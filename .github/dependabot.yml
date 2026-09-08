@@ -1,0 +1,19 @@
+# Weekly version-update PRs, so security alerts stop accumulating between manual sweeps. Minor and
+# patch bumps arrive grouped as one PR per ecosystem; majors stay individual so a breaking bump is
+# reviewed on its own. Same shape as Cando's, without its Temporal group; add a lockstep group here
+# the day Graft takes on an SDK whose packages must move together.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
