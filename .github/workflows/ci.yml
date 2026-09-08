@@ -50,6 +50,11 @@ jobs:
           for f in docs/adr/*.md; do
             head -3 "$f" | grep -q '^status: ' || { echo "$f has no status frontmatter" >&2; exit 1; }
           done
+          # A citation numbered above our newest ADR is another repository's, Cando's in practice,
+          # whose numbering runs ahead of ours. Name the repository in prose when citing one of
+          # those; once the two sequences overlap this check cannot tell them apart.
+          newest=$(ls docs/adr | sed -E 's/^([0-9]{4}).*/\1/' | sort | tail -1)
           for n in $(grep -rhoE 'ADR 00[0-9]{2}' docs README.md CONTEXT.md AGENTS.md | sed -E 's/ADR //' | sort -u); do
+            [[ "$n" > "$newest" ]] && continue
             ls docs/adr/${n}-*.md >/dev/null 2>&1 || { echo "ADR ${n} is cited but does not exist" >&2; exit 1; }
           done
