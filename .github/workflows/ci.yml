@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  # `main` too: a pull request tests its own head, the merge commit is a different tree, and two
+  # branches that each pass alone can still break once both are in. Copied from Cando, where the
+  # gap was not hypothetical (its CAN-83).
+  push:
+    branches: [main]
+
+# One run per ref, but `main` runs are never cancelled: consecutive merges share one ref, and
+# cancelling would throw away the previous commit's result, which is the per-commit signal the
+# push trigger exists to produce.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    # This job name is the required status check in the repository ruleset. Renaming it blocks
+    # every pull request on a check that no longer reports.
+    name: Typecheck, Lint & Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # A conflict marker inside a comment or a string is invisible to a typechecker and a linter.
+      # The three labelled markers are anchored at the line start with an optional label tail;
+      # `=======` is anchored at both ends so Markdown setext underlines under docs/ do not match.
+      - name: Refuse merge conflict markers
+        run: |
+          if git grep -nE '^(<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)( .*)?$|^=======$' -- ':!*.lock' ':!*.md'; then
+            echo "conflict markers found" >&2
+            exit 1
+          fi
+
+      # There is no code yet. Until there is, the check guards the documents the repo is made of:
+      # every ADR carries a status, the glossary and roadmap exist, and every ADR the roadmap or
+      # an ADR cites by number exists. When packages land, typecheck, lint and test steps join
+      # here and this job keeps its name.
+      - name: Check the decision records
+        run: |
+          set -euo pipefail
+          test -f CONTEXT.md
+          test -f docs/roadmap.md
+          for f in docs/adr/*.md; do
+            head -3 "$f" | grep -q '^status: ' || { echo "$f has no status frontmatter" >&2; exit 1; }
+          done
+          for n in $(grep -rhoE 'ADR 00[0-9]{2}' docs README.md CONTEXT.md AGENTS.md | sed -E 's/ADR //' | sort -u); do
+            ls docs/adr/${n}-*.md >/dev/null 2>&1 || { echo "ADR ${n} is cited but does not exist" >&2; exit 1; }
+          done
