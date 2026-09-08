@@ -35,6 +35,7 @@ exist.
 | MCP OAuth 2.1 for the harness to authenticate to Graft | ADR 0007 | Hermes at launch if cheap; OpenClaw when its client supports it | |
 | Elicitation for approvals where the client supports it | ADR 0006 | Step 3, behind a capability check | |
 | Working-set addition raised in the design session, not captured | ADR 0009 | Aleks restates it; then spec | |
+| Determinism gate at publish: evaluate the module's manifest twice, refuse if the two differ | Recommendation from `docs/research/executor-sh-teardown.md`, not yet an ADR | The check's spec in build step 4 | |
 | Pricing revisit | ADR 0014 | The first hundred acquisitions counted | |
 | Licence review | ADR 0015 | Community reaction in the first months | |
 | Cando adopts Graft as a dependency | ADR 0011 | Graft's core API stable | |

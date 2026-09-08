@@ -21,8 +21,8 @@ on the hosted tier only, once people are observed connecting Google through the 
 - **Keys only, OAuth later.** Rejected: it removes Gmail from the launch story, and Gmail is the
   first thing this audience connects.
 - **First-party clients for the top vendors.** Executor.sh runs thirteen on its cloud, absent from
-  self-host, each behind a fail-closed scope allowlist, with Google gated behind a rollout flag
-  while its review runs. Rejected in general: this is the broker work Graft just chose not to
+  self-host, ten of them behind a fail-closed scope allowlist, with Google gated behind a rollout
+  flag while its review runs. Rejected in general: this is the broker work Graft just chose not to
   rebuild, and every vendor is a verification programme that never ends.
 - **A third-party broker for OAuth alone.** Rejected for now: a second subprocessor for the one
   auth shape, when the guided BYO path covers it.
