@@ -1,0 +1,17 @@
+packages:
+  - apps/*
+  - packages/*
+
+# One version per shared dependency. A package declares `"typescript": "catalog:"` and gets the
+# line pinned here, so two packages cannot drift onto two compilers or two test runners.
+catalog:
+  # TypeScript 7 is the Go-native compiler and its npm package ships `tsc` alone: none of the JS
+  # compiler API (`createProgram`, `createSourceFile`) is in it. A package that needs that API — the
+  # check will, when it arrives — pins the last JS-based line under an alias in its own
+  # `package.json`, `"typescript6": "npm:typescript@~6.0.3"`, and imports `typescript6`, while `tsc`
+  # for the repo stays on 7. That is Cando's arrangement (its `packages/api/package.json` and the
+  # header of `module-check.core.ts` there); the alias is not catalogued until a package imports it.
+  typescript: ^7
+  # The Node 24 line, matching `engines.node` in the root `package.json`.
+  "@types/node": ^24.13.3
+  vitest: ^4.1.11
