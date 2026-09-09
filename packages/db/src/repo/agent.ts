@@ -6,8 +6,8 @@ import type { AgentScope } from "./scope";
 
 /**
  * Query ownership for the agent aggregate: the agent row and its scope (ADR 0007). Every read and
- * write takes the person's id in the SQL; the token lookup is the one deliberate exception, and
- * says so.
+ * write takes the person's id in the SQL; the token lookup and the sweep's roster are the two
+ * deliberate exceptions, and each says why.
  */
 
 export type AgentRow = typeof agent.$inferSelect;
@@ -70,6 +70,21 @@ export async function listAgents(db: DbOrTx, personId: string): Promise<AgentRow
     .select()
     .from(agent)
     .where(eq(agent.personId, personId))
+    .orderBy(asc(agent.createdAt), asc(agent.id));
+}
+
+/**
+ * Every agent whose token still resolves, across every person, oldest first — the sweep's roster
+ * (ADR 0009). Unscoped by nature, like the token lookup: the sweep is the system's own pass and has
+ * no person to scope by. It answers agent rows and nothing of theirs, so what the sweep does next —
+ * the working-set read, each demotion — is a statement under that agent's own pair, exactly as the
+ * agent's own call would be (`repo/working-set.ts`).
+ */
+export async function listAllActiveAgents(db: DbOrTx): Promise<AgentRow[]> {
+  return db
+    .select()
+    .from(agent)
+    .where(isNull(agent.revokedAt))
     .orderBy(asc(agent.createdAt), asc(agent.id));
 }
 

@@ -7,6 +7,8 @@ import {
   getConnection,
   listAgents,
   listConnections,
+  listTools,
+  listWorkingSetChanges,
   orNotFound,
   registerConnection,
   requirePerson,
@@ -17,7 +19,9 @@ import {
   type SessionLike,
   setAgentScope,
   setConnectionCredential,
+  type ToolDeps,
   updateAgentLimits,
+  type WorkingSetDeps,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import { connectionScheme } from "@graft/db/schema/connection";
@@ -46,6 +50,9 @@ export type ApiDeps = {
   db: DbOrTx;
   agent: AgentDeps;
   connection: ConnectionDeps;
+  /** The working-set history route (GRA-24) reads the changes and the toolbox they name. */
+  workingSet: WorkingSetDeps;
+  tool: ToolDeps;
 };
 
 export type ApiOptions = {
@@ -85,6 +92,34 @@ const connectionBody = z.object({
 
 const credentialBody = z.object({ fields: z.record(z.string(), z.unknown()) });
 
+/** How much history one page of the console's working-set view reads; bounded so a query cannot ask for all of it. */
+export const WORKING_SET_CHANGES_DEFAULT_LIMIT = 50;
+export const WORKING_SET_CHANGES_MAX_LIMIT = 500;
+
+const changesQuery = z.object({
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(WORKING_SET_CHANGES_MAX_LIMIT)
+    .default(WORKING_SET_CHANGES_DEFAULT_LIMIT),
+});
+
+/**
+ * One line of an agent's working-set history as the console reads it (GRA-1, user story 21): what
+ * changed, why (`agent`, `publish`, `idle`, `cap`, `revoke` — ADR 0009's two rule causes beside the
+ * agent-driven ones), when, and the tool by vendor and name rather than by id alone, so the view
+ * needs no second request to say which tool it was. `tool` is null only for a change whose tool row
+ * is gone, which the schema's cascade prevents; the field is nullable so the console never assumes.
+ */
+export type WorkingSetChangeOutput = {
+  id: string;
+  change: "promote" | "demote";
+  cause: "agent" | "publish" | "idle" | "cap" | "revoke";
+  createdAt: Date;
+  tool: { id: string; vendor: string; name: string; description: string } | null;
+};
+
 async function parseBody<T extends z.ZodType>(request: Request, schema: T): Promise<z.infer<T>> {
   let json: unknown;
   try {
@@ -104,7 +139,12 @@ async function parseBody<T extends z.ZodType>(request: Request, schema: T): Prom
 export function createApi(options: ApiOptions): Hono {
   const api = new Hono();
   const ctx: ServiceContext = { db: options.deps.db };
-  const { agent: agentDeps, connection: connectionDeps } = options.deps;
+  const {
+    agent: agentDeps,
+    connection: connectionDeps,
+    workingSet: workingSetDeps,
+    tool: toolDeps,
+  } = options.deps;
 
   if (options.corsOrigins.length > 0) {
     api.use("*", cors({ origin: [...options.corsOrigins], credentials: true }));
@@ -177,6 +217,47 @@ export function createApi(options: ApiOptions): Hono {
       "Agent not found, or already revoked",
     );
     return c.json({ agent });
+  });
+
+  /**
+   * The agent's working-set history, newest first — every promotion and demotion with its cause
+   * (ADR 0003: tool-list churn is a first-class event; ADR 0009: the rule's demotions are recorded
+   * beside the agent's). A revoked agent's history still answers: the rows are the person's records.
+   * `?limit=` caps the page; the tool's vendor and name are joined in from the person's toolbox.
+   */
+  api.get("/agents/:id/working-set/changes", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const query = changesQuery.safeParse(c.req.query());
+    if (!query.success) {
+      throw new ServiceError(
+        "BAD_REQUEST",
+        `limit must be a whole number from 1 to ${WORKING_SET_CHANGES_MAX_LIMIT}`,
+        { details: { issues: query.error.issues } },
+      );
+    }
+    const agent = orNotFound(
+      await getAgent(ctx, principal, c.req.param("id"), agentDeps),
+      "Agent not found",
+    );
+    const scope = { personId: principal.personId, agentId: agent.id };
+    const [rows, tools] = await Promise.all([
+      listWorkingSetChanges(ctx, scope, query.data.limit, workingSetDeps),
+      listTools(ctx, principal, toolDeps),
+    ]);
+    const toolsById = new Map(tools.map((tool) => [tool.id, tool]));
+    const changes: WorkingSetChangeOutput[] = rows.map((row) => {
+      const tool = toolsById.get(row.toolId);
+      return {
+        id: row.id,
+        change: row.change,
+        cause: row.cause,
+        createdAt: row.createdAt,
+        tool: tool
+          ? { id: tool.id, vendor: tool.vendor, name: tool.name, description: tool.description }
+          : null,
+      };
+    });
+    return c.json({ changes });
   });
 
   api.put("/agents/:id/scope", async (c) => {

@@ -235,3 +235,28 @@ export async function getAgentScope(
 ): Promise<string[]> {
   return deps.listAgentConnectionIds(ctx.db, scope);
 }
+
+/** An agent as the sweep sees it: its scope, and the two limits the rule reads (ADR 0009). */
+export type ActiveAgentScope = AgentScope & { workingSetCap: number; idleWindowDays: number };
+
+/**
+ * Every agent whose token still resolves, across every person — the sweep's roster (ADR 0009), and
+ * the one function in this module that takes no principal: the sweep is the system's own pass, not
+ * a person's request. What comes back is a scope per agent, so everything the sweep does next — the
+ * working-set read, each demotion — goes through a scoped statement like any agent's own call would.
+ * `deps` is narrowed to the one read, so a caller holding only this cannot reach a person-scoped
+ * function through it. The cap and window are the row's: the schema's defaults for a new agent, the
+ * person's own values once edited in the console (GRA-1, user story 22).
+ */
+export async function listActiveAgentScopes(
+  ctx: ServiceContext,
+  deps: Pick<AgentDeps, "listAllActiveAgents">,
+): Promise<ActiveAgentScope[]> {
+  const rows = await deps.listAllActiveAgents(ctx.db);
+  return rows.map((row) => ({
+    personId: row.personId,
+    agentId: row.id,
+    workingSetCap: row.workingSetCap,
+    idleWindowDays: row.idleWindowDays,
+  }));
+}

@@ -2,7 +2,12 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { DbOrTx } from "../index";
-import { listAgentConnectionIds, replaceAgentConnections, revokeAgent } from "./agent";
+import {
+  listAgentConnectionIds,
+  listAllActiveAgents,
+  replaceAgentConnections,
+  revokeAgent,
+} from "./agent";
 import { deleteApprovalsForVendor, findApproval, relaxApproval } from "./approval";
 import { findConnection, findConnectionByIdUnscoped, revokeConnection } from "./connection";
 import { answerPendingAction, consumePendingAction, findPendingAction } from "./pending-action";
@@ -129,6 +134,15 @@ describe("person-scoped statements take the person", () => {
     const s = only();
     expect(s.sql).toMatch(/where "connection"\."id" = \$1 limit \$2$/);
     expect(s.params).toEqual(["conn_1", 1]);
+  });
+
+  /** The sweep's roster is the other one (ADR 0009): every person's live agents, recognisable as such. */
+  it("the sweep's roster of active agents is unscoped, by name, and takes only the revoked filter", async () => {
+    await listAllActiveAgents(db);
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "agent" where "agent"\."revoked_at" is null order by/);
+    expect(s.sql).not.toContain('person_id" =');
+    expect(s.params).toEqual([]);
   });
 
   it("a revoke clears every secret column and stamps the moment, under the person", async () => {
