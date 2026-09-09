@@ -731,12 +731,10 @@ describe("the advanced set", () => {
     }
   });
 
-  it("the stubs answer not_available_yet with their ticket", async () => {
+  it("the stubs answer not_available_yet with their ticket; acquire and acquire_status are live (acquire.test.ts)", async () => {
     const a = await connect(TOKEN_A);
     try {
       for (const [name, args, ticket] of [
-        ["acquire", { connectionId: CONN_DEMO, goal: "list orders" }, "GRA-29"],
-        ["acquire_status", { jobId: "job_1" }, "GRA-29"],
         [
           "request_connection",
           { vendor: "x", primaryHost: "https://x.example", scheme: "bearer" },

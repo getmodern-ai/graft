@@ -8,7 +8,7 @@ import { z } from "zod";
  * makes sense complete is refused when half-set, because a partial set is always a typo or a
  * half-finished deploy and would otherwise present as a feature that silently never works.
  *
- * Every Graft variable is `GRAFT_*`. Later tickets add to this file: the model adapter (GRA-29).
+ * Every Graft variable is `GRAFT_*`. GRA-31 adds the provider-backed model to `modelBackend`.
  */
 
 /**
@@ -254,6 +254,62 @@ export const sweepIntervalSeconds = z.coerce
   .default(300);
 
 /**
+ * How many drafts one `acquire` job may make before it gives up (ADR 0004: attempts are bounded by
+ * count; ADR 0012, L1: a failed dry run is diagnosed and retried inside the job). Every module the
+ * model writes is an attempt — a draft the check refuses spends one as surely as a draft whose dry
+ * run fails — so four rather than three: one to learn the check's rules, one to learn the vendor's,
+ * and two to be wrong about something else. A whole number, at least one; bounded above because a
+ * job that drafts twenty times is not converging, it is spending.
+ */
+export const acquireMaxAttempts = z.coerce
+  .number({ error: "GRAFT_ACQUIRE_MAX_ATTEMPTS must be a whole number of attempts" })
+  .int("GRAFT_ACQUIRE_MAX_ATTEMPTS must be a whole number of attempts")
+  .min(1, "GRAFT_ACQUIRE_MAX_ATTEMPTS must be at least 1")
+  .max(20, "GRAFT_ACQUIRE_MAX_ATTEMPTS must be at most 20")
+  .default(4);
+
+/**
+ * The most tokens one `acquire` job may spend, input and output summed across every model turn
+ * (ADR 0004, ADR 0014: acquisition is the unit of price, so its cost has a ceiling). A job that
+ * reaches it ends with a result naming the ceiling. Four hundred thousand fits a documentation page
+ * or three at four thousand tokens each, the skill, and a handful of drafts with their diagnoses, and
+ * is well under what a provider's context would let a runaway loop reach. At least a thousand — a
+ * lower figure ends every job on its first turn, which is a typo.
+ */
+export const acquireTokenCeiling = z.coerce
+  .number({ error: "GRAFT_ACQUIRE_TOKEN_CEILING must be a whole number of tokens" })
+  .int("GRAFT_ACQUIRE_TOKEN_CEILING must be a whole number of tokens")
+  .min(1_000, "GRAFT_ACQUIRE_TOKEN_CEILING must be at least 1000")
+  .default(400_000);
+
+/**
+ * How many `acquire` jobs the in-process runner works at once (`@graft/mcp`'s `acquire/runner.ts`;
+ * GRA-1: no durable engine for the alpha). Each job holds a sandbox, a model conversation and a
+ * publish; two lets a second agent's job start while the first waits on a vendor, and keeps a
+ * laptop's Docker daemon at two containers. Bounded above so a typo cannot ask one process for a
+ * hundred concurrent sandboxes.
+ */
+export const acquireConcurrency = z.coerce
+  .number({ error: "GRAFT_ACQUIRE_CONCURRENCY must be a whole number of jobs" })
+  .int("GRAFT_ACQUIRE_CONCURRENCY must be a whole number of jobs")
+  .min(1, "GRAFT_ACQUIRE_CONCURRENCY must be at least 1")
+  .max(32, "GRAFT_ACQUIRE_CONCURRENCY must be at most 32")
+  .default(2);
+
+/**
+ * Which model answers `acquire` (ADR 0004; `@graft/model`'s adapter seam, ADR 0002). Unset, the
+ * server boots with no model and `acquire` refuses `acquire_unconfigured`, saying so — the sandbox's
+ * posture. `scripted` is `@graft/model/scripted` playing the JSON file `GRAFT_MODEL_SCRIPT` names,
+ * for a laptop driving the whole loop without a provider key; it is a canned answer sheet, not a
+ * model, and is refused under `NODE_ENV=production` (`serverEnvIssues`). The provider-backed value
+ * arrives with GRA-31 and joins this enum.
+ */
+export const modelBackend = z.enum(["scripted"]).optional();
+
+/** The scripted model's script, all-or-nothing with `GRAFT_MODEL_BACKEND=scripted` — see `modelBackend`. */
+export const modelScriptKeys = ["GRAFT_MODEL_BACKEND", "GRAFT_MODEL_SCRIPT"] as const;
+
+/**
  * The Docker sandbox backing's two settings (`@graft/sandbox-docker`, ADR 0002), all-or-nothing:
  * the prebuilt image sandboxes are created from, and the internal network they join. Individually
  * optional so a server with no Docker boots and only the sandbox is unavailable — a publish that
@@ -374,6 +430,23 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
     );
   }
 
+  /**
+   * The scripted model is a script, so it is the pair or nothing: a backend named with no script
+   * has nothing to play, a script with no backend is a file nobody reads — both a half-finished
+   * setup. And an answer sheet in place of a model is refused in production, like the fake sandbox.
+   */
+  const partialModel = partialGroupIssue(
+    value,
+    "The scripted model is partially configured — set GRAFT_MODEL_BACKEND=scripted and GRAFT_MODEL_SCRIPT together, or neither.",
+    modelScriptKeys,
+  );
+  if (partialModel) issues.push(partialModel);
+  if (value.NODE_ENV === "production" && value.GRAFT_MODEL_BACKEND === "scripted") {
+    issues.push(
+      "GRAFT_MODEL_BACKEND=scripted is the canned test model and is refused under NODE_ENV=production.",
+    );
+  }
+
   return issues;
 }
 
@@ -468,6 +541,15 @@ export const serverSchema = {
 
   /** How often the working-set sweep runs — see `sweepIntervalSeconds`. */
   GRAFT_SWEEP_INTERVAL_SECONDS: sweepIntervalSeconds,
+
+  /** The acquire job's three bounds, each with a correct default — see `acquireMaxAttempts`, `acquireTokenCeiling`, `acquireConcurrency`. */
+  GRAFT_ACQUIRE_MAX_ATTEMPTS: acquireMaxAttempts,
+  GRAFT_ACQUIRE_TOKEN_CEILING: acquireTokenCeiling,
+  GRAFT_ACQUIRE_CONCURRENCY: acquireConcurrency,
+
+  /** Which model answers `acquire`, and the scripted one's script — see `modelBackend`, `modelScriptKeys`. */
+  GRAFT_MODEL_BACKEND: modelBackend,
+  GRAFT_MODEL_SCRIPT: z.string().min(1).optional(),
 };
 
 /** The object schema `createEnv` is handed: the fields, the cross-field rules, the derived default. */

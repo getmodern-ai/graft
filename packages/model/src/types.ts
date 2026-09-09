@@ -1,0 +1,183 @@
+/**
+ * The model adapter — the seam between `acquire`'s job and whatever answers as Graft's model
+ * (ADR 0004: Graft holds the pen; ADR 0002: one interface, two backings). The **job owns the loop
+ * and the tools**: it reads the documentation, writes the draft, runs the check, makes the proof
+ * reads, publishes and dry-runs. The model only **answers**, one situation at a time, and every
+ * answer reports what it cost, so the job can hold the token ceiling (ADR 0014: attempts are
+ * bounded by count and by tokens).
+ *
+ * What the model is never handed: a credential, the capability token, or a way to call the vendor
+ * itself. Reads happen through the connection's execute path with the dry-run claim on, and their
+ * results come back here as text (`ProofRead`). A page of documentation comes back as text too
+ * (`DocPage`) and is untrusted, which the authoring skill the model is handed says in its own words.
+ *
+ * Two backings: `./scripted.ts` here, a list of canned answers for the suite and for a laptop with no
+ * provider; the provider-backed one is GRA-31's and runs `./conformance.ts` to prove it answers the
+ * same questions. This package imports nothing, so the types are what both sides compile against.
+ */
+
+/** What the job tells the model about the connection it is authoring against. Never a credential. */
+export type ConnectionBrief = {
+  id: string;
+  vendor: string;
+  displayName: string;
+  /** The auth scheme's name, so the model knows what the proxy injects; the values are the proxy's. */
+  scheme: string;
+  /** The base URL vendor-relative paths resolve against. */
+  primaryHost: string;
+  /** Every host the connection may reach — what `ctx.proxyBase(host)` may name. */
+  hosts: readonly string[];
+};
+
+/** Handed once, at `open`; the situations that follow refer back to it. */
+export type ModelJobContext = {
+  jobId: string;
+  goal: string;
+  hints: string | null;
+  connection: ConnectionBrief;
+  /** The authoring skill's text (`packages/runner/skills/authoring-a-tool/SKILL.md`), the discipline the model follows. */
+  skill: string;
+  /** The bounds the job holds the model to, so a provider-backed model can pace itself. */
+  budget: { maxAttempts: number; tokenCeiling: number };
+};
+
+/** What one answer cost. Whole tokens; the job sums them against the ceiling. */
+export type ModelUsage = { inputTokens: number; outputTokens: number };
+
+export type ModuleFile = { path: string; content: string };
+
+/**
+ * A module as the model drafts it: what the publish takes, plus the test input the dry run needs
+ * and the reads that prove the credential and the request shape before anything is published
+ * (the skill's step 4). `proofReads` are vendor-relative `GET` paths, `/items?limit=1`; the job
+ * runs each through the connection's execute path with the dry-run claim on and hands the answers
+ * back as `ProofRead`s. Empty skips the step.
+ */
+export type ModuleDraft = {
+  /** Kebab-case; with the vendor, the tool's identity. */
+  name: string;
+  description: string;
+  /** A JSON Schema object (`type: "object"`); `Input` is generated from it at the check. */
+  inputSchema: Record<string, unknown>;
+  /** `index.ts` and any siblings; a `package.json` when the module declares a package (ADR 0013). */
+  files: ModuleFile[];
+  testInput: Record<string, unknown>;
+  proofReads: string[];
+};
+
+/** A diagnostic as the check and the publish report one — `@graft/check`'s `Diagnostic`, structurally. */
+export type ModelDiagnostic = {
+  rule: string;
+  file: string;
+  line: number;
+  column: number;
+  message: string;
+  hint: string;
+};
+
+/** A documentation page the job read for the model, or why it could not. Untrusted text. */
+export type DocPage =
+  | { url: string; ok: true; title: string | null; content: string; truncated: boolean }
+  | { url: string; ok: false; error: string };
+
+/** One proof read's answer: the vendor's status and the head of its body, credentials redacted. */
+export type ProofRead = {
+  path: string;
+  ok: boolean;
+  status: number | null;
+  body: string | null;
+  /** Why the read produced no answer at all — the run failed, the proxy refused. */
+  error: string | null;
+};
+
+/** The dry-run report as the model reads it — `runner.mjs`'s report, the parts a diagnosis turns on. */
+export type DryRunSummary = {
+  passed: boolean;
+  reads: { method: string; path: string; status: number }[];
+  writesPreviewed: unknown[];
+  writesRefused: unknown[];
+  moduleError: string | null;
+  moduleResult: unknown;
+  unverified: string[];
+};
+
+/**
+ * What the job puts to the model. `goal` opens the conversation; every other kind is the outcome of
+ * something the job did with the model's last answer. `attempt` numbers the draft the outcome is
+ * about, as the console shows it.
+ */
+export type ModelSituation =
+  | { kind: "goal" }
+  | { kind: "docs"; pages: DocPage[] }
+  | {
+      kind: "check_refused";
+      attempt: number;
+      refusals: ModelDiagnostic[];
+      advice: ModelDiagnostic[];
+    }
+  /** Every proof read the draft asked for, passed or failed; the model decides whether to proceed. */
+  | { kind: "proof"; attempt: number; reads: ProofRead[] }
+  | {
+      kind: "publish_refused";
+      attempt: number;
+      refusals: ModelDiagnostic[];
+      advice: ModelDiagnostic[];
+    }
+  /** `report` is null when the run produced none — the runner failed — and `failure` says how. */
+  | {
+      kind: "dry_run_failed";
+      attempt: number;
+      report: DryRunSummary | null;
+      failure: string | null;
+    };
+
+export type ModelSituationKind = ModelSituation["kind"];
+
+/**
+ * What the model may answer. `note` is one line the job records as the attempt's diagnosis and
+ * relays as progress — what the model learned, what it changed. `write_module` always starts a new
+ * attempt; `proceed` is only meaningful after a `proof` situation; `give_up` ends the job.
+ */
+export type ModelAnswer =
+  | { kind: "read_docs"; urls: string[]; note: string }
+  | { kind: "write_module"; draft: ModuleDraft; note: string }
+  | { kind: "proceed"; note: string }
+  | { kind: "give_up"; reason: string };
+
+export type ModelAnswerKind = ModelAnswer["kind"];
+
+export type ModelReply = { answer: ModelAnswer; usage: ModelUsage };
+
+/** One job's conversation. A provider-backed adapter keeps its message history here. */
+export type ModelConversation = {
+  turn(situation: ModelSituation): Promise<ModelReply>;
+};
+
+export type ModelAdapter = {
+  /** Which backing this is — `scripted`, or the provider's name — for the trace. */
+  readonly name: string;
+  open(context: ModelJobContext): ModelConversation;
+};
+
+/** Which answers a situation admits; the job refuses the others as a model failure, by name. */
+export const ANSWERS_FOR: Record<ModelSituationKind, readonly ModelAnswerKind[]> = {
+  goal: ["read_docs", "write_module", "give_up"],
+  docs: ["read_docs", "write_module", "give_up"],
+  check_refused: ["read_docs", "write_module", "give_up"],
+  proof: ["read_docs", "write_module", "proceed", "give_up"],
+  publish_refused: ["read_docs", "write_module", "give_up"],
+  dry_run_failed: ["read_docs", "write_module", "give_up"],
+};
+
+export function answerAllowed(situation: ModelSituationKind, answer: ModelAnswerKind): boolean {
+  return ANSWERS_FOR[situation].includes(answer);
+}
+
+/** Whole, non-negative tokens — what a usage figure must be for the ceiling to mean anything. */
+export function isValidUsage(usage: unknown): usage is ModelUsage {
+  if (typeof usage !== "object" || usage === null) return false;
+  const { inputTokens, outputTokens } = usage as Record<string, unknown>;
+  return [inputTokens, outputTokens].every(
+    (n) => typeof n === "number" && Number.isInteger(n) && n >= 0,
+  );
+}

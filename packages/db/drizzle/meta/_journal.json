@@ -8,6 +8,13 @@
       "when": 1788920750840,
       "tag": "0000_persons_agents_connections_toolbox",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788931407708,
+      "tag": "0001_acquire_attempts_and_traces",
+      "breakpoints": true
     }
   ]
 }

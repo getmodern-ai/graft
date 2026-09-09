@@ -6,6 +6,20 @@
  * transport.
  */
 export {
+  ACQUIRE_FAILURES,
+  type AcquireAttemptSummary,
+  type AcquireConfig,
+  type AcquireFailure,
+  type AcquireFailureKind,
+  type AcquireResult,
+  type AcquireStarted,
+  type AcquireStatus,
+  type AcquireSuccess,
+  acquireStatusOf,
+  DEFAULT_ACQUIRE_CONFIG,
+  isAcquireFailure,
+} from "./acquire/shapes";
+export {
   type ApprovalAnswer,
   type ApprovalAskKind,
   type AskChannel,

@@ -156,7 +156,9 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
           where table_schema = 'public' and column_name = 'owner' order by table_name`,
     );
     expect(rows.rows.map((row) => row.table_name)).toEqual([
+      "acquire_attempt",
       "acquire_job",
+      "acquire_trace",
       "agent",
       "agent_connection",
       "approval",

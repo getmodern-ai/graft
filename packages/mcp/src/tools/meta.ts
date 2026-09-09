@@ -1,13 +1,20 @@
 import {
   countWorkingSet,
+  createAcquireJob,
   demoteTool,
+  GOAL_MAX_LENGTH,
+  getAcquireJob,
+  getAgentScope,
   getToolByName,
+  HINTS_MAX_LENGTH,
   listTools,
   listWorkingSet,
   promoteTool,
 } from "@graft/core";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
+import { type AcquireStarted, acquireStatusOf } from "../acquire/shapes";
+import { requireBuildApproval } from "../approval";
 import {
   clampTimeout,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -22,12 +29,12 @@ import { runAuthoredTool } from "../run";
 import { authoredToolName } from "../tool-names";
 
 /**
- * The fixed meta-tools every agent sees (CONTEXT.md, *Meta-tool*): the working set's own controls —
- * `find_tool`, `promote`, `demote`, `run_tool` (ADR 0003, ADR 0009) — and the four whose tickets
- * have not landed, present from day one so the list is stable and answering `not_available_yet`
- * with the ticket: `acquire` and `acquire_status` (GRA-29), `request_connection` and
- * `request_credential` (GRA-28). The advanced set is `authoring.ts`; the per-connection execute
- * tools are `execute.ts`.
+ * The fixed meta-tools every agent sees (CONTEXT.md, *Meta-tool*): the front door, `acquire` and
+ * `acquire_status` (ADR 0004; the job behind them is `../acquire/job.ts`), the working set's own
+ * controls — `find_tool`, `promote`, `demote`, `run_tool` (ADR 0003, ADR 0009) — and the two whose
+ * ticket has not landed, present from day one so the list is stable and answering
+ * `not_available_yet` with the ticket: `request_connection` and `request_credential` (GRA-28). The
+ * advanced set is `authoring.ts`; the per-connection execute tools are `execute.ts`.
  */
 
 export type MetaTool = {
@@ -253,6 +260,10 @@ function toolNotFound(key: { vendor: string; name: string }): CallToolResult {
   );
 }
 
+/** The line a job carries before its runner has said anything — what `acquire` answers with at once. */
+export const FIRST_PROGRESS_LINE =
+  "Queued: Graft's model will read the vendor's documentation, draft the tool, prove it with reads, publish and dry-run it, then promote it into your working set. Poll acquire_status with the jobId for progress.";
+
 const acquire: MetaTool = {
   definition: {
     name: ACQUIRE,
@@ -276,7 +287,66 @@ const acquire: MetaTool = {
       additionalProperties: false,
     },
   },
-  handle: async () => notAvailableYet("acquire", "GRA-29"),
+  /**
+   * The door to the loop (ADR 0004). In order: the arguments; the connection in the agent's scope —
+   * the same check every run makes, before anything else, and a connection outside it points at
+   * `request_connection` (GRA-28); a model to answer at all; the **build approval** (ADR 0008:
+   * `acquire` against a connection asks once per agent per connection), through the session's
+   * channel, so an unanswered ask returns GRA-23's `awaiting_approval` and the next call finds the
+   * answer; then the job row, and the runner woken. The call returns the moment the row exists —
+   * the loop is minutes long and a tool call is not (ADR 0004's client-compatibility risk).
+   */
+  handle: async (args, session) => {
+    const connectionId = typeof args.connectionId === "string" ? args.connectionId.trim() : "";
+    if (!connectionId) return toolRefusal("input_invalid", "connectionId must be a string");
+    const goal = typeof args.goal === "string" ? args.goal.trim() : "";
+    if (!goal || goal.length > GOAL_MAX_LENGTH) {
+      return toolRefusal("input_invalid", `goal must be 1 to ${GOAL_MAX_LENGTH} characters`);
+    }
+    if (args.hints !== undefined && typeof args.hints !== "string") {
+      return toolRefusal("input_invalid", "hints must be a string");
+    }
+    const hints = typeof args.hints === "string" ? args.hints.trim() : "";
+    if (hints.length > HINTS_MAX_LENGTH) {
+      return toolRefusal("input_invalid", `hints must be at most ${HINTS_MAX_LENGTH} characters`);
+    }
+
+    const { ctx, scope, deps, channel } = session;
+    const scopeIds = await getAgentScope(ctx, scope, deps.agent);
+    if (!scopeIds.includes(connectionId)) {
+      return toolRefusal(
+        "connection_not_in_scope",
+        `Connection ${connectionId} is not in this agent's scope, so nothing can be authored against it. request_connection proposes a new connection for the person to confirm; an existing one is added to the scope in the console.`,
+      );
+    }
+    if (!deps.model) {
+      return toolRefusal(
+        "acquire_unconfigured",
+        "This deployment has no model configured, so Graft cannot author a tool. Say so rather than retrying; the advanced tools (write_file, check_tool, publish_tool) still let you drive the loop yourself.",
+      );
+    }
+    const gate = await requireBuildApproval(ctx, scope, connectionId, deps, channel);
+    if (!gate.pass) return toolError(gate.answer);
+
+    const job = await createAcquireJob(
+      ctx,
+      scope,
+      {
+        connectionId,
+        goal,
+        hints: hints || null,
+        firstProgressLine: FIRST_PROGRESS_LINE,
+      },
+      deps.acquireJob,
+    );
+    deps.acquireRunner?.kick();
+    const started: AcquireStarted = {
+      jobId: job.id,
+      status: job.status === "running" ? "running" : "queued",
+      progress: job.progress,
+    };
+    return toolResult(started);
+  },
 };
 
 const acquireStatus: MetaTool = {
@@ -292,7 +362,18 @@ const acquireStatus: MetaTool = {
     },
     annotations: { readOnlyHint: true, destructiveHint: false },
   },
-  handle: async () => notAvailableYet("acquire_status", "GRA-29"),
+  handle: async (args, { ctx, scope, deps }) => {
+    const jobId = typeof args.jobId === "string" ? args.jobId.trim() : "";
+    if (!jobId) return toolRefusal("input_invalid", "jobId must be a string");
+    const job = await getAcquireJob(ctx, scope, jobId, deps.acquireJob);
+    if (!job) {
+      return toolRefusal(
+        "job_not_found",
+        `No acquire job ${jobId} was started by this agent. The id is the one acquire answered with.`,
+      );
+    }
+    return toolResult(acquireStatusOf(job));
+  },
 };
 
 const requestConnection: MetaTool = {

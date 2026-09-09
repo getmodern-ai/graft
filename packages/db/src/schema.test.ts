@@ -29,7 +29,9 @@ const owned = ownedTables.filter((table) => !authTables.has(table)).map(getTable
 describe("every owned table", () => {
   it("is found — the filter above must see the tables GRA-6 adds, or the assertions below prove nothing", () => {
     expect(owned.map((table) => table.name).sort()).toEqual([
+      "acquire_attempt",
       "acquire_job",
+      "acquire_trace",
       "agent",
       "agent_connection",
       "approval",
@@ -100,6 +102,7 @@ describe("the append-only records", () => {
     "usage_ledger",
     "agent_connection",
     "build_approval",
+    "acquire_trace",
   ])("%s has no updated_at", (name) => {
     const table = owned.find((candidate) => candidate.name === name);
     expect(table?.columns.map((column) => column.name)).not.toContain("updated_at");
@@ -133,6 +136,14 @@ describe("delete behaviour", () => {
     expect(deleteActions(schema.usageLedger).get("tool_id")).toBe("set null");
     expect(deleteActions(schema.usageLedger).get("version_id")).toBe("set null");
     expect(deleteActions(schema.toolVersion).get("publisher_job_id")).toBe("set null");
+  });
+
+  /** ADR 0012: an acquire job's record outlives the tool it built; its attempts and traces go with the job. */
+  it("keeps an acquire job when its tool or a version is deleted, and takes attempts and traces with the job", () => {
+    expect(deleteActions(schema.acquireJob).get("tool_id")).toBe("set null");
+    expect(deleteActions(schema.acquireAttempt).get("version_id")).toBe("set null");
+    expect(deleteActions(schema.acquireAttempt).get("job_id")).toBe("cascade");
+    expect(deleteActions(schema.acquireTrace).get("job_id")).toBe("cascade");
   });
 });
 
