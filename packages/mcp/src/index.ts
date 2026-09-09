@@ -63,6 +63,26 @@ export {
   MAX_COMMAND_TIMEOUT_SECONDS,
   MAX_DETACHED_TIMEOUT_SECONDS,
 } from "./bounds";
+export {
+  type AwaitingHandoff,
+  CONNECTION_ASK_KIND,
+  type Connected,
+  type ConnectionAnswer,
+  type ConnectionProposalInput,
+  type ConnectionProposalPayload,
+  type ConnectionRequestOutcome,
+  CREDENTIAL_ASK_KIND,
+  type CredentialAskPayload,
+  type CredentialRequestInput,
+  describeSchemes,
+  normaliseProposal,
+  PROPOSAL_PROVENANCE_NOTE,
+  type ProposalVerdict,
+  readConnectionAnswer,
+  readConnectionProposal,
+  requestConnection,
+  requestCredential,
+} from "./connection-request";
 export type { SessionContext } from "./context";
 export {
   type CreateMcpDepsInput,

@@ -45,6 +45,7 @@ export {
   AGENT_NAME_MAX_LENGTH,
   type AgentLimitsPatch,
   type AgentOutput,
+  addConnectionToAgentScope,
   type CreateAgentInput,
   createAgent,
   getAgent,
@@ -78,6 +79,8 @@ export {
 export { type ConnectionDeps, createConnectionDeps } from "./connection/connection.deps";
 export {
   DISPLAY_NAME_MAX_LENGTH,
+  HOST_NOT_PUBLIC,
+  type HostSetRefusal,
   type HostSetVerdict,
   SCHEME_PARAMETERS,
   VENDOR_MAX_LENGTH,
@@ -93,8 +96,10 @@ export {
   getConnection,
   listConnections,
   type RegisterConnectionInput,
+  type RegisterConnectionWithCredentialInput,
   type RevokeConnectionResult,
   registerConnection,
+  registerConnectionWithCredential,
   revokeConnection,
   setConnectionCredential,
   toConnectionOutput,
@@ -109,7 +114,14 @@ export {
 } from "./errors";
 export { isKebabCase } from "./kebab-case";
 export { defaultLedgerDeps, type LedgerDeps } from "./ledger/ledger.deps";
-export { lastUsedAtByTool, listUsage, recordUsage, type UsageInput } from "./ledger/ledger.service";
+export {
+  lastUsedAtByTool,
+  listUsage,
+  listVendorUsage,
+  recordUsage,
+  type UsageInput,
+  type VendorUsageRow,
+} from "./ledger/ledger.service";
 export {
   defaultPendingActionDeps,
   type PendingActionDeps,

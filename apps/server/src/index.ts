@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -6,6 +7,7 @@ import {
   createConnectionDeps,
   defaultAgentDeps,
   defaultApprovalDeps,
+  defaultLedgerDeps,
   defaultPendingActionDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
@@ -195,12 +197,16 @@ const app = createServer({
       connection: connectionDeps,
       workingSet: defaultWorkingSetDeps,
       tool: defaultToolDeps,
+      ledger: defaultLedgerDeps,
       approval: defaultApprovalDeps,
       pendingAction: defaultPendingActionDeps,
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
     handoff,
   },
+  // The console's build, served from the same origin as the API (`console.ts`); absent, the API is
+  // whole and every console path says where the build was expected.
+  console: { dir: env.GRAFT_CONSOLE_DIR },
   mcp,
 });
 
@@ -232,7 +238,8 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `(sandbox: ${env.GRAFT_SANDBOX_BACKEND}${sandbox ? "" : ", unconfigured"}; toolbox: ${store.root}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database, ` +
-      `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s`,
+      `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
+      `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );
 });
 

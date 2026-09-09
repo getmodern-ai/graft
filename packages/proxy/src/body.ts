@@ -12,8 +12,14 @@
  * that never finishes answering — cannot hold the buffer and the connection past the deadline.
  */
 
+/**
+ * `Uint8Array<ArrayBuffer>` rather than the bare `Uint8Array`, which TypeScript reads as
+ * `ArrayBufferLike`-backed: the bytes are built here on a fresh `ArrayBuffer`, and saying so is what
+ * lets them be a `Response` body under the DOM library's `BodyInit` as well as Node's — the console
+ * (`apps/web`) typechecks this file through the server's exported route types.
+ */
 export type CappedRead =
-  | { ok: true; bytes: Uint8Array }
+  | { ok: true; bytes: Uint8Array<ArrayBuffer> }
   | { ok: false; reason: "too_large" | "aborted" };
 
 /**

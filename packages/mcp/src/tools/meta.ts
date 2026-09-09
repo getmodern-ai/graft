@@ -11,6 +11,7 @@ import {
   listWorkingSet,
   promoteTool,
 } from "@graft/core";
+import { connectionScheme } from "@graft/db/schema/connection";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { type AcquireStarted, acquireStatusOf } from "../acquire/shapes";
@@ -23,18 +24,24 @@ import {
   MAX_COMMAND_TIMEOUT_SECONDS,
   MAX_DETACHED_TIMEOUT_SECONDS,
 } from "../bounds";
+import {
+  describeSchemes,
+  readConnectionProposal,
+  requestConnection,
+  requestCredential,
+} from "../connection-request";
 import type { SessionContext } from "../context";
-import { isPlainObject, notAvailableYet, toolError, toolRefusal, toolResult } from "../result";
+import { isPlainObject, toolError, toolRefusal, toolResult } from "../result";
 import { runAuthoredTool } from "../run";
 import { authoredToolName } from "../tool-names";
 
 /**
  * The fixed meta-tools every agent sees (CONTEXT.md, *Meta-tool*): the front door, `acquire` and
  * `acquire_status` (ADR 0004; the job behind them is `../acquire/job.ts`), the working set's own
- * controls — `find_tool`, `promote`, `demote`, `run_tool` (ADR 0003, ADR 0009) — and the two whose
- * ticket has not landed, present from day one so the list is stable and answering
- * `not_available_yet` with the ticket: `request_connection` and `request_credential` (GRA-28). The
- * advanced set is `authoring.ts`; the per-connection execute tools are `execute.ts`.
+ * controls — `find_tool`, `promote`, `demote`, `run_tool` (ADR 0003, ADR 0009) — and the two
+ * connection handoffs, `request_connection` and `request_credential` (GRA-28;
+ * `../connection-request.ts`). The advanced set is `authoring.ts`; the per-connection execute tools
+ * are `execute.ts`.
  */
 
 export type MetaTool = {
@@ -376,28 +383,51 @@ const acquireStatus: MetaTool = {
   },
 };
 
-const requestConnection: MetaTool = {
+const requestConnectionTool: MetaTool = {
   definition: {
     name: REQUEST_CONNECTION,
     description:
       "Propose a new connection to a vendor — its hosts, auth scheme, non-secret parameters and the documentation URL you read — and receive a handoff URL. " +
-      "The person opens it in the console, confirms what you proposed and enters the secret there; you never see the credential.",
+      "The person opens it in the console, checks what you proposed, edits it if need be and enters the secret there; you never see the credential, and this tool never takes one. " +
+      "Every host must be a public https host: private, loopback, link-local and cloud-metadata addresses are refused here and again by the proxy. " +
+      `Schemes — ${describeSchemes()}. ` +
+      "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the link to relay, and calling again with the same proposal returns the same link until they have, then connected. " +
+      "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list; a connection to the same vendor and host already in your scope answers connected at once.",
     inputSchema: {
       type: "object",
       properties: {
-        vendor: { type: "string", description: 'A kebab-case vendor slug, e.g. "unleashed".' },
-        displayName: { type: "string" },
+        vendor: {
+          type: "string",
+          description:
+            'A kebab-case vendor slug, e.g. "unleashed" — the key tools authored against this connection are bound to.',
+        },
+        displayName: {
+          type: "string",
+          description:
+            'What the person will see, e.g. "Acme Unleashed (production)". Defaults to the vendor slug.',
+        },
         primaryHost: {
           type: "string",
-          description: "The base URL vendor-relative paths resolve against.",
+          description:
+            'The https base URL vendor-relative paths resolve against, e.g. "https://api.unleashedsoftware.com".',
         },
         hosts: {
           type: "array",
           items: { type: "string" },
-          description: "Other hosts the connection may reach.",
+          description:
+            "Other hostnames the connection may reach (an SDK that spans several hosts); the primary's is included on its own.",
         },
-        scheme: { type: "string", description: "The auth scheme, as the proxy names them." },
-        schemeConfig: { type: "object", description: "The scheme's non-secret parameters." },
+        scheme: {
+          type: "string",
+          enum: [...connectionScheme],
+          description: "The auth scheme, as the proxy names them.",
+        },
+        schemeConfig: {
+          type: "object",
+          additionalProperties: { type: "string" },
+          description:
+            'The scheme\'s non-secret parameters, e.g. { "headerName": "x-api-key" } for api_key_header. Never a secret.',
+        },
         docsUrl: {
           type: "string",
           description: "The documentation page you read, so the person can check it.",
@@ -406,26 +436,56 @@ const requestConnection: MetaTool = {
       required: ["vendor", "primaryHost", "scheme"],
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
   },
-  handle: async () => notAvailableYet("request_connection", "GRA-28"),
+  handle: async (args, { ctx, scope, deps, notifier }) => {
+    const input = readConnectionProposal(args);
+    if ("error" in input) return toolRefusal("input_invalid", input.error);
+    const outcome = await requestConnection(ctx, scope, input, deps, notifier);
+    return outcome.isError ? toolError(outcome.answer) : toolResult(outcome.answer);
+  },
 };
 
-const requestCredential: MetaTool = {
+const requestCredentialTool: MetaTool = {
   definition: {
     name: REQUEST_CREDENTIAL,
     description:
-      "Ask the person to enter or re-enter a connection's credential in the console — after a vendor 401, or a rotated key. Returns a handoff URL to relay.",
+      "Ask the person to re-enter a connection's credential in the console — after a vendor 401 or 403, or a rotated key — and receive a handoff URL to relay. " +
+      "The connection must be in your scope. The re-entry replaces the credential and changes no approval; a revoked connection is reconnected by it. " +
+      "The call waits a short while; if the person has not finished it answers awaiting_credential with the link, and calling again returns the same link until they have, then connected.",
     inputSchema: {
       type: "object",
       properties: {
-        connectionId: { type: "string" },
-        reason: { type: "string", description: "What the vendor said, so the person knows why." },
+        connectionId: {
+          type: "string",
+          description:
+            "The connection whose credential the vendor refused — the id in execute__<connectionId>.",
+        },
+        reason: {
+          type: "string",
+          description:
+            "What the vendor said, in a sentence, so the person knows why; shown as your words.",
+        },
       },
       required: ["connectionId"],
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
   },
-  handle: async () => notAvailableYet("request_credential", "GRA-28"),
+  handle: async (args, { ctx, scope, deps }) => {
+    const connectionId = typeof args.connectionId === "string" ? args.connectionId : "";
+    if (!connectionId.trim()) {
+      return toolRefusal("input_invalid", "connectionId must be a non-empty string");
+    }
+    const reason = typeof args.reason === "string" ? args.reason : undefined;
+    const outcome = await requestCredential(
+      ctx,
+      scope,
+      { connectionId, ...(reason === undefined ? {} : { reason }) },
+      deps,
+    );
+    return outcome.isError ? toolError(outcome.answer) : toolResult(outcome.answer);
+  },
 };
 
 /** In the order the list carries them: the loop's tools first, the stubs beside them. */
@@ -436,6 +496,6 @@ export const META_TOOLS: readonly MetaTool[] = [
   promote,
   demote,
   runTool,
-  requestConnection,
-  requestCredential,
+  requestConnectionTool,
+  requestCredentialTool,
 ];

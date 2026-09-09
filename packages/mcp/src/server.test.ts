@@ -730,26 +730,6 @@ describe("the advanced set", () => {
       await a.close();
     }
   });
-
-  it("the stubs answer not_available_yet with their ticket; acquire and acquire_status are live (acquire.test.ts)", async () => {
-    const a = await connect(TOKEN_A);
-    try {
-      for (const [name, args, ticket] of [
-        [
-          "request_connection",
-          { vendor: "x", primaryHost: "https://x.example", scheme: "bearer" },
-          "GRA-28",
-        ],
-        ["request_credential", { connectionId: CONN_DEMO }, "GRA-28"],
-      ] as const) {
-        const result = await a.call(name, { ...args });
-        expect(result.isError, name).toBe(true);
-        expect(body(result)).toMatchObject({ error: "not_available_yet", ticket });
-      }
-    } finally {
-      await a.close();
-    }
-  });
 });
 
 describe("publish_tool", () => {

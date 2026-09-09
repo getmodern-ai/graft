@@ -667,7 +667,7 @@ async function discard(response: UpstreamResponse): Promise<void> {
   await response.body?.cancel().catch(() => undefined);
 }
 
-type Read = { kind: "read"; bytes: Uint8Array };
+type Read = { kind: "read"; bytes: Uint8Array<ArrayBuffer> };
 
 /**
  * The vendor's body under the cap and the deadline. A declared length over the cap is refused
@@ -705,7 +705,7 @@ async function readResponse(
 
 type Delivery = {
   response: UpstreamResponse;
-  bytes: Uint8Array;
+  bytes: Uint8Array<ArrayBuffer>;
   /** The hop that was answered — its method decides whether a body goes back. */
   hop: Hop;
   /**

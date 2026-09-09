@@ -19,6 +19,7 @@ const open: PendingActionRow = {
   agentId: "agent_1",
   kind: "approval",
   payload: { toolId: "tool_1" },
+  connectionId: null,
   expiresAt: new Date(NOW.getTime() + 60_000),
   answeredAt: null,
   answer: null,
@@ -63,6 +64,20 @@ describe("createPendingAction", () => {
       expiresAt: new Date(NOW.getTime() + DEFAULT_PENDING_ACTION_TTL_MS),
       createdAt: NOW,
     });
+  });
+
+  it("stamps the connection the ask is about on the column, when it is about one", async () => {
+    const deps = fakeDeps();
+    await createPendingAction(
+      ctx,
+      SCOPE,
+      { kind: "credential", payload: { connectionId: "conn_1" }, connectionId: "conn_1" },
+      deps,
+    );
+    expect(deps.insertPendingAction).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ kind: "credential", connectionId: "conn_1" }),
+    );
   });
 
   it("refuses a non-positive, absurd or non-finite window, and an empty kind", async () => {

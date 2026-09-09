@@ -227,6 +227,36 @@ export async function setAgentScope(
   return { agent: toAgentOutput(row), connectionIds: unique };
 }
 
+/**
+ * Add one connection to an agent's scope, keeping the rest — what the console does when it creates
+ * the connection an agent proposed (GRA-28): the connection is the person's, and only the agent that
+ * asked is given it; every other agent of the person waits for the person to add it (ADR 0007). The
+ * connection is checked to be the person's like any scope write; adding one already in the scope
+ * changes nothing. Read and replace run in one transaction, as `setAgentScope`'s replace does.
+ */
+export async function addConnectionToAgentScope(
+  ctx: ServiceContext,
+  principal: Principal,
+  agentId: string,
+  connectionId: string,
+  deps: AgentDeps,
+): Promise<{ agent: AgentOutput; connectionIds: string[] }> {
+  const row = orNotFound(
+    await deps.findAgent(ctx.db, principal.personId, agentId),
+    "Agent not found",
+  );
+  await assertOwnedConnections(ctx, principal, [connectionId], deps);
+  const scope: AgentScope = { personId: principal.personId, agentId: row.id };
+  const connectionIds = await ctx.db.transaction(async (tx) => {
+    const current = await deps.listAgentConnectionIds(tx, scope);
+    if (current.includes(connectionId)) return current;
+    const next = [...current, connectionId];
+    await deps.replaceAgentConnections(tx, scope, next);
+    return next;
+  });
+  return { agent: toAgentOutput(row), connectionIds };
+}
+
 /** The connection ids in an agent's scope — what `acquire` and every exec mint tokens within. */
 export async function getAgentScope(
   ctx: ServiceContext,
