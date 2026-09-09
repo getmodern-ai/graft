@@ -13,6 +13,9 @@
     "check-types": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@graft/auth": "workspace:*",
+    "@graft/core": "workspace:*",
+    "@graft/db": "workspace:*",
     "@graft/env": "workspace:*",
     "@graft/proxy": "workspace:*",
     "@graft/token": "workspace:*",
@@ -26,6 +29,7 @@
   "devDependencies": {
     "@graft/config": "workspace:*",
     "@types/node": "catalog:",
+    "drizzle-orm": "catalog:",
     "tsx": "^4.23.12",
     "typescript": "catalog:",
     "vitest": "catalog:"
