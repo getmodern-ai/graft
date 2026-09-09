@@ -507,6 +507,46 @@ describe("pending actions", () => {
       { personId: "person_1", agentId: "agent_1" },
       "tool_1",
     );
+    // Relaxed, the row carries the whole yes, so the action is spent here.
+    expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "pa_1",
+      NOW,
+    );
+  });
+
+  it("leaves a destructive tool's per-call yes for the agent's next call to take", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      approval: { decision: "allow", perCallRelaxed: false },
+    });
+    expect(deps.pendingAction.consumePendingAction).not.toHaveBeenCalled();
+  });
+
+  it("spends a write tool's yes at once — the approval row is the whole answer", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.tool.findAuthoredToolById).mockResolvedValueOnce({
+      ...destructiveTool,
+      destructive: false,
+    });
+    const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
+    expect(res.status).toBe(200);
+    expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
+    expect(deps.approval.relaxApproval).not.toHaveBeenCalled();
+  });
+
+  it("tolerates the agent taking the answer between the two statements", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.findPendingAction).mockResolvedValueOnce({
+      ...openAction,
+      answeredAt: NOW,
+      consumedAt: NOW,
+    });
+    const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: false }));
+    expect(res.status).toBe(200);
   });
 
   it("records a decline as a standing deny, and never relaxes on a no", async () => {
@@ -518,6 +558,8 @@ describe("pending actions", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ approval: { decision: "deny" } });
     expect(deps.approval.relaxApproval).not.toHaveBeenCalled();
+    // A no is in the row in full, so the action is spent here too.
+    expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
   });
 
   it("grants the build approval on a build ask's allow, and writes nothing on its decline", async () => {
@@ -541,6 +583,9 @@ describe("pending actions", () => {
     expect(body).not.toHaveProperty("buildApproval");
     expect(body).not.toHaveProperty("approval");
     expect(deps.approval.upsertApproval).not.toHaveBeenCalled();
+    // A build yes is in its row in full and was spent; a build decline records nothing and is left
+    // for the agent's next call to read once.
+    expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
   });
 
   it("maps an answered or expired action to 409 and 410, and a bad body to 400", async () => {

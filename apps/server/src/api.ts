@@ -3,6 +3,7 @@ import {
   type ApprovalDeps,
   answerPendingAction,
   type ConnectionDeps,
+  consumePendingAction,
   createAgent,
   getAgent,
   getAgentScope,
@@ -364,8 +365,15 @@ export function createApi(options: ApiOptions): Hono {
    * for happen in one transaction: for a `tool` ask the answer becomes the standing `approval` row
    * (`allow` or `deny` — a no holds too, ADR 0008), and `relax` on a destructive tool lifts its
    * per-call ask; for a `build` ask an `allow` grants the build approval and a decline writes
-   * nothing, so the next `acquire` asks again. The waiting call, if any, takes the answer on its next
-   * poll; a call made later finds the approval standing and never asks.
+   * nothing, so the next `acquire` asks again.
+   *
+   * **An answer the standing row now carries in full is consumed here.** Otherwise it would outlive
+   * the row: a yes left answered-but-unconsumed would still be found and honoured by a call made
+   * after the approval was withdrawn, which is exactly what withdrawing is meant to prevent. The two
+   * answers the agent's next call must read for itself stay unconsumed — a destructive tool's
+   * per-call yes (ADR 0008: it asks every call) and a build decline (no row records it). A call that
+   * is waiting sees the consumed action as `CONFLICT` and reads the rule again (`@graft/mcp`'s
+   * `approval.ts`), which is how it proceeds on a yes and refuses on a no.
    */
   api.post("/pending-actions/:id/answer", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -380,8 +388,17 @@ export function createApi(options: ApiOptions): Hono {
       const action = await answerPendingAction(scoped, principal, id, answer, pendingActionDeps);
       const scope = { personId: principal.personId, agentId: action.agentId };
       const said = readApprovalAnswer(action.answer);
+      /** Mark the answer spent; the agent may have taken it between the two statements, which is fine. */
+      const settle = async () => {
+        try {
+          await consumePendingAction(scoped, scope, action.id, pendingActionDeps);
+        } catch (error) {
+          if (!(error instanceof ServiceError && error.code === "CONFLICT")) throw error;
+        }
+      };
       if (action.kind === "tool" && typeof action.payload.toolId === "string") {
         const toolId = action.payload.toolId;
+        const tool = await getToolById(scoped, principal, toolId, toolDeps);
         let approval = await setApproval(
           scoped,
           scope,
@@ -389,12 +406,9 @@ export function createApi(options: ApiOptions): Hono {
           said.allow ? "allow" : "deny",
           approvalDeps,
         );
-        if (said.allow && said.relax) {
-          const tool = await getToolById(scoped, principal, toolId, toolDeps);
-          if (tool?.destructive) {
-            approval = await relaxDestructiveApproval(scoped, scope, toolId, approvalDeps);
-          }
-        }
+        const relaxed = said.allow && said.relax === true && tool?.destructive === true;
+        if (relaxed) approval = await relaxDestructiveApproval(scoped, scope, toolId, approvalDeps);
+        if (!said.allow || !tool?.destructive || relaxed) await settle();
         return { pendingAction: action, approval };
       }
       if (
@@ -408,6 +422,7 @@ export function createApi(options: ApiOptions): Hono {
           action.payload.connectionId,
           approvalDeps,
         );
+        await settle();
         return { pendingAction: action, buildApproval };
       }
       return { pendingAction: action };
