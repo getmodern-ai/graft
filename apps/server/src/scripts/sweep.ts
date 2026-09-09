@@ -4,7 +4,9 @@ import { createConnectionDeps } from "@graft/core";
 import { createDb } from "@graft/db";
 import { env } from "@graft/env/server";
 import { createMcpDeps, runSweep } from "@graft/mcp";
-import { createCredentialVault, createLocalKeyring } from "@graft/vault";
+import { createCredentialVault } from "@graft/vault";
+
+import { selectBackings } from "../backings";
 
 /**
  * Run one working-set sweep by hand and print the report (ADR 0009; `@graft/mcp`'s `runSweep`):
@@ -30,7 +32,10 @@ const { values } = parseArgs({
 });
 
 const db = createDb(env.GRAFT_DATABASE_URL);
-const vault = createCredentialVault(createLocalKeyring(env.GRAFT_KEYRING_SECRET));
+// The keyring the deployment's form selects (`../backings.ts`, ADR 0002): the sweep encrypts
+// nothing, but the connection deps carry the vault's encrypt half whichever form is running.
+const backings = await selectBackings(env, { raw: process.env });
+const vault = createCredentialVault(backings.keyring);
 // No sandbox and no key pair: the sweep runs nothing, it only reads and demotes.
 const deps = createMcpDeps({
   db,
