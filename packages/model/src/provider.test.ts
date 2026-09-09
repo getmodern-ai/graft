@@ -19,6 +19,9 @@ import type { DocPage, ModelJobContext, ModelSituation } from "./types";
 
 const DOCS_URL = "https://docs.demo.example/items";
 
+/** A `$` for module source: `${D}{x}` reads as `${x}` inside the module and is not an interpolation here. */
+const D = "$";
+
 /** A module the reader admits — the smallest draft the publish would take. */
 const GOOD_DRAFT: WireAnswer = {
   kind: "write_module",
@@ -37,8 +40,8 @@ const GOOD_DRAFT: WireAnswer = {
         path: "index.ts",
         content: [
           "export default async (input: Input, ctx: Context) => {",
-          "  const res = await ctx.fetch(`/items?limit=${input.limit ?? 5}`);",
-          "  if (!res.ok) throw new Error(`GET /items ${res.status}: ${await res.text()}`);",
+          `  const res = await ctx.fetch(\`/items?limit=${D}{input.limit ?? 5}\`);`,
+          `  if (!res.ok) throw new Error(\`GET /items ${D}{res.status}: ${D}{await res.text()}\`);`,
           "  return await res.json();",
           "};",
           "",
