@@ -11,11 +11,14 @@ import {
   getPendingActionForPerson,
   getToolById,
   grantBuildApproval,
+  type LedgerDeps,
   listAgents,
   listApprovals,
   listConnections,
   listOpenPendingActions,
   listTools,
+  listVendorUsage,
+  listWorkingSet,
   listWorkingSetChanges,
   orNotFound,
   type PendingActionDeps,
@@ -39,7 +42,10 @@ import {
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
+import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { connectionScheme } from "@graft/db/schema/connection";
+import type { UsageOutcome } from "@graft/db/schema/usage";
+import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
@@ -48,6 +54,7 @@ import {
   signHandoffToken,
   verifyHandoff,
 } from "@graft/mcp";
+import { executeToolName } from "@graft/mcp/tool-names";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -82,6 +89,8 @@ export type ApiDeps = {
   /** The working-set history route (GRA-24) reads the changes and the toolbox they name. */
   workingSet: WorkingSetDeps;
   tool: ToolDeps;
+  /** The connections page's "recent vendor calls" (GRA-26) read the ledger. */
+  ledger: LedgerDeps;
   /** The pending-action and approval routes (GRA-23) read and write the ask's two records. */
   approval: ApprovalDeps;
   pendingAction: PendingActionDeps;
@@ -181,6 +190,81 @@ export type WorkingSetChangeOutput = {
   tool: { id: string; vendor: string; name: string; description: string } | null;
 };
 
+/**
+ * A toolbox row as the console reads it (GRA-26): the pointer and the annotations the check derived
+ * (ADR 0008), never the code — Postgres holds no code, and the console shows none. `defaultConnectionId`
+ * is how the connections page finds the tools a revoked connection leaves behind (ADR 0007), and
+ * `vendor` how it finds them when the row's default was cleared.
+ */
+export type ToolOutput = {
+  id: string;
+  vendor: string;
+  name: string;
+  description: string;
+  readOnly: boolean;
+  destructive: boolean;
+  defaultConnectionId: string | null;
+  currentVersionId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export function toToolOutput(row: AuthoredToolRow): ToolOutput {
+  return {
+    id: row.id,
+    vendor: row.vendor,
+    name: row.name,
+    description: row.description,
+    readOnly: row.readOnly,
+    destructive: row.destructive,
+    defaultConnectionId: row.defaultConnectionId,
+    currentVersionId: row.currentVersionId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/** One promoted tool in an agent's working set, with the tool — the console's working-set view (ADR 0003). */
+export type WorkingSetEntryOutput = {
+  toolId: string;
+  promotedAt: Date;
+  /** Null until the first call — the contraction rule's clock (ADR 0009). */
+  lastUsedAt: Date | null;
+  promotedBy: WorkingSetPromotedBy;
+  tool: ToolOutput;
+};
+
+/**
+ * One recent call against a connection's vendor, from the ledger (GRA-26). The proxy's wide events
+ * are not persisted, so this is the invocation the MCP server recorded rather than the HTTP exchange
+ * the proxy saw: which tool, for which agent, how it ended, how long it took.
+ */
+export type ConnectionCallOutput = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  /** Null for the connection's own `execute__<id>` tool, which has no toolbox row. */
+  toolId: string | null;
+  toolName: string;
+  outcome: UsageOutcome;
+  dryRun: boolean;
+  latencyMs: number;
+  createdAt: Date;
+};
+
+/** How many calls one page of a connection's recent vendor calls reads; bounded like the history. */
+export const CONNECTION_CALLS_DEFAULT_LIMIT = 50;
+export const CONNECTION_CALLS_MAX_LIMIT = 500;
+
+const callsQuery = z.object({
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(CONNECTION_CALLS_MAX_LIMIT)
+    .default(CONNECTION_CALLS_DEFAULT_LIMIT),
+});
+
 async function parseBody<T extends z.ZodType>(request: Request, schema: T): Promise<z.infer<T>> {
   let json: unknown;
   try {
@@ -205,6 +289,7 @@ export function createApi(options: ApiOptions): Hono {
     connection: connectionDeps,
     workingSet: workingSetDeps,
     tool: toolDeps,
+    ledger: ledgerDeps,
   } = options.deps;
 
   if (options.corsOrigins.length > 0) {
@@ -307,6 +392,31 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
+   * The agent's working set as the harness sees it (ADR 0003): every promoted tool with the row that
+   * describes it. A revoked agent's set still answers, for the same reason its history does.
+   */
+  api.get("/agents/:id/working-set", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const agent = orNotFound(
+      await getAgent(ctx, principal, c.req.param("id"), agentDeps),
+      "Agent not found",
+    );
+    const entries = await listWorkingSet(
+      ctx,
+      { personId: principal.personId, agentId: agent.id },
+      workingSetDeps,
+    );
+    const workingSet: WorkingSetEntryOutput[] = entries.map((entry) => ({
+      toolId: entry.toolId,
+      promotedAt: entry.promotedAt,
+      lastUsedAt: entry.lastUsedAt,
+      promotedBy: entry.promotedBy,
+      tool: toToolOutput(entry.tool),
+    }));
+    return c.json({ workingSet });
+  });
+
+  /**
    * The agent's working-set history, newest first — every promotion and demotion with its cause
    * (ADR 0003: tool-list churn is a first-class event; ADR 0009: the rule's demotions are recorded
    * beside the agent's). A revoked agent's history still answers: the rows are the person's records.
@@ -355,6 +465,13 @@ export function createApi(options: ApiOptions): Hono {
     );
   });
 
+  /** The person's toolbox, demoted tools included — what a connection's tools are read from (ADR 0007). */
+  api.get("/tools", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const tools = await listTools(ctx, principal, toolDeps);
+    return c.json({ tools: tools.map(toToolOutput) });
+  });
+
   api.get("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ connections: await listConnections(ctx, principal, connectionDeps) });
@@ -376,6 +493,51 @@ export function createApi(options: ApiOptions): Hono {
       "Connection not found",
     );
     return c.json({ connection });
+  });
+
+  /**
+   * The connection's recent vendor calls, newest first, across every agent of the person (GRA-26).
+   * From the ledger, not from the proxy's wide events, which are not persisted — so a line is the
+   * invocation the MCP server recorded (`ConnectionCallOutput`). A call is the connection's when its
+   * tool is bound to the connection's vendor, or when it is the connection's own execute tool, whose
+   * wire name carries the id (CONTEXT.md, *Tool*). `?limit=` caps the page.
+   */
+  api.get("/connections/:id/usage", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const query = callsQuery.safeParse(c.req.query());
+    if (!query.success) {
+      throw new ServiceError(
+        "BAD_REQUEST",
+        `limit must be a whole number from 1 to ${CONNECTION_CALLS_MAX_LIMIT}`,
+        { details: { issues: query.error.issues } },
+      );
+    }
+    const connection = orNotFound(
+      await getConnection(ctx, principal, c.req.param("id"), connectionDeps),
+      "Connection not found",
+    );
+    const rows = await listVendorUsage(
+      ctx,
+      principal,
+      {
+        vendor: connection.vendor,
+        toolNames: [executeToolName(connection.id)],
+        limit: query.data.limit,
+      },
+      ledgerDeps,
+    );
+    const calls: ConnectionCallOutput[] = rows.map((row) => ({
+      id: row.id,
+      agentId: row.agentId,
+      agentName: row.agentName,
+      toolId: row.toolId,
+      toolName: row.toolName,
+      outcome: row.outcome,
+      dryRun: row.dryRun,
+      latencyMs: row.latencyMs,
+      createdAt: row.createdAt,
+    }));
+    return c.json({ calls });
   });
 
   /**

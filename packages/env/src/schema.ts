@@ -257,7 +257,21 @@ export const packageAllowlist = z
   });
 
 /**
- * How often the working-set sweep runs (ADR 0009; `@graft/mcp`'s `startSweep`): on this cadence the
+ * Where the console's build is (`apps/web`, GRA-26): the directory `vite build` wrote, which
+ * `apps/server` serves same-origin with the API so the session cookie never crosses an origin
+ * (`apps/server/src/console.ts`). Relative to the server's working directory when not absolute,
+ * like `GRAFT_TOOLBOX_ROOT`; the default is the sibling workspace's `dist`, where a checkout that ran
+ * `pnpm run build` has it. A directory with no build in it is not a boot failure — the server serves
+ * the API and answers every console path with a JSON 404 saying so — because the API is whole
+ * without the console, and a deployment that serves the console from elsewhere is legitimate.
+ */
+export const consoleDir = z
+  .string()
+  .min(1, "GRAFT_CONSOLE_DIR must name a directory")
+  .default("../web/dist");
+
+/**
+ * How often the working-set sweep runs (ADR 0009; "@graft/mcp"'s `startSweep`): on this cadence the
  * server contracts every agent's working set by its cap and idle window, from a plain timer in the
  * process (GRA-1: no durable engine for the alpha). Five minutes by default — a window is days long
  * and a cap is exceeded only by a promotion the agent just made, so nothing here is urgent, and a
@@ -496,6 +510,8 @@ export const serverSchema = {
   /** Which backing runs authored code, and whether the fake may — see `sandboxBackend`. */
   GRAFT_SANDBOX_BACKEND: sandboxBackend,
 
+  /** Where the console's build is served from — see `consoleDir`. */
+  GRAFT_CONSOLE_DIR: consoleDir,
   /** The console's URL and the handoff signing secret, both required — see `consoleUrl`, `handoffSecret`. */
   GRAFT_CONSOLE_URL: consoleUrl,
   GRAFT_HANDOFF_SECRET: handoffSecret,

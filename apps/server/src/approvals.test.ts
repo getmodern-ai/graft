@@ -137,6 +137,7 @@ beforeAll(async () => {
         tool: fake.tool,
         approval: fake.approval,
         pendingAction: fake.pendingAction,
+        ledger: fake.ledger,
       },
       corsOrigins: [],
       handoff,

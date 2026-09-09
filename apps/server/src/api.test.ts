@@ -2,6 +2,7 @@ import type {
   AgentDeps,
   ApprovalDeps,
   ConnectionDeps,
+  LedgerDeps,
   PendingActionDeps,
   ToolDeps,
   WorkingSetDeps,
@@ -12,7 +13,8 @@ import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
-import type { WorkingSetChangeRow } from "@graft/db/repo/working-set";
+import type { VendorUsageRow } from "@graft/db/repo/usage";
+import type { WorkingSetChangeRow, WorkingSetEntry } from "@graft/db/repo/working-set";
 import { signHandoffToken } from "@graft/mcp";
 import { initLogger } from "evlog";
 import { describe, expect, it, vi } from "vitest";
@@ -219,9 +221,63 @@ const unused = () =>
     throw new Error("not reached in this suite");
   });
 
+/** The one promoted tool `GET /agents/:id/working-set` answers, joined to its row as the repo does. */
+const workingSetEntry: WorkingSetEntry = {
+  agentId: "agent_1",
+  toolId: "tool_1",
+  promotedAt: NOW,
+  lastUsedAt: null,
+  promotedBy: "publish",
+  owner: "person",
+  createdAt: NOW,
+  updatedAt: NOW,
+  tool: toolRow,
+};
+
+/** Two ledger lines the connection's recent-calls view reads: a tool of the vendor, and its execute tool. */
+const usageRows: VendorUsageRow[] = [
+  {
+    id: "usage_2",
+    agentId: "agent_1",
+    agentName: "laptop Hermes",
+    toolId: null,
+    versionId: null,
+    toolName: "execute__conn_1",
+    outcome: "error",
+    dryRun: false,
+    latencyMs: 40,
+    owner: "person",
+    createdAt: new Date("2026-10-01T10:00:00Z"),
+  },
+  {
+    id: "usage_1",
+    agentId: "agent_1",
+    agentName: "laptop Hermes",
+    toolId: "tool_1",
+    versionId: "ver_1",
+    toolName: "demo__list-orders",
+    outcome: "ok",
+    dryRun: true,
+    latencyMs: 120,
+    owner: "person",
+    createdAt: NOW,
+  },
+];
+
+function ledgerDeps(): LedgerDeps {
+  return {
+    insertUsage: unused(),
+    listUsage: vi.fn(async () => []),
+    listUsageForVendor: vi.fn(async (_db, _person, args) => usageRows.slice(0, args.limit)),
+    lastUsedAtByTool: vi.fn(async () => []),
+    newId: () => "usage_new",
+    now: () => NOW,
+  };
+}
+
 function workingSetDeps(): WorkingSetDeps {
   return {
-    listWorkingSet: vi.fn(async () => []),
+    listWorkingSet: vi.fn(async () => [workingSetEntry]),
     findWorkingSetEntry: vi.fn(async () => null),
     countWorkingSet: vi.fn(async () => 0),
     insertWorkingSetEntry: unused(),
@@ -291,6 +347,7 @@ function harness(session: { user: { id: string } } | null) {
     connection: connectionDeps(),
     workingSet: workingSetDeps(),
     tool: toolDeps(),
+    ledger: ledgerDeps(),
     approval: approvalDeps(),
     pendingAction: pendingActionDeps(),
   };
@@ -422,6 +479,67 @@ describe("agents", () => {
   });
 });
 
+describe("the working set", () => {
+  /** GRA-26: the console's working-set view is the promoted tools with their rows, under the pair. */
+  it("answers each promoted tool with its row, and never the code", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/agents/agent_1/working-set");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      workingSet: [
+        {
+          toolId: "tool_1",
+          promotedAt: NOW.toISOString(),
+          lastUsedAt: null,
+          promotedBy: "publish",
+          tool: {
+            id: "tool_1",
+            vendor: "demo",
+            name: "list-orders",
+            description: "Lists orders",
+            readOnly: true,
+            destructive: false,
+            defaultConnectionId: "conn_1",
+            currentVersionId: null,
+            createdAt: NOW.toISOString(),
+            updatedAt: NOW.toISOString(),
+          },
+        },
+      ],
+    });
+    expect(deps.workingSet.listWorkingSet).toHaveBeenCalledWith(fakeDb, {
+      personId: "person_1",
+      agentId: "agent_1",
+    });
+  });
+
+  it("answers 404 for an agent that is not the person's, before any read", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.agent.findAgent).mockResolvedValueOnce(null);
+    const res = await app.request("/api/agents/agent_x/working-set");
+    expect(res.status).toBe(404);
+    expect(deps.workingSet.listWorkingSet).not.toHaveBeenCalled();
+  });
+
+  it("lists the toolbox — the pointer rows with their annotations, nothing of the module", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/tools");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { tools: Record<string, unknown>[] };
+    expect(body.tools).toHaveLength(1);
+    expect(body.tools[0]).toMatchObject({
+      id: "tool_1",
+      vendor: "demo",
+      name: "list-orders",
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: "conn_1",
+    });
+    expect(body.tools[0]).not.toHaveProperty("inputSchema");
+    expect(body.tools[0]).not.toHaveProperty("personId");
+  });
+});
+
 describe("the working-set history", () => {
   /** GRA-24: every demotion has a recorded cause, and the console's history reads it. */
   it("answers each change with its cause and the tool by vendor and name, newest first", async () => {
@@ -526,6 +644,60 @@ describe("connections", () => {
       { apiKey: "sk_live_1" },
       { personId: "person_1", connectionId: "conn_1" },
     );
+  });
+
+  /** GRA-26: recent vendor calls come from the ledger, under the person, by vendor and execute name. */
+  it("answers a connection's recent calls with the agent's name, newest first", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/connections/conn_1/usage");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      calls: [
+        {
+          id: "usage_2",
+          agentId: "agent_1",
+          agentName: "laptop Hermes",
+          toolId: null,
+          toolName: "execute__conn_1",
+          outcome: "error",
+          dryRun: false,
+          latencyMs: 40,
+          createdAt: "2026-10-01T10:00:00.000Z",
+        },
+        {
+          id: "usage_1",
+          agentId: "agent_1",
+          agentName: "laptop Hermes",
+          toolId: "tool_1",
+          toolName: "demo__list-orders",
+          outcome: "ok",
+          dryRun: true,
+          latencyMs: 120,
+          createdAt: NOW.toISOString(),
+        },
+      ],
+    });
+    expect(deps.ledger.listUsageForVendor).toHaveBeenCalledWith(fakeDb, "person_1", {
+      vendor: "demo",
+      toolNames: ["execute__conn_1"],
+      limit: 50,
+    });
+  });
+
+  it("takes ?limit= on the calls, refuses one out of range, and 404s a connection that is not the person's", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const one = await app.request("/api/connections/conn_1/usage?limit=1");
+    expect(((await one.json()) as { calls: unknown[] }).calls).toHaveLength(1);
+
+    for (const bad of ["0", "501", "many"]) {
+      const res = await app.request(`/api/connections/conn_1/usage?limit=${bad}`);
+      expect(res.status, bad).toBe(400);
+    }
+
+    vi.mocked(deps.connection.findConnection).mockResolvedValueOnce(null);
+    const missing = await app.request("/api/connections/conn_x/usage");
+    expect(missing.status).toBe(404);
+    expect(deps.ledger.listUsageForVendor).toHaveBeenCalledTimes(1);
   });
 
   it("revokes, answering what was swept", async () => {

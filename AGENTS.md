@@ -131,6 +131,39 @@ prints what a sweep would do without doing it; without `--plan` it demotes, from
 neither see a running server's in-flight runs nor notify its sessions, so use that form with the
 server stopped.
 
+### The console
+
+`apps/web` (`@graft/web`, GRA-26) is the console (CONTEXT.md, *Console*; ADR 0006): React on Vite,
+TanStack Router with file routes and Query, Tailwind 4, and the shadcn primitives generated into
+`src/components/ui` over Base UI. There is deliberately no `packages/ui`: one SPA does not warrant a
+second workspace, and the primitives are the registry's files, regenerated with
+`npx shadcn@latest add <name> -c apps/web` (the CLI writes `from "cn"` for the utils alias; it is
+`@/lib/utils` here). Biome excludes the generated `src/routeTree.gen.ts` and switches two a11y rules
+off for `src/components/ui/**` — the primitives' own shape trips them, and Cando does the same for its
+`packages/ui`.
+
+**Same-origin with the API, in both forms.** `pnpm --filter @graft/web dev` (or `pnpm run dev`, which
+starts the server too) serves the app on `:3001` with Vite proxying `/api` and `/mcp` to
+`GRAFT_SERVER_URL` (default `http://localhost:3000`), and in production `apps/server` serves
+`pnpm --filter @graft/web build`'s output from `GRAFT_CONSOLE_DIR` (default `../web/dist`, relative
+to the server's working directory) with an SPA fallback (`apps/server/src/console.ts`). The session
+cookie therefore never crosses an origin; `GRAFT_CORS_ORIGIN` remains for a console served from
+elsewhere. A server whose console directory holds no build boots and answers every console path with
+a JSON 404 saying where it looked. `GRAFT_CONSOLE_URL` is a different setting: where handoff URLs
+point (GRA-23), which in development is the Vite origin.
+
+The shape is Cando's: `routes/_auth/route.tsx` is the guard and only the guard (a signed-out visit
+goes to `/login?redirect=<same-origin path>` and returns there, which is how a handoff URL survives a
+fresh browser); `routes/_auth/_shell/` is the chrome; a screen's file placement decides both.
+`src/lib/*-queries.ts` hold the query options and mutations per aggregate, `src/lib/api.ts` is the
+one `fetch`, and every wire type is imported from `@graft/server/api`, `@graft/core`, `@graft/db` or
+`@graft/mcp` and passed through `Jsonified<T>` — never written a second time. The pending-actions
+page dispatches on the ask's `kind` in `components/pending/pending-action-card.tsx`, one card file per
+kind, so a new kind is one branch and one file. Components carry no tests; the pure helpers under
+`src/lib` do, and `check-types` runs `vite build` first so a broken bundle fails CI as a type error
+would. Accounts are opened at `/signup` — verification is off for the alpha, the reason is in
+`packages/auth/src/index.ts`.
+
 ### Publishing a tool by hand
 
 The publish (`@graft/publish`, GRA-18) writes a version into the person's toolbox — a directory tree
