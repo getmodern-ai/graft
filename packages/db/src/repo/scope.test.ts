@@ -8,9 +8,14 @@ import {
   replaceAgentConnections,
   revokeAgent,
 } from "./agent";
-import { deleteApprovalsForVendor, findApproval, relaxApproval } from "./approval";
+import { deleteApproval, deleteApprovalsForVendor, findApproval, relaxApproval } from "./approval";
 import { findConnection, findConnectionByIdUnscoped, revokeConnection } from "./connection";
-import { answerPendingAction, consumePendingAction, findPendingAction } from "./pending-action";
+import {
+  answerPendingAction,
+  consumePendingAction,
+  findPendingAction,
+  listPendingActionsByKind,
+} from "./pending-action";
 import { findToolVersion, listToolVersions, setCurrentToolVersion } from "./tool";
 import { listUsage } from "./usage";
 import { deleteWorkingSetEntry, listWorkingSet, touchWorkingSetUsed } from "./working-set";
@@ -78,6 +83,16 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     expect(only().sql).toMatch(SCOPED_AGENT);
   });
 
+  it("the agent's answerable actions of a kind — unconsumed and in time, the JSON unread", async () => {
+    await listPendingActionsByKind(db, SCOPE, "tool", new Date("2026-09-09T00:00:00Z"));
+    const s = only();
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.sql).toContain('"pending_action"."kind" = $');
+    expect(s.sql).toContain('"pending_action"."consumed_at" is null');
+    expect(s.sql).toContain('"pending_action"."expires_at" > $');
+    expect(s.sql.slice(s.sql.indexOf(" where "))).not.toContain("payload");
+  });
+
   it("the ledger", async () => {
     await listUsage(db, SCOPE, { limit: 10 });
     expect(only().sql).toMatch(SCOPED_AGENT);
@@ -101,6 +116,14 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
   it("relaxing an approval", async () => {
     await relaxApproval(db, SCOPE, "tool_1");
     expect(only().sql).toMatch(SCOPED_AGENT);
+  });
+
+  it("withdrawing an approval", async () => {
+    await deleteApproval(db, SCOPE, "tool_1");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "approval"/);
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["tool_1", "agent_1", "person_1"]);
   });
 
   it("consuming a pending action, which also demands it be answered and not yet consumed", async () => {

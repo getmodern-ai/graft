@@ -2,6 +2,7 @@ import { type AgentScope, requireAgent, type ServiceContext } from "@graft/core"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
+import type { ElicitForm } from "./approval";
 import type { SessionContext } from "./context";
 import type { McpDeps } from "./deps";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -46,12 +47,26 @@ export async function openAgentSession(
   return createAgentSession(deps, scope, notifier);
 }
 
+/**
+ * The client's form elicitation, once `initialize` has said it has one — null otherwise, and the
+ * ask goes through a handoff instead (ADR 0006: elicitation is layered on top, for approvals only,
+ * where the client supports it). The SDK normalises a bare `elicitation: {}` to form support.
+ */
+function elicitFormOf(server: Server): ElicitForm | null {
+  if (!server.getClientCapabilities()?.elicitation?.form) return null;
+  return (params) => server.elicitInput({ ...params, mode: "form" });
+}
+
 /** A session for an agent already resolved — the HTTP layer resolves once and reuses across requests. */
 export function createAgentSession(
   deps: McpDeps,
   scope: AgentScope,
   notifier: ToolListChangedNotifier,
 ): AgentSession {
+  const server = new Server(SERVER_INFO, {
+    capabilities: { tools: { listChanged: true } },
+    instructions: SERVER_INSTRUCTIONS,
+  });
   const session: SessionContext = {
     deps,
     scope,
@@ -59,12 +74,8 @@ export function createAgentSession(
     ctx: { db: deps.db },
     notifier,
     drafts: draftsDir(scope.agentId),
+    channel: { elicit: () => elicitFormOf(server) },
   };
-
-  const server = new Server(SERVER_INFO, {
-    capabilities: { tools: { listChanged: true } },
-    instructions: SERVER_INSTRUCTIONS,
-  });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: await listToolsFor(session),
   }));

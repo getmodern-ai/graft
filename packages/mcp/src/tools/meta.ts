@@ -226,7 +226,7 @@ const runTool: MetaTool = {
       additionalProperties: false,
     },
   },
-  handle: async (args, { deps, scope }) => {
+  handle: async (args, { deps, scope, channel }) => {
     const key = readToolKey(args);
     if ("error" in key) return toolRefusal("input_invalid", key.error);
     if (args.input !== undefined && !isPlainObject(args.input)) {
@@ -240,6 +240,7 @@ const runTool: MetaTool = {
       name: key.name,
       input: args.input ?? {},
       mode: { detached, timeoutSeconds, dryRun },
+      channel,
     });
     return run.isError ? toolError(run.answer) : toolResult(run.answer);
   },
