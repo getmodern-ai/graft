@@ -1,0 +1,200 @@
+import { drizzle } from "drizzle-orm/node-postgres";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import type { DbOrTx } from "../index";
+import { listAgentConnectionIds, replaceAgentConnections, revokeAgent } from "./agent";
+import { deleteApprovalsForVendor, findApproval, relaxApproval } from "./approval";
+import { findConnection, findConnectionByIdUnscoped, revokeConnection } from "./connection";
+import { answerPendingAction, consumePendingAction, findPendingAction } from "./pending-action";
+import { findToolVersion, listToolVersions, setCurrentToolVersion } from "./tool";
+import { listUsage } from "./usage";
+import { deleteWorkingSetEntry, listWorkingSet, touchWorkingSetUsed } from "./working-set";
+
+/**
+ * **The scope is in the SQL** — GRA-6's acceptance criterion, asserted on the statements
+ * themselves. Rendered rather than executed: a fake `pg` client records what drizzle would send and
+ * answers nothing, so what is pinned here is the predicate, not Postgres's evaluation of it. Every
+ * agent-scoped statement must name both the agent and the person (`repo/scope.ts`), and every
+ * person-scoped statement the person; a mis-scoped call then matches nothing, which is a 404 and
+ * not a disclosure (ADR 0007).
+ *
+ * The semantics were checked against a real Postgres by `apps/server`'s integration suite, which
+ * reads one agent's working set through another's scope and gets nothing.
+ */
+
+let statements: { sql: string; params: readonly unknown[] }[] = [];
+
+const db = drizzle({
+  client: {
+    query: async (config: { text?: string }, params: readonly unknown[] = []) => {
+      statements.push({ sql: config.text ?? "", params });
+      return { rows: [], rowCount: 0, fields: [], command: "", oid: 0 };
+    },
+  } as never,
+}) as unknown as DbOrTx;
+
+beforeEach(() => {
+  statements = [];
+});
+
+const SCOPE = { personId: "person_1", agentId: "agent_1" };
+
+/** The one shape every agent-scoped predicate takes: `agent_id IN (agents of this person named this)`. */
+const SCOPED_AGENT =
+  /"agent_id" in \(select "id" from "agent" where \("agent"\."id" = \$\d+ and "agent"\."person_id" = \$\d+\)\)/;
+
+const only = () => {
+  expect(statements).toHaveLength(1);
+  return statements[0] ?? { sql: "", params: [] };
+};
+
+describe("agent-scoped reads take both ids of the scope in the statement", () => {
+  it("the working set", async () => {
+    await listWorkingSet(db, SCOPE);
+    const s = only();
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["agent_1", "person_1"]);
+  });
+
+  it("the agent's scope", async () => {
+    await listAgentConnectionIds(db, SCOPE);
+    expect(only().sql).toMatch(SCOPED_AGENT);
+  });
+
+  it("an approval", async () => {
+    await findApproval(db, SCOPE, "tool_1");
+    const s = only();
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["tool_1", "agent_1", "person_1", 1]);
+  });
+
+  it("a pending action", async () => {
+    await findPendingAction(db, SCOPE, "pa_1");
+    expect(only().sql).toMatch(SCOPED_AGENT);
+  });
+
+  it("the ledger", async () => {
+    await listUsage(db, SCOPE, { limit: 10 });
+    expect(only().sql).toMatch(SCOPED_AGENT);
+  });
+});
+
+describe("agent-scoped writes take both ids too, so a mis-scoped write edits nothing", () => {
+  it("demotion", async () => {
+    await deleteWorkingSetEntry(db, SCOPE, "tool_1");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "working_set"/);
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["tool_1", "agent_1", "person_1"]);
+  });
+
+  it("the last-used stamp", async () => {
+    await touchWorkingSetUsed(db, SCOPE, "tool_1", new Date("2026-09-09T00:00:00Z"));
+    expect(only().sql).toMatch(SCOPED_AGENT);
+  });
+
+  it("relaxing an approval", async () => {
+    await relaxApproval(db, SCOPE, "tool_1");
+    expect(only().sql).toMatch(SCOPED_AGENT);
+  });
+
+  it("consuming a pending action, which also demands it be answered and not yet consumed", async () => {
+    await consumePendingAction(db, SCOPE, "pa_1", new Date());
+    const s = only();
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.sql).toContain('"pending_action"."answered_at" is not null');
+    expect(s.sql).toContain('"pending_action"."consumed_at" is null');
+  });
+
+  it("replacing the scope deletes under the pair before inserting", async () => {
+    await replaceAgentConnections(db, SCOPE, ["conn_1", "conn_2"]);
+    expect(statements[0]?.sql).toMatch(/^delete from "agent_connection"/);
+    expect(statements[0]?.sql).toMatch(SCOPED_AGENT);
+    expect(statements[1]?.sql).toMatch(/^insert into "agent_connection"/);
+    expect(statements[1]?.params).toEqual(["agent_1", "conn_1", "agent_1", "conn_2"]);
+  });
+});
+
+describe("person-scoped statements take the person", () => {
+  it("a connection read", async () => {
+    await findConnection(db, "person_1", "conn_1");
+    const s = only();
+    expect(s.sql).toContain('"connection"."person_id" = $');
+    expect(s.params).toEqual(["conn_1", "person_1", 1]);
+  });
+
+  /** The proxy's read is the one deliberate exception and must stay recognisable as such. */
+  it("the proxy's connection read is unscoped, by name", async () => {
+    await findConnectionByIdUnscoped(db, "conn_1");
+    const s = only();
+    expect(s.sql).toMatch(/where "connection"\."id" = \$1 limit \$2$/);
+    expect(s.params).toEqual(["conn_1", 1]);
+  });
+
+  it("a revoke clears every secret column and stamps the moment, under the person", async () => {
+    await revokeConnection(db, "person_1", "conn_1", new Date("2026-09-09T00:00:00Z"));
+    const s = only();
+    expect(s.sql).toMatch(/^update "connection" set/);
+    for (const column of [
+      "credential_ciphertext",
+      "credential_set_at",
+      "oauth_client_secret_ciphertext",
+      "oauth_refresh_state",
+      "revoked_at",
+    ]) {
+      expect(s.sql).toContain(`"${column}" = `);
+    }
+    expect(s.sql).toContain('"connection"."person_id" = $');
+  });
+
+  it("revoking an agent is guarded on it not being revoked already", async () => {
+    await revokeAgent(db, "person_1", "agent_1", new Date());
+    const s = only();
+    expect(s.sql).toContain('"agent"."person_id" = $');
+    expect(s.sql).toContain('"agent"."revoked_at" is null');
+  });
+
+  it("answering a pending action refuses an answered or expired one in the predicate", async () => {
+    await answerPendingAction(db, "person_1", "pa_1", {
+      answer: { decision: "allow" },
+      answeredAt: new Date("2026-09-09T00:00:00Z"),
+    });
+    const s = only();
+    expect(s.sql).toContain('in (select "id" from "agent" where "agent"."person_id" = $');
+    expect(s.sql).toContain('"pending_action"."answered_at" is null');
+    expect(s.sql).toContain('"pending_action"."expires_at" > $');
+  });
+
+  it("the vendor-wide approval delete reaches only the person's tools", async () => {
+    await deleteApprovalsForVendor(db, "person_1", "unleashed");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "approval"/);
+    expect(s.sql).toContain(
+      '"tool_id" in (select "id" from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."vendor" = $2))',
+    );
+  });
+});
+
+describe("a version is reached through its tool", () => {
+  it("listing versions scopes by the tool's person", async () => {
+    await listToolVersions(db, "person_1", "tool_1");
+    expect(only().sql).toContain(
+      '"tool_id" in (select "id" from "authored_tool" where ("authored_tool"."id" = $1 and "authored_tool"."person_id" = $2))',
+    );
+  });
+
+  it("finding a version scopes by the person's tools", async () => {
+    await findToolVersion(db, "person_1", "ver_1");
+    expect(only().sql).toContain(
+      'select "id" from "authored_tool" where "authored_tool"."person_id" = $',
+    );
+  });
+
+  it("moving the pointer demands the version belong to the tool", async () => {
+    await setCurrentToolVersion(db, "person_1", "tool_1", "ver_2");
+    const s = only();
+    expect(s.sql).toMatch(/^update "authored_tool" set "current_version_id" = \$1/);
+    expect(s.sql).toContain('"authored_tool"."person_id" = $');
+    expect(s.sql).toContain('select "tool_id" from "tool_version" where "tool_version"."id" = $');
+  });
+});

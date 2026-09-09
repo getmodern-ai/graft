@@ -1,3 +1,6 @@
+import { toProxyConnection } from "@graft/core";
+import type { DbOrTx } from "@graft/db";
+import { findConnectionByIdUnscoped } from "@graft/db/repo/connection";
 import {
   AUTH_SCHEMES,
   type ProxyConnection,
@@ -9,10 +12,27 @@ import type { EncryptOnlyVault } from "@graft/vault";
 import { z } from "zod";
 
 /**
- * The connection source the proxy reads, in memory. GRA-6 replaces the store with the connection
- * table and a service; the proxy's `connections.get` is the seam both satisfy, and the seed below is
- * how a laptop gets a connection before there is a console to enter one in (ADR 0006).
+ * The connection sources the proxy reads through `ProxyDeps["connections"]`: the database, and an
+ * in-memory store a laptop seeds from a file before there is a console to enter a connection in
+ * (ADR 0006). `index.ts` layers the seed over the database when `GRAFT_DEV_SEED` is set; the proxy
+ * sees one `get` either way.
  */
+
+/**
+ * The database as the proxy's connection source. The read is the *unscoped* one on purpose: a
+ * vendor call carries no session, and the capability token's `person` claim is what the proxy
+ * compares the row's owner against — that comparison is the whole authorisation (ADR 0010), and it
+ * happens in the proxy package. `toProxyConnection` builds the shape field by field, so a column
+ * added to the table later does not ride into the proxy by accident.
+ */
+export function createDatabaseConnections(db: DbOrTx): ProxyDeps["connections"] {
+  return {
+    get: async (connectionId) => {
+      const row = await findConnectionByIdUnscoped(db, connectionId);
+      return row ? toProxyConnection(row) : null;
+    },
+  };
+}
 
 export type ConnectionStore = ProxyDeps["connections"] & {
   put(connection: ProxyConnection): void;
@@ -27,6 +47,16 @@ export function createInMemoryConnections(): ConnectionStore {
       rows.set(connection.id, connection);
     },
     ids: () => [...rows.keys()],
+  };
+}
+
+/** The seed's rows first, the database for everything else — a seeded id shadows a database row. */
+export function layerConnections(
+  first: ProxyDeps["connections"],
+  second: ProxyDeps["connections"],
+): ProxyDeps["connections"] {
+  return {
+    get: async (connectionId) => (await first.get(connectionId)) ?? second.get(connectionId),
   };
 }
 

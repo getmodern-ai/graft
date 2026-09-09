@@ -16,7 +16,16 @@
     "check-types": "turbo run check-types",
     "test": "turbo run test",
     "check": "biome check --write .",
-    "lint": "biome ci ."
+    "lint": "biome ci .",
+    "db:push": "turbo run db:push -F @graft/db",
+    "db:generate": "turbo run db:generate -F @graft/db",
+    "db:migrate": "turbo run db:migrate -F @graft/db",
+    "db:check-chain": "turbo run db:check-chain -F @graft/db",
+    "db:studio": "turbo run db:studio -F @graft/db",
+    "db:start": "docker compose up -d postgres",
+    "db:watch": "docker compose up postgres",
+    "db:stop": "docker compose stop postgres",
+    "db:down": "docker compose down postgres"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",

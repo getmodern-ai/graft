@@ -8,8 +8,8 @@ import { z } from "zod";
  * makes sense complete is refused when half-set, because a partial set is always a typo or a
  * half-finished deploy and would otherwise present as a feature that silently never works.
  *
- * Every Graft variable is `GRAFT_*`. Later tickets add to this file: the database (GRA-6), the
- * sandbox (GRA-4), the model adapter (GRA-29).
+ * Every Graft variable is `GRAFT_*`. Later tickets add to this file: the sandbox (GRA-4), the model
+ * adapter (GRA-29).
  */
 
 /**
@@ -80,6 +80,76 @@ export const keyringSecret = z
     32,
     "GRAFT_KEYRING_SECRET must be at least 32 characters — the local keyring derives its key from it",
   );
+
+/**
+ * The database (GRA-6). Required, for the same reason the keyring secret is: nothing degrades
+ * without one — the person's account, every agent and every connection live there, so a server with
+ * no database has nothing to serve and should say so at boot. A connection string, not a URL in
+ * zod's sense: `postgresql://user:pass@host:5432/db` carries credentials `z.url()` would refuse.
+ */
+export const databaseUrl = z
+  .string()
+  .regex(
+    /^postgres(ql)?:\/\/.+/,
+    "GRAFT_DATABASE_URL must be a postgres:// or postgresql:// connection string",
+  );
+
+/**
+ * Better Auth's secret — it signs every session cookie and token (`@graft/auth`). Thirty-two
+ * characters for the reason `keyringSecret` gives, and a separate variable from it on purpose: the
+ * two guard different things, and a deployment that rotates one must not have to rotate the other.
+ */
+export const authSecret = z
+  .string()
+  .min(32, "GRAFT_AUTH_SECRET must be at least 32 characters — Better Auth signs sessions with it");
+
+/**
+ * Where Better Auth answers — the server's own public origin, which its callback and cookie logic
+ * need to know as an absolute URL. Required rather than derived from `PORT`: behind a proxy or a
+ * domain the port says nothing about the origin a browser sees, and a wrong value here presents as
+ * every sign-in failing with nothing in the boot log to say why.
+ */
+export const authUrl = z.url({
+  protocol: /^https?$/,
+  error: "GRAFT_AUTH_URL must be an absolute http(s) URL — the server's public origin",
+});
+
+/**
+ * The console's origins, as a comma-separated list of origins — `http://localhost:3001` — or unset
+ * for a deployment with no console yet. Each entry is checked to be an origin and nothing more: a
+ * path or a trailing slash would make the CORS and `trustedOrigins` comparison silently never match.
+ * Parsed to a list here, so no consumer splits the string a second time.
+ */
+export const corsOrigins = z
+  .string()
+  .optional()
+  .transform((raw, ctx) => {
+    if (raw === undefined) return [] as string[];
+    const origins = raw
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    for (const origin of origins) {
+      let parsed: URL;
+      try {
+        parsed = new URL(origin);
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          message: `GRAFT_CORS_ORIGIN entry "${origin}" is not a URL`,
+        });
+        return z.NEVER;
+      }
+      if (parsed.origin !== origin) {
+        ctx.addIssue({
+          code: "custom",
+          message: `GRAFT_CORS_ORIGIN entry "${origin}" must be an origin — scheme, host and port, no path or trailing slash (${parsed.origin})`,
+        });
+        return z.NEVER;
+      }
+    }
+    return [...new Set(origins)];
+  });
 
 /** `PORT` when set, 3000 otherwise: what the dev server listens on and what the proxy URL defaults to. */
 export const port = z.coerce.number().int().min(1).max(65535).default(3000);
@@ -159,6 +229,16 @@ export function withDerivedDefaults<T extends { PORT: number; GRAFT_PROXY_PUBLIC
 export const serverSchema = {
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: port,
+
+  /** The database, required — see `databaseUrl`. */
+  GRAFT_DATABASE_URL: databaseUrl,
+
+  /** Better Auth's secret and public origin, both required — see `authSecret` and `authUrl`. */
+  GRAFT_AUTH_SECRET: authSecret,
+  GRAFT_AUTH_URL: authUrl,
+
+  /** The console's origins, optional — a list once parsed, see `corsOrigins`. */
+  GRAFT_CORS_ORIGIN: corsOrigins,
 
   /** The local keyring's seed — see `keyringSecret` for why this one is required. */
   GRAFT_KEYRING_SECRET: keyringSecret,

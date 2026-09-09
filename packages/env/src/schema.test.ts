@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  authSecret,
+  authUrl,
   capabilityTokenPrivateKey,
   capabilityTokenPublicKey,
+  corsOrigins,
+  databaseUrl,
   defaultProxyPublicUrl,
   finalServerSchema,
   keyringSecret,
@@ -75,6 +79,54 @@ describe("GRAFT_KEYRING_SECRET", () => {
   });
 });
 
+describe("GRAFT_DATABASE_URL", () => {
+  it("accepts either scheme with credentials in it, and names itself otherwise", () => {
+    expect(databaseUrl.parse("postgresql://postgres:password@localhost:5432/graft")).toBe(
+      "postgresql://postgres:password@localhost:5432/graft",
+    );
+    expect(databaseUrl.parse("postgres://u@h/db")).toBe("postgres://u@h/db");
+    for (const bad of ["", "mysql://h/db", "localhost:5432/graft"]) {
+      const result = databaseUrl.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_DATABASE_URL");
+    }
+  });
+});
+
+describe("GRAFT_AUTH_SECRET and GRAFT_AUTH_URL", () => {
+  it("requires thirty-two characters of secret, naming itself when short", () => {
+    expect(authSecret.parse("y".repeat(32))).toBe("y".repeat(32));
+    expect(authSecret.safeParse("y".repeat(31)).error?.issues[0]?.message).toContain(
+      "GRAFT_AUTH_SECRET",
+    );
+  });
+
+  it("requires an absolute URL for the origin", () => {
+    expect(authUrl.parse("http://localhost:3000")).toBe("http://localhost:3000");
+    expect(authUrl.safeParse("localhost:3000").success).toBe(false);
+    expect(authUrl.safeParse("").error?.issues[0]?.message).toContain("GRAFT_AUTH_URL");
+  });
+});
+
+describe("GRAFT_CORS_ORIGIN", () => {
+  it("is an empty list when unset, and a trimmed, de-duplicated list when set", () => {
+    expect(corsOrigins.parse(undefined)).toEqual([]);
+    expect(
+      corsOrigins.parse(
+        " http://localhost:3001, https://console.graft.example ,http://localhost:3001",
+      ),
+    ).toEqual(["http://localhost:3001", "https://console.graft.example"]);
+  });
+
+  it("refuses an entry that is more than an origin, saying which and what it should have been", () => {
+    for (const bad of ["http://localhost:3001/", "https://console.graft.example/app", "console"]) {
+      const result = corsOrigins.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain(bad);
+    }
+  });
+});
+
 describe("GRAFT_DEV_SEED", () => {
   it("is refused under NODE_ENV=production and accepted otherwise", () => {
     expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_DEV_SEED: "./seed.json" })).toEqual([
@@ -110,16 +162,33 @@ describe("PORT and the derived proxy URL", () => {
 /** The whole object as `createEnv` is handed it — fields, cross-field rules and the derived default. */
 describe("finalServerSchema", () => {
   const schema = finalServerSchema(serverSchema);
-  const minimal = { GRAFT_KEYRING_SECRET: "test-secret-that-is-long-enough-32" };
+  const minimal = {
+    GRAFT_DATABASE_URL: "postgresql://postgres:password@localhost:5432/graft",
+    GRAFT_AUTH_SECRET: "auth-secret-that-is-long-enough-32-chars",
+    GRAFT_AUTH_URL: "http://localhost:3000",
+    GRAFT_KEYRING_SECRET: "test-secret-that-is-long-enough-32",
+  };
 
   it("parses the minimum a laptop needs, with every default filled in", () => {
     expect(schema.parse(minimal)).toEqual({
       NODE_ENV: "development",
       PORT: 3000,
+      GRAFT_DATABASE_URL: minimal.GRAFT_DATABASE_URL,
+      GRAFT_AUTH_SECRET: minimal.GRAFT_AUTH_SECRET,
+      GRAFT_AUTH_URL: minimal.GRAFT_AUTH_URL,
+      GRAFT_CORS_ORIGIN: [],
       GRAFT_KEYRING_SECRET: minimal.GRAFT_KEYRING_SECRET,
       GRAFT_PROXY_FOLLOW_REDIRECTS: false,
       GRAFT_PROXY_PUBLIC_URL: "http://localhost:3000/api/proxy",
     });
+  });
+
+  it("refuses the minimum with any one of the four required values missing", () => {
+    for (const key of Object.keys(minimal)) {
+      const { [key]: _omitted, ...rest } = minimal as Record<string, string>;
+      const result = schema.safeParse(rest);
+      expect(result.success, key).toBe(false);
+    }
   });
 
   it("reads a stringbool for the break-glass flag", () => {
@@ -131,7 +200,7 @@ describe("finalServerSchema", () => {
     );
   });
 
-  it("refuses the missing keyring secret, a half pair, and a seed file in production", () => {
+  it("refuses an empty environment, a half pair, and a seed file in production", () => {
     expect(schema.safeParse({}).success).toBe(false);
     const half = schema.safeParse({ ...minimal, GRAFT_CAPABILITY_TOKEN_PRIVATE_KEY: PRIVATE_PEM });
     expect(half.success).toBe(false);
