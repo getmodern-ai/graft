@@ -1,0 +1,18 @@
+{
+  "extends": "@graft/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    // `vite/client` for `import.meta.env` and asset imports; `node` because the server's route
+    // types, imported here for the wire shapes (`src/lib/api.ts`), reach `node:crypto` through
+    // `@graft/core`. Type-only imports, so nothing of Node is in the bundle — `vite build` is what
+    // proves that, and `check-types` runs it first.
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "vitest.config.ts"],
+  "exclude": ["dist"]
+}
