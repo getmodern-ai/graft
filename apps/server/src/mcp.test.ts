@@ -46,6 +46,12 @@ function harness() {
     runnerFiles: async () => [],
     skills: async () => [],
     readWebPage: async ({ url }) => ({ ok: false, url, error: "no network in this suite" }),
+    handoff: {
+      consoleUrl: "http://console.graft.test",
+      secret: "graft-server-test-handoff-secret-long-enough-32",
+      waitMs: 0,
+      ttlMs: 60_000,
+    },
   };
   const app = createServer({
     keys: null,

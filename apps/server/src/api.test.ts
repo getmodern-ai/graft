@@ -1,10 +1,21 @@
-import type { AgentDeps, ConnectionDeps, LedgerDeps, ToolDeps, WorkingSetDeps } from "@graft/core";
+import type {
+  AgentDeps,
+  ApprovalDeps,
+  ConnectionDeps,
+  LedgerDeps,
+  PendingActionDeps,
+  ToolDeps,
+  WorkingSetDeps,
+} from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { AgentRow } from "@graft/db/repo/agent";
+import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { ConnectionRow } from "@graft/db/repo/connection";
+import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import type { VendorUsageRow } from "@graft/db/repo/usage";
 import type { WorkingSetChangeRow, WorkingSetEntry } from "@graft/db/repo/working-set";
+import { signHandoffToken } from "@graft/mcp";
 import { initLogger } from "evlog";
 import { describe, expect, it, vi } from "vitest";
 
@@ -57,6 +68,70 @@ const connectionRow: ConnectionRow = {
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,
+};
+
+const HANDOFF = {
+  consoleUrl: "http://console.graft.test/app",
+  secret: "api-test-handoff-secret-that-is-long-enough-32",
+};
+
+const destructiveTool = {
+  id: "tool_1",
+  personId: "person_1",
+  vendor: "demo",
+  name: "delete-item",
+  description: "Deletes an item.",
+  readOnly: false,
+  destructive: true,
+} as AuthoredToolRow;
+
+const openAction: PendingActionRow = {
+  id: "pa_1",
+  agentId: "agent_1",
+  kind: "tool",
+  payload: {
+    toolId: "tool_1",
+    toolName: "demo__delete-item",
+    vendor: "demo",
+    description: "Deletes an item.",
+    annotations: { readOnlyHint: false, destructiveHint: true },
+    connectionId: "conn_1",
+    connectionName: "Demo",
+    hosts: ["api.demo.example"],
+  },
+  expiresAt: new Date(NOW.getTime() + 60 * 60 * 1000),
+  answeredAt: null,
+  answer: null,
+  consumedAt: null,
+  owner: "person",
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
+const buildAction: PendingActionRow = {
+  ...openAction,
+  id: "pa_2",
+  kind: "build",
+  payload: { connectionId: "conn_1", vendor: "demo", connectionName: "Demo", hosts: [] },
+};
+
+const approvalRow: ApprovalRow = {
+  agentId: "agent_1",
+  toolId: "tool_1",
+  decision: "allow",
+  decidedAt: NOW,
+  perCallRelaxed: false,
+  owner: "person",
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
+const buildApprovalRow: BuildApprovalRow = {
+  agentId: "agent_1",
+  connectionId: "conn_1",
+  grantedAt: NOW,
+  owner: "person",
+  createdAt: NOW,
 };
 
 const fakeDb = { transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(fakeDb) };
@@ -234,6 +309,38 @@ function toolDeps(): ToolDeps {
   };
 }
 
+function approvalDeps(): ApprovalDeps {
+  return {
+    findApproval: vi.fn(async () => approvalRow),
+    listApprovals: vi.fn(async () => [approvalRow]),
+    upsertApproval: vi.fn(async (_db, input) => ({ ...approvalRow, ...input }) as ApprovalRow),
+    relaxApproval: vi.fn(async () => ({ ...approvalRow, perCallRelaxed: true })),
+    deleteApproval: vi.fn(async () => approvalRow),
+    findBuildApproval: vi.fn(async () => null),
+    insertBuildApproval: vi.fn(async () => buildApprovalRow),
+    findAuthoredToolById: vi.fn(async () => destructiveTool),
+    findConnection: vi.fn(async () => connectionRow),
+    now: () => NOW,
+  };
+}
+
+function pendingActionDeps(): PendingActionDeps {
+  return {
+    insertPendingAction: vi.fn(async (_db, input) => ({ ...openAction, ...input }) as never),
+    findPendingAction: vi.fn(async () => openAction),
+    findPendingActionForPerson: vi.fn(async () => openAction),
+    listOpenPendingActions: vi.fn(async () => [openAction, buildAction]),
+    answerPendingAction: vi.fn(async (_db, _p, _id, args) => ({
+      ...openAction,
+      answer: args.answer,
+      answeredAt: args.answeredAt,
+    })),
+    consumePendingAction: vi.fn(async () => null),
+    newId: () => "pa_new",
+    now: () => NOW,
+  };
+}
+
 function harness(session: { user: { id: string } } | null) {
   const deps = {
     agent: agentDeps(),
@@ -241,6 +348,8 @@ function harness(session: { user: { id: string } } | null) {
     workingSet: workingSetDeps(),
     tool: toolDeps(),
     ledger: ledgerDeps(),
+    approval: approvalDeps(),
+    pendingAction: pendingActionDeps(),
   };
   const app = createServer({
     keys: null,
@@ -254,6 +363,7 @@ function harness(session: { user: { id: string } } | null) {
       },
       deps: { db: fakeDb as unknown as DbOrTx, ...deps },
       corsOrigins: ["http://localhost:3001"],
+      handoff: HANDOFF,
     },
   });
   return { app, deps };
@@ -598,5 +708,262 @@ describe("connections", () => {
       approvalsDeleted: 0,
       buildApprovalsDeleted: 0,
     });
+  });
+});
+
+describe("pending actions", () => {
+  it("lists the open actions across the person's agents, each with the requesting agent and a signed link", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/pending-actions");
+    expect(res.status).toBe(200);
+    const { pendingActions } = (await res.json()) as { pendingActions: Record<string, unknown>[] };
+    expect(pendingActions).toHaveLength(2);
+    expect(pendingActions[0]).toMatchObject({
+      id: "pa_1",
+      kind: "tool",
+      agent: { id: "agent_1", name: "laptop Hermes" },
+      payload: { toolName: "demo__delete-item", annotations: { destructiveHint: true } },
+      answeredAt: null,
+    });
+    const token = signHandoffToken(openAction, HANDOFF.secret);
+    expect(pendingActions[0]?.url).toBe(`http://console.graft.test/app/pending/pa_1?t=${token}`);
+  });
+
+  it("answers one action by its signed link, and refuses a tampered, reused or expired link naming which", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const token = signHandoffToken(openAction, HANDOFF.secret);
+    const ok = await app.request(`/api/pending-actions/pa_1?t=${token}`);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({
+      pendingAction: { id: "pa_1", kind: "tool", agent: { name: "laptop Hermes" } },
+    });
+
+    const missing = await app.request("/api/pending-actions/pa_1");
+    expect(missing.status).toBe(403);
+    expect(await missing.json()).toMatchObject({
+      error: "FORBIDDEN",
+      details: { reason: "tampered" },
+    });
+    const forged = await app.request(`/api/pending-actions/pa_1?t=${token.slice(0, -1)}A`);
+    expect(forged.status).toBe(403);
+
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce({
+      ...openAction,
+      answeredAt: NOW,
+      consumedAt: NOW,
+    });
+    const reused = await app.request(`/api/pending-actions/pa_1?t=${token}`);
+    expect(reused.status).toBe(409);
+    expect(await reused.json()).toMatchObject({ details: { reason: "consumed" } });
+
+    const expiredRow = { ...openAction, expiresAt: new Date(NOW.getTime() - 1) };
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce(expiredRow);
+    const expired = await app.request(
+      `/api/pending-actions/pa_1?t=${signHandoffToken(expiredRow, HANDOFF.secret)}`,
+    );
+    expect(expired.status).toBe(410);
+    expect(await expired.json()).toMatchObject({ error: "GONE", details: { reason: "expired" } });
+
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce(null);
+    const unknown = await app.request(`/api/pending-actions/pa_x?t=${token}`);
+    expect(unknown.status).toBe(404);
+  });
+
+  it("records an allow as the standing approval, relaxes a destructive tool when asked, and answers both rows", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.tool.findAuthoredToolById).mockResolvedValueOnce(destructiveTool);
+    const res = await app.request(
+      "/api/pending-actions/pa_1/answer",
+      json({ allow: true, relax: true }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      pendingAction: { id: "pa_1", answer: { allow: true, relax: true } },
+      approval: { agentId: "agent_1", toolId: "tool_1", decision: "allow", perCallRelaxed: true },
+    });
+    expect(deps.pendingAction.answerPendingAction).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "pa_1",
+      {
+        answer: { allow: true, relax: true },
+        answeredAt: NOW,
+      },
+    );
+    expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "allow",
+      decidedAt: NOW,
+    });
+    expect(deps.approval.relaxApproval).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "tool_1",
+    );
+    // Relaxed, the row carries the whole yes, so the action is spent here.
+    expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "pa_1",
+      NOW,
+    );
+  });
+
+  it("leaves a destructive tool's per-call yes for the agent's next call to take", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.tool.findAuthoredToolById).mockResolvedValueOnce(destructiveTool);
+    const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      approval: { decision: "allow", perCallRelaxed: false },
+    });
+    expect(deps.pendingAction.consumePendingAction).not.toHaveBeenCalled();
+  });
+
+  it("spends a write tool's yes at once — the approval row is the whole answer", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
+    expect(res.status).toBe(200);
+    expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
+    expect(deps.approval.relaxApproval).not.toHaveBeenCalled();
+  });
+
+  it("tolerates the agent taking the answer between the two statements", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.findPendingAction).mockResolvedValueOnce({
+      ...openAction,
+      answeredAt: NOW,
+      consumedAt: NOW,
+    });
+    const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: false }));
+    expect(res.status).toBe(200);
+  });
+
+  it("records a decline as a standing deny, and never relaxes on a no", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request(
+      "/api/pending-actions/pa_1/answer",
+      json({ allow: false, relax: true }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ approval: { decision: "deny" } });
+    expect(deps.approval.relaxApproval).not.toHaveBeenCalled();
+    // A no is in the row in full, so the action is spent here too.
+    expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("grants the build approval on a build ask's allow, and writes nothing on its decline", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.answerPendingAction).mockImplementation(
+      async (_db, _p, _id, args) => ({ ...buildAction, answer: args.answer, answeredAt: NOW }),
+    );
+    const yes = await app.request("/api/pending-actions/pa_2/answer", json({ allow: true }));
+    expect(await yes.json()).toMatchObject({
+      pendingAction: { id: "pa_2", kind: "build" },
+      buildApproval: { agentId: "agent_1", connectionId: "conn_1" },
+    });
+    expect(deps.approval.insertBuildApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      connectionId: "conn_1",
+      grantedAt: NOW,
+    });
+
+    const no = await app.request("/api/pending-actions/pa_2/answer", json({ allow: false }));
+    const body = (await no.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("buildApproval");
+    expect(body).not.toHaveProperty("approval");
+    expect(deps.approval.upsertApproval).not.toHaveBeenCalled();
+    // A build yes is in its row in full and was spent; a build decline records nothing and is left
+    // for the agent's next call to read once.
+    expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps an answered or expired action to 409 and 410, and a bad body to 400", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.answerPendingAction).mockResolvedValueOnce(null);
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce({
+      ...openAction,
+      answeredAt: NOW,
+    });
+    const answered = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
+    expect(answered.status).toBe(409);
+
+    vi.mocked(deps.pendingAction.answerPendingAction).mockResolvedValueOnce(null);
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce({
+      ...openAction,
+      expiresAt: new Date(NOW.getTime() - 1),
+    });
+    const expired = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
+    expect(expired.status).toBe(410);
+
+    const bad = await app.request("/api/pending-actions/pa_1/answer", json({ allow: "yes" }));
+    expect(bad.status).toBe(400);
+    expect(deps.approval.upsertApproval).not.toHaveBeenCalled();
+  });
+});
+
+describe("approvals", () => {
+  it("lists an agent's approvals, and demands the agent", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/approvals?agentId=agent_1");
+    expect(await res.json()).toEqual({
+      approvals: [expect.objectContaining({ toolId: "tool_1", decision: "allow" })],
+    });
+    expect(deps.approval.listApprovals).toHaveBeenCalledWith(fakeDb, {
+      personId: "person_1",
+      agentId: "agent_1",
+    });
+    const bare = await app.request("/api/approvals");
+    expect(bare.status).toBe(400);
+  });
+
+  it("relaxes a destructive tool's per-call ask, and refuses a tool that is not destructive with 400", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const relaxed = await app.request("/api/approvals/tool_1/relax?agentId=agent_1", {
+      method: "POST",
+    });
+    expect(relaxed.status).toBe(200);
+    expect(await relaxed.json()).toMatchObject({ approval: { perCallRelaxed: true } });
+
+    vi.mocked(deps.approval.findAuthoredToolById).mockResolvedValueOnce({
+      ...destructiveTool,
+      destructive: false,
+    });
+    const write = await app.request("/api/approvals/tool_1/relax?agentId=agent_1", {
+      method: "POST",
+    });
+    expect(write.status).toBe(400);
+  });
+
+  it("withdraws an approval, answering the row it removed, and 404 when none stood", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const gone = await app.request("/api/approvals/tool_1?agentId=agent_1", { method: "DELETE" });
+    expect(gone.status).toBe(200);
+    expect(await gone.json()).toMatchObject({ approval: { toolId: "tool_1" } });
+    expect(deps.approval.deleteApproval).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "tool_1",
+    );
+
+    vi.mocked(deps.approval.deleteApproval).mockResolvedValueOnce(null);
+    const none = await app.request("/api/approvals/tool_1?agentId=agent_1", { method: "DELETE" });
+    expect(none.status).toBe(404);
+  });
+
+  it("answers 401 without a session on every new route", async () => {
+    const { app } = harness(null);
+    for (const [path, init] of [
+      ["/api/pending-actions", undefined],
+      ["/api/pending-actions/pa_1?t=x", undefined],
+      ["/api/pending-actions/pa_1/answer", json({ allow: true })],
+      ["/api/approvals?agentId=agent_1", undefined],
+      ["/api/approvals/tool_1/relax?agentId=agent_1", { method: "POST" }],
+      ["/api/approvals/tool_1?agentId=agent_1", { method: "DELETE" }],
+    ] as const) {
+      const res = await app.request(path, init);
+      expect(res.status, path).toBe(401);
+    }
   });
 });

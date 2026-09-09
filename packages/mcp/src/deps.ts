@@ -1,16 +1,21 @@
 import { checkModule, type ModuleCheck } from "@graft/check";
 import {
   type AgentDeps,
+  type ApprovalDeps,
   type ConnectionDeps,
   defaultAgentDeps,
+  defaultApprovalDeps,
   defaultLedgerDeps,
+  defaultPendingActionDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
   type LedgerDeps,
+  type PendingActionDeps,
   type ToolDeps,
   type WorkingSetDeps,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import { listPendingActionsByKind } from "@graft/db/repo/pending-action";
 import {
   type PublishArgs,
   type PublishDeps,
@@ -22,6 +27,7 @@ import type { SandboxBackend } from "@graft/sandbox";
 import type { CapabilityTokenKeys } from "@graft/token";
 import type { ToolboxStore } from "@graft/toolbox";
 
+import type { HandoffConfig } from "./handoff";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { type ReadWebPage, readWebPage } from "./web-page";
@@ -81,6 +87,13 @@ export type McpDeps = {
   /** The `tools/list_changed` rate limit's window (`notifier.ts`); a test sets it low. */
   listChangedWindowMs?: number;
   now?: () => Date;
+  /** The approval and pending-action seams the ask flow reads and writes (`approval.ts`, ADR 0008). */
+  approval: ApprovalDeps;
+  pendingAction: PendingActionDeps;
+  /** The one read the ask flow needs that the pending-action seam does not carry — `approval.ts` says why. */
+  listPendingActionsByKind: typeof listPendingActionsByKind;
+  /** The handoff's configuration — the console's URL, the signing secret, the wait and the TTL (`handoff.ts`). */
+  handoff: HandoffConfig;
   /**
    * The `tools/list_changed` notifier, one per process, shared by the endpoint's sessions and the
    * sweep (`sweep.ts`) so a demotion the rule makes reaches the harness exactly as one the agent made
@@ -97,9 +110,11 @@ export type McpDeps = {
 
 export type CreateMcpDepsInput = Pick<
   McpDeps,
-  "db" | "connection" | "sandbox" | "keys" | "proxyPublicUrl"
+  "db" | "connection" | "sandbox" | "keys" | "proxyPublicUrl" | "handoff"
 > &
-  Partial<Omit<McpDeps, "db" | "connection" | "sandbox" | "keys" | "proxyPublicUrl">> & {
+  Partial<
+    Omit<McpDeps, "db" | "connection" | "sandbox" | "keys" | "proxyPublicUrl" | "handoff">
+  > & {
     /** The publish's deps, bound once by the server; the store inside them is `read_tool_source`'s. */
     publish?: PublishDeps | null;
   };
@@ -107,7 +122,7 @@ export type CreateMcpDepsInput = Pick<
 /**
  * The real deps, given what only the server knows: the database handle, the connection deps (which
  * carry the vault's encrypt half), the sandbox backing the environment selected, the key pair, the
- * proxy's public URL and the publish's deps. Everything else has one default — the core's
+ * proxy's public URL, the handoff's configuration and the publish's deps. Everything else has one default — the core's
  * `default*Deps`, the check, the runner and skills shipped with `@graft/runner`, the page reader —
  * and may be overridden.
  */
@@ -118,6 +133,9 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     tool: defaultToolDeps,
     workingSet: defaultWorkingSetDeps,
     ledger: defaultLedgerDeps,
+    approval: defaultApprovalDeps,
+    pendingAction: defaultPendingActionDeps,
+    listPendingActionsByKind,
     checkModule,
     runnerFiles,
     skills: loadSkills,

@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  approvalWaitSeconds,
   authSecret,
   authUrl,
   capabilityTokenPrivateKey,
   capabilityTokenPublicKey,
   consoleDir,
+  consoleUrl,
   corsOrigins,
   databaseUrl,
   defaultProxyPublicUrl,
   finalServerSchema,
+  handoffSecret,
   keyringSecret,
   packageAllowlist,
   packageMinAgeDays,
   packageMinWeeklyDownloads,
+  pendingActionTtlHours,
   port,
   sandboxBackend,
   serverEnvIssues,
@@ -239,6 +243,8 @@ describe("finalServerSchema", () => {
     GRAFT_AUTH_SECRET: "auth-secret-that-is-long-enough-32-chars",
     GRAFT_AUTH_URL: "http://localhost:3000",
     GRAFT_KEYRING_SECRET: "test-secret-that-is-long-enough-32",
+    GRAFT_CONSOLE_URL: "http://localhost:3001",
+    GRAFT_HANDOFF_SECRET: "handoff-secret-that-is-long-enough-32",
   };
 
   it("parses the minimum a laptop needs, with every default filled in", () => {
@@ -258,6 +264,10 @@ describe("finalServerSchema", () => {
       GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS: 1000,
       GRAFT_PACKAGE_ALLOWLIST: [],
       GRAFT_CONSOLE_DIR: "../web/dist",
+      GRAFT_CONSOLE_URL: minimal.GRAFT_CONSOLE_URL,
+      GRAFT_HANDOFF_SECRET: minimal.GRAFT_HANDOFF_SECRET,
+      GRAFT_APPROVAL_WAIT_SECONDS: 25,
+      GRAFT_PENDING_ACTION_TTL_HOURS: 24,
       GRAFT_SWEEP_INTERVAL_SECONDS: 300,
     });
   });
@@ -278,7 +288,7 @@ describe("finalServerSchema", () => {
     });
   });
 
-  it("refuses the minimum with any one of the four required values missing", () => {
+  it("refuses the minimum with any one of the six required values missing", () => {
     for (const key of Object.keys(minimal)) {
       const { [key]: _omitted, ...rest } = minimal as Record<string, string>;
       const result = schema.safeParse(rest);
@@ -305,6 +315,49 @@ describe("finalServerSchema", () => {
     expect(
       schema.safeParse({ ...minimal, NODE_ENV: "production", GRAFT_DEV_SEED: "seed.json" }).success,
     ).toBe(false);
+  });
+});
+
+describe("GRAFT_CONSOLE_URL and GRAFT_HANDOFF_SECRET", () => {
+  it("requires an absolute http(s) URL for the console, a path allowed, naming itself otherwise", () => {
+    expect(consoleUrl.parse("http://localhost:3001")).toBe("http://localhost:3001");
+    expect(consoleUrl.parse("https://graft.example/console")).toBe("https://graft.example/console");
+    for (const bad of ["", "localhost:3001", "ftp://console.example", "console"]) {
+      const result = consoleUrl.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_CONSOLE_URL");
+    }
+  });
+
+  it("requires thirty-two characters of handoff secret, naming itself when short", () => {
+    expect(handoffSecret.parse("h".repeat(32))).toBe("h".repeat(32));
+    expect(handoffSecret.safeParse("h".repeat(31)).error?.issues[0]?.message).toContain(
+      "GRAFT_HANDOFF_SECRET",
+    );
+  });
+});
+
+describe("the ask flow's clocks", () => {
+  it("waits 25 seconds by default, accepts zero, and refuses a negative, fractional or minutes-long wait", () => {
+    expect(approvalWaitSeconds.parse(undefined)).toBe(25);
+    expect(approvalWaitSeconds.parse("0")).toBe(0);
+    expect(approvalWaitSeconds.parse("300")).toBe(300);
+    for (const bad of ["-1", "2.5", "301", "soon"]) {
+      const result = approvalWaitSeconds.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_APPROVAL_WAIT_SECONDS");
+    }
+  });
+
+  it("keeps a pending action a day by default, at least an hour and at most a week", () => {
+    expect(pendingActionTtlHours.parse(undefined)).toBe(24);
+    expect(pendingActionTtlHours.parse("1")).toBe(1);
+    expect(pendingActionTtlHours.parse("168")).toBe(168);
+    for (const bad of ["0", "169", "1.5", "tomorrow"]) {
+      const result = pendingActionTtlHours.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_PENDING_ACTION_TTL_HOURS");
+    }
   });
 });
 

@@ -49,6 +49,7 @@ export {
   grantBuildApproval,
   listApprovals,
   relaxDestructiveApproval,
+  revokeApproval,
   setApproval,
 } from "./approval/approval.service";
 export { type ConnectionDeps, createConnectionDeps } from "./connection/connection.deps";
@@ -104,6 +105,7 @@ export {
   createPendingAction,
   DEFAULT_PENDING_ACTION_TTL_MS,
   getPendingAction,
+  getPendingActionForPerson,
   listOpenPendingActions,
   MAX_PENDING_ACTION_TTL_MS,
 } from "./pending-action/pending-action.service";

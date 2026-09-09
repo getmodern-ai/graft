@@ -47,6 +47,7 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
     listApprovals: vi.fn(async () => []),
     upsertApproval: vi.fn(async (_db, input) => ({ ...approval, ...input }) as ApprovalRow),
     relaxApproval: vi.fn(async () => ({ ...approval, perCallRelaxed: true })),
+    deleteApproval: vi.fn(async () => approval),
     findBuildApproval: vi.fn(async () => null),
     insertBuildApproval: vi.fn(async () => build),
     findAuthoredToolById: vi.fn(async () => writeTool),

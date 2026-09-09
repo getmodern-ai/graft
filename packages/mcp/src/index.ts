@@ -6,6 +6,24 @@
  * transport.
  */
 export {
+  type ApprovalAnswer,
+  type ApprovalAskKind,
+  type AskChannel,
+  type AwaitingApproval,
+  type BuildAskPayload,
+  DEFAULT_POLL_MS,
+  DESCRIPTION_PROVENANCE_NOTE,
+  describeAsk,
+  type ElicitForm,
+  elicitationSchemaFor,
+  type GateOutcome,
+  gateToolCall,
+  NO_ELICITATION,
+  readApprovalAnswer,
+  requireBuildApproval,
+  type ToolAskPayload,
+} from "./approval";
+export {
   clampTimeout,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   DEFAULT_DETACHED_TIMEOUT_SECONDS,
@@ -20,6 +38,16 @@ export {
   type PublishTool,
   type ToolboxReader,
 } from "./deps";
+export {
+  HANDOFF_PATH,
+  HANDOFF_TOKEN_PARAM,
+  type HandoffConfig,
+  type HandoffSubject,
+  type HandoffVerdict,
+  handoffUrl,
+  signHandoffToken,
+  verifyHandoff,
+} from "./handoff";
 export { createMcpHttpApp, type McpHttpOptions } from "./http";
 export {
   createInFlightRegistry,

@@ -31,13 +31,20 @@ const { values } = parseArgs({
 
 const db = createDb(env.GRAFT_DATABASE_URL);
 const vault = createCredentialVault(createLocalKeyring(env.GRAFT_KEYRING_SECRET));
-// No sandbox and no key pair: the sweep runs nothing, it only reads and demotes.
+// No sandbox and no key pair: the sweep runs nothing, it only reads and demotes. The handoff is the
+// deps' shape and never used here — a sweep asks nobody anything.
 const deps = createMcpDeps({
   db,
   connection: createConnectionDeps({ encrypt: vault.encrypt }),
   sandbox: null,
   keys: null,
   proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
+  handoff: {
+    consoleUrl: env.GRAFT_CONSOLE_URL,
+    secret: env.GRAFT_HANDOFF_SECRET,
+    waitMs: env.GRAFT_APPROVAL_WAIT_SECONDS * 1000,
+    ttlMs: env.GRAFT_PENDING_ACTION_TTL_HOURS * 60 * 60 * 1000,
+  },
 });
 
 try {

@@ -66,6 +66,12 @@ describe("a sweep's demotion reads back through the working-set history route", 
       notifier,
       inFlight,
       now: () => clock,
+      handoff: {
+        consoleUrl: "http://console.graft.test",
+        secret: "graft-server-sweep-test-handoff-secret-long-enough",
+        waitMs: 0,
+        ttlMs: 60_000,
+      },
     };
     let sessionPerson = "person_1";
     const app = createServer({
@@ -85,8 +91,11 @@ describe("a sweep's demotion reads back through the working-set history route", 
           workingSet: fake.workingSet,
           tool: fake.tool,
           ledger: fake.ledger,
+          approval: fake.approval,
+          pendingAction: fake.pendingAction,
         },
         corsOrigins: [],
+        handoff: mcp.handoff,
       },
       mcp,
     });

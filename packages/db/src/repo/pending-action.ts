@@ -129,3 +129,31 @@ export async function consumePendingAction(
     .returning();
   return row ?? null;
 }
+
+/**
+ * The agent's actions of one kind that a waiting meta-tool may still act on: unconsumed and not yet
+ * expired, answered or not, newest first. This is how a call finds the action a previous call left
+ * behind — answered while the agent was away, or still open — rather than creating a second one for
+ * the same ask (ADR 0006: the record is durable so the person can answer hours later; GRA-23 is
+ * where a later identical call takes that answer). The target inside `payload` is the caller's to
+ * match; this statement narrows by kind and leaves the JSON unread, as the table's header says.
+ */
+export async function listPendingActionsByKind(
+  db: DbOrTx,
+  scope: AgentScope,
+  kind: string,
+  now: Date,
+): Promise<PendingActionRow[]> {
+  return db
+    .select()
+    .from(pendingAction)
+    .where(
+      and(
+        inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
+        eq(pendingAction.kind, kind),
+        isNull(pendingAction.consumedAt),
+        gt(pendingAction.expiresAt, now),
+      ),
+    )
+    .orderBy(desc(pendingAction.createdAt), desc(pendingAction.id));
+}
