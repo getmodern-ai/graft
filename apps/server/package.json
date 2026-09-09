@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts",
     "keys": "tsx src/scripts/generate-keys.ts",
     "mint": "tsx src/scripts/mint-token.ts",
+    "sweep": "tsx src/scripts/sweep.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "check-types": "tsc -p tsconfig.json",

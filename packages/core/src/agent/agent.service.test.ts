@@ -53,6 +53,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     replaceAgentConnections: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
     findConnectionsByIds: vi.fn(async (_db, _p, ids) => ids.map(connectionRow)),
+    listAllActiveAgents: vi.fn(async () => [row]),
     newId: () => "agent_new",
     now: () => NOW,
     randomBytes: (bytes) => Buffer.alloc(bytes, 1),

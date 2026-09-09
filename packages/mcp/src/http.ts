@@ -45,8 +45,12 @@ function unauthorized(reason: string, message: string): Response {
 }
 
 export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): Hono {
+  // The process's one notifier, so the sweep's `changed` reaches these sessions (`deps.notifier`);
+  // a fresh one only when the deps were built by hand without it.
   const notifier =
-    options.notifier ?? createToolListChangedNotifier({ windowMs: deps.listChangedWindowMs });
+    options.notifier ??
+    deps.notifier ??
+    createToolListChangedNotifier({ windowMs: deps.listChangedWindowMs });
   const sessions = new Map<string, LiveSession>();
   const ctx = { db: deps.db };
   const app = new Hono();

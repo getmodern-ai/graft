@@ -91,6 +91,13 @@ cap and idle rule. Both fire `tools/list_changed`. A demoted tool stays in the t
 `find_tool` call from coming back.
 _Avoid_: enable/disable, load/unload, install/uninstall, delete
 
+**Sweep**:
+The scheduled pass that applies the cap and idle rule to each agent's working set: it demotes what
+went unused past the idle window, then the least recently used beyond the cap, never a tool used
+inside the window, and not at all while the agent has a run in flight. Every demotion it makes is
+recorded with its cause, `idle` or `cap`, beside the agent's own.
+_Avoid_: garbage collection, eviction, cleanup, expiry
+
 ### The loop
 
 **Acquire**:
