@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Every pull request, whatever its base. The launch is built as a stack (GRA-26 on GRA-23, GRA-28
+  # on GRA-26, and so on), and with a `branches: [main]` filter here a stacked PR showed only the CLA
+  # check until it was retargeted, so a reviewer approved it without a `Typecheck, Lint & Test`
+  # result (GRA-37). The required check on `main` is unchanged; it merely runs earlier.
   pull_request:
-    branches: [main]
   # `main` too: a pull request tests its own head, the merge commit is a different tree, and two
   # branches that each pass alone can still break once both are in. Copied from Cando, where the
   # gap was not hypothetical (its CAN-83).
