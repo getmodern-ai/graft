@@ -30,9 +30,17 @@ the same loop; they differ only in which sandbox, keyring and storage sit behind
 
 ## Status
 
-Design complete, code not started. The design was settled in one session on 8 and 9 September 2026
-and is recorded as one architecture decision record per decision under `docs/adr/`. The order of
-work and the roadmap are in `docs/roadmap.md`. Read `CONTEXT.md` first for the vocabulary.
+Design complete, the workspace scaffolded, the first slices under way. The design was settled in one
+session on 8 and 9 September 2026 and is recorded as one architecture decision record per decision
+under `docs/adr/`. The order of work and the roadmap are in `docs/roadmap.md`. Read `CONTEXT.md`
+first for the vocabulary.
+
+## Development
+
+Node 24 and pnpm 10. `pnpm install`, then `pnpm run check` (format and lint), `pnpm run check-types`
+and `pnpm run test`; the same three run in CI as the `Typecheck, Lint & Test` check. `AGENTS.md`
+lists every root command and how to add a package. Contributions are under the agreement in
+`CLA.md`, signed once on your first pull request.
 
 ## Reading order
 

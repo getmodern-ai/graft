@@ -38,10 +38,9 @@ jobs:
             exit 1
           fi
 
-      # There is no code yet. Until there is, the check guards the documents the repo is made of:
-      # every ADR carries a status, the glossary and roadmap exist, and every ADR the roadmap or
-      # an ADR cites by number exists. When packages land, typecheck, lint and test steps join
-      # here and this job keeps its name.
+      # The documents the repo is made of are checked beside the code: every ADR carries a status,
+      # the glossary and roadmap exist, and every ADR the roadmap or an ADR cites by number exists.
+      # Before install, like the marker guard, because it reads the tree and nothing else.
       - name: Check the decision records
         run: |
           set -euo pipefail
@@ -58,3 +57,27 @@ jobs:
             [[ "$n" > "$newest" ]] && continue
             ls docs/adr/${n}-*.md >/dev/null 2>&1 || { echo "ADR ${n} is cited but does not exist" >&2; exit 1; }
           done
+
+      # No `version` here: the action reads `packageManager` from the root `package.json`, so the
+      # pnpm that wrote the committed lockfile is the pnpm that checks it.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The three the job is named for, each its own step so a red run names what failed.
+      - name: Typecheck
+        run: pnpm run check-types
+
+      # `biome ci` exits 0 on warnings, so a rule that must fail the build is set to `error` in
+      # `biome.json`; `noFocusedTests` is the one promoted so far.
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Test
+        run: pnpm run test

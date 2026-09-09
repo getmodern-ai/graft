@@ -1,0 +1,25 @@
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+*.tsbuildinfo
+
+# Turbo
+.turbo
+
+# Test coverage
+coverage
+
+# Environment variables
+.env
+.env*.local
+
+# Agent worktrees. Claude Code puts them inside the repo, so without this a second checkout shows
+# up in `git status` and a `git add -A` can commit it. Only this subdirectory; the rest of
+# `.claude/` is tracked once it exists.
+.claude/worktrees/
+
+# Logs and editor litter
+*.log
+.DS_Store
