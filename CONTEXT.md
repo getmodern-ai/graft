@@ -65,7 +65,8 @@ _Avoid_: function, action, capability, skill
 
 **Meta-tool**:
 One of the fixed tools Graft's MCP server always exposes: `acquire`, `find_tool`, `promote`,
-`demote`, `run_tool`, and the low-level authoring set for agents that want to drive the loop
+`demote`, `run_tool`, `request_connection` and `request_credential` (the two handoffs about a
+connection's credential), and the low-level authoring set for agents that want to drive the loop
 themselves.
 _Avoid_: system tool, builtin, core tool
 
