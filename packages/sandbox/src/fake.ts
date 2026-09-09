@@ -53,6 +53,22 @@ function sandboxPathPattern(roots: readonly string[]): RegExp {
   return new RegExp(`(^|[^\\w./-])(${alternatives.join("|")})(?=/|['"\\s;|&<>)]|$)`, "g");
 }
 
+/**
+ * The same mapping over a per-process environment's values: a caller that hands a process
+ * `GRAFT_RESULT_PATH=/tmp/graft-runs/x.json` and later reads `/tmp/graft-runs/x.json` through the
+ * handle must find one file, as it does on a backing where the process and the read share a
+ * filesystem. Values are rewritten, never keys.
+ */
+export function rewriteEnvPaths(
+  env: Record<string, string>,
+  root: string,
+  roots: readonly string[] = FAKE_SANDBOX_ROOTS,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).map(([name, value]) => [name, rewriteSandboxPaths(value, root, roots)]),
+  );
+}
+
 /** Map the sandbox's absolute paths under the root: `/tools/x` → `<root>/tools/x`. */
 export function rewriteSandboxPaths(
   command: string,
@@ -153,7 +169,7 @@ function start(
     env: {
       PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ""}`,
       HOME: join(sandbox.root, "home"),
-      ...options.env,
+      ...rewriteEnvPaths(options.env, sandbox.root, sandbox.roots()),
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,

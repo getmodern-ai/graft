@@ -1,0 +1,518 @@
+import { randomUUID } from "node:crypto";
+
+import {
+  type AgentScope,
+  getAgentScope,
+  getToolByName,
+  getToolVersion,
+  recordDryRun,
+  recordUsage,
+  type ServiceContext,
+  touchToolUsed,
+} from "@graft/core";
+import type { UsageOutcome } from "@graft/db/schema/usage";
+import { EXIT_TIMEOUT, EXIT_USAGE, MODULE_ENTRIES, RUNNER_PATH } from "@graft/runner";
+import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
+import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
+
+import { boundResult } from "./bounds";
+import type { McpDeps } from "./deps";
+import { type Refusal, refusal } from "./result";
+import {
+  commandEnvironment,
+  type DetachedStart,
+  describeDetachedStart,
+  errorMessage,
+  openAgentSandbox,
+  RUN_SCRATCH_DIR,
+  remountToolbox,
+  startDetached,
+  TOOLBOX_DIR,
+} from "./sandbox";
+import { compileInputSchema } from "./schema";
+import { authoredToolName } from "./tool-names";
+
+/**
+ * Running an authored tool for an agent — the path a first-class call and `run_tool` share (ADR
+ * 0003: `run_tool` exists for the turn a tool was just published in, and runs exactly what the
+ * first-class tool runs).
+ *
+ * In order: the tool and its current version, from the person's toolbox (ADR 0007); the tool's
+ * default connection, which must be in the agent's scope — the scope is where the security property
+ * lives, and a tool bound to a connection the agent was never given is refused here, before any
+ * token exists; the input against the stored schema; then **mint, run, tally** in that order — the
+ * capability token first, so an unconfigured deployment answers without provisioning anything; the
+ * runner over the version directory the pointer names, with the token in the process environment
+ * and nowhere else (ADR 0010); then `last_used_at` and the ledger row, whatever the run said
+ * (ADR 0009: every invocation moves the clock; ADR 0012: every outcome is recorded). GRA-23's
+ * approval decision goes between the scope check and the mint, and nowhere else.
+ *
+ * A run never reads the toolbox through a store: the sandbox sees the mounted volume, and the runner
+ * loads the module from `/tools/<version path>` (ADR 0002's seam is what makes that true on every
+ * backing). The vendor's answer, or the runner's failure, comes back verbatim (GRA-1, user story 37).
+ */
+
+/**
+ * The exit code the run script uses for "nothing runnable at the module path", distinct from every
+ * code the runner itself exits with (`0`, `1`, `2`, `64`) so the one recovery it triggers — mount the
+ * toolbox again and retry once — never fires on a module that ran and failed. `66` is sysexits'
+ * EX_NOINPUT, kept for the same meaning.
+ */
+export const EXIT_MODULE_MISSING = 66;
+
+/**
+ * Seconds a token outlives the run it was minted for. The kill bound is the backing's and the wait
+ * outlasts it by a few seconds, so a vendor request in flight at the deadline still carries a valid
+ * token. A minute rather than those few seconds because the costs are not symmetric: the slack is a
+ * token nobody holds, no slack is a vendor 401 that reads as a broken credential.
+ */
+export const TOKEN_SLACK_SECONDS = 60;
+
+/** How long a token lives for a run bounded at `timeoutSeconds`: the bound plus the slack, under the ceiling. */
+export function tokenTtlFor(timeoutSeconds: number): number {
+  return Math.min(MAX_CAPABILITY_TOKEN_TTL_SECONDS, timeoutSeconds + TOKEN_SLACK_SECONDS);
+}
+
+/** How one run is to go, as one value, so the token's life, the environment and the ledger agree. */
+export type RunMode = { detached: boolean; timeoutSeconds: number; dryRun: boolean };
+
+/** The runner's failure, in Cando's shape: the sentence, the code, the tail of stderr. */
+export type RunFailure = { error: string; exitCode: number | null; stderrTail: string };
+
+/** How much of stderr comes back. The end is where the useful part is. */
+const STDERR_TAIL_BYTES = 4_000;
+const STDERR_MARKER = "__GRAFT_STDERR__";
+
+/**
+ * Mint a capability token for one connection and run with it in the process environment — the
+ * sequence an authored tool's run and an execute tool share, so the two cannot disagree about the
+ * order or what the process is told. `claim` is the token's `tool`: the authored tool's wire name
+ * for its run, `execute` for the execute tool.
+ */
+export async function runWithCapability<T>(args: {
+  deps: McpDeps;
+  scope: AgentScope;
+  connectionId: string;
+  claim: string;
+  mode: RunMode;
+  run: (env: Record<string, string>) => Promise<T>;
+}): Promise<T | Refusal> {
+  const { deps, scope, mode } = args;
+  if (!deps.keys) {
+    return refusal(
+      "proxy_unconfigured",
+      "This deployment has no capability token key pair, so nothing can reach a vendor from a sandbox yet. Say so rather than retrying.",
+    );
+  }
+  let token: string;
+  try {
+    token = await mintCapabilityToken(
+      {
+        personId: scope.personId,
+        agentId: scope.agentId,
+        connectionIds: [args.connectionId],
+        tool: args.claim,
+        ttlSeconds: tokenTtlFor(mode.timeoutSeconds),
+        ...(mode.dryRun ? { dryRun: true } : {}),
+      },
+      deps.keys,
+      deps.now?.(),
+    );
+  } catch (error) {
+    return refusal(
+      "token_mint_failed",
+      `Could not mint a capability token: ${errorMessage(error)}`,
+    );
+  }
+  return args.run({
+    ...commandEnvironment(mode.timeoutSeconds),
+    GRAFT_PROXY_URL: deps.proxyPublicUrl,
+    GRAFT_CONNECTION: args.connectionId,
+    GRAFT_TOKEN: token,
+    // The runner's own switch into dry-run mode; the claim on the token is what the proxy enforces.
+    ...(mode.dryRun ? { GRAFT_DRY_RUN: "1" } : {}),
+  });
+}
+
+export type ModuleRunOutcome =
+  | { ok: true; result: unknown }
+  | { ok: true; detached: DetachedStart }
+  | { ok: false; failure: RunFailure };
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The shell test for "nothing runnable at this path": neither a file nor a directory holding an entry. */
+function moduleAbsent(module: string): string {
+  return [
+    `[ ! -f ${module} ]`,
+    ...MODULE_ENTRIES.map((entry) => `[ ! -f ${module}/${entry} ]`),
+  ].join(" && ");
+}
+
+function moduleMissingMessage(modulePath: string): string {
+  return `${modulePath} is not on the toolbox, even after mounting it again. The published version may have been removed; republish the tool.`;
+}
+
+/**
+ * The runner over a module, on a sandbox already mounted and seeded. The input goes to a scratch
+ * file rather than argv (argument limits); stderr is separated into a file and its tail printed
+ * after a marker, so the exit code and both streams come back from one process. A missing module
+ * directory mounts the toolbox again and retries once: a sandbox mounted before a publish may see
+ * the new directory late, while a fresh mount sees it at once.
+ */
+export async function runModule(
+  handle: SandboxHandle,
+  args: {
+    scope: AgentScope;
+    modulePath: string;
+    input: unknown;
+    env: Record<string, string>;
+    mode: RunMode;
+  },
+): Promise<ModuleRunOutcome> {
+  const id = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+  const inputFile = `${RUN_SCRATCH_DIR}/${id}.json`;
+  const stderrFile = `${RUN_SCRATCH_DIR}/${id}.err`;
+  await handle.writeTree(
+    [{ path: `${id}.json`, content: JSON.stringify(args.input ?? {}) }],
+    RUN_SCRATCH_DIR,
+  );
+
+  const module = shellQuote(args.modulePath);
+  const absent = moduleAbsent(module);
+  // A dry run is always waited: the report is the point.
+  const detached = args.mode.detached && !args.mode.dryRun;
+
+  if (detached) {
+    if (!(await moduleIsPresent(handle, absent))) {
+      await remountToolbox(handle, args.scope);
+      if (!(await moduleIsPresent(handle, absent))) {
+        return {
+          ok: false,
+          failure: {
+            error: moduleMissingMessage(args.modulePath),
+            exitCode: EXIT_MODULE_MISSING,
+            stderrTail: "",
+          },
+        };
+      }
+    }
+    const script = [
+      `if ${absent}; then exit ${EXIT_MODULE_MISSING}; fi;`,
+      `node ${shellQuote(RUNNER_PATH)} ${module} < ${shellQuote(inputFile)}; code=$?;`,
+      `rm -f ${shellQuote(inputFile)}; exit $code`,
+    ].join(" ");
+    const started = await startDetached(handle, {
+      command: script,
+      env: args.env,
+      timeoutSeconds: args.mode.timeoutSeconds,
+      prefix: "tool",
+    });
+    return { ok: true, detached: started };
+  }
+
+  const script = [
+    `if ${absent}; then exit ${EXIT_MODULE_MISSING}; fi;`,
+    `node ${shellQuote(RUNNER_PATH)} ${module} < ${shellQuote(inputFile)} 2> ${shellQuote(stderrFile)}; code=$?;`,
+    `printf '\\n${STDERR_MARKER}\\n'; tail -c ${STDERR_TAIL_BYTES} ${shellQuote(stderrFile)};`,
+    `rm -f ${shellQuote(inputFile)} ${shellQuote(stderrFile)}; exit $code`,
+  ].join(" ");
+
+  const attempt = async (suffix: string) => {
+    const name = `tool-${id}${suffix}`;
+    await handle.execDetached(script, {
+      name,
+      timeoutSeconds: args.mode.timeoutSeconds,
+      env: args.env,
+    });
+    return handle.waitForProcess(name, { maxWaitSeconds: args.mode.timeoutSeconds + 5 });
+  };
+
+  let result = await attempt("");
+  if (result.status !== "running" && result.exitCode === EXIT_MODULE_MISSING) {
+    await remountToolbox(handle, args.scope);
+    result = await attempt("-retry");
+  }
+  return describeModuleRun(result, args.modulePath, args.mode.timeoutSeconds);
+}
+
+const PRESENT_MARKER = "__GRAFT_PRESENT__:";
+
+async function moduleIsPresent(handle: SandboxHandle, absent: string): Promise<boolean> {
+  const output = await handle.exec(
+    `if ${absent}; then echo ${PRESENT_MARKER}no; else echo ${PRESENT_MARKER}yes; fi`,
+  );
+  return output.includes(`${PRESENT_MARKER}yes`);
+}
+
+/** The process result in the runner's own terms — exit codes read by name. */
+export function describeModuleRun(
+  result: SandboxProcessResult,
+  modulePath: string,
+  timeoutSeconds: number,
+): ModuleRunOutcome {
+  const [stdout, stderrTail = ""] = splitAtMarker(result.stdout);
+  const stderr = stderrTail.trim();
+  const failure = (error: string): ModuleRunOutcome => ({
+    ok: false,
+    failure: { error, exitCode: result.exitCode, stderrTail: stderr },
+  });
+
+  if (result.status === "running") {
+    return failure(
+      `The tool was still running after ${timeoutSeconds} seconds and was left behind. Its output so far: ${stdout.trim().slice(-500)}`,
+    );
+  }
+  if (result.status === "killed") {
+    return failure(
+      `The tool was killed before it finished — it ran past the ${timeoutSeconds}-second limit.`,
+    );
+  }
+  if (result.exitCode === EXIT_MODULE_MISSING) return failure(moduleMissingMessage(modulePath));
+  if (result.exitCode === EXIT_TIMEOUT) {
+    return failure(`The tool timed out inside the runner: ${stderr || "no output"}`);
+  }
+  if (result.exitCode === EXIT_USAGE) {
+    return failure(`The runner refused the invocation: ${stderr || "no output"}`);
+  }
+  if (result.exitCode !== 0) {
+    return failure(`The tool failed (exit code ${result.exitCode}): ${stderr || "no output"}`);
+  }
+
+  const text = stdout.trim();
+  if (text === "") return { ok: true, result: null };
+  try {
+    return { ok: true, result: JSON.parse(text) };
+  } catch {
+    return failure(
+      `The tool exited 0 but printed something that is not JSON. The runner writes only the module's result to stdout, so the module printed to stdout itself: ${text.slice(-500)}`,
+    );
+  }
+}
+
+function splitAtMarker(stdout: string): [string, string?] {
+  const index = stdout.lastIndexOf(STDERR_MARKER);
+  if (index === -1) return [stdout];
+  return [stdout.slice(0, index), stdout.slice(index + STDERR_MARKER.length)];
+}
+
+/**
+ * The dry-run report as `runner.mjs` writes it — its header is the contract. Reads and write
+ * requests are what was verified; `unverified` names what was not.
+ */
+export type DryRunReport = {
+  dryRun: true;
+  passed: boolean;
+  reads: unknown[];
+  writesPreviewed: unknown[];
+  writesRefused: unknown[];
+  omitted?: number;
+  moduleResult?: unknown;
+  moduleError?: string;
+  verified: { reads: boolean; writeRequests: boolean };
+  unverified: string[];
+};
+
+export function readDryRunReport(value: unknown): DryRunReport | null {
+  if (typeof value !== "object" || value === null) return null;
+  const report = value as Partial<DryRunReport>;
+  if (
+    report.dryRun !== true ||
+    typeof report.passed !== "boolean" ||
+    !Array.isArray(report.reads) ||
+    !Array.isArray(report.writesPreviewed) ||
+    !Array.isArray(report.writesRefused) ||
+    typeof report.verified !== "object" ||
+    report.verified === null ||
+    !Array.isArray(report.unverified)
+  ) {
+    return null;
+  }
+  return report as DryRunReport;
+}
+
+export type AuthoredRunArgs = {
+  vendor: string;
+  name: string;
+  input: unknown;
+  mode: RunMode;
+};
+
+/** The vendor's answer verbatim, or — marked for the harness — a refusal or the runner's failure. */
+export type AuthoredRunAnswer =
+  | { isError: false; answer: unknown }
+  | { isError: true; answer: Record<string, unknown> };
+
+/**
+ * Run one authored tool for an agent, end to end — see the header. Every exit records a ledger
+ * row: `ok` for a result or a detached start (a capability was issued and the process runs),
+ * `error` for a failure, `refused` for a refusal before anything ran.
+ */
+export async function runAuthoredTool(
+  deps: McpDeps,
+  scope: AgentScope,
+  args: AuthoredRunArgs,
+): Promise<AuthoredRunAnswer> {
+  const ctx: ServiceContext = { db: deps.db };
+  const principal = { personId: scope.personId };
+  const wireName = authoredToolName(args.vendor, args.name);
+  const startedAt = Date.now();
+
+  const record = async (
+    outcome: UsageOutcome,
+    ids: { toolId?: string; versionId?: string } = {},
+  ) => {
+    await recordUsage(
+      ctx,
+      scope,
+      {
+        toolId: ids.toolId ?? null,
+        versionId: ids.versionId ?? null,
+        toolName: wireName,
+        outcome,
+        dryRun: args.mode.dryRun,
+        latencyMs: Date.now() - startedAt,
+      },
+      deps.ledger,
+    );
+  };
+  const refuse = async (
+    reason: string,
+    message: string,
+    ids?: { toolId?: string; versionId?: string },
+  ): Promise<AuthoredRunAnswer> => {
+    await record("refused", ids);
+    return { answer: refusal(reason, message), isError: true };
+  };
+
+  const tool = await getToolByName(
+    ctx,
+    principal,
+    { vendor: args.vendor, name: args.name },
+    deps.tool,
+  );
+  if (!tool) {
+    return refuse(
+      "tool_not_found",
+      `No tool named ${args.name} for ${args.vendor} is in this toolbox. find_tool searches it.`,
+    );
+  }
+  const ids = { toolId: tool.id };
+  const version = tool.currentVersionId
+    ? await getToolVersion(ctx, principal, tool.currentVersionId, deps.tool)
+    : null;
+  if (!version) {
+    return refuse(
+      "tool_has_no_version",
+      `${wireName} has no published version to run. Publish it first.`,
+      ids,
+    );
+  }
+  const versioned = { toolId: tool.id, versionId: version.id };
+
+  if (!tool.defaultConnectionId) {
+    return refuse(
+      "connection_not_bound",
+      `${wireName} is bound to no connection, so there is nothing to run it against.`,
+      versioned,
+    );
+  }
+  const connectionId = tool.defaultConnectionId;
+  const scopeIds = await getAgentScope(ctx, scope, deps.agent);
+  if (!scopeIds.includes(connectionId)) {
+    return refuse(
+      "connection_not_in_scope",
+      `${wireName} runs against connection ${connectionId}, which is not in this agent's scope. The person can add it in the console.`,
+      versioned,
+    );
+  }
+
+  const validator = compileInputSchema(tool.inputSchema);
+  if ("error" in validator) {
+    return refuse("input_schema_invalid", validator.error, versioned);
+  }
+  const verdict = validator(args.input);
+  if (!verdict.ok) return refuse("input_invalid", verdict.message, versioned);
+
+  // GRA-23's approval decision (`decideToolCall`, ADR 0008) belongs here: after the scope check,
+  // before the mint. This ticket lets every call pass.
+
+  const outcome = await runWithCapability({
+    deps,
+    scope,
+    connectionId,
+    claim: wireName,
+    mode: args.mode,
+    run: async (env): Promise<ModuleRunOutcome> => {
+      let handle: SandboxHandle;
+      try {
+        handle = await openAgentSandbox(deps, scope);
+      } catch (error) {
+        return {
+          ok: false,
+          failure: {
+            error: `The sandbox is unavailable right now: ${errorMessage(error)}`,
+            exitCode: null,
+            stderrTail: "",
+          },
+        };
+      }
+      return runModule(handle, {
+        scope,
+        modulePath: `${TOOLBOX_DIR}/${version.path}`,
+        input: verdict.value,
+        env,
+        mode: args.mode,
+      });
+    },
+  });
+
+  if ("error" in outcome && outcome.error === "refused") {
+    await record("refused", versioned);
+    return { answer: outcome, isError: true };
+  }
+  const run = outcome as ModuleRunOutcome;
+
+  // A capability was issued and the runner ran: the clock moves whatever the module said (ADR 0009).
+  await touchToolUsed(ctx, scope, tool.id, deps.workingSet);
+
+  if (!run.ok) {
+    await record("error", versioned);
+    return { answer: run.failure, isError: true };
+  }
+  if ("detached" in run) {
+    await record("ok", versioned);
+    return { answer: describeDetachedStart(run.detached), isError: false };
+  }
+  if (args.mode.dryRun) {
+    const report = readDryRunReport(run.result);
+    await recordDryRun(
+      ctx,
+      principal,
+      version.id,
+      {
+        report: report ?? { dryRun: true, passed: false, missing: true },
+        writesInvolved: report
+          ? report.writesPreviewed.length + report.writesRefused.length > 0
+          : false,
+      },
+      deps.tool,
+    );
+    await record(report ? "ok" : "error", versioned);
+    return report
+      ? { answer: { dryRun: report }, isError: false }
+      : {
+          answer: {
+            error: "The run produced no dry-run report; the runner did not run in dry-run mode.",
+            exitCode: 0,
+            stderrTail: "",
+          },
+          isError: true,
+        };
+  }
+  await record("ok", versioned);
+  const bounded = boundResult(run.result);
+  return { answer: "truncated" in bounded ? bounded : bounded.result, isError: false };
+}
