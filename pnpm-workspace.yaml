@@ -15,6 +15,14 @@ catalog:
   # The Node 24 line, matching `engines.node` in the root `package.json`.
   "@types/node": ^24.13.3
   vitest: ^4.1.11
+  # HTTP, the proxy's way out, tokens, schema validation and the validated environment, at the
+  # versions Cando runs (ADR 0011): one line each so the proxy, the token and the server cannot
+  # disagree about a compiler-visible type such as `Headers` or a JWT claim set.
+  hono: ^4.13.3
+  undici: ^7.29.0
+  jose: ^6.2.4
+  zod: ^4.4.3
+  "@t3-oss/env-core": ^0.13.11
   # The Docker sandbox backing moves files in and out of a container as tar streams over the Engine
   # API (`packages/sandbox-docker/src/tar.ts`); this does the header arithmetic and the PAX records
   # for long paths. The types are a separate package, as they are for most of what predates TS.
