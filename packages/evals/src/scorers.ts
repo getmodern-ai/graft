@@ -48,6 +48,8 @@ export type ScenarioRun = {
 };
 
 export type ToolUse = {
+  /** What the harness sent, filled from the published schema. */
+  input: Record<string, unknown>;
   first: unknown;
   ask: PendingActionRow | null;
   /** When the ask was answered, from the harness's clock; null when there was no ask. */
@@ -257,7 +259,9 @@ export function toolWorks(run: ScenarioRun): Score {
   return {
     name: "tool_works",
     pass: problem === null,
-    detail: problem ?? `answered as expected: ${JSON.stringify(run.use?.final).slice(0, 160)}`,
+    detail: problem
+      ? `${problem} (sent ${JSON.stringify(run.use?.input ?? {})})`
+      : `answered as expected: ${JSON.stringify(run.use?.final).slice(0, 160)}`,
   };
 }
 

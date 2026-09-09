@@ -69,7 +69,8 @@ export async function runScenario(
     let use: ToolUse | null = null;
     if (result && tool) {
       const [vendor, name] = result.tool.split("__");
-      const call = () => harness.call("run_tool", { vendor, name, input: scenario.use.input });
+      const input = fillInput(tool.inputSchema, scenario.use.values);
+      const call = () => harness.call("run_tool", { vendor, name, input });
       const first = body<Awaiting>(await call());
       let ask = null;
       let answeredAt: number | null = null;
@@ -80,7 +81,7 @@ export async function runScenario(
         answeredAt = Date.now();
         second = body(await call());
       }
-      use = { first, ask, answeredAt, second, final: second ?? first };
+      use = { input, first, ask, answeredAt, second, final: second ?? first };
     }
 
     const attempts = [...world.store.acquireAttempts.values()]
@@ -125,4 +126,22 @@ export async function runScenario(
   } finally {
     await harness.close();
   }
+}
+
+/**
+ * The input an agent would send: every property the published schema declares, filled from what the
+ * agent knows under whichever name the model chose for it. Properties the agent has no value for are
+ * left out; a required one among them makes the call refuse, which the scorer then says.
+ */
+export function fillInput(
+  schema: Record<string, unknown>,
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = schema.properties;
+  if (typeof properties !== "object" || properties === null) return {};
+  const input: Record<string, unknown> = {};
+  for (const property of Object.keys(properties)) {
+    if (property in values) input[property] = values[property];
+  }
+  return input;
 }

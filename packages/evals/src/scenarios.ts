@@ -36,8 +36,13 @@ import { CONN_DEMO, CONN_GITHUB } from "./world";
  */
 
 export type ToolUseSpec = {
-  /** The input the harness calls the published tool with, as the agent would. */
-  input: Record<string, unknown>;
+  /**
+   * What the agent knows when it calls the tool, under every name the model might have given the
+   * field: the harness reads the published input schema and fills each property from here, as an
+   * agent reads a tool's schema before calling it. A property no alias covers is left out, and the
+   * refusal that follows is what `tool_works` reports.
+   */
+  values: Record<string, unknown>;
   /** What the final answer must be for the tool to count as working; null means it does. */
   expect: (answer: unknown) => string | null;
 };
@@ -86,7 +91,7 @@ export const listItems: Scenario = {
   goal: "List the items in the Demo Orders catalogue, up to a limit the caller gives.",
   hints: `The API documentation is at ${DEMO_DOCS_URL}. Items are read with GET /items?limit=<n>.`,
   use: {
-    input: { limit: 2 },
+    values: { limit: 2, max: 2, count: 2, pageSize: 2, page_size: 2, perPage: 2, per_page: 2 },
     expect: (answer) => {
       const items = isRecord(answer) && Array.isArray(answer.items) ? answer.items : null;
       if (!items) return `expected { items: [...] }, got ${JSON.stringify(answer).slice(0, 120)}`;
@@ -109,7 +114,15 @@ export const createOrder: Scenario = {
   goal: "Create an order in Demo Orders for one item id and a quantity, and return the new order's id and status.",
   hints: `The API documentation is at ${DEMO_DOCS_URL}. Orders are created with POST /orders and a JSON body { itemId, quantity }.`,
   use: {
-    input: { itemId: "itm_1", quantity: 2 },
+    values: {
+      itemId: "itm_1",
+      item_id: "itm_1",
+      item: "itm_1",
+      id: "itm_1",
+      quantity: 2,
+      qty: 2,
+      amount: 2,
+    },
     expect: (answer) => {
       if (!isRecord(answer))
         return `expected an order, got ${JSON.stringify(answer).slice(0, 120)}`;
@@ -136,7 +149,21 @@ export const githubOpenIssues: Scenario = {
   hints: `Use the ${OCTOKIT_PACKAGE} SDK at exactly version ${OCTOKIT_VERSION}, declared in a package.json under dependencies. The endpoint is documented at ${GITHUB_DOCS_URL}; the repository to prove it against is getmodern-ai/graft. Return each issue's number, title and url.`,
   sdk: { package: OCTOKIT_PACKAGE, version: OCTOKIT_VERSION },
   use: {
-    input: { owner: "getmodern-ai", repo: "graft" },
+    values: {
+      owner: "getmodern-ai",
+      org: "getmodern-ai",
+      organization: "getmodern-ai",
+      repo: "graft",
+      repository: "graft",
+      name: "graft",
+      repoName: "graft",
+      repo_name: "graft",
+      state: "open",
+      per_page: 30,
+      perPage: 30,
+      limit: 30,
+      page: 1,
+    },
     expect: (answer) => {
       const list = Array.isArray(answer)
         ? answer

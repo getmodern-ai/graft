@@ -244,6 +244,7 @@ describe("first_write_through_published_tool", () => {
       requests: [request("GET", "/items", 250), request("POST", "/orders", 1_000)],
       events: [event("execute", true), event(tool, dryRun)],
       use: {
+        input: {},
         first: {},
         ask: ask(900, 950),
         answeredAt: answeredAt === null ? null : T0 + answeredAt,
