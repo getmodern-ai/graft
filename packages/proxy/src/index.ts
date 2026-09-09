@@ -16,12 +16,13 @@
  * runner and the check need to agree with it on (the path forms, the header names, the field
  * table), and what the README names — no more. Each module is reachable by name through the
  * package's `./*` export for a reader who wants one piece: `@graft/proxy/types` for the rest of the
- * vocabulary, and `/public-host`, `/credential-fields` and `/cause-chain` for the tables a host
- * takes without the Hono app.
+ * vocabulary, and `/public-host`, `/credential-fields`, `/scheme-parameters` and `/cause-chain` for
+ * the tables a host — or the console's bundle — takes without the Hono app.
  */
 export { createProxyApp, DEFAULT_PROXY_OPTIONS, HOST_SEGMENT_MARKER, proxyPathFor } from "./app";
 export { SCHEME_CREDENTIAL_FIELDS, SCHEME_OPTIONAL_CREDENTIAL_FIELDS } from "./credential-fields";
 export { DRY_RUN_HEADER, DRY_RUN_PREVIEW_STATUS, isSafeMethod } from "./dry-run";
+export { SCHEME_PARAMETERS, type SchemeParameterRule } from "./scheme-parameters";
 export { SNOWFLAKE_TOKEN_TYPE_HEADER, UNLEASHED_CLIENT_TYPE } from "./schemes";
 export { INBOUND_AUTH_HEADERS, TOKEN_HEADERS } from "./token";
 export type {

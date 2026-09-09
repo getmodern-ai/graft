@@ -1,6 +1,10 @@
 import type { ConnectionScheme } from "@graft/db/schema/connection";
-import { SCHEME_CREDENTIAL_FIELDS, SCHEME_OPTIONAL_CREDENTIAL_FIELDS } from "@graft/proxy";
+import {
+  SCHEME_CREDENTIAL_FIELDS,
+  SCHEME_OPTIONAL_CREDENTIAL_FIELDS,
+} from "@graft/proxy/credential-fields";
 import { isPublicHost } from "@graft/proxy/public-host";
+import { SCHEME_PARAMETERS, type SchemeParameterRule } from "@graft/proxy/scheme-parameters";
 
 import { isKebabCase } from "../kebab-case";
 
@@ -11,9 +15,16 @@ import { isKebabCase } from "../kebab-case";
  * service stays about orchestration and these get a test that needs no fakes.
  *
  * Each validator answers with a sentence a person can act on, or with the normalised value. The
- * address rule and the field table come from `@graft/proxy`: the proxy applies `isPublicHost` again
- * at resolution (ADR 0010), and its scheme plugins are the side that knows which fields a
- * credential must hold — this package imports from the proxy, never the reverse.
+ * address rule and the two halves of the scheme table come from `@graft/proxy`: the proxy applies
+ * `isPublicHost` again at resolution (ADR 0010), and its scheme plugins are the side that knows
+ * which fields a credential must hold — this package imports from the proxy, never the reverse.
+ *
+ * **This module is browser-safe, and the console depends on that.** Its imports are the proxy's
+ * three import-free tables and a type, so `@graft/core/connection/connection.rules` is what the
+ * connection form validates with — the same functions the service and the meta-tool call, which is
+ * what makes "refused at the form and again at the proxy" (GRA-28) one rule rather than three. An
+ * import of `@graft/proxy`'s index or of a repo here would pull `node:crypto` and drizzle into the
+ * console's bundle; `apps/web`'s `vite build` is what fails when that happens.
  */
 
 /** Bounds a slug that lands in a path and a header, and keeps the console's tables readable. */
@@ -39,9 +50,22 @@ export function validateDisplayName(name: string): string | null {
   return null;
 }
 
-export type HostSetVerdict =
-  | { ok: true; primaryHost: string; hosts: string[] }
-  | { ok: false; problem: string };
+/**
+ * Why a host set was refused, for a caller whose next sentence turns on it: `host_not_public` is the
+ * address rule (ADR 0010) and travels as a `reason` word the API, the meta-tool and the form all
+ * show; `invalid` is everything else about the shape. The offending host rides along when there is
+ * one, so the form can mark the input it belongs to.
+ */
+export type HostSetRefusal = {
+  ok: false;
+  problem: string;
+  reason: "host_not_public" | "invalid";
+  host?: string;
+};
+
+export type HostSetVerdict = { ok: true; primaryHost: string; hosts: string[] } | HostSetRefusal;
+
+export const HOST_NOT_PUBLIC = "host_not_public";
 
 /** A hostname, optionally with a port — what the explicit proxy form carries as its host segment. */
 const HOSTNAME_WITH_PORT =
@@ -57,46 +81,41 @@ const HOSTNAME_WITH_PORT =
  * one.
  */
 export function validateHostSet(primaryHost: string, hosts: readonly string[]): HostSetVerdict {
+  const invalid = (problem: string): HostSetRefusal => ({ ok: false, problem, reason: "invalid" });
   let url: URL;
   try {
     url = new URL(primaryHost.trim());
   } catch {
-    return { ok: false, problem: "The primary host is not a valid URL" };
+    return invalid("The primary host is not a valid URL");
   }
   if (url.protocol !== "https:") {
-    return {
-      ok: false,
-      problem: "The primary host must use https — a credential is never sent in the clear",
-    };
+    return invalid("The primary host must use https — a credential is never sent in the clear");
   }
   if (url.username || url.password) {
-    return {
-      ok: false,
-      problem: "The primary host must not carry credentials — they belong in the credential fields",
-    };
+    return invalid(
+      "The primary host must not carry credentials — they belong in the credential fields",
+    );
   }
   if (url.search || url.hash) {
-    return {
-      ok: false,
-      problem:
-        "The primary host is a host and an optional path, without a query string or fragment",
-    };
+    return invalid(
+      "The primary host is a host and an optional path, without a query string or fragment",
+    );
   }
-  if (!isPublicHost(url.hostname)) {
-    return { ok: false, problem: notPublic(url.hostname) };
-  }
+  if (!isPublicHost(url.hostname)) return notPublic(url.hostname);
 
   const set = new Set<string>([url.host.toLowerCase()]);
   for (const raw of hosts) {
     const host = raw.trim().toLowerCase();
     if (!HOSTNAME_WITH_PORT.test(host)) {
       return {
-        ok: false,
-        problem: `"${raw}" is not a hostname — a host in the set is a name like files.vendor.example, optionally with a port`,
+        ...invalid(
+          `"${raw}" is not a hostname — a host in the set is a name like files.vendor.example, optionally with a port`,
+        ),
+        host: raw,
       };
     }
     const hostname = host.replace(/:\d+$/, "");
-    if (!isPublicHost(hostname)) return { ok: false, problem: notPublic(hostname) };
+    if (!isPublicHost(hostname)) return notPublic(hostname);
     set.add(host);
   }
 
@@ -104,27 +123,18 @@ export function validateHostSet(primaryHost: string, hosts: readonly string[]): 
   return { ok: true, primaryHost: `${url.origin}${path}`, hosts: [...set] };
 }
 
-function notPublic(hostname: string): string {
-  return `${hostname} is not a public host — private, loopback, link-local, metadata and internal addresses are refused`;
+function notPublic(hostname: string): HostSetRefusal {
+  return {
+    ok: false,
+    reason: HOST_NOT_PUBLIC,
+    host: hostname,
+    problem: `${hostname} is not a public host — private, loopback, link-local, metadata and internal addresses are refused`,
+  };
 }
 
-export type SchemeRule = { required: readonly string[]; optional: readonly string[] };
-
-/**
- * What each scheme plugin is parameterised by (`@graft/proxy`'s `schemes.ts`). Keyed by the
- * column's enum so adding a scheme without saying what it takes fails to compile. Nothing here is a
- * secret: a header *name* and a *prefix*, a query parameter *name*, a token *endpoint*, *scopes*,
- * where the OAuth2 client authenticates, a Snowflake *account* and *user*.
- */
-export const SCHEME_PARAMETERS: Record<ConnectionScheme, SchemeRule> = {
-  api_key_header: { required: ["headerName"], optional: ["prefix"] },
-  api_key_query: { required: ["queryParam"], optional: [] },
-  bearer: { required: [], optional: [] },
-  basic: { required: [], optional: [] },
-  oauth2_client_credentials: { required: ["tokenUrl"], optional: ["scopes", "clientAuth"] },
-  unleashed_hmac: { required: [], optional: [] },
-  snowflake_keypair_jwt: { required: ["account", "user"], optional: [] },
-};
+/** Re-exported so the service's callers and the form read one table (`@graft/proxy/scheme-parameters`). */
+export { SCHEME_PARAMETERS };
+export type SchemeRule = SchemeParameterRule;
 
 /** The header name must be a token; the one it must not be is the credential's own carrier. */
 const HEADER_NAME = /^[A-Za-z0-9-]+$/;
@@ -173,7 +183,7 @@ function validateHttpsUrl(raw: string, what: string): string | null {
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:") return `${what} must use https`;
-    if (!isPublicHost(url.hostname)) return notPublic(url.hostname);
+    if (!isPublicHost(url.hostname)) return notPublic(url.hostname).problem;
     return null;
   } catch {
     return `${what} is not a valid URL`;

@@ -157,3 +157,37 @@ export async function listPendingActionsByKind(
     )
     .orderBy(desc(pendingAction.createdAt), desc(pendingAction.id));
 }
+
+/**
+ * A revoke's third sweep (ADR 0007): every open ask about the connection, across every agent of
+ * the person — a tool's ask, a build ask, a credential re-entry — closed in one statement, under the
+ * person through the agent's owner like the other person-scoped statements here. Found by the
+ * `connection_id` column, never by the payload, as the table's header says.
+ *
+ * Both clocks are stamped, because the two doors read different predicates. `expires_at` is what
+ * the console's answer and its list read, so the person can no longer answer a closed ask; but the
+ * take (`consumePendingAction`) reads no clock at all — an answer may be taken after its expiry,
+ * which is the whole point of a durable record (ADR 0006) — so a per-call yes already given would
+ * still be grantable after reconnection unless `consumed_at` is stamped too (GRA-23's known edge,
+ * closed by GRA-28). A closed ask therefore reads as expired to the console and as taken to the
+ * agent; the next call asks afresh, which after a revoke is right.
+ */
+export async function expirePendingActionsForConnection(
+  db: DbOrTx,
+  personId: string,
+  connectionId: string,
+  at: Date,
+): Promise<PendingActionRow[]> {
+  return db
+    .update(pendingAction)
+    .set({ expiresAt: at, consumedAt: at })
+    .where(
+      and(
+        eq(pendingAction.connectionId, connectionId),
+        inArray(pendingAction.agentId, personAgentIds(db, personId)),
+        isNull(pendingAction.consumedAt),
+        gt(pendingAction.expiresAt, at),
+      ),
+    )
+    .returning();
+}
