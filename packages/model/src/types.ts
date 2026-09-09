@@ -32,6 +32,14 @@ export type ConnectionBrief = {
 /** Handed once, at `open`; the situations that follow refer back to it. */
 export type ModelJobContext = {
   jobId: string;
+  /**
+   * Whose job this is — the person the requesting agent belongs to (ADR 0007). The routed adapter
+   * (`./routed.ts`) picks the person's own provider key over the deployment's fixed model by it
+   * (ADR 0014), and every provider call carries it as a trace attribute (`./langfuse.ts`). An id
+   * for routing and for the trace, never an authenticated principal: nothing downstream of the
+   * model may treat it as a right.
+   */
+  personId: string;
   goal: string;
   hints: string | null;
   connection: ConnectionBrief;
