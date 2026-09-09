@@ -9,6 +9,7 @@ import {
 import {
   createTool,
   nextVersionNumber,
+  orNotFound,
   publishToolVersion as recordPublishedVersion,
   type ServiceContext,
   type ToolDeps,
@@ -36,7 +37,13 @@ import {
   readManifest,
 } from "./manifest";
 import type { PackageMetadataSource } from "./metadata";
-import { evaluatePackage, isAllowlisted, type PackagePolicyConfig } from "./policy";
+import {
+  evaluatePackage,
+  isAllowlisted,
+  isExactVersion,
+  isValidPackageName,
+  type PackagePolicyConfig,
+} from "./policy";
 
 /**
  * Publishing an authored tool (GRA-1, "The check, the runner and the toolbox"): the draft's files
@@ -208,7 +215,7 @@ export async function publishToolVersion(
     name: args.name,
   });
   const versionNumber = existing
-    ? ((await nextVersionNumber(ctx, principal, existing.id, deps.tool)) ?? 1)
+    ? orNotFound(await nextVersionNumber(ctx, principal, existing.id, deps.tool), "Tool not found")
     : 1;
   const versionPath = versionPathOf(args.vendor, args.name, versionNumber);
   const written = normaliseManifest(sources.files);
@@ -308,7 +315,12 @@ async function readDraft(
   }
 }
 
-/** Every declared package against the policy; allowlisted names never reach the registry. */
+/**
+ * Every declared package against the policy. The registry is asked only where its answer can change
+ * the verdict: not for an allowlisted name, and not for a name or a version the policy's first rules
+ * refuse on the manifest alone — so a range spec is an `exact-version` refusal even while the
+ * registry is down, never a `registry-unavailable` one.
+ */
 async function applyPolicy(
   dependencies: readonly ManifestDependency[],
   deps: Pick<PublishDeps, "metadata" | "policy" | "now">,
@@ -316,7 +328,10 @@ async function applyPolicy(
   const now = deps.now();
   const refusals: PublishDiagnostic[] = [];
   for (const dependency of dependencies) {
-    const needsRegistry = !isAllowlisted(dependency.name, deps.policy.allowlist);
+    const needsRegistry =
+      isValidPackageName(dependency.name) &&
+      isExactVersion(dependency.spec) &&
+      !isAllowlisted(dependency.name, deps.policy.allowlist);
     let metadata = null;
     if (needsRegistry) {
       try {

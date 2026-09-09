@@ -399,6 +399,8 @@ describe("a module declaring packages", () => {
       expect(h.tool.tools).toEqual([]);
       expect(h.tool.versions).toEqual([]);
       expect(h.install).not.toHaveBeenCalled();
+      // The registry is asked only where it could change the verdict: not for a range.
+      expect(h.metadata.lookups).toEqual(rule === "exact-version" ? [] : [`${name}@${version}`]);
     },
   );
 
