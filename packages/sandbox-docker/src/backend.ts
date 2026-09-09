@@ -22,7 +22,7 @@ import { filesUnder, packTree, readTar } from "./tar";
  * execs; `ensure` creates it on the internal network named in the options, whose only other member is
  * the proxy, so a process inside reaches the proxy by name and nothing else — the daemon gives an
  * internal network no gateway and forwards it no DNS. The toolbox is a named volume mounted where the
- * caller asks. A per-exec environment goes on the exec, so it is that process's alone. A detached
+ * caller asks — one per toolbox, or a subpath of one shared volume (`toolboxVolume`). A per-exec environment goes on the exec, so it is that process's alone. A detached
  * exec is a background process whose stdout, stderr and exit code are files under its name, which is
  * how a later call, holding any handle to the sandbox, finds it. `install` is its own container from
  * the same image on a network with the registry in reach, as root with npm on its path, which no
@@ -59,6 +59,17 @@ export type DockerSandboxBackendOptions = {
    * backing it was created with — `POST /volumes/create` returns the existing volume by name.
    */
   toolboxHostRoot?: string;
+  /**
+   * The other way the server and the sandboxes come to share one tree, for a server that itself
+   * runs in a container beside the daemon — the compose file (GRA-33): **one named volume holding
+   * every toolbox as a subdirectory**, mounted whole into the server at `GRAFT_TOOLBOX_ROOT` and into
+   * each sandbox by its own subpath (`VolumeOptions.Subpath`, Engine API 1.45, Docker 26 and later).
+   * A sandbox sees its toolbox and nothing beside it, as with a volume of its own. The subdirectory
+   * has to exist before the daemon will mount it, and this process may not have the volume in reach,
+   * so it is made by a short-lived container from the image, owned by the sandbox user. Mutually
+   * exclusive with `toolboxHostRoot`; the volume is the deployment's to create and to remove.
+   */
+  toolboxVolume?: string;
   install?: {
     /**
      * The network an install container runs on. Default `bridge`, the daemon's own, which reaches the
@@ -102,6 +113,11 @@ const DEFAULT_WORKING_DIR = "/workspace";
 const LABEL_PREFIX = "graft.sandbox.prefix";
 const LABEL_NAME = "graft.sandbox.name";
 const LABEL_INSTALL = "graft.sandbox.install";
+const LABEL_SETUP = "graft.sandbox.setup";
+/** Where the shared toolbox volume is mounted inside the container that prepares a subdirectory of it. */
+const SETUP_VOLUME_MOUNT = "/toolboxes";
+/** `$0` the toolbox id, `$1` the owner — `ensureToolboxDirectory`. */
+const TOOLBOX_DIRECTORY_SCRIPT = `set -e; mkdir -p "${SETUP_VOLUME_MOUNT}/$0"; chown "$1" "${SETUP_VOLUME_MOUNT}/$0"`;
 
 const DEFAULT_EXEC_TIMEOUT_SECONDS = 30;
 const DEFAULT_DETACHED_TIMEOUT_SECONDS = 600;
@@ -183,8 +199,7 @@ type ContainerInspect = {
   Created: string;
   State: { Running: boolean };
   Config: { Labels?: Record<string, string> };
-  HostConfig: { Memory?: number };
-  Mounts?: { Type: string; Name?: string; Destination: string }[];
+  HostConfig: { Memory?: number; Mounts?: VolumeMount[] };
 };
 
 type ContainerListItem = {
@@ -204,7 +219,16 @@ type ExecResult = {
   timedOut: boolean;
 };
 
-type VolumeMount = { Type: "volume"; Source: string; Target: string };
+/** A mount as the Engine API takes it and hands it back under `HostConfig.Mounts`. */
+type VolumeMount = {
+  Type: "volume";
+  Source: string;
+  Target: string;
+  VolumeOptions?: { Subpath?: string };
+};
+
+/** What a toolbox mounts as: a volume of its own, or a subpath of the shared one. */
+type ToolboxMount = Pick<VolumeMount, "Source" | "VolumeOptions">;
 
 export function createDockerSandboxBackend(
   options: DockerSandboxBackendOptions,
@@ -222,6 +246,13 @@ export function createDockerSandboxBackend(
       `the install network must not be the sandbox network (${options.network}): an install reaches the registry, a sandbox must not`,
     );
   }
+  if (options.toolboxVolume !== undefined && options.toolboxHostRoot !== undefined) {
+    throw new Error(
+      "toolboxVolume and toolboxHostRoot are two ways of sharing one toolbox tree; set one of them",
+    );
+  }
+  if (options.toolboxVolume !== undefined)
+    assertSandboxName("the toolbox volume", options.toolboxVolume);
 
   const containerName = (name: string) => `${prefix}-${name}`;
   const toolboxVolumeName = (toolboxId: string) => `${volumePrefix}-${toolboxId}`;
@@ -253,6 +284,86 @@ export function createDockerSandboxBackend(
     })();
     return networkChecked;
   };
+
+  /**
+   * The mount a toolbox takes, made ready: in the shared-volume arrangement its subdirectory, made
+   * by a container that has the whole volume because this process may not (`toolboxVolume`);
+   * otherwise its own volume, created or found by name.
+   */
+  async function ensureToolboxMount(toolboxId: string): Promise<ToolboxMount> {
+    if (options.toolboxVolume !== undefined) {
+      assertSandboxName("a toolbox id", toolboxId);
+      await assertSharedVolume(options.toolboxVolume);
+      await ensureToolboxDirectory(options.toolboxVolume, toolboxId);
+      return { Source: options.toolboxVolume, VolumeOptions: { Subpath: toolboxId } };
+    }
+    return { Source: await ensureVolume(toolboxId) };
+  }
+
+  /**
+   * Checked once per backend: the shared volume exists. Asked for by name in a mount, a volume the
+   * daemon does not have is created on the spot, empty — which here would be a second toolbox tree
+   * beside the server's, with every sandbox reading and writing the wrong one and nothing failing.
+   * A misspelt `GRAFT_TOOLBOX_VOLUME` is caught at the first mount instead.
+   */
+  let sharedVolumeChecked: Promise<void> | undefined;
+  const assertSharedVolume = (volume: string) => {
+    sharedVolumeChecked ??= (async () => {
+      try {
+        await engine.json("GET", `/volumes/${encodeURIComponent(volume)}`);
+      } catch (error) {
+        if (error instanceof DockerEngineError && error.status === 404) {
+          throw new Error(
+            `toolbox volume ${volume} does not exist on the daemon; it must be the volume the server's toolbox root is mounted from (GRAFT_TOOLBOX_VOLUME)`,
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+    })();
+    return sharedVolumeChecked;
+  };
+
+  /**
+   * `mkdir -p` and `chown` inside the shared volume, as root, from a throwaway container on no
+   * network. Idempotent, and the one place a directory in that volume is made by the backing: the
+   * daemon refuses to mount a subpath that is not there, and it would not be there for a toolbox
+   * nothing has written to yet — a run's first `mountToolbox` precedes its first draft.
+   */
+  async function ensureToolboxDirectory(volume: string, toolboxId: string): Promise<void> {
+    const { Id } = await engine.json<{ Id: string }>("POST", "/containers/create", {
+      body: {
+        Image: options.image,
+        User: "root",
+        Cmd: ["sh", "-c", TOOLBOX_DIRECTORY_SCRIPT, toolboxId, owner],
+        Labels: { [LABEL_PREFIX]: prefix, [LABEL_SETUP]: toolboxId },
+        HostConfig: {
+          ...hardening(),
+          NetworkMode: "none",
+          Mounts: [{ Type: "volume", Source: volume, Target: SETUP_VOLUME_MOUNT }],
+        },
+      },
+    });
+    try {
+      await engine.json("POST", `/containers/${Id}/start`);
+      const { StatusCode } = await engine.json<{ StatusCode: number }>(
+        "POST",
+        `/containers/${Id}/wait`,
+      );
+      if (StatusCode !== 0) {
+        const logs = await demux(
+          await engine.stream("GET", `/containers/${Id}/logs`, {
+            query: { stdout: true, stderr: true },
+          }),
+        );
+        throw new Error(
+          `could not prepare toolbox ${toolboxId} in volume ${volume}: ${logs.logs.trim()}`,
+        );
+      }
+    } finally {
+      await remove(Id);
+    }
+  }
 
   async function ensureVolume(toolboxId: string): Promise<string> {
     assertSandboxName("a toolbox id", toolboxId);
@@ -478,33 +589,28 @@ export function createDockerSandboxBackend(
       mountToolbox: async ({ toolboxId, mountPath }) => {
         assertAbsolute("mountPath", mountPath);
         const target = normaliseDir(mountPath);
-        const volume = await ensureVolume(toolboxId);
+        const wanted = await ensureToolboxMount(toolboxId);
         const current = await inspect(state.id);
         if (!current) throw new Error(`sandbox ${name} no longer exists`);
-        const mounts = (current.Mounts ?? []).filter((mount) => mount.Type === "volume");
-        if (
-          mounts.some(
-            (mount) => mount.Name === volume && normaliseDir(mount.Destination) === target,
-          )
-        ) {
+        // The specs the container was created with, read back as given — `HostConfig.Mounts` keeps
+        // the subpath, which the flattened `Mounts` list does not.
+        const mounts = (current.HostConfig.Mounts ?? []).filter((mount) => mount.Type === "volume");
+        const same = (mount: VolumeMount) =>
+          mount.Source === wanted.Source &&
+          mount.VolumeOptions?.Subpath === wanted.VolumeOptions?.Subpath;
+        if (mounts.some((mount) => same(mount) && normaliseDir(mount.Target) === target)) {
           return;
         }
         // A running container cannot take a new mount, so the sandbox is recreated around it: same
         // name, same network, same memory, every other toolbox it had, plus this one. Only the
         // volumes survive — the container's own filesystem, and any detached process, do not. That
         // is why `SandboxHandle.mountToolbox` says to mount first.
-        const kept: VolumeMount[] = mounts
-          .filter((mount) => mount.Name && normaliseDir(mount.Destination) !== target)
-          .map((mount) => ({
-            Type: "volume",
-            Source: mount.Name ?? "",
-            Target: mount.Destination,
-          }));
+        const kept = mounts.filter((mount) => normaliseDir(mount.Target) !== target);
         const memory = current.HostConfig.Memory;
         await remove(state.id);
         state.id = await createContainer(name, {
           ...(memory ? { memoryMb: memory / (1024 * 1024) } : {}),
-          mounts: [...kept, { Type: "volume", Source: volume, Target: target }],
+          mounts: [...kept, { Type: "volume", Target: target, ...wanted }],
         });
       },
 
@@ -593,7 +699,7 @@ export function createDockerSandboxBackend(
       timeoutSeconds = DEFAULT_INSTALL_TIMEOUT_SECONDS,
     }) => {
       assertVersionPath(versionPath);
-      const volume = await ensureVolume(toolboxId);
+      const toolbox = await ensureToolboxMount(toolboxId);
       const { Id } = await engine.json<{ Id: string }>("POST", "/containers/create", {
         body: {
           Image: options.image,
@@ -614,7 +720,7 @@ export function createDockerSandboxBackend(
           HostConfig: {
             ...hardening(),
             NetworkMode: installNetwork,
-            Mounts: [{ Type: "volume", Source: volume, Target: INSTALL_TOOLBOX_MOUNT }],
+            Mounts: [{ Type: "volume", Target: INSTALL_TOOLBOX_MOUNT, ...toolbox }],
           },
         },
       });

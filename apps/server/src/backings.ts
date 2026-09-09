@@ -89,6 +89,7 @@ export type BackingsEnv = Pick<
   | "GRAFT_SANDBOX_NETWORK"
   | "GRAFT_PROXY_PUBLIC_URL"
   | "GRAFT_TOOLBOX_ROOT"
+  | "GRAFT_TOOLBOX_VOLUME"
 >;
 
 export type SelectBackingsDeps = {
@@ -123,15 +124,20 @@ function openBackings(env: BackingsEnv): Backings {
     sandbox = fake;
     toolboxRoot = join(fake.root, "toolboxes");
   } else {
-    // Bound to the toolbox root so the install step and the store see one tree: every toolbox
-    // volume is a bind of `<root>/<toolboxId>`. The Docker backing reads `DOCKER_HOST` itself.
+    // The install step and the store have to see one tree (`packages/toolbox/README.md`). On a host
+    // that is the toolbox root bound into every sandbox, `<root>/<toolboxId>`; in the compose file,
+    // where this server is itself a container, it is the named volume the root is mounted from,
+    // `GRAFT_TOOLBOX_VOLUME`, each sandbox taking its own subpath (GRA-33). The Docker backing reads
+    // `DOCKER_HOST` itself.
     toolboxRoot = env.GRAFT_TOOLBOX_ROOT;
     sandbox =
       env.GRAFT_SANDBOX_IMAGE && env.GRAFT_SANDBOX_NETWORK
         ? createDockerSandboxBackend({
             image: env.GRAFT_SANDBOX_IMAGE,
             network: env.GRAFT_SANDBOX_NETWORK,
-            toolboxHostRoot: toolboxRoot,
+            ...(env.GRAFT_TOOLBOX_VOLUME
+              ? { toolboxVolume: env.GRAFT_TOOLBOX_VOLUME }
+              : { toolboxHostRoot: toolboxRoot }),
           })
         : null;
   }

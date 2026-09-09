@@ -8,7 +8,8 @@ import { z } from "zod";
  * makes sense complete is refused when half-set, because a partial set is always a typo or a
  * half-finished deploy and would otherwise present as a feature that silently never works.
  *
- * Every Graft variable is `GRAFT_*`. GRA-31 adds the provider-backed model to `modelBackend`.
+ * Every Graft variable is `GRAFT_*`. GRA-31 adds the provider-backed model to `modelBackend`; the
+ * self-hosted form's boot (GRA-33) is here already.
  */
 
 /**
@@ -201,6 +202,22 @@ export const toolboxRoot = z
   .string()
   .min(1, "GRAFT_TOOLBOX_ROOT must name a directory")
   .default("./.graft/toolboxes");
+
+/**
+ * The named Docker volume `GRAFT_TOOLBOX_ROOT` is mounted from, when the server itself runs in a
+ * container beside the daemon it creates sandboxes on — the compose file (GRA-33). Set, the Docker
+ * backing mounts each toolbox into its sandboxes as a subpath of this one volume
+ * (`@graft/sandbox-docker`'s `toolboxVolume`), so the tree the server writes and the tree a sandbox
+ * mounts are one. Unset, the backing binds `GRAFT_TOOLBOX_ROOT/<toolbox>` from the host, which is
+ * right for a server running on the host itself. A volume name, not a path.
+ */
+export const toolboxVolume = z
+  .string()
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/,
+    "GRAFT_TOOLBOX_VOLUME must be a Docker volume name — letters, digits, '.', '_' and '-'",
+  )
+  .optional();
 
 /**
  * The package policy's two thresholds (ADR 0013; `@graft/publish`'s `evaluatePackage`): a package
@@ -402,6 +419,40 @@ export const pendingActionTtlHours = z.coerce
   .default(24);
 
 /**
+ * The admin bootstrapped on first start (GRA-1, user story 28; GRA-33): the one account a fresh
+ * self-hosted database opens with, so the person who ran `docker compose up` can sign in without a
+ * sign-up form facing the network first. Both optional — a laptop signs up through the console — and
+ * all-or-nothing (`adminKeys`), because an email with no password would present as a console nobody
+ * can enter. Read once, by `apps/server/src/boot.ts`, and only while the database holds no person;
+ * a later change to either variable changes nothing, and the boot line says so.
+ */
+export const adminEmail = z
+  .email({
+    error: "GRAFT_ADMIN_EMAIL must be an email address — the account bootstrapped on first start",
+  })
+  .optional();
+
+/** Eight characters is Better Auth's own floor; a shorter value would fail the sign-up, not the boot. */
+export const adminPassword = z
+  .string()
+  .min(
+    8,
+    "GRAFT_ADMIN_PASSWORD must be at least 8 characters — Better Auth refuses a shorter password",
+  )
+  .optional();
+
+export const adminKeys = ["GRAFT_ADMIN_EMAIL", "GRAFT_ADMIN_PASSWORD"] as const;
+
+/**
+ * Whether the server applies the committed migrations before it listens (GRA-33). On by default,
+ * because the self-hosted image is the one process that ever touches its database, and a compose
+ * file with a separate migration step is a step somebody forgets. Off is for the development loop
+ * that moves the schema with `db:push`: a pushed database has no migration ledger, so the migrator
+ * would try to create tables that exist and refuse to start. `apps/server/src/boot.ts` runs it.
+ */
+export const migrateOnStart = z.stringbool().default(true);
+
+/**
  * A group of settings that only makes sense complete. Factored so a second hand-written copy of
  * this comparison is not where two groups drift — one of them getting the `present.length === 0`
  * case wrong and reporting every unconfigured deploy as broken.
@@ -440,6 +491,13 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
     sandboxKeys,
   );
   if (partialSandbox) issues.push(partialSandbox);
+
+  const partialAdmin = partialGroupIssue(
+    value,
+    "The bootstrapped admin is partially configured — set both GRAFT_ADMIN_EMAIL and GRAFT_ADMIN_PASSWORD or neither.",
+    adminKeys,
+  );
+  if (partialAdmin) issues.push(partialAdmin);
 
   /**
    * The keyring secret is the open form's — `createLocalKeyring` derives its key from it — so it is
@@ -568,8 +626,9 @@ export const serverSchema = {
    */
   GRAFT_DEV_SEED: z.string().min(1).optional(),
 
-  /** Where toolboxes live as files — see `toolboxRoot`. */
+  /** Where toolboxes live as files, and the volume that directory is mounted from — see `toolboxRoot`, `toolboxVolume`. */
   GRAFT_TOOLBOX_ROOT: toolboxRoot,
+  GRAFT_TOOLBOX_VOLUME: toolboxVolume,
 
   /** The package policy's thresholds and extra names — see `packageMinAgeDays`, `packageAllowlist`. */
   GRAFT_PACKAGE_MIN_AGE_DAYS: packageMinAgeDays,
@@ -604,7 +663,36 @@ export const serverSchema = {
   /** Which model answers `acquire`, and the scripted one's script — see `modelBackend`, `modelScriptKeys`. */
   GRAFT_MODEL_BACKEND: modelBackend,
   GRAFT_MODEL_SCRIPT: z.string().min(1).optional(),
+
+  /** The admin opened on first start, all-or-nothing — see `adminKeys`. */
+  GRAFT_ADMIN_EMAIL: adminEmail,
+  GRAFT_ADMIN_PASSWORD: adminPassword,
+
+  /** Whether the boot applies the committed migrations — see `migrateOnStart`. */
+  GRAFT_MIGRATE_ON_START: migrateOnStart,
 };
+
+/**
+ * One line per issue, the variable named on each — what the boot prints before it refuses to start
+ * (`server.ts`). The messages in this file already name their variable; zod's own for a value that
+ * is simply absent is "expected string, received undefined", which a person reading a container's
+ * log at midnight should not have to decode, so that one becomes "<VARIABLE> is not set". A
+ * cross-field sentence (`serverEnvIssues`) has no path and stands as it is.
+ */
+export function describeEnvIssues(
+  issues: readonly { path?: readonly (PropertyKey | { key: PropertyKey })[]; message: string }[],
+): string {
+  return issues
+    .map((issue) => {
+      const name = (issue.path ?? [])
+        .map((segment) => String(typeof segment === "object" ? segment.key : segment))
+        .join(".");
+      if (!name) return issue.message;
+      if (/received undefined$/.test(issue.message)) return `${name} is not set`;
+      return issue.message.includes(name) ? issue.message : `${name}: ${issue.message}`;
+    })
+    .join("\n");
+}
 
 /** The object schema `createEnv` is handed: the fields, the cross-field rules, the derived default. */
 export function finalServerSchema<T extends z.ZodRawShape>(shape: T) {

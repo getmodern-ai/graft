@@ -4,6 +4,10 @@ node_modules
 # Build outputs
 dist
 *.tsbuildinfo
+# The server's build copies two directories beside its `dist/`, where the bundled code resolves
+# them (`apps/server/tsdown.config.ts`): the runner's skills and the migration chain.
+apps/server/skills/
+apps/server/drizzle/
 
 # Turbo
 .turbo

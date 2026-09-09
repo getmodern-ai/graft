@@ -35,11 +35,93 @@ session on 8 and 9 September 2026 and is recorded as one architecture decision r
 under `docs/adr/`. The order of work and the roadmap are in `docs/roadmap.md`. Read `CONTEXT.md`
 first for the vocabulary.
 
+## Self-hosting
+
+Ten minutes from a machine with Docker to a Hermes agent that acquires its own tools. You need
+Docker 26 or later with Compose, a model provider key — the self-hosted form always brings its own
+(ADR 0014) — and a harness, Hermes or OpenClaw.
+
+**1. Get the compose file and mint the secrets.** The repository holds `docker-compose.yml`, its
+`.env.example`, and the sandbox image's Dockerfile; nothing else is needed from it.
+
+```bash
+git clone https://github.com/getmodern-ai/graft && cd graft
+cp .env.example .env
+docker compose run --rm --no-deps graft node dist/keys.mjs >> .env   # five secrets, one line each
+```
+
+Open `.env` and fill the model group — `GRAFT_MODEL_BACKEND=provider`, `GRAFT_MODEL_PROVIDER`,
+`GRAFT_MODEL_API_KEY`, `GRAFT_MODEL_AUTHORING`, `GRAFT_MODEL_TRIAGE` — and change
+`GRAFT_ADMIN_EMAIL` and `GRAFT_ADMIN_PASSWORD` from the defaults. Graft refuses to start without the
+secrets, and says which are missing; the same refusal for a missing model key (ADR 0014) arrives with
+the provider adapter (GRA-31).
+
+**2. Bring it up.**
+
+```bash
+docker compose up -d
+docker compose logs graft        # "migrations: … applied", then "admin … created"
+```
+
+Postgres, then Graft — the server, the proxy, the MCP endpoint and the console in one container —
+with the committed migrations applied on start and the admin opened into the empty database. The
+sandbox image is built alongside; sandboxes are created from it on an internal network whose only
+other member is the proxy (ADR 0013).
+
+**3. Sign in and create an agent.** Open `http://localhost:3000`, sign in as the admin, then
+*Agents → New agent*. The token is shown once; put it where your harness reads environment
+variables — for Hermes, `~/.hermes/.env`:
+
+```bash
+echo "GRAFT_TOKEN=grft_…" >> ~/.hermes/.env
+```
+
+**4. Point Hermes at it.** In `~/.hermes/config.yaml`, under `mcp_servers`, then `/reload-mcp` in
+a session (or restart Hermes):
+
+```yaml
+mcp_servers:
+  graft:
+    url: "http://localhost:3000/mcp"
+    headers:
+      Authorization: "Bearer ${GRAFT_TOKEN}"
+```
+
+Hermes now lists Graft's meta-tools — `acquire`, `find_tool`, `promote`, `demote`, `run_tool` and
+the rest — beside its own.
+
+**5. Ask for something no tool covers.** "Fetch my IP from httpbin.org and tell me what it is", say.
+The agent proposes a connection (`request_connection`) and hands you a link into the console to
+confirm it; then `acquire` reads the vendor's documentation, writes the module, checks it, dry-runs it
+against the live API with writes stopped at the proxy, publishes it and promotes it — and the new
+tool appears in Hermes's list as `httpbin__<name>`, first-class. Secrets are entered in the console,
+never in the chat (ADR 0006).
+
+**OpenClaw** takes the same block in its JSON `mcpServers` shape — `{"graft": {"type": "http", "url":
+"http://localhost:3000/mcp", "headers": {"Authorization": "Bearer ${GRAFT_TOKEN}"}}}` — and expands
+`${GRAFT_TOKEN}` from its environment; the console shows this form on every agent's page. The
+GRA-25 spike confirmed the static bearer header and lazy `tools/list_changed` handling; OpenClaw has
+no MCP elicitation, so approvals arrive as console links.
+
+**Behind a domain**, set `GRAFT_PUBLIC_URL` in `.env` to the https origin your reverse proxy serves,
+and put that proxy in front of port 3000. **On Linux**, set `GRAFT_DOCKER_GID` to
+`stat -c %g /var/run/docker.sock` so the unprivileged server can reach the daemon. **Without the
+socket** — a Docker daemon in a sibling container, `docker:dind` — the server takes `DOCKER_HOST`
+instead; `packages/sandbox-docker/README.md` describes that arrangement and what has to live inside
+the sibling daemon. **Upgrading** is `docker compose pull && docker compose up -d`: migrations apply
+on start and the toolbox lives in the `graft_toolboxes` volume, which only `docker compose down -v`
+removes. **Stopping** is `docker compose down`; the sandboxes the server created are containers of
+their own, `graft-sandbox-agent-<id>`, still attached to the sandbox network, and `down` says so
+rather than removing them — `docker rm -f $(docker ps -aq --filter label=graft.sandbox.prefix)`
+first, or leave them for the next `up`, which finds them again.
+
 ## Development
 
 Node 24 and pnpm 10. `pnpm install`, then `pnpm run check` (format and lint), `pnpm run check-types`
-and `pnpm run test`; the same three run in CI as the `Typecheck, Lint & Test` check. `AGENTS.md`
-lists every root command and how to add a package. Contributions are under the agreement in
+and `pnpm run test`; the same three run in CI as the `Typecheck, Lint & Test` check. The compose file
+above is the development environment too: `pnpm run db:start` brings up its Postgres alone for a
+server run from source, and `docker compose up -d --build` runs the whole thing as a self-hoster
+gets it. `AGENTS.md` lists every root command and how to add a package. Contributions are under the agreement in
 `CLA.md`, signed once on your first pull request.
 
 ## Reading order

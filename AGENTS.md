@@ -42,13 +42,31 @@ pnpm run check-types   # turbo: tsc per package
 pnpm run test          # turbo: vitest per package
 pnpm run build         # turbo: only packages that declare a build script
 pnpm run dev           # turbo: persistent, only packages that declare a dev script
-pnpm run db:start      # postgres:18 via docker compose, port 5432 (GRAFT_POSTGRES_PORT overrides)
+docker compose up -d   # the self-hosted form, whole: Postgres, Graft (server, proxy, MCP, console), the sandbox image
+pnpm run db:start      # postgres:18 alone, via the same compose file, port 5432 (GRAFT_POSTGRES_PORT overrides)
 pnpm run db:push       # apply packages/db/src/schema/*.ts directly — the dev loop
 pnpm run db:generate   # write a migration under packages/db/drizzle from the schema
 pnpm run db:migrate    # apply the committed migrations
 pnpm run db:check-chain # journal ↔ files ↔ prevId chain, no database — the third of three guards
 pnpm run db:studio     # Drizzle Studio
 ```
+
+### The compose file is the development environment
+
+`docker-compose.yml` at the root is the self-hosted form (ADR 0002) and, from GRA-33 on, the way this
+repository is run whole: `docker compose up -d` brings up Postgres, builds the sandbox image, and runs
+the server image — server, proxy, MCP endpoint and console in one container — with migrations applied
+and an admin opened on first start. README, "Self-hosting", is the walkthrough; the compose file's
+comments are the reference for each name. Two ways to use it while developing:
+
+- **Postgres alone** (`pnpm run db:start`) and the server from source on the host (`pnpm run dev`) —
+  the inner loop, where `tsx watch` and Vite reload. `apps/server/.env` names the database for it.
+- **Everything in containers** (`docker compose up -d --build`) — to see the image a self-hoster
+  gets, or to run the loop end to end with Docker sandboxes and no host setup. `.env` at the root
+  (from `.env.example`) holds its secrets, model key and admin.
+
+Use a distinct project name (`docker compose -p <name> …`) to run a second copy beside a colleague's:
+the sandbox network and the toolbox volume are named after the project, so two never share one.
 
 ### The database
 
@@ -88,20 +106,34 @@ GRAFT_AUTH_URL=http://localhost:3000
 GRAFT_CORS_ORIGIN=http://localhost:3001
 GRAFT_CONSOLE_URL=http://localhost:3001
 ENV
-pnpm run db:migrate
 pnpm --filter @graft/server dev
 ```
+
+**The server migrates on start** (`apps/server/src/boot.ts`, GRA-33): before it listens it checks the
+committed chain for holes — a hole refuses the start with the problems listed — and applies whatever
+the database has not seen, so `db:migrate` is no longer a step. The exception is the `db:push` loop:
+a pushed database has no migration ledger and the migrator would refuse to create tables that exist,
+so set `GRAFT_MIGRATE_ON_START=false` while the schema is moving. Then, if `GRAFT_ADMIN_EMAIL` and
+`GRAFT_ADMIN_PASSWORD` are set (all-or-nothing) and the database holds no person, the boot opens that
+account through Better Auth's own sign-up and prints one line saying so; a database with anyone in it
+is never touched, and the line says that instead. Unset, nothing happens — a laptop signs up at
+`/signup`.
 
 `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL`, `GRAFT_CONSOLE_URL` (where the
 console answers — the base of every handoff URL) and `GRAFT_HANDOFF_SECRET` (32+, signs those URLs)
 are required, and so is `GRAFT_KEYRING_SECRET` (32+) under the default `GRAFT_BACKINGS=open`;
 `GRAFT_CORS_ORIGIN` is an optional comma-separated list of origins; the capability token key pair is
 all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the database for a proxy
-smoke test and is refused in production. `GRAFT_APPROVAL_WAIT_SECONDS` (default 25) is how long a
-tool call waits for a person to answer a handoff before returning `awaiting_approval` — or
-`awaiting_connection` / `awaiting_credential` for the two connection handoffs (GRA-28), which share
-the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default 24) how long that action stays
-answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the rules as code.
+smoke test and is refused in production. A refusal prints one line per problem with the variable
+named and exits 1 (`packages/env/src/server.ts`). Under `NODE_ENV=production` on the open backings the
+model group ADR 0014 requires — `GRAFT_MODEL_BACKEND=provider` with `GRAFT_MODEL_PROVIDER` and
+`GRAFT_MODEL_API_KEY`, `GRAFT_MODEL_AUTHORING` and `GRAFT_MODEL_TRIAGE` beside them — is required
+too; the fields and that rule are GRA-31's. `GRAFT_APPROVAL_WAIT_SECONDS` (default
+25) is how long a tool call waits for a person to answer a handoff before returning
+`awaiting_approval` — or `awaiting_connection` / `awaiting_credential` for the two connection
+handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default
+24) how long that action stays answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the
+rules as code.
 
 `GRAFT_BACKINGS` picks the backing behind each seam (ADR 0002; `apps/server/src/backings.ts`).
 `open`, the default, is what this repository holds — the sandbox `GRAFT_SANDBOX_BACKEND` names, the
@@ -120,6 +152,40 @@ unset, leaves the server up with every run refusing for want of a sandbox; or `f
 directory on the server's own disk for a laptop without a daemon — the toolbox then lives in that
 directory too, for as long as the process does — which is not a sandbox, and `@graft/env` refuses it
 in production and beside `cloud`.
+
+### The self-hosted image
+
+`apps/server/Dockerfile`, built from the repository root, is the one image (GRA-33). Its stages:
+`manifests` collects every `package.json` at its path so the `deps` install layer is a cache hit on
+any commit that leaves the lockfile alone; `build` runs the console's `vite build` and the server's
+`tsdown` (`apps/server/tsdown.config.ts` — the workspace packages inlined, every third-party import
+left external, and the four files the code resolves off `import.meta.url` laid beside the bundle:
+`runner.mjs`, `skills/`, `drizzle/`, the check's worker as a second entry); `prod-deps` installs the
+production dependencies of the server and of every inlined package flat under `/app/node_modules`
+(`node-linker=hoisted`, so `typescript6` and `tar-stream` resolve from the server's directory);
+`runtime` is `node:24-slim` as user `graft`, uid 10001 — the sandbox user's uid on purpose, so drafts
+sandboxes write into the shared toolbox are the server's to remove. `node dist/index.mjs` is the
+server; `node dist/keys.mjs` beside it mints a `.env`'s secrets without pnpm.
+
+The compose file runs it as service `graft` on `${GRAFT_PORT:-3000}`, joined to two networks: the
+default one, and `sandbox` (`internal: true`, compose-named `<project>_sandbox`) under the alias
+`proxy`, which is what `GRAFT_PROXY_PUBLIC_URL=http://proxy:3000/api/proxy` hands a sandbox. The
+Docker socket is mounted (arrangement 1 of `packages/sandbox-docker/README.md`; the `docker:dind`
+sibling is arrangement 2) with `group_add: ${GRAFT_DOCKER_GID:-0}` for the socket's group. The
+toolbox is the named volume `<project>_toolboxes`, mounted at `GRAFT_TOOLBOX_ROOT` and named again in
+`GRAFT_TOOLBOX_VOLUME` so the backing mounts each toolbox into its sandbox as a subpath of the same
+volume — one tree (`packages/toolbox/README.md`). Service `sandbox` has `scale: 0`: it builds the
+sandbox image under the name `GRAFT_SANDBOX_IMAGE` carries and starts nothing. Health checks:
+`pg_isready` and `GET /api/health`; `graft` waits for Postgres healthy.
+
+CI builds the image on every pull request and asserts that it refuses to start naming what is missing:
+run with no environment, `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` and `GRAFT_HANDOFF_SECRET`; run with
+every field but the keyring secret, `GRAFT_KEYRING_SECRET` — the cross-field rule GRA-20 made of it,
+which only runs once every field is present.
+`.github/workflows/release.yml` pushes `ghcr.io/getmodern-ai/graft` and `graft-sandbox` on a `v*` tag,
+for `linux/amd64` and `linux/arm64`. The conformance suite against a running compose project is
+`packages/sandbox-docker/src/compose.test.ts`, opt-in by `GRAFT_COMPOSE_NETWORK` and
+`GRAFT_SANDBOX_IMAGE`; its header has the command.
 
 The working-set sweep (ADR 0009) runs inside the server on a plain timer, every
 `GRAFT_SWEEP_INTERVAL_SECONDS` (default 300): per agent it demotes what went unused past the idle
