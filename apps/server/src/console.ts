@@ -57,15 +57,19 @@ export function createConsoleApp(options: ConsoleOptions): ConsoleApp {
     return { app, built, dir };
   }
 
+  // Built once: `serveStatic` resolves and checks its root at construction, not per request.
+  const files = serveStatic({ root: dir });
+  const index = serveStatic({ root: dir, path: "index.html" });
+
   // Files first: hashed assets, the favicon, `index.html` itself at `/`.
-  app.use("*", (c, next) => (excluded(c.req.path) ? next() : serveStatic({ root: dir })(c, next)));
+  app.use("*", (c, next) => (excluded(c.req.path) ? next() : files(c, next)));
 
   // Then the SPA fallback, for a navigation and nothing else: a missing asset is a 404, not a page.
   app.get("*", (c, next) => {
     if (excluded(c.req.path)) return next();
     const accepts = c.req.header("accept") ?? "";
     if (!accepts.includes("text/html") && !accepts.includes("*/*")) return next();
-    return serveStatic({ root: dir, path: "index.html" })(c, next);
+    return index(c, next);
   });
 
   return { app, built, dir };
