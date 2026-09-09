@@ -1,0 +1,13 @@
+{
+  "extends": "@graft/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Importing a type from `@graft/check` pulls its `module-check.core.ts` into this program, and
+    // that file imports a sibling with its `.ts` extension for the worker thread's native resolution
+    // (its header says why). TypeScript refuses the extension unless the importing program allows
+    // it, so every consumer of the check carries this flag; harmless under `noEmit`.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts", "vitest.config.ts"],
+  "exclude": ["dist", "fixtures"]
+}

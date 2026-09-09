@@ -288,6 +288,43 @@ importers:
         specifier: 'catalog:'
         version: 4.1.11(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
 
+  packages/publish:
+    dependencies:
+      '@graft/check':
+        specifier: workspace:*
+        version: link:../check
+      '@graft/core':
+        specifier: workspace:*
+        version: link:../core
+      '@graft/db':
+        specifier: workspace:*
+        version: link:../db
+      '@graft/runner':
+        specifier: workspace:*
+        version: link:../runner
+      '@graft/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+      '@graft/toolbox':
+        specifier: workspace:*
+        version: link:../toolbox
+    devDependencies:
+      '@graft/config':
+        specifier: workspace:*
+        version: link:../config
+      '@graft/sandbox-docker':
+        specifier: workspace:*
+        version: link:../sandbox-docker
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
+
   packages/runner:
     devDependencies:
       '@graft/config':
@@ -351,6 +388,25 @@ importers:
       jose:
         specifier: 'catalog:'
         version: 6.2.12
+    devDependencies:
+      '@graft/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
+
+  packages/toolbox:
+    dependencies:
+      '@graft/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
     devDependencies:
       '@graft/config':
         specifier: workspace:*

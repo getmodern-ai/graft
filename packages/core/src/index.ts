@@ -123,6 +123,7 @@ export {
   listTools,
   listToolVersions,
   moveToolPointer,
+  nextVersionNumber,
   publishToolVersion,
   recordDryRun,
   TOOL_DESCRIPTION_MAX_LENGTH,
@@ -130,6 +131,7 @@ export {
   type ToolDefinitionPatch,
   type ToolVersionInput,
   updateToolDefinition,
+  validateToolDefinition,
 } from "./tool/tool.service";
 export { defaultWorkingSetDeps, type WorkingSetDeps } from "./working-set/working-set.deps";
 export {
