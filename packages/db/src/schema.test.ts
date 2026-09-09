@@ -75,7 +75,9 @@ describe("every owned table", () => {
       const indexedLeading = new Set<string>();
       for (const index of table.indexes) {
         const [first] = index.config.columns;
-        if (first && "name" in first) indexedLeading.add(first.name);
+        if (first && "name" in first && typeof first.name === "string") {
+          indexedLeading.add(first.name);
+        }
       }
       const [pkFirst] = table.primaryKeys[0]?.columns ?? [];
       if (pkFirst) indexedLeading.add(pkFirst.name);
