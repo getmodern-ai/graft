@@ -23,20 +23,18 @@ export function renderScorecard(
   const rule = "─".repeat(78);
   const lines: string[] = ["", rule, `  GRAFT ACQUIRE EVALUATION — model: ${options.model}`, rule];
   let passed = 0;
-  let input = 0;
-  let output = 0;
+  let total = 0;
 
   for (const { scenario, run, error, scores } of reports) {
     const whole = error === undefined && scores.length > 0 && scores.every((s) => s.pass);
     if (whole) passed += 1;
-    input += run?.tokens.input ?? 0;
-    output += run?.tokens.output ?? 0;
+    total += run?.tokens.total ?? 0;
     const failing = scores.filter((s) => !s.pass).length;
     lines.push(
       "",
       `  ${whole ? "PASS" : "FAIL"}  ${scenario.name}` +
         (run
-          ? `   (${run.status.attempts} attempt(s), ${run.tokens.input}+${run.tokens.output} tokens, ${Math.round(run.ms / 1000)}s)`
+          ? `   (${run.status.attempts} attempt(s), ${run.tokens.total} tokens, ${Math.round(run.ms / 1000)}s)`
           : "") +
         (failing ? `   ${failing} scorer(s) red` : ""),
       `        ${scenario.because}`,
@@ -55,7 +53,7 @@ export function renderScorecard(
   lines.push(
     "",
     rule,
-    `  OVERALL  ${passed}/${reports.length} scenario(s) passed whole   tokens: ${input} in, ${output} out, ${input + output} total`,
+    `  OVERALL  ${passed}/${reports.length} scenario(s) passed whole   tokens: ${total} in total across every model turn`,
     rule,
     "",
   );

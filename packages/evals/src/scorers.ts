@@ -43,7 +43,8 @@ export type ScenarioRun = {
   asks: PendingActionRow[];
   ledger: UsageLedgerRow[];
   ms: number;
-  tokens: { input: number; output: number };
+  /** The attempts' split, and the job's total as charged against the ceiling. */
+  tokens: { input: number; output: number; total: number };
 };
 
 export type ToolUse = {
@@ -79,7 +80,7 @@ export function succeeded(run: ScenarioRun): Score {
     name: "succeeded",
     pass: run.status.status === "succeeded" && result !== null,
     detail: result
-      ? `${result.tool} v${result.version} in ${run.status.attempts} attempt(s), ${run.tokens.input + run.tokens.output} tokens, ${Math.round(run.ms / 1000)}s`
+      ? `${result.tool} v${result.version} in ${run.status.attempts} attempt(s), ${run.tokens.total} tokens, ${Math.round(run.ms / 1000)}s`
       : `status ${run.status.status}: ${JSON.stringify(run.status.result ?? run.status.progress.at(-1) ?? "")}`.slice(
           0,
           300,
@@ -89,7 +90,7 @@ export function succeeded(run: ScenarioRun): Score {
 
 /** Attempts and tokens inside the bounds the job was given; a pass that spent the budget is a warning in itself. */
 export function withinBudget(run: ScenarioRun, maxAttempts: number, tokenCeiling: number): Score {
-  const spent = run.tokens.input + run.tokens.output;
+  const spent = run.tokens.total;
   return {
     name: "within_budget",
     pass: run.status.attempts <= maxAttempts && spent <= tokenCeiling,

@@ -114,9 +114,13 @@ export async function runScenario(
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
       ledger: world.store.usage.slice(ledgerBefore),
       ms: Date.now() - startedAt,
-      tokens: job
-        ? { input: tokens.input, output: Math.max(tokens.output, job.tokenSpend - tokens.input) }
-        : tokens,
+      // The job's own figure is the total every turn was charged against the ceiling; the attempts'
+      // split is known only for attempts that finished, so an abandoned one leaves it short.
+      tokens: {
+        input: tokens.input,
+        output: tokens.output,
+        total: job?.tokenSpend ?? tokens.input + tokens.output,
+      },
     };
   } finally {
     await harness.close();

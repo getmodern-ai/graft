@@ -168,7 +168,7 @@ function run(overrides: Partial<ScenarioRun>): ScenarioRun {
     asks: [],
     ledger: [],
     ms: 1,
-    tokens: { input: 10, output: 5 },
+    tokens: { input: 10, output: 5, total: 15 },
     ...overrides,
   };
 }

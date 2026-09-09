@@ -5,6 +5,7 @@ import type { AcquireJobRow } from "@graft/db/repo/acquire-job";
 import {
   createScriptedModel,
   type ModelAdapter,
+  type ModelSituation,
   type ModelSituationKind,
   type ModuleDraft,
   type ScriptedStep,
@@ -396,6 +397,8 @@ describe("a job that passes first time", () => {
     ]);
     // The job holds the agent in flight for its whole length (ADR 0009): every model turn happens under the hold.
     const heldDuringTurns: boolean[] = [];
+    /** What each turn was shown, so the shape a provider-backed adapter renders is asserted too. */
+    const shown: ModelSituation[] = [];
     const model: ModelAdapter = {
       name: scripted.name,
       open: (context) => {
@@ -403,6 +406,7 @@ describe("a job that passes first time", () => {
         return {
           turn: async (situation) => {
             heldDuringTurns.push(deps.inFlight?.has(AGENT_A) ?? false);
+            shown.push(situation);
             return conversation.turn(situation);
           },
         };
@@ -469,6 +473,10 @@ describe("a job that passes first time", () => {
       const docs = conversation?.situations[1];
       expect(docs?.kind === "docs" && docs.pages.map((p) => p.ok)).toEqual([true, false]);
       expect(heldDuringTurns).toEqual([true, true, true]);
+      // The proof situation carries its reads as an array — the shape the seam declares and a
+      // provider-backed adapter renders; a spread into an object once passed the types (GRA-31).
+      const proof = shown.find((s) => s.kind === "proof");
+      expect(proof && Array.isArray(proof.reads)).toBe(true);
       expect(deps.inFlight?.has(AGENT_A)).toBe(false);
 
       // The rows the console reads (ADR 0012).

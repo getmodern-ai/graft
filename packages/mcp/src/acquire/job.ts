@@ -655,7 +655,7 @@ class AcquireLoop {
         ? `Attempt ${attempt.number}: ${reads.filter((r) => !r.ok).length} of ${reads.length} proof read(s) failed; asking the model what to change.`
         : `Attempt ${attempt.number}: ${reads.length} proof read(s) answered as the documentation said.`,
     );
-    return { ...reads };
+    return reads;
   }
 
   private async publishAndDryRun(
