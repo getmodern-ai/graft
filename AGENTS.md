@@ -417,3 +417,12 @@ upstream. `.claude/worktrees` is excluded root-relative on purpose: a `**/` patt
 would exclude the whole checkout and lint nothing (Cando's CAN-147; reproduced here before writing
 the pattern). Skills for the vendored engineering workflow will be added now that there is code to
 work on.
+
+## Conventions
+
+- **One pnpm override, for a Dependabot alert, not a preference.** `@esbuild-kit/core-utils>esbuild` is
+  pinned to the 0.25 line in the root `package.json` because drizzle-kit's ESM loader still depends on
+  `@esbuild-kit/core-utils`, which resolves `esbuild@0.18`, and esbuild below 0.25 lets any website
+  reach its development server (GRA-41). Nothing here runs esbuild's serve mode, so the exposure was
+  theoretical; the override exists so the alert closes. Drop it when drizzle-kit stops depending on
+  `@esbuild-kit` (`pnpm why @esbuild-kit/core-utils` says whether it still does).
