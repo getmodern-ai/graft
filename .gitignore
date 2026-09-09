@@ -27,3 +27,8 @@ coverage
 # Logs and editor litter
 *.log
 .DS_Store
+
+# The hosted form's backings are a private package placed here as `packages/cloud-backings/` when a
+# checkout links it in (ADR 0002: the commercial half is hidden by absence). The workspace glob picks
+# it up whenever it is present; git never does, so a linked checkout cannot commit it here.
+packages/cloud-backings/

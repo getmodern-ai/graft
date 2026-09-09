@@ -20,19 +20,14 @@ import {
   createRegistryMetadataSource,
   DEFAULT_PACKAGE_POLICY,
 } from "@graft/publish";
-import {
-  createFakeSandboxBackend,
-  type SandboxBackend,
-  type SandboxProcessResult,
-} from "@graft/sandbox";
-import { createDockerSandboxBackend } from "@graft/sandbox-docker";
+import type { SandboxProcessResult } from "@graft/sandbox";
 import { importCapabilityTokenKeys } from "@graft/token";
-import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
-import { createCredentialVault, createLocalKeyring } from "@graft/vault";
+import { createCredentialVault } from "@graft/vault";
 import { serve } from "@hono/node-server";
 import { initLogger } from "evlog";
 
 import { API_MOUNT_PATH, createServer, MCP_MOUNT_PATH, PROXY_MOUNT_PATH } from "./app";
+import { selectBackings } from "./backings";
 import {
   connectionSeeds,
   createDatabaseConnections,
@@ -78,9 +73,12 @@ const keys =
       })
     : null;
 
-// The local keyring is the one backing this repository holds (ADR 0002); the hosted form's KMS
-// keyring arrives with the private package (GRA-20) and is selected here.
-const vault = createCredentialVault(createLocalKeyring(env.GRAFT_KEYRING_SECRET));
+// The three seams' backings and the toolbox store, chosen once from `GRAFT_BACKINGS` and
+// `GRAFT_SANDBOX_BACKEND` (`backings.ts`, ADR 0002). The keyring goes under the vault here; the
+// sandbox, the store and the mirror are the publish's and the MCP server's below.
+const backings = await selectBackings(env, { raw: process.env });
+const { sandbox, store } = backings;
+const vault = createCredentialVault(backings.keyring);
 
 // One pool for the process; the migrations are applied separately (`pnpm run db:migrate`), so a
 // server never alters the schema it is about to serve.
@@ -107,37 +105,10 @@ if (env.GRAFT_DEV_SEED) {
 // one component, and that component is the proxy binding in `app.ts`).
 const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
 
-/**
- * The sandbox backing (ADR 0002) and the toolbox store, which have to see one tree
- * (`packages/toolbox/README.md`): with Docker the store's root is bound into every toolbox volume;
- * with the fake the store sits inside the fake's own temporary directory, so a laptop's toolbox lives
- * as long as the process. Docker without its image and network is no backing at all — the server
- * boots, every run refuses saying so, and the install step answers the publish the same way. The
- * fake is refused in production by `@graft/env`. The Docker backing reads `DOCKER_HOST` itself.
- */
-let sandbox: SandboxBackend | null;
-let toolboxRoot: string;
-if (env.GRAFT_SANDBOX_BACKEND === "fake") {
-  const fake = createFakeSandboxBackend();
-  sandbox = fake;
-  toolboxRoot = join(fake.root, "toolboxes");
-} else {
-  toolboxRoot = env.GRAFT_TOOLBOX_ROOT;
-  sandbox =
-    env.GRAFT_SANDBOX_IMAGE && env.GRAFT_SANDBOX_NETWORK
-      ? createDockerSandboxBackend({
-          image: env.GRAFT_SANDBOX_IMAGE,
-          network: env.GRAFT_SANDBOX_NETWORK,
-          toolboxHostRoot: toolboxRoot,
-        })
-      : null;
-}
-const store = createFilesystemToolboxStore({ root: toolboxRoot });
-
 const publish = createPublishDeps({
   db,
   store,
-  mirror: createNoopToolboxMirror(),
+  mirror: backings.mirror,
   sandbox: sandbox ?? {
     install: async (): Promise<SandboxProcessResult> => {
       const logs =
@@ -235,7 +206,8 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
       `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} ` +
-      `(sandbox: ${env.GRAFT_SANDBOX_BACKEND}${sandbox ? "" : ", unconfigured"}; toolbox: ${store.root}), ` +
+      `(${backings.form} backings — sandbox ${sandbox ? "configured" : "unconfigured"}, ` +
+      `keyring ${backings.keyring.id}, toolbox ${store.root}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database, ` +
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +

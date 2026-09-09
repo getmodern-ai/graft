@@ -4,6 +4,7 @@ import {
   approvalWaitSeconds,
   authSecret,
   authUrl,
+  backingsForm,
   capabilityTokenPrivateKey,
   capabilityTokenPublicKey,
   consoleDir,
@@ -32,6 +33,9 @@ import {
  * check, then misbehaves at the first real request — the worst kind, because nothing in the deploy
  * says anything is wrong. Pure functions, so no `process.env` is touched here.
  */
+
+/** The open form's one required cross-field input, so a test about another rule sees that rule alone. */
+const SECRET = { GRAFT_KEYRING_SECRET: "x".repeat(32) };
 
 const PRIVATE_PEM = [
   "-----BEGIN PRIVATE KEY-----",
@@ -67,17 +71,20 @@ describe("the capability token key pair", () => {
   });
 
   it("is all-or-nothing", () => {
-    expect(serverEnvIssues({ GRAFT_CAPABILITY_TOKEN_PRIVATE_KEY: PRIVATE_PEM })).toEqual([
-      expect.stringMatching(/partially configured.*Missing: GRAFT_CAPABILITY_TOKEN_PUBLIC_KEY/),
-    ]);
-    expect(serverEnvIssues({ GRAFT_CAPABILITY_TOKEN_PUBLIC_KEY: PUBLIC_PEM })).toHaveLength(1);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_CAPABILITY_TOKEN_PRIVATE_KEY: PRIVATE_PEM })).toEqual(
+      [expect.stringMatching(/partially configured.*Missing: GRAFT_CAPABILITY_TOKEN_PUBLIC_KEY/)],
+    );
+    expect(
+      serverEnvIssues({ ...SECRET, GRAFT_CAPABILITY_TOKEN_PUBLIC_KEY: PUBLIC_PEM }),
+    ).toHaveLength(1);
     expect(
       serverEnvIssues({
+        ...SECRET,
         GRAFT_CAPABILITY_TOKEN_PRIVATE_KEY: PRIVATE_PEM,
         GRAFT_CAPABILITY_TOKEN_PUBLIC_KEY: PUBLIC_PEM,
       }),
     ).toEqual([]);
-    expect(serverEnvIssues({})).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET })).toEqual([]);
   });
 });
 
@@ -87,6 +94,32 @@ describe("GRAFT_KEYRING_SECRET", () => {
     const result = keyringSecret.safeParse("x".repeat(31));
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toContain("GRAFT_KEYRING_SECRET");
+  });
+
+  it("is required exactly when the open backings are selected, which is the default", () => {
+    expect(serverEnvIssues({})).toEqual([expect.stringMatching(/GRAFT_KEYRING_SECRET.*open/)]);
+    expect(serverEnvIssues({ GRAFT_BACKINGS: "open" })).toHaveLength(1);
+    expect(serverEnvIssues({ GRAFT_BACKINGS: "cloud" })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET })).toEqual([]);
+  });
+});
+
+describe("GRAFT_BACKINGS", () => {
+  it("is open by default and accepts only the two forms", () => {
+    expect(backingsForm.parse(undefined)).toBe("open");
+    expect(backingsForm.parse("cloud")).toBe("cloud");
+    for (const bad of ["hosted", "docker", "", "Open"]) {
+      expect(backingsForm.safeParse(bad).success, bad).toBe(false);
+    }
+  });
+
+  it("refuses the fake sandbox beside the cloud form, whose sandbox is the private package's", () => {
+    expect(serverEnvIssues({ GRAFT_BACKINGS: "cloud", GRAFT_SANDBOX_BACKEND: "fake" })).toEqual([
+      expect.stringMatching(/GRAFT_SANDBOX_BACKEND=fake.*GRAFT_BACKINGS=cloud/),
+    ]);
+    expect(serverEnvIssues({ GRAFT_BACKINGS: "cloud", GRAFT_SANDBOX_BACKEND: "docker" })).toEqual(
+      [],
+    );
   });
 });
 
@@ -140,11 +173,13 @@ describe("GRAFT_CORS_ORIGIN", () => {
 
 describe("GRAFT_DEV_SEED", () => {
   it("is refused under NODE_ENV=production and accepted otherwise", () => {
-    expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_DEV_SEED: "./seed.json" })).toEqual([
-      expect.stringMatching(/GRAFT_DEV_SEED.*production/),
-    ]);
-    expect(serverEnvIssues({ NODE_ENV: "development", GRAFT_DEV_SEED: "./seed.json" })).toEqual([]);
-    expect(serverEnvIssues({ NODE_ENV: "production" })).toEqual([]);
+    expect(
+      serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_DEV_SEED: "./seed.json" }),
+    ).toEqual([expect.stringMatching(/GRAFT_DEV_SEED.*production/)]);
+    expect(
+      serverEnvIssues({ ...SECRET, NODE_ENV: "development", GRAFT_DEV_SEED: "./seed.json" }),
+    ).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, NODE_ENV: "production" })).toEqual([]);
   });
 });
 
@@ -211,14 +246,18 @@ describe("the package policy's thresholds and extra names", () => {
 
 describe("the Docker sandbox backing's pair", () => {
   it("is all-or-nothing", () => {
-    expect(serverEnvIssues({ GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev" })).toEqual([
+    expect(serverEnvIssues({ ...SECRET, GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev" })).toEqual([
       expect.stringMatching(
         /sandbox backing is partially configured.*Missing: GRAFT_SANDBOX_NETWORK/,
       ),
     ]);
-    expect(serverEnvIssues({ GRAFT_SANDBOX_NETWORK: "graft_sandbox" })).toHaveLength(1);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_SANDBOX_NETWORK: "graft_sandbox" })).toHaveLength(1);
     expect(
-      serverEnvIssues({ GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev", GRAFT_SANDBOX_NETWORK: "x" }),
+      serverEnvIssues({
+        ...SECRET,
+        GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev",
+        GRAFT_SANDBOX_NETWORK: "x",
+      }),
     ).toEqual([]);
   });
 });
@@ -255,6 +294,7 @@ describe("finalServerSchema", () => {
       GRAFT_AUTH_SECRET: minimal.GRAFT_AUTH_SECRET,
       GRAFT_AUTH_URL: minimal.GRAFT_AUTH_URL,
       GRAFT_CORS_ORIGIN: [],
+      GRAFT_BACKINGS: "open",
       GRAFT_KEYRING_SECRET: minimal.GRAFT_KEYRING_SECRET,
       GRAFT_PROXY_FOLLOW_REDIRECTS: false,
       GRAFT_PROXY_PUBLIC_URL: "http://localhost:3000/api/proxy",
@@ -286,6 +326,14 @@ describe("finalServerSchema", () => {
       GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev",
       GRAFT_SANDBOX_NETWORK: "graft_sandbox",
     });
+  });
+
+  it("boots the cloud form without a keyring secret, and refuses a form it does not know", () => {
+    const { GRAFT_KEYRING_SECRET: _omitted, ...withoutSecret } = minimal;
+    expect(schema.parse({ ...withoutSecret, GRAFT_BACKINGS: "cloud" })).toMatchObject({
+      GRAFT_BACKINGS: "cloud",
+    });
+    expect(schema.safeParse({ ...minimal, GRAFT_BACKINGS: "hosted" }).success).toBe(false);
   });
 
   it("refuses the minimum with any one of the six required values missing", () => {
@@ -369,13 +417,15 @@ describe("the sandbox backing", () => {
   });
 
   it("refuses the fake backing in production and nowhere else", () => {
-    expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "fake" })).toEqual([
-      expect.stringMatching(/GRAFT_SANDBOX_BACKEND=fake.*NODE_ENV=production/),
-    ]);
-    expect(serverEnvIssues({ NODE_ENV: "development", GRAFT_SANDBOX_BACKEND: "fake" })).toEqual([]);
-    expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "docker" })).toEqual(
-      [],
-    );
+    expect(
+      serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "fake" }),
+    ).toEqual([expect.stringMatching(/GRAFT_SANDBOX_BACKEND=fake.*NODE_ENV=production/)]);
+    expect(
+      serverEnvIssues({ ...SECRET, NODE_ENV: "development", GRAFT_SANDBOX_BACKEND: "fake" }),
+    ).toEqual([]);
+    expect(
+      serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "docker" }),
+    ).toEqual([]);
   });
 });
 
