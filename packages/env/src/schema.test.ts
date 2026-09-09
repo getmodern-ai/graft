@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  adminEmail,
+  adminPassword,
   approvalWaitSeconds,
   authSecret,
   authUrl,
@@ -11,19 +13,24 @@ import {
   corsOrigins,
   databaseUrl,
   defaultProxyPublicUrl,
+  describeEnvIssues,
   finalServerSchema,
   handoffSecret,
   keyringSecret,
+  migrateOnStart,
   packageAllowlist,
   packageMinAgeDays,
   packageMinWeeklyDownloads,
   pendingActionTtlHours,
   port,
   sandboxBackend,
+  selfHostModelIssue,
+  selfHostModelKeys,
   serverEnvIssues,
   serverSchema,
   sweepIntervalSeconds,
   toolboxRoot,
+  toolboxVolume,
   withDerivedDefaults,
 } from "./schema";
 
@@ -43,6 +50,20 @@ const PUBLIC_PEM = [
   "MCowBQYDK2VwAyEAj2uCF9JXBSzQ5uPuwHvUGeFxErE7W9fqWkzfF7ITOuI=",
   "-----END PUBLIC KEY-----",
 ].join("\n");
+
+/**
+ * Production with the model group the self-hosted form requires (ADR 0014; the fields are GRA-31's,
+ * the rule `selfHostModelIssue`), so a rule about something else in production can be asserted
+ * without this one in the way.
+ */
+const PRODUCTION = {
+  NODE_ENV: "production",
+  GRAFT_MODEL_BACKEND: "provider",
+  GRAFT_MODEL_PROVIDER: "openai",
+  GRAFT_MODEL_API_KEY: "sk-test",
+  GRAFT_MODEL_AUTHORING: "gpt-5",
+  GRAFT_MODEL_TRIAGE: "gpt-5-mini",
+};
 
 describe("the capability token key pair", () => {
   it("accepts a PEM with real line breaks and one with \\n-escaped ones, canonically", () => {
@@ -140,11 +161,11 @@ describe("GRAFT_CORS_ORIGIN", () => {
 
 describe("GRAFT_DEV_SEED", () => {
   it("is refused under NODE_ENV=production and accepted otherwise", () => {
-    expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_DEV_SEED: "./seed.json" })).toEqual([
+    expect(serverEnvIssues({ ...PRODUCTION, GRAFT_DEV_SEED: "./seed.json" })).toEqual([
       expect.stringMatching(/GRAFT_DEV_SEED.*production/),
     ]);
     expect(serverEnvIssues({ NODE_ENV: "development", GRAFT_DEV_SEED: "./seed.json" })).toEqual([]);
-    expect(serverEnvIssues({ NODE_ENV: "production" })).toEqual([]);
+    expect(serverEnvIssues(PRODUCTION)).toEqual([]);
   });
 });
 
@@ -175,6 +196,18 @@ describe("GRAFT_TOOLBOX_ROOT", () => {
     expect(toolboxRoot.parse(undefined)).toBe("./.graft/toolboxes");
     expect(toolboxRoot.parse("/var/lib/graft/toolboxes")).toBe("/var/lib/graft/toolboxes");
     expect(toolboxRoot.safeParse("").error?.issues[0]?.message).toContain("GRAFT_TOOLBOX_ROOT");
+  });
+});
+
+describe("GRAFT_TOOLBOX_VOLUME", () => {
+  it("is optional, takes a volume name, and refuses a path, naming itself", () => {
+    expect(toolboxVolume.parse(undefined)).toBeUndefined();
+    expect(toolboxVolume.parse("graft_toolboxes")).toBe("graft_toolboxes");
+    for (const bad of ["/var/lib/graft/toolboxes", "./toolboxes", ""]) {
+      const result = toolboxVolume.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_TOOLBOX_VOLUME");
+    }
   });
 });
 
@@ -269,6 +302,7 @@ describe("finalServerSchema", () => {
       GRAFT_APPROVAL_WAIT_SECONDS: 25,
       GRAFT_PENDING_ACTION_TTL_HOURS: 24,
       GRAFT_SWEEP_INTERVAL_SECONDS: 300,
+      GRAFT_MIGRATE_ON_START: true,
     });
   });
 
@@ -369,13 +403,11 @@ describe("the sandbox backing", () => {
   });
 
   it("refuses the fake backing in production and nowhere else", () => {
-    expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "fake" })).toEqual([
+    expect(serverEnvIssues({ ...PRODUCTION, GRAFT_SANDBOX_BACKEND: "fake" })).toEqual([
       expect.stringMatching(/GRAFT_SANDBOX_BACKEND=fake.*NODE_ENV=production/),
     ]);
     expect(serverEnvIssues({ NODE_ENV: "development", GRAFT_SANDBOX_BACKEND: "fake" })).toEqual([]);
-    expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "docker" })).toEqual(
-      [],
-    );
+    expect(serverEnvIssues({ ...PRODUCTION, GRAFT_SANDBOX_BACKEND: "docker" })).toEqual([]);
   });
 });
 
@@ -389,5 +421,97 @@ describe("GRAFT_CONSOLE_DIR", () => {
     const result = consoleDir.safeParse("");
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toContain("GRAFT_CONSOLE_DIR");
+  });
+});
+
+describe("the bootstrapped admin (GRA-33)", () => {
+  it("takes an email address and a password of Better Auth's minimum, and is optional", () => {
+    expect(adminEmail.parse(undefined)).toBeUndefined();
+    expect(adminEmail.parse("admin@example.com")).toBe("admin@example.com");
+    expect(adminEmail.safeParse("admin").error?.issues[0]?.message).toContain("GRAFT_ADMIN_EMAIL");
+    expect(adminPassword.parse("eight-ch")).toBe("eight-ch");
+    expect(adminPassword.safeParse("seven77").error?.issues[0]?.message).toContain(
+      "GRAFT_ADMIN_PASSWORD",
+    );
+  });
+
+  it("is all-or-nothing", () => {
+    expect(serverEnvIssues({ GRAFT_ADMIN_EMAIL: "admin@example.com" })).toEqual([
+      expect.stringMatching(/admin is partially configured.*Missing: GRAFT_ADMIN_PASSWORD/),
+    ]);
+    expect(serverEnvIssues({ GRAFT_ADMIN_PASSWORD: "change-me-please" })).toEqual([
+      expect.stringMatching(/Missing: GRAFT_ADMIN_EMAIL/),
+    ]);
+    expect(
+      serverEnvIssues({
+        GRAFT_ADMIN_EMAIL: "admin@example.com",
+        GRAFT_ADMIN_PASSWORD: "change-me-please",
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("GRAFT_MIGRATE_ON_START", () => {
+  it("is on unless said otherwise, and reads a stringbool", () => {
+    expect(migrateOnStart.parse(undefined)).toBe(true);
+    expect(migrateOnStart.parse("false")).toBe(false);
+    expect(migrateOnStart.parse("0")).toBe(false);
+    expect(migrateOnStart.safeParse("later").success).toBe(false);
+  });
+});
+
+describe("the self-hosted form's model group (ADR 0014)", () => {
+  it("is required in production on the open backings, naming every missing variable", () => {
+    const issue = selfHostModelIssue({ NODE_ENV: "production" });
+    expect(issue).toMatch(/model provider and key.*ADR 0014/);
+    expect(issue).toContain("Missing: GRAFT_MODEL_BACKEND=provider, GRAFT_MODEL_PROVIDER");
+    for (const key of selfHostModelKeys) expect(issue).toContain(key);
+    expect(serverEnvIssues({ NODE_ENV: "production" })).toEqual([
+      expect.stringContaining("ADR 0014"),
+    ]);
+  });
+
+  it("names only what is missing when the group is half there, and the backend when it is not the provider", () => {
+    const { GRAFT_MODEL_API_KEY: _key, ...withoutKey } = PRODUCTION;
+    expect(selfHostModelIssue(withoutKey)).toMatch(/Missing: GRAFT_MODEL_API_KEY$/);
+    expect(selfHostModelIssue({ ...PRODUCTION, GRAFT_MODEL_BACKEND: "scripted" })).toMatch(
+      /Missing: GRAFT_MODEL_BACKEND=provider$/,
+    );
+  });
+
+  it("is satisfied by the group, and asks nothing outside production or on the hosted backings", () => {
+    expect(selfHostModelIssue(PRODUCTION)).toBeNull();
+    expect(selfHostModelIssue({ ...PRODUCTION, GRAFT_BACKINGS: "open" })).toBeNull();
+    expect(selfHostModelIssue({ NODE_ENV: "development" })).toBeNull();
+    expect(selfHostModelIssue({ NODE_ENV: "test" })).toBeNull();
+    expect(selfHostModelIssue({ NODE_ENV: "production", GRAFT_BACKINGS: "cloud" })).toBeNull();
+  });
+
+  // The fields are GRA-31's, and until that lands the object schema strips them before the rule
+  // sees them — so the whole-schema parse can only pass in production once the two are merged.
+  it.todo("finalServerSchema parses a production self-host that carries the model group (GRA-31)");
+});
+
+describe("describeEnvIssues", () => {
+  it("names the variable on every line, says 'is not set' for a missing one, and keeps a cross-field sentence whole", () => {
+    const text = describeEnvIssues([
+      {
+        path: ["GRAFT_AUTH_SECRET"],
+        message: "Invalid input: expected string, received undefined",
+      },
+      { path: ["GRAFT_AUTH_URL"], message: "GRAFT_AUTH_URL must be an absolute http(s) URL" },
+      { message: "The bootstrapped admin is partially configured — set both or neither." },
+    ]);
+    expect(text.split("\n")).toEqual([
+      "GRAFT_AUTH_SECRET is not set",
+      "GRAFT_AUTH_URL must be an absolute http(s) URL",
+      "The bootstrapped admin is partially configured — set both or neither.",
+    ]);
+  });
+
+  it("prefixes a message that does not already name its variable", () => {
+    expect(describeEnvIssues([{ path: [{ key: "PORT" }], message: "Too small" }])).toBe(
+      "PORT: Too small",
+    );
   });
 });

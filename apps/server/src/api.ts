@@ -311,6 +311,14 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ error: "INTERNAL", message: "Something went wrong" }, 500);
   });
 
+  /**
+   * Liveness, for the compose file's health check and a load balancer's (GRA-33, GRA-34): the
+   * process is up and answering. Deliberately nothing about the database — the boot migrated it
+   * before this route could answer, and a probe that queried it would turn a database hiccup into
+   * a restart loop of a server that would have recovered on its own.
+   */
+  api.get("/health", (c) => c.json({ ok: true }));
+
   /** Better Auth's own routes: sign-up, sign-in, sign-out, session. */
   api.on(["POST", "GET"], "/auth/*", (c) => options.auth.handler(c.req.raw));
 

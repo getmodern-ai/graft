@@ -13,6 +13,9 @@ import {
   defaultWorkingSetDeps,
 } from "@graft/core";
 import { createDb } from "@graft/db";
+import { applyMigrations, MIGRATIONS_DIR } from "@graft/db/migrate";
+import { checkMigrationChain, readMigrationChain } from "@graft/db/migration-chain";
+import { countPersons } from "@graft/db/repo/person";
 import { env } from "@graft/env/server";
 import { createMcpDeps, startSweep } from "@graft/mcp";
 import {
@@ -33,6 +36,7 @@ import { serve } from "@hono/node-server";
 import { initLogger } from "evlog";
 
 import { API_MOUNT_PATH, createServer, MCP_MOUNT_PATH, PROXY_MOUNT_PATH } from "./app";
+import { bootstrapAdmin, MigrationChainBrokenError, migrateOnStart } from "./boot";
 import {
   connectionSeeds,
   createDatabaseConnections,
@@ -55,8 +59,12 @@ import {
  *   GRAFT_CORS_ORIGIN=http://localhost:3001
  *   GRAFT_CONSOLE_URL=http://localhost:3001
  *   EOF
- *   pnpm run db:migrate                                      # or db:push while the schema is moving
- *   pnpm --filter @graft/server dev
+ *   pnpm --filter @graft/server dev                          # migrates on start; GRAFT_MIGRATE_ON_START=false with db:push
+ *
+ * The self-hosted image runs this same file (`apps/server/Dockerfile`, GRA-33): `docker compose up`
+ * is the recipe above with every value in the compose file, and `boot.ts` is the two steps the
+ * image adds before it listens — the committed migrations, then the admin from `GRAFT_ADMIN_EMAIL`
+ * and `GRAFT_ADMIN_PASSWORD` when the database holds nobody yet.
  *
  * Connections come from the database; `GRAFT_DEV_SEED=./dev-seed.json` layers a file of seeded
  * connections over it for a proxy smoke test without a console (`connections.ts` has the shape).
@@ -82,9 +90,32 @@ const keys =
 // keyring arrives with the private package (GRA-20) and is selected here.
 const vault = createCredentialVault(createLocalKeyring(env.GRAFT_KEYRING_SECRET));
 
-// One pool for the process; the migrations are applied separately (`pnpm run db:migrate`), so a
-// server never alters the schema it is about to serve.
+// One pool for the process.
 const db = createDb(env.GRAFT_DATABASE_URL);
+
+/**
+ * The committed migrations, applied before anything reads the schema (`boot.ts`; GRA-33). The chain
+ * is checked for holes first and a hole refuses the start with the problems listed; a database that
+ * cannot be reached refuses it with pg's reason and never the URL, which carries the password. Off
+ * with `GRAFT_MIGRATE_ON_START=false` for a schema moved by `db:push`.
+ */
+if (env.GRAFT_MIGRATE_ON_START) {
+  try {
+    await migrateOnStart({
+      readChain: () => readMigrationChain(MIGRATIONS_DIR),
+      checkChain: checkMigrationChain,
+      apply: () => applyMigrations(db),
+      log: console.log,
+    });
+  } catch (error) {
+    const reason =
+      error instanceof MigrationChainBrokenError
+        ? error.message
+        : `the database at GRAFT_DATABASE_URL could not be migrated: ${error instanceof Error ? error.message : String(error)}`;
+    console.error(`graft refused to start: ${reason}`);
+    process.exit(1);
+  }
+}
 
 const auth = createAuth({
   db,
@@ -92,6 +123,21 @@ const auth = createAuth({
   baseURL: env.GRAFT_AUTH_URL,
   trustedOrigins: env.GRAFT_CORS_ORIGIN,
 });
+
+// The one admin a fresh self-hosted database opens with (`boot.ts`): through Better Auth's own
+// sign-up, only while the database holds nobody, and a no-op on a laptop that never set the pair.
+await bootstrapAdmin(
+  env.GRAFT_ADMIN_EMAIL && env.GRAFT_ADMIN_PASSWORD
+    ? { email: env.GRAFT_ADMIN_EMAIL, password: env.GRAFT_ADMIN_PASSWORD }
+    : null,
+  {
+    countPersons: () => countPersons(db),
+    signUp: async (input) => {
+      await auth.api.signUpEmail({ body: input });
+    },
+    log: console.log,
+  },
+);
 
 let connections = createDatabaseConnections(db);
 let seededCount = 0;
@@ -109,11 +155,13 @@ const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
 
 /**
  * The sandbox backing (ADR 0002) and the toolbox store, which have to see one tree
- * (`packages/toolbox/README.md`): with Docker the store's root is bound into every toolbox volume;
- * with the fake the store sits inside the fake's own temporary directory, so a laptop's toolbox lives
- * as long as the process. Docker without its image and network is no backing at all — the server
- * boots, every run refuses saying so, and the install step answers the publish the same way. The
- * fake is refused in production by `@graft/env`. The Docker backing reads `DOCKER_HOST` itself.
+ * (`packages/toolbox/README.md`): with Docker on the host the store's root is bound into every
+ * toolbox volume; with Docker beside a containerised server (the compose file) the store's root is a
+ * named volume, `GRAFT_TOOLBOX_VOLUME`, and each sandbox mounts its subpath of it; with the fake the
+ * store sits inside the fake's own temporary directory, so a laptop's toolbox lives as long as the
+ * process. Docker without its image and network is no backing at all — the server boots, every run
+ * refuses saying so, and the install step answers the publish the same way. The fake is refused in
+ * production by `@graft/env`. The Docker backing reads `DOCKER_HOST` itself.
  */
 let sandbox: SandboxBackend | null;
 let toolboxRoot: string;
@@ -128,7 +176,9 @@ if (env.GRAFT_SANDBOX_BACKEND === "fake") {
       ? createDockerSandboxBackend({
           image: env.GRAFT_SANDBOX_IMAGE,
           network: env.GRAFT_SANDBOX_NETWORK,
-          toolboxHostRoot: toolboxRoot,
+          ...(env.GRAFT_TOOLBOX_VOLUME
+            ? { toolboxVolume: env.GRAFT_TOOLBOX_VOLUME }
+            : { toolboxHostRoot: toolboxRoot }),
         })
       : null;
 }

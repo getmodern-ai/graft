@@ -16,6 +16,7 @@ import {
   findPendingAction,
   listPendingActionsByKind,
 } from "./pending-action";
+import { countPersons } from "./person";
 import { findToolVersion, listToolVersions, setCurrentToolVersion } from "./tool";
 import { listUsage, listUsageForVendor } from "./usage";
 import { deleteWorkingSetEntry, listWorkingSet, touchWorkingSetUsed } from "./working-set";
@@ -178,6 +179,15 @@ describe("person-scoped statements take the person", () => {
     const s = only();
     expect(s.sql).toMatch(/^select .* from "agent" where "agent"\."revoked_at" is null order by/);
     expect(s.sql).not.toContain('person_id" =');
+    expect(s.params).toEqual([]);
+  });
+
+  /** The boot's count of persons is the third (GRA-33): whether anybody exists yet, before the admin is opened. */
+  it("the boot's count of persons is unscoped, by name, over Better Auth's table alone", async () => {
+    await countPersons(db);
+    const s = only();
+    expect(s.sql).toMatch(/^select count\(\*\) from "user"$/);
+    expect(s.sql).not.toContain("where");
     expect(s.params).toEqual([]);
   });
 
