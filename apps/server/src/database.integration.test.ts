@@ -173,6 +173,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "build_approval",
       "connection",
       "pending_action",
+      "person_model_key",
       "tool_version",
       "usage_ledger",
       "working_set",
@@ -459,8 +460,8 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
   });
 
   it("round-trips a person's model key: ciphertext in the row, opened under that person's model-key scope alone, never in the public shape", async () => {
-    const personId = await signUp("ada@example.com");
-    const other = await signUp("bob@example.com");
+    const personId = await signUp("model-key-owner@example.com");
+    const other = await signUp("model-key-other@example.com");
     const ctx: ServiceContext = { db };
     const deps = createModelKeyDeps({ encrypt: vault.encrypt });
 
