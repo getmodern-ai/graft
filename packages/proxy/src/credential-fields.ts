@@ -21,6 +21,8 @@ export const SCHEME_CREDENTIAL_FIELDS: Record<AuthScheme, readonly string[]> = {
   bearer: ["token"],
   basic: ["username", "password"],
   oauth2_client_credentials: ["clientId", "clientSecret"],
+  /** The client id is not a secret and goes in `schemeConfig` (`scheme-parameters.ts`). */
+  oauth_authorization_code: ["clientSecret"],
   unleashed_hmac: ["apiId", "apiKey"],
   snowflake_keypair_jwt: ["privateKey"],
 };
@@ -32,4 +34,17 @@ export const SCHEME_CREDENTIAL_FIELDS: Record<AuthScheme, readonly string[]> = {
  */
 export const SCHEME_OPTIONAL_CREDENTIAL_FIELDS: Partial<Record<AuthScheme, readonly string[]>> = {
   snowflake_keypair_jwt: ["privateKeyPassphrase"],
+};
+
+/**
+ * Fields the **vendor issues and Graft writes** into the stored credential, beside what the person
+ * typed: the tokens an authorization-code consent yields and when the access token dies (ADR 0005).
+ * The person never types one — the form does not render them and the entry rule refuses them — and
+ * they are absent until the consent completes, which is the "awaiting consent" state the console
+ * shows and the proxy refuses as `consent_required`. The callback route and the refresh write them;
+ * the plugin reads them. `expiresAt` is an ISO instant, not a secret, kept here so the token and its
+ * lifetime are one write.
+ */
+export const SCHEME_ISSUED_CREDENTIAL_FIELDS: Partial<Record<AuthScheme, readonly string[]>> = {
+  oauth_authorization_code: ["accessToken", "refreshToken", "expiresAt"],
 };

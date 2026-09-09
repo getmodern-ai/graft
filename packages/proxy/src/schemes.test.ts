@@ -3,8 +3,13 @@ import { createHmac, createVerify, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { createDerivedCredentialCache } from "./cache";
-import { SCHEME_CREDENTIAL_FIELDS, SCHEME_OPTIONAL_CREDENTIAL_FIELDS } from "./credential-fields";
 import {
+  SCHEME_CREDENTIAL_FIELDS,
+  SCHEME_ISSUED_CREDENTIAL_FIELDS,
+  SCHEME_OPTIONAL_CREDENTIAL_FIELDS,
+} from "./credential-fields";
+import {
+  CredentialRefreshError,
   DerivedCredentialError,
   InvalidCredentialFieldError,
   InvalidSchemeParameterError,
@@ -17,6 +22,7 @@ import {
   SNOWFLAKE_TOKEN_TYPE_HEADER,
   UNLEASHED_CLIENT_TYPE,
 } from "./schemes";
+import { createSingleFlight } from "./single-flight";
 import {
   SNOWFLAKE_JWT_LIFETIME_SECONDS,
   SNOWFLAKE_JWT_REFRESH_SKEW_SECONDS,
@@ -108,11 +114,16 @@ describe("scheme plugins", () => {
       bearer: ["token"],
       basic: ["username", "password"],
       oauth2_client_credentials: ["clientId", "clientSecret"],
+      oauth_authorization_code: ["clientSecret"],
       unleashed_hmac: ["apiId", "apiKey"],
       snowflake_keypair_jwt: ["privateKey"],
     });
     expect(SCHEME_OPTIONAL_CREDENTIAL_FIELDS).toEqual({
       snowflake_keypair_jwt: ["privateKeyPassphrase"],
+    });
+    // What the vendor issues and Graft writes — never typed, never rendered (ADR 0005).
+    expect(SCHEME_ISSUED_CREDENTIAL_FIELDS).toEqual({
+      oauth_authorization_code: ["accessToken", "refreshToken", "expiresAt"],
     });
   });
 
@@ -128,13 +139,21 @@ describe("scheme plugins", () => {
       api_key_header: { headerName: "X-Api-Key" },
       api_key_query: { queryParam: "key" },
       oauth2_client_credentials: { tokenUrl: "https://auth.vendor.example/oauth/token" },
+      oauth_authorization_code: {
+        clientId: "client-id",
+        authorizeUrl: "https://auth.vendor.example/oauth/authorize",
+        tokenUrl: "https://auth.vendor.example/oauth/token",
+      },
       snowflake_keypair_jwt: { account: "acct", user: "svc" },
     };
     // Past its field checks, a deriving scheme runs into the next thing: the network stub for
-    // OAuth2, an unparseable key for Snowflake. Either proves the fields were read first.
+    // OAuth2, an unparseable key for Snowflake, and for the authorization-code scheme the fact that
+    // a record holding only what the person typed has no token yet. Each proves the fields were
+    // read first.
     const PAST_THE_FIELDS: Partial<Record<keyof typeof SCHEMES, new (...args: never[]) => Error>> =
       {
         oauth2_client_credentials: DerivedCredentialError,
+        oauth_authorization_code: CredentialRefreshError,
         snowflake_keypair_jwt: InvalidCredentialFieldError,
       };
     const credentialOf = (fields: readonly string[]) =>
@@ -147,6 +166,8 @@ describe("scheme plugins", () => {
       signal: new AbortController().signal,
       cache: createDerivedCredentialCache(() => 0),
       now: () => 0,
+      once: (_key, run) => run(),
+      storeCredential: async () => undefined,
     };
 
     for (const scheme of AUTH_SCHEMES) {
@@ -179,12 +200,16 @@ describe("scheme plugins", () => {
     }
   });
 
-  it("the two token-minting schemes are the ones that derive their wire credential", () => {
+  it("the three token-minting schemes are the ones that derive their wire credential", () => {
     const deriving = Object.entries(SCHEMES)
       .filter(([, plugin]) => plugin.derive !== undefined)
       .map(([scheme]) => scheme)
       .sort();
-    expect(deriving).toEqual(["oauth2_client_credentials", "snowflake_keypair_jwt"]);
+    expect(deriving).toEqual([
+      "oauth2_client_credentials",
+      "oauth_authorization_code",
+      "snowflake_keypair_jwt",
+    ]);
   });
 
   /**
@@ -198,6 +223,11 @@ describe("scheme plugins", () => {
       api_key_header: { headerName: "X-Vendor-Auth", prefix: "Token" },
       api_key_query: { queryParam: "key" },
       oauth2_client_credentials: { tokenUrl: "https://auth.vendor.example/oauth/token" },
+      oauth_authorization_code: {
+        clientId: "client-id",
+        authorizeUrl: "https://auth.vendor.example/oauth/authorize",
+        tokenUrl: "https://auth.vendor.example/oauth/token",
+      },
       snowflake_keypair_jwt: { account: "acct", user: "svc" },
     };
     const WIRE: Record<keyof typeof SCHEMES, Record<string, string>> = {
@@ -206,6 +236,7 @@ describe("scheme plugins", () => {
       bearer: { token: "t" },
       basic: { username: "u", password: "p" },
       oauth2_client_credentials: { accessToken: "tok" },
+      oauth_authorization_code: { accessToken: "tok" },
       unleashed_hmac: { apiId: "i", apiKey: "k" },
       snowflake_keypair_jwt: { token: "jwt", signature: "sig" },
     };
@@ -324,6 +355,8 @@ describe("oauth2_client_credentials", () => {
       signal: new AbortController().signal,
       cache: createDerivedCredentialCache(clock),
       now: clock,
+      once: (_key, run) => run(),
+      storeCredential: async () => undefined,
     };
     return { runtime: rt, requests };
   }
@@ -536,6 +569,8 @@ describe("snowflake_keypair_jwt", () => {
       signal: new AbortController().signal,
       cache: createDerivedCredentialCache(clock),
       now: clock,
+      once: (_key, run) => run(),
+      storeCredential: async () => undefined,
     };
     return rt;
   }
@@ -692,5 +727,251 @@ describe("snowflake_keypair_jwt", () => {
     expect(bad).toBeInstanceOf(InvalidCredentialFieldError);
     expect((bad as InvalidCredentialFieldError).field).toBe("privateKey");
     expect((bad as Error).message).not.toContain("not-a-pem");
+  });
+});
+
+/**
+ * The authorization-code plugin (ADR 0005): a stored token sent as it is, refreshed with the refresh
+ * token when spent, the rotated record handed back through `storeCredential`, one refresh for any
+ * number of concurrent callers, and the two things it cannot make good named apart —
+ * `consent_required` with no token at all, `refresh_failed` when the endpoint refuses.
+ */
+describe("oauth_authorization_code", () => {
+  const TOKEN_URL = "https://oauth2.vendor.example/token";
+  const CONFIG = {
+    clientId: "client-id-value",
+    authorizeUrl: "https://accounts.vendor.example/o/oauth2/auth",
+    tokenUrl: TOKEN_URL,
+    scopes: "mail.readonly",
+  };
+  const T0 = Date.parse("2026-09-09T10:00:00Z");
+  const EXPIRES_AT = new Date(T0 + 3600_000).toISOString();
+  const STORED = {
+    clientSecret: "client-secret-value",
+    accessToken: "access-1",
+    refreshToken: "refresh-1",
+    expiresAt: EXPIRES_AT,
+  };
+
+  type Responder = (request: UpstreamRequest) => UpstreamResponse | Promise<UpstreamResponse>;
+
+  const tokenResponse = (body: Record<string, unknown>, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+
+  function runtime(responder: Responder, clock: () => number = () => T0) {
+    const requests: UpstreamRequest[] = [];
+    const stored: Record<string, string>[] = [];
+    const rt: SchemeRuntime = {
+      connectionId: "conn_a",
+      upstreamFetch: async (request) => {
+        requests.push(request);
+        return responder(request);
+      },
+      signal: new AbortController().signal,
+      cache: createDerivedCredentialCache(clock),
+      now: clock,
+      once: createSingleFlight(),
+      storeCredential: async (fields) => {
+        stored.push({ ...fields });
+      },
+    };
+    return { runtime: rt, requests, stored };
+  }
+
+  const derive = (
+    rt: SchemeRuntime,
+    options: { refresh: boolean } = { refresh: false },
+    credential: Record<string, string> = STORED,
+    config: Record<string, string> = CONFIG,
+  ) => {
+    const plugin = SCHEMES.oauth_authorization_code;
+    if (!plugin.derive) throw new Error("oauth_authorization_code has no derive step");
+    return plugin.derive(credential, config, rt, options);
+  };
+
+  const decode = (bytes: Uint8Array | null) => (bytes ? new TextDecoder().decode(bytes) : null);
+  const failure = (promise: Promise<unknown>) =>
+    promise.then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+  it("sends the stored access token as it is while it is inside its lifetime, and asks the endpoint for nothing", async () => {
+    const h = runtime(() => {
+      throw new Error("the endpoint must not be asked");
+    });
+    expect(await derive(h.runtime)).toEqual({ accessToken: "access-1" });
+    expect(h.requests).toHaveLength(0);
+    expect(h.stored).toHaveLength(0);
+  });
+
+  it("refreshes before sending once the token is within the skew of its expiry: a refresh_token grant with the client in the body, the rotated record stored", async () => {
+    const clock = () => T0 + 3600_000 - OAUTH2_TOKEN_SKEW_MS + 1;
+    const h = runtime(
+      () =>
+        tokenResponse({ access_token: "access-2", expires_in: 3600, refresh_token: "refresh-2" }),
+      clock,
+    );
+
+    expect(await derive(h.runtime)).toEqual({ accessToken: "access-2" });
+
+    const request = h.requests[0];
+    expect(request?.url).toBe(TOKEN_URL);
+    expect(request?.method).toBe("POST");
+    expect(request?.headers.get("authorization")).toBeNull();
+    expect(decode(request?.body ?? null)).toBe(
+      "grant_type=refresh_token&refresh_token=refresh-1&client_id=client-id-value&client_secret=client-secret-value",
+    );
+    expect(h.stored).toEqual([
+      {
+        clientSecret: "client-secret-value",
+        accessToken: "access-2",
+        refreshToken: "refresh-2",
+        expiresAt: new Date(clock() + 3600_000).toISOString(),
+      },
+    ]);
+  });
+
+  it("keeps a refresh token the endpoint did not rotate, and drops the old expiry when it says nothing about lifetime", async () => {
+    const h = runtime(
+      () => tokenResponse({ access_token: "access-2", token_type: "bearer" }),
+      () => T0 + 7200_000,
+    );
+    await derive(h.runtime);
+    expect(h.stored).toEqual([
+      { clientSecret: "client-secret-value", accessToken: "access-2", refreshToken: "refresh-1" },
+    ]);
+  });
+
+  it("puts the client in a Basic header when clientAuth is basic", async () => {
+    const h = runtime(() => tokenResponse({ access_token: "access-2", expires_in: 60 }));
+    await derive(h.runtime, { refresh: true }, STORED, { ...CONFIG, clientAuth: "basic" });
+    const request = h.requests[0];
+    expect(request?.headers.get("authorization")).toBe(
+      `Basic ${Buffer.from("client-id-value:client-secret-value").toString("base64")}`,
+    );
+    expect(decode(request?.body ?? null)).toBe("grant_type=refresh_token&refresh_token=refresh-1");
+  });
+
+  it("refresh: true refreshes inside the lifetime too — the vendor just refused what was sent", async () => {
+    const h = runtime(() => tokenResponse({ access_token: "access-2", expires_in: 3600 }));
+    expect(await derive(h.runtime, { refresh: true })).toEqual({ accessToken: "access-2" });
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it("two concurrent derives against the same spent record make one token request and store once", async () => {
+    const h = runtime(
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        return tokenResponse({ access_token: "access-2", expires_in: 3600 });
+      },
+      () => T0 + 7200_000,
+    );
+
+    const [a, b] = await Promise.all([derive(h.runtime), derive(h.runtime)]);
+
+    expect(a).toEqual({ accessToken: "access-2" });
+    expect(b).toEqual({ accessToken: "access-2" });
+    expect(h.requests).toHaveLength(1);
+    expect(h.stored).toHaveLength(1);
+  });
+
+  it("answers from the cache a caller still holding the record the refresh was made from, and lets one holding the new record send it", async () => {
+    const clock = () => T0 + 7200_000;
+    const h = runtime(() => tokenResponse({ access_token: "access-2", expires_in: 3600 }), clock);
+    await derive(h.runtime);
+    expect(h.requests).toHaveLength(1);
+
+    // The row has not caught up yet: same old record, no second exchange.
+    expect(await derive(h.runtime)).toEqual({ accessToken: "access-2" });
+    expect(h.requests).toHaveLength(1);
+
+    // The row has: the new record is sent as it is.
+    const rotated = h.stored[0] as Record<string, string>;
+    expect(await derive(h.runtime, { refresh: false }, rotated)).toEqual({
+      accessToken: "access-2",
+    });
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it("a record holding only the client secret is consent_required, before the endpoint is asked", async () => {
+    const h = runtime(() => {
+      throw new Error("the endpoint must not be asked");
+    });
+    const error = await failure(derive(h.runtime, { refresh: false }, { clientSecret: "s" }));
+    expect(error).toBeInstanceOf(CredentialRefreshError);
+    expect((error as CredentialRefreshError).reason).toBe("consent_required");
+    expect(h.requests).toHaveLength(0);
+  });
+
+  it("a spent token with no refresh token is refresh_failed — sent stale, the vendor decides", async () => {
+    const h = runtime(
+      () => {
+        throw new Error("the endpoint must not be asked");
+      },
+      () => T0 + 7200_000,
+    );
+    const error = await failure(
+      derive(
+        h.runtime,
+        { refresh: false },
+        { clientSecret: "s", accessToken: "a", expiresAt: EXPIRES_AT },
+      ),
+    );
+    expect(error).toBeInstanceOf(CredentialRefreshError);
+    expect((error as CredentialRefreshError).reason).toBe("refresh_failed");
+    expect((error as CredentialRefreshError).upstreamStatus).toBeNull();
+  });
+
+  it("an endpoint that refuses the refresh is refresh_failed, carrying its status and never its body", async () => {
+    const h = runtime(() =>
+      tokenResponse({ error: "invalid_grant", client_id: "client-id-value" }, 400),
+    );
+    const error = await failure(derive(h.runtime, { refresh: true }));
+    expect(error).toBeInstanceOf(CredentialRefreshError);
+    const refresh = error as CredentialRefreshError;
+    expect(refresh.reason).toBe("refresh_failed");
+    expect(refresh.upstreamStatus).toBe(400);
+    expect(refresh.message).not.toContain("invalid_grant");
+    expect(refresh.message).not.toContain("client-id-value");
+    expect(h.stored).toHaveLength(0);
+  });
+
+  it("an endpoint that cannot be reached is refresh_failed too, with the fetch failure as its cause", async () => {
+    const h = runtime(() => {
+      throw new Error("ECONNREFUSED");
+    });
+    const error = await failure(derive(h.runtime, { refresh: true }));
+    expect(error).toBeInstanceOf(CredentialRefreshError);
+    expect((error as CredentialRefreshError).reason).toBe("refresh_failed");
+    expect((error as CredentialRefreshError).cause).toBeInstanceOf(DerivedCredentialError);
+  });
+
+  it("a token URL that is not https or not public is the connection's fault, not a refresh failure", async () => {
+    const h = runtime(() => tokenResponse({ access_token: "x" }));
+    const error = await failure(
+      derive(h.runtime, { refresh: true }, STORED, {
+        ...CONFIG,
+        tokenUrl: "http://oauth2.vendor.example/token",
+      }),
+    );
+    expect(error).toBeInstanceOf(DerivedCredentialError);
+    expect((error as DerivedCredentialError).reason).toBe("host_not_public");
+    expect(h.requests).toHaveLength(0);
+  });
+
+  it("names the missing client secret, then the missing client id", async () => {
+    const h = runtime(() => tokenResponse({ access_token: "x" }));
+    const noSecret = await failure(derive(h.runtime, { refresh: true }, { accessToken: "a" }));
+    expect(noSecret).toBeInstanceOf(MissingCredentialFieldError);
+    expect((noSecret as MissingCredentialFieldError).field).toBe("clientSecret");
+    const noClient = await failure(
+      derive(h.runtime, { refresh: true }, STORED, { tokenUrl: TOKEN_URL }),
+    );
+    expect(noClient).toBeInstanceOf(MissingSchemeParameterError);
+    expect((noClient as MissingSchemeParameterError).parameter).toBe("clientId");
   });
 });

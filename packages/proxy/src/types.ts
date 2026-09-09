@@ -24,6 +24,7 @@ export const AUTH_SCHEMES = [
   "bearer",
   "basic",
   "oauth2_client_credentials",
+  "oauth_authorization_code",
   "unleashed_hmac",
   "snowflake_keypair_jwt",
 ] as const;
@@ -79,10 +80,20 @@ export type DerivedCredentialCache = {
 };
 
 /**
+ * Run one asynchronous step per key at a time: a caller that arrives while a step for the same key
+ * is in flight awaits that step's result rather than starting its own. What makes two concurrent
+ * calls against an expired authorization-code token refresh it once (ADR 0005; `single-flight.ts`).
+ */
+export type SingleFlight = <T>(key: string, run: () => Promise<T>) => Promise<T>;
+
+/**
  * What a scheme plugin's `derive` step is handed: the connection it is deriving for (the cache
  * key), the proxy's own way out to the network (so a token endpoint answers to the same
  * public-address rule as the vendor), the call's one deadline, the cache, and the clock the cache
- * reads — one clock, so a signed token's expiry and its cache entry's cannot disagree.
+ * reads — one clock, so a signed token's expiry and its cache entry's cannot disagree. `once` is
+ * the single-flight for a refresh, and `storeCredential` is how a scheme whose stored credential
+ * rotates itself — an authorization-code refresh token buying a new access token — hands the
+ * rotated fields back to the host to keep, so the next process sends the token this one bought.
  */
 export type SchemeRuntime = {
   connectionId: string;
@@ -90,6 +101,9 @@ export type SchemeRuntime = {
   signal: AbortSignal;
   cache: DerivedCredentialCache;
   now: () => number;
+  once: SingleFlight;
+  /** Persist the credential the scheme just rotated — the whole record, secrets included. */
+  storeCredential: (fields: CredentialFields) => Promise<void>;
 };
 
 /**
@@ -200,6 +214,12 @@ export type ProxyOutcome =
   /** The connection is the person's, but not among the ids the token names — outside the scope. */
   | "connection_not_in_token"
   | "connection_not_ready"
+  /**
+   * An authorization-code connection whose person has not completed the consent at the vendor —
+   * a client secret is stored and no token is (ADR 0005). Distinct from `connection_not_ready` so
+   * the agent's next sentence is "complete the consent", not "enter a credential".
+   */
+  | "consent_required"
   | "credential_unreadable"
   | "credential_incomplete"
   | "token_exchange_failed"
@@ -252,6 +272,16 @@ export type ProxyEvent = {
   dryRun: boolean;
   dryRunOutcome: DryRunOutcome | null;
   /**
+   * What an authorization-code connection's stored token did on this call (ADR 0005): `refreshed`
+   * when this call bought a fresh access token with the refresh token and stored it,
+   * `refresh_failed` when it tried and the vendor's token endpoint refused — after which the
+   * vendor's own 401 went back to the caller and the connection was marked for re-consent. Null
+   * for every other scheme, and for a call that sent the stored token as it was. Under
+   * single-flight, two concurrent calls that shared one refresh record it once, on the call that
+   * made it.
+   */
+  oauth: "refreshed" | "refresh_failed" | null;
+  /**
    * The error behind an `upstream_unreachable`, `credential_unreadable`, `token_exchange_failed`
    * or `proxy_error` outcome, flattened to one line; null otherwise. `name: message` down the
    * cause chain for the proxy's own errors and the network's; for what a host-injected dependency
@@ -280,6 +310,22 @@ export type ProxyDeps = {
   };
   /** The vault's decrypt half. Throws when the ciphertext is not this row's or is damaged. */
   decryptCredential: (ciphertext: Uint8Array, scope: CredentialScope) => Promise<CredentialFields>;
+  /**
+   * The vault's encrypt half and the row write, for a credential a scheme rotated on the way to
+   * the vendor — an authorization-code refresh (ADR 0005). The fields are the whole record to store,
+   * secrets included; the host encrypts them under the same scope it decrypts with. Optional: a host
+   * without it still gets the refreshed token for this call, and forgets it with the process.
+   */
+  storeCredential?: (scope: CredentialScope, fields: CredentialFields) => Promise<void>;
+  /**
+   * A refresh the vendor's token endpoint refused, so the person has to consent again (ADR 0005):
+   * the host marks the connection so the console offers Reconnect. `reason` is the proxy's own
+   * sentence and `upstreamStatus` the endpoint's status; neither ever carries the endpoint's body.
+   */
+  credentialRefreshFailed?: (
+    scope: CredentialScope,
+    detail: { reason: string; upstreamStatus: number | null },
+  ) => Promise<void>;
   /** Defaults to `createUpstreamFetch()` — undici with a public-address-only resolver. */
   upstreamFetch?: UpstreamFetch;
   /** The wide-event sink. Called exactly once per proxied call, refused or forwarded. */

@@ -133,6 +133,8 @@ describe("wireCredential", () => {
       signal: new AbortController().signal,
       cache: createDerivedCredentialCache(),
       now: Date.now,
+      once: (_key, run) => run(),
+      storeCredential: async () => undefined,
     };
   }
 
