@@ -53,7 +53,8 @@ docker compose run --rm --no-deps graft node dist/keys.mjs >> .env   # five secr
 Open `.env` and fill the model group — `GRAFT_MODEL_BACKEND=provider`, `GRAFT_MODEL_PROVIDER`,
 `GRAFT_MODEL_API_KEY`, `GRAFT_MODEL_AUTHORING`, `GRAFT_MODEL_TRIAGE` — and change
 `GRAFT_ADMIN_EMAIL` and `GRAFT_ADMIN_PASSWORD` from the defaults. Graft refuses to start without the
-secrets or the model group, and says which are missing.
+secrets, and says which are missing; the same refusal for a missing model key (ADR 0014) arrives with
+the provider adapter (GRA-31).
 
 **2. Bring it up.**
 

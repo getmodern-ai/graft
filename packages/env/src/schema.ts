@@ -8,8 +8,9 @@ import { z } from "zod";
  * makes sense complete is refused when half-set, because a partial set is always a typo or a
  * half-finished deploy and would otherwise present as a feature that silently never works.
  *
- * Every Graft variable is `GRAFT_*`. Later tickets add to this file: the model adapter (GRA-29,
- * GRA-31); the self-hosted form's boot (GRA-33) is here already.
+ * Every Graft variable is `GRAFT_*`. Later tickets add to this file: the model adapter (GRA-29)
+ * and, with it, ADR 0014's rule that a production self-host carries a provider and key (GRA-31); the
+ * self-hosted form's boot (GRA-33) is here already.
  */
 
 /**
@@ -397,39 +398,6 @@ export const adminKeys = ["GRAFT_ADMIN_EMAIL", "GRAFT_ADMIN_PASSWORD"] as const;
 export const migrateOnStart = z.stringbool().default(true);
 
 /**
- * The model group the self-hosted form cannot run without (ADR 0014: "the self-hosted form always
- * requires a bring-your-own key and a provider setting, and refuses to start without one"). The
- * fields themselves are GRA-31's — `GRAFT_MODEL_BACKEND=provider`, the provider, its key, and the
- * two model names — and are declared there; this file holds only the rule that a production
- * deployment on the open backings must have them, so the two tickets do not define the group twice.
- * `GRAFT_BACKINGS` is GRA-20's selector: unset reads as `open`, and the hosted form (`cloud`)
- * brings its own model on Graft's account and is exempt.
- */
-export const selfHostModelKeys = [
-  "GRAFT_MODEL_PROVIDER",
-  "GRAFT_MODEL_API_KEY",
-  "GRAFT_MODEL_AUTHORING",
-  "GRAFT_MODEL_TRIAGE",
-] as const;
-
-export function selfHostModelIssue(value: Record<string, unknown>): string | null {
-  if (value.NODE_ENV !== "production") return null;
-  if (value.GRAFT_BACKINGS !== undefined && value.GRAFT_BACKINGS !== "open") return null;
-
-  const missing: string[] = [];
-  if (value.GRAFT_MODEL_BACKEND !== "provider") missing.push("GRAFT_MODEL_BACKEND=provider");
-  for (const key of selfHostModelKeys) {
-    if (value[key] === undefined) missing.push(key);
-  }
-  if (missing.length === 0) return null;
-
-  return (
-    "The self-hosted form needs a model provider and key to author tools (ADR 0014) — set " +
-    `GRAFT_MODEL_BACKEND=provider with ${selfHostModelKeys.join(", ")}. Missing: ${missing.join(", ")}`
-  );
-}
-
-/**
  * A group of settings that only makes sense complete. Factored so a second hand-written copy of
  * this comparison is not where two groups drift — one of them getting the `present.length === 0`
  * case wrong and reporting every unconfigured deploy as broken.
@@ -475,9 +443,6 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
     adminKeys,
   );
   if (partialAdmin) issues.push(partialAdmin);
-
-  const model = selfHostModelIssue(value);
-  if (model) issues.push(model);
 
   /**
    * The keyring secret is the open form's — `createLocalKeyring` derives its key from it — so it is

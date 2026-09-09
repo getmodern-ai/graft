@@ -25,8 +25,6 @@ import {
   pendingActionTtlHours,
   port,
   sandboxBackend,
-  selfHostModelIssue,
-  selfHostModelKeys,
   serverEnvIssues,
   serverSchema,
   sweepIntervalSeconds,
@@ -54,20 +52,6 @@ const PUBLIC_PEM = [
   "MCowBQYDK2VwAyEAj2uCF9JXBSzQ5uPuwHvUGeFxErE7W9fqWkzfF7ITOuI=",
   "-----END PUBLIC KEY-----",
 ].join("\n");
-
-/**
- * Production with the model group the self-hosted form requires (ADR 0014; the fields are GRA-31's,
- * the rule `selfHostModelIssue`), so a rule about something else in production can be asserted
- * without this one in the way.
- */
-const PRODUCTION = {
-  NODE_ENV: "production",
-  GRAFT_MODEL_BACKEND: "provider",
-  GRAFT_MODEL_PROVIDER: "openai",
-  GRAFT_MODEL_API_KEY: "sk-test",
-  GRAFT_MODEL_AUTHORING: "gpt-5",
-  GRAFT_MODEL_TRIAGE: "gpt-5-mini",
-};
 
 describe("the capability token key pair", () => {
   it("accepts a PEM with real line breaks and one with \\n-escaped ones, canonically", () => {
@@ -194,13 +178,13 @@ describe("GRAFT_CORS_ORIGIN", () => {
 
 describe("GRAFT_DEV_SEED", () => {
   it("is refused under NODE_ENV=production and accepted otherwise", () => {
-    expect(serverEnvIssues({ ...SECRET, ...PRODUCTION, GRAFT_DEV_SEED: "./seed.json" })).toEqual([
-      expect.stringMatching(/GRAFT_DEV_SEED.*production/),
-    ]);
+    expect(
+      serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_DEV_SEED: "./seed.json" }),
+    ).toEqual([expect.stringMatching(/GRAFT_DEV_SEED.*production/)]);
     expect(
       serverEnvIssues({ ...SECRET, NODE_ENV: "development", GRAFT_DEV_SEED: "./seed.json" }),
     ).toEqual([]);
-    expect(serverEnvIssues({ ...SECRET, ...PRODUCTION })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, NODE_ENV: "production" })).toEqual([]);
   });
 });
 
@@ -451,15 +435,15 @@ describe("the sandbox backing", () => {
   });
 
   it("refuses the fake backing in production and nowhere else", () => {
-    expect(serverEnvIssues({ ...SECRET, ...PRODUCTION, GRAFT_SANDBOX_BACKEND: "fake" })).toEqual([
-      expect.stringMatching(/GRAFT_SANDBOX_BACKEND=fake.*NODE_ENV=production/),
-    ]);
+    expect(
+      serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "fake" }),
+    ).toEqual([expect.stringMatching(/GRAFT_SANDBOX_BACKEND=fake.*NODE_ENV=production/)]);
     expect(
       serverEnvIssues({ ...SECRET, NODE_ENV: "development", GRAFT_SANDBOX_BACKEND: "fake" }),
     ).toEqual([]);
-    expect(serverEnvIssues({ ...SECRET, ...PRODUCTION, GRAFT_SANDBOX_BACKEND: "docker" })).toEqual(
-      [],
-    );
+    expect(
+      serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "docker" }),
+    ).toEqual([]);
   });
 });
 
@@ -511,38 +495,6 @@ describe("GRAFT_MIGRATE_ON_START", () => {
     expect(migrateOnStart.parse("0")).toBe(false);
     expect(migrateOnStart.safeParse("later").success).toBe(false);
   });
-});
-
-describe("the self-hosted form's model group (ADR 0014)", () => {
-  it("is required in production on the open backings, naming every missing variable", () => {
-    const issue = selfHostModelIssue({ NODE_ENV: "production" });
-    expect(issue).toMatch(/model provider and key.*ADR 0014/);
-    expect(issue).toContain("Missing: GRAFT_MODEL_BACKEND=provider, GRAFT_MODEL_PROVIDER");
-    for (const key of selfHostModelKeys) expect(issue).toContain(key);
-    expect(serverEnvIssues({ ...SECRET, NODE_ENV: "production" })).toEqual([
-      expect.stringContaining("ADR 0014"),
-    ]);
-  });
-
-  it("names only what is missing when the group is half there, and the backend when it is not the provider", () => {
-    const { GRAFT_MODEL_API_KEY: _key, ...withoutKey } = PRODUCTION;
-    expect(selfHostModelIssue(withoutKey)).toMatch(/Missing: GRAFT_MODEL_API_KEY$/);
-    expect(selfHostModelIssue({ ...PRODUCTION, GRAFT_MODEL_BACKEND: "scripted" })).toMatch(
-      /Missing: GRAFT_MODEL_BACKEND=provider$/,
-    );
-  });
-
-  it("is satisfied by the group, and asks nothing outside production or on the hosted backings", () => {
-    expect(selfHostModelIssue(PRODUCTION)).toBeNull();
-    expect(selfHostModelIssue({ ...PRODUCTION, GRAFT_BACKINGS: "open" })).toBeNull();
-    expect(selfHostModelIssue({ NODE_ENV: "development" })).toBeNull();
-    expect(selfHostModelIssue({ NODE_ENV: "test" })).toBeNull();
-    expect(selfHostModelIssue({ NODE_ENV: "production", GRAFT_BACKINGS: "cloud" })).toBeNull();
-  });
-
-  // The fields are GRA-31's, and until that lands the object schema strips them before the rule
-  // sees them — so the whole-schema parse can only pass in production once the two are merged.
-  it.todo("finalServerSchema parses a production self-host that carries the model group (GRA-31)");
 });
 
 describe("describeEnvIssues", () => {

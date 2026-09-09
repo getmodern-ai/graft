@@ -126,9 +126,9 @@ are required, and so is `GRAFT_KEYRING_SECRET` (32+) under the default `GRAFT_BA
 all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the database for a proxy
 smoke test and is refused in production. A refusal prints one line per problem with the variable
 named and exits 1 (`packages/env/src/server.ts`). Under `NODE_ENV=production` on the open backings the
-model group ADR 0014 requires — `GRAFT_MODEL_BACKEND=provider`, `GRAFT_MODEL_PROVIDER`,
-`GRAFT_MODEL_API_KEY`, `GRAFT_MODEL_AUTHORING`, `GRAFT_MODEL_TRIAGE` — is required too; the rule is
-`selfHostModelIssue` in `schema.ts`, the fields are GRA-31's. `GRAFT_APPROVAL_WAIT_SECONDS` (default
+model group ADR 0014 requires — `GRAFT_MODEL_BACKEND=provider` with `GRAFT_MODEL_PROVIDER` and
+`GRAFT_MODEL_API_KEY`, `GRAFT_MODEL_AUTHORING` and `GRAFT_MODEL_TRIAGE` beside them — is required
+too; the fields and that rule are GRA-31's. `GRAFT_APPROVAL_WAIT_SECONDS` (default
 25) is how long a tool call waits for a person to answer a handoff before returning
 `awaiting_approval` — or `awaiting_connection` / `awaiting_credential` for the two connection
 handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default
@@ -179,7 +179,7 @@ sandbox image under the name `GRAFT_SANDBOX_IMAGE` carries and starts nothing. H
 `pg_isready` and `GET /api/health`; `graft` waits for Postgres healthy.
 
 CI builds the image on every pull request and asserts that, run with no environment, it exits and
-names `GRAFT_AUTH_SECRET`, `GRAFT_DATABASE_URL`, `GRAFT_KEYRING_SECRET` and `GRAFT_MODEL_API_KEY`.
+names `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET`, `GRAFT_KEYRING_SECRET` and `GRAFT_HANDOFF_SECRET`.
 `.github/workflows/release.yml` pushes `ghcr.io/getmodern-ai/graft` and `graft-sandbox` on a `v*` tag,
 for `linux/amd64` and `linux/arm64`. The conformance suite against a running compose project is
 `packages/sandbox-docker/src/compose.test.ts`, opt-in by `GRAFT_COMPOSE_NETWORK` and
