@@ -17,10 +17,12 @@ export const DEFAULT_PENDING_ACTION_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_PENDING_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type CreatePendingActionInput = {
-  /** The meta-tool's own word for what is being asked — `approval`, `connection`, `credential`. */
+  /** The meta-tool's own word for what is being asked — `tool`, `build`, `connection`, `credential`. */
   kind: string;
   payload: Record<string, unknown>;
   ttlMs?: number;
+  /** The connection the ask is about, when it is about one — the column a revoke closes asks by (ADR 0007). */
+  connectionId?: string | null;
 };
 
 export async function createPendingAction(
@@ -45,6 +47,7 @@ export async function createPendingAction(
     agentId: scope.agentId,
     kind: input.kind,
     payload: input.payload,
+    ...(input.connectionId ? { connectionId: input.connectionId } : {}),
     expiresAt: new Date(now.getTime() + ttl),
     createdAt: now,
   });

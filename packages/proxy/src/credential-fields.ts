@@ -1,8 +1,9 @@
 import type { AuthScheme } from "./types";
 
 /**
- * Which credential fields each scheme reads from storage — one table, two readers, and the one
- * module of this package the console's bundle is meant to reach.
+ * Which credential fields each scheme reads from storage — one table, two readers, and with
+ * `scheme-parameters.ts` (the non-secret half) the two modules of this package the console's bundle
+ * is meant to reach.
  *
  * The handoff form labels its secret inputs from this and the connection service refuses any other
  * set, so what a person types and what the plugin reads cannot drift (GRA-1, "Connections, schemes

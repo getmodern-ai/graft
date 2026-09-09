@@ -380,7 +380,12 @@ async function askByHandoff(
     (await createPendingAction(
       ctx,
       scope,
-      { kind: subject.kind, payload: payloadFor(subject), ttlMs: deps.handoff.ttlMs },
+      {
+        kind: subject.kind,
+        payload: payloadFor(subject),
+        ttlMs: deps.handoff.ttlMs,
+        connectionId: subject.connection.id,
+      },
       deps.pendingAction,
     ));
   const url = handoffUrl(

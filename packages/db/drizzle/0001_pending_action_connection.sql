@@ -1,0 +1,3 @@
+ALTER TABLE "pending_action" ADD COLUMN "connection_id" text;--> statement-breakpoint
+ALTER TABLE "pending_action" ADD CONSTRAINT "pending_action_connection_id_connection_id_fk" FOREIGN KEY ("connection_id") REFERENCES "public"."connection"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "pending_action_connection_id_idx" ON "pending_action" USING btree ("connection_id");

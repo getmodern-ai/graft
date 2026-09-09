@@ -4,11 +4,16 @@ import { queryOptions } from "@tanstack/react-query";
 
 import type { Tool } from "./agent-queries";
 import { api, type Jsonified } from "./api";
+import type { ConnectionRegistration } from "./connection-form";
+import type { PendingAction } from "./pending-action-queries";
 
 /**
- * Connections, as the console lists and revokes them (ADR 0007: a connection is the person's, and a
- * revoke reaches every agent at once). Entering and re-entering a credential arrive with GRA-28;
- * the routes exist on the server already (`PUT /api/connections/:id/credential`).
+ * Connections, as the console lists, creates, re-credentials and revokes them (ADR 0007: a
+ * connection is the person's, and a revoke reaches every agent at once). A credential travels in a
+ * request body to the server and to nothing else here — no query reads one back, and the server
+ * answers `credentialSetAt` alone (GRA-28; CONTEXT.md, *Connection*: write-only after entry). The
+ * two submits on a pending action are the connection handoff's own routes (`apps/server/src/api.ts`,
+ * "The connection handoff's submits"), apart from the generic answer because of what they carry.
  */
 
 export type Connection = Jsonified<ConnectionOutput>;
@@ -65,4 +70,38 @@ export function toolsOfConnection(tools: readonly Tool[], connection: Connection
 /** A connection with no credential — never entered, or revoked — has tools that cannot run yet. */
 export function isAwaitingCredential(connection: Connection): boolean {
   return connection.credentialSetAt === null;
+}
+
+/** The person's own Add connection: registered with its credential in one transaction (GRA-28). */
+export function createConnection(
+  input: ConnectionRegistration & { credential: Record<string, string> },
+) {
+  return api<{ connection: Connection }>("/connections", { method: "POST", body: input });
+}
+
+/** Re-enter a credential with no agent asking — a rotated key, or the reconnection after a revoke. */
+export function setConnectionCredential(connectionId: string, credential: Record<string, string>) {
+  return api<{ connection: Connection }>(
+    `/connections/${encodeURIComponent(connectionId)}/credential`,
+    { method: "PUT", body: { fields: credential } },
+  );
+}
+
+/** The submit for an agent's `connection` ask: the proposal as edited, and the secret. */
+export function submitConnectionProposal(
+  actionId: string,
+  input: ConnectionRegistration & { credential: Record<string, string> },
+) {
+  return api<{ connection: Connection; pendingAction: PendingAction }>(
+    `/pending-actions/${encodeURIComponent(actionId)}/connection`,
+    { method: "POST", body: input },
+  );
+}
+
+/** The submit for an agent's `credential` ask: the secret alone. */
+export function submitCredentialRequest(actionId: string, credential: Record<string, string>) {
+  return api<{ connection: Connection; pendingAction: PendingAction }>(
+    `/pending-actions/${encodeURIComponent(actionId)}/credential`,
+    { method: "POST", body: { credential } },
+  );
 }
