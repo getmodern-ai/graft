@@ -70,6 +70,16 @@ serves from, the scheme (a key in a header, a bearer token, basic auth, OAuth2),
 non-secret parameters go into `request_connection`, with the page's URL as `docsUrl` so the person
 can check it. The person enters the secret in the console. You never do.
 
+A vendor that needs an OAuth **consent** — Gmail, Slack user tokens, Notion — is
+`scheme: "oauth_authorization_code"`, with the docs' `authorizeUrl`, `tokenUrl` and the narrowest
+`scopes` in `schemeConfig` and no `clientId`: the person registers a client at the vendor and enters
+its id and secret on the form. The answer carries a `redirectUri`; guide them in three sentences —
+which developer console to open and that the client is a *web application*, to name it after Graft,
+and to paste that redirect URI exactly — then relay the link. A Google project in Testing mode
+expires refresh tokens after seven days, so a Google connection reconnects weekly; say so once. Once
+connected, the proxy injects and refreshes the token: your module calls `ctx.fetch` as for any other
+scheme and never sees a token.
+
 ## The module
 
 Your sandbox is Node 24: `node` and the built-in `fetch` are there; curl and Python are not. Its
