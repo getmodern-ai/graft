@@ -96,6 +96,13 @@ required; `GRAFT_CORS_ORIGIN` is an optional comma-separated list of origins; th
 pair is all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the database for a
 proxy smoke test and is refused in production. `packages/env/src/schema.ts` is the rules as code.
 
+The MCP endpoint is `POST /mcp` with `Authorization: Bearer <agent token>` — `POST /api/agents` mints
+the token, shown once. Authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names: `docker` by
+default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and, unset, leaves
+the server up with every run refusing for want of a sandbox; or `fake`, a temporary directory on the
+server's own disk for a laptop without a daemon — the toolbox then lives in that directory too, for as
+long as the process does — which is not a sandbox, and `@graft/env` refuses it in production.
+
 ### Publishing a tool by hand
 
 The publish (`@graft/publish`, GRA-18) writes a version into the person's toolbox — a directory tree

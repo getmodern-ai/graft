@@ -1,15 +1,29 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { createAuth } from "@graft/auth";
 import { createConnectionDeps, defaultAgentDeps } from "@graft/core";
 import { createDb } from "@graft/db";
 import { env } from "@graft/env/server";
+import { createMcpDeps } from "@graft/mcp";
+import {
+  createPublishDeps,
+  createRegistryMetadataSource,
+  DEFAULT_PACKAGE_POLICY,
+} from "@graft/publish";
+import {
+  createFakeSandboxBackend,
+  type SandboxBackend,
+  type SandboxProcessResult,
+} from "@graft/sandbox";
+import { createDockerSandboxBackend } from "@graft/sandbox-docker";
 import { importCapabilityTokenKeys } from "@graft/token";
+import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import { createCredentialVault, createLocalKeyring } from "@graft/vault";
 import { serve } from "@hono/node-server";
 import { initLogger } from "evlog";
 
-import { API_MOUNT_PATH, createServer, PROXY_MOUNT_PATH } from "./app";
+import { API_MOUNT_PATH, createServer, MCP_MOUNT_PATH, PROXY_MOUNT_PATH } from "./app";
 import {
   connectionSeeds,
   createDatabaseConnections,
@@ -79,6 +93,56 @@ if (env.GRAFT_DEV_SEED) {
   connections = layerConnections(seeded, connections);
 }
 
+// The vault's encrypt half is all the connection service may hold (GRA-1: decrypted in exactly
+// one component, and that component is the proxy binding in `app.ts`).
+const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
+
+/**
+ * The sandbox backing (ADR 0002) and the toolbox store, which have to see one tree
+ * (`packages/toolbox/README.md`): with Docker the store's root is bound into every toolbox volume;
+ * with the fake the store sits inside the fake's own temporary directory, so a laptop's toolbox lives
+ * as long as the process. Docker without its image and network is no backing at all — the server
+ * boots, every run refuses saying so, and the install step answers the publish the same way. The
+ * fake is refused in production by `@graft/env`. The Docker backing reads `DOCKER_HOST` itself.
+ */
+let sandbox: SandboxBackend | null;
+let toolboxRoot: string;
+if (env.GRAFT_SANDBOX_BACKEND === "fake") {
+  const fake = createFakeSandboxBackend();
+  sandbox = fake;
+  toolboxRoot = join(fake.root, "toolboxes");
+} else {
+  toolboxRoot = env.GRAFT_TOOLBOX_ROOT;
+  sandbox =
+    env.GRAFT_SANDBOX_IMAGE && env.GRAFT_SANDBOX_NETWORK
+      ? createDockerSandboxBackend({
+          image: env.GRAFT_SANDBOX_IMAGE,
+          network: env.GRAFT_SANDBOX_NETWORK,
+          toolboxHostRoot: toolboxRoot,
+        })
+      : null;
+}
+const store = createFilesystemToolboxStore({ root: toolboxRoot });
+
+const publish = createPublishDeps({
+  db,
+  store,
+  mirror: createNoopToolboxMirror(),
+  sandbox: sandbox ?? {
+    install: async (): Promise<SandboxProcessResult> => {
+      const logs =
+        "no sandbox backing is configured: set GRAFT_SANDBOX_IMAGE and GRAFT_SANDBOX_NETWORK to run the install step (packages/sandbox-docker/README.md)";
+      return { status: "failed", exitCode: null, logs, stdout: "", stderr: logs };
+    },
+  },
+  metadata: createRegistryMetadataSource(),
+  policy: {
+    allowlist: [...DEFAULT_PACKAGE_POLICY.allowlist, ...env.GRAFT_PACKAGE_ALLOWLIST],
+    minAgeDays: env.GRAFT_PACKAGE_MIN_AGE_DAYS,
+    minWeeklyDownloads: env.GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS,
+  },
+});
+
 const app = createServer({
   keys,
   vault,
@@ -89,21 +153,30 @@ const app = createServer({
       handler: (request) => auth.handler(request),
       getSession: (headers) => auth.api.getSession({ headers }),
     },
-    // The vault's encrypt half is all the connection service may hold (GRA-1: decrypted in exactly
-    // one component, and that component is the proxy binding in `app.ts`).
     deps: {
       db,
       agent: defaultAgentDeps,
-      connection: createConnectionDeps({ encrypt: vault.encrypt }),
+      connection: connectionDeps,
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
   },
+  // What a sandbox is handed as `GRAFT_PROXY_URL` is the proxy's public URL, so relocating the proxy
+  // stays the DNS change GRA-1 promises.
+  mcp: createMcpDeps({
+    db,
+    connection: connectionDeps,
+    sandbox,
+    keys,
+    proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
+    publish,
+  }),
 });
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
-      `auth and the JSON API at ${API_MOUNT_PATH}, ` +
+      `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} ` +
+      `(sandbox: ${env.GRAFT_SANDBOX_BACKEND}${sandbox ? "" : ", unconfigured"}; toolbox: ${store.root}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database`,
   );
