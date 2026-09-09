@@ -25,6 +25,34 @@ jobs:
     permissions:
       contents: read
 
+    # One suite needs a real database: `apps/server/src/database.integration.test.ts`, which applies
+    # the migration chain to an empty Postgres and round-trips a person, an agent and a connection
+    # with an encrypted credential. Injected fakes cannot show that the migration applies or that
+    # the vault's ciphertext survives a `bytea` column. The suite skips itself when
+    # `TEST_DATABASE_URL` is unset, so a developer without Docker is unaffected; under `CI` it fails
+    # rather than skipping if this service is ever removed, which is what stops the coverage
+    # evaporating silently.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: graft_test
+        ports:
+          - 5432:5432
+        # Without this the suite can start before Postgres accepts connections.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Declared under `test.env` in `turbo.json`, or strict env mode would withhold it from vitest.
+      # The suite creates a throwaway database per run on this server, so the named database is only
+      # where it connects to do that.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/graft_test
+
     steps:
       - uses: actions/checkout@v7
 
@@ -78,6 +106,44 @@ jobs:
       # `biome.json`; `noFocusedTests` is the one promoted so far.
       - name: Lint
         run: pnpm run lint
+
+      # `check-types` cannot see schema/migration drift: the schema and the code that reads it agree
+      # with each other, and are both wrong about the database. Neither command below needs Postgres
+      # — `generate` diffs the TypeScript schema against the last snapshot under `drizzle/meta`, and
+      # `check` looks for two snapshots claiming the same parent, the collision two parallel branches
+      # produce. Both, because `check` compares snapshots to each other and never the schema to them.
+      # Run through `pnpm exec` from `packages/db`, because drizzle-kit is that package's dependency.
+      # Stdin is `/dev/null` so a rename prompt — the one case `generate` asks a question — fails the
+      # step instead of hanging the job. The tree is restored before the assertion, so the check
+      # cannot leave an uncommitted migration behind for the steps that follow.
+      - name: Check for schema/migration drift
+        working-directory: packages/db
+        run: |
+          pnpm exec drizzle-kit check < /dev/null
+
+          pnpm exec drizzle-kit generate < /dev/null
+          drift="$(git status --porcelain -- drizzle)"
+          git checkout -- drizzle
+          git clean -fdq -- drizzle
+
+          if [ -n "$drift" ]; then
+            printf '%s\n' "$drift"
+            echo "::error::the schema has changes no migration captures; run \`pnpm run db:generate\` and commit the result"
+            exit 1
+          fi
+          echo "Every schema change is captured by a migration."
+
+      # The third of three guards, deliberately its own step: `drizzle-kit check` finds a fork, and
+      # `generate` producing nothing means the schema matches the tip — neither finds a *hole*, a
+      # journal entry whose `.sql` is absent, a snapshot missing from the middle, a `prevId` pointing
+      # at nothing. `packages/db/src/migration-chain.ts` is what does, and `packages/db`'s own suite
+      # asserts the committed chain too; this step names the failure where a red `Test` would not.
+      - name: Check the migration chain for holes
+        run: |
+          if ! pnpm run db:check-chain; then
+            echo "::error::the migration chain has a hole — see the lines above. This passes \`drizzle-kit check\` and fails when the migrations are applied."
+            exit 1
+          fi
 
       # The sandbox image is built here rather than inside the suite so that a broken Dockerfile is
       # its own red step, and so the suite tests the image CI built rather than one it found lying

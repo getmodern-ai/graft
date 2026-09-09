@@ -1,26 +1,30 @@
 {
-  "name": "@graft/env",
+  "name": "@graft/auth",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
     "./*": {
       "default": "./src/*.ts"
     }
   },
   "scripts": {
+    "generate-schema": "pnpm dlx @better-auth/cli@1.4.21 generate --config ./better-auth.config.ts --output ../db/src/schema/auth.ts --yes",
     "test": "vitest run",
     "test:watch": "vitest",
     "check-types": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@t3-oss/env-core": "catalog:",
-    "dotenv": "catalog:",
-    "zod": "catalog:"
+    "@graft/db": "workspace:*",
+    "better-auth": "catalog:"
   },
   "devDependencies": {
     "@graft/config": "workspace:*",
     "@types/node": "catalog:",
+    "drizzle-orm": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

@@ -1,0 +1,30 @@
+name: graft
+
+# Postgres for local development — the one dialect Graft has in both forms (GRA-1, "Why Postgres in
+# the Docker image and not SQLite"). `pnpm run db:start` brings it up detached, `db:stop` stops it
+# without losing the volume, `db:down` removes the container (and, being a project-level operation,
+# the shared network — prefer `stop` day to day). The full self-hosted image with the server, the
+# proxy and the sandbox network is GRA-33's compose file, not this one.
+services:
+  postgres:
+    image: postgres:18
+    container_name: graft-postgres
+    environment:
+      POSTGRES_DB: graft
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    ports:
+      # Overridable because a laptop often already runs a Postgres on 5432 for another project; the
+      # matching `GRAFT_DATABASE_URL` goes in `apps/server/.env`.
+      - "${GRAFT_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - graft_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  graft_postgres_data:

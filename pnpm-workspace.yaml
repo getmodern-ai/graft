@@ -28,3 +28,15 @@ catalog:
   # for long paths. The types are a separate package, as they are for most of what predates TS.
   tar-stream: ^3.2.1
   "@types/tar-stream": ^3.1.4
+  # The database and the account, at the versions Cando runs (ADR 0011). `drizzle-orm` and
+  # `drizzle-kit` move together — a snapshot written by one kit version is read by the next, and the
+  # ORM's column types are what the kit diffs — so both are pinned here rather than in `packages/db`
+  # alone, where a second consumer could drift. `pg` is the driver both the ORM and Better Auth's
+  # adapter ride; `better-auth` is exact because its schema is generated from the installed version
+  # and a minor bump can add a column (`packages/db/src/schema/auth.ts` says how to regenerate).
+  drizzle-orm: ^0.45.2
+  drizzle-kit: ^0.31.10
+  pg: ^8.23.0
+  "@types/pg": ^8.23.1
+  better-auth: 1.7.2
+  dotenv: ^17.4.2

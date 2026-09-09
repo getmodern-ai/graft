@@ -17,14 +17,43 @@
       "dependsOn": ["^test"],
       "outputs": [],
       // Strict env mode passes a task nothing it has not declared. The Docker conformance suite
-      // (`packages/sandbox-docker`) reads these three: where the daemon is, whether it may skip when
-      // no daemon answers, and which prebuilt image to test. Declaring them also makes them part of
-      // the cache key, so a run against a different image is not a cache hit on the last one.
-      "env": ["CI", "DOCKER_HOST", "GRAFT_SANDBOX_IMAGE"]
+      // (`packages/sandbox-docker`) reads three: where the daemon is, whether it may skip when no
+      // daemon answers, and which prebuilt image to test. `TEST_DATABASE_URL` is the fourth: the one
+      // suite that needs Postgres (`apps/server/src/database.integration.test.ts`) reads it, skips
+      // without it and refuses to skip under `CI`. Declaring them also makes them part of the cache
+      // key, so a run with a database is not a cache hit on a run without one.
+      "env": ["CI", "DOCKER_HOST", "GRAFT_SANDBOX_IMAGE", "TEST_DATABASE_URL"]
     },
     "dev": {
       "cache": false,
       "persistent": true
+    },
+    // The `db:*` tasks are `@graft/db`'s drizzle-kit scripts; the root filters to that package. None
+    // is cached: a migration generated or applied from cache is a claim about a tree the task never
+    // saw. `db:push` and `db:migrate` read `GRAFT_DATABASE_URL`, normally from `apps/server/.env`,
+    // which `drizzle.config.ts` loads itself; CI passes it in the environment instead, which strict
+    // env mode would otherwise withhold.
+    "db:push": {
+      "cache": false,
+      "env": ["GRAFT_DATABASE_URL"]
+    },
+    "db:generate": {
+      "cache": false
+    },
+    "db:migrate": {
+      "cache": false,
+      "env": ["GRAFT_DATABASE_URL"]
+    },
+    // Uncached for the reason above, and for this one that is the point rather than the convention:
+    // a guard replayed from cache reports on the tree it last saw, which is the failure it exists to
+    // close.
+    "db:check-chain": {
+      "cache": false
+    },
+    "db:studio": {
+      "cache": false,
+      "persistent": true,
+      "env": ["GRAFT_DATABASE_URL"]
     }
   }
 }
