@@ -2,6 +2,7 @@ import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useState } from "react";
 
 import { ConnectionCalls } from "@/components/connection/connection-calls";
+import { ReenterCredentialDialog } from "@/components/connection/reenter-credential-dialog";
 import { RevokeConnectionDialog } from "@/components/connection/revoke-connection-dialog";
 import { Time } from "@/components/time";
 import { ToolAnnotations } from "@/components/tool-annotations";
@@ -22,12 +23,13 @@ import { type Connection, isAwaitingCredential } from "@/lib/connection-queries"
 /**
  * One connection: the vendor, the hosts the proxy pins its calls to, the scheme, when the credential
  * was set — and never the credential (CONTEXT.md: write-only after entry) — with the tools bound to
- * its vendor and its recent vendor calls. A revoked connection is still listed: its tools are, too,
- * awaiting reconnection (ADR 0007).
+ * its vendor and its recent vendor calls. A revoked connection is still listed, awaiting
+ * reconnection: its tools are, too, and Re-enter credential is the reconnection (ADR 0007; GRA-28).
  */
 export function ConnectionCard({ connection, tools }: { connection: Connection; tools: Tool[] }) {
   const [showCalls, setShowCalls] = useState(false);
   const [revoking, setRevoking] = useState(false);
+  const [reentering, setReentering] = useState(false);
   const awaiting = isAwaitingCredential(connection);
 
   return (
@@ -38,9 +40,12 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
           <Badge variant="outline">{connection.vendor}</Badge>
           <Badge variant="outline">{connection.scheme}</Badge>
           {connection.revokedAt ? (
-            <Badge variant="destructive">revoked</Badge>
+            <>
+              <Badge variant="destructive">revoked</Badge>
+              <Badge variant="outline">awaiting reconnection</Badge>
+            </>
           ) : awaiting ? (
-            <Badge variant="outline">no credential yet</Badge>
+            <Badge variant="outline">awaiting credential</Badge>
           ) : (
             <Badge variant="secondary">connected</Badge>
           )}
@@ -48,18 +53,29 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         <CardDescription>
           {connection.revokedAt ? (
             <>
-              Revoked <Time iso={connection.revokedAt} />. The credential is cleared; its tools
-              await reconnection.
+              Revoked <Time iso={connection.revokedAt} />. The credential is cleared and every
+              approval with it; re-entering a credential reconnects it.
             </>
           ) : connection.credentialSetAt ? (
             <>
-              Credential set <Time iso={connection.credentialSetAt} />.
+              Credential set <Time iso={connection.credentialSetAt} />. Never shown again.
             </>
           ) : (
             <>Registered, no credential entered yet.</>
           )}
         </CardDescription>
-        <CardAction>
+        <CardAction className="flex gap-2">
+          <Button
+            variant={connection.revokedAt || awaiting ? "default" : "outline"}
+            size="sm"
+            onClick={() => setReentering(true)}
+          >
+            {connection.revokedAt
+              ? "Reconnect"
+              : awaiting
+                ? "Enter credential"
+                : "Re-enter credential"}
+          </Button>
           {connection.revokedAt ? null : (
             <Button variant="outline" size="sm" onClick={() => setRevoking(true)}>
               Revoke
@@ -130,6 +146,12 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       </CardFooter>
 
       <RevokeConnectionDialog connection={connection} open={revoking} onOpenChange={setRevoking} />
+      <ReenterCredentialDialog
+        key={`${connection.id}:${connection.credentialSetAt ?? "none"}`}
+        connection={connection}
+        open={reentering}
+        onOpenChange={setReentering}
+      />
     </Card>
   );
 }

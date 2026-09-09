@@ -25,8 +25,9 @@ import {
 /**
  * What every ask's card shares (ADR 0006): who asked and when, how long it stays answerable, the
  * approve and decline that answer it, and the sentence once it is settled. The kind-specific cards
- * (`tool-ask-card.tsx`, `build-ask-card.tsx`, and GRA-28's) fill the title, the description line
- * and the body, and say what the answer carries beyond `allow`.
+ * (`tool-ask-card.tsx`, `build-ask-card.tsx`, `connection-ask-card.tsx`, `credential-ask-card.tsx`)
+ * fill the title, the description line and the body, say what the answer carries beyond `allow`,
+ * and name the approve button when "Approve" is not the verb — GRA-28's cards say Connect.
  */
 export function useAnswerAsk(action: PendingAction, onAnswered?: () => void) {
   const queryClient = useQueryClient();
@@ -54,6 +55,7 @@ export function AskCard({
   settled,
   onAnswer,
   pending,
+  approveLabel = "Approve",
 }: {
   action: PendingAction;
   /** "<agent> asks to …" — the kind's own words after the agent's name. */
@@ -65,6 +67,8 @@ export function AskCard({
   settled: (answer: PendingAction["answer"]) => React.ReactNode;
   onAnswer: (allow: boolean) => void;
   pending: boolean;
+  /** The approve button's verb; "Approve" unless the kind's act is something else. */
+  approveLabel?: string;
 }) {
   const open = isOpen(action);
   const agentName = action.agent?.name ?? "A revoked agent";
@@ -104,7 +108,7 @@ export function AskCard({
             Decline
           </Button>
           <Button disabled={pending} onClick={() => onAnswer(true)}>
-            Approve
+            {approveLabel}
           </Button>
         </CardFooter>
       ) : (
