@@ -8,13 +8,19 @@ import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { ConnectionDeps } from "./connection.deps";
 import {
+  completeOAuthConsent,
+  isConnectionUsable,
+  markOAuthConsentRequired,
   registerConnection,
   registerConnectionWithCredential,
   revokeConnection,
   setConnectionCredential,
+  startOAuthConsent,
+  storeRefreshedCredential,
   toConnectionOutput,
   toProxyConnection,
 } from "./connection.service";
+import { OAUTH_STATE_TTL_MS, pkceChallenge, verifyOAuthState } from "./oauth-consent";
 
 /**
  * The connection service with fakes and no database. The vault is a fake too — what is asserted is
@@ -49,6 +55,25 @@ const row: ConnectionRow = {
   updatedAt: NOW,
 };
 
+/** An authorization-code connection with its client secret entered and no consent yet (ADR 0005). */
+const oauthRow: ConnectionRow = {
+  ...row,
+  id: "conn_o",
+  vendor: "gmail",
+  displayName: "Gmail",
+  scheme: "oauth_authorization_code",
+  schemeConfig: {
+    clientId: "client-id",
+    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    scopes: "https://www.googleapis.com/auth/gmail.readonly",
+  },
+  primaryHost: "https://gmail.googleapis.com",
+  hosts: ["gmail.googleapis.com"],
+  credentialCiphertext: CIPHERTEXT,
+  credentialSetAt: NOW,
+};
+
 const fakeDb = { transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(fakeDb) };
 const ctx = { db: fakeDb } as unknown as ServiceContext;
 
@@ -70,6 +95,13 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
       ...row,
       credentialCiphertext: args.ciphertext,
       credentialSetAt: args.setAt,
+      ...(args.oauthRefreshState === undefined
+        ? {}
+        : { oauthRefreshState: args.oauthRefreshState }),
+    })),
+    setConnectionOAuthState: vi.fn(async (_db, _p, _id, state) => ({
+      ...row,
+      oauthRefreshState: state,
     })),
     revokeConnection: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
@@ -166,33 +198,42 @@ describe("registerConnection", () => {
     expect(deps.insertConnection).not.toHaveBeenCalled();
   });
 
-  it("stores a person-registered OAuth client's id, endpoints and scopes — never a secret", async () => {
+  it("stores a person-registered OAuth client's id, endpoints and scopes as the scheme's parameters — never a secret, and never without the client id", async () => {
     const deps = fakeDeps();
-    await registerConnection(
+    const registration = {
+      vendor: "gmail",
+      displayName: "Gmail",
+      scheme: "oauth_authorization_code" as const,
+      primaryHost: "https://gmail.googleapis.com",
+      schemeConfig: {
+        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenUrl: "https://oauth2.googleapis.com/token",
+        scopes: "https://www.googleapis.com/auth/gmail.readonly",
+      },
+    };
+    // A proposal may omit the client id; a registration may not (ADR 0005).
+    await expect(registerConnection(ctx, PRINCIPAL, registration, deps)).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("clientId"),
+    });
+
+    const output = await registerConnection(
       ctx,
       PRINCIPAL,
-      {
-        vendor: "gmail",
-        displayName: "Gmail",
-        scheme: "bearer",
-        primaryHost: "https://gmail.googleapis.com",
-        oauth: {
-          clientId: "client-id",
-          authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-          tokenUrl: "https://oauth2.googleapis.com/token",
-          scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
-        },
-      },
+      { ...registration, schemeConfig: { ...registration.schemeConfig, clientId: "client-id" } },
       deps,
     );
     const inserted = vi.mocked(deps.insertConnection).mock.calls[0]?.[1];
-    expect(inserted).toMatchObject({
-      oauthClientId: "client-id",
-      oauthAuthorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-      oauthTokenUrl: "https://oauth2.googleapis.com/token",
-      oauthScopes: ["https://www.googleapis.com/auth/gmail.readonly"],
-    });
+    expect(inserted?.schemeConfig).toEqual({ ...registration.schemeConfig, clientId: "client-id" });
     expect(inserted).not.toHaveProperty("oauthClientSecretCiphertext");
+    expect(inserted).not.toHaveProperty("oauthClientId");
+    expect(output.oauth).toEqual({
+      status: "awaiting_consent",
+      consentedAt: null,
+      expiresAt: null,
+      refreshedAt: null,
+      consentRequired: null,
+    });
   });
 });
 
@@ -361,6 +402,31 @@ describe("the two shapes of a row", () => {
     expect(output).not.toHaveProperty("credentialCiphertext");
     expect(output).not.toHaveProperty("oauthClientSecretCiphertext");
     expect(output).not.toHaveProperty("oauthRefreshState");
+    // A key-shaped scheme has no consent to speak of.
+    expect(output.oauth).toBeNull();
+  });
+
+  it("an authorization-code row's public shape says where the consent stands and never carries the verifier", () => {
+    const output = toConnectionOutput({
+      ...oauthRow,
+      oauthRefreshState: {
+        consentedAt: "2026-09-09T09:00:00.000Z",
+        expiresAt: "2026-09-09T10:00:00.000Z",
+        pkce: {
+          verifier: "the-verifier",
+          issuedAt: "2026-09-09T08:59:00.000Z",
+          pendingActionId: null,
+        },
+      },
+    });
+    expect(output.oauth).toEqual({
+      status: "connected",
+      consentedAt: "2026-09-09T09:00:00.000Z",
+      expiresAt: "2026-09-09T10:00:00.000Z",
+      refreshedAt: null,
+      consentRequired: null,
+    });
+    expect(JSON.stringify(output)).not.toContain("the-verifier");
   });
 
   it("the proxy's shape is exactly what @graft/proxy declares, ciphertext included", () => {
@@ -373,5 +439,284 @@ describe("the two shapes of a row", () => {
       schemeConfig: { headerName: "api-auth-id" },
       credentialCiphertext: CIPHERTEXT,
     });
+  });
+});
+
+/**
+ * The four moments of an authorization-code connection (ADR 0005), with fakes: what each writes to
+ * the state and the credential, what the public shape then says, and that no answer carries a
+ * token or the verifier.
+ */
+describe("the consent", () => {
+  const SECRET = "connection-service-test-handoff-secret-32";
+  const REDIRECT = "http://localhost:3000/api/oauth/callback";
+
+  function oauthDeps(overrides: Partial<ConnectionDeps> = {}) {
+    return fakeDeps({
+      findConnection: vi.fn(async () => oauthRow),
+      setConnectionCredential: vi.fn(async (_db, _p, _id, args) => ({
+        ...oauthRow,
+        credentialCiphertext: args.ciphertext,
+        credentialSetAt: args.setAt,
+        ...(args.oauthRefreshState === undefined
+          ? {}
+          : { oauthRefreshState: args.oauthRefreshState }),
+      })),
+      setConnectionOAuthState: vi.fn(async (_db, _p, _id, state) => ({
+        ...oauthRow,
+        oauthRefreshState: state,
+      })),
+      ...overrides,
+    });
+  }
+
+  it("re-entering the client secret writes a record with no token and resets the consent state", async () => {
+    const deps = oauthDeps();
+    await setConnectionCredential(ctx, PRINCIPAL, "conn_o", { clientSecret: "s2" }, deps);
+    expect(deps.vault.encrypt).toHaveBeenCalledWith(
+      { clientSecret: "s2" },
+      { personId: "person_1", connectionId: "conn_o" },
+    );
+    expect(deps.setConnectionCredential).toHaveBeenCalledWith(fakeDb, "person_1", "conn_o", {
+      ciphertext: CIPHERTEXT,
+      setAt: NOW,
+      oauthRefreshState: null,
+    });
+    // A key-shaped scheme's re-entry leaves the column alone.
+    const keyDeps = fakeDeps();
+    await setConnectionCredential(ctx, PRINCIPAL, "conn_1", { apiKey: "k" }, keyDeps);
+    expect(vi.mocked(keyDeps.setConnectionCredential).mock.calls[0]?.[3]).not.toHaveProperty(
+      "oauthRefreshState",
+    );
+  });
+
+  it("starting the consent writes a PKCE verifier and answers an authorize URL with its challenge, the redirect URI and a state signed over the connection, the person and the ask", async () => {
+    const deps = oauthDeps();
+    const started = await startOAuthConsent(
+      ctx,
+      PRINCIPAL,
+      "conn_o",
+      { redirectUri: REDIRECT, secret: SECRET, pendingActionId: "pa_1" },
+      deps,
+    );
+
+    const written = vi.mocked(deps.setConnectionOAuthState).mock.calls[0]?.[3] as {
+      pkce: { verifier: string; issuedAt: string; pendingActionId: string | null };
+    };
+    expect(written.pkce).toEqual({
+      verifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      issuedAt: NOW.toISOString(),
+      pendingActionId: "pa_1",
+    });
+
+    const url = new URL(started.authorizeUrl);
+    expect(`${url.origin}${url.pathname}`).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(url.searchParams.get("client_id")).toBe("client-id");
+    expect(url.searchParams.get("redirect_uri")).toBe(REDIRECT);
+    expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/gmail.readonly");
+    expect(url.searchParams.get("code_challenge")).toBe(pkceChallenge(written.pkce.verifier));
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(url.searchParams.get("access_type")).toBe("offline");
+    expect(verifyOAuthState(url.searchParams.get("state"), SECRET, NOW)).toEqual({
+      ok: true,
+      payload: {
+        connectionId: "conn_o",
+        personId: "person_1",
+        pendingActionId: "pa_1",
+        expiresAt: NOW.getTime() + OAUTH_STATE_TTL_MS,
+        nonce: "conn_new",
+      },
+    });
+    expect(started.expiresAt).toEqual(new Date(NOW.getTime() + OAUTH_STATE_TTL_MS));
+    expect(JSON.stringify(started.connection)).not.toContain(written.pkce.verifier);
+    expect(started.connection.oauth?.status).toBe("awaiting_consent");
+  });
+
+  it("starting again keeps what is known about the consent and replaces the verifier", async () => {
+    const deps = oauthDeps({
+      findConnection: vi.fn(async () => ({
+        ...oauthRow,
+        oauthRefreshState: {
+          consentedAt: "2026-09-01T10:00:00.000Z",
+          consentRequired: { at: "2026-09-08T10:00:00.000Z", reason: "refused" },
+          pkce: { verifier: "old", issuedAt: "x", pendingActionId: null },
+        },
+      })),
+    });
+    await startOAuthConsent(
+      ctx,
+      PRINCIPAL,
+      "conn_o",
+      { redirectUri: REDIRECT, secret: SECRET },
+      deps,
+    );
+    const written = vi.mocked(deps.setConnectionOAuthState).mock.calls[0]?.[3] as Record<
+      string,
+      unknown
+    >;
+    expect(written.consentedAt).toBe("2026-09-01T10:00:00.000Z");
+    expect(written.consentRequired).toEqual({ at: "2026-09-08T10:00:00.000Z", reason: "refused" });
+    expect((written.pkce as { verifier: string }).verifier).not.toBe("old");
+    expect((written.pkce as { pendingActionId: unknown }).pendingActionId).toBeNull();
+  });
+
+  it("refuses to start before the client secret is entered, and for a scheme with no consent", async () => {
+    const noSecret = oauthDeps({
+      findConnection: vi.fn(async () => ({ ...oauthRow, credentialCiphertext: null })),
+    });
+    await expect(
+      startOAuthConsent(
+        ctx,
+        PRINCIPAL,
+        "conn_o",
+        { redirectUri: REDIRECT, secret: SECRET },
+        noSecret,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(noSecret.setConnectionOAuthState).not.toHaveBeenCalled();
+
+    await expect(
+      startOAuthConsent(
+        ctx,
+        PRINCIPAL,
+        "conn_1",
+        { redirectUri: REDIRECT, secret: SECRET },
+        fakeDeps(),
+      ),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("api_key_header"),
+    });
+  });
+
+  it("completing the consent encrypts the whole record, records when and until when, and drops the verifier", async () => {
+    const deps = oauthDeps({
+      findConnection: vi.fn(async () => ({
+        ...oauthRow,
+        oauthRefreshState: { pkce: { verifier: "v", issuedAt: "x", pendingActionId: "pa_1" } },
+      })),
+    });
+    const record = {
+      clientSecret: "s",
+      accessToken: "access-1",
+      refreshToken: "refresh-1",
+      expiresAt: "2026-09-09T11:00:00.000Z",
+    };
+    const output = await completeOAuthConsent(ctx, PRINCIPAL, "conn_o", record, deps);
+
+    expect(deps.vault.encrypt).toHaveBeenCalledWith(record, {
+      personId: "person_1",
+      connectionId: "conn_o",
+    });
+    expect(deps.setConnectionCredential).toHaveBeenCalledWith(fakeDb, "person_1", "conn_o", {
+      ciphertext: CIPHERTEXT,
+      setAt: NOW,
+      oauthRefreshState: { consentedAt: NOW.toISOString(), expiresAt: "2026-09-09T11:00:00.000Z" },
+    });
+    expect(output.oauth).toEqual({
+      status: "connected",
+      consentedAt: NOW.toISOString(),
+      expiresAt: "2026-09-09T11:00:00.000Z",
+      refreshedAt: null,
+      consentRequired: null,
+    });
+    const serialised = JSON.stringify(output);
+    for (const secret of ["access-1", "refresh-1", "clientSecret", '"v"']) {
+      expect(serialised).not.toContain(secret);
+    }
+  });
+
+  it("refuses to complete with a record missing the access token or carrying a field from no table", async () => {
+    const deps = oauthDeps();
+    await expect(
+      completeOAuthConsent(ctx, PRINCIPAL, "conn_o", { clientSecret: "s" }, deps),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("accessToken"),
+    });
+    await expect(
+      completeOAuthConsent(
+        ctx,
+        PRINCIPAL,
+        "conn_o",
+        { clientSecret: "s", accessToken: "a", idToken: "i" },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("idToken") });
+    expect(deps.vault.encrypt).not.toHaveBeenCalled();
+  });
+
+  it("a refresh stores the rotated record, keeps the consent's moment, clears a standing refusal, and stamps the new expiry", async () => {
+    const deps = oauthDeps({
+      findConnection: vi.fn(async () => ({
+        ...oauthRow,
+        oauthRefreshState: {
+          consentedAt: "2026-09-01T10:00:00.000Z",
+          expiresAt: "2026-09-09T09:00:00.000Z",
+          consentRequired: { at: "2026-09-08T10:00:00.000Z", reason: "refused once" },
+        },
+      })),
+    });
+    const record = {
+      clientSecret: "s",
+      accessToken: "access-2",
+      refreshToken: "refresh-1",
+      expiresAt: "2026-09-09T11:00:00.000Z",
+    };
+    const output = await storeRefreshedCredential(ctx, PRINCIPAL, "conn_o", record, deps);
+    expect(deps.vault.encrypt).toHaveBeenCalledWith(record, {
+      personId: "person_1",
+      connectionId: "conn_o",
+    });
+    expect(vi.mocked(deps.setConnectionCredential).mock.calls[0]?.[3]).toEqual({
+      ciphertext: CIPHERTEXT,
+      setAt: NOW,
+      oauthRefreshState: {
+        consentedAt: "2026-09-01T10:00:00.000Z",
+        expiresAt: "2026-09-09T11:00:00.000Z",
+        refreshedAt: NOW.toISOString(),
+      },
+    });
+    expect(output.oauth).toMatchObject({ status: "connected", refreshedAt: NOW.toISOString() });
+  });
+
+  it("a refused refresh marks the connection for re-consent and touches no credential", async () => {
+    const deps = oauthDeps({
+      findConnection: vi.fn(async () => ({
+        ...oauthRow,
+        oauthRefreshState: { consentedAt: "2026-09-01T10:00:00.000Z" },
+      })),
+    });
+    const output = await markOAuthConsentRequired(
+      ctx,
+      PRINCIPAL,
+      "conn_o",
+      "The stored token could not be refreshed: The token endpoint answered 400",
+      deps,
+    );
+    expect(deps.setConnectionOAuthState).toHaveBeenCalledWith(fakeDb, "person_1", "conn_o", {
+      consentedAt: "2026-09-01T10:00:00.000Z",
+      consentRequired: {
+        at: NOW.toISOString(),
+        reason: "The stored token could not be refreshed: The token endpoint answered 400",
+      },
+    });
+    expect(deps.setConnectionCredential).not.toHaveBeenCalled();
+    expect(deps.vault.encrypt).not.toHaveBeenCalled();
+    expect(output.oauth?.status).toBe("consent_required");
+    expect(isConnectionUsable(output)).toBe(false);
+  });
+
+  it("is usable only once connected: not revoked, a credential entered, and the consent complete and standing", () => {
+    const base = toConnectionOutput({ ...row, credentialSetAt: NOW });
+    expect(isConnectionUsable(base)).toBe(true);
+    expect(isConnectionUsable({ ...base, revokedAt: NOW })).toBe(false);
+    expect(isConnectionUsable({ ...base, credentialSetAt: null })).toBe(false);
+    expect(isConnectionUsable(toConnectionOutput(oauthRow))).toBe(false);
+    expect(
+      isConnectionUsable(
+        toConnectionOutput({ ...oauthRow, oauthRefreshState: { consentedAt: NOW.toISOString() } }),
+      ),
+    ).toBe(true);
   });
 });
