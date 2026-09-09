@@ -92,24 +92,34 @@ pnpm run db:migrate
 pnpm --filter @graft/server dev
 ```
 
-`GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL`, `GRAFT_KEYRING_SECRET` (32+),
-`GRAFT_CONSOLE_URL` (where the console answers — the base of every handoff URL) and
-`GRAFT_HANDOFF_SECRET` (32+, signs those URLs) are required; `GRAFT_CORS_ORIGIN` is an optional
-comma-separated list of origins; the capability token key pair is all-or-nothing; `GRAFT_DEV_SEED`
-layers a JSON file of connections over the database for a proxy smoke test and is refused in
-production. `GRAFT_APPROVAL_WAIT_SECONDS` (default 25) is how long a tool call waits for a person to
-answer a handoff before returning `awaiting_approval` — or `awaiting_connection` /
-`awaiting_credential` for the two connection handoffs (GRA-28), which share the wait and the TTL — and
-`GRAFT_PENDING_ACTION_TTL_HOURS` (default 24) how long that action stays answerable (ADR 0006,
-ADR 0008). `packages/env/src/schema.ts` is the
-rules as code.
+`GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL`, `GRAFT_CONSOLE_URL` (where the
+console answers — the base of every handoff URL) and `GRAFT_HANDOFF_SECRET` (32+, signs those URLs)
+are required, and so is `GRAFT_KEYRING_SECRET` (32+) under the default `GRAFT_BACKINGS=open`;
+`GRAFT_CORS_ORIGIN` is an optional comma-separated list of origins; the capability token key pair is
+all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the database for a proxy
+smoke test and is refused in production. `GRAFT_APPROVAL_WAIT_SECONDS` (default 25) is how long a
+tool call waits for a person to answer a handoff before returning `awaiting_approval` — or
+`awaiting_connection` / `awaiting_credential` for the two connection handoffs (GRA-28), which share
+the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default 24) how long that action stays
+answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the rules as code.
+
+`GRAFT_BACKINGS` picks the backing behind each seam (ADR 0002; `apps/server/src/backings.ts`).
+`open`, the default, is what this repository holds — the sandbox `GRAFT_SANDBOX_BACKEND` names, the
+local keyring, a mirror that copies nothing — and is also the self-hosted form in production.
+`cloud` loads the hosted form's backings from a private package that is not in this repository: it
+is placed at `packages/cloud-backings/`, which is gitignored, where the workspace glob picks it up
+and `apps/server`'s `optionalDependencies` entry links it into the server's `node_modules`; absent,
+the install still succeeds and the server refuses to boot with a sentence saying so. The selector
+imports it by a name held in a variable, so the type program never resolves it — which is what keeps
+the package absent rather than optional.
 
 The MCP endpoint is `POST /mcp` with `Authorization: Bearer <agent token>` — `POST /api/agents` mints
-the token, shown once. Authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names: `docker` by
-default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and, unset, leaves
-the server up with every run refusing for want of a sandbox; or `fake`, a temporary directory on the
-server's own disk for a laptop without a daemon — the toolbox then lives in that directory too, for as
-long as the process does — which is not a sandbox, and `@graft/env` refuses it in production.
+the token, shown once. Under `open`, authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names:
+`docker` by default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and,
+unset, leaves the server up with every run refusing for want of a sandbox; or `fake`, a temporary
+directory on the server's own disk for a laptop without a daemon — the toolbox then lives in that
+directory too, for as long as the process does — which is not a sandbox, and `@graft/env` refuses it
+in production and beside `cloud`.
 
 The working-set sweep (ADR 0009) runs inside the server on a plain timer, every
 `GRAFT_SWEEP_INTERVAL_SECONDS` (default 300): per agent it demotes what went unused past the idle
