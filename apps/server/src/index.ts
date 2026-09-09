@@ -14,7 +14,8 @@ import {
 } from "@graft/core";
 import { createDb } from "@graft/db";
 import { env } from "@graft/env/server";
-import { createMcpDeps, startSweep } from "@graft/mcp";
+import { createAcquireRunner, createMcpDeps, startSweep } from "@graft/mcp";
+import { createScriptedModel, type ModelAdapter, parseScript } from "@graft/model";
 import {
   createPublishDeps,
   createRegistryMetadataSource,
@@ -171,6 +172,19 @@ const handoff = {
  * the in-flight registry inside are the process's one of each: the sweep's `tools/list_changed`
  * reaches the endpoint's sessions, and the endpoint's runs hold the sweep off (ADR 0003, ADR 0009).
  */
+/**
+ * The model that answers `acquire` (ADR 0004; `@graft/model`'s seam, ADR 0002). `scripted` plays the
+ * JSON file `GRAFT_MODEL_SCRIPT` names — a laptop driving the whole loop with no provider key, and
+ * refused in production by `@graft/env`; the provider-backed adapter arrives with GRA-31 and is
+ * selected here. Unset, the server boots with no model and `acquire` refuses `acquire_unconfigured`.
+ */
+let model: ModelAdapter | null = null;
+if (env.GRAFT_MODEL_BACKEND === "scripted" && env.GRAFT_MODEL_SCRIPT) {
+  model = createScriptedModel(
+    parseScript(JSON.parse(await readFile(env.GRAFT_MODEL_SCRIPT, "utf8"))),
+  );
+}
+
 const mcp = createMcpDeps({
   db,
   connection: connectionDeps,
@@ -179,7 +193,36 @@ const mcp = createMcpDeps({
   proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
   publish,
   handoff,
+  model,
+  acquire: {
+    maxAttempts: env.GRAFT_ACQUIRE_MAX_ATTEMPTS,
+    tokenCeiling: env.GRAFT_ACQUIRE_TOKEN_CEILING,
+  },
 });
+
+/**
+ * The `acquire` job runner (GRA-29; `@graft/mcp`'s `acquire/runner.ts`), the second plain scheduler
+ * in the process beside the sweep: the meta-tool kicks it as a job is queued, the poll picks up what
+ * a previous process left. On the deps so the meta-tool can reach it; started once the app exists.
+ */
+const acquireRunner = createAcquireRunner(mcp, {
+  concurrency: env.GRAFT_ACQUIRE_CONCURRENCY,
+  onEvent: (event) => {
+    if (event.kind === "claimed") {
+      console.log(
+        `acquire: job ${event.jobId} for agent ${event.agentId} ${event.resumed ? "resumed" : "started"}`,
+      );
+    } else if (event.kind === "finished") {
+      console.log(`acquire: job ${event.jobId} for agent ${event.agentId} ${event.status}`);
+    } else {
+      console.error(
+        `acquire: job ${event.jobId} for agent ${event.agentId} failed: ${event.error}`,
+      );
+    }
+  },
+  onError: (error) => console.error("acquire runner tick failed", error),
+});
+mcp.acquireRunner = acquireRunner;
 
 const app = createServer({
   keys,
@@ -231,6 +274,8 @@ const sweep = startSweep(mcp, {
   onError: (error) => console.error("working-set sweep failed", error),
 });
 
+acquireRunner.start();
+
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
@@ -239,6 +284,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database, ` +
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
+      `model: ${model ? model.name : "none (acquire refuses)"}, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );
 });
@@ -246,6 +292,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     sweep.stop();
+    acquireRunner.stop();
     mcp.notifier?.close();
     mcp.inFlight?.close();
     db.close().finally(() => process.exit(0));

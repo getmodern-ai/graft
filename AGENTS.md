@@ -153,6 +153,40 @@ kind, so a new kind is one branch and one file. Components carry no tests; the p
 would. Accounts are opened at `/signup` — verification is off for the alpha, the reason is in
 `packages/auth/src/index.ts`.
 
+### Running `acquire` locally
+
+`acquire` is the loop (ADR 0004): the meta-tool creates a job and the in-process runner
+(`@graft/mcp`'s `acquire/runner.ts`, GRA-29) works it — reads the documentation, drafts, checks,
+proves with reads, publishes, dry-runs, retries, promotes. The runner is the second plain scheduler
+beside the sweep: `GRAFT_ACQUIRE_CONCURRENCY` (default 2) jobs at once, kicked by the meta-tool and
+polling for what a previous process left queued or running with a stale heartbeat. Each job is bounded
+by `GRAFT_ACQUIRE_MAX_ATTEMPTS` (default 4 — every draft is an attempt, a check refusal included) and
+`GRAFT_ACQUIRE_TOKEN_CEILING` (default 400000 tokens across every model turn); a job that hits either
+ends with a result naming it. Every attempt is an `acquire_attempt` row, every step an `acquire_trace`
+line, redacted on the way in (`@graft/core`'s `redaction.ts`; the proxy redacts an echoed credential
+by value before that, ADR 0010 amended).
+
+Which model answers is `GRAFT_MODEL_BACKEND`. Unset, the server boots with no model and `acquire`
+refuses `acquire_unconfigured`. `scripted` plays a JSON file of canned answers, one per situation the
+job puts (`@graft/model/scripted`, `parseScript` has the shape), for driving the whole loop on a laptop
+with no provider key; it needs `GRAFT_MODEL_SCRIPT=<path>` beside it and is refused in production. The
+provider-backed value arrives with GRA-31.
+
+```bash
+cat >> apps/server/.env <<'ENV'
+GRAFT_SANDBOX_BACKEND=fake
+GRAFT_MODEL_BACKEND=scripted
+GRAFT_MODEL_SCRIPT=./acquire-script.json
+ENV
+```
+
+A script for a public API the proxy can reach without a real key — the connection still needs *a*
+credential entered, since the scheme injects one — is the shortest by-hand proof: `goal` →
+`write_module` with a `ctx.fetch` of a documented `GET`, `proofReads` naming the same path, and a
+`testInput`. `acquire { connectionId, goal }` over MCP answers `{ jobId, status, progress }`;
+`acquire_status { jobId }` answers the progress lines and, at the end, `result` — the tool's wire name,
+version and annotations, or `{ failure, message, lastDiagnostics, tried }`.
+
 ### Publishing a tool by hand
 
 The publish (`@graft/publish`, GRA-18) writes a version into the person's toolbox — a directory tree

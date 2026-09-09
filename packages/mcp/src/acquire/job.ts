@@ -242,7 +242,7 @@ class AcquireLoop {
           : this.failure("job_failed", `The job failed: ${errorMessage(error)}`, {
               error: errorMessage(error),
             });
-      await this.closeOpen("abandoned", failure.message).catch(() => undefined);
+      await this.closeOpen(this.openOutcome(), failure.message).catch(() => undefined);
       await this.trace("result", `Failed (${failure.failure}): ${failure.message}`, {
         data: { ...failure },
       }).catch(() => undefined);
@@ -347,7 +347,7 @@ class AcquireLoop {
           continue;
         }
         case "give_up": {
-          await this.closeOpen("abandoned", answer.reason);
+          await this.closeOpen(this.openOutcome(), answer.reason);
           throw this.end("model_gave_up", `The model gave up: ${answer.reason}`, {
             reason: answer.reason,
             last: this.lastDiagnostics,
@@ -375,9 +375,7 @@ class AcquireLoop {
           continue;
         }
         case "write_module": {
-          if (this.open) {
-            await this.closeOpen(this.open.proofFailed ? "proof_failed" : "abandoned", answer.note);
-          }
+          if (this.open) await this.closeOpen(this.openOutcome(), answer.note);
           if (this.attemptsMade >= this.config.maxAttempts) {
             throw this.end(
               "attempt_budget",
@@ -417,7 +415,7 @@ class AcquireLoop {
     this.turns += 1;
     const budget = turnBudgetFor(this.config.maxAttempts);
     if (this.turns > budget) {
-      await this.closeOpen("abandoned", "the turn budget ran out");
+      await this.closeOpen(this.openOutcome(), "the turn budget ran out");
       throw this.end(
         "turn_budget",
         `The model was asked ${budget} times without the loop ending; the last diagnostics are in lastDiagnostics.`,
@@ -428,7 +426,7 @@ class AcquireLoop {
     try {
       reply = await conversation.turn(situation);
     } catch (error) {
-      await this.closeOpen("abandoned", `the model failed: ${errorMessage(error)}`);
+      await this.closeOpen(this.openOutcome(), `the model failed: ${errorMessage(error)}`);
       throw this.end(
         "model_failed",
         `The model failed to answer ${situation.kind}: ${errorMessage(error)}`,
@@ -471,7 +469,7 @@ class AcquireLoop {
       },
     });
     if (this.tokensSpent > this.config.tokenCeiling) {
-      await this.closeOpen("abandoned", "the token ceiling was reached");
+      await this.closeOpen(this.openOutcome(), "the token ceiling was reached");
       throw this.end(
         "token_ceiling",
         `The token ceiling of ${this.config.tokenCeiling} was reached after ${this.tokensSpent} tokens; the last diagnostics are in lastDiagnostics.`,
@@ -841,6 +839,14 @@ class AcquireLoop {
         },
       },
     };
+  }
+
+  /**
+   * What an attempt the loop leaves mid-way is closed as: `proof_failed` when a proof read had
+   * already failed — that is what stopped it, whatever the model said next — else `abandoned`.
+   */
+  private openOutcome(): "proof_failed" | "abandoned" {
+    return this.open?.proofFailed ? "proof_failed" : "abandoned";
   }
 
   /** Close the open attempt, if any, and add it to what was tried. */

@@ -8,8 +8,11 @@ import { SCHEME_CREDENTIAL_FIELDS, SCHEME_OPTIONAL_CREDENTIAL_FIELDS } from "@gr
  *
  * **The job never holds the connection's credential**, by design: a stored credential is decrypted
  * in exactly one place, the proxy's binding (GRA-6, `apps/server/src/app.ts`), and the job is not
- * it. So a credential's *value* is not something this function can be handed, and the redaction
- * works from what the job does know and from shape:
+ * it. The redaction *by value* therefore happens in the proxy, on the response leg, where the
+ * plaintext is in hand (`@graft/proxy`'s `echo.ts`; ADR 0010, amended): a vendor that echoes the key
+ * answers the sandbox with `[redacted:credential]` in its place. This function is the second line —
+ * what the job itself can see and the proxy cannot — and works from what the job knows and from
+ * shape:
  *
  *  - the values the job does hold — the capability tokens it minted for its runs, which a module
  *    can print (`ctx.proxyKey`) and a proxy refusal can echo;
@@ -23,10 +26,11 @@ import { SCHEME_CREDENTIAL_FIELDS, SCHEME_OPTIONAL_CREDENTIAL_FIELDS } from "@gr
  *    GitLab's, and a PEM private key — for a vendor that echoes the raw key in prose, which the
  *    field-name rule cannot see.
  *
- * The last two are best-effort by construction: a vendor that echoes a key of an unrecognised shape
- * under no field name gets through. That is the limit of redacting without the value, and the
- * reason the value is not fetched to close it: a decrypt on the job's path would be a second place a
- * credential becomes plaintext, which is the property GRA-6 chose to keep.
+ * The last two are best-effort by construction, and are defence in depth behind the proxy's
+ * value-based pass rather than the line itself: a key of an unrecognised shape under no field name
+ * gets through *here* — and is caught *there*, where the value is known. The value is not fetched to
+ * close the gap on this side: a decrypt on the job's path would be a second place a credential
+ * becomes plaintext, which is the property GRA-6 chose to keep.
  */
 
 export const REDACTED = "[redacted]";
@@ -85,6 +89,9 @@ const HTTP_CREDENTIAL = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/g;
 /** The scheme word of an `Authorization` value, which the field pass must not take for the credential. */
 const AUTH_SCHEME_WORD = /^(?:Bearer|Basic|Digest|Token)$/i;
 
+/** A value an earlier pass — this file's, or the proxy's `[redacted:credential]` — has already replaced. */
+const ALREADY_REDACTED = /^\[redacted[\]:]/;
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -129,7 +136,7 @@ export function redactText(
     out = out.replace(fields, (match: string, lead: string, value: string) => {
       // Already redacted by an earlier pass, or an auth scheme word whose credential the
       // `HTTP_CREDENTIAL` pass has dealt with — `authorization: Bearer [redacted]` stays readable.
-      if (value.startsWith(REDACTED) || AUTH_SCHEME_WORD.test(value)) return match;
+      if (ALREADY_REDACTED.test(value) || AUTH_SCHEME_WORD.test(value)) return match;
       return `${lead}${REDACTED}`;
     });
   }
