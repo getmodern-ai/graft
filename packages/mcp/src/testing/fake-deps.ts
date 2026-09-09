@@ -340,8 +340,47 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.connections.set(id, updated);
       return updated;
     },
-    deleteApprovalsForVendor: async () => [],
-    deleteBuildApprovalsForConnection: async () => [],
+    deleteApprovalsForVendor: async (_db, personId, vendor) => {
+      const swept: ApprovalRow[] = [];
+      for (const [k, row] of store.approvals) {
+        const tool = store.tools.get(row.toolId);
+        if (tool?.personId === personId && tool.vendor === vendor) {
+          swept.push(row);
+          store.approvals.delete(k);
+        }
+      }
+      return swept;
+    },
+    deleteBuildApprovalsForConnection: async (_db, personId, connectionId) => {
+      const swept: BuildApprovalRow[] = [];
+      for (const [k, row] of store.buildApprovals) {
+        if (
+          row.connectionId === connectionId &&
+          store.connections.get(connectionId)?.personId === personId
+        ) {
+          swept.push(row);
+          store.buildApprovals.delete(k);
+        }
+      }
+      return swept;
+    },
+    /** The repo's predicate: the connection's open asks of every kind, both clocks stamped. */
+    expirePendingActionsForConnection: async (_db, personId, connectionId, at) => {
+      const closed: PendingActionRow[] = [];
+      for (const [id, row] of store.pendingActions) {
+        if (
+          row.connectionId === connectionId &&
+          store.agents.get(row.agentId)?.personId === personId &&
+          row.consumedAt === null &&
+          row.expiresAt > at
+        ) {
+          const updated = { ...row, expiresAt: at, consumedAt: at };
+          store.pendingActions.set(id, updated);
+          closed.push(updated);
+        }
+      }
+      return closed;
+    },
     vault: { encrypt: async () => Buffer.from("ciphertext") },
     newId: store.newId,
     now: store.now,
@@ -638,6 +677,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         agentId: input.agentId,
         kind: input.kind,
         payload: input.payload,
+        connectionId: input.connectionId ?? null,
         expiresAt: input.expiresAt,
         answeredAt: input.answeredAt ?? null,
         answer: input.answer ?? null,

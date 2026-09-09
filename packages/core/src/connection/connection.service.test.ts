@@ -2,13 +2,14 @@ import type { ConnectionRow } from "@graft/db/repo/connection";
 import { connectionScheme } from "@graft/db/schema/connection";
 import { AUTH_SCHEMES } from "@graft/proxy";
 import type { EncryptOnlyVault } from "@graft/vault";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { ConnectionDeps } from "./connection.deps";
 import {
   registerConnection,
+  registerConnectionWithCredential,
   revokeConnection,
   setConnectionCredential,
   toConnectionOutput,
@@ -51,6 +52,10 @@ const row: ConnectionRow = {
 const fakeDb = { transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(fakeDb) };
 const ctx = { db: fakeDb } as unknown as ServiceContext;
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 function fakeVault(): EncryptOnlyVault & { encrypt: ReturnType<typeof vi.fn> } {
   return { encrypt: vi.fn(async () => CIPHERTEXT) };
 }
@@ -69,6 +74,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     revokeConnection: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
+    expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
     vault: fakeVault(),
     newId: () => "conn_new",
     now: () => NOW,
@@ -136,6 +142,30 @@ describe("registerConnection", () => {
     expect(deps.insertConnection).not.toHaveBeenCalled();
   });
 
+  /** GRA-28: the reason word the form and the meta-tool show beside the sentence. */
+  it("names host_not_public and the host in the refusal's details, for a primary or an additional host", async () => {
+    const deps = fakeDeps();
+    const base = {
+      vendor: "acme",
+      displayName: "Acme",
+      scheme: "bearer" as const,
+      primaryHost: "https://api.acme.example",
+    };
+    await expect(
+      registerConnection(ctx, PRINCIPAL, { ...base, primaryHost: "https://169.254.169.254" }, deps),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      details: { reason: "host_not_public", host: "169.254.169.254" },
+    });
+    await expect(
+      registerConnection(ctx, PRINCIPAL, { ...base, hosts: ["db.internal"] }, deps),
+    ).rejects.toMatchObject({ details: { reason: "host_not_public", host: "db.internal" } });
+    await expect(
+      registerConnection(ctx, PRINCIPAL, { ...base, primaryHost: "http://api.acme.example" }, deps),
+    ).rejects.toMatchObject({ details: { reason: "invalid" } });
+    expect(deps.insertConnection).not.toHaveBeenCalled();
+  });
+
   it("stores a person-registered OAuth client's id, endpoints and scopes — never a secret", async () => {
     const deps = fakeDeps();
     await registerConnection(
@@ -163,6 +193,71 @@ describe("registerConnection", () => {
       oauthScopes: ["https://www.googleapis.com/auth/gmail.readonly"],
     });
     expect(inserted).not.toHaveProperty("oauthClientSecretCiphertext");
+  });
+});
+
+describe("registerConnectionWithCredential", () => {
+  /** GRA-28: the console's one submit — the row and its ciphertext land together or not at all. */
+  it("registers and encrypts in one transaction, and answers the public shape with credentialSetAt", async () => {
+    // The read between the two writes answers the row just inserted, as the repo would.
+    const deps = fakeDeps({ findConnection: vi.fn(async (_db, _p, id) => ({ ...row, id })) });
+    const transaction = vi.spyOn(fakeDb, "transaction");
+    const output = await registerConnectionWithCredential(
+      ctx,
+      PRINCIPAL,
+      {
+        vendor: "acme",
+        displayName: "Acme",
+        scheme: "api_key_header",
+        schemeConfig: { headerName: "x-api-key" },
+        primaryHost: "https://api.acme.example",
+        credential: { apiKey: "sk_live_1" },
+      },
+      deps,
+    );
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(deps.insertConnection).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ id: "conn_new", vendor: "acme" }),
+    );
+    expect(deps.vault.encrypt).toHaveBeenCalledWith(
+      { apiKey: "sk_live_1" },
+      { personId: "person_1", connectionId: "conn_new" },
+    );
+    expect(deps.setConnectionCredential).toHaveBeenCalledWith(fakeDb, "person_1", "conn_new", {
+      ciphertext: CIPHERTEXT,
+      setAt: NOW,
+    });
+    expect(output.credentialSetAt).toEqual(NOW);
+    expect(JSON.stringify(output)).not.toContain("sk_live_1");
+  });
+
+  it("refuses a credential the scheme does not take before anything is written, and a private host before the vault is asked", async () => {
+    const deps = fakeDeps();
+    const base = {
+      vendor: "acme",
+      displayName: "Acme",
+      scheme: "bearer" as const,
+      primaryHost: "https://api.acme.example",
+    };
+    await expect(
+      registerConnectionWithCredential(
+        ctx,
+        PRINCIPAL,
+        { ...base, credential: { apiKey: "k" } },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      registerConnectionWithCredential(
+        ctx,
+        PRINCIPAL,
+        { ...base, primaryHost: "https://10.0.0.5", credential: { token: "t" } },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", details: { reason: "host_not_public" } });
+    expect(deps.insertConnection).not.toHaveBeenCalled();
+    expect(deps.vault.encrypt).not.toHaveBeenCalled();
   });
 });
 
@@ -216,11 +311,13 @@ describe("setConnectionCredential", () => {
 });
 
 describe("revokeConnection", () => {
-  /** ADR 0007: credential and approvals go, for every agent; the tools stay. */
-  it("clears the row, deletes the vendor's approvals and the connection's build approvals, in one transaction", async () => {
+  /** ADR 0007: credential, approvals and open asks go, for every agent; the tools stay. */
+  it("clears the row, deletes the vendor's approvals and the connection's build approvals, and closes its open asks, in one transaction", async () => {
     const deps = fakeDeps();
+    const transaction = vi.spyOn(fakeDb, "transaction");
     const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
 
+    expect(transaction).toHaveBeenCalledTimes(1);
     expect(deps.revokeConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1", NOW);
     expect(deps.deleteApprovalsForVendor).toHaveBeenCalledWith(fakeDb, "person_1", "unleashed");
     expect(deps.deleteBuildApprovalsForConnection).toHaveBeenCalledWith(
@@ -228,7 +325,19 @@ describe("revokeConnection", () => {
       "person_1",
       "conn_1",
     );
-    expect(result).toMatchObject({ approvalsDeleted: 2, buildApprovalsDeleted: 1 });
+    // GRA-23's known edge: a destructive tool's per-call yes lives on an unconsumed action, not in a
+    // row the two deletes reach — so the connection's open asks are closed under the same clock.
+    expect(deps.expirePendingActionsForConnection).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "conn_1",
+      NOW,
+    );
+    expect(result).toMatchObject({
+      approvalsDeleted: 2,
+      buildApprovalsDeleted: 1,
+      pendingActionsExpired: 3,
+    });
     expect(result?.connection.revokedAt).toEqual(NOW);
   });
 
@@ -236,6 +345,7 @@ describe("revokeConnection", () => {
     const deps = fakeDeps({ revokeConnection: vi.fn(async () => null) });
     await expect(revokeConnection(ctx, PRINCIPAL, "conn_x", deps)).resolves.toBeNull();
     expect(deps.deleteApprovalsForVendor).not.toHaveBeenCalled();
+    expect(deps.expirePendingActionsForConnection).not.toHaveBeenCalled();
   });
 });
 

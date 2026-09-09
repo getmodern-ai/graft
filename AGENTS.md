@@ -98,9 +98,10 @@ are required, and so is `GRAFT_KEYRING_SECRET` (32+) under the default `GRAFT_BA
 `GRAFT_CORS_ORIGIN` is an optional comma-separated list of origins; the capability token key pair is
 all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the database for a proxy
 smoke test and is refused in production. `GRAFT_APPROVAL_WAIT_SECONDS` (default 25) is how long a
-tool call waits for a person to answer a handoff before returning `awaiting_approval`, and
-`GRAFT_PENDING_ACTION_TTL_HOURS` (default 24) how long that action stays answerable (ADR 0006,
-ADR 0008). `packages/env/src/schema.ts` is the rules as code.
+tool call waits for a person to answer a handoff before returning `awaiting_approval` — or
+`awaiting_connection` / `awaiting_credential` for the two connection handoffs (GRA-28), which share
+the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default 24) how long that action stays
+answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the rules as code.
 
 `GRAFT_BACKINGS` picks the backing behind each seam (ADR 0002; `apps/server/src/backings.ts`).
 `open`, the default, is what this repository holds — the sandbox `GRAFT_SANDBOX_BACKEND` names, the
@@ -161,7 +162,18 @@ one `fetch`, and every wire type is imported from `@graft/server/api`, `@graft/c
 page dispatches on the ask's `kind` in `components/pending/pending-action-card.tsx`, one card file per
 kind, so a new kind is one branch and one file. Components carry no tests; the pure helpers under
 `src/lib` do, and `check-types` runs `vite build` first so a broken bundle fails CI as a type error
-would. Accounts are opened at `/signup` — verification is off for the alpha, the reason is in
+would.
+
+**The connection form reaches into `@graft/core` and `@graft/proxy` at run time, and three modules
+stay browser-safe for it** (GRA-28): `packages/core/src/connection/connection.rules.ts` is what the
+form validates with — the same functions the connection service applies at create and the
+`request_connection` meta-tool applies to an agent's proposal, so a private, link-local or
+cloud-metadata host is refused with the reason `host_not_public` in all three places and again by the
+proxy at resolution — and `packages/proxy/src/credential-fields.ts` and `scheme-parameters.ts` are the
+two halves of the scheme table the form renders its secret and parameter inputs from. Each imports
+nothing but the others and a type; an import of `@graft/proxy`'s index or of a repo in one of them
+pulls `node:crypto` or drizzle into the bundle, and `vite build` is what fails. Add a scheme by adding
+to both tables and the plugin, never to the form. Accounts are opened at `/signup` — verification is off for the alpha, the reason is in
 `packages/auth/src/index.ts`.
 
 ### Publishing a tool by hand

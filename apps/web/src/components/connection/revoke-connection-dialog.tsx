@@ -21,9 +21,9 @@ import { count } from "@/lib/format";
 
 /**
  * Revoke a connection (ADR 0007): the credential and every OAuth secret are cleared, every approval
- * for the vendor's tools and every build approval for this connection are deleted — for all agents
- * at once — and the tools stay, awaiting reconnection. Re-entering the credential is the
- * reconnection; that form arrives with GRA-28.
+ * for the vendor's tools and every build approval for this connection are deleted, and every open
+ * ask about it is closed — for all agents at once — and the tools stay, awaiting reconnection.
+ * Re-entering the credential (`reenter-credential-dialog.tsx`) is the reconnection.
  */
 export function RevokeConnectionDialog({
   connection,
@@ -42,10 +42,10 @@ export function RevokeConnectionDialog({
       queryClient.invalidateQueries({ queryKey: toolKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       toast.success(`${connection.displayName} is revoked`, {
-        description: `Credential cleared; ${count(result.approvalsDeleted, "tool approval")} and ${count(
+        description: `Credential cleared; ${count(result.approvalsDeleted, "tool approval")}, ${count(
           result.buildApprovalsDeleted,
           "build approval",
-        )} removed. Its tools stay and ask again after reconnection.`,
+        )} and ${count(result.pendingActionsExpired, "open ask")} removed. Its tools stay and ask again after reconnection.`,
       });
       onOpenChange(false);
     },
@@ -57,9 +57,9 @@ export function RevokeConnectionDialog({
         <DialogHeader>
           <DialogTitle>Revoke {connection.displayName}?</DialogTitle>
           <DialogDescription>
-            The credential is cleared and every agent loses its approvals for {connection.vendor}{" "}
-            tools at once. The tools themselves stay in the toolbox and ask again once a credential
-            is re-entered.
+            The credential is cleared, every agent loses its approvals for {connection.vendor} tools
+            at once, and any open ask about this connection is closed. The tools themselves stay in
+            the toolbox and ask again once a credential is re-entered.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

@@ -26,7 +26,7 @@ function PendingRoute() {
     <>
       <PageHeader
         title="Pending actions"
-        description="Asks your agents could not settle on their own: a write's first call, every call of a destructive tool, an acquire against a connection."
+        description="Asks your agents could not settle on their own: a write's first call, every call of a destructive tool, an acquire against a connection, a connection to set up or a credential to re-enter."
       />
 
       {data.pendingActions.length === 0 ? (
