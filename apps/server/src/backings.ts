@@ -7,7 +7,6 @@ import { createDockerSandboxBackend } from "@graft/sandbox-docker";
 import {
   createFilesystemToolboxStore,
   createNoopToolboxMirror,
-  type FilesystemToolboxStore,
   type ToolboxMirror,
   type ToolboxStore,
 } from "@graft/toolbox";
@@ -17,7 +16,11 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  * Which backing stands behind each of the three seams — sandbox, keyring, toolbox mirror — chosen
  * once at boot from `GRAFT_BACKINGS` (ADR 0002: one core, two backings per seam, the commercial
  * half hidden by absence), and the toolbox store beside them, because the store and the sandbox have
- * to see one tree (`packages/toolbox/README.md`) and which tree depends on the sandbox chosen.
+ * to see one tree (`packages/toolbox/README.md`) and which tree depends on the sandbox chosen. Under
+ * `open` that is the filesystem store, rooted where the sandbox backing sees the same directory;
+ * under `cloud` the private package may answer with a store of its own — one over the drives its
+ * sandboxes mount (GRA-39) — and the selector takes that in place of the filesystem store, since a
+ * version written to this machine's disk is one no hosted sandbox would ever see.
  *
  * `open` is what this repository holds: the sandbox `GRAFT_SANDBOX_BACKEND` names — Docker when
  * its pair of variables is set, none when it is not, or the in-process fake for a laptop without a
@@ -39,9 +42,9 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  *
  * Nothing about the hosted backings is typed here beyond the seams they implement. What the private
  * module must export is `createCloudBackings(input: CloudBackingsInput)` returning the three
- * backings, and `assertCloudBackings` checks that shape at boot and says what is missing — the one
- * enforcement a boundary of absence can have. `NODE_ENV=production` with `open` is allowed: it is
- * the self-hosted form deployed, not something missing.
+ * backings and, if it has one, its store; `assertCloudBackings` checks that shape at boot and says
+ * what is missing — the one enforcement a boundary of absence can have. `NODE_ENV=production` with
+ * `open` is allowed: it is the self-hosted form deployed, not something missing.
  */
 
 export type BackingsForm = ServerEnv["GRAFT_BACKINGS"];
@@ -56,15 +59,27 @@ export type Backings = {
   sandbox: SandboxBackend | null;
   keyring: Keyring;
   mirror: ToolboxMirror;
-  /** The toolbox as the server holds it, rooted where the sandbox backing sees the same tree. */
-  store: FilesystemToolboxStore;
+  /** The toolbox as the server holds it, where the sandbox backing sees the same tree. */
+  store: ToolboxStore;
+  /**
+   * The directory the store writes on this machine — `<root>/<toolboxId>/<path>` — when it is the
+   * filesystem store, and null when the cloud backings answered with a store of their own and the
+   * toolbox is nowhere on this disk. For a boot line or a script telling a reader where to look;
+   * nothing reads the toolbox through it.
+   */
+  toolboxRoot: string | null;
 };
 
-/** What the private module's factory returns: the three seams and nothing else. */
+/**
+ * What the private module's factory returns: the three seams, and a toolbox store when the hosted
+ * form holds the toolbox somewhere this machine's disk is not (GRA-39). Absent, the selector's
+ * filesystem store at `GRAFT_TOOLBOX_ROOT` is what the publish writes.
+ */
 export type CloudBackings = {
   sandbox: SandboxBackend;
   keyring: Keyring;
   mirror: ToolboxMirror;
+  store?: ToolboxStore;
 };
 
 /**
@@ -76,7 +91,7 @@ export type CloudBackings = {
 export type CloudBackingsInput = {
   env: { NODE_ENV: ServerEnv["NODE_ENV"]; GRAFT_PROXY_PUBLIC_URL: string };
   raw: Readonly<Record<string, string | undefined>>;
-  /** The toolbox as the server holds it — what a mirror reads a version from. */
+  /** The filesystem store at the toolbox root — what a factory that owns no store is read through. */
   store: ToolboxStore;
 };
 
@@ -145,12 +160,14 @@ function openBackings(env: BackingsEnv): Backings {
           })
         : null;
   }
+  const store = createFilesystemToolboxStore({ root: toolboxRoot });
   return {
     form: "open",
     sandbox,
     keyring: createLocalKeyring(env.GRAFT_KEYRING_SECRET),
     mirror: createNoopToolboxMirror(),
-    store: createFilesystemToolboxStore({ root: toolboxRoot }),
+    store,
+    toolboxRoot: store.root,
   };
 }
 
@@ -172,17 +189,24 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
   if (typeof factory !== "function") {
     throw new Error(`${specifier} does not export createCloudBackings(input)`);
   }
-  // The hosted sandbox mounts its own copy of the toolbox; the store here is the server's, which
-  // the publish writes and the mirror reads (`packages/toolbox/README.md`, "the hosted form").
-  const store = createFilesystemToolboxStore({ root: env.GRAFT_TOOLBOX_ROOT });
+  // The filesystem store is handed to every factory and is what one that owns no store is read
+  // through. A factory that answers with its own — the hosted form's, over the drives its sandboxes
+  // mount (GRA-39) — is what the publish writes to instead, and there is then no toolbox on this disk.
+  const filesystem = createFilesystemToolboxStore({ root: env.GRAFT_TOOLBOX_ROOT });
   const input: CloudBackingsInput = {
     env: { NODE_ENV: env.NODE_ENV, GRAFT_PROXY_PUBLIC_URL: env.GRAFT_PROXY_PUBLIC_URL },
     raw: deps.raw ?? process.env,
-    store,
+    store: filesystem,
   };
   const created: unknown = await factory(input);
   assertCloudBackings(created, specifier);
-  return { form: "cloud", ...created, store };
+  const { store: own, ...seams } = created;
+  return {
+    form: "cloud",
+    ...seams,
+    store: own ?? filesystem,
+    toolboxRoot: own ? null : filesystem.root,
+  };
 }
 
 const MODULE_NOT_FOUND_CODES = new Set(["ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]);
@@ -205,7 +229,13 @@ const SEAM_MEMBERS = {
   mirror: ["mirrorVersion"],
 } as const;
 
-/** Throw unless `value` carries the three seams, naming the first thing that is missing. */
+/** The store's verbs (`ToolboxStore` in `@graft/toolbox`), for the factory that answers with one. */
+const STORE_MEMBERS = ["readTree", "writeTree", "read", "list", "exists", "remove"] as const;
+
+/**
+ * Throw unless `value` carries the three seams — and, when it carries a store, the whole store —
+ * naming the first thing that is missing.
+ */
 export function assertCloudBackings(
   value: unknown,
   specifier: string,
@@ -229,5 +259,15 @@ export function assertCloudBackings(
   }
   if (typeof (record.keyring as Record<string, unknown>).id !== "string") {
     throw new Error(`${specifier}'s createCloudBackings returned a keyring with no id`);
+  }
+  if (record.store !== undefined) {
+    if (typeof record.store !== "object" || record.store === null) {
+      throw new Error(`${specifier}'s createCloudBackings returned a store that is not an object`);
+    }
+    for (const member of STORE_MEMBERS) {
+      if (typeof (record.store as Record<string, unknown>)[member] !== "function") {
+        throw new Error(`${specifier}'s createCloudBackings returned a store without ${member}()`);
+      }
+    }
   }
 }

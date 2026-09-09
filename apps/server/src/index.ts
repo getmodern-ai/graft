@@ -323,7 +323,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
       `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} ` +
       `(${backings.form} backings — sandbox ${sandbox ? "configured" : "unconfigured"}, ` +
-      `keyring ${backings.keyring.id}, toolbox ${store.root}), ` +
+      `keyring ${backings.keyring.id}, toolbox ${backings.toolboxRoot ?? "held by the cloud backings"}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database, ` +
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
