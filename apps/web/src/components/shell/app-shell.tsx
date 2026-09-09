@@ -78,12 +78,11 @@ function NavLink({
 
 /**
  * How many asks are waiting, beside the link — the one number a person opening the console wants
- * first (ADR 0006). Silent until GRA-23's list endpoint exists: a 404 there is not a count of zero,
- * so the badge stays away rather than saying nothing is pending.
+ * first (ADR 0006). Polled, because an ask arrives while the person is on another screen.
  */
 function PendingCount() {
-  const { data } = useQuery({ ...pendingActionsQuery, retry: false });
-  const open = data?.actions.length ?? 0;
+  const { data } = useQuery({ ...pendingActionsQuery, refetchInterval: 15_000 });
+  const open = data?.pendingActions.length ?? 0;
   if (open === 0) return null;
   return <Badge>{open}</Badge>;
 }

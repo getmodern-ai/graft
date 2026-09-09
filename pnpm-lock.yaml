@@ -247,6 +247,12 @@ importers:
       '@graft/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@graft/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@graft/mcp':
+        specifier: workspace:*
+        version: link:../../packages/mcp
       '@graft/server':
         specifier: workspace:*
         version: link:../server
