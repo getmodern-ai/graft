@@ -144,7 +144,7 @@ export function AddConnectionDialog({
               />
             </FieldGroup>
           </FieldSet>
-          <ConsentStatus state={consent.state} />
+          <ConsentStatus state={consent.state} onCancel={consent.cancel} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>
               Cancel

@@ -23,6 +23,23 @@ export function isOAuthAuthorizationCode(scheme: string): boolean {
  */
 export const OAUTH_CALLBACK_PATH = "/api/oauth/callback";
 
+/**
+ * How long a consent may take from Connect to the callback before its state is refused — and how
+ * long the console waits for it. Here rather than in `oauth-consent.ts` because the console reads
+ * it too, and that file imports `node:crypto`.
+ */
+export const OAUTH_STATE_TTL_MS = 10 * 60_000;
+
+/**
+ * The same-origin channel the callback page announces itself on beside `postMessage` (ADR 0005;
+ * `apps/server/src/oauth.ts`). A vendor whose consent page sends `Cross-Origin-Opener-Policy:
+ * same-origin` — Google does — severs the popup from its opener, so `window.opener` is null on the
+ * callback page and the opener's handle reports the popup closed; in production the console and the
+ * callback share an origin, so a `BroadcastChannel` still reaches it. In development, where they
+ * do not, the console's poll of the connection is what notices.
+ */
+export const OAUTH_CONSENT_CHANNEL = "graft:oauth";
+
 /** `GRAFT_AUTH_URL` plus the callback path — a trailing slash on the origin is not doubled. */
 export function oauthRedirectUri(authUrl: string): string {
   return `${authUrl.replace(/\/+$/, "")}${OAUTH_CALLBACK_PATH}`;

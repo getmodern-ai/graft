@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-import { isGoogleHost } from "./oauth.rules";
+import { isGoogleHost, OAUTH_STATE_TTL_MS } from "./oauth.rules";
 
 /**
  * The consent's two protections and the URL that starts it (ADR 0005): **PKCE** (RFC 7636) so a
@@ -14,8 +14,8 @@ import { isGoogleHost } from "./oauth.rules";
  * (`connection.service.ts`) writes the verifier and the route (`apps/server/src/oauth.ts`) reads it.
  */
 
-/** How long a consent may take from Connect to the callback before its state is refused. */
-export const OAUTH_STATE_TTL_MS = 10 * 60_000;
+/** The consent's lifetime lives with the browser-safe rules; re-exported for the callers here. */
+export { OAUTH_STATE_TTL_MS };
 
 /** What the signed state carries — the callback's whole context. */
 export type OAuthStatePayload = {

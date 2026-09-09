@@ -158,7 +158,7 @@ export function ReenterCredentialDialog({
               autoFocus
             />
           </FieldGroup>
-          <ConsentStatus state={consent.state} />
+          <ConsentStatus state={consent.state} onCancel={consent.cancel} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>
               Cancel

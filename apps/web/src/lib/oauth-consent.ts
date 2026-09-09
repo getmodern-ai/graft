@@ -1,3 +1,4 @@
+import { OAUTH_CONSENT_CHANNEL, OAUTH_STATE_TTL_MS } from "@graft/core/connection/oauth.rules";
 import type { OAuthCallbackMessage } from "@graft/server/oauth";
 import { queryOptions } from "@tanstack/react-query";
 
@@ -8,9 +9,14 @@ import type { Connection } from "./connection-queries";
  * The consent as the console runs it (ADR 0005): the redirect URI the person pastes into the client
  * they register — fetched from the server, never computed here, so the form can only ever show the
  * URI the callback route serves — the popup the authorize URL opens, and how the console learns the
- * consent finished. Two signals, either enough: the callback page `postMessage`s the opener with an
- * `OAuthCallbackMessage` (`apps/server/src/oauth.ts`), and, should the popup have lost its opener
- * or the message its way, the connection is polled while the popup is open until it says connected.
+ * consent finished. Three signals, any one enough, and the poll is the one that always works: the
+ * connection is read every second until it says connected; the callback page (`apps/server/src/oauth.ts`)
+ * `postMessage`s the opener and announces itself on a same-origin `BroadcastChannel`; and the person
+ * can stop waiting. **The popup's `closed` flag is deliberately not a signal.** A vendor whose
+ * consent page sends `Cross-Origin-Opener-Policy: same-origin` — Google does, verified against
+ * `accounts.google.com` on 9 September 2026 — swaps the popup's browsing context group, after which
+ * the opener's handle reports it closed while the consent is still running and `window.opener` is
+ * null on the callback page, so neither the flag nor the message can be relied on for such a vendor.
  * Nothing here ever sees a token: the message carries a status word and the connection id.
  */
 
@@ -32,19 +38,22 @@ export function startOAuthConsent(connectionId: string, pendingActionId?: string
   );
 }
 
-export type ConsentOutcome = OAuthCallbackMessage["status"] | "closed";
+/** How the wait ended: the callback's word, the person stopped it, or the consent's lifetime passed. */
+export type ConsentOutcome = OAuthCallbackMessage["status"] | "stopped" | "expired";
 
 /**
- * The callback page's message, when `event` is one — from the server's origin (the page is served
- * there, which in development is not the console's own origin), of the shape the page sends, and
- * about the connection in question. Pure, so the filter has a test; anything else is null.
+ * The callback page's message, when `event` is one — from an origin the page may be served on (the
+ * server's for `postMessage`; the console's own for the channel, which is same-origin by
+ * construction), of the shape the page sends, and about the connection in question. Pure, so the
+ * filter has a test; anything else is null.
  */
 export function readConsentMessage(
   event: { origin: string; data: unknown },
-  serverOrigin: string,
+  allowedOrigin: string | readonly string[],
   connectionId: string,
 ): OAuthCallbackMessage | null {
-  if (event.origin !== serverOrigin) return null;
+  const origins = typeof allowedOrigin === "string" ? [allowedOrigin] : allowedOrigin;
+  if (!origins.includes(event.origin)) return null;
   const data = event.data;
   if (typeof data !== "object" || data === null) return null;
   const message = data as Partial<OAuthCallbackMessage>;
@@ -77,11 +86,15 @@ export function openConsentPopup(authorizeUrl: string): Window | null {
   );
 }
 
+/** How often the connection is read while the consent runs. */
+export const CONSENT_POLL_MS = 1000;
+
 /**
- * Wait for the consent in `popup` to end: the callback's message, the connection reading as
- * connected on a poll, or the popup closing. `isConnected` is the poll — the caller's refetch of the
- * connection — asked every second while the popup is open and once more after it closes, because a
- * popup that closes itself right after posting may beat the message to the listener.
+ * Wait for the consent to end: the callback's message (opener or channel), the connection reading
+ * as connected on a poll, the person stopping the wait (`signal`), or the consent's own lifetime
+ * passing — never the popup's `closed` flag, for the reason the module header gives. `isConnected`
+ * is the caller's read of the connection. The popup is closed by this side once the wait ends, when
+ * the browser still lets it be.
  */
 export function awaitConsent(args: {
   popup: Window;
@@ -89,32 +102,50 @@ export function awaitConsent(args: {
   connectionId: string;
   isConnected: () => Promise<boolean>;
   signal?: AbortSignal;
+  deadlineMs?: number;
 }): Promise<{ outcome: ConsentOutcome; message: string }> {
   return new Promise((resolve) => {
     let settled = false;
+    const channel =
+      "BroadcastChannel" in window ? new BroadcastChannel(OAUTH_CONSENT_CHANNEL) : null;
     const settle = (outcome: ConsentOutcome, message = "") => {
       if (settled) return;
       settled = true;
       window.removeEventListener("message", onMessage);
+      channel?.close();
       clearInterval(poll);
+      clearTimeout(deadline);
       args.signal?.removeEventListener("abort", onAbort);
+      try {
+        args.popup.close();
+      } catch {
+        // A swapped or already-closed popup; nothing to do.
+      }
       resolve({ outcome, message });
     };
     const onMessage = (event: MessageEvent) => {
       const message = readConsentMessage(event, args.serverOrigin, args.connectionId);
       if (message) settle(message.status, message.message);
     };
-    const onAbort = () => settle("closed");
+    const onChannel = (event: MessageEvent) => {
+      const message = readConsentMessage(
+        { origin: event.origin || window.location.origin, data: event.data },
+        window.location.origin,
+        args.connectionId,
+      );
+      if (message) settle(message.status, message.message);
+    };
+    const onAbort = () => settle("stopped");
     const poll = setInterval(async () => {
       if (settled) return;
-      if (await args.isConnected().catch(() => false)) return settle("connected");
-      if (args.popup.closed) {
-        // One last look: the callback may have written the tokens as the window closed.
-        if (await args.isConnected().catch(() => false)) return settle("connected");
-        settle("closed");
-      }
-    }, 1000);
+      if (await args.isConnected().catch(() => false)) settle("connected");
+    }, CONSENT_POLL_MS);
+    const deadline = setTimeout(
+      () => settle("expired", "The consent took too long; press Connect to start it again."),
+      args.deadlineMs ?? OAUTH_STATE_TTL_MS,
+    );
     window.addEventListener("message", onMessage);
+    channel?.addEventListener("message", onChannel);
     args.signal?.addEventListener("abort", onAbort);
   });
 }

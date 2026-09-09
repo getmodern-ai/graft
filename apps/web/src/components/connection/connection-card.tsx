@@ -163,7 +163,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 text-sm">
-        <ConsentStatus state={consent.state} />
+        <ConsentStatus state={consent.state} onCancel={consent.cancel} />
         <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]">
           <dt className="text-muted-foreground">Hosts</dt>
           <dd className="flex flex-wrap gap-1.5">

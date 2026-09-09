@@ -119,6 +119,7 @@ export {
   isOAuthAuthorizationCode,
   OAUTH_AUTHORIZATION_CODE,
   OAUTH_CALLBACK_PATH,
+  OAUTH_CONSENT_CHANNEL,
   type OAuthPublicState,
   type OAuthState,
   type OAuthStatus,

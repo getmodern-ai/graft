@@ -4,6 +4,7 @@ import { ExternalLinkIcon, KeyRoundIcon, TriangleAlertIcon } from "lucide-react"
 import type { ConsentState } from "@/components/connection/use-oauth-consent";
 import { CopyButton } from "@/components/copy-button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { type ConnectionDraft, googleNoticeFor, isOAuthDraft } from "@/lib/connection-form";
 import { redirectUriQuery } from "@/lib/oauth-consent";
@@ -72,18 +73,28 @@ export function GoogleNotice({ draft }: { draft: ConnectionDraft }) {
 
 /**
  * Where a running consent stands: the popup is open, the browser refused it (the person opens the
- * URL themselves), or how it ended. Rendered under the form once Connect has been pressed.
+ * URL themselves), or how it ended. Rendered under the form once Connect has been pressed. The wait
+ * ends when the connection reads as connected or the person stops it — a Google consent page
+ * severs the popup from this page, so its closing is not something this page can see
+ * (`lib/oauth-consent.ts`), which is why the stop is the person's.
  */
-export function ConsentStatus({ state }: { state: ConsentState }) {
+export function ConsentStatus({ state, onCancel }: { state: ConsentState; onCancel?: () => void }) {
   switch (state.phase) {
     case "idle":
       return null;
     case "running":
       return (
-        <p className="flex items-center gap-2 text-muted-foreground text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
           <Spinner className="size-3.5" />
-          Complete the consent in the popup. This page updates when the vendor sends you back.
-        </p>
+          <span>
+            Complete the consent in the popup. This page updates once the vendor has sent you back.
+          </span>
+          {onCancel ? (
+            <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+              Stop waiting
+            </Button>
+          ) : null}
+        </div>
       );
     case "blocked":
       return (
@@ -111,9 +122,11 @@ export function ConsentStatus({ state }: { state: ConsentState }) {
           <AlertTitle>
             {state.outcome === "declined"
               ? "The consent was declined"
-              : state.outcome === "closed"
-                ? "The popup closed before the consent completed"
-                : "The consent did not complete"}
+              : state.outcome === "stopped"
+                ? "Stopped waiting for the consent"
+                : state.outcome === "expired"
+                  ? "The consent took too long"
+                  : "The consent did not complete"}
           </AlertTitle>
           <AlertDescription>
             {state.message || "The client id and secret are kept; press Connect to try again."}

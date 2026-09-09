@@ -158,7 +158,7 @@ export function CredentialAskCard({
           />
         </FieldGroup>
       ) : null}
-      <ConsentStatus state={consent.state} />
+      <ConsentStatus state={consent.state} onCancel={consent.cancel} />
     </AskCard>
   );
 }

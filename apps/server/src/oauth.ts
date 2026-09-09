@@ -3,6 +3,7 @@ import {
   type ConnectionDeps,
   completeOAuthConsent,
   isOAuthAuthorizationCode,
+  OAUTH_CONSENT_CHANNEL,
   oauthRedirectUri,
   type PendingActionDeps,
   type Principal,
@@ -288,9 +289,12 @@ function escapeHtml(text: string): string {
 
 /**
  * The page the popup ends on: one sentence, and a script that tells the console what happened and
- * for which connection — to the console's origin alone, so no other page that opened this window
- * hears it. The message is JSON with `<` escaped, so nothing in a display name can close the
- * script; the text is HTML-escaped. Everything on it is already the person's to know.
+ * for which connection — to the opener, at the console's origin alone, so no other page that opened
+ * this window hears it; and on a same-origin `BroadcastChannel`, because a vendor whose consent page
+ * sends `Cross-Origin-Opener-Policy: same-origin` (Google) has severed this window from its opener
+ * by the time it lands here (`@graft/core`'s `OAUTH_CONSENT_CHANNEL`). The message is JSON with `<`
+ * escaped, so nothing in a display name can close the script; the text is HTML-escaped. Everything
+ * on it is already the person's to know.
  */
 export function callbackPage(message: OAuthCallbackMessage, consoleOrigin: string): string {
   const title =
@@ -325,6 +329,13 @@ export function callbackPage(message: OAuthCallbackMessage, consoleOrigin: strin
   var message = ${payload};
   try {
     if (window.opener && !window.opener.closed) window.opener.postMessage(message, ${origin});
+  } catch (error) {}
+  try {
+    if ("BroadcastChannel" in window) {
+      var channel = new BroadcastChannel(${JSON.stringify(OAUTH_CONSENT_CHANNEL)});
+      channel.postMessage(message);
+      channel.close();
+    }
   } catch (error) {}
   if (message.status === "connected") setTimeout(function () { window.close(); }, 1500);
 })();

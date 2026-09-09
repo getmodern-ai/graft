@@ -202,7 +202,7 @@ export function ConnectionAskCard({
               />
             </FieldGroup>
           </FieldSet>
-          <ConsentStatus state={consent.state} />
+          <ConsentStatus state={consent.state} onCancel={consent.cancel} />
         </>
       ) : (
         <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
