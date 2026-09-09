@@ -158,6 +158,9 @@ beforeAll(async () => {
   });
   // Promoted for agent A alone; agent B holds the same toolbox with an empty working set.
   store.promote(AGENT_A, "tool_list_items");
+  // Agent A may run code against Demo (the build approval, ADR 0008); the asks themselves are
+  // `approval.test.ts`'s subject, and this suite is about everything that happens once they pass.
+  store.grantBuild(AGENT_A, CONN_DEMO);
 
   checked = [];
   const fakeCheck: ModuleCheck = async (input) => {
@@ -207,6 +210,12 @@ beforeAll(async () => {
     listChangedWindowMs: 300,
     toolbox,
     publishTool: (args) => publishToolVersion(publish, args),
+    handoff: {
+      consoleUrl: "http://console.graft.test",
+      secret: "graft-mcp-test-handoff-secret-that-is-long-enough",
+      waitMs: 0,
+      ttlMs: 60_000,
+    },
   };
 }, 30_000);
 

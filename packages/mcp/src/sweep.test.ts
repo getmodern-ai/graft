@@ -73,6 +73,12 @@ beforeAll(() => {
     notifier,
     inFlight,
     now: () => clock,
+    handoff: {
+      consoleUrl: "http://console.graft.test",
+      secret: "graft-sweep-test-handoff-secret-that-is-long-enough",
+      waitMs: 0,
+      ttlMs: 60_000,
+    },
   };
 });
 

@@ -116,6 +116,7 @@ async function dispatch(
         name: key.name,
         input: args,
         mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: false },
+        channel: session.channel,
       });
       return run.isError ? toolError(run.answer) : toolResult(run.answer);
     }
