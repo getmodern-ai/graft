@@ -15,6 +15,10 @@ coverage
 .env
 .env*.local
 
+# A laptop's toolboxes: `GRAFT_TOOLBOX_ROOT` defaults here (`@graft/toolbox`), one directory per
+# person, versions with their node_modules inside. A deployment sets an absolute path elsewhere.
+.graft/
+
 # Agent worktrees. Claude Code puts them inside the repo, so without this a second checkout shows
 # up in `git status` and a `git add -A` can commit it. Only this subdirectory; the rest of
 # `.claude/` is tracked once it exists.

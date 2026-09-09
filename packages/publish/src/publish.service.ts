@@ -31,6 +31,7 @@ import {
   forbiddenDraftFiles,
   MANIFEST_FILE,
   type ManifestDependency,
+  normaliseManifest,
   type PublishDiagnostic,
   readManifest,
 } from "./manifest";
@@ -51,7 +52,8 @@ import { evaluatePackage, isAllowlisted, type PackagePolicyConfig } from "./poli
  *  5. Every declared package is put to the package policy (`./policy.ts`); allowlisted names skip
  *     the registry. Every failing package is a diagnostic, all of them at once, so the model fixes
  *     the manifest in one edit.
- *  6. The version directory `tools/<vendor>/<name>/v<N>` is written from the draft's files.
+ *  6. The version directory `tools/<vendor>/<name>/v<N>` is written from the draft's files, the
+ *     manifest carrying `"type": "module"` (`normaliseManifest`).
  *  7. When packages are declared, the sandbox backend's `install` runs — ADR 0013's build step, the
  *     one place that reaches the registry — and its lockfile is hashed. A failed install is a
  *     refusal with npm's words in it.
@@ -209,8 +211,9 @@ export async function publishToolVersion(
     ? ((await nextVersionNumber(ctx, principal, existing.id, deps.tool)) ?? 1)
     : 1;
   const versionPath = versionPathOf(args.vendor, args.name, versionNumber);
-  await deps.store.writeTree(args.toolboxId, versionPath, sources.files);
-  const sourceHash = sourceHashOf(sources.files);
+  const written = normaliseManifest(sources.files);
+  await deps.store.writeTree(args.toolboxId, versionPath, written);
+  const sourceHash = sourceHashOf(written);
 
   // 7. The build step.
   let lockfileHash: string | null = null;

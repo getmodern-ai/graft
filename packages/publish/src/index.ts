@@ -4,6 +4,7 @@ export {
   MANIFEST_FILE,
   type ManifestDependency,
   type ManifestReading,
+  normaliseManifest,
   PUBLISH_RULES,
   type PublishDiagnostic,
   type PublishRule,

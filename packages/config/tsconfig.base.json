@@ -17,6 +17,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    // `@graft/check`'s core imports a sibling with its `.ts` extension, for the worker thread's native
+    // resolution (the header of `module-check.core.ts` says why), and TypeScript refuses the extension
+    // in any program that reaches the file — which every consumer of a check type does. Allowed here
+    // once rather than in each consumer; legal only under `noEmit`, which every workspace sets.
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   }
 }

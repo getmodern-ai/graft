@@ -6,9 +6,11 @@ import type { ToolDeps } from "./tool.deps";
 import {
   addToolVersion,
   createTool,
+  nextVersionNumber,
   publishToolVersion,
   recordDryRun,
   updateToolDefinition,
+  validateToolDefinition,
 } from "./tool.service";
 
 const NOW = new Date("2026-09-09T10:00:00Z");
@@ -169,6 +171,44 @@ describe("addToolVersion", () => {
       ),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(deps.insertToolVersion).not.toHaveBeenCalled();
+  });
+});
+
+describe("nextVersionNumber", () => {
+  it("is one past the latest, one for a tool with none, and null for a tool that is not the person's", async () => {
+    expect(await nextVersionNumber(ctx, PRINCIPAL, "tool_1", fakeDeps())).toBe(3);
+    expect(
+      await nextVersionNumber(
+        ctx,
+        PRINCIPAL,
+        "tool_1",
+        fakeDeps({ listToolVersions: vi.fn(async () => []) }),
+      ),
+    ).toBe(1);
+    expect(
+      await nextVersionNumber(
+        ctx,
+        PRINCIPAL,
+        "tool_x",
+        fakeDeps({ findAuthoredToolById: vi.fn(async () => null) }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("validateToolDefinition", () => {
+  it("passes a good definition and refuses each bad field as BAD_REQUEST, touching nothing", () => {
+    expect(() => validateToolDefinition(input)).not.toThrow();
+    for (const bad of [
+      { ...input, name: "listOrders" },
+      { ...input, vendor: "Unleashed" },
+      { ...input, description: "   " },
+      { ...input, inputSchema: { type: "array" } },
+    ]) {
+      expect(() => validateToolDefinition(bad)).toThrow(
+        expect.objectContaining({ code: "BAD_REQUEST" }),
+      );
+    }
   });
 });
 

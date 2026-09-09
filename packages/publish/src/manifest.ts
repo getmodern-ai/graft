@@ -203,6 +203,28 @@ export function readManifest(files: readonly ToolboxFile[]): ManifestReading {
   return { ok: true, dependencies: list };
 }
 
+/**
+ * The files as the version carries them: the draft's, with `"type": "module"` set in `package.json`
+ * when the draft left it out. Node loads the entry as an ES module either way — the check and the
+ * runner both assume it, and `readManifest` refuses any other value — but a manifest without the
+ * field makes Node detect the syntax and print `MODULE_TYPELESS_PACKAGE_JSON` on stderr on every
+ * run, into the combined stream a caller reads the result from. Set first so a reader sees it; every
+ * other key stays in the order the model wrote. A draft with no `package.json` is left alone: Node
+ * detects a file with no manifest silently. Called after `readManifest` has accepted the file, so the
+ * parse cannot fail here.
+ */
+export function normaliseManifest(files: readonly ToolboxFile[]): ToolboxFile[] {
+  return files.map((file) => {
+    if (file.path !== MANIFEST_FILE) return file;
+    const parsed = JSON.parse(file.content) as Record<string, unknown>;
+    if (parsed.type === "module") return file;
+    return {
+      path: MANIFEST_FILE,
+      content: `${JSON.stringify({ type: "module", ...parsed }, null, 2)}\n`,
+    };
+  });
+}
+
 /** Where a JSON key sits in the text, 1-based, so a diagnostic points at the line the model wrote. */
 export function positionOf(text: string, key: string): { line: number; column: number } {
   const needle = `${JSON.stringify(key)}`;
