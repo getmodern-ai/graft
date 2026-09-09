@@ -68,7 +68,7 @@ function agentDeps(): AgentDeps {
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
     replaceAgentConnections: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => ["conn_1"]),
-    findConnectionsByIds: vi.fn(async (_db, _p, ids) =>
+    findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
       ids.map((id) => ({ ...connectionRow, id })),
     ),
     newId: () => "agent_new",
