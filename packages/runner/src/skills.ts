@@ -34,7 +34,7 @@ export const SKILLS_DIR = "/skills";
  * sandbox, which is why they share a package. If a bundler ever folds this package into an app, the
  * directory has to travel with the bundle and this constant is the one place to change.
  */
-export const SKILLS_SOURCE_DIR = fileURLToPath(new URL("../skills/", import.meta.url));
+export const SKILLS_SOURCE_DIR = fileURLToPath(new URL("../skills", import.meta.url));
 
 /**
  * Pull `name` and `description` out of YAML frontmatter.
@@ -58,11 +58,7 @@ export function parseSkill(raw: string): Skill | null {
     const separator = line.indexOf(":");
     if (separator === -1) continue;
     const key = line.slice(0, separator).trim();
-    const value = line
-      .slice(separator + 1)
-      .trim()
-      .replace(/^["'](.*)["']$/, "$1");
-    if (key) fields[key] = value;
+    if (key) fields[key] = unquote(line.slice(separator + 1).trim());
   }
 
   const name = fields.name;
@@ -70,6 +66,23 @@ export function parseSkill(raw: string): Skill | null {
   if (!name || !description) return null;
 
   return { name, description, content: (body ?? "").trim() };
+}
+
+/**
+ * A frontmatter scalar without its quotes. A double-quoted value is read as JSON, which is what
+ * `skillFiles` writes and a YAML double-quoted scalar is a superset of, so an escaped `"` inside a
+ * description round-trips; a single-quoted or unquoted value is taken as it stands.
+ */
+function unquote(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (typeof parsed === "string") return parsed;
+    } catch {
+      // Not JSON after all — fall through to the plain strip.
+    }
+  }
+  return value.replace(/^["'](.*)["']$/, "$1");
 }
 
 /** Read every `<dir>/<name>/SKILL.md`. Sorted, so the list is stable between runs. */

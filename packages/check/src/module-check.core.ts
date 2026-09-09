@@ -313,7 +313,7 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
   }
   // The SDK rules and the annotations read the same bindings: which identifiers reach a package.
   const bindings = analyseSdkBindings(module);
-  const tally: MethodTally = { reads: 0, writes: 0, deletes: 0 };
+  const tally: MethodTally = { writes: 0, deletes: 0 };
   for (const [abs, source] of module.originals) {
     scanSdk(source, abs, bag, bindings.get(abs) ?? new Map(), tally);
   }
@@ -1096,7 +1096,8 @@ function rootPackageOf(expression: ts.Expression, locals: SdkBindings): string |
   return undefined;
 }
 
-type MethodTally = { reads: number; writes: number; deletes: number };
+/** What the annotations are decided on; a read leaves no mark, so only the two that do are counted. */
+type MethodTally = { writes: number; deletes: number };
 
 /**
  * One walk per file for the two SDK-aware rules. Every `new X(…)` of a bound identifier — and every
@@ -1126,8 +1127,7 @@ function scanSdk(
       ) {
         const method = fetchMethod(node.arguments[1]);
         if (method === "DELETE") tally.deletes += 1;
-        else if (method !== null && READ_METHODS.has(method)) tally.reads += 1;
-        else tally.writes += 1;
+        else if (method === null || !READ_METHODS.has(method)) tally.writes += 1;
       }
     }
     ts.forEachChild(node, visit);
@@ -1197,7 +1197,7 @@ function checkSdkConstruction(
 ): void {
   const rel = abs.slice(MODULE_ROOT.length + 1);
   const client = node.expression.getText(sf);
-  const args = node.arguments ?? ts.factory.createNodeArray<ts.Expression>();
+  const args: readonly ts.Expression[] = node.arguments ?? [];
   const options = args.map(unwrapParentheses).find(ts.isObjectLiteralExpression) ?? null;
   const example = `new ${client}({ apiKey: ctx.proxyKey, baseUrl: ctx.proxyBase() })`;
   const refuse = (at: ts.Node, message: string, hint: string) =>

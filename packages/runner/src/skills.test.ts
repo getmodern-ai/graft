@@ -105,6 +105,14 @@ describe("skillFiles", () => {
     expect(file?.path).toBe("alpha/SKILL.md");
     expect(parseSkill(file?.content ?? "")).toEqual(skill);
   });
+
+  it("round-trips a description holding a double quote", () => {
+    const skill = { name: "beta", description: 'Say "yes" once', content: "body" };
+    const [file] = skillFiles([skill]);
+
+    expect(file?.content).toContain('description: "Say \\"yes\\" once"');
+    expect(parseSkill(file?.content ?? "")).toEqual(skill);
+  });
 });
 
 /**
