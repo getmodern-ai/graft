@@ -17,10 +17,10 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    // `@graft/check`'s worker thread loads `./annotations.ts` by its real file name, so that import
-    // carries the extension, and a package that imports `@graft/check` type-checks the file too.
-    // Legal because every project sets `noEmit` (packages ship source, AGENTS.md); a project that
-    // does not gets TS5096 naming this flag, which is the right complaint.
+    // `@graft/check`'s core imports a sibling with its `.ts` extension, for the worker thread's native
+    // resolution (the header of `module-check.core.ts` says why), and TypeScript refuses the extension
+    // in any program that reaches the file — which every consumer of a check type does. Allowed here
+    // once rather than in each consumer; legal only under `noEmit`, which every workspace sets.
     "allowImportingTsExtensions": true,
     "types": ["node"]
   }

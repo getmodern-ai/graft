@@ -75,6 +75,24 @@ function validateInputSchema(schema: Record<string, unknown>): void {
   }
 }
 
+/**
+ * The four rules a tool's definition must pass, together, before anything is written — the publish
+ * (`@graft/publish`) asks this first, so a bad name is refused before a version directory exists for
+ * it. `createTool` and `updateToolDefinition` apply the same rules on their own inputs.
+ */
+export function validateToolDefinition(input: {
+  vendor: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}): void {
+  const vendorProblem = validateVendor(input.vendor);
+  if (vendorProblem) throw new ServiceError("BAD_REQUEST", vendorProblem);
+  validateName(input.name);
+  validateDescription(input.description);
+  validateInputSchema(input.inputSchema);
+}
+
 async function assertOwnedConnection(
   ctx: ServiceContext,
   principal: Principal,
@@ -99,11 +117,7 @@ export async function createTool(
   input: CreateToolInput,
   deps: ToolDeps,
 ): Promise<AuthoredToolRow> {
-  const vendorProblem = validateVendor(input.vendor);
-  if (vendorProblem) throw new ServiceError("BAD_REQUEST", vendorProblem);
-  validateName(input.name);
-  validateDescription(input.description);
-  validateInputSchema(input.inputSchema);
+  validateToolDefinition(input);
   await assertOwnedConnection(ctx, principal, input.defaultConnectionId, deps);
 
   const existing = await deps.findAuthoredTool(ctx.db, principal.personId, {
@@ -134,6 +148,24 @@ export async function createTool(
 }
 
 /**
+ * The number the tool's next version will carry: one past the latest, one for a tool with none. The
+ * publish asks before it writes, because the number names the version's directory in the toolbox
+ * (`@graft/toolbox`'s `versionPath`) and the directory is written before the row. `addToolVersion`
+ * asks again inside its transaction, so the row's number is read at insert time and not trusted from
+ * the caller. Null when the tool is not the person's.
+ */
+export async function nextVersionNumber(
+  ctx: ServiceContext,
+  principal: Principal,
+  toolId: string,
+  deps: ToolDeps,
+): Promise<number | null> {
+  if (!(await deps.findAuthoredToolById(ctx.db, principal.personId, toolId))) return null;
+  const [latest] = await deps.listToolVersions(ctx.db, principal.personId, toolId);
+  return (latest?.versionNumber ?? 0) + 1;
+}
+
+/**
  * Add a version: the next number after the latest, never a gap and never a reuse. Two publishes
  * racing for the same tool both read the same latest and the unique constraint refuses the second,
  * which surfaces as the database's error rather than a version claiming another's directory.
@@ -145,12 +177,14 @@ export async function addToolVersion(
   input: ToolVersionInput,
   deps: ToolDeps,
 ): Promise<ToolVersionRow> {
-  orNotFound(await deps.findAuthoredToolById(ctx.db, principal.personId, toolId), "Tool not found");
-  const [latest] = await deps.listToolVersions(ctx.db, principal.personId, toolId);
+  const versionNumber = orNotFound(
+    await nextVersionNumber(ctx, principal, toolId, deps),
+    "Tool not found",
+  );
   return deps.insertToolVersion(ctx.db, {
     id: deps.newId(),
     toolId,
-    versionNumber: (latest?.versionNumber ?? 0) + 1,
+    versionNumber,
     path: input.path,
     sourceHash: input.sourceHash,
     lockfileHash: input.lockfileHash ?? null,

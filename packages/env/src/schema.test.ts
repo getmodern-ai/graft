@@ -10,12 +10,14 @@ import {
   defaultProxyPublicUrl,
   finalServerSchema,
   keyringSecret,
+  packageAllowlist,
+  packageMinAgeDays,
+  packageMinWeeklyDownloads,
   port,
   sandboxBackend,
-  sandboxImage,
-  sandboxNetwork,
   serverEnvIssues,
   serverSchema,
+  toolboxRoot,
   withDerivedDefaults,
 } from "./schema";
 
@@ -162,6 +164,59 @@ describe("PORT and the derived proxy URL", () => {
   });
 });
 
+describe("GRAFT_TOOLBOX_ROOT", () => {
+  it("defaults to the laptop's gitignored directory and refuses an empty value", () => {
+    expect(toolboxRoot.parse(undefined)).toBe("./.graft/toolboxes");
+    expect(toolboxRoot.parse("/var/lib/graft/toolboxes")).toBe("/var/lib/graft/toolboxes");
+    expect(toolboxRoot.safeParse("").error?.issues[0]?.message).toContain("GRAFT_TOOLBOX_ROOT");
+  });
+});
+
+describe("the package policy's thresholds and extra names", () => {
+  it("default to ninety days and a thousand downloads, coerce whole numbers, and refuse anything else", () => {
+    expect(packageMinAgeDays.parse(undefined)).toBe(90);
+    expect(packageMinWeeklyDownloads.parse(undefined)).toBe(1000);
+    expect(packageMinAgeDays.parse("0")).toBe(0);
+    expect(packageMinWeeklyDownloads.parse("250")).toBe(250);
+    for (const bad of ["-1", "1.5", "ninety"]) {
+      const result = packageMinAgeDays.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_PACKAGE_MIN_AGE_DAYS");
+    }
+  });
+
+  it("parses the allowlist to a trimmed, de-duplicated list of names and scope patterns", () => {
+    expect(packageAllowlist.parse(undefined)).toEqual([]);
+    expect(packageAllowlist.parse(" left-pad, @octokit/*,left-pad ,@my-org/sdk")).toEqual([
+      "left-pad",
+      "@octokit/*",
+      "@my-org/sdk",
+    ]);
+  });
+
+  it("refuses an entry that is not a package name, saying which", () => {
+    for (const bad of ["Left-Pad", "../x", "@scope", "left pad", "*"]) {
+      const result = packageAllowlist.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain(bad);
+    }
+  });
+});
+
+describe("the Docker sandbox backing's pair", () => {
+  it("is all-or-nothing", () => {
+    expect(serverEnvIssues({ GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev" })).toEqual([
+      expect.stringMatching(
+        /sandbox backing is partially configured.*Missing: GRAFT_SANDBOX_NETWORK/,
+      ),
+    ]);
+    expect(serverEnvIssues({ GRAFT_SANDBOX_NETWORK: "graft_sandbox" })).toHaveLength(1);
+    expect(
+      serverEnvIssues({ GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev", GRAFT_SANDBOX_NETWORK: "x" }),
+    ).toEqual([]);
+  });
+});
+
 /** The whole object as `createEnv` is handed it — fields, cross-field rules and the derived default. */
 describe("finalServerSchema", () => {
   const schema = finalServerSchema(serverSchema);
@@ -184,6 +239,24 @@ describe("finalServerSchema", () => {
       GRAFT_PROXY_FOLLOW_REDIRECTS: false,
       GRAFT_PROXY_PUBLIC_URL: "http://localhost:3000/api/proxy",
       GRAFT_SANDBOX_BACKEND: "docker",
+      GRAFT_TOOLBOX_ROOT: "./.graft/toolboxes",
+      GRAFT_PACKAGE_MIN_AGE_DAYS: 90,
+      GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS: 1000,
+      GRAFT_PACKAGE_ALLOWLIST: [],
+    });
+  });
+
+  it("refuses a half-configured Docker sandbox backing and accepts the pair", () => {
+    expect(schema.safeParse({ ...minimal, GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev" }).success).toBe(
+      false,
+    );
+    expect(
+      schema.parse({
+        ...minimal,
+        GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev",
+        GRAFT_SANDBOX_NETWORK: "graft_sandbox",
+      }),
+    ).toMatchObject({
       GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev",
       GRAFT_SANDBOX_NETWORK: "graft_sandbox",
     });
@@ -220,13 +293,10 @@ describe("finalServerSchema", () => {
 });
 
 describe("the sandbox backing", () => {
-  it("is docker unless said otherwise, with the image and network the compose file names", () => {
+  it("is docker unless said otherwise", () => {
     expect(sandboxBackend.parse(undefined)).toBe("docker");
     expect(sandboxBackend.parse("fake")).toBe("fake");
     expect(sandboxBackend.safeParse("blaxel").success).toBe(false);
-    expect(sandboxImage.parse(undefined)).toBe("graft-sandbox:dev");
-    expect(sandboxNetwork.parse(undefined)).toBe("graft_sandbox");
-    expect(sandboxImage.safeParse("").success).toBe(false);
   });
 
   it("refuses the fake backing in production and nowhere else", () => {

@@ -98,10 +98,30 @@ proxy smoke test and is refused in production. `packages/env/src/schema.ts` is t
 
 The MCP endpoint is `POST /mcp` with `Authorization: Bearer <agent token>` — `POST /api/agents` mints
 the token, shown once. Authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names: `docker` by
-default, which needs the image (`pnpm --filter @graft/sandbox-docker image:build` tags
-`graft-sandbox:dev`, `GRAFT_SANDBOX_IMAGE`) and an `internal: true` network the proxy is attached to
-(`GRAFT_SANDBOX_NETWORK`, `graft_sandbox`); or `fake`, a temporary directory on the server's own disk,
-for a laptop without a daemon — it is not a sandbox, and `@graft/env` refuses it in production.
+default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and, unset, leaves
+the server up with every run refusing for want of a sandbox; or `fake`, a temporary directory on the
+server's own disk for a laptop without a daemon — the toolbox then lives in that directory too, for as
+long as the process does — which is not a sandbox, and `@graft/env` refuses it in production.
+
+### Publishing a tool by hand
+
+The publish (`@graft/publish`, GRA-18) writes a version into the person's toolbox — a directory tree
+under `GRAFT_TOOLBOX_ROOT`, default `./.graft/toolboxes`, one subdirectory per person
+(`packages/toolbox/README.md` has the layout and how the tree meets a sandbox's mount). A module can
+be published from a directory without the MCP server:
+
+```bash
+pnpm --filter @graft/server publish-fixture -- --dir ../../packages/publish/fixtures/hello \
+  --vendor demo --name hello --description "Greets a name" --email you@example.com --password '…'
+```
+
+A module that declares packages needs the Docker backing for ADR 0013's install step:
+`GRAFT_SANDBOX_IMAGE` (`pnpm --filter @graft/sandbox-docker image:build` makes `graft-sandbox:dev`)
+and `GRAFT_SANDBOX_NETWORK` (an `internal` network, `docker network create --internal graft-sandbox`),
+all-or-nothing. Without them the publish refuses such a module with an `install-failed` diagnostic
+saying so. `left-pad` in `packages/publish/fixtures/left-pad` is not an official SDK, so admitting it
+is `GRAFT_PACKAGE_ALLOWLIST=left-pad`; `GRAFT_PACKAGE_MIN_AGE_DAYS` and
+`GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS` are the policy's other two knobs.
 
 `check-types`, `test`, `build` and `dev` are Turbo tasks, so they run whatever a workspace declares
 under that script name and nothing for a workspace that declares none. Filter with

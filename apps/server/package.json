@@ -10,7 +10,8 @@
     "mint": "tsx src/scripts/mint-token.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check-types": "tsc -p tsconfig.json"
+    "check-types": "tsc -p tsconfig.json",
+    "publish-fixture": "tsx src/scripts/publish-fixture.ts"
   },
   "dependencies": {
     "@graft/auth": "workspace:*",
@@ -19,11 +20,14 @@
     "@graft/env": "workspace:*",
     "@graft/mcp": "workspace:*",
     "@graft/proxy": "workspace:*",
+    "@graft/publish": "workspace:*",
     "@graft/sandbox": "workspace:*",
     "@graft/sandbox-docker": "workspace:*",
     "@graft/token": "workspace:*",
+    "@graft/toolbox": "workspace:*",
     "@graft/vault": "workspace:*",
     "@hono/node-server": "^2.1.1",
+    "drizzle-orm": "catalog:",
     "evlog": "^2.27.1",
     "hono": "catalog:",
     "jose": "catalog:",
@@ -33,7 +37,6 @@
     "@graft/config": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "catalog:",
-    "drizzle-orm": "catalog:",
     "tsx": "^4.23.12",
     "typescript": "catalog:",
     "vitest": "catalog:"

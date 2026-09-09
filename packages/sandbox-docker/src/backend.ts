@@ -1,4 +1,5 @@
-import { posix } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { join, posix, resolve } from "node:path";
 
 import {
   assertSandboxName,
@@ -47,6 +48,17 @@ export type DockerSandboxBackendOptions = {
   prefix?: string;
   /** Prefixes every toolbox volume name. Default `graft-toolbox`. Shared by every backing of one deployment. */
   toolboxVolumePrefix?: string;
+  /**
+   * The directory the server keeps toolboxes in as files — `@graft/toolbox`'s filesystem store,
+   * `GRAFT_TOOLBOX_ROOT`. Set, every toolbox volume is a bind of `<toolboxHostRoot>/<toolboxId>`,
+   * created here when missing, so what the publish writes through the store is what the install step
+   * installs into and what a run mounts (GRA-18). The path is read by the daemon, not by this
+   * process: with a mounted socket the compose file mounts the same host directory into the server
+   * at the same path, and with a sibling daemon the option has no meaning. Unset, a toolbox volume is
+   * a plain named volume this process cannot read. A volume that already exists keeps whatever
+   * backing it was created with — `POST /volumes/create` returns the existing volume by name.
+   */
+  toolboxHostRoot?: string;
   install?: {
     /**
      * The network an install container runs on. Default `bridge`, the daemon's own, which reaches the
@@ -245,10 +257,23 @@ export function createDockerSandboxBackend(
   async function ensureVolume(toolboxId: string): Promise<string> {
     assertSandboxName("a toolbox id", toolboxId);
     const name = toolboxVolumeName(toolboxId);
+    // A bind of the store's directory when the server holds the toolbox as files
+    // (`toolboxHostRoot`); the directory has to exist before the daemon mounts it.
+    const device =
+      options.toolboxHostRoot === undefined
+        ? null
+        : join(resolve(options.toolboxHostRoot), toolboxId);
+    if (device !== null) await mkdir(device, { recursive: true });
     // `POST /volumes/create` returns the existing volume when the name is taken: the idempotence
     // that makes "one toolbox, many sandboxes" one call per sandbox.
     await engine.json("POST", "/volumes/create", {
-      body: { Name: name, Labels: { [LABEL_PREFIX]: prefix, "graft.toolbox.id": toolboxId } },
+      body: {
+        Name: name,
+        Labels: { [LABEL_PREFIX]: prefix, "graft.toolbox.id": toolboxId },
+        ...(device === null
+          ? {}
+          : { Driver: "local", DriverOpts: { type: "none", o: "bind", device } }),
+      },
     });
     return name;
   }
