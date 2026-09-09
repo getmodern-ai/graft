@@ -12,7 +12,7 @@ import {
   createCapabilityTokenVerifier,
   importCapabilityTokenKeys,
 } from "@graft/token";
-import { createCredentialVault, createLocalKeyring } from "@graft/vault";
+import { type CredentialVault, createCredentialVault, createLocalKeyring } from "@graft/vault";
 import { serve } from "@hono/node-server";
 
 /**
@@ -24,6 +24,10 @@ import { serve } from "@hono/node-server";
  * resolved and nothing leaves the machine. The connection is seeded with a real ciphertext from the
  * real vault, which is how the suite can assert that the vendor saw the decrypted credential and
  * never the token (GRA-19's acceptance criterion).
+ *
+ * A suite that creates connections *during* the run — GRA-28's handoff, where the person's submit
+ * makes the row — hands `resolve` a read of its own store and encrypts with the returned `vault`,
+ * so the proxy decrypts what the connection service wrote with the same keyring.
  */
 
 const VAULT_SECRET = "graft-mcp-test-vault-secret-that-is-long-enough";
@@ -54,6 +58,8 @@ export type FakeVendorConnection = {
 export type FakeVendor = {
   /** The proxy's base URL — what a sandbox is handed as `GRAFT_PROXY_URL`. */
   url: string;
+  /** The vault the seeded ciphertexts were made with; a suite's connection deps take its `encrypt`. */
+  vault: CredentialVault;
   /** Every request that reached the vendor, in order. */
   requests: UpstreamRequest[];
   /** The proxy's one wide event per call. */
@@ -66,6 +72,8 @@ export async function startFakeVendor(args: {
   connections: readonly FakeVendorConnection[];
   /** What the vendor answers; the default is a small JSON body. */
   respond?: (request: UpstreamRequest) => Response | Promise<Response>;
+  /** A connection not among the seeds — read from a suite's store, for rows made during the run. */
+  resolve?: (id: string) => Promise<ProxyConnection | null>;
 }): Promise<FakeVendor> {
   const vault = createCredentialVault(createLocalKeyring(VAULT_SECRET));
   const rows = new Map<string, ProxyConnection>();
@@ -94,7 +102,7 @@ export async function startFakeVendor(args: {
 
   const app = createProxyApp({
     ...createCapabilityTokenVerifier(args.keys),
-    connections: { get: async (id) => rows.get(id) ?? null },
+    connections: { get: async (id) => rows.get(id) ?? (await args.resolve?.(id)) ?? null },
     decryptCredential: (ciphertext, scope) => vault.decrypt(ciphertext, scope),
     upstreamFetch: async (request) => {
       requests.push(request);
@@ -112,6 +120,7 @@ export async function startFakeVendor(args: {
 
   return {
     url: `http://127.0.0.1:${address.port}`,
+    vault,
     requests,
     events,
     close: () =>

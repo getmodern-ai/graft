@@ -40,6 +40,9 @@
     "jose": "catalog:",
     "zod": "catalog:"
   },
+  "optionalDependencies": {
+    "@graft/cloud-backings": "workspace:*"
+  },
   "devDependencies": {
     "@graft/config": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",

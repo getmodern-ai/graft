@@ -13,6 +13,7 @@ import { findConnection, findConnectionByIdUnscoped, revokeConnection } from "./
 import {
   answerPendingAction,
   consumePendingAction,
+  expirePendingActionsForConnection,
   findPendingAction,
   listPendingActionsByKind,
 } from "./pending-action";
@@ -223,6 +224,28 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('in (select "id" from "agent" where "agent"."person_id" = $');
     expect(s.sql).toContain('"pending_action"."answered_at" is null');
     expect(s.sql).toContain('"pending_action"."expires_at" > $');
+  });
+
+  /** A revoke's third sweep (GRA-28): by the column, under the person, both clocks stamped, the JSON unread. */
+  it("closing a connection's open asks takes the connection and the person, and stamps expiry and consumption", async () => {
+    await expirePendingActionsForConnection(
+      db,
+      "person_1",
+      "conn_1",
+      new Date("2026-09-09T00:00:00Z"),
+    );
+    const s = only();
+    expect(s.sql).toMatch(/^update "pending_action" set/);
+    expect(s.sql).toContain('"expires_at" = $');
+    expect(s.sql).toContain('"consumed_at" = $');
+    expect(s.sql).toContain('"pending_action"."connection_id" = $');
+    expect(s.sql).toContain('in (select "id" from "agent" where "agent"."person_id" = $');
+    expect(s.sql).toContain('"pending_action"."consumed_at" is null');
+    expect(s.sql).toContain('"pending_action"."expires_at" > $');
+    // The predicate alone — `returning` lists every column, the JSON among them.
+    expect(s.sql.slice(s.sql.indexOf(" where "), s.sql.indexOf(" returning"))).not.toContain(
+      "payload",
+    );
   });
 
   it("the vendor-wide approval delete reaches only the person's tools", async () => {

@@ -99,6 +99,7 @@ const openAction: PendingActionRow = {
     connectionName: "Demo",
     hosts: ["api.demo.example"],
   },
+  connectionId: "conn_1",
   expiresAt: new Date(NOW.getTime() + 60 * 60 * 1000),
   answeredAt: null,
   answer: null,
@@ -171,6 +172,7 @@ function connectionDeps(): ConnectionDeps {
     revokeConnection: vi.fn(async () => ({ ...connectionRow, revokedAt: NOW })),
     deleteApprovalsForVendor: vi.fn(async () => []),
     deleteBuildApprovalsForConnection: vi.fn(async () => []),
+    expirePendingActionsForConnection: vi.fn(async () => []),
     vault: { encrypt: vi.fn(async () => Buffer.from("ciphertext")) },
     newId: () => "conn_new",
     now: () => NOW,
@@ -714,7 +716,244 @@ describe("connections", () => {
       connection: { revokedAt: NOW.toISOString() },
       approvalsDeleted: 0,
       buildApprovalsDeleted: 0,
+      pendingActionsExpired: 0,
     });
+  });
+});
+
+describe("the connection handoff's submits (GRA-28)", () => {
+  const connectionAction: PendingActionRow = {
+    ...openAction,
+    id: "pa_c",
+    kind: "connection",
+    connectionId: null,
+    payload: {
+      vendor: "acme",
+      displayName: "Acme",
+      scheme: "api_key_header",
+      schemeConfig: { headerName: "x-acme-key" },
+      primaryHost: "https://api.acme.example",
+      hosts: ["api.acme.example"],
+      docsUrl: null,
+      note: "written by the agent's model",
+    },
+  };
+  const credentialAction: PendingActionRow = {
+    ...openAction,
+    id: "pa_k",
+    kind: "credential",
+    connectionId: "conn_1",
+    payload: {
+      connectionId: "conn_1",
+      vendor: "demo",
+      connectionName: "Demo",
+      scheme: "api_key_header",
+      hosts: ["api.demo.example"],
+      reason: "401",
+      revoked: false,
+    },
+  };
+  const submission = {
+    vendor: "acme",
+    displayName: "Acme Orders (production)",
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "x-acme-key" },
+    primaryHost: "https://api.acme.example/v1/",
+    hosts: ["files.acme.example"],
+    credential: { apiKey: "sk_live_1" },
+  };
+
+  it("creates the connection as edited, with its credential, gives it to the requesting agent, records the answer, and echoes nothing of the secret", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce(
+      connectionAction,
+    );
+    // The reads and the write between the two statements answer the row just inserted, as the repo would.
+    vi.mocked(deps.connection.findConnection).mockImplementation(async (_db, _p, id) => ({
+      ...connectionRow,
+      id,
+    }));
+    vi.mocked(deps.connection.setConnectionCredential).mockImplementation(
+      async (_db, _p, id, args) => ({
+        ...connectionRow,
+        id,
+        credentialCiphertext: args.ciphertext,
+        credentialSetAt: args.setAt,
+      }),
+    );
+    const res = await app.request("/api/pending-actions/pa_c/connection", json(submission));
+    expect(res.status).toBe(201);
+    const text = await res.text();
+    expect(text).toContain(`"credentialSetAt":"${NOW.toISOString()}"`);
+    expect(text).toContain('"answer":{"connectionId":"conn_new"}');
+    expect(text).not.toContain("sk_live_1");
+    expect(text).not.toContain("iphertext");
+
+    expect(deps.connection.insertConnection).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({
+        id: "conn_new",
+        vendor: "acme",
+        displayName: "Acme Orders (production)",
+        primaryHost: "https://api.acme.example/v1",
+        hosts: ["api.acme.example", "files.acme.example"],
+      }),
+    );
+    expect(deps.connection.vault.encrypt).toHaveBeenCalledWith(
+      { apiKey: "sk_live_1" },
+      { personId: "person_1", connectionId: "conn_new" },
+    );
+    // The requesting agent's scope gains the connection and keeps what it had (ADR 0007).
+    expect(deps.agent.replaceAgentConnections).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      ["conn_1", "conn_new"],
+    );
+    expect(deps.pendingAction.answerPendingAction).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "pa_c",
+      {
+        answer: { connectionId: "conn_new" },
+        answeredAt: NOW,
+      },
+    );
+    // The secret reached the vault and nothing else.
+    for (const fn of [
+      deps.pendingAction.answerPendingAction,
+      deps.connection.insertConnection,
+      deps.connection.setConnectionCredential,
+      deps.agent.replaceAgentConnections,
+    ]) {
+      expect(JSON.stringify(vi.mocked(fn).mock.calls)).not.toContain("sk_live_1");
+    }
+  });
+
+  it("refuses a host that is not public as host_not_public, naming it, before anything is written", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce(
+      connectionAction,
+    );
+    const res = await app.request(
+      "/api/pending-actions/pa_c/connection",
+      json({ ...submission, hosts: ["169.254.169.254"] }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: "BAD_REQUEST",
+      message: expect.stringContaining("not a public host"),
+      details: { reason: "host_not_public", host: "169.254.169.254" },
+    });
+    expect(deps.connection.insertConnection).not.toHaveBeenCalled();
+    expect(deps.connection.vault.encrypt).not.toHaveBeenCalled();
+    expect(deps.pendingAction.answerPendingAction).not.toHaveBeenCalled();
+  });
+
+  it("refuses an answered, taken or expired action, one of another kind and an unknown one, before writing", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const find = vi.mocked(deps.pendingAction.findPendingActionForPerson);
+    for (const [row, status] of [
+      [{ ...connectionAction, answeredAt: NOW, answer: { connectionId: "conn_9" } }, 409],
+      [{ ...connectionAction, consumedAt: NOW }, 409],
+      [{ ...connectionAction, expiresAt: new Date(NOW.getTime() - 1) }, 410],
+      [openAction, 400],
+      [null, 404],
+    ] as const) {
+      find.mockResolvedValueOnce(row);
+      const res = await app.request("/api/pending-actions/pa_c/connection", json(submission));
+      expect(res.status, `${row?.kind ?? "none"}`).toBe(status);
+    }
+    // A credential ask refuses a connection submit, and the reverse.
+    find.mockResolvedValueOnce(credentialAction);
+    expect(
+      (await app.request("/api/pending-actions/pa_k/connection", json(submission))).status,
+    ).toBe(400);
+    find.mockResolvedValueOnce(connectionAction);
+    expect(
+      (
+        await app.request(
+          "/api/pending-actions/pa_c/credential",
+          json({ credential: { apiKey: "k" } }),
+        )
+      ).status,
+    ).toBe(400);
+    expect(deps.connection.insertConnection).not.toHaveBeenCalled();
+    expect(deps.connection.vault.encrypt).not.toHaveBeenCalled();
+  });
+
+  it("re-enters a credential for a credential ask, records the connection on the answer, and touches no approval", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce(
+      credentialAction,
+    );
+    const res = await app.request(
+      "/api/pending-actions/pa_k/credential",
+      json({ credential: { apiKey: "sk_live_2" } }),
+    );
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain(`"credentialSetAt":"${NOW.toISOString()}"`);
+    expect(text).toContain('"answer":{"connectionId":"conn_1"}');
+    expect(text).not.toContain("sk_live_2");
+    expect(deps.connection.vault.encrypt).toHaveBeenCalledWith(
+      { apiKey: "sk_live_2" },
+      { personId: "person_1", connectionId: "conn_1" },
+    );
+    expect(deps.pendingAction.answerPendingAction).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "pa_k",
+      {
+        answer: { connectionId: "conn_1" },
+        answeredAt: NOW,
+      },
+    );
+    expect(deps.connection.insertConnection).not.toHaveBeenCalled();
+    expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+    expect(deps.approval.upsertApproval).not.toHaveBeenCalled();
+    expect(deps.approval.deleteApproval).not.toHaveBeenCalled();
+  });
+
+  /** The console's Add connection: the same form with no pending action behind it. */
+  it("registers a connection with its credential in one call when the body carries one", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    // The read between the two writes answers the row just inserted — a bearer connection.
+    vi.mocked(deps.connection.findConnection).mockImplementation(async (_db, _p, id) => ({
+      ...connectionRow,
+      id,
+      scheme: "bearer",
+      schemeConfig: {},
+    }));
+    const res = await app.request(
+      "/api/connections",
+      json({
+        vendor: "acme",
+        displayName: "Acme",
+        scheme: "bearer",
+        primaryHost: "https://api.acme.example",
+        credential: { token: "tok_1" },
+      }),
+    );
+    expect(res.status).toBe(201);
+    const text = await res.text();
+    expect(text).toContain(`"credentialSetAt":"${NOW.toISOString()}"`);
+    expect(text).not.toContain("tok_1");
+    expect(deps.connection.vault.encrypt).toHaveBeenCalledWith(
+      { token: "tok_1" },
+      { personId: "person_1", connectionId: "conn_new" },
+    );
+    expect(deps.pendingAction.answerPendingAction).not.toHaveBeenCalled();
+  });
+
+  it("needs a session on both submits", async () => {
+    const { app } = harness(null);
+    for (const path of [
+      "/api/pending-actions/pa_c/connection",
+      "/api/pending-actions/pa_k/credential",
+    ]) {
+      const res = await app.request(path, json({ credential: {} }));
+      expect(res.status, path).toBe(401);
+    }
   });
 });
 

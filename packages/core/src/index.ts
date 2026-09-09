@@ -22,6 +22,7 @@ export {
   AGENT_NAME_MAX_LENGTH,
   type AgentLimitsPatch,
   type AgentOutput,
+  addConnectionToAgentScope,
   type CreateAgentInput,
   createAgent,
   getAgent,
@@ -55,6 +56,8 @@ export {
 export { type ConnectionDeps, createConnectionDeps } from "./connection/connection.deps";
 export {
   DISPLAY_NAME_MAX_LENGTH,
+  HOST_NOT_PUBLIC,
+  type HostSetRefusal,
   type HostSetVerdict,
   SCHEME_PARAMETERS,
   VENDOR_MAX_LENGTH,
@@ -70,8 +73,10 @@ export {
   getConnection,
   listConnections,
   type RegisterConnectionInput,
+  type RegisterConnectionWithCredentialInput,
   type RevokeConnectionResult,
   registerConnection,
+  registerConnectionWithCredential,
   revokeConnection,
   setConnectionCredential,
   toConnectionOutput,

@@ -737,12 +737,6 @@ describe("the advanced set", () => {
       for (const [name, args, ticket] of [
         ["acquire", { connectionId: CONN_DEMO, goal: "list orders" }, "GRA-29"],
         ["acquire_status", { jobId: "job_1" }, "GRA-29"],
-        [
-          "request_connection",
-          { vendor: "x", primaryHost: "https://x.example", scheme: "bearer" },
-          "GRA-28",
-        ],
-        ["request_credential", { connectionId: CONN_DEMO }, "GRA-28"],
       ] as const) {
         const result = await a.call(name, { ...args });
         expect(result.isError, name).toBe(true);

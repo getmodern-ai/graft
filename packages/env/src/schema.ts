@@ -66,20 +66,35 @@ export const capabilityTokenKeys = [
 ] as const;
 
 /**
- * The local keyring's seed (`@graft/vault`, ADR 0002's self-hosted backing). Required, not
- * optional, and the reason is the direction of the failure: every optional feature in this file
+ * The local keyring's seed (`@graft/vault`, ADR 0002's self-hosted backing). Required whenever the
+ * open backings are selected — `GRAFT_BACKINGS=open`, the default; `serverEnvIssues` holds the
+ * rule — and the reason is the direction of the failure: every optional feature in this file
  * degrades safely when absent, but a vault with no key cannot degrade — the alternative to
  * encrypting a person's API key is storing it in the clear — so a deploy that forgot the secret
  * must fail to boot rather than start accepting credentials. Thirty-two characters because the key
- * is derived from it by a plain hash, so the secret has to carry the entropy itself. The hosted
- * form's KMS keyring (GRA-20) will bring its own variable and loosen this one.
+ * is derived from it by a plain hash, so the secret has to carry the entropy itself. Optional as a
+ * field only because the hosted form's keyring arrives with the private package and its own
+ * configuration (GRA-20): a secret nothing in that deployment reads would be a lie in its
+ * environment, and the cross-field rule keeps the failure direction for the form that does read it.
  */
 export const keyringSecret = z
   .string()
   .min(
     32,
     "GRAFT_KEYRING_SECRET must be at least 32 characters — the local keyring derives its key from it",
-  );
+  )
+  .optional();
+
+/**
+ * Which backings the server puts behind its three seams — sandbox, keyring, toolbox mirror
+ * (ADR 0002): `open`, the backings this repository holds, or `cloud`, the hosted form's from the
+ * private package placed at `packages/cloud-backings/`. `apps/server/src/backings.ts` does the
+ * selecting; this only validates the word. Default `open`, so a checkout without the private
+ * package boots as the self-hosted form, and `NODE_ENV=production` with `open` is that form
+ * deployed rather than a misconfiguration. `cloud` without the package fails at boot with a
+ * sentence from the selector, not from here: the environment cannot see what is installed.
+ */
+export const backingsForm = z.enum(["open", "cloud"]).default("open");
 
 /**
  * The database (GRA-6). Required, for the same reason the keyring secret is: nothing degrades
@@ -152,8 +167,9 @@ export const corsOrigins = z
   });
 
 /**
- * Which backing authored code runs on (ADR 0002: every seam has two backings behind one interface).
- * `docker` — `@graft/sandbox-docker`, the self-hosted form's — by default, which needs the
+ * Which of the open form's backings authored code runs on (ADR 0002: every seam has two backings
+ * behind one interface; under `GRAFT_BACKINGS=cloud` the private package's sandbox is used and this
+ * is not read). `docker` — `@graft/sandbox-docker`, the self-hosted form's — by default, which needs the
  * `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair (`sandboxKeys`); without the pair the server
  * boots with no sandbox and every run refuses, saying so. `fake` is the in-process directory
  * `@graft/sandbox` ships for unit tests, allowed here so a laptop without a daemon can drive the MCP
@@ -464,6 +480,17 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   if (model) issues.push(model);
 
   /**
+   * The keyring secret is the open form's — `createLocalKeyring` derives its key from it — so it is
+   * required exactly when the open backings are selected. Under `cloud` the private package brings
+   * its own keyring and its own configuration, and nothing here reads the secret.
+   */
+  if ((value.GRAFT_BACKINGS ?? "open") === "open" && value.GRAFT_KEYRING_SECRET === undefined) {
+    issues.push(
+      "GRAFT_KEYRING_SECRET is required with the open backings (GRAFT_BACKINGS=open, the default): the local keyring derives its key from it.",
+    );
+  }
+
+  /**
    * The seed file is for a laptop: connections with their plaintext credentials in a JSON file the
    * server encrypts into memory at boot (`apps/server/src/connections.ts`). In production the
    * connections come from the database (GRA-6) and a credential on disk is exactly what the vault
@@ -479,6 +506,14 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   if (value.NODE_ENV === "production" && value.GRAFT_SANDBOX_BACKEND === "fake") {
     issues.push(
       "GRAFT_SANDBOX_BACKEND=fake is the in-process test backing and is refused under NODE_ENV=production; use docker.",
+    );
+  }
+
+  // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
+  // package brings the sandbox, and a `fake` set beside it would be two answers to one question.
+  if (value.GRAFT_BACKINGS === "cloud" && value.GRAFT_SANDBOX_BACKEND === "fake") {
+    issues.push(
+      "GRAFT_SANDBOX_BACKEND=fake names an open-form sandbox and has no meaning under GRAFT_BACKINGS=cloud, where the private package's sandbox is used; unset it.",
     );
   }
 
@@ -513,7 +548,10 @@ export const serverSchema = {
   /** The console's origins, optional — a list once parsed, see `corsOrigins`. */
   GRAFT_CORS_ORIGIN: corsOrigins,
 
-  /** The local keyring's seed — see `keyringSecret` for why this one is required. */
+  /** Which form's backings stand behind the seams — see `backingsForm`. */
+  GRAFT_BACKINGS: backingsForm,
+
+  /** The local keyring's seed — see `keyringSecret` for when this one is required. */
   GRAFT_KEYRING_SECRET: keyringSecret,
 
   /**

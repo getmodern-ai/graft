@@ -7,6 +7,7 @@ import { ServiceError } from "../errors";
 import { hashAgentToken } from "../tenancy";
 import type { AgentDeps } from "./agent.deps";
 import {
+  addConnectionToAgentScope,
   createAgent,
   revokeAgent,
   setAgentScope,
@@ -203,5 +204,41 @@ describe("setAgentScope", () => {
       code: "NOT_FOUND",
     });
     expect(deps.replaceAgentConnections).not.toHaveBeenCalled();
+  });
+});
+
+describe("addConnectionToAgentScope", () => {
+  /** GRA-28: the agent that asked is given the connection it asked for, and keeps what it had. */
+  it("adds the connection to what is already there, under the scope pair, once it is confirmed the person's", async () => {
+    const deps = fakeDeps({ listAgentConnectionIds: vi.fn(async () => ["conn_1"]) });
+    const result = await addConnectionToAgentScope(ctx, PRINCIPAL, "agent_1", "conn_2", deps);
+    expect(result.connectionIds).toEqual(["conn_1", "conn_2"]);
+    expect(deps.findConnectionsByIds).toHaveBeenCalledWith(fakeDb, "person_1", ["conn_2"]);
+    expect(deps.replaceAgentConnections).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      ["conn_1", "conn_2"],
+    );
+  });
+
+  it("changes nothing when the connection is already in the scope", async () => {
+    const deps = fakeDeps({ listAgentConnectionIds: vi.fn(async () => ["conn_1", "conn_2"]) });
+    const result = await addConnectionToAgentScope(ctx, PRINCIPAL, "agent_1", "conn_2", deps);
+    expect(result.connectionIds).toEqual(["conn_1", "conn_2"]);
+    expect(deps.replaceAgentConnections).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown agent and a connection that is not the person's, writing nothing", async () => {
+    const noAgent = fakeDeps({ findAgent: vi.fn(async () => null) });
+    await expect(
+      addConnectionToAgentScope(ctx, PRINCIPAL, "missing", "conn_1", noAgent),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(noAgent.replaceAgentConnections).not.toHaveBeenCalled();
+
+    const foreign = fakeDeps({ findConnectionsByIds: vi.fn(async () => []) });
+    await expect(
+      addConnectionToAgentScope(ctx, PRINCIPAL, "agent_1", "conn_x", foreign),
+    ).rejects.toMatchObject({ code: "NOT_FOUND", details: { connectionIds: ["conn_x"] } });
+    expect(foreign.replaceAgentConnections).not.toHaveBeenCalled();
   });
 });

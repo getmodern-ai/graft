@@ -67,10 +67,32 @@ describe("validateHostSet", () => {
     ]) {
       const asPrimary = validateHostSet(`https://${host}`, []);
       expect(asPrimary.ok, host).toBe(false);
-      if (!asPrimary.ok) expect(asPrimary.problem).toContain("not a public host");
+      if (!asPrimary.ok) {
+        expect(asPrimary.problem).toContain("not a public host");
+        // The reason word the API, the meta-tool and the form show (GRA-28), and the host as the
+        // URL parser spells it, so the form can mark the input it came from.
+        expect(asPrimary.reason).toBe("host_not_public");
+        expect(asPrimary.host).toBe(host);
+      }
     }
     const asExtra = validateHostSet("https://api.vendor.example", ["169.254.169.254"]);
-    expect(asExtra.ok).toBe(false);
+    expect(asExtra).toMatchObject({
+      ok: false,
+      reason: "host_not_public",
+      host: "169.254.169.254",
+    });
+  });
+
+  it("says invalid, not host_not_public, for a refusal about shape", () => {
+    expect(validateHostSet("http://api.vendor.example", [])).toMatchObject({
+      ok: false,
+      reason: "invalid",
+    });
+    expect(validateHostSet("https://api.vendor.example", ["not a host"])).toMatchObject({
+      ok: false,
+      reason: "invalid",
+      host: "not a host",
+    });
   });
 
   it("refuses an additional host that is not a hostname", () => {

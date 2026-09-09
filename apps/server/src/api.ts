@@ -1,6 +1,7 @@
 import {
   type AgentDeps,
   type ApprovalDeps,
+  addConnectionToAgentScope,
   answerPendingAction,
   type ConnectionDeps,
   consumePendingAction,
@@ -24,6 +25,7 @@ import {
   type PendingActionDeps,
   type Principal,
   registerConnection,
+  registerConnectionWithCredential,
   relaxDestructiveApproval,
   requirePerson,
   revokeAgent,
@@ -47,6 +49,8 @@ import { connectionScheme } from "@graft/db/schema/connection";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
+  CONNECTION_ASK_KIND,
+  CREDENTIAL_ASK_KIND,
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
   handoffUrl,
@@ -74,6 +78,13 @@ import { z } from "zod";
  * handoff link, the answer — which also writes the approval the ask was for, so the agent's next
  * call proceeds whether or not it is still waiting — and the standing approvals per agent, to relax
  * a destructive tool's per-call ask or to withdraw an answer.
+ *
+ * **The connection handoff's submits** (GRA-28; ADR 0006) are two more routes on a pending action,
+ * apart from the generic answer because their bodies carry a secret and their work is one
+ * transaction: `POST /pending-actions/:id/connection` creates the connection an agent proposed with
+ * its credential and gives it to that agent alone, `POST /pending-actions/:id/credential` re-enters
+ * an existing connection's. The secret travels in the request body to the vault and nowhere else —
+ * never logged, never echoed, never on the action or its answer, which names the connection only.
  */
 
 /** The slice of Better Auth the API reads — structural, so a test fakes it without a database. */
@@ -107,7 +118,8 @@ export type ApiOptions = {
 
 /**
  * A pending action as the console shows it (ADR 0006): the requesting agent named, the payload the
- * ask wrote (`@graft/mcp`'s `ToolAskPayload` or `BuildAskPayload`), its clocks, and the signed link.
+ * ask wrote (`@graft/mcp`'s `ToolAskPayload`, `BuildAskPayload`, `ConnectionProposalPayload` or
+ * `CredentialAskPayload`), its clocks, and the signed link.
  */
 export type PendingActionCard = {
   id: string;
@@ -143,13 +155,19 @@ const agentPatch = agentBody.omit({ connectionIds: true }).partial();
 
 const scopeBody = z.object({ connectionIds: z.array(z.string()) });
 
-const connectionBody = z.object({
+/** The scheme's secret fields as the console posts them; the service holds them to the scheme's table. */
+const credentialFields = z.record(z.string(), z.unknown());
+
+const registrationBody = z.object({
   vendor: z.string(),
   displayName: z.string(),
   scheme: z.enum(connectionScheme),
   schemeConfig: z.record(z.string(), z.unknown()).optional(),
   primaryHost: z.string(),
   hosts: z.array(z.string()).optional(),
+});
+
+const connectionBody = registrationBody.extend({
   oauth: z
     .object({
       clientId: z.string(),
@@ -158,9 +176,15 @@ const connectionBody = z.object({
       scopes: z.array(z.string()).optional(),
     })
     .optional(),
+  /** With it, the connection is registered with its credential in one transaction (GRA-28's Add connection). */
+  credential: credentialFields.optional(),
 });
 
-const credentialBody = z.object({ fields: z.record(z.string(), z.unknown()) });
+const credentialBody = z.object({ fields: credentialFields });
+
+/** GRA-28's submit for a `connection` ask: the proposal as the person edited it, and the secret. */
+const connectionSubmitBody = registrationBody.extend({ credential: credentialFields });
+const credentialSubmitBody = z.object({ credential: credentialFields });
 
 /** How much history one page of the console's working-set view reads; bounded so a query cannot ask for all of it. */
 export const WORKING_SET_CHANGES_DEFAULT_LIMIT = 50;
@@ -485,13 +509,23 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ connections: await listConnections(ctx, principal, connectionDeps) });
   });
 
+  /**
+   * Register a connection. With `credential` in the body the row and its ciphertext are written in
+   * one transaction (GRA-28: the console's Add connection, the same form as an agent's proposal with
+   * no pending action behind it); without, the row waits for `PUT /connections/:id/credential`.
+   */
   api.post("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const body = await parseBody(c.req.raw, connectionBody);
-    return c.json(
-      { connection: await registerConnection(ctx, principal, body, connectionDeps) },
-      201,
-    );
+    const { credential, ...registration } = await parseBody(c.req.raw, connectionBody);
+    const connection = credential
+      ? await registerConnectionWithCredential(
+          ctx,
+          principal,
+          { ...registration, credential },
+          connectionDeps,
+        )
+      : await registerConnection(ctx, principal, registration, connectionDeps);
+    return c.json({ connection }, 201);
   });
 
   api.get("/connections/:id", async (c) => {
@@ -676,6 +710,108 @@ export function createApi(options: ApiOptions): Hono {
         return { pendingAction: action, buildApproval };
       }
       return { pendingAction: action };
+    });
+    return c.json(result);
+  });
+
+  /**
+   * The action a submit route is for: the person's, of the kind the route serves, unanswered and in
+   * time — refused with the answer route's codes (409 answered or taken, 410 expired) before anything
+   * is written. The answer's own predicate refuses again inside the transaction, so two submits of
+   * one link make one connection and the second is told so.
+   */
+  const openActionOfKind = async (
+    scoped: ServiceContext,
+    principal: Principal,
+    id: string,
+    kind: string,
+  ): Promise<PendingActionRow> => {
+    const row = orNotFound(
+      await getPendingActionForPerson(scoped, principal, id, pendingActionDeps),
+      "Pending action not found",
+    );
+    if (row.kind !== kind) {
+      throw new ServiceError("BAD_REQUEST", `This action is a ${row.kind} ask, not a ${kind} one`);
+    }
+    if (row.answeredAt || row.consumedAt) {
+      throw new ServiceError("CONFLICT", "This action has already been answered");
+    }
+    if (row.expiresAt.getTime() <= pendingActionDeps.now().getTime()) {
+      throw new ServiceError(
+        "GONE",
+        "This action has expired — the agent will ask again if it still needs to",
+      );
+    }
+    return row;
+  };
+
+  /**
+   * The person's submit for a `connection` ask (GRA-28; ADR 0006): the proposal as they edited it
+   * becomes a connection with its credential written once through the vault's encrypt half, the
+   * connection joins the requesting agent's scope and no other agent's (ADR 0007), and the action's
+   * answer records `{ connectionId }` and nothing of the credential — one transaction, so a refused
+   * host or a mistyped field leaves no row, no scope change and no answer. The waiting
+   * `request_connection` call takes the answer and says connected; a proposed host that is not
+   * public is refused here as `host_not_public`, as it was to the agent and as the form said.
+   */
+  api.post("/pending-actions/:id/connection", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, connectionSubmitBody);
+    const id = c.req.param("id");
+    const result = await ctx.db.transaction(async (tx) => {
+      const scoped: ServiceContext = { db: tx };
+      const action = await openActionOfKind(scoped, principal, id, CONNECTION_ASK_KIND);
+      const connection = await registerConnectionWithCredential(
+        scoped,
+        principal,
+        body,
+        connectionDeps,
+      );
+      await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, agentDeps);
+      const pendingAction = await answerPendingAction(
+        scoped,
+        principal,
+        action.id,
+        { connectionId: connection.id },
+        pendingActionDeps,
+      );
+      return { connection, pendingAction };
+    });
+    return c.json(result, 201);
+  });
+
+  /**
+   * The person's submit for a `credential` ask (GRA-28): the connection the ask names gets the new
+   * credential, the answer records the connection, and no approval is touched — the credential
+   * changing is not a reason for a tool to ask again (ADR 0008). A revoked connection is reconnected
+   * by it (ADR 0007; the repo clears `revoked_at` with the ciphertext).
+   */
+  api.post("/pending-actions/:id/credential", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, credentialSubmitBody);
+    const id = c.req.param("id");
+    const result = await ctx.db.transaction(async (tx) => {
+      const scoped: ServiceContext = { db: tx };
+      const action = await openActionOfKind(scoped, principal, id, CREDENTIAL_ASK_KIND);
+      const connectionId = action.payload.connectionId;
+      if (typeof connectionId !== "string") {
+        throw new ServiceError("BAD_REQUEST", "This credential ask names no connection");
+      }
+      const connection = await setConnectionCredential(
+        scoped,
+        principal,
+        connectionId,
+        body.credential,
+        connectionDeps,
+      );
+      const pendingAction = await answerPendingAction(
+        scoped,
+        principal,
+        action.id,
+        { connectionId },
+        pendingActionDeps,
+      );
+      return { connection, pendingAction };
     });
     return c.json(result);
   });
