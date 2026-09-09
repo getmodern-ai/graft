@@ -7,6 +7,11 @@ import {
   validateVendor,
 } from "@graft/core/connection/connection.rules";
 import {
+  GOOGLE_TESTING_MODE_NOTICE,
+  hasGoogleHost,
+  isOAuthAuthorizationCode,
+} from "@graft/core/connection/oauth.rules";
+import {
   SCHEME_CREDENTIAL_FIELDS,
   SCHEME_OPTIONAL_CREDENTIAL_FIELDS,
 } from "@graft/proxy/credential-fields";
@@ -34,6 +39,7 @@ export const SCHEME_LABELS: Record<AuthScheme, string> = {
   bearer: "Bearer token",
   basic: "Username and password",
   oauth2_client_credentials: "OAuth2 client credentials",
+  oauth_authorization_code: "OAuth consent (a client you register)",
   unleashed_hmac: "Unleashed HMAC (API id and key)",
   snowflake_keypair_jwt: "Snowflake key-pair JWT",
 };
@@ -47,13 +53,17 @@ const FIELD_PRESENTATION: Record<string, FieldPresentation> = {
   token: { label: "Token" },
   username: { label: "Username" },
   password: { label: "Password" },
-  clientId: { label: "Client id" },
+  clientId: { label: "Client id", hint: "From the OAuth client you registered at the vendor." },
   clientSecret: { label: "Client secret" },
   privateKey: { label: "Private key", hint: "PEM, as the vendor issued it.", multiline: true },
   privateKeyPassphrase: { label: "Private key passphrase" },
   headerName: { label: "Header name", hint: "e.g. x-api-key" },
   prefix: { label: "Prefix", hint: "Put before the key in the header, e.g. Bearer or Token." },
   queryParam: { label: "Query parameter" },
+  authorizeUrl: {
+    label: "Authorize URL",
+    hint: "Where the consent runs, from the vendor's OAuth documentation — https, on a public host.",
+  },
   tokenUrl: { label: "Token URL", hint: "https, on a public host." },
   scopes: { label: "Scopes", hint: "Space-separated, as the vendor lists them." },
   clientAuth: { label: "Client authentication", hint: "basic or body." },
@@ -83,17 +93,48 @@ export function credentialFieldsFor(scheme: AuthScheme): FormField[] {
   ];
 }
 
-/** The non-secret parameter inputs a scheme takes, required first. */
+/**
+ * The non-secret parameter inputs a scheme takes, required first. The parameters the person
+ * supplies rather than the agent — an OAuth client id (ADR 0005) — are required inputs too: a
+ * proposal arrives with them blank, and the form will not submit without them.
+ */
 export function parametersFor(scheme: AuthScheme): FormField[] {
   const rule = SCHEME_PARAMETERS[scheme];
   return [
     ...rule.required.map((name) => ({ name, required: true, presentation: presentField(name) })),
+    ...(rule.personEntered ?? []).map((name) => ({
+      name,
+      required: true,
+      presentation: presentField(name),
+    })),
     ...rule.optional.map((name) => ({ name, required: false, presentation: presentField(name) })),
   ];
 }
 
 export function isScheme(value: string): value is AuthScheme {
   return (SCHEMES as readonly string[]).includes(value);
+}
+
+/** Whether the draft's scheme runs a consent after the secret is entered (ADR 0005). */
+export function isOAuthDraft(draft: Pick<ConnectionDraft, "scheme">): boolean {
+  return isOAuthAuthorizationCode(draft.scheme);
+}
+
+/**
+ * The Google Testing-mode sentence (ADR 0005), when the draft is an OAuth consent and any host it
+ * reaches — or its authorize endpoint — is Google's; null for every other draft, so the notice
+ * appears for Google and nowhere else. Read from the hosts as typed, so it appears as the person
+ * fills the form rather than only once every host passes.
+ */
+export function googleNoticeFor(draft: ConnectionDraft): string | null {
+  if (!isOAuthAuthorizationCode(draft.scheme)) return null;
+  const hosts = [...parseHostList(draft.hosts)];
+  try {
+    hosts.push(new URL(draft.primaryHost.trim()).hostname);
+  } catch {
+    // Not a URL yet; the additional hosts and the authorize URL may still say.
+  }
+  return hasGoogleHost(hosts, draft.schemeConfig.authorizeUrl) ? GOOGLE_TESTING_MODE_NOTICE : null;
 }
 
 /** What the form holds while the person edits: strings, the hosts as typed, one entry per line or comma. */

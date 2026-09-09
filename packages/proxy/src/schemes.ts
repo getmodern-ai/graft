@@ -1,7 +1,22 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
-import { readCapped } from "./body";
-import { isPublicHost } from "./public-host";
+import {
+  clientAuthOf,
+  isTokenExpiring,
+  OAUTH2_DEFAULT_TOKEN_LIFETIME_MS,
+  OAUTH2_TOKEN_SKEW_MS,
+  requestToken,
+  type TokenResponse,
+  tokenEndpointOf,
+  tokenExpiresAt,
+} from "./oauth";
+import {
+  CredentialRefreshError,
+  DerivedCredentialError,
+  InvalidCredentialFieldError,
+  MissingCredentialFieldError,
+  MissingSchemeParameterError,
+} from "./scheme-errors";
 import {
   SNOWFLAKE_JWT_LIFETIME_SECONDS,
   SNOWFLAKE_JWT_REFRESH_SKEW_SECONDS,
@@ -18,19 +33,34 @@ import type { AuthScheme, CredentialFields, SchemeConfig, SchemeRuntime } from "
  * (ADR 0010). Each one mutates the outgoing request in place: a header set, a query parameter set,
  * a signature computed.
  *
- * Four send what they hold. Three do work first: `oauth2_client_credentials` *derives* an access
- * token from the client id and secret, `snowflake_keypair_jwt` signs a short-lived JWT with the
- * connection's private key, and `unleashed_hmac` signs the query string per call. The `derive`
- * hook is the shape the first two need — an async step that runs once before the vendor is called
- * and once more, on demand, when the vendor answers 401 — and it is where an authorization-code
- * refresh goes when GRA-30 adds one. Each plugin also *names* the headers it would set
- * (`headerNames`), which is all a dry run needs of it.
+ * Four send what they hold. Four do work first: `oauth2_client_credentials` *derives* an access
+ * token from the client id and secret, `oauth_authorization_code` sends the access token a
+ * person's consent yielded and *refreshes* it with the refresh token when it is spent (ADR 0005),
+ * `snowflake_keypair_jwt` signs a short-lived JWT with the connection's private key, and
+ * `unleashed_hmac` signs the query string per call. The `derive` hook is the shape the first three
+ * need — an async step that runs once before the vendor is called and once more, on demand, when
+ * the vendor answers 401. Each plugin also *names* the headers it would set (`headerNames`), which
+ * is all a dry run needs of it.
  *
- * The field names each plugin reads are the table in `credential-fields.ts`, not a property here:
+ * The field names each plugin reads are the tables in `credential-fields.ts`, not a property here:
  * that file is import-free because the console reaches it, and this one imports `node:crypto`.
- * `schemes.test.ts` holds each plugin to its row. Copied from Cando (ADR 0011); the Snowflake
- * recipe is Modern's, re-expressed as a plugin.
+ * `schemes.test.ts` holds each plugin to its row. The errors a plugin throws are `scheme-errors.ts`,
+ * re-exported below; the token-endpoint conversation two of them share is `oauth.ts`. Copied from
+ * Cando (ADR 0011); the Snowflake recipe is Modern's, re-expressed as a plugin.
  */
+
+export { OAUTH2_DEFAULT_TOKEN_LIFETIME_MS, OAUTH2_TOKEN_SKEW_MS } from "./oauth";
+export {
+  type CredentialIncompleteRefusal,
+  CredentialRefreshError,
+  credentialIncompleteRefusal,
+  DerivedCredentialError,
+  InvalidCredentialFieldError,
+  InvalidSchemeParameterError,
+  isSchemeConfigurationError,
+  MissingCredentialFieldError,
+  MissingSchemeParameterError,
+} from "./scheme-errors";
 
 /** The outgoing request as a plugin sees it: the URL and the headers, nothing else. */
 export type SchemeTarget = { url: URL; headers: Headers };
@@ -81,101 +111,13 @@ export type SchemePlugin = {
   scrubRedirect?: (location: URL, config: SchemeConfig) => void;
 };
 
-/** A credential field the scheme needs is absent from the decrypted record. */
-export class MissingCredentialFieldError extends Error {
-  constructor(public readonly field: string) {
-    super(`credential is missing the ${field} field`);
-    this.name = "MissingCredentialFieldError";
-  }
-}
-
-/** A credential field is present but not something the scheme can use — a key that is not a key. */
-export class InvalidCredentialFieldError extends Error {
-  constructor(
-    public readonly field: string,
-    reason: string,
-  ) {
-    super(`credential field ${field} is unusable: ${reason}`);
-    this.name = "InvalidCredentialFieldError";
-  }
-}
-
-/** A parameter the scheme is parameterised by is absent from the connection's `schemeConfig`. */
-export class MissingSchemeParameterError extends Error {
-  constructor(public readonly parameter: string) {
-    super(`scheme configuration is missing ${parameter}`);
-    this.name = "MissingSchemeParameterError";
-  }
-}
-
-/** A parameter is present but not one of the values the scheme accepts. */
-export class InvalidSchemeParameterError extends Error {
-  constructor(
-    public readonly parameter: string,
-    expected: string,
-  ) {
-    super(`scheme configuration has an invalid ${parameter}: expected ${expected}`);
-    this.name = "InvalidSchemeParameterError";
-  }
-}
-
-/** The four errors above, as one predicate: the connection is misconfigured, not the proxy. */
-export function isSchemeConfigurationError(
-  error: unknown,
-): error is
-  | MissingCredentialFieldError
-  | InvalidCredentialFieldError
-  | MissingSchemeParameterError
-  | InvalidSchemeParameterError {
-  return (
-    error instanceof MissingCredentialFieldError ||
-    error instanceof InvalidCredentialFieldError ||
-    error instanceof MissingSchemeParameterError ||
-    error instanceof InvalidSchemeParameterError
-  );
-}
-
-/** The refusal a scheme configuration error earns; the ladder puts the status (409) on it. */
-export type CredentialIncompleteRefusal = { reason: "credential_incomplete"; message: string };
-
-/**
- * A scheme configuration error as the caller's refusal — `credential_incomplete`, carrying the
- * error's own message, which names the missing or unusable field or parameter and never a value —
- * or null for any other error, which is not the connection's fault and is the caller's to rethrow.
- * One mapping, because the ladder meets these errors in three places — `apply` on a live call,
- * `derive`, and the dry run's preview (`dry-run.ts`).
- */
-export function credentialIncompleteRefusal(error: unknown): CredentialIncompleteRefusal | null {
-  if (!isSchemeConfigurationError(error)) return null;
-  return { reason: "credential_incomplete", message: error.message };
-}
-
-/**
- * The `derive` step could not produce a wire credential. `host_not_public` when the token endpoint
- * fails the address rule before it is called; `token_exchange_failed` when it was called and did
- * not answer with a token — `cause` carries the fetch failure, `upstreamStatus` the endpoint's
- * status, and neither ever carries the endpoint's body, which echoes the client id on a rejection.
- */
-export class DerivedCredentialError extends Error {
-  readonly upstreamStatus: number | undefined;
-  constructor(
-    message: string,
-    public readonly reason: "host_not_public" | "token_exchange_failed",
-    options: { cause?: unknown; upstreamStatus?: number } = {},
-  ) {
-    super(message, options.cause === undefined ? undefined : { cause: options.cause });
-    this.name = "DerivedCredentialError";
-    this.upstreamStatus = options.upstreamStatus;
-  }
-}
-
 function field(credential: CredentialFields, name: string): string {
   const value = credential[name];
   if (value === undefined || value === "") throw new MissingCredentialFieldError(name);
   return value;
 }
 
-/** A field the scheme uses when it is there — `SCHEME_OPTIONAL_CREDENTIAL_FIELDS` names them. */
+/** A field the scheme uses when it is there — the optional and issued tables name them. */
 function optionalField(credential: CredentialFields, name: string): string | undefined {
   const value = credential[name];
   return value === undefined || value === "" ? undefined : value;
@@ -203,41 +145,26 @@ export const UNLEASHED_CLIENT_TYPE = "graft/agent";
  */
 export const SNOWFLAKE_TOKEN_TYPE_HEADER = "x-snowflake-authorization-token-type";
 
-/** The OAuth2 token is refreshed this far before `expires_in` says it dies — flight time. */
-export const OAUTH2_TOKEN_SKEW_MS = 60_000;
-
 /**
- * How long a token is trusted when the endpoint says nothing about its lifetime. Short on purpose:
- * the refresh-on-401 path makes a stale token cost one retried call, so the price of guessing low
- * is one token exchange every five minutes, and the price of guessing high would be a 401 the
- * agent's code sees.
+ * A digest of the tokens a stored authorization-code credential holds — what a cached refresh is
+ * keyed to. A cache entry made *from* one stored pair is answered only to a caller holding that same
+ * pair: the call that arrives after the refreshed record was written reads the new tokens and gets
+ * nothing stale; the call that decrypted the old record a moment before the write gets the token the
+ * refresh bought rather than starting another. Never the tokens themselves in the key.
  */
-export const OAUTH2_DEFAULT_TOKEN_LIFETIME_MS = 5 * 60_000;
-
-/** A token response is a few hundred bytes; a megabyte from a token endpoint is not a token. */
-const MAX_TOKEN_RESPONSE_BYTES = 64 * 1024;
-
-const OAUTH2_CLIENT_AUTH = ["basic", "body"] as const;
-type ClientAuth = (typeof OAUTH2_CLIENT_AUTH)[number];
-
-/**
- * RFC 6749 §2.3.1: the id and secret are each form-urlencoded before they are joined and base64'd,
- * so a secret containing `:` or `%` survives. `encodeURIComponent` is the encoding the reference
- * clients use for this; the handful of characters it treats differently from a form body
- * (`!'()*`) do not occur in issued client secrets.
- */
-function basicClientAuthorization(clientId: string, clientSecret: string): string {
-  const pair = `${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`;
-  return `Basic ${Buffer.from(pair, "utf8").toString("base64")}`;
+function storedTokenSignature(accessToken: string | undefined, refreshToken: string | undefined) {
+  return createHash("sha256")
+    .update(`${accessToken ?? ""}\n${refreshToken ?? ""}`)
+    .digest("base64url");
 }
 
-function clientAuthOf(config: SchemeConfig): ClientAuth {
-  const value = config.clientAuth;
-  if (value === undefined || value === "") return "basic";
-  if (!(OAUTH2_CLIENT_AUTH as readonly string[]).includes(value)) {
-    throw new InvalidSchemeParameterError("clientAuth", OAUTH2_CLIENT_AUTH.join(" or "));
-  }
-  return value as ClientAuth;
+/** The cache's lifetime for a token the endpoint just issued: its own, less flight time. */
+function cacheLifetimeMs(response: TokenResponse): number {
+  const lifetime =
+    response.expiresInSeconds === null
+      ? OAUTH2_DEFAULT_TOKEN_LIFETIME_MS
+      : response.expiresInSeconds * 1000;
+  return lifetime - OAUTH2_TOKEN_SKEW_MS;
 }
 
 export const SCHEMES: Record<AuthScheme, SchemePlugin> = {
@@ -317,95 +244,121 @@ export const SCHEMES: Record<AuthScheme, SchemePlugin> = {
       }
       runtime.cache.delete(key);
 
-      const tokenUrl = config.tokenUrl;
-      if (!tokenUrl) throw new MissingSchemeParameterError("tokenUrl");
-      let endpoint: URL;
-      try {
-        endpoint = new URL(tokenUrl);
-      } catch {
-        throw new InvalidSchemeParameterError("tokenUrl", "an absolute https URL");
-      }
-      // The token endpoint receives the client secret, so it answers to the vendor's address rule:
-      // https, and public by its literal here and by what it resolves to inside
-      // `runtime.upstreamFetch`.
-      if (endpoint.protocol !== "https:" || !isPublicHost(endpoint.hostname)) {
-        throw new DerivedCredentialError(
-          `The token endpoint ${endpoint.hostname} is not a public https host`,
-          "host_not_public",
-        );
-      }
-
+      const endpoint = tokenEndpointOf(config.tokenUrl);
       const clientId = field(credential, "clientId");
       const clientSecret = field(credential, "clientSecret");
-      const clientAuth = clientAuthOf(config);
+      const clientAuth = clientAuthOf(config, "basic");
 
-      const form = new URLSearchParams({ grant_type: "client_credentials" });
-      if (config.scopes) form.set("scope", config.scopes);
-      const headers = new Headers({
-        "content-type": "application/x-www-form-urlencoded",
-        accept: "application/json",
-      });
-      if (clientAuth === "basic") {
-        headers.set("authorization", basicClientAuthorization(clientId, clientSecret));
-      } else {
-        form.set("client_id", clientId);
-        form.set("client_secret", clientSecret);
-      }
-
-      let response: Awaited<ReturnType<SchemeRuntime["upstreamFetch"]>>;
-      try {
-        response = await runtime.upstreamFetch(
-          {
-            url: endpoint.href,
-            method: "POST",
-            headers,
-            body: new TextEncoder().encode(form.toString()),
-          },
-          { signal: runtime.signal },
-        );
-      } catch (error) {
-        throw new DerivedCredentialError(
-          "The token endpoint could not be reached",
-          "token_exchange_failed",
-          { cause: error },
-        );
-      }
-
-      const read = await readCapped(response.body, MAX_TOKEN_RESPONSE_BYTES, runtime.signal);
-      if (response.status < 200 || response.status > 299) {
-        // Never the body: a rejected client-credentials exchange echoes the client id back.
-        throw new DerivedCredentialError(
-          `The token endpoint answered ${response.status}`,
-          "token_exchange_failed",
-          { upstreamStatus: response.status },
-        );
-      }
-      if (!read.ok) {
-        throw new DerivedCredentialError(
-          read.reason === "aborted"
-            ? "The token endpoint did not finish answering within the time limit"
-            : "The token endpoint's answer was too large to be a token",
-          "token_exchange_failed",
-          { upstreamStatus: response.status },
-        );
-      }
-
-      const token = parseTokenResponse(read.bytes);
-      if (!token) {
-        throw new DerivedCredentialError(
-          "The token endpoint answered without a bearer access_token",
-          "token_exchange_failed",
-          { upstreamStatus: response.status },
-        );
-      }
+      const grant: Record<string, string> = { grant_type: "client_credentials" };
+      if (config.scopes) grant.scope = config.scopes;
+      const token = await requestToken(
+        { endpoint, clientId, clientSecret, clientAuth, grant },
+        runtime.upstreamFetch,
+        runtime.signal,
+      );
 
       const derived: CredentialFields = { accessToken: token.accessToken };
-      const lifetimeMs =
-        token.expiresInSeconds === null
-          ? OAUTH2_DEFAULT_TOKEN_LIFETIME_MS
-          : token.expiresInSeconds * 1000;
-      runtime.cache.set(key, derived, lifetimeMs - OAUTH2_TOKEN_SKEW_MS);
+      runtime.cache.set(key, derived, cacheLifetimeMs(token));
       return derived;
+    },
+  },
+
+  /**
+   * RFC 6749 §4.1, with a client the person registered at the vendor (ADR 0005). The stored record
+   * is the client secret the person entered plus what the consent yielded — `accessToken`,
+   * `refreshToken`, `expiresAt` (`SCHEME_ISSUED_CREDENTIAL_FIELDS`), written by the host's callback
+   * route; the client id, the endpoints and the scopes are `schemeConfig`. The wire credential is
+   * the stored access token, sent as it is while it is good. When it is within the skew of its
+   * expiry, or the vendor answers 401, `derive` buys a fresh one with the refresh token
+   * (`grant_type=refresh_token`, the client in the body unless `clientAuth: basic`), hands the
+   * rotated record to `runtime.storeCredential` so the next process sends the new token, and caches
+   * it keyed to the record it was made from. The refresh runs **single-flight per connection**
+   * (`runtime.once`): two concurrent calls that both decrypted the expired token make one request.
+   *
+   * What it cannot make good it says: no token at all is `consent_required`, refused before the
+   * vendor is asked; a token the endpoint will not refresh is `refresh_failed`, and the ladder
+   * sends the stale token so the vendor's own 401 reaches the caller (`credential-source.ts`).
+   */
+  oauth_authorization_code: {
+    apply(target, credential) {
+      target.headers.set("authorization", `Bearer ${field(credential, "accessToken")}`);
+    },
+    headerNames() {
+      return ["authorization"];
+    },
+    async derive(credential, config, runtime, { refresh }) {
+      // The one field the person entered is read first, so a record missing it refuses by name
+      // before anything is said about tokens.
+      const clientSecret = field(credential, "clientSecret");
+      const accessToken = optionalField(credential, "accessToken");
+      const refreshToken = optionalField(credential, "refreshToken");
+      const expiresAt = optionalField(credential, "expiresAt");
+      const key = `oauth_authorization_code:${runtime.connectionId}`;
+      const from = storedTokenSignature(accessToken, refreshToken);
+
+      if (!refresh) {
+        const cached = runtime.cache.get(key);
+        if (cached && cached.from === from) return { accessToken: field(cached, "accessToken") };
+        if (accessToken && !isTokenExpiring(expiresAt, runtime.now())) return { accessToken };
+      } else {
+        runtime.cache.delete(key);
+      }
+
+      if (!accessToken && !refreshToken) {
+        throw new CredentialRefreshError(
+          "The connection awaits the person's consent at the vendor; complete it in the console",
+          "consent_required",
+        );
+      }
+      if (!refreshToken) {
+        throw new CredentialRefreshError(
+          "The stored access token is past its lifetime and the vendor issued no refresh token",
+          "refresh_failed",
+        );
+      }
+
+      const clientId = parameter(config, "clientId");
+      const clientAuth = clientAuthOf(config, "body");
+      const endpoint = tokenEndpointOf(config.tokenUrl);
+
+      const rotated = await runtime.once(key, async () => {
+        let token: TokenResponse;
+        try {
+          token = await requestToken(
+            {
+              endpoint,
+              clientId,
+              clientSecret,
+              clientAuth,
+              grant: { grant_type: "refresh_token", refresh_token: refreshToken },
+            },
+            runtime.upstreamFetch,
+            runtime.signal,
+          );
+        } catch (error) {
+          if (error instanceof DerivedCredentialError && error.reason === "token_exchange_failed") {
+            throw new CredentialRefreshError(
+              `The stored token could not be refreshed: ${error.message}`,
+              "refresh_failed",
+              { cause: error, upstreamStatus: error.upstreamStatus ?? null },
+            );
+          }
+          throw error;
+        }
+        // The whole record, rebuilt: a refresh token the endpoint did not rotate is kept, and the old
+        // expiry is dropped rather than carried onto a token it says nothing about.
+        const nextExpiresAt = tokenExpiresAt(token, runtime.now());
+        const record: CredentialFields = {
+          clientSecret,
+          accessToken: token.accessToken,
+          refreshToken: token.refreshToken ?? refreshToken,
+          ...(nextExpiresAt ? { expiresAt: nextExpiresAt } : {}),
+        };
+        runtime.cache.set(key, { accessToken: token.accessToken, from }, cacheLifetimeMs(token));
+        await runtime.storeCredential(record);
+        return record;
+      });
+      return { accessToken: field(rotated, "accessToken") };
     },
   },
 
@@ -500,36 +453,3 @@ export const SCHEMES: Record<AuthScheme, SchemePlugin> = {
     },
   },
 };
-
-/**
- * RFC 6749 §5.1's success body, reduced to what the plugin uses. `token_type` is compared
- * case-insensitively because servers disagree on its case; anything but bearer is not a token
- * this scheme knows how to send. `expires_in` is optional in the RFC and absent in practice often
- * enough to have a default.
- */
-function parseTokenResponse(
-  bytes: Uint8Array,
-): { accessToken: string; expiresInSeconds: number | null } | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const body = parsed as { access_token?: unknown; token_type?: unknown; expires_in?: unknown };
-  if (typeof body.access_token !== "string" || body.access_token === "") return null;
-  if (typeof body.token_type === "string" && body.token_type.toLowerCase() !== "bearer") {
-    return null;
-  }
-  const expiresIn =
-    typeof body.expires_in === "number"
-      ? body.expires_in
-      : typeof body.expires_in === "string"
-        ? Number(body.expires_in)
-        : null;
-  return {
-    accessToken: body.access_token,
-    expiresInSeconds: expiresIn !== null && Number.isFinite(expiresIn) ? expiresIn : null,
-  };
-}

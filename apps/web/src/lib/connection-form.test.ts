@@ -4,7 +4,9 @@ import {
   credentialFieldsFor,
   draftFromProposal,
   emptyDraft,
+  googleNoticeFor,
   hostsOf,
+  isOAuthDraft,
   parametersFor,
   parseHostList,
   SCHEMES,
@@ -156,5 +158,108 @@ describe("hosts and proposals", () => {
       hosts: "files.acme.example",
       credential: { apiKey: "" },
     });
+  });
+});
+
+/**
+ * The OAuth consent on the form (ADR 0005): the client id is an input the person fills, the client
+ * secret is the one secret, the issued tokens are never inputs, and the Google notice appears for
+ * Google hosts and nowhere else.
+ */
+describe("the OAuth consent's form", () => {
+  const gmail = {
+    ...emptyDraft("oauth_authorization_code"),
+    vendor: "gmail",
+    displayName: "Gmail",
+    primaryHost: "https://gmail.googleapis.com",
+    schemeConfig: {
+      clientId: "client-id",
+      authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+      scopes: "https://www.googleapis.com/auth/gmail.readonly",
+      clientAuth: "",
+    },
+    credential: { clientSecret: "s" },
+  };
+
+  it("renders the client id as a required parameter and the client secret as the one secret, and never the tokens", () => {
+    expect(parametersFor("oauth_authorization_code").map((f) => [f.name, f.required])).toEqual([
+      ["authorizeUrl", true],
+      ["tokenUrl", true],
+      ["clientId", true],
+      ["scopes", false],
+      ["clientAuth", false],
+    ]);
+    expect(credentialFieldsFor("oauth_authorization_code").map((f) => f.name)).toEqual([
+      "clientSecret",
+    ]);
+    expect(isOAuthDraft(gmail)).toBe(true);
+    expect(isOAuthDraft(emptyDraft("bearer"))).toBe(false);
+  });
+
+  it("requires the client id at submit, though a proposal arrives without it", () => {
+    const proposed = draftFromProposal({
+      vendor: "gmail",
+      displayName: "Gmail",
+      scheme: "oauth_authorization_code",
+      schemeConfig: {
+        authorizeUrl: gmail.schemeConfig.authorizeUrl,
+        tokenUrl: gmail.schemeConfig.tokenUrl,
+        scopes: gmail.schemeConfig.scopes,
+      },
+      primaryHost: "https://gmail.googleapis.com",
+      hosts: ["gmail.googleapis.com"],
+    });
+    expect(proposed.schemeConfig.clientId).toBe("");
+    const blank = validateConnectionDraft({ ...proposed, credential: { clientSecret: "s" } });
+    expect(blank.ok).toBe(false);
+    if (!blank.ok) expect(blank.errors["schemeConfig.clientId"]).toContain("clientId");
+    const filled = validateConnectionDraft({
+      ...proposed,
+      schemeConfig: { ...proposed.schemeConfig, clientId: "client-id" },
+      credential: { clientSecret: "s" },
+    });
+    expect(filled.ok).toBe(true);
+    if (filled.ok) {
+      expect(filled.value.schemeConfig).toEqual({
+        authorizeUrl: gmail.schemeConfig.authorizeUrl,
+        tokenUrl: gmail.schemeConfig.tokenUrl,
+        scopes: gmail.schemeConfig.scopes,
+        clientId: "client-id",
+      });
+      expect(filled.value.credential).toEqual({ clientSecret: "s" });
+    }
+  });
+
+  it("shows the Google notice for a Google host or authorize endpoint, and for no other", () => {
+    expect(googleNoticeFor(gmail)).toContain("seven days");
+    expect(
+      googleNoticeFor({
+        ...gmail,
+        primaryHost: "https://api.vendor.example",
+        schemeConfig: {
+          ...gmail.schemeConfig,
+          authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        },
+      }),
+    ).toContain("seven days");
+    expect(
+      googleNoticeFor({
+        ...gmail,
+        primaryHost: "https://api.vendor.example",
+        schemeConfig: {
+          ...gmail.schemeConfig,
+          authorizeUrl: "https://auth.vendor.example/authorize",
+        },
+      }),
+    ).toBeNull();
+    // A key-shaped connection to a Google host has no consent and no notice.
+    expect(
+      googleNoticeFor({ ...emptyDraft("bearer"), primaryHost: "https://www.googleapis.com" }),
+    ).toBeNull();
+    // Read from the hosts as typed, before they pass.
+    expect(
+      googleNoticeFor({ ...gmail, primaryHost: "https://", hosts: "gmail.googleapis.com" }),
+    ).toContain("seven days");
   });
 });

@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import {
   createProxyApp,
   type ProxyConnection,
+  type ProxyDeps,
   type ProxyEvent,
   type UpstreamRequest,
 } from "@graft/proxy";
@@ -74,6 +75,14 @@ export async function startFakeVendor(args: {
   respond?: (request: UpstreamRequest) => Response | Promise<Response>;
   /** A connection not among the seeds — read from a suite's store, for rows made during the run. */
   resolve?: (id: string) => Promise<ProxyConnection | null>;
+  /**
+   * Where the proxy puts an authorization-code token it refreshed and how it marks a refused refresh
+   * (ADR 0005) — a suite binds `apps/server`'s `createDatabaseCredentialRotation` over its store, so
+   * a refresh through the fake vendor lands in the row the suite reads back.
+   */
+  rotation?: Pick<ProxyDeps, "storeCredential" | "credentialRefreshFailed">;
+  /** The proxy's clock, for a suite that wants a stored token to read as expired. */
+  now?: () => number;
 }): Promise<FakeVendor> {
   const vault = createCredentialVault(createLocalKeyring(VAULT_SECRET));
   const rows = new Map<string, ProxyConnection>();
@@ -104,6 +113,8 @@ export async function startFakeVendor(args: {
     ...createCapabilityTokenVerifier(args.keys),
     connections: { get: async (id) => rows.get(id) ?? (await args.resolve?.(id)) ?? null },
     decryptCredential: (ciphertext, scope) => vault.decrypt(ciphertext, scope),
+    ...args.rotation,
+    ...(args.now ? { now: args.now } : {}),
     upstreamFetch: async (request) => {
       requests.push(request);
       return respond(request);

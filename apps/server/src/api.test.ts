@@ -170,6 +170,10 @@ function connectionDeps(): ConnectionDeps {
       credentialCiphertext: args.ciphertext,
       credentialSetAt: args.setAt,
     })),
+    setConnectionOAuthState: vi.fn(async (_db, _p, _id, state) => ({
+      ...connectionRow,
+      oauthRefreshState: state,
+    })),
     revokeConnection: vi.fn(async () => ({ ...connectionRow, revokedAt: NOW })),
     deleteApprovalsForVendor: vi.fn(async () => []),
     deleteBuildApprovalsForConnection: vi.fn(async () => []),

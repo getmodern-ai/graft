@@ -117,6 +117,7 @@ beforeAll(async () => {
     readWebPage: async ({ url }) => ({ ok: false, url, error: "no network in this suite" }),
     listChangedWindowMs: 50,
     handoff: { consoleUrl: CONSOLE_URL, secret: SECRET, waitMs: 0, ttlMs: 60_000, pollMs: 20 },
+    oauthRedirectUri: "http://graft.test/api/oauth/callback",
   };
 }, 30_000);
 
@@ -311,6 +312,43 @@ describe("the proposal's rules, before any record exists", () => {
     expect(text).toContain(
       "oauth2_client_credentials (parameters: tokenUrl, optional scopes, optional clientAuth; the person enters: clientId, clientSecret)",
     );
+    // The client id is the person's to enter, not the agent's to propose (ADR 0005).
+    expect(text).toContain(
+      "oauth_authorization_code (parameters: authorizeUrl, tokenUrl, optional scopes, optional clientAuth; the person enters: clientId, clientSecret)",
+    );
+  });
+
+  /** ADR 0005: the agent proposes the endpoints and scopes; the client id it cannot know. */
+  it("accepts an authorization-code proposal without a client id, and refuses one without its endpoints", () => {
+    const oauth = {
+      ...PROPOSAL,
+      vendor: "gmail",
+      primaryHost: "https://gmail.googleapis.com",
+      scheme: "oauth_authorization_code",
+      schemeConfig: {
+        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenUrl: "https://oauth2.googleapis.com/token",
+        scopes: "https://www.googleapis.com/auth/gmail.readonly",
+      },
+    };
+    expect(normaliseProposal(oauth)).toMatchObject({
+      ok: true,
+      payload: { scheme: "oauth_authorization_code", schemeConfig: oauth.schemeConfig },
+    });
+    expect(
+      normaliseProposal({ ...oauth, schemeConfig: { tokenUrl: oauth.schemeConfig.tokenUrl } }),
+    ).toMatchObject({
+      ok: false,
+      reason: "input_invalid",
+      message: expect.stringContaining("authorizeUrl"),
+      details: { field: "schemeConfig" },
+    });
+    expect(
+      normaliseProposal({
+        ...oauth,
+        schemeConfig: { ...oauth.schemeConfig, authorizeUrl: "http://accounts.google.com/auth" },
+      }),
+    ).toMatchObject({ ok: false, reason: "input_invalid" });
   });
 
   it("reads an answer that names a connection, and nothing else", () => {
@@ -633,6 +671,110 @@ describe("request_credential through a harness", () => {
       ).toMatchObject({
         status: "connected",
       });
+    } finally {
+      await a.close();
+    }
+  });
+});
+
+/**
+ * The authorization-code shape of `request_connection` (ADR 0005), as far as the MCP side goes: the
+ * awaiting answer carries the redirect URI the person pastes into the client they register and a
+ * message that guides them, and a connection whose consent has not completed is not "already
+ * connected". The consent itself is HTTP and lives in `apps/server/src/oauth.test.ts`.
+ */
+describe("request_connection with the OAuth shape", () => {
+  const GMAIL = {
+    vendor: "gmail",
+    displayName: "Gmail",
+    primaryHost: "https://gmail.googleapis.com",
+    scheme: "oauth_authorization_code",
+    schemeConfig: {
+      authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+      scopes: "https://www.googleapis.com/auth/gmail.readonly",
+    },
+    docsUrl: "https://developers.google.com/gmail/api/auth/scopes",
+  };
+
+  it("answers the handoff link with the redirect URI and the guidance, and does not read a consent still pending as connected", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const first = body(await a.call("request_connection", GMAIL));
+      expect(first).toMatchObject({
+        error: "awaiting_connection",
+        redirectUri: "http://graft.test/api/oauth/callback",
+        pendingActionId: expect.any(String),
+      });
+      const message = String(first.message);
+      expect(message).toContain("http://graft.test/api/oauth/callback");
+      expect(message).toContain("developer console");
+      expect(message).toContain("seven days");
+      const action = store.pendingActions.get(first.pendingActionId as string);
+      expect(action?.payload).toMatchObject({
+        scheme: "oauth_authorization_code",
+        schemeConfig: GMAIL.schemeConfig,
+        hosts: ["gmail.googleapis.com"],
+      });
+
+      // The person entered the client id and secret; the consent has not run. Not connected yet.
+      const connection = await registerConnectionWithCredential(
+        { db: deps.db },
+        { personId: PERSON },
+        {
+          vendor: "gmail",
+          displayName: "Gmail",
+          scheme: "oauth_authorization_code",
+          schemeConfig: { ...GMAIL.schemeConfig, clientId: "client-id" },
+          primaryHost: "https://gmail.googleapis.com",
+          credential: { clientSecret: "client-secret" },
+        },
+        deps.connection,
+      );
+      await addConnectionToAgentScope(
+        { db: deps.db },
+        { personId: PERSON },
+        AGENT_A,
+        connection.id,
+        deps.agent,
+      );
+      const again = body(await a.call("request_connection", GMAIL));
+      expect(again).toMatchObject({
+        error: "awaiting_connection",
+        pendingActionId: first.pendingActionId,
+      });
+
+      // The callback answers the ask once the tokens are stored (apps/server); the call then connects.
+      await answerPendingAction(
+        { db: deps.db },
+        { personId: PERSON },
+        first.pendingActionId as string,
+        { connectionId: connection.id },
+        deps.pendingAction,
+      );
+      const third = await a.call("request_connection", GMAIL);
+      expect(third.isError).toBeFalsy();
+      expect(body(third)).toMatchObject({ status: "connected", connectionId: connection.id });
+      expect(JSON.stringify(body(third))).not.toContain("client-secret");
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("a key-shaped proposal carries no redirect URI", async () => {
+    const a = await connect(TOKEN_B);
+    try {
+      const said = body(
+        await a.call("request_connection", {
+          ...PROPOSAL,
+          vendor: "beta",
+          primaryHost: "https://api.beta.example",
+          hosts: [],
+        }),
+      );
+      expect(said).toMatchObject({ error: "awaiting_connection" });
+      expect(said).not.toHaveProperty("redirectUri");
+      expect(String(said.message)).not.toContain("developer console");
     } finally {
       await a.close();
     }

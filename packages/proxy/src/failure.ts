@@ -1,7 +1,11 @@
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { causeChain, describeCauseChain } from "./cause-chain";
-import { credentialIncompleteRefusal, DerivedCredentialError } from "./schemes";
+import {
+  CredentialRefreshError,
+  credentialIncompleteRefusal,
+  DerivedCredentialError,
+} from "./schemes";
 import type { ProxyDeps, ProxyOptions, ProxyOutcome } from "./types";
 import { isPrivateAddressFailure, isTimeoutFailure } from "./upstream";
 
@@ -93,7 +97,13 @@ export function describeFailure(failure: unknown): string | null {
 }
 
 /** The host-bound functions of `ProxyDeps`, by the name the event records when one throws. */
-export type HostDependency = "verifyToken" | "jwks" | "connections.get" | "decryptCredential";
+export type HostDependency =
+  | "verifyToken"
+  | "jwks"
+  | "connections.get"
+  | "decryptCredential"
+  | "storeCredential"
+  | "credentialRefreshFailed";
 
 /**
  * What a host-injected dependency threw, as the proxy is allowed to know it: which dependency, and
@@ -135,6 +145,7 @@ function describeThrownNames(thrown: unknown): string {
  * is not wrapped because nothing is left to record its failure to; `now` and `options` are values.
  */
 export function guardHostDeps(deps: ProxyDeps): ProxyDeps {
+  const { storeCredential, credentialRefreshFailed } = deps;
   return {
     ...deps,
     verifyToken: (token) => fromHost("verifyToken", () => deps.verifyToken(token)),
@@ -144,6 +155,18 @@ export function guardHostDeps(deps: ProxyDeps): ProxyDeps {
     },
     decryptCredential: (ciphertext, scope) =>
       fromHost("decryptCredential", () => deps.decryptCredential(ciphertext, scope)),
+    ...(storeCredential
+      ? {
+          storeCredential: (scope, fields) =>
+            fromHost("storeCredential", () => storeCredential(scope, fields)),
+        }
+      : {}),
+    ...(credentialRefreshFailed
+      ? {
+          credentialRefreshFailed: (scope, detail) =>
+            fromHost("credentialRefreshFailed", () => credentialRefreshFailed(scope, detail)),
+        }
+      : {}),
   };
 }
 
@@ -176,6 +199,19 @@ export function refuseIncomplete(error: unknown, requestBytes: number): Refused 
 export function deriveRefusal(error: unknown, requestBytes: number): Refused {
   const incomplete = refuseIncomplete(error, requestBytes);
   if (incomplete) return incomplete;
+  if (error instanceof CredentialRefreshError) {
+    // No token to send: the person has not consented yet (ADR 0005). A `refresh_failed` never
+    // reaches here from the ladder — `credential-source.ts` sends the stored token stale instead —
+    // but a caller that asks anyway gets the exchange's own word.
+    if (error.reason === "consent_required") {
+      return refuse(409, "consent_required", error.message, { requestBytes });
+    }
+    return refuse(502, "token_exchange_failed", error.message, {
+      requestBytes,
+      ...(error.upstreamStatus === null ? {} : { upstreamStatus: error.upstreamStatus }),
+      failure: error.cause,
+    });
+  }
   if (error instanceof DerivedCredentialError) {
     if (error.reason === "host_not_public" || isPrivateAddressFailure(error.cause)) {
       return refuse(403, "host_not_public", "The token endpoint is not a public address", {

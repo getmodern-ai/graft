@@ -1,10 +1,15 @@
 import type { ConnectionScheme } from "@graft/db/schema/connection";
 import {
   SCHEME_CREDENTIAL_FIELDS,
+  SCHEME_ISSUED_CREDENTIAL_FIELDS,
   SCHEME_OPTIONAL_CREDENTIAL_FIELDS,
 } from "@graft/proxy/credential-fields";
 import { isPublicHost } from "@graft/proxy/public-host";
-import { SCHEME_PARAMETERS, type SchemeParameterRule } from "@graft/proxy/scheme-parameters";
+import {
+  requiredParametersOf,
+  SCHEME_PARAMETERS,
+  type SchemeParameterRule,
+} from "@graft/proxy/scheme-parameters";
 
 import { isKebabCase } from "../kebab-case";
 
@@ -139,21 +144,29 @@ export type SchemeRule = SchemeParameterRule;
 /** The header name must be a token; the one it must not be is the credential's own carrier. */
 const HEADER_NAME = /^[A-Za-z0-9-]+$/;
 
+/**
+ * The scheme's parameters against its table. Two stages, one rule: an agent's **proposal** may omit
+ * the parameters the person supplies on the form — an OAuth client id the person registered
+ * (ADR 0005; `personEntered` in `@graft/proxy/scheme-parameters`) — and a **registration** may not.
+ * The default is the registration, so the service and the form require everything; the meta-tool
+ * passes `{ proposal: true }`.
+ */
 export function validateSchemeConfig(
   scheme: ConnectionScheme,
   config: Record<string, unknown>,
+  options: { proposal?: boolean } = {},
 ): string | null {
   const rule = SCHEME_PARAMETERS[scheme];
+  const required = options.proposal ? rule.required : requiredParametersOf(rule);
+  const known = [...requiredParametersOf(rule), ...rule.optional];
   const given = Object.keys(config);
-  const missing = rule.required.filter((key) => !given.includes(key));
-  const unknown = given.filter(
-    (key) => !rule.required.includes(key) && !rule.optional.includes(key),
-  );
+  const missing = required.filter((key) => !given.includes(key));
+  const unknown = given.filter((key) => !known.includes(key));
   if (missing.length > 0) {
     return `The ${scheme} scheme needs ${missing.join(", ")} in its configuration`;
   }
   if (unknown.length > 0) {
-    return `The ${scheme} scheme takes no ${unknown.join(", ")} — its parameters are ${[...rule.required, ...rule.optional].join(", ") || "none"}`;
+    return `The ${scheme} scheme takes no ${unknown.join(", ")} — its parameters are ${known.join(", ") || "none"}`;
   }
   for (const [key, value] of Object.entries(config)) {
     if (typeof value !== "string" || value.trim().length === 0) {
@@ -169,12 +182,18 @@ export function validateSchemeConfig(
       return "An API key in the Authorization header needs a prefix such as Bearer or Token — or use the bearer scheme";
     }
   }
-  if (scheme === "oauth2_client_credentials") {
+  if (scheme === "oauth2_client_credentials" || scheme === "oauth_authorization_code") {
     const problem = validateHttpsUrl(String(config.tokenUrl), "The token URL");
     if (problem) return problem;
     if (config.clientAuth !== undefined && !["basic", "body"].includes(String(config.clientAuth))) {
       return "clientAuth is basic or body";
     }
+  }
+  if (scheme === "oauth_authorization_code") {
+    // The person's browser is sent here with the client id in the URL; the same address rule as
+    // the token endpoint, because the consent is the vendor's and a private host is nobody's.
+    const problem = validateHttpsUrl(String(config.authorizeUrl), "The authorize URL");
+    if (problem) return problem;
   }
   return null;
 }
@@ -218,36 +237,38 @@ export function validateCredentialFields(
   return null;
 }
 
-export type OAuthClientVerdict =
-  | { ok: true; clientId: string; authorizeUrl: string; tokenUrl: string; scopes: string[] }
-  | { ok: false; problem: string };
-
 /**
- * An authorization-code client the person registered (ADR 0005): the id and the two endpoints,
- * https on public hosts, and the scopes as a list. The client secret is a credential and takes the
- * vault's path, never this one.
+ * The fields a consent or a refresh writes into an authorization-code credential beside the client
+ * secret — the issued table's, each a non-empty string when present, and never anything the person
+ * types (`validateCredentialFields` is the entry rule and refuses them). The access token is the
+ * one the record cannot do without once a consent has completed.
  */
-export function validateOAuthClient(input: {
-  clientId: string;
-  authorizeUrl: string;
-  tokenUrl: string;
-  scopes?: readonly string[];
-}): OAuthClientVerdict {
-  const clientId = input.clientId.trim();
-  if (clientId.length === 0) return { ok: false, problem: "The OAuth client id is required" };
-  for (const [what, raw] of [
-    ["The authorize URL", input.authorizeUrl],
-    ["The token URL", input.tokenUrl],
-  ] as const) {
-    const problem = validateHttpsUrl(raw.trim(), what);
-    if (problem) return { ok: false, problem };
+export function validateIssuedCredentialFields(
+  scheme: ConnectionScheme,
+  fields: Record<string, unknown>,
+): string | null {
+  const entered = [
+    ...SCHEME_CREDENTIAL_FIELDS[scheme],
+    ...(SCHEME_OPTIONAL_CREDENTIAL_FIELDS[scheme] ?? []),
+  ];
+  const issued = SCHEME_ISSUED_CREDENTIAL_FIELDS[scheme] ?? [];
+  if (issued.length === 0) return `The ${scheme} scheme issues no credential fields`;
+  const given = Object.keys(fields);
+  const unknown = given.filter((field) => !entered.includes(field) && !issued.includes(field));
+  if (unknown.length > 0) {
+    return `The ${scheme} credential takes no ${unknown.join(", ")} — its fields are ${[...entered, ...issued].join(", ")}`;
   }
-  const scopes = [...new Set((input.scopes ?? []).map((scope) => scope.trim()).filter(Boolean))];
-  return {
-    ok: true,
-    clientId,
-    authorizeUrl: input.authorizeUrl.trim(),
-    tokenUrl: input.tokenUrl.trim(),
-    scopes,
-  };
+  const missingEntered = SCHEME_CREDENTIAL_FIELDS[scheme].filter((f) => !given.includes(f));
+  if (missingEntered.length > 0) {
+    return `The ${scheme} credential needs ${missingEntered.join(", ")}`;
+  }
+  if (!given.includes("accessToken")) {
+    return `The ${scheme} credential needs accessToken once the consent has completed`;
+  }
+  for (const [field, value] of Object.entries(fields)) {
+    if (typeof value !== "string" || value.length === 0) {
+      return `The credential field ${field} must be a non-empty string`;
+    }
+  }
+  return null;
 }

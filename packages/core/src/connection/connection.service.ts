@@ -11,19 +11,40 @@ import {
   validateCredentialFields,
   validateDisplayName,
   validateHostSet,
-  validateOAuthClient,
+  validateIssuedCredentialFields,
   validateSchemeConfig,
   validateVendor,
 } from "./connection.rules";
+import {
+  isOAuthAuthorizationCode,
+  type OAuthPublicState,
+  type OAuthState,
+  oauthPublicState,
+  readOAuthState,
+} from "./oauth.rules";
+import {
+  buildAuthorizeUrl,
+  generatePkce,
+  OAUTH_STATE_TTL_MS,
+  type OAuthStatePayload,
+  signOAuthState,
+} from "./oauth-consent";
 
 /**
  * Connections (CONTEXT.md; ADR 0007, ADR 0010): register, enter or re-enter the credential, revoke,
  * list. The credential is written through the vault's encrypt half and read back by nothing here:
  * the row's public shape carries `credentialSetAt` alone, and `toProxyConnection` is the one
  * function that hands the ciphertext on — to the proxy's binding in `apps/server`, which decrypts.
+ *
+ * An authorization-code connection (ADR 0005) adds four moments, each a function below: the consent
+ * **starts** (a PKCE verifier written, a signed authorize URL returned), **completes** (the tokens the
+ * callback exchanged the code for written beside the client secret, as one record), the proxy
+ * **refreshes** the token and hands the rotated record back, or a refresh is **refused** and the
+ * connection is marked for re-consent. The tokens take the credential's path — encrypted, write-only
+ * — and the non-secret state beside them is what the console reads (`oauth.rules.ts`).
  */
 
-/** The row as the wire sees it: never a ciphertext, never the refresh state. */
+/** The row as the wire sees it: never a ciphertext, never a token, never the PKCE verifier. */
 export type ConnectionOutput = {
   id: string;
   vendor: string;
@@ -34,10 +55,8 @@ export type ConnectionOutput = {
   hosts: string[];
   /** Whether a credential is set, and since when — the one thing said about it. */
   credentialSetAt: Date | null;
-  oauthClientId: string | null;
-  oauthAuthorizeUrl: string | null;
-  oauthTokenUrl: string | null;
-  oauthScopes: string[] | null;
+  /** Where the consent stands, for an authorization-code connection; null for every other scheme. */
+  oauth: OAuthPublicState | null;
   revokedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -53,14 +72,23 @@ export function toConnectionOutput(row: ConnectionRow): ConnectionOutput {
     primaryHost: row.primaryHost,
     hosts: row.hosts,
     credentialSetAt: row.credentialSetAt,
-    oauthClientId: row.oauthClientId,
-    oauthAuthorizeUrl: row.oauthAuthorizeUrl,
-    oauthTokenUrl: row.oauthTokenUrl,
-    oauthScopes: row.oauthScopes,
+    oauth: isOAuthAuthorizationCode(row.scheme)
+      ? oauthPublicState(readOAuthState(row.oauthRefreshState))
+      : null,
     revokedAt: row.revokedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/**
+ * Whether a vendor call through this connection can succeed today: not revoked, a credential
+ * entered, and — for an authorization-code connection — the consent completed and not since refused.
+ * What `request_connection` reads before saying "already connected", and the console's "connected".
+ */
+export function isConnectionUsable(connection: ConnectionOutput): boolean {
+  if (connection.revokedAt !== null || connection.credentialSetAt === null) return false;
+  return connection.oauth === null || connection.oauth.status === "connected";
 }
 
 /**
@@ -85,11 +113,13 @@ export type RegisterConnectionInput = {
   vendor: string;
   displayName: string;
   scheme: ConnectionScheme;
+  /**
+   * The scheme's non-secret parameters — for an authorization-code connection the client id the
+   * person registered, the two endpoints and the scopes (ADR 0005), like every other scheme's.
+   */
   schemeConfig?: Record<string, unknown>;
   primaryHost: string;
   hosts?: readonly string[];
-  /** An authorization-code client the person registered (ADR 0005); the secret comes separately. */
-  oauth?: { clientId: string; authorizeUrl: string; tokenUrl: string; scopes?: readonly string[] };
 };
 
 /** A refused rule is a 400 with the rule's own sentence. */
@@ -116,9 +146,7 @@ function validateRegistration(input: RegisterConnectionInput) {
   refuse(validateSchemeConfig(input.scheme, schemeConfig));
   const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
   if (!hostSet.ok) refuseHostSet(hostSet);
-  const oauth = input.oauth ? validateOAuthClient(input.oauth) : null;
-  if (oauth && !oauth.ok) throw new ServiceError("BAD_REQUEST", oauth.problem);
-  return { schemeConfig, hostSet, oauth };
+  return { schemeConfig, hostSet };
 }
 
 /**
@@ -133,7 +161,7 @@ export async function registerConnection(
   input: RegisterConnectionInput,
   deps: ConnectionDeps,
 ): Promise<ConnectionOutput> {
-  const { schemeConfig, hostSet, oauth } = validateRegistration(input);
+  const { schemeConfig, hostSet } = validateRegistration(input);
 
   const row = await deps.insertConnection(ctx.db, {
     id: deps.newId(),
@@ -144,14 +172,6 @@ export async function registerConnection(
     schemeConfig: schemeConfig as Record<string, string>,
     primaryHost: hostSet.primaryHost,
     hosts: hostSet.hosts,
-    ...(oauth?.ok
-      ? {
-          oauthClientId: oauth.clientId,
-          oauthAuthorizeUrl: oauth.authorizeUrl,
-          oauthTokenUrl: oauth.tokenUrl,
-          oauthScopes: oauth.scopes,
-        }
-      : {}),
   });
   return toConnectionOutput(row);
 }
@@ -209,6 +229,10 @@ export async function getConnection(
  * reach the vault and nothing else, and the answer carries `credentialSetAt` and no more (GRA-6's
  * acceptance criterion). A re-entry after a revoke is the reconnection ADR 0007 describes — the
  * repo clears `revoked_at` in the same statement.
+ *
+ * For an authorization-code connection what is entered is the client secret alone, so the record
+ * written here holds no token and the consent state is reset with it: the person consents next,
+ * from the authorize URL `startOAuthConsent` builds (ADR 0005).
  */
 export async function setConnectionCredential(
   ctx: ServiceContext,
@@ -230,7 +254,219 @@ export async function setConnectionCredential(
     await deps.setConnectionCredential(ctx.db, principal.personId, row.id, {
       ciphertext,
       setAt: deps.now(),
+      ...(isOAuthAuthorizationCode(row.scheme) ? { oauthRefreshState: null } : {}),
     }),
+    "Connection not found",
+  );
+  return toConnectionOutput(updated);
+}
+
+/** The row an OAuth function works on: the person's, of the authorization-code scheme. */
+async function oauthRow(
+  ctx: ServiceContext,
+  principal: Principal,
+  connectionId: string,
+  deps: ConnectionDeps,
+): Promise<ConnectionRow> {
+  const row = orNotFound(
+    await deps.findConnection(ctx.db, principal.personId, connectionId),
+    "Connection not found",
+  );
+  if (!isOAuthAuthorizationCode(row.scheme)) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `${row.displayName} uses the ${row.scheme} scheme, which has no consent to run`,
+    );
+  }
+  return row;
+}
+
+export type StartOAuthConsentInput = {
+  /** Where the vendor sends the browser back — `oauthRedirectUri(GRAFT_AUTH_URL)`. */
+  redirectUri: string;
+  /** `GRAFT_HANDOFF_SECRET`, which signs the state as it signs a handoff URL. */
+  secret: string;
+  /** The `connection` or `credential` ask this consent answers, when there is one. */
+  pendingActionId?: string | null;
+};
+
+export type StartedOAuthConsent = {
+  /** What the console opens in a popup. */
+  authorizeUrl: string;
+  /** Until when the callback accepts the state. */
+  expiresAt: Date;
+  connection: ConnectionOutput;
+};
+
+/**
+ * Start the consent (ADR 0005): a PKCE verifier is written into the connection's state for the
+ * callback to read, and the authorize URL is built with its challenge, the redirect URI and a state
+ * signed over this connection, this person and the ask it answers. Needs the client secret to be
+ * entered first — the callback exchanges the code with it — so a connection with no credential is
+ * refused, and the console's Enter credential comes before Connect. Starting again replaces the
+ * verifier: only the newest consent can complete. The verifier is not a secret in the vault's sense
+ * — useless without the code the vendor delivers to the callback alone, and without the client
+ * secret — and is dropped when the consent completes.
+ */
+export async function startOAuthConsent(
+  ctx: ServiceContext,
+  principal: Principal,
+  connectionId: string,
+  input: StartOAuthConsentInput,
+  deps: ConnectionDeps,
+): Promise<StartedOAuthConsent> {
+  const row = await oauthRow(ctx, principal, connectionId, deps);
+  if (!row.credentialCiphertext) {
+    throw new ServiceError(
+      "CONFLICT",
+      `${row.displayName} has no client secret yet — enter it before connecting`,
+    );
+  }
+  const clientId = row.schemeConfig.clientId;
+  const authorizeUrl = row.schemeConfig.authorizeUrl;
+  if (!clientId || !authorizeUrl) {
+    throw new ServiceError(
+      "CONFLICT",
+      `${row.displayName} is missing its client id or authorize URL`,
+    );
+  }
+
+  const now = deps.now();
+  const expiresAt = new Date(now.getTime() + OAUTH_STATE_TTL_MS);
+  const { verifier, challenge } = generatePkce();
+  const payload: OAuthStatePayload = {
+    connectionId: row.id,
+    personId: principal.personId,
+    pendingActionId: input.pendingActionId ?? null,
+    expiresAt: expiresAt.getTime(),
+    nonce: deps.newId(),
+  };
+  const state: OAuthState = {
+    ...readOAuthState(row.oauthRefreshState),
+    pkce: {
+      verifier,
+      issuedAt: now.toISOString(),
+      pendingActionId: input.pendingActionId ?? null,
+    },
+  };
+  const updated = orNotFound(
+    await deps.setConnectionOAuthState(ctx.db, principal.personId, row.id, state),
+    "Connection not found",
+  );
+  return {
+    authorizeUrl: buildAuthorizeUrl({
+      authorizeUrl,
+      clientId,
+      redirectUri: input.redirectUri,
+      scopes: row.schemeConfig.scopes,
+      state: signOAuthState(payload, input.secret),
+      codeChallenge: challenge,
+    }),
+    expiresAt,
+    connection: toConnectionOutput(updated),
+  };
+}
+
+/**
+ * Complete the consent (ADR 0005): the record the callback assembled — the client secret it
+ * decrypted plus the tokens the code was exchanged for, `SCHEME_ISSUED_CREDENTIAL_FIELDS` — is
+ * encrypted and written as the connection's credential, and the state says when the person
+ * consented and when the token dies. The verifier and any earlier refusal go with the old state.
+ * A revoked connection is reconnected by it (ADR 0007), as by any credential entry.
+ */
+export async function completeOAuthConsent(
+  ctx: ServiceContext,
+  principal: Principal,
+  connectionId: string,
+  fields: Record<string, unknown>,
+  deps: ConnectionDeps,
+): Promise<ConnectionOutput> {
+  const row = await oauthRow(ctx, principal, connectionId, deps);
+  refuse(validateIssuedCredentialFields(row.scheme, fields));
+  const record = fields as Record<string, string>;
+  const ciphertext = await deps.vault.encrypt(record, {
+    personId: principal.personId,
+    connectionId: row.id,
+  });
+  const now = deps.now();
+  const state: OAuthState = {
+    consentedAt: now.toISOString(),
+    expiresAt: record.expiresAt ?? null,
+  };
+  const updated = orNotFound(
+    await deps.setConnectionCredential(ctx.db, principal.personId, row.id, {
+      ciphertext,
+      setAt: now,
+      oauthRefreshState: state,
+    }),
+    "Connection not found",
+  );
+  return toConnectionOutput(updated);
+}
+
+/**
+ * The proxy refreshed the token and hands the rotated record back (ADR 0005; `@graft/proxy`'s
+ * `storeCredential` seam, bound in `apps/server`): encrypted and written in place of the old, with
+ * the new expiry and the moment beside it. A standing "consent required" is cleared — a refresh
+ * that succeeded is the proof it no longer holds. `credentialSetAt` is not the person's entry here
+ * but the record's last write; the console reads the consent's own moment from the state.
+ */
+export async function storeRefreshedCredential(
+  ctx: ServiceContext,
+  principal: Principal,
+  connectionId: string,
+  fields: Record<string, unknown>,
+  deps: ConnectionDeps,
+): Promise<ConnectionOutput> {
+  const row = await oauthRow(ctx, principal, connectionId, deps);
+  refuse(validateIssuedCredentialFields(row.scheme, fields));
+  const record = fields as Record<string, string>;
+  const ciphertext = await deps.vault.encrypt(record, {
+    personId: principal.personId,
+    connectionId: row.id,
+  });
+  const now = deps.now();
+  const {
+    consentRequired: _cleared,
+    pkce: _dropped,
+    ...kept
+  } = readOAuthState(row.oauthRefreshState);
+  const state: OAuthState = {
+    ...kept,
+    expiresAt: record.expiresAt ?? null,
+    refreshedAt: now.toISOString(),
+  };
+  const updated = orNotFound(
+    await deps.setConnectionCredential(ctx.db, principal.personId, row.id, {
+      ciphertext,
+      setAt: now,
+      oauthRefreshState: state,
+    }),
+    "Connection not found",
+  );
+  return toConnectionOutput(updated);
+}
+
+/**
+ * The vendor's token endpoint refused a refresh (ADR 0005; the proxy's `credentialRefreshFailed`
+ * seam): the person has to consent again, and the console's button says Reconnect. The credential
+ * is left as it is — the proxy keeps sending the stale token so the vendor's own 401 reaches the
+ * agent — and only the state changes. `reason` is the proxy's sentence, never the endpoint's body.
+ */
+export async function markOAuthConsentRequired(
+  ctx: ServiceContext,
+  principal: Principal,
+  connectionId: string,
+  reason: string,
+  deps: ConnectionDeps,
+): Promise<ConnectionOutput> {
+  const row = await oauthRow(ctx, principal, connectionId, deps);
+  const state: OAuthState = {
+    ...readOAuthState(row.oauthRefreshState),
+    consentRequired: { at: deps.now().toISOString(), reason: reason.slice(0, 500) },
+  };
+  const updated = orNotFound(
+    await deps.setConnectionOAuthState(ctx.db, principal.personId, row.id, state),
     "Connection not found",
   );
   return toConnectionOutput(updated);

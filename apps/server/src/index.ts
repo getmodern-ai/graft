@@ -12,6 +12,7 @@ import {
   defaultPendingActionDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
+  oauthRedirectUri,
 } from "@graft/core";
 import { createDb } from "@graft/db";
 import { applyMigrations, MIGRATIONS_DIR } from "@graft/db/migrate";
@@ -36,6 +37,7 @@ import { bootstrapAdmin, MigrationChainBrokenError, migrateOnStart } from "./boo
 import {
   connectionSeeds,
   createDatabaseConnections,
+  createDatabaseCredentialRotation,
   createInMemoryConnections,
   layerConnections,
   seedConnections,
@@ -224,6 +226,9 @@ const mcp = createMcpDeps({
   proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
   publish,
   handoff,
+  // What the agent tells the person to paste into the OAuth client they register (ADR 0005) — the
+  // same value `GET /api/oauth/redirect-uri` shows and `GET /api/oauth/callback` serves.
+  oauthRedirectUri: oauthRedirectUri(env.GRAFT_AUTH_URL),
   model: modelSetup.model,
   acquire: {
     maxAttempts: env.GRAFT_ACQUIRE_MAX_ATTEMPTS,
@@ -259,6 +264,8 @@ const app = createServer({
   keys,
   vault,
   connections,
+  // An authorization-code token the proxy refreshes goes back into the row it came from (ADR 0005).
+  credentialRotation: createDatabaseCredentialRotation(db, connectionDeps),
   followRedirects: env.GRAFT_PROXY_FOLLOW_REDIRECTS,
   api: {
     auth: {
@@ -278,6 +285,9 @@ const app = createServer({
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
     handoff,
+    // The consent's two ends (`oauth.ts`): the redirect URI on this server's origin, and the one
+    // decrypt outside the proxy binding — the client secret, for the code exchange.
+    oauth: { authUrl: env.GRAFT_AUTH_URL, decrypt: vault.decrypt },
   },
   // The console's build, served from the same origin as the API (`console.ts`); absent, the API is
   // whole and every console path says where the build was expected.

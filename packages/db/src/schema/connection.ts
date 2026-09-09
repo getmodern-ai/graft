@@ -17,6 +17,7 @@ export const connectionScheme = [
   "bearer",
   "basic",
   "oauth2_client_credentials",
+  "oauth_authorization_code",
   "unleashed_hmac",
   "snowflake_keypair_jwt",
 ] as const;
@@ -79,16 +80,26 @@ export const connection = pgTable(
      */
     credentialSetAt: timestamp("credential_set_at"),
     /**
-     * Authorization-code OAuth, with a client the person registered (ADR 0005). The client id,
-     * the endpoints and the scopes are configuration; the client secret is a credential of its
-     * own, encrypted like the other; the refresh state is what single-flight refresh reads and
-     * writes. All null for a key-shaped scheme. The flow itself is GRA-30's.
+     * Authorization-code OAuth, with a client the person registered (ADR 0005). GRA-30 kept the
+     * client id, the two endpoints and the scopes in `scheme_config` beside every other scheme's
+     * parameters, and the client secret in `credential_ciphertext` beside the tokens the consent
+     * yields — one record, so the proxy decrypts once and the form renders from one table — which
+     * leaves these five columns from GRA-6 unwritten. They stay until a migration drops them; nothing
+     * reads them (`packages/core`'s `toConnectionOutput` does not).
      */
     oauthClientId: text("oauth_client_id"),
     oauthClientSecretCiphertext: bytea("oauth_client_secret_ciphertext"),
     oauthAuthorizeUrl: text("oauth_authorize_url"),
     oauthTokenUrl: text("oauth_token_url"),
     oauthScopes: text("oauth_scopes").array(),
+    /**
+     * The non-secret state of an authorization-code connection, read by the console and written
+     * by the consent and the refresh (ADR 0005): when the person consented, when the access token
+     * dies, when it was last refreshed, whether a refresh was refused and the person has to consent
+     * again — and, between the person clicking Connect and the vendor calling back, the PKCE
+     * verifier the callback exchanges the code with. `packages/core`'s `OAuthState` is the shape;
+     * this column stores it unread. Never a token: those are in the ciphertext.
+     */
     oauthRefreshState: jsonb("oauth_refresh_state").$type<Record<string, unknown>>(),
     /**
      * Set when the person revokes the connection. The row stays for its history and so the

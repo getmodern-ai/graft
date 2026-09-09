@@ -1,9 +1,13 @@
+import { useMutation } from "@tanstack/react-query";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { ConnectionCalls } from "@/components/connection/connection-calls";
+import { ConsentStatus } from "@/components/connection/oauth-client-notice";
 import { ReenterCredentialDialog } from "@/components/connection/reenter-credential-dialog";
 import { RevokeConnectionDialog } from "@/components/connection/revoke-connection-dialog";
+import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
 import { Time } from "@/components/time";
 import { ToolAnnotations } from "@/components/tool-annotations";
 import { Badge } from "@/components/ui/badge";
@@ -18,19 +22,119 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { Tool } from "@/lib/agent-queries";
-import { type Connection, isAwaitingCredential } from "@/lib/connection-queries";
+import { type Connection, connectionStatus } from "@/lib/connection-queries";
+import { startOAuthConsent } from "@/lib/oauth-consent";
 
 /**
  * One connection: the vendor, the hosts the proxy pins its calls to, the scheme, when the credential
  * was set — and never the credential (CONTEXT.md: write-only after entry) — with the tools bound to
  * its vendor and its recent vendor calls. A revoked connection is still listed, awaiting
  * reconnection: its tools are, too, and Re-enter credential is the reconnection (ADR 0007; GRA-28).
+ *
+ * An OAuth connection (ADR 0005) has two more states between the secret and connected: the client
+ * secret entered and the consent not yet completed, and a refresh the vendor refused so the person
+ * has to consent again. Both are one button — Connect, Reconnect — that starts the consent in a
+ * popup with the client secret already in place; the secret is asked for again only after a revoke.
  */
 export function ConnectionCard({ connection, tools }: { connection: Connection; tools: Tool[] }) {
   const [showCalls, setShowCalls] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [reentering, setReentering] = useState(false);
-  const awaiting = isAwaitingCredential(connection);
+  const status = connectionStatus(connection);
+  const usable = status === "connected";
+  const consent = useOAuthConsent({
+    onConnected: () => toast.success(`${connection.displayName} is connected`),
+  });
+  const reconsent = useMutation({
+    mutationFn: () => startOAuthConsent(connection.id),
+    onSuccess: ({ authorizeUrl }) => void consent.run(authorizeUrl, connection),
+  });
+  const consenting = reconsent.isPending || consent.running;
+
+  const badge = {
+    revoked: (
+      <>
+        <Badge variant="destructive">revoked</Badge>
+        <Badge variant="outline">awaiting reconnection</Badge>
+      </>
+    ),
+    awaiting_credential: (
+      <Badge variant="outline">
+        {connection.oauth ? "awaiting client secret" : "awaiting credential"}
+      </Badge>
+    ),
+    awaiting_consent: <Badge variant="outline">awaiting consent</Badge>,
+    consent_required: <Badge variant="destructive">needs re-consent</Badge>,
+    connected: <Badge variant="secondary">connected</Badge>,
+  }[status];
+
+  const description = {
+    revoked: (
+      <>
+        Revoked <Time iso={connection.revokedAt ?? ""} />. The credential is cleared and every
+        approval with it;{" "}
+        {connection.oauth
+          ? "entering the client secret and consenting again"
+          : "re-entering a credential"}{" "}
+        reconnects it.
+      </>
+    ),
+    awaiting_credential: (
+      <>Registered, no {connection.oauth ? "client secret" : "credential"} entered yet.</>
+    ),
+    awaiting_consent: (
+      <>Client secret set; the vendor's consent has not been completed. Connect opens it.</>
+    ),
+    consent_required: (
+      <>
+        The vendor refused to refresh the token
+        {connection.oauth?.consentRequired ? (
+          <>
+            {" "}
+            <Time iso={connection.oauth.consentRequired.at} />
+          </>
+        ) : null}
+        ; consent again to keep the tools working.
+      </>
+    ),
+    connected: connection.oauth ? (
+      <>
+        Consented <Time iso={connection.oauth.consentedAt ?? connection.credentialSetAt ?? ""} />
+        {connection.oauth.refreshedAt ? (
+          <>
+            , token refreshed <Time iso={connection.oauth.refreshedAt} />
+          </>
+        ) : null}
+        . Tokens are never shown.
+      </>
+    ) : (
+      <>
+        Credential set <Time iso={connection.credentialSetAt ?? ""} />. Never shown again.
+      </>
+    ),
+  }[status];
+
+  // Which button, and what it does: a consent alone when the client secret is in place, the
+  // credential dialog otherwise (which for an OAuth connection runs the consent after the secret).
+  const primary =
+    connection.oauth && (status === "awaiting_consent" || status === "consent_required")
+      ? {
+          label: status === "consent_required" ? "Reconnect" : "Connect",
+          onClick: () => reconsent.mutate(),
+        }
+      : {
+          label:
+            status === "revoked"
+              ? "Reconnect"
+              : status === "awaiting_credential"
+                ? connection.oauth
+                  ? "Enter client secret"
+                  : "Enter credential"
+                : connection.oauth
+                  ? "Re-enter client secret"
+                  : "Re-enter credential",
+          onClick: () => setReentering(true),
+        };
 
   return (
     <Card>
@@ -39,44 +143,19 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
           {connection.displayName}
           <Badge variant="outline">{connection.vendor}</Badge>
           <Badge variant="outline">{connection.scheme}</Badge>
-          {connection.revokedAt ? (
-            <>
-              <Badge variant="destructive">revoked</Badge>
-              <Badge variant="outline">awaiting reconnection</Badge>
-            </>
-          ) : awaiting ? (
-            <Badge variant="outline">awaiting credential</Badge>
-          ) : (
-            <Badge variant="secondary">connected</Badge>
-          )}
+          {badge}
         </CardTitle>
-        <CardDescription>
-          {connection.revokedAt ? (
-            <>
-              Revoked <Time iso={connection.revokedAt} />. The credential is cleared and every
-              approval with it; re-entering a credential reconnects it.
-            </>
-          ) : connection.credentialSetAt ? (
-            <>
-              Credential set <Time iso={connection.credentialSetAt} />. Never shown again.
-            </>
-          ) : (
-            <>Registered, no credential entered yet.</>
-          )}
-        </CardDescription>
+        <CardDescription>{description}</CardDescription>
         <CardAction className="flex gap-2">
           <Button
-            variant={connection.revokedAt || awaiting ? "default" : "outline"}
+            variant={usable ? "outline" : "default"}
             size="sm"
-            onClick={() => setReentering(true)}
+            disabled={consenting}
+            onClick={primary.onClick}
           >
-            {connection.revokedAt
-              ? "Reconnect"
-              : awaiting
-                ? "Enter credential"
-                : "Re-enter credential"}
+            {consenting ? "Waiting for the consent…" : primary.label}
           </Button>
-          {connection.revokedAt ? null : (
+          {status === "revoked" ? null : (
             <Button variant="outline" size="sm" onClick={() => setRevoking(true)}>
               Revoke
             </Button>
@@ -84,6 +163,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 text-sm">
+        <ConsentStatus state={consent.state} onCancel={consent.cancel} />
         <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]">
           <dt className="text-muted-foreground">Hosts</dt>
           <dd className="flex flex-wrap gap-1.5">
@@ -124,7 +204,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
                       {tool.vendor}__{tool.name}
                     </code>
                     <ToolAnnotations readOnly={tool.readOnly} destructive={tool.destructive} />
-                    {awaiting ? <Badge variant="outline">awaiting reconnection</Badge> : null}
+                    {usable ? null : <Badge variant="outline">awaiting reconnection</Badge>}
                   </li>
                 ))}
               </ul>
