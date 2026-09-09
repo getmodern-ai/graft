@@ -173,6 +173,12 @@ jobs:
       # exited, and what it said — because a container that started with nothing would be the worse
       # failure, and one that exited for some other reason would hide behind a green step. The
       # model-key refusal ADR 0014 asks of a self-host arrives with GRA-31's rule.
+      #
+      # A third run asks for the hosted backings, `GRAFT_BACKINGS=cloud`, and must be told the private
+      # package is not installed: the same Dockerfile builds the hosted image when that package is
+      # linked into the checkout (GRA-38), and this is the open image's proof that it was not. The
+      # selector runs before the database pool is opened (`apps/server/src/index.ts`), so the run
+      # needs no Postgres, and the keyring secret is not required under `cloud`, so it is left out.
       - name: Build the server image
         run: docker build -f apps/server/Dockerfile -t graft-server:ci .
 
@@ -194,6 +200,13 @@ jobs:
           }
           refuses "GRAFT_DATABASE_URL GRAFT_AUTH_SECRET GRAFT_HANDOFF_SECRET"
           refuses "GRAFT_KEYRING_SECRET" \
+            -e GRAFT_DATABASE_URL=postgresql://postgres:postgres@nowhere:5432/graft \
+            -e GRAFT_AUTH_SECRET=ci-auth-secret-that-is-long-enough-32 \
+            -e GRAFT_AUTH_URL=http://localhost:3000 \
+            -e GRAFT_CONSOLE_URL=http://localhost:3000 \
+            -e GRAFT_HANDOFF_SECRET=ci-handoff-secret-that-is-long-enough-32
+          refuses "@graft/cloud-backings installed GRAFT_BACKINGS=open" \
+            -e GRAFT_BACKINGS=cloud \
             -e GRAFT_DATABASE_URL=postgresql://postgres:postgres@nowhere:5432/graft \
             -e GRAFT_AUTH_SECRET=ci-auth-secret-that-is-long-enough-32 \
             -e GRAFT_AUTH_URL=http://localhost:3000 \

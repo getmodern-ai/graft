@@ -162,6 +162,19 @@ the install still succeeds and the server refuses to boot with a sentence saying
 imports it by a name held in a variable, so the type program never resolves it — which is what keeps
 the package absent rather than optional.
 
+**In the image the package arrives built** (GRA-38). The bundled server runs where there is Node and
+`node_modules` and nothing else — no TypeScript, no workspace — so a linked package ships a `build`
+of its own: `tsdown`, the `@graft/*` seam packages it imports inlined as the server's bundle inlines
+them, its third-party imports left external; and its `exports` name `dist/index.mjs` under `default`
+for the runtime and `src/index.ts` under `types` for the type program. `apps/server/Dockerfile` runs
+that build when `packages/cloud-backings/` is present in the build context and copies `dist/` and
+`package.json` to `/app/node_modules/@graft/cloud-backings`, a real directory beside the dependencies
+the package imports; absent, the same lines do nothing, and the Dockerfile's comments say why each is
+shaped as it is. One consequence on a laptop: `tsx` resolves the bare name through `default` exactly
+as Node does, so a server run from source under `GRAFT_BACKINGS=cloud` needs
+`pnpm --filter @graft/cloud-backings build` first — unbuilt, the import fails as module-not-found and
+the selector's sentence says the package is not installed.
+
 The MCP endpoint is `POST /mcp` with `Authorization: Bearer <agent token>` — `POST /api/agents` mints
 the token, shown once. Under `open`, authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names:
 `docker` by default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and,
@@ -177,12 +190,17 @@ in production and beside `cloud`.
 any commit that leaves the lockfile alone; `build` runs the console's `vite build` and the server's
 `tsdown` (`apps/server/tsdown.config.ts` — the workspace packages inlined, every third-party import
 left external, and the four files the code resolves off `import.meta.url` laid beside the bundle:
-`runner.mjs`, `skills/`, `drizzle/`, the check's worker as a second entry); `prod-deps` installs the
-production dependencies of the server and of every inlined package flat under `/app/node_modules`
-(`node-linker=hoisted`, so `typescript6` and `tar-stream` resolve from the server's directory);
-`runtime` is `node:24-slim` as user `graft`, uid 10001 — the sandbox user's uid on purpose, so drafts
-sandboxes write into the shared toolbox are the server's to remove. `node dist/index.mjs` is the
-server; `node dist/keys.mjs` beside it mints a `.env`'s secrets without pnpm.
+`runner.mjs`, `skills/`, `drizzle/`, the check's worker as a second entry), then the linked backings
+package's own build when `packages/cloud-backings/` is present (GRA-38; the paragraph on
+`GRAFT_BACKINGS` above); `prod-deps` installs the production dependencies of the server and of every
+inlined package flat under `/app/node_modules` (`node-linker=hoisted`, so `typescript6` and
+`tar-stream` resolve from the server's directory — and the linked package's third-party dependencies
+land there too, since the lockfile the stage is given names them whenever the package is in the
+tree); `runtime` is `node:24-slim` as user `graft`, uid 10001 — the sandbox user's uid on purpose, so
+drafts sandboxes write into the shared toolbox are the server's to remove. `node dist/index.mjs` is
+the server; `node dist/keys.mjs` beside it mints a `.env`'s secrets without pnpm. The linked package,
+built, is `/app/node_modules/@graft/cloud-backings`; the open image has no such directory, and the
+same Dockerfile lines produce both images.
 
 The compose file runs it as service `graft` on `${GRAFT_PORT:-3000}`, joined to two networks: the
 default one, and `sandbox` (`internal: true`, compose-named `<project>_sandbox`) under the alias
@@ -198,7 +216,9 @@ sandbox image under the name `GRAFT_SANDBOX_IMAGE` carries and starts nothing. H
 CI builds the image on every pull request and asserts that it refuses to start naming what is missing:
 run with no environment, `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` and `GRAFT_HANDOFF_SECRET`; run with
 every field but the keyring secret, `GRAFT_KEYRING_SECRET` — the cross-field rule GRA-20 made of it,
-which only runs once every field is present.
+which only runs once every field is present; run with every field under `GRAFT_BACKINGS=cloud`, the
+sentence that `@graft/cloud-backings` is not installed — the open image's proof that it carries no
+hosted backings (GRA-38), which needs no database because the selector runs before the pool is opened.
 `.github/workflows/release.yml` pushes `ghcr.io/getmodern-ai/graft` and `graft-sandbox` on a `v*` tag,
 for `linux/amd64` and `linux/arm64`. The conformance suite against a running compose project is
 `packages/sandbox-docker/src/compose.test.ts`, opt-in by `GRAFT_COMPOSE_NETWORK` and
