@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  acquireConcurrency,
+  acquireMaxAttempts,
+  acquireTokenCeiling,
   adminEmail,
   adminPassword,
   approvalWaitSeconds,
@@ -19,6 +22,7 @@ import {
   handoffSecret,
   keyringSecret,
   migrateOnStart,
+  modelBackend,
   packageAllowlist,
   packageMinAgeDays,
   packageMinWeeklyDownloads,
@@ -327,6 +331,9 @@ describe("finalServerSchema", () => {
       GRAFT_PENDING_ACTION_TTL_HOURS: 24,
       GRAFT_SWEEP_INTERVAL_SECONDS: 300,
       GRAFT_MIGRATE_ON_START: true,
+      GRAFT_ACQUIRE_MAX_ATTEMPTS: 4,
+      GRAFT_ACQUIRE_TOKEN_CEILING: 400_000,
+      GRAFT_ACQUIRE_CONCURRENCY: 2,
     });
   });
 
@@ -444,6 +451,67 @@ describe("the sandbox backing", () => {
     expect(
       serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "docker" }),
     ).toEqual([]);
+  });
+});
+
+describe("the acquire job's bounds", () => {
+  it("default to four attempts, four hundred thousand tokens and two concurrent jobs", () => {
+    expect(acquireMaxAttempts.parse(undefined)).toBe(4);
+    expect(acquireTokenCeiling.parse(undefined)).toBe(400_000);
+    expect(acquireConcurrency.parse(undefined)).toBe(2);
+  });
+
+  it("take whole numbers inside their bounds, naming the variable otherwise", () => {
+    expect(acquireMaxAttempts.parse("6")).toBe(6);
+    expect(acquireTokenCeiling.parse("50000")).toBe(50_000);
+    expect(acquireConcurrency.parse("1")).toBe(1);
+    for (const [schema, bad, name] of [
+      [acquireMaxAttempts, "0", "GRAFT_ACQUIRE_MAX_ATTEMPTS"],
+      [acquireMaxAttempts, "21", "GRAFT_ACQUIRE_MAX_ATTEMPTS"],
+      [acquireMaxAttempts, "2.5", "GRAFT_ACQUIRE_MAX_ATTEMPTS"],
+      [acquireTokenCeiling, "999", "GRAFT_ACQUIRE_TOKEN_CEILING"],
+      [acquireTokenCeiling, "lots", "GRAFT_ACQUIRE_TOKEN_CEILING"],
+      [acquireConcurrency, "0", "GRAFT_ACQUIRE_CONCURRENCY"],
+      [acquireConcurrency, "33", "GRAFT_ACQUIRE_CONCURRENCY"],
+    ] as const) {
+      const result = schema.safeParse(bad);
+      expect(result.success, `${name}=${bad}`).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain(name);
+    }
+  });
+});
+
+describe("GRAFT_MODEL_BACKEND", () => {
+  it("is unset by default — no model, and acquire says so — and admits scripted", () => {
+    expect(modelBackend.parse(undefined)).toBeUndefined();
+    expect(modelBackend.parse("scripted")).toBe("scripted");
+    expect(modelBackend.safeParse("gpt").success).toBe(false);
+  });
+
+  it("is all-or-nothing with its script, and refused in production", () => {
+    // The open backings' keyring secret beside every input, so the one issue asserted is this rule's.
+    const keyed = { GRAFT_KEYRING_SECRET: "k".repeat(32) };
+    expect(serverEnvIssues({ ...keyed, GRAFT_MODEL_BACKEND: "scripted" })).toEqual([
+      expect.stringMatching(/scripted model is partially configured.*Missing: GRAFT_MODEL_SCRIPT/),
+    ]);
+    expect(serverEnvIssues({ ...keyed, GRAFT_MODEL_SCRIPT: "./script.json" })).toEqual([
+      expect.stringMatching(/Missing: GRAFT_MODEL_BACKEND/),
+    ]);
+    expect(
+      serverEnvIssues({
+        ...keyed,
+        GRAFT_MODEL_BACKEND: "scripted",
+        GRAFT_MODEL_SCRIPT: "./script.json",
+      }),
+    ).toEqual([]);
+    expect(
+      serverEnvIssues({
+        ...keyed,
+        NODE_ENV: "production",
+        GRAFT_MODEL_BACKEND: "scripted",
+        GRAFT_MODEL_SCRIPT: "./script.json",
+      }),
+    ).toEqual([expect.stringMatching(/GRAFT_MODEL_BACKEND=scripted.*production/)]);
   });
 });
 

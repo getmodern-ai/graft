@@ -146,6 +146,9 @@ importers:
       '@graft/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
+      '@graft/model':
+        specifier: workspace:*
+        version: link:../../packages/model
       '@graft/proxy':
         specifier: workspace:*
         version: link:../../packages/proxy
@@ -444,6 +447,9 @@ importers:
       '@graft/db':
         specifier: workspace:*
         version: link:../db
+      '@graft/model':
+        specifier: workspace:*
+        version: link:../model
       '@graft/proxy':
         specifier: workspace:*
         version: link:../proxy
@@ -481,6 +487,21 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.1
         version: 2.1.1(hono@4.13.7)
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.3
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.0))
+
+  packages/model:
+    devDependencies:
+      '@graft/config':
+        specifier: workspace:*
+        version: link:../config
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3

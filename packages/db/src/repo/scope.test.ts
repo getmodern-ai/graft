@@ -3,6 +3,17 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { DbOrTx } from "../index";
 import {
+  addAcquireJobTokenSpend,
+  claimAcquireJob,
+  findAcquireJob,
+  heartbeatAcquireJob,
+  insertAcquireTrace,
+  listAcquireAttempts,
+  listAcquireTraces,
+  listRunnableAcquireJobs,
+  updateAcquireAttempt,
+} from "./acquire-job";
+import {
   listAgentConnectionIds,
   listAllActiveAgents,
   replaceAgentConnections,
@@ -99,6 +110,22 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     await listUsage(db, SCOPE, { limit: 10 });
     expect(only().sql).toMatch(SCOPED_AGENT);
   });
+
+  it("an acquire job, its attempts and its trace", async () => {
+    await findAcquireJob(db, SCOPE, "job_1");
+    expect(only().sql).toMatch(SCOPED_AGENT);
+    statements = [];
+    await listAcquireAttempts(db, SCOPE, "job_1");
+    const attempts = only();
+    expect(attempts.sql).toMatch(SCOPED_AGENT);
+    expect(attempts.sql).toContain('"acquire_attempt"."job_id" = $');
+    statements = [];
+    await listAcquireTraces(db, SCOPE, "job_1", 100);
+    const traces = only();
+    expect(traces.sql).toMatch(SCOPED_AGENT);
+    expect(traces.sql).toContain('"acquire_trace"."job_id" = $');
+    expect(traces.sql).toMatch(/order by "acquire_trace"\."sequence" asc limit \$\d+$/);
+  });
 });
 
 describe("agent-scoped writes take both ids too, so a mis-scoped write edits nothing", () => {
@@ -134,6 +161,39 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(s.sql).toMatch(SCOPED_AGENT);
     expect(s.sql).toContain('"pending_action"."answered_at" is not null');
     expect(s.sql).toContain('"pending_action"."consumed_at" is null');
+  });
+
+  it("the acquire loop's writes: tokens, the heartbeat, an attempt's end", async () => {
+    await addAcquireJobTokenSpend(db, SCOPE, "job_1", 120);
+    const tokens = only();
+    expect(tokens.sql).toMatch(
+      /^update "acquire_job" set "token_spend" = "acquire_job"\."token_spend" \+ \$1/,
+    );
+    expect(tokens.sql).toMatch(SCOPED_AGENT);
+    statements = [];
+    await heartbeatAcquireJob(db, SCOPE, "job_1", new Date("2026-09-09T00:00:00Z"));
+    expect(only().sql).toMatch(SCOPED_AGENT);
+    statements = [];
+    await updateAcquireAttempt(db, SCOPE, "att_1", { outcome: "passed" });
+    const attempt = only();
+    expect(attempt.sql).toMatch(/^update "acquire_attempt" set/);
+    expect(attempt.sql).toMatch(SCOPED_AGENT);
+  });
+
+  it("a trace line is numbered in the statement, over the job's own lines", async () => {
+    // The fake client answers no row, which the insert reports as a throw once the statement is out.
+    await insertAcquireTrace(db, {
+      id: "tr_1",
+      jobId: "job_1",
+      agentId: "agent_1",
+      kind: "progress",
+      text: "Reading the docs",
+    }).catch(() => null);
+    const s = only();
+    expect(s.sql).toMatch(/^insert into "acquire_trace"/);
+    expect(s.sql).toContain(
+      '(select coalesce(max("acquire_trace"."sequence"), 0) + 1 from "acquire_trace" where "acquire_trace"."job_id" = $',
+    );
   });
 
   it("replacing the scope deletes under the pair before inserting", async () => {
@@ -190,6 +250,38 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toMatch(/^select count\(\*\) from "user"$/);
     expect(s.sql).not.toContain("where");
     expect(s.params).toEqual([]);
+  });
+
+  /**
+   * The acquire runner's two (GRA-29): the roster of what may be run, joined to the agent for the
+   * person, and the claim, whose predicate is the roster's so two runners cannot both take a job.
+   */
+  it("the acquire runner's roster is unscoped, by name, joined to the agent for the person, and takes only the runnable predicate", async () => {
+    const stale = new Date("2026-09-09T00:00:00Z");
+    await listRunnableAcquireJobs(db, { staleBefore: stale, limit: 2 });
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select .* from "acquire_job" inner join "agent" on "agent"\."id" = "acquire_job"\."agent_id" where/,
+    );
+    expect(s.sql).toContain('"acquire_job"."status" = $');
+    expect(s.sql).toContain('"acquire_job"."heartbeat_at" is null');
+    expect(s.sql).toContain('"acquire_job"."heartbeat_at" < $');
+    expect(s.sql).not.toContain('person_id" =');
+    expect(s.params).toEqual(["queued", "running", stale.toISOString(), 2]);
+  });
+
+  it("the acquire runner's claim carries the runnable predicate into the update, so a second claim matches nothing", async () => {
+    const now = new Date("2026-09-09T00:01:00Z");
+    const stale = new Date("2026-09-09T00:00:00Z");
+    await claimAcquireJob(db, "job_1", { now, staleBefore: stale });
+    const s = only();
+    expect(s.sql).toMatch(
+      /^update "acquire_job" set "status" = \$1, "started_at" = coalesce\("acquire_job"\."started_at", \$2\), "heartbeat_at" = \$3/,
+    );
+    expect(s.sql).toContain('"acquire_job"."id" = $');
+    expect(s.sql).toContain('"acquire_job"."status" = $');
+    expect(s.sql).toContain('"acquire_job"."heartbeat_at" < $');
+    expect(s.sql).not.toContain("person_id");
   });
 
   it("a revoke clears every secret column and stamps the moment, under the person", async () => {

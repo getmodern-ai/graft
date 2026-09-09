@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
 import { createProxyApp, DEFAULT_PROXY_OPTIONS, proxyPathFor } from "./app";
+import { CREDENTIAL_REDACTED, REDACTED_HEADER } from "./echo";
 import { MAX_REDIRECT_HOPS } from "./redirects";
 import { SNOWFLAKE_TOKEN_TYPE_HEADER, UNLEASHED_CLIENT_TYPE } from "./schemes";
 import type {
@@ -1730,6 +1731,7 @@ describe("the wide event", () => {
     "redirectHops",
     "dryRun",
     "dryRunOutcome",
+    "credentialEchoed",
     "failure",
   ].sort();
 
@@ -1882,10 +1884,104 @@ describe("a vendor that reflects the credential", () => {
     );
     const res = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
 
-    expect(res.headers.get("x-echo-key")).toBe("<redacted>");
-    expect(res.headers.get("x-echo-auth")).toBe("Token <redacted>");
+    expect(res.headers.get("x-echo-key")).toBe(CREDENTIAL_REDACTED);
+    expect(res.headers.get("x-echo-auth")).toBe(`Token ${CREDENTIAL_REDACTED}`);
     expect(res.headers.get("x-other")).toBe("keep");
+    expect(res.headers.get(REDACTED_HEADER)).toBe("credential");
     expect(await res.text()).toBe("ok");
+    expect(h.events[0]).toMatchObject({ outcome: "forwarded", credentialEchoed: true });
+  });
+
+  /**
+   * The body too (GRA-29; ADR 0010, amended): the proxy is the only component holding the plaintext,
+   * so a vendor's 401 that quotes the key it refused is redacted here by value, before it reaches
+   * the sandbox and `acquire`'s trace. Text-like bodies only; a binary body is never rewritten.
+   */
+  it("redacts a credential value a vendor echoes in a 401 JSON body, marks the response, and says so on the event", async () => {
+    const h = harness();
+    h.respond(() =>
+      jsonResponse(
+        { error: "unauthorized", message: `Invalid API key provided: ${SECRET}`, apiKey: SECRET },
+        { status: 401 },
+      ),
+    );
+    const res = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+
+    expect(res.status).toBe(401);
+    const text = await res.text();
+    expect(text).not.toContain(SECRET);
+    expect(JSON.parse(text)).toEqual({
+      error: "unauthorized",
+      message: `Invalid API key provided: ${CREDENTIAL_REDACTED}`,
+      apiKey: CREDENTIAL_REDACTED,
+    });
+    expect(res.headers.get(REDACTED_HEADER)).toBe("credential");
+    expect(h.events).toHaveLength(1);
+    expect(h.events[0]).toMatchObject({
+      outcome: "forwarded",
+      upstreamStatus: 401,
+      credentialEchoed: true,
+      responseBytes: Buffer.byteLength(text),
+    });
+  });
+
+  it("redacts an echo in a 200 text body and in a body with no declared type, and leaves a clean body unmarked", async () => {
+    const h = harness();
+    h.respond(
+      () =>
+        new Response(`echo: ${SECRET} and again ${SECRET}`, {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        }),
+    );
+    const echoed = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+    expect(await echoed.text()).toBe(
+      `echo: ${CREDENTIAL_REDACTED} and again ${CREDENTIAL_REDACTED}`,
+    );
+    expect(echoed.headers.get(REDACTED_HEADER)).toBe("credential");
+
+    h.respond(() => new Response(`untyped ${SECRET}`, { status: 200 }));
+    const untyped = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+    expect(await untyped.text()).toBe(`untyped ${CREDENTIAL_REDACTED}`);
+
+    h.respond(() => jsonResponse({ ok: true }));
+    const clean = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+    expect(await clean.json()).toEqual({ ok: true });
+    expect(clean.headers.has(REDACTED_HEADER)).toBe(false);
+    expect(h.events.at(-1)).toMatchObject({ credentialEchoed: false });
+  });
+
+  it("redacts the base64 pair a vendor echoes from a Basic Authorization header", async () => {
+    const h = harness({}, { ...CONNECTION, authScheme: "basic", schemeConfig: {} });
+    h.credentials.set("cipher:conn_1", { username: "ops@example.com", password: "p4ssw0rd-long" });
+    const pair = Buffer.from("ops@example.com:p4ssw0rd-long", "utf8").toString("base64");
+    h.respond(() =>
+      jsonResponse({ saw: `Basic ${pair}`, password: "p4ssw0rd-long" }, { status: 401 }),
+    );
+    const res = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+    const text = await res.text();
+    expect(text).not.toContain(pair);
+    expect(text).not.toContain("p4ssw0rd-long");
+    expect(JSON.parse(text)).toEqual({
+      saw: `Basic ${CREDENTIAL_REDACTED}`,
+      password: CREDENTIAL_REDACTED,
+    });
+  });
+
+  it("passes a binary body through untouched even when its bytes spell the key", async () => {
+    const h = harness();
+    const bytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]), Buffer.from(SECRET)]);
+    h.respond(
+      () =>
+        new Response(bytes, {
+          status: 200,
+          headers: { "content-type": "application/octet-stream" },
+        }),
+    );
+    const res = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+    expect(Buffer.from(await res.arrayBuffer()).equals(bytes)).toBe(true);
+    expect(res.headers.has(REDACTED_HEADER)).toBe(false);
+    expect(h.events[0]).toMatchObject({ credentialEchoed: false, responseBytes: bytes.byteLength });
   });
 });
 
@@ -2065,7 +2161,7 @@ describe("oauth2_client_credentials through the proxy", () => {
 
     const res = await h.app.request("/c/conn_o/orders", { headers: bearer(GOOD) });
 
-    expect(res.headers.get("x-echo")).toBe("got <redacted>");
+    expect(res.headers.get("x-echo")).toBe(`got ${CREDENTIAL_REDACTED}`);
   });
 });
 
