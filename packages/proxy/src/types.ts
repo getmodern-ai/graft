@@ -252,6 +252,13 @@ export type ProxyEvent = {
   dryRun: boolean;
   dryRunOutcome: DryRunOutcome | null;
   /**
+   * The vendor reflected a credential value — into a header or a text-like body — and the proxy
+   * redacted it before answering (`echo.ts`; ADR 0010, amended). The audit trail's record that a
+   * vendor echoes what it is sent, which is worth knowing about a vendor; false on every call that
+   * was refused or intercepted, since no vendor answered.
+   */
+  credentialEchoed: boolean;
+  /**
    * The error behind an `upstream_unreachable`, `credential_unreadable`, `token_exchange_failed`
    * or `proxy_error` outcome, flattened to one line; null otherwise. `name: message` down the
    * cause chain for the proxy's own errors and the network's; for what a host-injected dependency
