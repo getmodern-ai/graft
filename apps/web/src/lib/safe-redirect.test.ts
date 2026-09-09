@@ -9,6 +9,13 @@ describe("safeRedirectPath", () => {
     expect(safeRedirectPath("/")).toBe("/");
   });
 
+  it("never returns to a door — the guard and the door would otherwise bounce", () => {
+    for (const door of ["/login", "/login?redirect=%2Fagents", "/signup", "/signup/"]) {
+      expect(safeRedirectPath(door), door).toBeNull();
+    }
+    expect(safeRedirectPath("/loginish")).toBe("/loginish");
+  });
+
   it("drops anything that could leave the origin", () => {
     for (const bad of [
       "https://evil.example/",

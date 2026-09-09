@@ -1,94 +1,74 @@
+import type { BuildAskPayload, ToolAskPayload } from "@graft/mcp/approval";
+import type { PendingActionCard } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
-import { api } from "./api";
+import { api, type Jsonified } from "./api";
 
 /**
- * Pending actions and handoffs as the console sees them (ADR 0006, ADR 0008).
- *
- * **GRA-23 owns the server side of this file and has not merged yet.** Its endpoints — the open
- * list, the handoff verdict, the answer, the relax — are being built on `aleks/gra-23-approvals`,
- * so the shapes here are the console's own view held in one place, to be replaced by the server's
- * exported types when that branch lands (the GRA-26 brief). Every screen under `routes/_auth/_shell/
- * pending*` reads through this file and nothing else, which is what makes the swap mechanical.
+ * Pending actions and handoffs as the console sees them (ADR 0006, ADR 0008), on GRA-23's routes
+ * (`apps/server/src/api.ts`, "Pending actions and approvals"). The card is the server's shape,
+ * jsonified; its `payload` is the ask's own — `@graft/mcp`'s `ToolAskPayload` for a tool call,
+ * `BuildAskPayload` for an `acquire` — and `readAsk` is the one place that narrows it, so a screen
+ * never reads `payload.x` on faith. A later kind (GRA-28's connection and credential asks) adds a
+ * branch here and a card file beside the others; `pending-action-card.tsx` dispatches on the kind.
  */
 
-export type PendingActionView = {
-  id: string;
-  /** The meta-tool's word for the ask: `approval` for a tool call, `build` for `acquire`. */
-  kind: string;
-  /** The agent that asked (ADR 0006: the page shows the requesting agent). */
-  agent: { id: string; name: string; revokedAt: string | null };
-  /** The tool the ask is about, for a tool call; its description is the model's own prose (ADR 0008). */
-  tool: {
-    id: string;
-    vendor: string;
-    name: string;
-    description: string;
-    readOnly: boolean;
-    destructive: boolean;
-  } | null;
-  /** The connection the ask is about — the vendor host the page shows (ADR 0006). */
-  connection: {
-    id: string;
-    vendor: string;
-    displayName: string;
-    primaryHost: string;
-  } | null;
-  createdAt: string;
-  expiresAt: string;
-  answeredAt: string | null;
-  /** Whether a destructive tool's per-call ask has been relaxed for this agent (ADR 0008). */
-  perCallRelaxed: boolean;
-};
+export type PendingAction = Jsonified<PendingActionCard>;
 
-/** What a handoff link resolves to (`@graft/mcp`'s `handoff.ts` on GRA-23's branch). */
-export type HandoffView =
-  | { ok: true; action: PendingActionView }
-  | {
-      ok: false;
-      reason: "tampered" | "expired" | "consumed" | "answered" | "not_found";
-      message: string;
-    };
+export type Ask =
+  | { kind: "tool"; action: PendingAction; payload: Jsonified<ToolAskPayload> }
+  | { kind: "build"; action: PendingAction; payload: Jsonified<BuildAskPayload> }
+  | { kind: "other"; action: PendingAction };
 
-export type PendingAnswer = {
-  decision: "allow" | "deny";
-  /** For a destructive tool: also relax the per-call ask, so later calls pass silently (ADR 0008). */
-  relaxPerCall?: boolean;
-};
+/** Narrow a card's payload by its kind. A payload missing what its kind promises reads as `other`. */
+export function readAsk(action: PendingAction): Ask {
+  const payload = action.payload;
+  if (action.kind === "tool" && typeof payload.toolId === "string") {
+    return { kind: "tool", action, payload: payload as Jsonified<ToolAskPayload> };
+  }
+  if (action.kind === "build" && typeof payload.connectionId === "string") {
+    return { kind: "build", action, payload: payload as Jsonified<BuildAskPayload> };
+  }
+  return { kind: "other", action };
+}
+
+/** The person's answer: `allow`, and for a destructive tool whether to relax its per-call ask too. */
+export type PendingAnswer = { allow: boolean; relax?: boolean };
 
 export const pendingKeys = {
   all: ["pending-actions"] as const,
   one: (id: string) => ["pending-actions", id] as const,
 };
 
+/** The open asks across every agent, newest first, each with its handoff link. */
 export const pendingActionsQuery = queryOptions({
   queryKey: pendingKeys.all,
-  queryFn: () => api<{ actions: PendingActionView[] }>("/pending-actions"),
+  queryFn: () => api<{ pendingActions: PendingAction[] }>("/pending-actions"),
 });
 
-/** The selected action, verified against its handoff token when the link carried one. */
-export const pendingActionQuery = (id: string, token: string | null) =>
+/**
+ * One action by its handoff link — the server verifies `t` against the row and refuses a tampered
+ * (403), already-used (409) or expired (410) link with `details.reason`, which the page turns into
+ * its refusal. A link is required here: without one the server refuses as tampered, and the list is
+ * where a signed-in person reads an action they did not arrive at by link.
+ */
+export const pendingActionQuery = (id: string, token: string) =>
   queryOptions({
     queryKey: [...pendingKeys.one(id), token] as const,
     queryFn: () =>
-      api<HandoffView>(
-        `/pending-actions/${encodeURIComponent(id)}${
-          token ? `?t=${encodeURIComponent(token)}` : ""
-        }`,
+      api<{ pendingAction: PendingAction }>(
+        `/pending-actions/${encodeURIComponent(id)}?t=${encodeURIComponent(token)}`,
       ),
   });
 
 export function answerPendingAction(id: string, answer: PendingAnswer) {
-  return api<{ action: PendingActionView }>(`/pending-actions/${encodeURIComponent(id)}/answer`, {
-    method: "POST",
-    body: answer,
-  });
+  return api<{ pendingAction: PendingAction }>(
+    `/pending-actions/${encodeURIComponent(id)}/answer`,
+    { method: "POST", body: answer },
+  );
 }
 
-/** The relax switch on a standing approval, outside an ask (ADR 0008). */
-export function setPerCallRelaxed(agentId: string, toolId: string, relaxed: boolean) {
-  return api<{ perCallRelaxed: boolean }>(
-    `/agents/${encodeURIComponent(agentId)}/approvals/${encodeURIComponent(toolId)}/relax`,
-    { method: relaxed ? "POST" : "DELETE" },
-  );
+/** Whether the action can still be answered from here. */
+export function isOpen(action: PendingAction, now: Date = new Date()): boolean {
+  return action.answeredAt === null && new Date(action.expiresAt).getTime() > now.getTime();
 }

@@ -13,8 +13,20 @@ export function safeRedirectPath(value: unknown): string | null {
   if (typeof value !== "string") return null;
   if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return null;
   if (/^\/[\s]/.test(value)) return null;
+  // A door never returns to a door: a signed-in visit to `/login?redirect=%2Flogin` would otherwise
+  // bounce between the door's own guard and itself.
+  if (
+    DOORS.some(
+      (door) => value === door || value.startsWith(`${door}?`) || value.startsWith(`${door}/`),
+    )
+  ) {
+    return null;
+  }
   return value;
 }
+
+/** The public doors, which are never a destination after sign-in. */
+const DOORS = ["/login", "/signup"] as const;
 
 /** Where a signed-in person lands when nothing asked for somewhere else. */
 export const DEFAULT_SIGNED_IN_PATH = "/agents";

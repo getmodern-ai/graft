@@ -27,6 +27,8 @@
   "devDependencies": {
     "@graft/config": "workspace:*",
     "@graft/core": "workspace:*",
+    "@graft/db": "workspace:*",
+    "@graft/mcp": "workspace:*",
     "@graft/server": "workspace:*",
     "@tailwindcss/vite": "catalog:",
     "@tanstack/router-plugin": "catalog:",
