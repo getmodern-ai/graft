@@ -2,7 +2,12 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createAuth } from "@graft/auth";
-import { createConnectionDeps, defaultAgentDeps } from "@graft/core";
+import {
+  createConnectionDeps,
+  defaultAgentDeps,
+  defaultToolDeps,
+  defaultWorkingSetDeps,
+} from "@graft/core";
 import { createDb } from "@graft/db";
 import { env } from "@graft/env/server";
 import { createMcpDeps } from "@graft/mcp";
@@ -157,6 +162,8 @@ const app = createServer({
       db,
       agent: defaultAgentDeps,
       connection: connectionDeps,
+      workingSet: defaultWorkingSetDeps,
+      tool: defaultToolDeps,
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
   },
