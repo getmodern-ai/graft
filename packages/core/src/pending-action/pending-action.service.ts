@@ -60,6 +60,16 @@ export async function getPendingAction(
   return deps.findPendingAction(ctx.db, scope, id);
 }
 
+/** The console's read of one action, whichever of the person's agents raised it (GRA-23's card). */
+export async function getPendingActionForPerson(
+  ctx: ServiceContext,
+  principal: Principal,
+  id: string,
+  deps: PendingActionDeps,
+): Promise<PendingActionRow | null> {
+  return deps.findPendingActionForPerson(ctx.db, principal.personId, id);
+}
+
 /** The console's list: unanswered and not yet expired, across all of the person's agents. */
 export async function listOpenPendingActions(
   ctx: ServiceContext,

@@ -1,4 +1,5 @@
 import {
+  deleteApproval,
   findApproval,
   findBuildApproval,
   insertBuildApproval,
@@ -15,6 +16,7 @@ export type ApprovalDeps = {
   listApprovals: typeof listApprovals;
   upsertApproval: typeof upsertApproval;
   relaxApproval: typeof relaxApproval;
+  deleteApproval: typeof deleteApproval;
   findBuildApproval: typeof findBuildApproval;
   insertBuildApproval: typeof insertBuildApproval;
   /** The tool and the connection an approval names must be the person's. */
@@ -28,6 +30,7 @@ export const defaultApprovalDeps: ApprovalDeps = {
   listApprovals,
   upsertApproval,
   relaxApproval,
+  deleteApproval,
   findBuildApproval,
   insertBuildApproval,
   findAuthoredToolById,

@@ -8,8 +8,7 @@ import { z } from "zod";
  * makes sense complete is refused when half-set, because a partial set is always a typo or a
  * half-finished deploy and would otherwise present as a feature that silently never works.
  *
- * Every Graft variable is `GRAFT_*`. Later tickets add to this file: the sandbox (GRA-4), the model
- * adapter (GRA-29).
+ * Every Graft variable is `GRAFT_*`. Later tickets add to this file: the model adapter (GRA-29).
  */
 
 /**
@@ -281,6 +280,58 @@ export const sweepIntervalSeconds = z.coerce
 export const sandboxKeys = ["GRAFT_SANDBOX_IMAGE", "GRAFT_SANDBOX_NETWORK"] as const;
 
 /**
+ * Where the console answers (CONTEXT.md, *Console*) — the base every handoff URL is built on
+ * (ADR 0006: a meta-tool returns a URL the person opens in the console). Required, because a
+ * handoff URL is how an approval reaches a person whose harness cannot ask in place, and a server
+ * that cannot build one would answer every such call with a refusal that reads as a broken tool.
+ * An absolute URL rather than an origin: a console served under a path is a legitimate deployment.
+ */
+export const consoleUrl = z.url({
+  protocol: /^https?$/,
+  error:
+    "GRAFT_CONSOLE_URL must be an absolute http(s) URL — where the console answers, the base of every handoff URL",
+});
+
+/**
+ * What signs a handoff URL (`@graft/mcp`'s `handoff.ts`; ADR 0006: the URL is a phishing-shaped
+ * artefact, so it is signed and bound to the agent that requested it). Thirty-two characters for the
+ * reason `keyringSecret` gives, and its own variable rather than the auth secret because a rotation
+ * of one must not force the other: rotating this one only invalidates links not yet opened.
+ */
+export const handoffSecret = z
+  .string()
+  .min(32, "GRAFT_HANDOFF_SECRET must be at least 32 characters — handoff URLs are signed with it");
+
+/**
+ * How long a tool call waits for the person to answer a handoff before returning
+ * `awaiting_approval` (GRA-23). Under the tool-call timeout of every known harness by a margin, so
+ * the answer the agent relays is Graft's own sentence and not a transport error; zero returns at
+ * once. Bounded above because a call held for minutes is the client-compatibility risk ADR 0004
+ * names.
+ */
+export const approvalWaitSeconds = z.coerce
+  .number({ error: "GRAFT_APPROVAL_WAIT_SECONDS must be a whole number of seconds" })
+  .int("GRAFT_APPROVAL_WAIT_SECONDS must be a whole number of seconds")
+  .min(0, "GRAFT_APPROVAL_WAIT_SECONDS must be zero or more")
+  .max(
+    300,
+    "GRAFT_APPROVAL_WAIT_SECONDS must be at most 300 — a tool call cannot be held for longer",
+  )
+  .default(25);
+
+/**
+ * How long a pending action stays answerable (ADR 0006: the person may answer hours later). A day
+ * by default; at most the week `@graft/core`'s pending-action service allows, so a value here can
+ * never be one the service refuses at the first ask.
+ */
+export const pendingActionTtlHours = z.coerce
+  .number({ error: "GRAFT_PENDING_ACTION_TTL_HOURS must be a whole number of hours" })
+  .int("GRAFT_PENDING_ACTION_TTL_HOURS must be a whole number of hours")
+  .min(1, "GRAFT_PENDING_ACTION_TTL_HOURS must be at least 1")
+  .max(168, "GRAFT_PENDING_ACTION_TTL_HOURS must be at most 168 — one week")
+  .default(24);
+
+/**
  * A group of settings that only makes sense complete. Factored so a second hand-written copy of
  * this comparison is not where two groups drift — one of them getting the `present.length === 0`
  * case wrong and reporting every unconfigured deploy as broken.
@@ -444,6 +495,14 @@ export const serverSchema = {
 
   /** Which backing runs authored code, and whether the fake may — see `sandboxBackend`. */
   GRAFT_SANDBOX_BACKEND: sandboxBackend,
+
+  /** The console's URL and the handoff signing secret, both required — see `consoleUrl`, `handoffSecret`. */
+  GRAFT_CONSOLE_URL: consoleUrl,
+  GRAFT_HANDOFF_SECRET: handoffSecret,
+
+  /** The ask flow's two clocks, each with a correct default — see `approvalWaitSeconds`, `pendingActionTtlHours`. */
+  GRAFT_APPROVAL_WAIT_SECONDS: approvalWaitSeconds,
+  GRAFT_PENDING_ACTION_TTL_HOURS: pendingActionTtlHours,
 
   /** How often the working-set sweep runs — see `sweepIntervalSeconds`. */
   GRAFT_SWEEP_INTERVAL_SECONDS: sweepIntervalSeconds,

@@ -75,6 +75,21 @@ export async function relaxDestructiveApproval(
   );
 }
 
+/**
+ * Withdraw the standing answer, from the console (ADR 0008: the record is the person's to revisit).
+ * The tool asks again on its next call, as if never answered — the one way back from a `deny`, and
+ * the way to make a relaxed destructive tool ask per call again. Null when nothing stood.
+ */
+export async function revokeApproval(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  toolId: string,
+  deps: ApprovalDeps,
+): Promise<ApprovalRow | null> {
+  orNotFound(await deps.findAuthoredToolById(ctx.db, scope.personId, toolId), "Tool not found");
+  return deps.deleteApproval(ctx.db, scope, toolId);
+}
+
 /** ADR 0008 applied to one call: the tool's annotations and the agent's standing approval. */
 export async function decideToolCall(
   ctx: ServiceContext,

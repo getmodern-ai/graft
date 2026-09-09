@@ -4,6 +4,8 @@ import { createAuth } from "@graft/auth";
 import {
   createConnectionDeps,
   defaultAgentDeps,
+  defaultApprovalDeps,
+  defaultPendingActionDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
 } from "@graft/core";
@@ -38,11 +40,12 @@ import {
  * To run it on a laptop:
  *
  *   pnpm run db:start                                        # Postgres 18 in Docker, port 5432
- *   pnpm --filter @graft/server keys >> apps/server/.env     # a key pair, a keyring secret, an auth secret
+ *   pnpm --filter @graft/server keys >> apps/server/.env     # a key pair, a keyring, an auth and a handoff secret
  *   cat >> apps/server/.env <<'EOF'
  *   GRAFT_DATABASE_URL=postgresql://postgres:password@localhost:5432/graft
  *   GRAFT_AUTH_URL=http://localhost:3000
  *   GRAFT_CORS_ORIGIN=http://localhost:3001
+ *   GRAFT_CONSOLE_URL=http://localhost:3001
  *   EOF
  *   pnpm run db:migrate                                      # or db:push while the schema is moving
  *   pnpm --filter @graft/server dev
@@ -119,6 +122,18 @@ const publish = createPublishDeps({
 });
 
 /**
+ * The handoff (ADR 0006): where the console answers, what signs the link, how long a call waits for
+ * the person and how long the pending action outlives the call. Built once, because the API's card
+ * and the MCP server's ask have to agree on the URL and the mark.
+ */
+const handoff = {
+  consoleUrl: env.GRAFT_CONSOLE_URL,
+  secret: env.GRAFT_HANDOFF_SECRET,
+  waitMs: env.GRAFT_APPROVAL_WAIT_SECONDS * 1000,
+  ttlMs: env.GRAFT_PENDING_ACTION_TTL_HOURS * 60 * 60 * 1000,
+};
+
+/**
  * One `McpDeps` for the endpoint and the sweep. What a sandbox is handed as `GRAFT_PROXY_URL` is the
  * proxy's public URL, so relocating the proxy stays the DNS change GRA-1 promises. The notifier and
  * the in-flight registry inside are the process's one of each: the sweep's `tools/list_changed`
@@ -131,6 +146,7 @@ const mcp = createMcpDeps({
   keys,
   proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
   publish,
+  handoff,
 });
 
 const app = createServer({
@@ -149,8 +165,11 @@ const app = createServer({
       connection: connectionDeps,
       workingSet: defaultWorkingSetDeps,
       tool: defaultToolDeps,
+      approval: defaultApprovalDeps,
+      pendingAction: defaultPendingActionDeps,
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
+    handoff,
   },
   mcp,
 });

@@ -1,30 +1,53 @@
 import {
   type AgentDeps,
+  type ApprovalDeps,
+  answerPendingAction,
   type ConnectionDeps,
+  consumePendingAction,
   createAgent,
   getAgent,
   getAgentScope,
   getConnection,
+  getPendingActionForPerson,
+  getToolById,
+  grantBuildApproval,
   listAgents,
+  listApprovals,
   listConnections,
+  listOpenPendingActions,
   listTools,
   listWorkingSetChanges,
   orNotFound,
+  type PendingActionDeps,
+  type Principal,
   registerConnection,
+  relaxDestructiveApproval,
   requirePerson,
   revokeAgent,
+  revokeApproval,
   revokeConnection,
   type ServiceContext,
   ServiceError,
+  type ServiceErrorCode,
   type SessionLike,
   setAgentScope,
+  setApproval,
   setConnectionCredential,
   type ToolDeps,
   updateAgentLimits,
   type WorkingSetDeps,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { connectionScheme } from "@graft/db/schema/connection";
+import {
+  HANDOFF_TOKEN_PARAM,
+  type HandoffConfig,
+  handoffUrl,
+  readApprovalAnswer,
+  signHandoffToken,
+  verifyHandoff,
+} from "@graft/mcp";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -38,6 +61,12 @@ import { z } from "zod";
  * Errors: a `ServiceError` becomes `{ error, message, details? }` at its status; a body that fails
  * its schema is a 400 with zod's issues; anything else is a 500 with no message, because a message
  * from a dependency might carry anything.
+ *
+ * **Pending actions and approvals** (GRA-23; ADR 0006, ADR 0008) are the routes the console's
+ * approval pages call: the open actions across the person's agents, one action by its signed
+ * handoff link, the answer — which also writes the approval the ask was for, so the agent's next
+ * call proceeds whether or not it is still waiting — and the standing approvals per agent, to relax
+ * a destructive tool's per-call ask or to withdraw an answer.
  */
 
 /** The slice of Better Auth the API reads — structural, so a test fakes it without a database. */
@@ -53,6 +82,9 @@ export type ApiDeps = {
   /** The working-set history route (GRA-24) reads the changes and the toolbox they name. */
   workingSet: WorkingSetDeps;
   tool: ToolDeps;
+  /** The pending-action and approval routes (GRA-23) read and write the ask's two records. */
+  approval: ApprovalDeps;
+  pendingAction: PendingActionDeps;
 };
 
 export type ApiOptions = {
@@ -60,6 +92,35 @@ export type ApiOptions = {
   deps: ApiDeps;
   /** The console's origins (`GRAFT_CORS_ORIGIN`); empty means no CORS header is ever written. */
   corsOrigins: readonly string[];
+  /** What signs and roots a handoff URL (`@graft/mcp`'s `handoff.ts`) — the console's URL and the secret. */
+  handoff: Pick<HandoffConfig, "consoleUrl" | "secret">;
+};
+
+/**
+ * A pending action as the console shows it (ADR 0006): the requesting agent named, the payload the
+ * ask wrote (`@graft/mcp`'s `ToolAskPayload` or `BuildAskPayload`), its clocks, and the signed link.
+ */
+export type PendingActionCard = {
+  id: string;
+  agentId: string;
+  agent: { id: string; name: string } | null;
+  kind: string;
+  payload: Record<string, unknown>;
+  expiresAt: Date;
+  createdAt: Date;
+  answeredAt: Date | null;
+  answer: Record<string, unknown> | null;
+  consumedAt: Date | null;
+  url: string;
+};
+
+const answerBody = z.object({ allow: z.boolean(), relax: z.boolean().optional() });
+
+/** How a handoff verdict lands on the wire: the reason word rides in `details`. */
+const HANDOFF_REFUSAL_CODE: Record<"tampered" | "expired" | "consumed", ServiceErrorCode> = {
+  tampered: "FORBIDDEN",
+  expired: "GONE",
+  consumed: "CONFLICT",
 };
 
 const agentBody = z.object({
@@ -168,8 +229,34 @@ export function createApi(options: ApiOptions): Hono {
   /** Better Auth's own routes: sign-up, sign-in, sign-out, session. */
   api.on(["POST", "GET"], "/auth/*", (c) => options.auth.handler(c.req.raw));
 
+  const { approval: approvalDeps, pendingAction: pendingActionDeps } = options.deps;
+  const { handoff } = options;
+
   const principalOf = async (headers: Headers) =>
     requirePerson(await options.auth.getSession(headers));
+
+  /** `?agentId=` on the approval routes — an approval is per agent, and the path names the tool. */
+  const agentIdOf = (query: string | undefined): string => {
+    if (!query) throw new ServiceError("BAD_REQUEST", "agentId is required as a query parameter");
+    return query;
+  };
+
+  const card = async (row: PendingActionRow, principal: Principal): Promise<PendingActionCard> => {
+    const agent = await getAgent(ctx, principal, row.agentId, agentDeps);
+    return {
+      id: row.id,
+      agentId: row.agentId,
+      agent: agent ? { id: agent.id, name: agent.name } : null,
+      kind: row.kind,
+      payload: row.payload,
+      expiresAt: row.expiresAt,
+      createdAt: row.createdAt,
+      answeredAt: row.answeredAt,
+      answer: row.answer,
+      consumedAt: row.consumedAt,
+      url: handoffUrl(handoff.consoleUrl, row.id, signHandoffToken(row, handoff.secret)),
+    };
+  };
 
   api.get("/me", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -316,6 +403,138 @@ export function createApi(options: ApiOptions): Hono {
       "Connection not found",
     );
     return c.json(result);
+  });
+
+  /** The console's inbox: every open action across the person's agents, newest first, each with its link. */
+  api.get("/pending-actions", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const rows = await listOpenPendingActions(ctx, principal, pendingActionDeps);
+    return c.json({
+      pendingActions: await Promise.all(rows.map((row) => card(row, principal))),
+    });
+  });
+
+  /**
+   * Where a handoff link lands (`<console>/pending/<id>?t=…` calls this with the same `t`). The
+   * token is verified against the row — tampered 403, already used 409, expired 410, each naming
+   * its reason in `details` — and the session must be the owning person's too: the link is a
+   * pointer the person carries, never a credential (ADR 0006).
+   */
+  api.get("/pending-actions/:id", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const row = orNotFound(
+      await getPendingActionForPerson(ctx, principal, c.req.param("id"), pendingActionDeps),
+      "Pending action not found",
+    );
+    const verdict = verifyHandoff({
+      token: c.req.query(HANDOFF_TOKEN_PARAM),
+      subject: row,
+      secret: handoff.secret,
+      now: pendingActionDeps.now(),
+    });
+    if (!verdict.ok) {
+      throw new ServiceError(HANDOFF_REFUSAL_CODE[verdict.reason], verdict.message, {
+        details: { reason: verdict.reason },
+      });
+    }
+    return c.json({ pendingAction: await card(row, principal) });
+  });
+
+  /**
+   * The person's answer, `{ allow, relax? }`. Recording the answer and writing the approval it is
+   * for happen in one transaction: for a `tool` ask the answer becomes the standing `approval` row
+   * (`allow` or `deny` — a no holds too, ADR 0008), and `relax` on a destructive tool lifts its
+   * per-call ask; for a `build` ask an `allow` grants the build approval and a decline writes
+   * nothing, so the next `acquire` asks again.
+   *
+   * **An answer the standing row now carries in full is consumed here.** Otherwise it would outlive
+   * the row: a yes left answered-but-unconsumed would still be found and honoured by a call made
+   * after the approval was withdrawn, which is exactly what withdrawing is meant to prevent. The two
+   * answers the agent's next call must read for itself stay unconsumed — a destructive tool's
+   * per-call yes (ADR 0008: it asks every call) and a build decline (no row records it). A call that
+   * is waiting sees the consumed action as `CONFLICT` and reads the rule again (`@graft/mcp`'s
+   * `approval.ts`), which is how it proceeds on a yes and refuses on a no.
+   */
+  api.post("/pending-actions/:id/answer", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, answerBody);
+    const id = c.req.param("id");
+    const result = await ctx.db.transaction(async (tx) => {
+      const scoped: ServiceContext = { db: tx };
+      const answer = {
+        allow: body.allow,
+        ...(body.relax === undefined ? {} : { relax: body.relax }),
+      };
+      const action = await answerPendingAction(scoped, principal, id, answer, pendingActionDeps);
+      const scope = { personId: principal.personId, agentId: action.agentId };
+      const said = readApprovalAnswer(action.answer);
+      /** Mark the answer spent; the agent may have taken it between the two statements, which is fine. */
+      const settle = async () => {
+        try {
+          await consumePendingAction(scoped, scope, action.id, pendingActionDeps);
+        } catch (error) {
+          if (!(error instanceof ServiceError && error.code === "CONFLICT")) throw error;
+        }
+      };
+      if (action.kind === "tool" && typeof action.payload.toolId === "string") {
+        const toolId = action.payload.toolId;
+        const tool = await getToolById(scoped, principal, toolId, toolDeps);
+        let approval = await setApproval(
+          scoped,
+          scope,
+          toolId,
+          said.allow ? "allow" : "deny",
+          approvalDeps,
+        );
+        const relaxed = said.allow && said.relax === true && tool?.destructive === true;
+        if (relaxed) approval = await relaxDestructiveApproval(scoped, scope, toolId, approvalDeps);
+        if (!said.allow || !tool?.destructive || relaxed) await settle();
+        return { pendingAction: action, approval };
+      }
+      if (
+        action.kind === "build" &&
+        said.allow &&
+        typeof action.payload.connectionId === "string"
+      ) {
+        const buildApproval = await grantBuildApproval(
+          scoped,
+          scope,
+          action.payload.connectionId,
+          approvalDeps,
+        );
+        await settle();
+        return { pendingAction: action, buildApproval };
+      }
+      return { pendingAction: action };
+    });
+    return c.json(result);
+  });
+
+  /** One agent's standing approvals — what the console lists to relax or withdraw. */
+  api.get("/approvals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
+    return c.json({ approvals: await listApprovals(ctx, scope, approvalDeps) });
+  });
+
+  /** Relax a destructive tool's per-call ask for one agent (ADR 0008). 400 for a tool that is not destructive. */
+  api.post("/approvals/:toolId/relax", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
+    return c.json({
+      approval: await relaxDestructiveApproval(ctx, scope, c.req.param("toolId"), approvalDeps),
+    });
+  });
+
+  /** Withdraw one agent's answer for one tool; the tool asks again on its next call. */
+  api.delete("/approvals/:toolId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
+    const approval = orNotFound(
+      await revokeApproval(ctx, scope, c.req.param("toolId"), approvalDeps),
+      "No approval stands for this tool and agent",
+    );
+    return c.json({ approval });
   });
 
   return api;

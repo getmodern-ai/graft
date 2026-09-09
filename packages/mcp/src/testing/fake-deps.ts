@@ -1,14 +1,18 @@
 import {
   type AgentDeps,
+  type ApprovalDeps,
   type ConnectionDeps,
   hashAgentToken,
   type LedgerDeps,
+  type PendingActionDeps,
   type ToolDeps,
   type WorkingSetDeps,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { AgentRow } from "@graft/db/repo/agent";
+import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { ConnectionRow } from "@graft/db/repo/connection";
+import type { listPendingActionsByKind, PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 import type { UsageLedgerRow } from "@graft/db/repo/usage";
 import type { WorkingSetChangeRow, WorkingSetRow } from "@graft/db/repo/working-set";
@@ -18,8 +22,8 @@ import type { ConnectionScheme } from "@graft/db/schema/connection";
  * The five service seams over in-memory maps — what `server.test.ts` binds `McpDeps` to, so the
  * suite runs the real services (`@graft/core`) with no database. Every read takes the person or the
  * scope as the repo functions do, and answers nothing for another person's row, which is what the
- * scope tests here rely on. Later tickets extend the store: GRA-23 adds approvals, GRA-29 acquire
- * jobs. The shape is a plain object of maps rather than a class so a test can reach in and assert.
+ * scope tests here rely on. Later tickets extend the store: GRA-29 adds acquire jobs. The shape is
+ * a plain object of maps rather than a class so a test can reach in and assert.
  */
 
 export type FakeStore = {
@@ -33,6 +37,11 @@ export type FakeStore = {
   workingSet: Map<string, WorkingSetRow>;
   changes: WorkingSetChangeRow[];
   usage: UsageLedgerRow[];
+  /** `<agentId> <toolId>` -> row (ADR 0008) */
+  approvals: Map<string, ApprovalRow>;
+  /** `<agentId> <connectionId>` -> row */
+  buildApprovals: Map<string, BuildApprovalRow>;
+  pendingActions: Map<string, PendingActionRow>;
   now: () => Date;
   /** The next generated id. */
   newId: () => string;
@@ -68,6 +77,8 @@ export type FakeStore = {
   }): { tool: AuthoredToolRow; version: ToolVersionRow };
   promote(agentId: string, toolId: string): void;
   isPromoted(agentId: string, toolId: string): boolean;
+  /** The person's standing yes to code running against a connection for this agent (ADR 0008). */
+  grantBuild(agentId: string, connectionId: string): void;
 };
 
 const key = (agentId: string, toolId: string) => `${agentId} ${toolId}`;
@@ -84,6 +95,9 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     workingSet: new Map(),
     changes: [],
     usage: [],
+    approvals: new Map(),
+    buildApprovals: new Map(),
+    pendingActions: new Map(),
     now,
     newId: () => `id_${++counter}`,
     addAgent(input) {
@@ -185,6 +199,16 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     isPromoted(agentId, toolId) {
       return store.workingSet.has(key(agentId, toolId));
     },
+    grantBuild(agentId, connectionId) {
+      const at = now();
+      store.buildApprovals.set(key(agentId, connectionId), {
+        agentId,
+        connectionId,
+        grantedAt: at,
+        owner: "person",
+        createdAt: at,
+      });
+    },
   };
   return store;
 }
@@ -196,6 +220,9 @@ export type FakeDeps = {
   tool: ToolDeps;
   workingSet: WorkingSetDeps;
   ledger: LedgerDeps;
+  approval: ApprovalDeps;
+  pendingAction: PendingActionDeps;
+  listPendingActionsByKind: typeof listPendingActionsByKind;
 };
 
 /** The deps over a store. `db` is never dereferenced; the transaction fake hands itself to its body. */
@@ -529,5 +556,149 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     now: store.now,
   };
 
-  return { db, agent, connection, tool, workingSet, ledger };
+  /** The approval rows, with the repo's predicates: the scope on every read and write, the upsert's kept relaxation. */
+  const approval: ApprovalDeps = {
+    findApproval: async (_db, scope, toolId) =>
+      ownsAgent(scope) ? (store.approvals.get(key(scope.agentId, toolId)) ?? null) : null,
+    listApprovals: async (_db, scope) =>
+      ownsAgent(scope)
+        ? [...store.approvals.values()]
+            .filter((row) => row.agentId === scope.agentId)
+            .sort((a, b) => a.toolId.localeCompare(b.toolId))
+        : [],
+    upsertApproval: async (_db, input) => {
+      const at = store.now();
+      const existing = store.approvals.get(key(input.agentId, input.toolId));
+      const row: ApprovalRow = {
+        agentId: input.agentId,
+        toolId: input.toolId,
+        decision: input.decision,
+        decidedAt: input.decidedAt,
+        perCallRelaxed: input.perCallRelaxed ?? existing?.perCallRelaxed ?? false,
+        owner: "person",
+        createdAt: existing?.createdAt ?? at,
+        updatedAt: at,
+      };
+      store.approvals.set(key(row.agentId, row.toolId), row);
+      return row;
+    },
+    relaxApproval: async (_db, scope, toolId) => {
+      if (!ownsAgent(scope)) return null;
+      const row = store.approvals.get(key(scope.agentId, toolId));
+      if (!row) return null;
+      const updated = { ...row, perCallRelaxed: true, updatedAt: store.now() };
+      store.approvals.set(key(scope.agentId, toolId), updated);
+      return updated;
+    },
+    deleteApproval: async (_db, scope, toolId) => {
+      if (!ownsAgent(scope)) return null;
+      const row = store.approvals.get(key(scope.agentId, toolId)) ?? null;
+      store.approvals.delete(key(scope.agentId, toolId));
+      return row;
+    },
+    findBuildApproval: async (_db, scope, connectionId) =>
+      ownsAgent(scope)
+        ? (store.buildApprovals.get(key(scope.agentId, connectionId)) ?? null)
+        : null,
+    insertBuildApproval: async (_db, input) => {
+      if (store.buildApprovals.has(key(input.agentId, input.connectionId))) return null;
+      const row: BuildApprovalRow = {
+        agentId: input.agentId,
+        connectionId: input.connectionId,
+        grantedAt: input.grantedAt,
+        owner: "person",
+        createdAt: store.now(),
+      };
+      store.buildApprovals.set(key(row.agentId, row.connectionId), row);
+      return row;
+    },
+    findAuthoredToolById: tool.findAuthoredToolById,
+    findConnection: connection.findConnection,
+    now: store.now,
+  };
+
+  /** Pending actions, with the repo's predicates: answering needs open and in time, consuming needs answered and untaken. */
+  const ownsAction = (personId: string, row: PendingActionRow | undefined) =>
+    row !== undefined && store.agents.get(row.agentId)?.personId === personId;
+  const pendingAction: PendingActionDeps = {
+    insertPendingAction: async (_db, input) => {
+      const row: PendingActionRow = {
+        id: input.id,
+        agentId: input.agentId,
+        kind: input.kind,
+        payload: input.payload,
+        expiresAt: input.expiresAt,
+        answeredAt: input.answeredAt ?? null,
+        answer: input.answer ?? null,
+        consumedAt: input.consumedAt ?? null,
+        owner: "person",
+        createdAt: input.createdAt ?? store.now(),
+        updatedAt: input.updatedAt ?? store.now(),
+      };
+      store.pendingActions.set(row.id, row);
+      return row;
+    },
+    findPendingAction: async (_db, scope, id) => {
+      const row = store.pendingActions.get(id);
+      return ownsAgent(scope) && row?.agentId === scope.agentId ? row : null;
+    },
+    findPendingActionForPerson: async (_db, personId, id) => {
+      const row = store.pendingActions.get(id);
+      return ownsAction(personId, row) ? (row ?? null) : null;
+    },
+    listOpenPendingActions: async (_db, personId, now) =>
+      [...store.pendingActions.values()]
+        .filter(
+          (row) => ownsAction(personId, row) && row.answeredAt === null && row.expiresAt > now,
+        )
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id)),
+    answerPendingAction: async (_db, personId, id, args) => {
+      const row = store.pendingActions.get(id);
+      if (!ownsAction(personId, row) || !row) return null;
+      if (row.answeredAt !== null || row.expiresAt <= args.answeredAt) return null;
+      const updated = { ...row, answer: args.answer, answeredAt: args.answeredAt };
+      store.pendingActions.set(id, updated);
+      return updated;
+    },
+    consumePendingAction: async (_db, scope, id, consumedAt) => {
+      const row = store.pendingActions.get(id);
+      if (!ownsAgent(scope) || row?.agentId !== scope.agentId) return null;
+      if (row.answeredAt === null || row.consumedAt !== null) return null;
+      const updated = { ...row, consumedAt };
+      store.pendingActions.set(id, updated);
+      return updated;
+    },
+    newId: () => `pa_${store.newId()}`,
+    now: store.now,
+  };
+
+  const listPendingActionsByKind: FakeDeps["listPendingActionsByKind"] = async (
+    _db,
+    scope,
+    kind,
+    now,
+  ) =>
+    ownsAgent(scope)
+      ? [...store.pendingActions.values()]
+          .filter(
+            (row) =>
+              row.agentId === scope.agentId &&
+              row.kind === kind &&
+              row.consumedAt === null &&
+              row.expiresAt > now,
+          )
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))
+      : [];
+
+  return {
+    db,
+    agent,
+    connection,
+    tool,
+    workingSet,
+    ledger,
+    approval,
+    pendingAction,
+    listPendingActionsByKind,
+  };
 }
