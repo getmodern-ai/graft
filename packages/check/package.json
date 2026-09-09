@@ -1,0 +1,29 @@
+{
+  "name": "@graft/check",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check-types": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@graft/runner": "workspace:*",
+    "typescript6": "npm:typescript@~6.0.3"
+  },
+  "devDependencies": {
+    "@graft/config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
