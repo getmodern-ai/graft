@@ -1,0 +1,103 @@
+import { lookup as dnsLookup, type LookupAddress } from "node:dns";
+import type { LookupFunction } from "node:net";
+
+import { Agent, fetch as undiciFetch } from "undici";
+
+import { hasCauseNamed } from "./cause-chain";
+import { isPublicHost } from "./public-host";
+import type { UpstreamFetch } from "./types";
+
+/**
+ * The default way out — "refuses private, link-local and cloud-metadata ranges at registration
+ * and at resolution" (GRA-1, "The proxy and the capability token"), done where the address is
+ * actually chosen.
+ *
+ * A hostname is judged twice. Its *text* is judged by `isPublicHost` before the fetch (an IP
+ * literal, `localhost`, an `.internal` name). What it *resolves to* can only be judged by the code
+ * about to open the socket, so the check lives inside the resolver the connector calls: the
+ * address checked is the address connected to, with no window between the two for a DNS answer
+ * to change. A resolver that answers with even one private address refuses the whole lookup — an
+ * attacker who controls a name cannot smuggle `169.254.169.254` in among public addresses.
+ *
+ * TLS is unaffected: undici still passes the hostname as `servername`, so certificate validation
+ * is against the vendor's name while the socket goes to the address this resolver vouched for.
+ */
+
+/** The vendor name resolved to an address a credential must not be sent to. */
+export class PrivateAddressError extends Error {
+  constructor(
+    public readonly hostname: string,
+    public readonly address: string,
+  ) {
+    super(`${hostname} resolves to ${address}, which is not a public address`);
+    this.name = "PrivateAddressError";
+  }
+}
+
+/** The subset of `dns.lookup` this needs — injectable so the guard is testable without DNS. */
+export type ResolveAll = (
+  hostname: string,
+  callback: (error: NodeJS.ErrnoException | null, addresses: LookupAddress[]) => void,
+) => void;
+
+const defaultResolveAll: ResolveAll = (hostname, callback) => {
+  dnsLookup(hostname, { all: true, verbatim: true }, callback);
+};
+
+/**
+ * The `lookup` `net.connect` and `tls.connect` accept. Node passes `all: true` when it is going to
+ * race address families itself (the default since Node 20) and expects an array back; otherwise it
+ * expects one address and its family. Both are honoured.
+ */
+export function guardedLookup(resolveAll: ResolveAll = defaultResolveAll): LookupFunction {
+  return (hostname, options, callback) => {
+    resolveAll(hostname, (error, addresses) => {
+      if (error) return callback(error, []);
+      const offender = addresses.find((entry) => !isPublicHost(entry.address));
+      if (offender) return callback(new PrivateAddressError(hostname, offender.address), []);
+      const first = addresses[0];
+      if (!first) return callback(new PrivateAddressError(hostname, "(no address)"), []);
+      if (options.all) return callback(null, addresses);
+      callback(null, first.address, first.family);
+    });
+  };
+}
+
+/**
+ * undici's fetch over an `Agent` whose connector resolves through `guardedLookup`. undici's own
+ * fetch rather than the global one, with a plain init rather than a `Request` instance, because
+ * the two are different copies of the same library and a `Request` from one is an opaque object
+ * to the other. `redirect: "manual"` always — the proxy decides about redirects, never the fetch.
+ */
+export function createUpstreamFetch(resolveAll?: ResolveAll): UpstreamFetch {
+  const agent = new Agent({
+    connect: { lookup: guardedLookup(resolveAll) },
+  });
+
+  return async (request, { signal }) => {
+    const response = await undiciFetch(request.url, {
+      method: request.method,
+      headers: [...request.headers],
+      body: request.body,
+      dispatcher: agent,
+      signal,
+      redirect: "manual",
+    });
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: new Headers([...response.headers]),
+      body: response.body as ReadableStream<Uint8Array> | null,
+    };
+  };
+}
+
+/** Whether a failure anywhere in a `cause` chain is the resolver's refusal. */
+export function isPrivateAddressFailure(error: unknown): boolean {
+  return hasCauseNamed(error, ["PrivateAddressError"]);
+}
+
+/** Whether a failure anywhere in a `cause` chain is the abort the proxy's own timeout raised. */
+export function isTimeoutFailure(error: unknown): boolean {
+  return hasCauseNamed(error, ["TimeoutError", "AbortError"]);
+}
