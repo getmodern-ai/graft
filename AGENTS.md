@@ -178,8 +178,10 @@ volume — one tree (`packages/toolbox/README.md`). Service `sandbox` has `scale
 sandbox image under the name `GRAFT_SANDBOX_IMAGE` carries and starts nothing. Health checks:
 `pg_isready` and `GET /api/health`; `graft` waits for Postgres healthy.
 
-CI builds the image on every pull request and asserts that, run with no environment, it exits and
-names `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET`, `GRAFT_KEYRING_SECRET` and `GRAFT_HANDOFF_SECRET`.
+CI builds the image on every pull request and asserts that it refuses to start naming what is missing:
+run with no environment, `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` and `GRAFT_HANDOFF_SECRET`; run with
+every field but the keyring secret, `GRAFT_KEYRING_SECRET` — the cross-field rule GRA-20 made of it,
+which only runs once every field is present.
 `.github/workflows/release.yml` pushes `ghcr.io/getmodern-ai/graft` and `graft-sandbox` on a `v*` tag,
 for `linux/amd64` and `linux/arm64`. The conformance suite against a running compose project is
 `packages/sandbox-docker/src/compose.test.ts`, opt-in by `GRAFT_COMPOSE_NETWORK` and
