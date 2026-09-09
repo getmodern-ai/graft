@@ -81,20 +81,26 @@ that every agent-scoped read takes the scope in the statement (ADR 0007) is asse
 
 ```bash
 pnpm run db:start
-pnpm --filter @graft/server keys >> apps/server/.env    # key pair, keyring secret, auth secret
+pnpm --filter @graft/server keys >> apps/server/.env    # key pair, keyring, auth and handoff secrets
 cat >> apps/server/.env <<'ENV'
 GRAFT_DATABASE_URL=postgresql://postgres:password@localhost:5432/graft
 GRAFT_AUTH_URL=http://localhost:3000
 GRAFT_CORS_ORIGIN=http://localhost:3001
+GRAFT_CONSOLE_URL=http://localhost:3001
 ENV
 pnpm run db:migrate
 pnpm --filter @graft/server dev
 ```
 
-`GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL` and `GRAFT_KEYRING_SECRET` (32+) are
-required; `GRAFT_CORS_ORIGIN` is an optional comma-separated list of origins; the capability token key
-pair is all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the database for a
-proxy smoke test and is refused in production. `packages/env/src/schema.ts` is the rules as code.
+`GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL`, `GRAFT_KEYRING_SECRET` (32+),
+`GRAFT_CONSOLE_URL` (where the console answers — the base of every handoff URL) and
+`GRAFT_HANDOFF_SECRET` (32+, signs those URLs) are required; `GRAFT_CORS_ORIGIN` is an optional
+comma-separated list of origins; the capability token key pair is all-or-nothing; `GRAFT_DEV_SEED`
+layers a JSON file of connections over the database for a proxy smoke test and is refused in
+production. `GRAFT_APPROVAL_WAIT_SECONDS` (default 25) is how long a tool call waits for a person to
+answer a handoff before returning `awaiting_approval`, and `GRAFT_PENDING_ACTION_TTL_HOURS` (default
+24) how long that action stays answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the
+rules as code.
 
 The MCP endpoint is `POST /mcp` with `Authorization: Bearer <agent token>` — `POST /api/agents` mints
 the token, shown once. Authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names: `docker` by

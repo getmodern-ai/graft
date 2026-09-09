@@ -143,3 +143,21 @@ export async function deleteBuildApprovalsForConnection(
     )
     .returning();
 }
+
+/**
+ * Revoke one agent's standing answer for one tool, from the console (ADR 0008: an approval is a
+ * durable record the person can revisit). The next call then asks again as if never answered. Null
+ * when no approval stood. Distinct from the vendor-wide sweep above, which is a revoke's and reaches
+ * every agent.
+ */
+export async function deleteApproval(
+  db: DbOrTx,
+  scope: AgentScope,
+  toolId: string,
+): Promise<ApprovalRow | null> {
+  const [row] = await db
+    .delete(approval)
+    .where(and(eq(approval.toolId, toolId), inArray(approval.agentId, scopedAgentIds(db, scope))))
+    .returning();
+  return row ?? null;
+}

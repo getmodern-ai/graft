@@ -1,6 +1,7 @@
 import { type ConnectionOutput, recordUsage } from "@graft/core";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
+import { requireBuildApproval } from "../approval";
 import {
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   MAX_COMMAND_TIMEOUT_SECONDS,
@@ -25,6 +26,11 @@ import { commandTimingProperties, detachedAdvice } from "./authoring";
  * call. `dryRun: true` mints the dry-run claim and otherwise runs the command as it is: the claim is
  * the whole guarantee — the proxy forwards `GET`/`HEAD` and stops every other method with a preview
  * — so nothing here inspects what the command does.
+ *
+ * Every execute call, dry run included, needs the connection's **build approval** (`approval.ts`,
+ * ADR 0008): code running against a connection at all is the moment reads of the person's data
+ * begin, which is exactly what that approval is for. Once per agent per connection; `acquire`
+ * (GRA-29) requires the same row.
  */
 
 export const EXECUTE_CLAIM = "execute";
@@ -82,6 +88,22 @@ export async function callExecuteTool(
   if ("error" in parsed) return toolRefusal("input_invalid", parsed.error);
   const dryRun = args.dryRun === true;
   const startedAt = Date.now();
+
+  const gate = await requireBuildApproval(ctx, scope, connectionId, deps, session.channel);
+  if (!gate.pass) {
+    await recordUsage(
+      ctx,
+      scope,
+      {
+        toolName: executeToolName(connectionId),
+        outcome: "refused",
+        dryRun,
+        latencyMs: Date.now() - startedAt,
+      },
+      deps.ledger,
+    );
+    return toolError(gate.answer);
+  }
 
   const outcome = await runWithCapability({
     deps,

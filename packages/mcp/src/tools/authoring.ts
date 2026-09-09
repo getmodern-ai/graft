@@ -520,6 +520,7 @@ const publishTool: MetaTool = {
       name,
       input: args.testInput,
       mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true },
+      channel: session.channel,
     });
     return toolResult({
       ...published,

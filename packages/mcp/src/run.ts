@@ -16,6 +16,7 @@ import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
 import { sandboxPath } from "@graft/toolbox";
 
+import { type AskChannel, gateToolCall } from "./approval";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
 import { type Refusal, refusal } from "./result";
@@ -44,8 +45,8 @@ import { authoredToolName } from "./tool-names";
  * capability token first, so an unconfigured deployment answers without provisioning anything; the
  * runner over the version directory the pointer names, with the token in the process environment
  * and nowhere else (ADR 0010); then `last_used_at` and the ledger row, whatever the run said
- * (ADR 0009: every invocation moves the clock; ADR 0012: every outcome is recorded). GRA-23's
- * approval decision goes between the scope check and the mint, and nowhere else.
+ * (ADR 0009: every invocation moves the clock; ADR 0012: every outcome is recorded). The approval
+ * gate (`approval.ts`, ADR 0008) sits between the scope check and the mint, and nowhere else.
  *
  * A run never reads the toolbox through a store: the sandbox sees the mounted volume, and the runner
  * loads the module from `/tools/<version path>` (ADR 0002's seam is what makes that true on every
@@ -338,6 +339,8 @@ export type AuthoredRunArgs = {
   name: string;
   input: unknown;
   mode: RunMode;
+  /** How an ask reaches the person, when the rule says ask (`approval.ts`). */
+  channel: AskChannel;
 };
 
 /** The vendor's answer verbatim, or — marked for the harness — a refusal or the runner's failure. */
@@ -436,8 +439,17 @@ export async function runAuthoredTool(
   const verdict = validator(args.input);
   if (!verdict.ok) return refuse("input_invalid", verdict.message, versioned);
 
-  // GRA-23's approval decision (`decideToolCall`, ADR 0008) belongs here: after the scope check,
-  // before the mint. This ticket lets every call pass.
+  // The approval gate (ADR 0008): after the scope check, before the mint. A dry run passes it: reads
+  // reach the vendor as they would for a read-only tool and every write stops at the proxy on the
+  // token's claim, so nothing changes at the vendor and no trust is spent — publishing's dry run
+  // (`publish_tool`) asks nothing for the same reason.
+  if (!args.mode.dryRun) {
+    const gate = await gateToolCall(ctx, scope, { tool, connectionId }, deps, args.channel);
+    if (!gate.pass) {
+      await record("refused", versioned);
+      return { answer: gate.answer, isError: true };
+    }
+  }
 
   const outcome = await runWithCapability({
     deps,
