@@ -44,3 +44,17 @@ proxy cannot see (ADR 0013).
 - **The checker's binding rule is mechanical and literal**: a placeholder in the constructor and
   `ctx.proxyBase` as the base. A module that computes its base URL at run time is refused, which is
   a deliberate false positive.
+
+## Amended 9 September 2026
+
+The placeholder credential is not a fixed constant but **the capability token itself**, exposed to
+the module as `ctx.proxyKey` beside `ctx.proxyBase(host?)` (GRA-3). The proxy already reads the
+token from `Authorization`, so an SDK constructed with `apiKey: ctx.proxyKey` and its base at
+`ctx.proxyBase(host)` needs no custom header protocol, and the checker's rule matches the credential
+argument against that identifier rather than against a string. The module holds nothing longer-lived
+than the exec: the token is minted per exec, names one connection, and expires in minutes. The risk
+class is the one Cando's ADR 0025 accepted — model-written code can print the token, and what it buys
+is bounded to that connection for those minutes. Two SDK facts the checker and the skill carry:
+`@slack/web-api` must be constructed with `allowAbsoluteUrls: false`, since it otherwise treats a
+method name that is an absolute URL as the URL to call; and Stripe's SDK has no base-path option, so
+Stripe is raw `ctx.fetch` for now.
