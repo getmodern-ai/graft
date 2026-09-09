@@ -388,7 +388,7 @@ describe("promote and demote", () => {
       expect(demoted).toEqual({
         tool: LIST_ITEMS,
         promoted: false,
-        changed: false || true,
+        changed: true,
         workingSetSize: 0,
       });
       expect(await b.names()).not.toContain(LIST_ITEMS);
@@ -772,8 +772,7 @@ describe("publish_tool", () => {
       expect(published.dryRun).toMatchObject({ dryRun: { passed: true } });
       expect(vendor.requests.at(-1)?.url).toBe("https://api.demo.example/v2/items?limit=3");
 
-      // The version is on the toolbox the sandbox mounts, the row is in the toolbox, and the working set has it.
-      expect(store.tools.get(store.tools.keys().next().value ?? "")).toBeDefined();
+      // The row is in the toolbox and the working set has it; the files are where the sandbox mounts them.
       const tool = [...store.tools.values()].find((row) => row.name === "greet");
       expect(tool).toMatchObject({
         vendor: "demo",

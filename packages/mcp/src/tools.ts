@@ -18,7 +18,6 @@ import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "./bounds";
 import type { SessionContext } from "./context";
 import { toolError, toolRefusal, toolResult } from "./result";
 import { runAuthoredTool } from "./run";
-import { errorMessage } from "./sandbox";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
 import { AUTHORING_TOOLS } from "./tools/authoring";
 import { callExecuteTool, executeToolDefinition } from "./tools/execute";
@@ -89,7 +88,6 @@ export async function callToolFor(
     return toolError({
       error: "internal",
       message: `Something went wrong running ${name}. Try again, and say so if it repeats.`,
-      cause: errorMessage(error).slice(0, 200),
     });
   }
 }
