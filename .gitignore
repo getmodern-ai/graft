@@ -4,6 +4,10 @@ node_modules
 # Build outputs
 dist
 *.tsbuildinfo
+# The server's build copies two directories beside its `dist/`, where the bundled code resolves
+# them (`apps/server/tsdown.config.ts`): the runner's skills and the migration chain.
+apps/server/skills/
+apps/server/drizzle/
 
 # Turbo
 .turbo
@@ -27,3 +31,8 @@ coverage
 # Logs and editor litter
 *.log
 .DS_Store
+
+# The hosted form's backings are a private package placed here as `packages/cloud-backings/` when a
+# checkout links it in (ADR 0002: the commercial half is hidden by absence). The workspace glob picks
+# it up whenever it is present; git never does, so a linked checkout cannot commit it here.
+packages/cloud-backings/

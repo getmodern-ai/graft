@@ -14,7 +14,7 @@ import {
   SANDBOX_UID,
   SANDBOX_USER,
 } from "./backend";
-import { DockerEngine, DockerEngineError, resolveDockerHost } from "./engine";
+import { DockerEngine, DockerEngineError, demux, resolveDockerHost } from "./engine";
 
 /**
  * The Docker backing against the conformance suite, plus what is true of this backing alone: the
@@ -238,6 +238,100 @@ describe.skipIf(docker.reason !== undefined)("docker sandbox backing", () => {
       expect(
         await handle.exec("echo first > /tools/first.txt && stat -c %u /tools /tools/first.txt"),
       ).toBe(`${SANDBOX_UID}\n${SANDBOX_UID}`);
+    });
+
+    it("refuses a shared toolbox volume the daemon does not have, naming it, rather than letting Docker create a second tree", async () => {
+      const missing = createDockerSandboxBackend({
+        image: fixture.image,
+        network: fixture.network,
+        prefix: `${fixture.prefix}-missing`,
+        toolboxVolume: `${fixture.prefix}-nowhere`,
+      });
+      try {
+        const { handle } = await missing.ensure({ name: "missing-volume" });
+        await expect(
+          handle.mountToolbox({ toolboxId: "person", mountPath: "/tools" }),
+        ).rejects.toThrow(/nowhere does not exist on the daemon.*GRAFT_TOOLBOX_VOLUME/);
+        const { Volumes } = await fixture.engine.json<{ Volumes: { Name: string }[] | null }>(
+          "GET",
+          "/volumes",
+        );
+        expect((Volumes ?? []).map((v) => v.Name)).not.toContain(`${fixture.prefix}-nowhere`);
+      } finally {
+        await missing.destroy("missing-volume");
+      }
+    });
+
+    it("mounts toolboxes as subpaths of one shared volume, each sandbox seeing its own alone, and mounting again is a no-op", async () => {
+      const volume = `${fixture.prefix}-shared`;
+      await fixture.engine.json("POST", "/volumes/create", { body: { Name: volume } });
+      const shared = createDockerSandboxBackend({
+        image: fixture.image,
+        network: fixture.network,
+        prefix: `${fixture.prefix}-shared`,
+        toolboxVolume: volume,
+      });
+      try {
+        const a = (await shared.ensure({ name: "shared-a" })).handle;
+        const b = (await shared.ensure({ name: "shared-b" })).handle;
+        await a.mountToolbox({ toolboxId: "person-a", mountPath: "/tools" });
+        await b.mountToolbox({ toolboxId: "person-b", mountPath: "/tools" });
+        await a.writeTree([{ path: "mine.txt", content: "a" }], "/tools");
+        await b.writeTree([{ path: "mine.txt", content: "b" }], "/tools");
+
+        // Each sees its own file and not the other's, and writes into a directory it owns.
+        expect(await a.read("/tools/mine.txt")).toBe("a");
+        expect(await b.read("/tools/mine.txt")).toBe("b");
+        expect(await a.exec("ls /tools")).toBe("mine.txt");
+        expect(await a.exec("stat -c %u /tools")).toBe(String(SANDBOX_UID));
+
+        // The same mount asked for again recreates nothing: the container id is unchanged.
+        const before = await fixture.engine.json<{ Id: string }>(
+          "GET",
+          `/containers/${shared.containerName("shared-a")}/json`,
+        );
+        await a.mountToolbox({ toolboxId: "person-a", mountPath: "/tools" });
+        const after = await fixture.engine.json<{ Id: string }>(
+          "GET",
+          `/containers/${shared.containerName("shared-a")}/json`,
+        );
+        expect(after.Id).toBe(before.Id);
+
+        // The volume holds both toolboxes side by side — the tree a server mounting it whole would see.
+        const { Id } = await fixture.engine.json<{ Id: string }>("POST", "/containers/create", {
+          body: {
+            Image: fixture.image,
+            Cmd: [
+              "sh",
+              "-c",
+              "ls /toolboxes && cat /toolboxes/person-a/mine.txt /toolboxes/person-b/mine.txt",
+            ],
+            HostConfig: {
+              NetworkMode: fixture.network,
+              Mounts: [{ Type: "volume", Source: volume, Target: "/toolboxes" }],
+            },
+          },
+        });
+        try {
+          await fixture.engine.json("POST", `/containers/${Id}/start`);
+          await fixture.engine.json("POST", `/containers/${Id}/wait`);
+          const logs = await demux(
+            await fixture.engine.stream("GET", `/containers/${Id}/logs`, {
+              query: { stdout: true, stderr: true },
+            }),
+          );
+          expect(logs.stdout.split("\n").filter(Boolean)).toEqual(["person-a", "person-b", "ab"]);
+        } finally {
+          await fixture.engine
+            .json("DELETE", `/containers/${Id}`, { query: { force: true } })
+            .catch(() => undefined);
+        }
+      } finally {
+        for (const sandbox of await shared.list()) await shared.destroy(sandbox.name);
+        await fixture.engine
+          .json("DELETE", `/volumes/${volume}`, { query: { force: true } })
+          .catch(() => undefined);
+      }
     });
 
     it("install vendors a real dependency into the version directory, lockfile beside it, owned by the sandbox user", async () => {

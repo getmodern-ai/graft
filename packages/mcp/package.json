@@ -20,6 +20,7 @@
     "@graft/check": "workspace:*",
     "@graft/core": "workspace:*",
     "@graft/db": "workspace:*",
+    "@graft/model": "workspace:*",
     "@graft/proxy": "workspace:*",
     "@graft/publish": "workspace:*",
     "@graft/runner": "workspace:*",

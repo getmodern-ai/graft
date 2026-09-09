@@ -15,6 +15,13 @@
       "when": 1788931225370,
       "tag": "0001_pending_action_connection",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788932627886,
+      "tag": "0002_acquire_attempts_and_traces",
+      "breakpoints": true
     }
   ]
 }

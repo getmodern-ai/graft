@@ -40,16 +40,17 @@ one that runs in CI (ADR 0002, ADR 0013).
 
 ## Talking to Docker
 
-The backing speaks the Engine API (`v1.43`, Docker 24 and later) over `node:http` — raw HTTP rather
+The backing speaks the Engine API (`v1.45`, Docker 26 and later) over `node:http` — raw HTTP rather
 than a client library, because the surface used is a dozen endpoints and the one hard part,
 demultiplexing an exec's stream, is the same eight-byte frame header whichever client reads it.
 `DOCKER_HOST` is read as the CLI reads it: `unix:///path` (default `/var/run/docker.sock`) or
 `tcp://host:port`. TLS is refused rather than half-supported.
 
-## Two arrangements, for the compose file (GRA-33)
+## Two arrangements, and the compose file (GRA-33)
 
 The server creates sandboxes; the proxy is what they talk to. Both arrangements below leave every
-sandbox on an internal network whose only other member is the proxy.
+sandbox on an internal network whose only other member is the proxy. The repository's
+`docker-compose.yml` is arrangement 1 written out, and the place to read for the exact names.
 
 **1. Mounted socket.** The server container mounts the host's Docker socket and creates sandbox
 containers as siblings of itself on the host's daemon.
@@ -100,6 +101,17 @@ container on it too. Plain TCP only, on a network no one else can reach; the bac
 
 In both arrangements the toolbox volumes belong to the daemon, not to the server container: a server
 restart keeps every toolbox, and a `docker volume prune` is what would lose them.
+
+**The toolbox, when the server is a container too.** The server writes versions as files through
+`@graft/toolbox`'s store; a sandbox mounts the toolbox as a volume; the two have to be one tree. On a
+host-run server, `toolboxHostRoot` binds `<GRAFT_TOOLBOX_ROOT>/<toolboxId>` into each sandbox. A
+containerised server's `GRAFT_TOOLBOX_ROOT` is not a host path the daemon can bind, so the compose
+file uses the third option, `toolboxVolume` (`GRAFT_TOOLBOX_VOLUME`): **one named volume holding
+every toolbox as a subdirectory**, mounted whole into the server and into each sandbox by its own
+subpath (`VolumeOptions.Subpath`, which is why the backing asks for Engine API 1.45, Docker 26). A
+sandbox sees its toolbox and nothing beside it. The subdirectory is made before the first mount by a
+short-lived container from the image, since the server may not have the volume in reach; the
+volume itself is compose's to create and `docker compose down -v` is what removes it.
 
 ## The install network
 

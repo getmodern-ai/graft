@@ -1,4 +1,5 @@
 import {
+  type AcquireJobDeps,
   type AgentDeps,
   type ApprovalDeps,
   type ConnectionDeps,
@@ -9,6 +10,7 @@ import {
   type WorkingSetDeps,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import type { AcquireAttemptRow, AcquireJobRow, AcquireTraceRow } from "@graft/db/repo/acquire-job";
 import type { AgentRow } from "@graft/db/repo/agent";
 import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { ConnectionRow } from "@graft/db/repo/connection";
@@ -22,8 +24,8 @@ import type { ConnectionScheme } from "@graft/db/schema/connection";
  * The five service seams over in-memory maps — what `server.test.ts` binds `McpDeps` to, so the
  * suite runs the real services (`@graft/core`) with no database. Every read takes the person or the
  * scope as the repo functions do, and answers nothing for another person's row, which is what the
- * scope tests here rely on. Later tickets extend the store: GRA-29 adds acquire jobs. The shape is
- * a plain object of maps rather than a class so a test can reach in and assert.
+ * scope tests here rely on. The acquire job, its attempts and its trace (GRA-29) are the last three
+ * maps. The shape is a plain object of maps rather than a class so a test can reach in and assert.
  */
 
 export type FakeStore = {
@@ -42,6 +44,9 @@ export type FakeStore = {
   /** `<agentId> <connectionId>` -> row */
   buildApprovals: Map<string, BuildApprovalRow>;
   pendingActions: Map<string, PendingActionRow>;
+  acquireJobs: Map<string, AcquireJobRow>;
+  acquireAttempts: Map<string, AcquireAttemptRow>;
+  acquireTraces: AcquireTraceRow[];
   now: () => Date;
   /** The next generated id. */
   newId: () => string;
@@ -98,6 +103,9 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     approvals: new Map(),
     buildApprovals: new Map(),
     pendingActions: new Map(),
+    acquireJobs: new Map(),
+    acquireAttempts: new Map(),
+    acquireTraces: [],
     now,
     newId: () => `id_${++counter}`,
     addAgent(input) {
@@ -223,6 +231,7 @@ export type FakeDeps = {
   approval: ApprovalDeps;
   pendingAction: PendingActionDeps;
   listPendingActionsByKind: typeof listPendingActionsByKind;
+  acquireJob: AcquireJobDeps;
 };
 
 /** The deps over a store. `db` is never dereferenced; the transaction fake hands itself to its body. */
@@ -759,6 +768,191 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id))
       : [];
 
+  /**
+   * The acquire job's record, with the repo's predicates: every read and write under the pair, the
+   * runner's roster and claim unscoped as the real ones are, the trace numbered per job.
+   */
+  const ownsJob = (scope: { personId: string; agentId: string }, row: AcquireJobRow | undefined) =>
+    row !== undefined && row.agentId === scope.agentId && ownsAgent(scope);
+  const runnable = (row: AcquireJobRow, staleBefore: Date) =>
+    row.status === "queued" ||
+    (row.status === "running" && (row.heartbeatAt === null || row.heartbeatAt < staleBefore));
+  const acquireJob: AcquireJobDeps = {
+    insertAcquireJob: async (_db, input) => {
+      const at = store.now();
+      const row: AcquireJobRow = {
+        id: input.id,
+        agentId: input.agentId,
+        connectionId: input.connectionId,
+        goal: input.goal,
+        hints: input.hints ?? null,
+        status: input.status ?? "queued",
+        progress: input.progress ?? [],
+        attempts: input.attempts ?? 0,
+        tokenSpend: input.tokenSpend ?? 0,
+        result: input.result ?? null,
+        traceRef: input.traceRef ?? null,
+        startedAt: input.startedAt ?? null,
+        heartbeatAt: input.heartbeatAt ?? null,
+        finishedAt: input.finishedAt ?? null,
+        toolId: input.toolId ?? null,
+        owner: "person",
+        createdAt: at,
+        updatedAt: at,
+      };
+      store.acquireJobs.set(row.id, row);
+      return row;
+    },
+    findAcquireJob: async (_db, scope, id) => {
+      const row = store.acquireJobs.get(id);
+      return ownsJob(scope, row) ? (row ?? null) : null;
+    },
+    listAcquireJobs: async (_db, scope, limit) =>
+      ownsAgent(scope)
+        ? [...store.acquireJobs.values()]
+            .filter((row) => row.agentId === scope.agentId)
+            .sort(
+              (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+            )
+            .slice(0, limit)
+        : [],
+    updateAcquireJob: async (_db, scope, id, patch) => {
+      const row = store.acquireJobs.get(id);
+      if (!ownsJob(scope, row) || !row) return null;
+      const updated = { ...row, ...patch, updatedAt: store.now() };
+      store.acquireJobs.set(id, updated);
+      return updated;
+    },
+    appendAcquireJobProgress: async (_db, scope, id, lines) => {
+      const row = store.acquireJobs.get(id);
+      if (!ownsJob(scope, row) || !row) return null;
+      const updated = { ...row, progress: [...row.progress, ...lines], updatedAt: store.now() };
+      store.acquireJobs.set(id, updated);
+      return updated;
+    },
+    recordAcquireJobAttempt: async (_db, scope, id, tokens) => {
+      const row = store.acquireJobs.get(id);
+      if (!ownsJob(scope, row) || !row) return null;
+      const updated = {
+        ...row,
+        attempts: row.attempts + 1,
+        tokenSpend: row.tokenSpend + tokens,
+        updatedAt: store.now(),
+      };
+      store.acquireJobs.set(id, updated);
+      return updated;
+    },
+    addAcquireJobTokenSpend: async (_db, scope, id, tokens) => {
+      const row = store.acquireJobs.get(id);
+      if (!ownsJob(scope, row) || !row) return null;
+      const updated = { ...row, tokenSpend: row.tokenSpend + tokens, updatedAt: store.now() };
+      store.acquireJobs.set(id, updated);
+      return updated;
+    },
+    heartbeatAcquireJob: async (_db, scope, id, at) => {
+      const row = store.acquireJobs.get(id);
+      if (!ownsJob(scope, row) || !row) return null;
+      const updated = { ...row, heartbeatAt: at, updatedAt: at };
+      store.acquireJobs.set(id, updated);
+      return updated;
+    },
+    listRunnableAcquireJobs: async (_db, args) =>
+      [...store.acquireJobs.values()]
+        .filter((row) => runnable(row, args.staleBefore))
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
+        .slice(0, args.limit)
+        .flatMap((job) => {
+          const owner = store.agents.get(job.agentId);
+          return owner ? [{ job, personId: owner.personId }] : [];
+        }),
+    claimAcquireJob: async (_db, id, args) => {
+      const row = store.acquireJobs.get(id);
+      if (!row || !runnable(row, args.staleBefore)) return null;
+      const updated: AcquireJobRow = {
+        ...row,
+        status: "running",
+        startedAt: row.startedAt ?? args.now,
+        heartbeatAt: args.now,
+        updatedAt: args.now,
+      };
+      store.acquireJobs.set(id, updated);
+      return updated;
+    },
+    insertAcquireAttempt: async (_db, input) => {
+      const at = store.now();
+      if (
+        [...store.acquireAttempts.values()].some(
+          (row) => row.jobId === input.jobId && row.attemptNumber === input.attemptNumber,
+        )
+      ) {
+        throw new Error(
+          `duplicate key value violates unique constraint "acquire_attempt_job_id_attempt_number_unique"`,
+        );
+      }
+      const row: AcquireAttemptRow = {
+        id: input.id,
+        jobId: input.jobId,
+        agentId: input.agentId,
+        attemptNumber: input.attemptNumber,
+        draftPath: input.draftPath,
+        files: input.files,
+        checkOutput: input.checkOutput ?? null,
+        versionId: input.versionId ?? null,
+        diagnosis: input.diagnosis ?? null,
+        outcome: input.outcome ?? "running",
+        inputTokens: input.inputTokens ?? 0,
+        outputTokens: input.outputTokens ?? 0,
+        finishedAt: input.finishedAt ?? null,
+        owner: "person",
+        createdAt: at,
+        updatedAt: at,
+      };
+      store.acquireAttempts.set(row.id, row);
+      return row;
+    },
+    updateAcquireAttempt: async (_db, scope, id, patch) => {
+      const row = store.acquireAttempts.get(id);
+      if (!row || row.agentId !== scope.agentId || !ownsAgent(scope)) return null;
+      const updated = { ...row, ...patch, updatedAt: store.now() };
+      store.acquireAttempts.set(id, updated);
+      return updated;
+    },
+    listAcquireAttempts: async (_db, scope, jobId) =>
+      ownsAgent(scope)
+        ? [...store.acquireAttempts.values()]
+            .filter((row) => row.jobId === jobId && row.agentId === scope.agentId)
+            .sort((a, b) => a.attemptNumber - b.attemptNumber)
+        : [],
+    insertAcquireTrace: async (_db, input) => {
+      const sequence = store.acquireTraces.filter((row) => row.jobId === input.jobId).length + 1;
+      const row: AcquireTraceRow = {
+        id: input.id,
+        jobId: input.jobId,
+        agentId: input.agentId,
+        attemptNumber: input.attemptNumber ?? null,
+        sequence,
+        kind: input.kind,
+        text: input.text,
+        data: input.data ?? null,
+        redacted: input.redacted ?? false,
+        owner: "person",
+        createdAt: store.now(),
+      };
+      store.acquireTraces.push(row);
+      return row;
+    },
+    listAcquireTraces: async (_db, scope, jobId, limit) =>
+      ownsAgent(scope)
+        ? store.acquireTraces
+            .filter((row) => row.jobId === jobId && row.agentId === scope.agentId)
+            .sort((a, b) => a.sequence - b.sequence)
+            .slice(0, limit)
+        : [],
+    findConnection: connection.findConnection,
+    newId: () => `acq_${store.newId()}`,
+    now: store.now,
+  };
+
   return {
     db,
     agent,
@@ -769,5 +963,6 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     approval,
     pendingAction,
     listPendingActionsByKind,
+    acquireJob,
   };
 }

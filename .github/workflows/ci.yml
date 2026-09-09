@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Every pull request, whatever its base. The launch is built as a stack (GRA-26 on GRA-23, GRA-28
+  # on GRA-26, and so on), and with a `branches: [main]` filter here a stacked PR showed only the CLA
+  # check until it was retargeted, so a reviewer approved it without a `Typecheck, Lint & Test`
+  # result (GRA-37). The required check on `main` is unchanged; it merely runs earlier.
   pull_request:
-    branches: [main]
   # `main` too: a pull request tests its own head, the merge commit is a different tree, and two
   # branches that each pass alone can still break once both are in. Copied from Cando, where the
   # gap was not hypothetical (its CAN-83).
@@ -159,3 +162,40 @@ jobs:
         run: pnpm run test
         env:
           GRAFT_SANDBOX_IMAGE: graft-sandbox:ci
+
+      # The self-hosted image (GRA-33), built here so a broken Dockerfile or a bundle that no longer
+      # resolves its imports is a red step on the pull request rather than a red release. Then the one
+      # thing the image promises before it has a database: it refuses to start with a message naming
+      # what is missing (`packages/env/src/server.ts`). Two runs, because the schema's cross-field
+      # rules run only once every field is present: the first run has no environment and must name
+      # the required fields; the second has every field and must name the keyring secret, which the
+      # open backings require by rule (GRA-20). Both directions are asserted each time — that it
+      # exited, and what it said — because a container that started with nothing would be the worse
+      # failure, and one that exited for some other reason would hide behind a green step. The
+      # model-key refusal ADR 0014 asks of a self-host arrives with GRA-31's rule.
+      - name: Build the server image
+        run: docker build -f apps/server/Dockerfile -t graft-server:ci .
+
+      - name: The image refuses to start without its secrets, naming them
+        run: |
+          set -uo pipefail
+          refuses() {
+            local expected="$1"; shift
+            local output
+            if output=$(docker run --rm "$@" graft-server:ci 2>&1); then
+              echo "::error::the image started: $*"
+              printf '%s\n' "$output"
+              exit 1
+            fi
+            printf '%s\n' "$output"
+            for name in $expected; do
+              grep -q "$name" <<<"$output" || { echo "::error::the refusal does not name $name" >&2; exit 1; }
+            done
+          }
+          refuses "GRAFT_DATABASE_URL GRAFT_AUTH_SECRET GRAFT_HANDOFF_SECRET"
+          refuses "GRAFT_KEYRING_SECRET" \
+            -e GRAFT_DATABASE_URL=postgresql://postgres:postgres@nowhere:5432/graft \
+            -e GRAFT_AUTH_SECRET=ci-auth-secret-that-is-long-enough-32 \
+            -e GRAFT_AUTH_URL=http://localhost:3000 \
+            -e GRAFT_CONSOLE_URL=http://localhost:3000 \
+            -e GRAFT_HANDOFF_SECRET=ci-handoff-secret-that-is-long-enough-32

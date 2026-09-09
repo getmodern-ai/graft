@@ -7,15 +7,38 @@
 
 export { type AcquireJobDeps, defaultAcquireJobDeps } from "./acquire-job/acquire-job.deps";
 export {
+  type AppendAcquireTraceInput,
   appendAcquireJobProgress,
+  appendAcquireTrace,
+  claimRunnableAcquireJobs,
   completeAcquireJob,
   createAcquireJob,
+  type FinishAcquireAttemptInput,
+  finishAcquireAttempt,
   GOAL_MAX_LENGTH,
   getAcquireJob,
+  HINTS_MAX_LENGTH,
+  heartbeatAcquireJob,
+  listAcquireAttempts,
   listAcquireJobs,
+  listAcquireTraces,
   recordAcquireJobAttempt,
+  recordAcquireJobTokens,
+  type StartAcquireAttemptInput,
+  startAcquireAttempt,
   startAcquireJob,
+  TRACE_READ_LIMIT,
+  TRACE_TEXT_MAX_LENGTH,
 } from "./acquire-job/acquire-job.service";
+export {
+  GENERIC_SECRET_FIELD_NAMES,
+  MIN_SECRET_LENGTH,
+  REDACTED,
+  type RedactionRule,
+  redactText,
+  redactValue,
+  secretFieldNamesFor,
+} from "./acquire-job/redaction";
 export { type AgentDeps, defaultAgentDeps } from "./agent/agent.deps";
 export {
   type ActiveAgentScope,

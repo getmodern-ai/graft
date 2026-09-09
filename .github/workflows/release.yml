@@ -1,0 +1,71 @@
+name: Release
+
+# The published self-hosted images (GRA-33): the server — with the proxy, the MCP endpoint and the
+# console — and the sandbox image sandboxes are created from, pushed to GitHub's registry on a
+# version tag. `docker-compose.yml` names both; a self-hoster who never builds pulls these.
+#
+# Two platforms, because the audience runs Graft on a laptop as often as on a server, and Apple
+# laptops are arm64. Cross-building the arm64 half under QEMU is slow — Cando measured its pnpm
+# install going from twenty seconds to four minutes — which is acceptable on a tag and would not be
+# on every pull request; CI builds the amd64 server image alone.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    name: Build and push the images
+    runs-on: ubuntu-latest
+    strategy:
+      # Two jobs rather than two steps so a sandbox-image failure does not wait out the server
+      # build, and so each has its own build cache scope.
+      matrix:
+        include:
+          - image: ghcr.io/getmodern-ai/graft
+            context: .
+            file: apps/server/Dockerfile
+            scope: server
+          - image: ghcr.io/getmodern-ai/graft-sandbox
+            context: packages/sandbox-docker
+            file: packages/sandbox-docker/Dockerfile
+            scope: sandbox
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `v1.2.3` → `1.2.3`, `1.2`, `1` and `latest`; a pre-release tag (`v1.2.3-rc.1`) gets its own
+      # tag and does not move `latest`. The commit SHA rides along so an image can always be traced.
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.scope }}

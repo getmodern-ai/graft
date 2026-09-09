@@ -14,26 +14,26 @@ import {
   oauthRedirectUri,
 } from "@graft/core";
 import { createDb } from "@graft/db";
+import { applyMigrations, MIGRATIONS_DIR } from "@graft/db/migrate";
+import { checkMigrationChain, readMigrationChain } from "@graft/db/migration-chain";
+import { countPersons } from "@graft/db/repo/person";
 import { env } from "@graft/env/server";
-import { createMcpDeps, startSweep } from "@graft/mcp";
+import { createAcquireRunner, createMcpDeps, startSweep } from "@graft/mcp";
+import { createScriptedModel, type ModelAdapter, parseScript } from "@graft/model";
 import {
   createPublishDeps,
   createRegistryMetadataSource,
   DEFAULT_PACKAGE_POLICY,
 } from "@graft/publish";
-import {
-  createFakeSandboxBackend,
-  type SandboxBackend,
-  type SandboxProcessResult,
-} from "@graft/sandbox";
-import { createDockerSandboxBackend } from "@graft/sandbox-docker";
+import type { SandboxProcessResult } from "@graft/sandbox";
 import { importCapabilityTokenKeys } from "@graft/token";
-import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
-import { createCredentialVault, createLocalKeyring } from "@graft/vault";
+import { createCredentialVault } from "@graft/vault";
 import { serve } from "@hono/node-server";
 import { initLogger } from "evlog";
 
 import { API_MOUNT_PATH, createServer, MCP_MOUNT_PATH, PROXY_MOUNT_PATH } from "./app";
+import { selectBackings } from "./backings";
+import { bootstrapAdmin, MigrationChainBrokenError, migrateOnStart } from "./boot";
 import {
   connectionSeeds,
   createDatabaseConnections,
@@ -57,8 +57,12 @@ import {
  *   GRAFT_CORS_ORIGIN=http://localhost:3001
  *   GRAFT_CONSOLE_URL=http://localhost:3001
  *   EOF
- *   pnpm run db:migrate                                      # or db:push while the schema is moving
- *   pnpm --filter @graft/server dev
+ *   pnpm --filter @graft/server dev                          # migrates on start; GRAFT_MIGRATE_ON_START=false with db:push
+ *
+ * The self-hosted image runs this same file (`apps/server/Dockerfile`, GRA-33): `docker compose up`
+ * is the recipe above with every value in the compose file, and `boot.ts` is the two steps the
+ * image adds before it listens — the committed migrations, then the admin from `GRAFT_ADMIN_EMAIL`
+ * and `GRAFT_ADMIN_PASSWORD` when the database holds nobody yet.
  *
  * Connections come from the database; `GRAFT_DEV_SEED=./dev-seed.json` layers a file of seeded
  * connections over it for a proxy smoke test without a console (`connections.ts` has the shape).
@@ -80,13 +84,39 @@ const keys =
       })
     : null;
 
-// The local keyring is the one backing this repository holds (ADR 0002); the hosted form's KMS
-// keyring arrives with the private package (GRA-20) and is selected here.
-const vault = createCredentialVault(createLocalKeyring(env.GRAFT_KEYRING_SECRET));
+// The three seams' backings and the toolbox store, chosen once from `GRAFT_BACKINGS` and
+// `GRAFT_SANDBOX_BACKEND` (`backings.ts`, ADR 0002). The keyring goes under the vault here; the
+// sandbox, the store and the mirror are the publish's and the MCP server's below.
+const backings = await selectBackings(env, { raw: process.env });
+const { sandbox, store } = backings;
+const vault = createCredentialVault(backings.keyring);
 
-// One pool for the process; the migrations are applied separately (`pnpm run db:migrate`), so a
-// server never alters the schema it is about to serve.
+// One pool for the process.
 const db = createDb(env.GRAFT_DATABASE_URL);
+
+/**
+ * The committed migrations, applied before anything reads the schema (`boot.ts`; GRA-33). The chain
+ * is checked for holes first and a hole refuses the start with the problems listed; a database that
+ * cannot be reached refuses it with pg's reason and never the URL, which carries the password. Off
+ * with `GRAFT_MIGRATE_ON_START=false` for a schema moved by `db:push`.
+ */
+if (env.GRAFT_MIGRATE_ON_START) {
+  try {
+    await migrateOnStart({
+      readChain: () => readMigrationChain(MIGRATIONS_DIR),
+      checkChain: checkMigrationChain,
+      apply: () => applyMigrations(db),
+      log: console.log,
+    });
+  } catch (error) {
+    const reason =
+      error instanceof MigrationChainBrokenError
+        ? error.message
+        : `the database at GRAFT_DATABASE_URL could not be migrated: ${error instanceof Error ? error.message : String(error)}`;
+    console.error(`graft refused to start: ${reason}`);
+    process.exit(1);
+  }
+}
 
 const auth = createAuth({
   db,
@@ -94,6 +124,21 @@ const auth = createAuth({
   baseURL: env.GRAFT_AUTH_URL,
   trustedOrigins: env.GRAFT_CORS_ORIGIN,
 });
+
+// The one admin a fresh self-hosted database opens with (`boot.ts`): through Better Auth's own
+// sign-up, only while the database holds nobody, and a no-op on a laptop that never set the pair.
+await bootstrapAdmin(
+  env.GRAFT_ADMIN_EMAIL && env.GRAFT_ADMIN_PASSWORD
+    ? { email: env.GRAFT_ADMIN_EMAIL, password: env.GRAFT_ADMIN_PASSWORD }
+    : null,
+  {
+    countPersons: () => countPersons(db),
+    signUp: async (input) => {
+      await auth.api.signUpEmail({ body: input });
+    },
+    log: console.log,
+  },
+);
 
 let connections = createDatabaseConnections(db);
 let seededCount = 0;
@@ -109,37 +154,10 @@ if (env.GRAFT_DEV_SEED) {
 // one component, and that component is the proxy binding in `app.ts`).
 const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
 
-/**
- * The sandbox backing (ADR 0002) and the toolbox store, which have to see one tree
- * (`packages/toolbox/README.md`): with Docker the store's root is bound into every toolbox volume;
- * with the fake the store sits inside the fake's own temporary directory, so a laptop's toolbox lives
- * as long as the process. Docker without its image and network is no backing at all — the server
- * boots, every run refuses saying so, and the install step answers the publish the same way. The
- * fake is refused in production by `@graft/env`. The Docker backing reads `DOCKER_HOST` itself.
- */
-let sandbox: SandboxBackend | null;
-let toolboxRoot: string;
-if (env.GRAFT_SANDBOX_BACKEND === "fake") {
-  const fake = createFakeSandboxBackend();
-  sandbox = fake;
-  toolboxRoot = join(fake.root, "toolboxes");
-} else {
-  toolboxRoot = env.GRAFT_TOOLBOX_ROOT;
-  sandbox =
-    env.GRAFT_SANDBOX_IMAGE && env.GRAFT_SANDBOX_NETWORK
-      ? createDockerSandboxBackend({
-          image: env.GRAFT_SANDBOX_IMAGE,
-          network: env.GRAFT_SANDBOX_NETWORK,
-          toolboxHostRoot: toolboxRoot,
-        })
-      : null;
-}
-const store = createFilesystemToolboxStore({ root: toolboxRoot });
-
 const publish = createPublishDeps({
   db,
   store,
-  mirror: createNoopToolboxMirror(),
+  mirror: backings.mirror,
   sandbox: sandbox ?? {
     install: async (): Promise<SandboxProcessResult> => {
       const logs =
@@ -173,6 +191,19 @@ const handoff = {
  * the in-flight registry inside are the process's one of each: the sweep's `tools/list_changed`
  * reaches the endpoint's sessions, and the endpoint's runs hold the sweep off (ADR 0003, ADR 0009).
  */
+/**
+ * The model that answers `acquire` (ADR 0004; `@graft/model`'s seam, ADR 0002). `scripted` plays the
+ * JSON file `GRAFT_MODEL_SCRIPT` names — a laptop driving the whole loop with no provider key, and
+ * refused in production by `@graft/env`; the provider-backed adapter arrives with GRA-31 and is
+ * selected here. Unset, the server boots with no model and `acquire` refuses `acquire_unconfigured`.
+ */
+let model: ModelAdapter | null = null;
+if (env.GRAFT_MODEL_BACKEND === "scripted" && env.GRAFT_MODEL_SCRIPT) {
+  model = createScriptedModel(
+    parseScript(JSON.parse(await readFile(env.GRAFT_MODEL_SCRIPT, "utf8"))),
+  );
+}
+
 const mcp = createMcpDeps({
   db,
   connection: connectionDeps,
@@ -184,7 +215,36 @@ const mcp = createMcpDeps({
   // What the agent tells the person to paste into the OAuth client they register (ADR 0005) — the
   // same value `GET /api/oauth/redirect-uri` shows and `GET /api/oauth/callback` serves.
   oauthRedirectUri: oauthRedirectUri(env.GRAFT_AUTH_URL),
+  model,
+  acquire: {
+    maxAttempts: env.GRAFT_ACQUIRE_MAX_ATTEMPTS,
+    tokenCeiling: env.GRAFT_ACQUIRE_TOKEN_CEILING,
+  },
 });
+
+/**
+ * The `acquire` job runner (GRA-29; `@graft/mcp`'s `acquire/runner.ts`), the second plain scheduler
+ * in the process beside the sweep: the meta-tool kicks it as a job is queued, the poll picks up what
+ * a previous process left. On the deps so the meta-tool can reach it; started once the app exists.
+ */
+const acquireRunner = createAcquireRunner(mcp, {
+  concurrency: env.GRAFT_ACQUIRE_CONCURRENCY,
+  onEvent: (event) => {
+    if (event.kind === "claimed") {
+      console.log(
+        `acquire: job ${event.jobId} for agent ${event.agentId} ${event.resumed ? "resumed" : "started"}`,
+      );
+    } else if (event.kind === "finished") {
+      console.log(`acquire: job ${event.jobId} for agent ${event.agentId} ${event.status}`);
+    } else {
+      console.error(
+        `acquire: job ${event.jobId} for agent ${event.agentId} failed: ${event.error}`,
+      );
+    }
+  },
+  onError: (error) => console.error("acquire runner tick failed", error),
+});
+mcp.acquireRunner = acquireRunner;
 
 const app = createServer({
   keys,
@@ -241,14 +301,18 @@ const sweep = startSweep(mcp, {
   onError: (error) => console.error("working-set sweep failed", error),
 });
 
+acquireRunner.start();
+
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
       `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} ` +
-      `(sandbox: ${env.GRAFT_SANDBOX_BACKEND}${sandbox ? "" : ", unconfigured"}; toolbox: ${store.root}), ` +
+      `(${backings.form} backings — sandbox ${sandbox ? "configured" : "unconfigured"}, ` +
+      `keyring ${backings.keyring.id}, toolbox ${store.root}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database, ` +
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
+      `model: ${model ? model.name : "none (acquire refuses)"}, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );
 });
@@ -256,6 +320,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     sweep.stop();
+    acquireRunner.stop();
     mcp.notifier?.close();
     mcp.inFlight?.close();
     db.close().finally(() => process.exit(0));

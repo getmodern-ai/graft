@@ -39,9 +39,12 @@ The two are one tree in each place the code runs:
   `toolboxHostRoot` option — the same directory as `GRAFT_TOOLBOX_ROOT` — every toolbox volume is a
   bind of `<root>/<toolboxId>`, so the version the publish wrote through the store is what the
   install step installs into and what a run mounts. The bind's path is read by the Docker daemon, so
-  with a mounted socket the compose file (GRA-33) mounts the same host directory into the server
-  container at the same path; with a sibling daemon the option has no meaning and the toolbox would
-  have to reach the server another way.
+  it holds for a server running on the host. The compose file (GRA-33), where the server is itself a
+  container, uses the backing's other option instead: `toolboxVolume` (`GRAFT_TOOLBOX_VOLUME`), one
+  named volume holding every toolbox as a subdirectory, mounted whole into the server at
+  `GRAFT_TOOLBOX_ROOT` and into each sandbox by its own subpath — the same tree, and a sandbox still
+  sees only its own toolbox (`packages/sandbox-docker/README.md`). With a sibling daemon neither
+  option has meaning and the toolbox would have to reach the server another way.
 - **In the hosted form**, the filesystem store on the server plus the S3 mirror; the Blaxel sandbox
   mounts its own copy (GRA-20).
 

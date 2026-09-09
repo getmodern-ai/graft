@@ -26,6 +26,7 @@ export {
   SCHEME_OPTIONAL_CREDENTIAL_FIELDS,
 } from "./credential-fields";
 export { DRY_RUN_HEADER, DRY_RUN_PREVIEW_STATUS, isSafeMethod } from "./dry-run";
+export { CREDENTIAL_REDACTED, REDACTED_CREDENTIAL, REDACTED_HEADER } from "./echo";
 export {
   type ClientAuth,
   clientAuthOf,

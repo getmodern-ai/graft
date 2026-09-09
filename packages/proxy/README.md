@@ -189,9 +189,12 @@ One per call, refused or not: `outcome`, the proxy's `status` and the vendor's `
 vendor `host` the call resolved to, `latencyMs`, `requestBytes` and `responseBytes`,
 `redirectHops`, `failure` (a cause chain for the proxy's own errors and the network's; the
 dependency and the class names for what the host's vault or store threw — never a stack or a body),
-`dryRun` — whether the token carried the claim — and `dryRunOutcome`: `forwarded` once a dry-run
+`dryRun` — whether the token carried the claim — `dryRunOutcome`: `forwarded` once a dry-run
 read has left for the vendor, `intercepted` for a write stopped here, `null` for an ordinary call or
-one refused before the decision. Never a header, a body or a query value.
+one refused before the decision — and `credentialEchoed`, true when the vendor reflected a
+credential value into a header or a text-like body and the proxy replaced it with
+`[redacted:credential]` on the way back, marking the response `x-graft-redacted: credential`
+(`echo.ts`; ADR 0010, amended). Never a header, a body or a query value.
 
 One deadline (thirty seconds by default) covers the whole call, from the caller's first body byte
 to the vendor's last, so neither side can hold a connection and a buffer past it. Both bodies are

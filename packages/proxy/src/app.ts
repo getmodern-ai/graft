@@ -17,6 +17,13 @@ import {
   schemeHeaderNames,
 } from "./dry-run";
 import {
+  echoableSecrets,
+  REDACTED_CREDENTIAL,
+  REDACTED_HEADER,
+  redactBodyEchoes,
+  redactHeaderEchoes,
+} from "./echo";
+import {
   describeFailure,
   guardHostDeps,
   type Refused,
@@ -186,6 +193,8 @@ type Answered = {
   requestBytes: number;
   responseBytes: number;
   redirectHops: number;
+  /** The vendor reflected a credential value and the proxy redacted it on the way back (`echo.ts`). */
+  credentialEchoed: boolean;
 };
 
 /** A write stopped by the dry-run claim: the proxy's own answer, with no vendor status to report. */
@@ -258,6 +267,7 @@ async function proxyCall(
       requestBytes: result.requestBytes ?? null,
       responseBytes: null,
       redirectHops: 0,
+      credentialEchoed: false,
       failure: describeFailure(result.failure),
     };
     deps.log(event);
@@ -275,6 +285,7 @@ async function proxyCall(
       requestBytes: result.requestBytes,
       responseBytes: result.responseBytes,
       redirectHops: 0,
+      credentialEchoed: false,
       failure: null,
     });
     return result.response;
@@ -288,6 +299,7 @@ async function proxyCall(
     requestBytes: result.requestBytes,
     responseBytes: result.responseBytes,
     redirectHops: result.redirectHops,
+    credentialEchoed: result.credentialEchoed,
     failure: null,
   });
   return result.response;
@@ -779,24 +791,31 @@ type Delivery = {
 /**
  * The vendor's answer, verbatim minus what is not the caller's to have: hop-by-hop and framing
  * headers (`headers.ts`), what the scheme put on a returned redirect's URL (`redirects.ts`), and
- * any credential value the vendor reflected into a header. The one header the proxy adds is the
- * dry-run marker, and only under the claim: it tells the runner this response is real, as against
- * the preview an intercepted write gets.
+ * any credential value the vendor reflected into a header or a text-like body (`echo.ts` — the
+ * proxy is the one component that can redact by value, and says so with `x-graft-redacted`). The
+ * other header the proxy adds is the dry-run marker, and only under the claim: it tells the runner
+ * this response is real, as against the preview an intercepted write gets.
  */
 function answer(forwarding: Forwarding, delivery: Delivery): Answered {
   const { plugin, config, credential, trace } = forwarding;
-  const { response, bytes, hop, sentTo, wire, hops, requestBytes } = delivery;
+  const { response, hop, sentTo, wire, hops, requestBytes } = delivery;
 
   const returned = passthroughResponseHeaders(response.headers);
   if (isRedirect(response.status)) scrubReturnedRedirect(returned, sentTo, plugin, config);
   // Both the stored and the derived values: a vendor may echo either.
-  redactCredentialEchoes(returned, { ...credential, ...wire });
+  const secrets = echoableSecrets(credential, wire);
+  const headersRedacted = redactHeaderEchoes(returned, secrets);
+  const nullBody = hop.method === "HEAD" || NULL_BODY_STATUSES.has(response.status);
+  const body = nullBody
+    ? { bytes: delivery.bytes, changed: false }
+    : redactBodyEchoes(delivery.bytes, returned.get("content-type"), secrets);
+  const credentialEchoed = headersRedacted || body.changed;
+  if (credentialEchoed) returned.set(REDACTED_HEADER, REDACTED_CREDENTIAL);
   if (trace.dryRun) returned.set(DRY_RUN_HEADER, "forwarded");
 
-  const nullBody = hop.method === "HEAD" || NULL_BODY_STATUSES.has(response.status);
   return {
     kind: "answered",
-    response: new Response(nullBody ? null : bytes, {
+    response: new Response(nullBody ? null : body.bytes, {
       status: response.status,
       statusText: response.statusText,
       headers: returned,
@@ -804,38 +823,10 @@ function answer(forwarding: Forwarding, delivery: Delivery): Answered {
     outcome: isRedirect(response.status) ? "redirect_returned" : "forwarded",
     upstreamStatus: response.status,
     requestBytes,
-    responseBytes: nullBody ? 0 : bytes.byteLength,
+    responseBytes: nullBody ? 0 : body.bytes.byteLength,
     redirectHops: hops,
+    credentialEchoed,
   };
-}
-
-/** Shorter credential values would match header text by accident; a real key is far longer. */
-const MIN_REDACTABLE_LENGTH = 8;
-
-/**
- * A credential value the vendor reflected into a response header comes back as `<redacted>` —
- * the other half of the reflection case above, for vendors that echo an `Authorization` or a key
- * header they were sent. Header values only: a body is the vendor's answer and passes through
- * verbatim, so a vendor that echoes a key in a body is the vendor's doing, not the proxy's.
- * `set-cookie` is handled through `getSetCookie` because it is the one header that may
- * legitimately appear more than once.
- */
-function redactCredentialEchoes(headers: Headers, credential: CredentialFields): void {
-  const secrets = Object.values(credential).filter((v) => v.length >= MIN_REDACTABLE_LENGTH);
-  if (secrets.length === 0) return;
-  const redact = (value: string) =>
-    secrets.reduce((text, secret) => text.split(secret).join("<redacted>"), value);
-
-  const cookies = headers.getSetCookie();
-  for (const [name, value] of [...headers.entries()]) {
-    if (name === "set-cookie") continue;
-    const clean = redact(value);
-    if (clean !== value) headers.set(name, clean);
-  }
-  if (cookies.some((cookie) => redact(cookie) !== cookie)) {
-    headers.delete("set-cookie");
-    for (const cookie of cookies) headers.append("set-cookie", redact(cookie));
-  }
 }
 
 /**

@@ -8,7 +8,8 @@ import { z } from "zod";
  * makes sense complete is refused when half-set, because a partial set is always a typo or a
  * half-finished deploy and would otherwise present as a feature that silently never works.
  *
- * Every Graft variable is `GRAFT_*`. Later tickets add to this file: the model adapter (GRA-29).
+ * Every Graft variable is `GRAFT_*`. GRA-31 adds the provider-backed model to `modelBackend`; the
+ * self-hosted form's boot (GRA-33) is here already.
  */
 
 /**
@@ -65,20 +66,35 @@ export const capabilityTokenKeys = [
 ] as const;
 
 /**
- * The local keyring's seed (`@graft/vault`, ADR 0002's self-hosted backing). Required, not
- * optional, and the reason is the direction of the failure: every optional feature in this file
+ * The local keyring's seed (`@graft/vault`, ADR 0002's self-hosted backing). Required whenever the
+ * open backings are selected — `GRAFT_BACKINGS=open`, the default; `serverEnvIssues` holds the
+ * rule — and the reason is the direction of the failure: every optional feature in this file
  * degrades safely when absent, but a vault with no key cannot degrade — the alternative to
  * encrypting a person's API key is storing it in the clear — so a deploy that forgot the secret
  * must fail to boot rather than start accepting credentials. Thirty-two characters because the key
- * is derived from it by a plain hash, so the secret has to carry the entropy itself. The hosted
- * form's KMS keyring (GRA-20) will bring its own variable and loosen this one.
+ * is derived from it by a plain hash, so the secret has to carry the entropy itself. Optional as a
+ * field only because the hosted form's keyring arrives with the private package and its own
+ * configuration (GRA-20): a secret nothing in that deployment reads would be a lie in its
+ * environment, and the cross-field rule keeps the failure direction for the form that does read it.
  */
 export const keyringSecret = z
   .string()
   .min(
     32,
     "GRAFT_KEYRING_SECRET must be at least 32 characters — the local keyring derives its key from it",
-  );
+  )
+  .optional();
+
+/**
+ * Which backings the server puts behind its three seams — sandbox, keyring, toolbox mirror
+ * (ADR 0002): `open`, the backings this repository holds, or `cloud`, the hosted form's from the
+ * private package placed at `packages/cloud-backings/`. `apps/server/src/backings.ts` does the
+ * selecting; this only validates the word. Default `open`, so a checkout without the private
+ * package boots as the self-hosted form, and `NODE_ENV=production` with `open` is that form
+ * deployed rather than a misconfiguration. `cloud` without the package fails at boot with a
+ * sentence from the selector, not from here: the environment cannot see what is installed.
+ */
+export const backingsForm = z.enum(["open", "cloud"]).default("open");
 
 /**
  * The database (GRA-6). Required, for the same reason the keyring secret is: nothing degrades
@@ -151,8 +167,9 @@ export const corsOrigins = z
   });
 
 /**
- * Which backing authored code runs on (ADR 0002: every seam has two backings behind one interface).
- * `docker` — `@graft/sandbox-docker`, the self-hosted form's — by default, which needs the
+ * Which of the open form's backings authored code runs on (ADR 0002: every seam has two backings
+ * behind one interface; under `GRAFT_BACKINGS=cloud` the private package's sandbox is used and this
+ * is not read). `docker` — `@graft/sandbox-docker`, the self-hosted form's — by default, which needs the
  * `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair (`sandboxKeys`); without the pair the server
  * boots with no sandbox and every run refuses, saying so. `fake` is the in-process directory
  * `@graft/sandbox` ships for unit tests, allowed here so a laptop without a daemon can drive the MCP
@@ -185,6 +202,22 @@ export const toolboxRoot = z
   .string()
   .min(1, "GRAFT_TOOLBOX_ROOT must name a directory")
   .default("./.graft/toolboxes");
+
+/**
+ * The named Docker volume `GRAFT_TOOLBOX_ROOT` is mounted from, when the server itself runs in a
+ * container beside the daemon it creates sandboxes on — the compose file (GRA-33). Set, the Docker
+ * backing mounts each toolbox into its sandboxes as a subpath of this one volume
+ * (`@graft/sandbox-docker`'s `toolboxVolume`), so the tree the server writes and the tree a sandbox
+ * mounts are one. Unset, the backing binds `GRAFT_TOOLBOX_ROOT/<toolbox>` from the host, which is
+ * right for a server running on the host itself. A volume name, not a path.
+ */
+export const toolboxVolume = z
+  .string()
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/,
+    "GRAFT_TOOLBOX_VOLUME must be a Docker volume name — letters, digits, '.', '_' and '-'",
+  )
+  .optional();
 
 /**
  * The package policy's two thresholds (ADR 0013; `@graft/publish`'s `evaluatePackage`): a package
@@ -268,6 +301,62 @@ export const sweepIntervalSeconds = z.coerce
   .default(300);
 
 /**
+ * How many drafts one `acquire` job may make before it gives up (ADR 0004: attempts are bounded by
+ * count; ADR 0012, L1: a failed dry run is diagnosed and retried inside the job). Every module the
+ * model writes is an attempt — a draft the check refuses spends one as surely as a draft whose dry
+ * run fails — so four rather than three: one to learn the check's rules, one to learn the vendor's,
+ * and two to be wrong about something else. A whole number, at least one; bounded above because a
+ * job that drafts twenty times is not converging, it is spending.
+ */
+export const acquireMaxAttempts = z.coerce
+  .number({ error: "GRAFT_ACQUIRE_MAX_ATTEMPTS must be a whole number of attempts" })
+  .int("GRAFT_ACQUIRE_MAX_ATTEMPTS must be a whole number of attempts")
+  .min(1, "GRAFT_ACQUIRE_MAX_ATTEMPTS must be at least 1")
+  .max(20, "GRAFT_ACQUIRE_MAX_ATTEMPTS must be at most 20")
+  .default(4);
+
+/**
+ * The most tokens one `acquire` job may spend, input and output summed across every model turn
+ * (ADR 0004, ADR 0014: acquisition is the unit of price, so its cost has a ceiling). A job that
+ * reaches it ends with a result naming the ceiling. Four hundred thousand fits a documentation page
+ * or three at four thousand tokens each, the skill, and a handful of drafts with their diagnoses, and
+ * is well under what a provider's context would let a runaway loop reach. At least a thousand — a
+ * lower figure ends every job on its first turn, which is a typo.
+ */
+export const acquireTokenCeiling = z.coerce
+  .number({ error: "GRAFT_ACQUIRE_TOKEN_CEILING must be a whole number of tokens" })
+  .int("GRAFT_ACQUIRE_TOKEN_CEILING must be a whole number of tokens")
+  .min(1_000, "GRAFT_ACQUIRE_TOKEN_CEILING must be at least 1000")
+  .default(400_000);
+
+/**
+ * How many `acquire` jobs the in-process runner works at once (`@graft/mcp`'s `acquire/runner.ts`;
+ * GRA-1: no durable engine for the alpha). Each job holds a sandbox, a model conversation and a
+ * publish; two lets a second agent's job start while the first waits on a vendor, and keeps a
+ * laptop's Docker daemon at two containers. Bounded above so a typo cannot ask one process for a
+ * hundred concurrent sandboxes.
+ */
+export const acquireConcurrency = z.coerce
+  .number({ error: "GRAFT_ACQUIRE_CONCURRENCY must be a whole number of jobs" })
+  .int("GRAFT_ACQUIRE_CONCURRENCY must be a whole number of jobs")
+  .min(1, "GRAFT_ACQUIRE_CONCURRENCY must be at least 1")
+  .max(32, "GRAFT_ACQUIRE_CONCURRENCY must be at most 32")
+  .default(2);
+
+/**
+ * Which model answers `acquire` (ADR 0004; `@graft/model`'s adapter seam, ADR 0002). Unset, the
+ * server boots with no model and `acquire` refuses `acquire_unconfigured`, saying so — the sandbox's
+ * posture. `scripted` is `@graft/model/scripted` playing the JSON file `GRAFT_MODEL_SCRIPT` names,
+ * for a laptop driving the whole loop without a provider key; it is a canned answer sheet, not a
+ * model, and is refused under `NODE_ENV=production` (`serverEnvIssues`). The provider-backed value
+ * arrives with GRA-31 and joins this enum.
+ */
+export const modelBackend = z.enum(["scripted"]).optional();
+
+/** The scripted model's script, all-or-nothing with `GRAFT_MODEL_BACKEND=scripted` — see `modelBackend`. */
+export const modelScriptKeys = ["GRAFT_MODEL_BACKEND", "GRAFT_MODEL_SCRIPT"] as const;
+
+/**
  * The Docker sandbox backing's two settings (`@graft/sandbox-docker`, ADR 0002), all-or-nothing:
  * the prebuilt image sandboxes are created from, and the internal network they join. Individually
  * optional so a server with no Docker boots and only the sandbox is unavailable — a publish that
@@ -330,6 +419,40 @@ export const pendingActionTtlHours = z.coerce
   .default(24);
 
 /**
+ * The admin bootstrapped on first start (GRA-1, user story 28; GRA-33): the one account a fresh
+ * self-hosted database opens with, so the person who ran `docker compose up` can sign in without a
+ * sign-up form facing the network first. Both optional — a laptop signs up through the console — and
+ * all-or-nothing (`adminKeys`), because an email with no password would present as a console nobody
+ * can enter. Read once, by `apps/server/src/boot.ts`, and only while the database holds no person;
+ * a later change to either variable changes nothing, and the boot line says so.
+ */
+export const adminEmail = z
+  .email({
+    error: "GRAFT_ADMIN_EMAIL must be an email address — the account bootstrapped on first start",
+  })
+  .optional();
+
+/** Eight characters is Better Auth's own floor; a shorter value would fail the sign-up, not the boot. */
+export const adminPassword = z
+  .string()
+  .min(
+    8,
+    "GRAFT_ADMIN_PASSWORD must be at least 8 characters — Better Auth refuses a shorter password",
+  )
+  .optional();
+
+export const adminKeys = ["GRAFT_ADMIN_EMAIL", "GRAFT_ADMIN_PASSWORD"] as const;
+
+/**
+ * Whether the server applies the committed migrations before it listens (GRA-33). On by default,
+ * because the self-hosted image is the one process that ever touches its database, and a compose
+ * file with a separate migration step is a step somebody forgets. Off is for the development loop
+ * that moves the schema with `db:push`: a pushed database has no migration ledger, so the migrator
+ * would try to create tables that exist and refuse to start. `apps/server/src/boot.ts` runs it.
+ */
+export const migrateOnStart = z.stringbool().default(true);
+
+/**
  * A group of settings that only makes sense complete. Factored so a second hand-written copy of
  * this comparison is not where two groups drift — one of them getting the `present.length === 0`
  * case wrong and reporting every unconfigured deploy as broken.
@@ -369,6 +492,24 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   );
   if (partialSandbox) issues.push(partialSandbox);
 
+  const partialAdmin = partialGroupIssue(
+    value,
+    "The bootstrapped admin is partially configured — set both GRAFT_ADMIN_EMAIL and GRAFT_ADMIN_PASSWORD or neither.",
+    adminKeys,
+  );
+  if (partialAdmin) issues.push(partialAdmin);
+
+  /**
+   * The keyring secret is the open form's — `createLocalKeyring` derives its key from it — so it is
+   * required exactly when the open backings are selected. Under `cloud` the private package brings
+   * its own keyring and its own configuration, and nothing here reads the secret.
+   */
+  if ((value.GRAFT_BACKINGS ?? "open") === "open" && value.GRAFT_KEYRING_SECRET === undefined) {
+    issues.push(
+      "GRAFT_KEYRING_SECRET is required with the open backings (GRAFT_BACKINGS=open, the default): the local keyring derives its key from it.",
+    );
+  }
+
   /**
    * The seed file is for a laptop: connections with their plaintext credentials in a JSON file the
    * server encrypts into memory at boot (`apps/server/src/connections.ts`). In production the
@@ -385,6 +526,31 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   if (value.NODE_ENV === "production" && value.GRAFT_SANDBOX_BACKEND === "fake") {
     issues.push(
       "GRAFT_SANDBOX_BACKEND=fake is the in-process test backing and is refused under NODE_ENV=production; use docker.",
+    );
+  }
+
+  /**
+   * The scripted model is a script, so it is the pair or nothing: a backend named with no script
+   * has nothing to play, a script with no backend is a file nobody reads — both a half-finished
+   * setup. And an answer sheet in place of a model is refused in production, like the fake sandbox.
+   */
+  const partialModel = partialGroupIssue(
+    value,
+    "The scripted model is partially configured — set GRAFT_MODEL_BACKEND=scripted and GRAFT_MODEL_SCRIPT together, or neither.",
+    modelScriptKeys,
+  );
+  if (partialModel) issues.push(partialModel);
+  if (value.NODE_ENV === "production" && value.GRAFT_MODEL_BACKEND === "scripted") {
+    issues.push(
+      "GRAFT_MODEL_BACKEND=scripted is the canned test model and is refused under NODE_ENV=production.",
+    );
+  }
+
+  // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
+  // package brings the sandbox, and a `fake` set beside it would be two answers to one question.
+  if (value.GRAFT_BACKINGS === "cloud" && value.GRAFT_SANDBOX_BACKEND === "fake") {
+    issues.push(
+      "GRAFT_SANDBOX_BACKEND=fake names an open-form sandbox and has no meaning under GRAFT_BACKINGS=cloud, where the private package's sandbox is used; unset it.",
     );
   }
 
@@ -419,7 +585,10 @@ export const serverSchema = {
   /** The console's origins, optional — a list once parsed, see `corsOrigins`. */
   GRAFT_CORS_ORIGIN: corsOrigins,
 
-  /** The local keyring's seed — see `keyringSecret` for why this one is required. */
+  /** Which form's backings stand behind the seams — see `backingsForm`. */
+  GRAFT_BACKINGS: backingsForm,
+
+  /** The local keyring's seed — see `keyringSecret` for when this one is required. */
   GRAFT_KEYRING_SECRET: keyringSecret,
 
   /**
@@ -457,8 +626,9 @@ export const serverSchema = {
    */
   GRAFT_DEV_SEED: z.string().min(1).optional(),
 
-  /** Where toolboxes live as files — see `toolboxRoot`. */
+  /** Where toolboxes live as files, and the volume that directory is mounted from — see `toolboxRoot`, `toolboxVolume`. */
   GRAFT_TOOLBOX_ROOT: toolboxRoot,
+  GRAFT_TOOLBOX_VOLUME: toolboxVolume,
 
   /** The package policy's thresholds and extra names — see `packageMinAgeDays`, `packageAllowlist`. */
   GRAFT_PACKAGE_MIN_AGE_DAYS: packageMinAgeDays,
@@ -484,7 +654,45 @@ export const serverSchema = {
 
   /** How often the working-set sweep runs — see `sweepIntervalSeconds`. */
   GRAFT_SWEEP_INTERVAL_SECONDS: sweepIntervalSeconds,
+
+  /** The acquire job's three bounds, each with a correct default — see `acquireMaxAttempts`, `acquireTokenCeiling`, `acquireConcurrency`. */
+  GRAFT_ACQUIRE_MAX_ATTEMPTS: acquireMaxAttempts,
+  GRAFT_ACQUIRE_TOKEN_CEILING: acquireTokenCeiling,
+  GRAFT_ACQUIRE_CONCURRENCY: acquireConcurrency,
+
+  /** Which model answers `acquire`, and the scripted one's script — see `modelBackend`, `modelScriptKeys`. */
+  GRAFT_MODEL_BACKEND: modelBackend,
+  GRAFT_MODEL_SCRIPT: z.string().min(1).optional(),
+
+  /** The admin opened on first start, all-or-nothing — see `adminKeys`. */
+  GRAFT_ADMIN_EMAIL: adminEmail,
+  GRAFT_ADMIN_PASSWORD: adminPassword,
+
+  /** Whether the boot applies the committed migrations — see `migrateOnStart`. */
+  GRAFT_MIGRATE_ON_START: migrateOnStart,
 };
+
+/**
+ * One line per issue, the variable named on each — what the boot prints before it refuses to start
+ * (`server.ts`). The messages in this file already name their variable; zod's own for a value that
+ * is simply absent is "expected string, received undefined", which a person reading a container's
+ * log at midnight should not have to decode, so that one becomes "<VARIABLE> is not set". A
+ * cross-field sentence (`serverEnvIssues`) has no path and stands as it is.
+ */
+export function describeEnvIssues(
+  issues: readonly { path?: readonly (PropertyKey | { key: PropertyKey })[]; message: string }[],
+): string {
+  return issues
+    .map((issue) => {
+      const name = (issue.path ?? [])
+        .map((segment) => String(typeof segment === "object" ? segment.key : segment))
+        .join(".");
+      if (!name) return issue.message;
+      if (/received undefined$/.test(issue.message)) return `${name} is not set`;
+      return issue.message.includes(name) ? issue.message : `${name}: ${issue.message}`;
+    })
+    .join("\n");
+}
 
 /** The object schema `createEnv` is handed: the fields, the cross-field rules, the derived default. */
 export function finalServerSchema<T extends z.ZodRawShape>(shape: T) {

@@ -1,8 +1,10 @@
 import { checkModule, type ModuleCheck } from "@graft/check";
 import {
+  type AcquireJobDeps,
   type AgentDeps,
   type ApprovalDeps,
   type ConnectionDeps,
+  defaultAcquireJobDeps,
   defaultAgentDeps,
   defaultApprovalDeps,
   defaultLedgerDeps,
@@ -16,6 +18,7 @@ import {
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import { listPendingActionsByKind } from "@graft/db/repo/pending-action";
+import type { ModelAdapter } from "@graft/model";
 import {
   type PublishArgs,
   type PublishDeps,
@@ -27,6 +30,7 @@ import type { SandboxBackend } from "@graft/sandbox";
 import type { CapabilityTokenKeys } from "@graft/token";
 import type { ToolboxStore } from "@graft/toolbox";
 
+import type { AcquireConfig } from "./acquire/shapes";
 import type { HandoffConfig } from "./handoff";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
@@ -34,9 +38,9 @@ import { type ReadWebPage, readWebPage } from "./web-page";
 
 /**
  * Everything the MCP server is handed rather than owns — the one object `apps/server` builds from
- * its environment and every later ticket extends: GRA-23 adds the approval reads, GRA-29 the
- * `acquire` job engine and the model adapter; GRA-24 added the notifier and the in-flight registry
- * the sweep shares with the endpoint, at the end. A test binds the same
+ * its environment and every later ticket extends: GRA-23 added the approval reads, GRA-24 the
+ * notifier and the in-flight registry the sweep shares with the endpoint, GRA-29 the `acquire`
+ * job's record, the model adapter and the runner's kick, at the end. A test binds the same
  * shape to in-memory fakes (`./testing/fake-deps.ts`) and the fake sandbox, so the suite in
  * `server.test.ts` runs with no database, no Docker and no network beyond a loopback listener for
  * the proxy.
@@ -114,6 +118,22 @@ export type McpDeps = {
    * nothing is held and the sweep never skips.
    */
   inFlight?: InFlightRegistry;
+  /** The `acquire` job's record — the job, its attempts, its trace (`acquire/job.ts`, ADR 0012). */
+  acquireJob: AcquireJobDeps;
+  /**
+   * The model that answers `acquire` (ADR 0004; `@graft/model`). Null when the deployment configured
+   * none — `acquire` then refuses `acquire_unconfigured` and the rest of the server is unaffected,
+   * the sandbox's posture.
+   */
+  model?: ModelAdapter | null;
+  /** The bounds every job is held to; `DEFAULT_ACQUIRE_CONFIG` when absent. */
+  acquire?: AcquireConfig;
+  /**
+   * The in-process job runner's handle (`acquire/runner.ts`), so the meta-tool can wake it the
+   * moment a job is queued rather than leave the job to the next poll. Absent, a job waits queued
+   * for a runner — which is what a process that starts none, the sweep script say, wants.
+   */
+  acquireRunner?: { kick(): void };
 };
 
 export type CreateMcpDepsInput = Pick<
@@ -143,6 +163,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     ledger: defaultLedgerDeps,
     approval: defaultApprovalDeps,
     pendingAction: defaultPendingActionDeps,
+    acquireJob: defaultAcquireJobDeps,
     listPendingActionsByKind,
     checkModule,
     runnerFiles,
