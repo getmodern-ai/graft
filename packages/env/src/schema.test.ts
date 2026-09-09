@@ -5,6 +5,7 @@ import {
   authUrl,
   capabilityTokenPrivateKey,
   capabilityTokenPublicKey,
+  consoleDir,
   corsOrigins,
   databaseUrl,
   defaultProxyPublicUrl,
@@ -243,6 +244,7 @@ describe("finalServerSchema", () => {
       GRAFT_PACKAGE_MIN_AGE_DAYS: 90,
       GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS: 1000,
       GRAFT_PACKAGE_ALLOWLIST: [],
+      GRAFT_CONSOLE_DIR: "../web/dist",
     });
   });
 
@@ -307,5 +309,18 @@ describe("the sandbox backing", () => {
     expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "docker" })).toEqual(
       [],
     );
+  });
+});
+
+describe("GRAFT_CONSOLE_DIR", () => {
+  it("defaults to the console workspace's build beside the server, and takes any non-empty path", () => {
+    expect(consoleDir.parse(undefined)).toBe("../web/dist");
+    expect(consoleDir.parse("/srv/graft/console")).toBe("/srv/graft/console");
+  });
+
+  it("refuses an empty value, naming the variable", () => {
+    const result = consoleDir.safeParse("");
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toContain("GRAFT_CONSOLE_DIR");
   });
 });

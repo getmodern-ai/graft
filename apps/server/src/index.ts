@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -5,6 +6,7 @@ import { createAuth } from "@graft/auth";
 import {
   createConnectionDeps,
   defaultAgentDeps,
+  defaultLedgerDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
 } from "@graft/core";
@@ -164,9 +166,13 @@ const app = createServer({
       connection: connectionDeps,
       workingSet: defaultWorkingSetDeps,
       tool: defaultToolDeps,
+      ledger: defaultLedgerDeps,
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
   },
+  // The console's build, served from the same origin as the API (`console.ts`); absent, the API is
+  // whole and every console path says where the build was expected.
+  console: { dir: env.GRAFT_CONSOLE_DIR },
   // What a sandbox is handed as `GRAFT_PROXY_URL` is the proxy's public URL, so relocating the proxy
   // stays the DNS change GRA-1 promises.
   mcp: createMcpDeps({
@@ -185,7 +191,8 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} ` +
       `(sandbox: ${env.GRAFT_SANDBOX_BACKEND}${sandbox ? "" : ", unconfigured"}; toolbox: ${store.root}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
-      `${seededCount} connection(s) seeded over the database`,
+      `${seededCount} connection(s) seeded over the database, ` +
+      `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );
 });
 

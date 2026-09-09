@@ -242,6 +242,20 @@ export const packageAllowlist = z
   });
 
 /**
+ * Where the console's build is (`apps/web`, GRA-26): the directory `vite build` wrote, which
+ * `apps/server` serves same-origin with the API so the session cookie never crosses an origin
+ * (`apps/server/src/console.ts`). Relative to the server's working directory when not absolute,
+ * like `GRAFT_TOOLBOX_ROOT`; the default is the sibling workspace's `dist`, where a checkout that ran
+ * `pnpm run build` has it. A directory with no build in it is not a boot failure — the server serves
+ * the API and answers every console path with a JSON 404 saying so — because the API is whole
+ * without the console, and a deployment that serves the console from elsewhere is legitimate.
+ */
+export const consoleDir = z
+  .string()
+  .min(1, "GRAFT_CONSOLE_DIR must name a directory")
+  .default("../web/dist");
+
+/**
  * The Docker sandbox backing's two settings (`@graft/sandbox-docker`, ADR 0002), all-or-nothing:
  * the prebuilt image sandboxes are created from, and the internal network they join. Individually
  * optional so a server with no Docker boots and only the sandbox is unavailable — a publish that
@@ -393,6 +407,9 @@ export const serverSchema = {
 
   /** Which backing runs authored code, and whether the fake may — see `sandboxBackend`. */
   GRAFT_SANDBOX_BACKEND: sandboxBackend,
+
+  /** Where the console's build is served from — see `consoleDir`. */
+  GRAFT_CONSOLE_DIR: consoleDir,
 };
 
 /** The object schema `createEnv` is handed: the fields, the cross-field rules, the derived default. */
