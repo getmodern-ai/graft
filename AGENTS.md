@@ -91,10 +91,20 @@ pnpm run db:migrate
 pnpm --filter @graft/server dev
 ```
 
-`GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL` and `GRAFT_KEYRING_SECRET` (32+) are
-required; `GRAFT_CORS_ORIGIN` is an optional comma-separated list of origins; the capability token key
-pair is all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the database for a
-proxy smoke test and is refused in production. `packages/env/src/schema.ts` is the rules as code.
+`GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+) and `GRAFT_AUTH_URL` are required, and so is
+`GRAFT_KEYRING_SECRET` (32+) under the default `GRAFT_BACKINGS=open`; `GRAFT_CORS_ORIGIN` is an
+optional comma-separated list of origins; the capability token key pair is all-or-nothing;
+`GRAFT_DEV_SEED` layers a JSON file of connections over the database for a proxy smoke test and is
+refused in production. `packages/env/src/schema.ts` is the rules as code.
+
+`GRAFT_BACKINGS` picks the backing behind each seam (ADR 0002; `apps/server/src/backings.ts`).
+`open`, the default, is what this repository holds — the Docker sandbox when its pair is set, the
+local keyring, a mirror that copies nothing — and is also the self-hosted form in production.
+`cloud` loads the hosted form's backings from a private package that is not in this repository: it
+is placed at `packages/cloud-backings/`, which is gitignored, where the workspace glob picks it up;
+absent, the server refuses to boot with a sentence saying so. The selector imports it by a name held
+in a variable, so the type program never resolves it — which is what keeps the package absent rather
+than optional.
 
 ### Publishing a tool by hand
 

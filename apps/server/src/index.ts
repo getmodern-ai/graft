@@ -5,11 +5,13 @@ import { createConnectionDeps, defaultAgentDeps } from "@graft/core";
 import { createDb } from "@graft/db";
 import { env } from "@graft/env/server";
 import { importCapabilityTokenKeys } from "@graft/token";
-import { createCredentialVault, createLocalKeyring } from "@graft/vault";
+import { createFilesystemToolboxStore } from "@graft/toolbox";
+import { createCredentialVault } from "@graft/vault";
 import { serve } from "@hono/node-server";
 import { initLogger } from "evlog";
 
 import { API_MOUNT_PATH, createServer, PROXY_MOUNT_PATH } from "./app";
+import { selectBackings } from "./backings";
 import {
   connectionSeeds,
   createDatabaseConnections,
@@ -54,9 +56,12 @@ const keys =
       })
     : null;
 
-// The local keyring is the one backing this repository holds (ADR 0002); the hosted form's KMS
-// keyring arrives with the private package (GRA-20) and is selected here.
-const vault = createCredentialVault(createLocalKeyring(env.GRAFT_KEYRING_SECRET));
+// The three seams' backings, chosen once from `GRAFT_BACKINGS` (`backings.ts`, ADR 0002). The keyring
+// goes under the vault here; the sandbox and the mirror are the publish's, which GRA-19 wires over
+// MCP, and the boot line below says whether a sandbox backing is configured at all.
+const store = createFilesystemToolboxStore({ root: env.GRAFT_TOOLBOX_ROOT });
+const backings = await selectBackings(env, { store, raw: process.env });
+const vault = createCredentialVault(backings.keyring);
 
 // One pool for the process; the migrations are applied separately (`pnpm run db:migrate`), so a
 // server never alters the schema it is about to serve.
@@ -105,6 +110,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
       `auth and the JSON API at ${API_MOUNT_PATH}, ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
+      `${backings.form} backings (keyring ${backings.keyring.id}, sandbox ${backings.sandbox ? "configured" : "absent"}), ` +
       `${seededCount} connection(s) seeded over the database`,
   );
 });

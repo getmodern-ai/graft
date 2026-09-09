@@ -13,22 +13,23 @@ import {
   publishToolVersion,
 } from "@graft/publish";
 import type { SandboxBackend, SandboxProcessResult } from "@graft/sandbox/types";
-import { createDockerSandboxBackend } from "@graft/sandbox-docker";
 import {
   createFilesystemToolboxStore,
-  createNoopToolboxMirror,
   draftPath,
   type ToolboxFile,
   toolboxIdOf,
 } from "@graft/toolbox";
 import { eq } from "drizzle-orm";
 
+import { selectBackings } from "../backings";
+
 /**
  * Publish a module from a directory on this machine into a person's toolbox, by hand — the publish
  * (`@graft/publish`, GRA-18) exercised end to end against the real database, the filesystem store
- * at `GRAFT_TOOLBOX_ROOT` and, when `GRAFT_SANDBOX_IMAGE` and `GRAFT_SANDBOX_NETWORK` are set, the
- * Docker backing's install step. Development only; GRA-19 exposes the same service as `publish_tool`
- * over MCP.
+ * at `GRAFT_TOOLBOX_ROOT` and the backings `GRAFT_BACKINGS` selects (`../backings.ts`): the Docker
+ * backing's install step when `GRAFT_SANDBOX_IMAGE` and `GRAFT_SANDBOX_NETWORK` are set, the
+ * private package's install step and mirror under `cloud`. Development only; GRA-19 exposes the
+ * same service as `publish_tool` over MCP.
  *
  *   pnpm --filter @graft/server publish-fixture -- \
  *     --dir ../../packages/publish/fixtures/hello --vendor demo --name hello \
@@ -118,28 +119,21 @@ try {
   if (!personId) throw new Error("unreachable: a person was required above");
 
   const store = createFilesystemToolboxStore({ root: env.GRAFT_TOOLBOX_ROOT });
-  // The Docker backing when the environment names one — bound to the store's root so the install
-  // step and the store see one tree (`@graft/toolbox`'s README) — else an install that answers with
-  // why it cannot run, which the publish turns into an `install-failed` diagnostic.
-  const sandbox: Pick<SandboxBackend, "install"> =
-    env.GRAFT_SANDBOX_IMAGE && env.GRAFT_SANDBOX_NETWORK
-      ? createDockerSandboxBackend({
-          image: env.GRAFT_SANDBOX_IMAGE,
-          network: env.GRAFT_SANDBOX_NETWORK,
-          toolboxHostRoot: store.root,
-        })
-      : {
-          install: async (): Promise<SandboxProcessResult> => {
-            const logs =
-              "no sandbox backing is configured: set GRAFT_SANDBOX_IMAGE and GRAFT_SANDBOX_NETWORK to run the install step (packages/sandbox-docker/README.md)";
-            return { status: "failed", exitCode: null, logs, stdout: "", stderr: logs };
-          },
-        };
+  // The selected backings' sandbox when there is one, else an install that answers with why it
+  // cannot run, which the publish turns into an `install-failed` diagnostic.
+  const backings = await selectBackings(env, { store, raw: process.env });
+  const sandbox: Pick<SandboxBackend, "install"> = backings.sandbox ?? {
+    install: async (): Promise<SandboxProcessResult> => {
+      const logs =
+        "no sandbox backing is configured: set GRAFT_SANDBOX_IMAGE and GRAFT_SANDBOX_NETWORK to run the install step (packages/sandbox-docker/README.md)";
+      return { status: "failed", exitCode: null, logs, stdout: "", stderr: logs };
+    },
+  };
 
   const deps = createPublishDeps({
     db,
     store,
-    mirror: createNoopToolboxMirror(),
+    mirror: backings.mirror,
     sandbox,
     metadata: createRegistryMetadataSource(),
     policy: {
