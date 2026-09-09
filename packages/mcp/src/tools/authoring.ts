@@ -6,7 +6,6 @@ import {
   getToolVersion,
   isKebabCase,
   listConnections,
-  promoteTool,
   validateVendor,
 } from "@graft/core";
 import type { SandboxFile } from "@graft/sandbox";
@@ -32,6 +31,7 @@ import {
 } from "../bounds";
 import type { SessionContext } from "../context";
 import { heldInFlight, isSettledProcess } from "../in-flight";
+import { promotePublished } from "../promote";
 import { isPlainObject, toolError, toolRefusal, toolResult } from "../result";
 import { runAuthoredTool } from "../run";
 import {
@@ -500,9 +500,9 @@ const publishTool: MetaTool = {
       });
     }
 
-    // A publish promotes (ADR 0003), which is what fires the notification.
-    const change = await promoteTool(ctx, scope, outcome.tool.id, "publish", deps.workingSet);
-    if (change.changed) notifier.changed(scope.agentId);
+    // A publish promotes (ADR 0003), which is what fires the notification — the same step
+    // `acquire`'s job takes once its dry run passes (`../promote.ts`).
+    await promotePublished(ctx, scope, outcome.tool.id, deps, notifier);
 
     const wire = authoredToolName(vendor, name);
     const published = {
