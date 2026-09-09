@@ -14,6 +14,7 @@ import { Route as AuthRouteRouteImport } from './routes/_auth/route'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AuthShellRouteRouteImport } from './routes/_auth/_shell/route'
+import { Route as AuthShellSettingsRouteImport } from './routes/_auth/_shell/settings'
 import { Route as AuthShellAgentsIndexRouteImport } from './routes/_auth/_shell/agents.index'
 import { Route as AuthShellAgentsAgentIdRouteImport } from './routes/_auth/_shell/agents.$agentId'
 import { Route as AuthShellConnectionsIndexRouteImport } from './routes/_auth/_shell/connections.index'
@@ -42,6 +43,11 @@ const SignupRoute = SignupRouteImport.update({
 const AuthShellRouteRoute = AuthShellRouteRouteImport.update({
   id: '/_shell',
   getParentRoute: () => AuthRouteRoute,
+} as any)
+const AuthShellSettingsRoute = AuthShellSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AuthShellRouteRoute,
 } as any)
 const AuthShellAgentsIndexRoute = AuthShellAgentsIndexRouteImport.update({
   id: '/agents/',
@@ -74,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/settings': typeof AuthShellSettingsRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
   '/pending/$id': typeof AuthShellPendingIdRoute
   '/agents/': typeof AuthShellAgentsIndexRoute
@@ -84,6 +91,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/settings': typeof AuthShellSettingsRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
   '/pending/$id': typeof AuthShellPendingIdRoute
   '/agents': typeof AuthShellAgentsIndexRoute
@@ -97,6 +105,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/_auth/_shell': typeof AuthShellRouteRouteWithChildren
+  '/_auth/_shell/settings': typeof AuthShellSettingsRoute
   '/_auth/_shell/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
   '/_auth/_shell/pending/$id': typeof AuthShellPendingIdRoute
   '/_auth/_shell/agents/': typeof AuthShellAgentsIndexRoute
@@ -109,6 +118,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/settings'
     | '/agents/$agentId'
     | '/pending/$id'
     | '/agents/'
@@ -119,6 +129,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/settings'
     | '/agents/$agentId'
     | '/pending/$id'
     | '/agents'
@@ -131,6 +142,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/_auth/_shell'
+    | '/_auth/_shell/settings'
     | '/_auth/_shell/agents/$agentId'
     | '/_auth/_shell/pending/$id'
     | '/_auth/_shell/agents/'
@@ -182,6 +194,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthShellRouteRouteImport
       parentRoute: typeof AuthRouteRoute
     }
+    '/_auth/_shell/settings': {
+      id: '/_auth/_shell/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthShellSettingsRouteImport
+      parentRoute: typeof AuthShellRouteRoute
+    }
     '/_auth/_shell/agents/': {
       id: '/_auth/_shell/agents/'
       path: '/agents'
@@ -221,6 +240,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthShellRouteRouteChildren {
+  AuthShellSettingsRoute: typeof AuthShellSettingsRoute
   AuthShellAgentsAgentIdRoute: typeof AuthShellAgentsAgentIdRoute
   AuthShellPendingIdRoute: typeof AuthShellPendingIdRoute
   AuthShellAgentsIndexRoute: typeof AuthShellAgentsIndexRoute
@@ -229,6 +249,7 @@ interface AuthShellRouteRouteChildren {
 }
 
 const AuthShellRouteRouteChildren: AuthShellRouteRouteChildren = {
+  AuthShellSettingsRoute: AuthShellSettingsRoute,
   AuthShellAgentsAgentIdRoute: AuthShellAgentsAgentIdRoute,
   AuthShellPendingIdRoute: AuthShellPendingIdRoute,
   AuthShellAgentsIndexRoute: AuthShellAgentsIndexRoute,
