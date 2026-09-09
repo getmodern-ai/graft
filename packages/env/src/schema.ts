@@ -256,6 +256,19 @@ export const consoleDir = z
   .default("../web/dist");
 
 /**
+ * How often the working-set sweep runs (ADR 0009; "@graft/mcp"'s `startSweep`): on this cadence the
+ * server contracts every agent's working set by its cap and idle window, from a plain timer in the
+ * process (GRA-1: no durable engine for the alpha). Five minutes by default — a window is days long
+ * and a cap is exceeded only by a promotion the agent just made, so nothing here is urgent, and a
+ * sweep is two reads per agent. Whole seconds, at least one; a fraction is a typo.
+ */
+export const sweepIntervalSeconds = z.coerce
+  .number({ error: "GRAFT_SWEEP_INTERVAL_SECONDS must be a whole number of seconds" })
+  .int("GRAFT_SWEEP_INTERVAL_SECONDS must be a whole number of seconds")
+  .min(1, "GRAFT_SWEEP_INTERVAL_SECONDS must be at least one second")
+  .default(300);
+
+/**
  * The Docker sandbox backing's two settings (`@graft/sandbox-docker`, ADR 0002), all-or-nothing:
  * the prebuilt image sandboxes are created from, and the internal network they join. Individually
  * optional so a server with no Docker boots and only the sandbox is unavailable — a publish that
@@ -410,6 +423,8 @@ export const serverSchema = {
 
   /** Where the console's build is served from — see `consoleDir`. */
   GRAFT_CONSOLE_DIR: consoleDir,
+  /** How often the working-set sweep runs — see `sweepIntervalSeconds`. */
+  GRAFT_SWEEP_INTERVAL_SECONDS: sweepIntervalSeconds,
 };
 
 /** The object schema `createEnv` is handed: the fields, the cross-field rules, the derived default. */

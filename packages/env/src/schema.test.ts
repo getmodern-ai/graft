@@ -18,6 +18,7 @@ import {
   sandboxBackend,
   serverEnvIssues,
   serverSchema,
+  sweepIntervalSeconds,
   toolboxRoot,
   withDerivedDefaults,
 } from "./schema";
@@ -219,6 +220,18 @@ describe("the Docker sandbox backing's pair", () => {
 });
 
 /** The whole object as `createEnv` is handed it — fields, cross-field rules and the derived default. */
+describe("GRAFT_SWEEP_INTERVAL_SECONDS", () => {
+  it("defaults to five minutes, coerces whole seconds, and refuses zero, a fraction or a word, naming itself", () => {
+    expect(sweepIntervalSeconds.parse(undefined)).toBe(300);
+    expect(sweepIntervalSeconds.parse("60")).toBe(60);
+    for (const bad of ["0", "-5", "1.5", "often"]) {
+      const result = sweepIntervalSeconds.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_SWEEP_INTERVAL_SECONDS");
+    }
+  });
+});
+
 describe("finalServerSchema", () => {
   const schema = finalServerSchema(serverSchema);
   const minimal = {
@@ -245,6 +258,7 @@ describe("finalServerSchema", () => {
       GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS: 1000,
       GRAFT_PACKAGE_ALLOWLIST: [],
       GRAFT_CONSOLE_DIR: "../web/dist",
+      GRAFT_SWEEP_INTERVAL_SECONDS: 300,
     });
   });
 

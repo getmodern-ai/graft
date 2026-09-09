@@ -74,6 +74,7 @@ function agentDeps(): AgentDeps {
     findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
       ids.map((id) => ({ ...connectionRow, id })),
     ),
+    listAllActiveAgents: vi.fn(async () => [agentRow]),
     newId: () => "agent_new",
     now: () => NOW,
   };

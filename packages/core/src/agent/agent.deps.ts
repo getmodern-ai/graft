@@ -4,6 +4,7 @@ import {
   insertAgent,
   listAgentConnectionIds,
   listAgents,
+  listAllActiveAgents,
   replaceAgentConnections,
   revokeAgent,
   updateAgent,
@@ -26,6 +27,8 @@ export type AgentDeps = {
   listAgentConnectionIds: typeof listAgentConnectionIds;
   /** Setting a scope reads the person's connections to refuse an id that is not theirs. */
   findConnectionsByIds: typeof findConnectionsByIds;
+  /** The sweep's roster — the one read here with no person in it (ADR 0009; `listActiveAgentScopes`). */
+  listAllActiveAgents: typeof listAllActiveAgents;
   newId: () => string;
   now: () => Date;
   /** The token's entropy — injectable so a test knows the token it will be shown. */
@@ -42,6 +45,7 @@ export const defaultAgentDeps: AgentDeps = {
   replaceAgentConnections,
   listAgentConnectionIds,
   findConnectionsByIds,
+  listAllActiveAgents,
   newId: () => crypto.randomUUID(),
   now: () => new Date(),
 };
