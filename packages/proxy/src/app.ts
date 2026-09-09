@@ -39,15 +39,18 @@ import { forwardableRequestHeaders, passthroughResponseHeaders } from "./headers
 import { isPublicHost } from "./public-host";
 import { type Hop, isRedirect, nextHop, scrubReturnedRedirect } from "./redirects";
 import { SCHEMES, type SchemePlugin, type SchemeTarget } from "./schemes";
+import { createSingleFlight } from "./single-flight";
 import { extractToken, scrubToken } from "./token";
 import type {
   CredentialFields,
+  CredentialScope,
   DerivedCredentialCache,
   ProxyDeps,
   ProxyEvent,
   ProxyOptions,
   SchemeConfig,
   SchemeRuntime,
+  SingleFlight,
   UpstreamFetch,
   UpstreamResponse,
 } from "./types";
@@ -126,8 +129,9 @@ export function createProxyApp(deps: ProxyDeps): Hono {
   const options: ProxyOptions = { ...DEFAULT_PROXY_OPTIONS, ...deps.options };
   const upstream = deps.upstreamFetch ?? createUpstreamFetch();
   const now = deps.now ?? Date.now;
-  // One cache per app: per process in production, per harness in a test.
+  // One cache and one single-flight per app: per process in production, per harness in a test.
   const cache = createDerivedCredentialCache(now);
+  const once = createSingleFlight();
   // What the host bound, with what it throws recorded by class name and never by message
   // (`failure.ts`). Everything below reads the host through `host`, never through `deps`.
   const host = guardHostDeps(deps);
@@ -150,7 +154,7 @@ export function createProxyApp(deps: ProxyDeps): Hono {
     return c.json(jwks, 200, { "cache-control": "public, max-age=300" });
   });
 
-  const handle = (c: Context) => proxyCall(c, host, options, { upstream, cache, now });
+  const handle = (c: Context) => proxyCall(c, host, options, { upstream, cache, now, once });
   // Both shapes, because `/c/:id/*` alone does not match a bare `/c/:id` (the vendor's root). The
   // explicit host form is inside the wildcard and read out of the raw path by `routeOf`.
   app.all("/c/:connectionId", handle);
@@ -160,7 +164,12 @@ export function createProxyApp(deps: ProxyDeps): Hono {
 }
 
 /** What one app instance owns for the life of the process, handed to every call. */
-type Shared = { upstream: UpstreamFetch; cache: DerivedCredentialCache; now: () => number };
+type Shared = {
+  upstream: UpstreamFetch;
+  cache: DerivedCredentialCache;
+  now: () => number;
+  once: SingleFlight;
+};
 
 /** What the wide event learns as the call gets further; nulls for what it never reached. */
 type Trace = {
@@ -172,6 +181,8 @@ type Trace = {
   /** From the token once it verifies; the outcome once the call is intercepted or leaves. */
   dryRun: boolean;
   dryRunOutcome: DryRunOutcome | null;
+  /** What an authorization-code token did on this call; `forward` sets it (`ProxyEvent.oauth`). */
+  oauth: ProxyEvent["oauth"];
 };
 
 type Answered = {
@@ -225,6 +236,7 @@ async function proxyCall(
     host: null,
     dryRun: false,
     dryRunOutcome: null,
+    oauth: null,
   };
 
   let result: Refused | Answered | Intercepted;
@@ -429,6 +441,10 @@ async function decide(
     return source.unavailable(error, requestBytes);
   }
 
+  // The host keeps what a scheme rotates on the way to the vendor, under the scope it decrypts with
+  // (ADR 0005); a host that bound neither seam gets the refreshed token for this call alone.
+  const scope: CredentialScope = { personId: connection.personId, connectionId: connection.id };
+  const { storeCredential, credentialRefreshFailed } = deps;
   return forward(
     {
       headers,
@@ -441,6 +457,12 @@ async function decide(
       hosts: source.hosts,
       signal,
       trace,
+      rotation: {
+        store: storeCredential ? (fields) => storeCredential(scope, fields) : async () => undefined,
+        failed: credentialRefreshFailed
+          ? (detail) => credentialRefreshFailed(scope, detail)
+          : async () => undefined,
+      },
     },
     { method: call.method, url: target.url, body },
     requestBytes,
@@ -529,6 +551,11 @@ type Forwarding = {
   signal: AbortSignal;
   /** The event's running record; `forward` marks the moment a dry-run read leaves. */
   trace: Trace;
+  /** The host's two seams for a credential the scheme rotates, bound to this connection's scope. */
+  rotation: {
+    store: (fields: CredentialFields) => Promise<void>;
+    failed: (detail: { reason: string; upstreamStatus: number | null }) => Promise<void>;
+  };
 };
 
 /**
@@ -538,6 +565,12 @@ type Forwarding = {
  * becomes the next hop, and otherwise the body is read under the cap and the vendor's answer goes
  * back. Each step answers either what the next needs or a `Refused`, and the loop returns the first
  * refusal it meets.
+ *
+ * One credential is allowed to go out **stale**: an authorization-code token the scheme tried and
+ * failed to refresh (ADR 0005). The stored token is sent as it is and whatever the vendor answers —
+ * its 401, in the usual case — goes back untouched, so the agent's code reads the vendor's own
+ * refusal rather than the proxy's; the host is told the refresh failed, which is what turns the
+ * console's button into Reconnect, and the event says `oauth: refresh_failed`.
  */
 async function forward(
   forwarding: Forwarding,
@@ -546,13 +579,28 @@ async function forward(
 ): Promise<Refused | Answered> {
   const { headers, options, shared, plugin, config, credential, hosts, signal, trace } = forwarding;
   // The same deadline covers every hop and the token exchange — thirty seconds is the ceiling on
-  // how long a vendor may hold the agent's call, not a per-hop allowance.
+  // how long a vendor may hold the agent's call, not a per-hop allowance. `storeCredential` is
+  // reached only by the call that made the refresh — under single-flight the others await its
+  // result — so the event records the refresh on that one call.
   const runtime: SchemeRuntime = {
     connectionId: forwarding.connectionId,
     upstreamFetch: shared.upstream,
     signal,
     cache: shared.cache,
     now: shared.now,
+    once: shared.once,
+    storeCredential: async (fields) => {
+      trace.oauth = "refreshed";
+      await forwarding.rotation.store(fields);
+    },
+  };
+  // The two words the host may have, and never the stale record beside them on the same object.
+  const refreshFailed = async (stale: { reason: string; upstreamStatus: number | null }) => {
+    trace.oauth = "refresh_failed";
+    await forwarding.rotation.failed({
+      reason: stale.reason,
+      upstreamStatus: stale.upstreamStatus,
+    });
   };
 
   const deriveWire = (refresh: boolean) =>
@@ -561,10 +609,12 @@ async function forward(
   const derived = await deriveWire(false);
   if (derived.kind === "refused") return derived;
   let wire = derived.credential;
+  // A token that could not be refreshed before the call is not refreshed again after it either.
+  let refreshed = derived.kind === "stale";
+  if (derived.kind === "stale") await refreshFailed(derived);
 
   let hop = first;
   let hops = 0;
-  let refreshed = false;
   while (true) {
     const outgoing = applyScheme(hop, headers, plugin, wire, config, requestBytes);
     if (outgoing.kind === "refused") return outgoing;
@@ -579,15 +629,22 @@ async function forward(
     /**
      * A 401 against a derived credential is read as "the token died early" exactly once: the
      * scheme makes a fresh one and the same hop is sent again. A second 401 is the vendor's answer
-     * and passes through like any other — the agent's code sees it, verbatim.
+     * and passes through like any other — the agent's code sees it, verbatim. So does the first,
+     * when the scheme could not make a fresh one: the vendor's 401 is kept and returned below.
      */
     if (response.status === 401 && plugin.derive && !refreshed) {
       refreshed = true;
-      await discard(response);
       const fresh = await deriveWire(true);
-      if (fresh.kind === "refused") return fresh;
-      wire = fresh.credential;
-      continue;
+      if (fresh.kind === "refused") {
+        await discard(response);
+        return fresh;
+      }
+      if (fresh.kind === "wire") {
+        await discard(response);
+        wire = fresh.credential;
+        continue;
+      }
+      await refreshFailed(fresh);
     }
 
     const next = nextHop(response, hop, hosts, options, hops);

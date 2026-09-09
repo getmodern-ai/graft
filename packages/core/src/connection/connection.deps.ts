@@ -9,6 +9,7 @@ import {
   listConnections,
   revokeConnection,
   setConnectionCredential,
+  setConnectionOAuthState,
 } from "@graft/db/repo/connection";
 import { expirePendingActionsForConnection } from "@graft/db/repo/pending-action";
 import type { EncryptOnlyVault } from "@graft/vault";
@@ -26,6 +27,8 @@ export type ConnectionDeps = {
   findConnectionByIdUnscoped: typeof findConnectionByIdUnscoped;
   listConnections: typeof listConnections;
   setConnectionCredential: typeof setConnectionCredential;
+  /** The consent's non-secret state alone — a verifier written, a refusal marked (ADR 0005). */
+  setConnectionOAuthState: typeof setConnectionOAuthState;
   revokeConnection: typeof revokeConnection;
   /** A revoke's three sweeps (ADR 0007): every approval for the vendor's tools, every build approval, every open ask about the connection. */
   deleteApprovalsForVendor: typeof deleteApprovalsForVendor;
@@ -48,6 +51,7 @@ export function createConnectionDeps(vault: EncryptOnlyVault): ConnectionDeps {
     findConnectionByIdUnscoped,
     listConnections,
     setConnectionCredential,
+    setConnectionOAuthState,
     revokeConnection,
     deleteApprovalsForVendor,
     deleteBuildApprovalsForConnection,

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   validateCredentialFields,
   validateHostSet,
-  validateOAuthClient,
+  validateIssuedCredentialFields,
   validateSchemeConfig,
   validateVendor,
 } from "./connection.rules";
@@ -178,32 +178,106 @@ describe("validateCredentialFields", () => {
   });
 });
 
-describe("validateOAuthClient", () => {
-  it("accepts a client with https endpoints and trims the scopes", () => {
+/**
+ * The authorization-code scheme's parameters (ADR 0005): the two endpoints and the scopes the agent
+ * proposes from the documentation, and the client id only the person can supply — absent from a
+ * proposal, required at registration, one rule with two stages.
+ */
+describe("validateSchemeConfig for oauth_authorization_code", () => {
+  const proposed = {
+    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    scopes: "https://www.googleapis.com/auth/gmail.readonly",
+  };
+
+  it("lets a proposal omit the client id and requires it of a registration", () => {
     expect(
-      validateOAuthClient({
-        clientId: " client ",
-        authorizeUrl: "https://accounts.vendor.example/o/authorize",
-        tokenUrl: "https://oauth2.vendor.example/token",
-        scopes: ["mail.read", " mail.read ", ""],
+      validateSchemeConfig("oauth_authorization_code", proposed, { proposal: true }),
+    ).toBeNull();
+    expect(validateSchemeConfig("oauth_authorization_code", proposed)).toContain("clientId");
+    expect(
+      validateSchemeConfig("oauth_authorization_code", { ...proposed, clientId: "client-id" }),
+    ).toBeNull();
+    expect(
+      validateSchemeConfig("oauth_authorization_code", {
+        ...proposed,
+        clientId: "client-id",
+        clientAuth: "basic",
       }),
-    ).toEqual({
-      ok: true,
-      clientId: "client",
-      authorizeUrl: "https://accounts.vendor.example/o/authorize",
-      tokenUrl: "https://oauth2.vendor.example/token",
-      scopes: ["mail.read"],
-    });
+    ).toBeNull();
   });
 
-  it("refuses an empty client id and a non-https or private endpoint", () => {
-    const base = {
-      clientId: "c",
-      authorizeUrl: "https://a.example.com/x",
-      tokenUrl: "https://t.example.com/y",
-    };
-    expect(validateOAuthClient({ ...base, clientId: " " }).ok).toBe(false);
-    expect(validateOAuthClient({ ...base, authorizeUrl: "http://a.example.com/x" }).ok).toBe(false);
-    expect(validateOAuthClient({ ...base, tokenUrl: "https://192.168.1.1/y" }).ok).toBe(false);
+  it("holds both endpoints to https on a public host, clientAuth to its two values, and refuses unknown parameters", () => {
+    const registered = { ...proposed, clientId: "client-id" };
+    expect(
+      validateSchemeConfig("oauth_authorization_code", {
+        ...registered,
+        authorizeUrl: "http://accounts.google.com/o/oauth2/v2/auth",
+      }),
+    ).toContain("authorize URL must use https");
+    expect(
+      validateSchemeConfig("oauth_authorization_code", {
+        ...registered,
+        tokenUrl: "https://10.0.0.1/token",
+      }),
+    ).toContain("not a public host");
+    expect(
+      validateSchemeConfig("oauth_authorization_code", { ...registered, clientAuth: "header" }),
+    ).toContain("clientAuth");
+    expect(
+      validateSchemeConfig("oauth_authorization_code", { ...registered, clientSecret: "s" }),
+    ).toContain("takes no clientSecret");
+  });
+
+  it("does not let a proposal omit a parameter the agent is meant to propose", () => {
+    expect(
+      validateSchemeConfig(
+        "oauth_authorization_code",
+        { tokenUrl: proposed.tokenUrl },
+        { proposal: true },
+      ),
+    ).toContain("authorizeUrl");
+  });
+});
+
+describe("validateIssuedCredentialFields", () => {
+  const record = {
+    clientSecret: "s",
+    accessToken: "a",
+    refreshToken: "r",
+    expiresAt: "2026-09-09T11:00:00.000Z",
+  };
+
+  it("accepts the client secret beside the issued fields, with the refresh token and expiry optional", () => {
+    expect(validateIssuedCredentialFields("oauth_authorization_code", record)).toBeNull();
+    expect(
+      validateIssuedCredentialFields("oauth_authorization_code", {
+        clientSecret: "s",
+        accessToken: "a",
+      }),
+    ).toBeNull();
+  });
+
+  it("needs the access token and the client secret, refuses a field from neither table, and a scheme that issues nothing", () => {
+    expect(
+      validateIssuedCredentialFields("oauth_authorization_code", { clientSecret: "s" }),
+    ).toContain("accessToken");
+    expect(
+      validateIssuedCredentialFields("oauth_authorization_code", { accessToken: "a" }),
+    ).toContain("clientSecret");
+    expect(
+      validateIssuedCredentialFields("oauth_authorization_code", { ...record, idToken: "x" }),
+    ).toContain("takes no idToken");
+    expect(
+      validateIssuedCredentialFields("oauth_authorization_code", { ...record, accessToken: "" }),
+    ).toContain("accessToken");
+    expect(validateIssuedCredentialFields("bearer", { token: "t" })).toContain("issues no");
+  });
+
+  it("the entry rule still refuses what only a consent may write", () => {
+    expect(
+      validateCredentialFields("oauth_authorization_code", { clientSecret: "s", accessToken: "a" }),
+    ).toContain("takes no accessToken");
+    expect(validateCredentialFields("oauth_authorization_code", { clientSecret: "s" })).toBeNull();
   });
 });

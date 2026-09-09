@@ -12,6 +12,7 @@ import {
   getPendingActionForPerson,
   getToolById,
   grantBuildApproval,
+  isOAuthAuthorizationCode,
   type LedgerDeps,
   listAgents,
   listApprovals,
@@ -63,6 +64,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
+import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
+
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
  * names oRPC for later; nothing here would change but the transport). Every route resolves the
@@ -85,6 +88,17 @@ import { z } from "zod";
  * its credential and gives it to that agent alone, `POST /pending-actions/:id/credential` re-enters
  * an existing connection's. The secret travels in the request body to the vault and nowhere else —
  * never logged, never echoed, never on the action or its answer, which names the connection only.
+ *
+ * **An authorization-code connection has one more step** (GRA-30; ADR 0005). What the person enters
+ * on the form is the client id and secret of a client they registered at the vendor; the tokens come
+ * from a consent that runs in a popup. So the three routes that store a credential — `POST
+ * /connections`, and the two submits above — start the consent when the scheme is
+ * `oauth_authorization_code` and answer `authorizeUrl` beside the connection, and the two submits
+ * leave the ask **unanswered**: the callback (`oauth.ts`) answers it with `{ connectionId }` once
+ * the tokens are stored, so the waiting `request_connection` says connected when the agent can
+ * actually call the vendor. `POST /connections/:id/oauth/authorize-url` starts a consent on its own
+ * — the console's Connect and Reconnect — and `GET /oauth/redirect-uri` and `GET /oauth/callback`
+ * are the consent's two ends.
  */
 
 /** The slice of Better Auth the API reads — structural, so a test fakes it without a database. */
@@ -114,6 +128,13 @@ export type ApiOptions = {
   corsOrigins: readonly string[];
   /** What signs and roots a handoff URL (`@graft/mcp`'s `handoff.ts`) — the console's URL and the secret. */
   handoff: Pick<HandoffConfig, "consoleUrl" | "secret">;
+  /**
+   * The consent's configuration (`oauth.ts`; ADR 0005): the server's origin the redirect URI is
+   * built on and the vault's decrypt half the callback exchanges the code with. Optional so a harness
+   * with no OAuth in it binds nothing; `index.ts` always binds it, and a route that needs it without
+   * it refuses with a sentence saying so.
+   */
+  oauth?: OAuthOptions;
 };
 
 /**
@@ -168,14 +189,6 @@ const registrationBody = z.object({
 });
 
 const connectionBody = registrationBody.extend({
-  oauth: z
-    .object({
-      clientId: z.string(),
-      authorizeUrl: z.string(),
-      tokenUrl: z.string(),
-      scopes: z.array(z.string()).optional(),
-    })
-    .optional(),
   /** With it, the connection is registered with its credential in one transaction (GRA-28's Add connection). */
   credential: credentialFields.optional(),
 });
@@ -185,6 +198,9 @@ const credentialBody = z.object({ fields: credentialFields });
 /** GRA-28's submit for a `connection` ask: the proposal as the person edited it, and the secret. */
 const connectionSubmitBody = registrationBody.extend({ credential: credentialFields });
 const credentialSubmitBody = z.object({ credential: credentialFields });
+
+/** Start a consent on an existing connection, answering an open ask about it when one is named. */
+const authorizeUrlBody = z.object({ pendingActionId: z.string().optional() });
 
 /** How much history one page of the console's working-set view reads; bounded so a query cannot ask for all of it. */
 export const WORKING_SET_CHANGES_DEFAULT_LIMIT = 50;
@@ -352,6 +368,47 @@ export function createApi(options: ApiOptions): Hono {
   const principalOf = async (headers: Headers) =>
     requirePerson(await options.auth.getSession(headers));
 
+  /** What `beginConsent` needs; a harness that bound no `oauth` cannot start one and is told so. */
+  const oauthOptions = () => {
+    if (!options.oauth) {
+      throw new ServiceError(
+        "BAD_REQUEST",
+        "This server has no OAuth configuration, so a consent cannot be started",
+      );
+    }
+    return { connection: connectionDeps, handoff, oauth: options.oauth };
+  };
+
+  /**
+   * An authorization-code connection's next step once its client secret is stored: the consent,
+   * started here so the route's answer carries the authorize URL (ADR 0005). Null for every other
+   * scheme, whose credential is complete as entered.
+   */
+  const consentFor = async (
+    scoped: ServiceContext,
+    principal: Principal,
+    connectionId: string,
+    scheme: string,
+    pendingActionId: string | null,
+  ) =>
+    isOAuthAuthorizationCode(scheme)
+      ? beginConsent(scoped, principal, connectionId, pendingActionId, oauthOptions())
+      : null;
+
+  if (options.oauth) {
+    api.route(
+      "/oauth",
+      createOAuthRoutes({
+        db: options.deps.db,
+        connection: connectionDeps,
+        pendingAction: pendingActionDeps,
+        getSession: options.auth.getSession,
+        handoff,
+        oauth: options.oauth,
+      }),
+    );
+  }
+
   /** `?agentId=` on the approval routes — an approval is per agent, and the path names the tool. */
   const agentIdOf = (query: string | undefined): string => {
     if (!query) throw new ServiceError("BAD_REQUEST", "agentId is required as a query parameter");
@@ -517,15 +574,62 @@ export function createApi(options: ApiOptions): Hono {
   api.post("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const { credential, ...registration } = await parseBody(c.req.raw, connectionBody);
-    const connection = credential
-      ? await registerConnectionWithCredential(
-          ctx,
-          principal,
-          { ...registration, credential },
-          connectionDeps,
-        )
-      : await registerConnection(ctx, principal, registration, connectionDeps);
-    return c.json({ connection }, 201);
+    if (!credential) {
+      const connection = await registerConnection(ctx, principal, registration, connectionDeps);
+      return c.json({ connection }, 201);
+    }
+    // With a credential: the row, its ciphertext and — for an authorization-code connection — the
+    // consent's start, in one transaction, so the answer carries the authorize URL to open.
+    const result = await ctx.db.transaction(async (tx) => {
+      const scoped: ServiceContext = { db: tx };
+      const connection = await registerConnectionWithCredential(
+        scoped,
+        principal,
+        { ...registration, credential },
+        connectionDeps,
+      );
+      const consent = await consentFor(scoped, principal, connection.id, connection.scheme, null);
+      return consent
+        ? { connection: consent.connection, authorizeUrl: consent.authorizeUrl }
+        : { connection };
+    });
+    return c.json(result, 201);
+  });
+
+  /**
+   * Start — or start again — the consent of an authorization-code connection (ADR 0005): the
+   * console's Connect after entering the client secret, and its Reconnect after a refused refresh.
+   * Answers the authorize URL to open in a popup and until when the callback accepts it. With
+   * `pendingActionId`, the consent answers that ask when it completes: the ask must be the person's,
+   * open, and — for a credential re-entry — about this connection.
+   */
+  api.post("/connections/:id/oauth/authorize-url", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, authorizeUrlBody);
+    const connectionId = c.req.param("id");
+    let pendingActionId: string | null = null;
+    if (body.pendingActionId) {
+      const action = await openAction(ctx, principal, body.pendingActionId);
+      if (action.kind !== CONNECTION_ASK_KIND && action.kind !== CREDENTIAL_ASK_KIND) {
+        throw new ServiceError("BAD_REQUEST", `A ${action.kind} ask is not answered by a consent`);
+      }
+      if (action.kind === CREDENTIAL_ASK_KIND && action.payload.connectionId !== connectionId) {
+        throw new ServiceError("BAD_REQUEST", "This ask is about another connection");
+      }
+      pendingActionId = action.id;
+    }
+    const started = await beginConsent(
+      ctx,
+      principal,
+      connectionId,
+      pendingActionId,
+      oauthOptions(),
+    );
+    return c.json({
+      authorizeUrl: started.authorizeUrl,
+      expiresAt: started.expiresAt,
+      connection: started.connection,
+    });
   });
 
   api.get("/connections/:id", async (c) => {
@@ -720,6 +824,32 @@ export function createApi(options: ApiOptions): Hono {
    * is written. The answer's own predicate refuses again inside the transaction, so two submits of
    * one link make one connection and the second is told so.
    */
+  /** Unanswered, untaken and in time — or the answer route's own refusal (409, 410). */
+  const refuseUnlessOpen = (row: PendingActionRow): PendingActionRow => {
+    if (row.answeredAt || row.consumedAt) {
+      throw new ServiceError("CONFLICT", "This action has already been answered");
+    }
+    if (row.expiresAt.getTime() <= pendingActionDeps.now().getTime()) {
+      throw new ServiceError(
+        "GONE",
+        "This action has expired — the agent will ask again if it still needs to",
+      );
+    }
+    return row;
+  };
+
+  const openAction = async (
+    scoped: ServiceContext,
+    principal: Principal,
+    id: string,
+  ): Promise<PendingActionRow> =>
+    refuseUnlessOpen(
+      orNotFound(
+        await getPendingActionForPerson(scoped, principal, id, pendingActionDeps),
+        "Pending action not found",
+      ),
+    );
+
   const openActionOfKind = async (
     scoped: ServiceContext,
     principal: Principal,
@@ -733,16 +863,7 @@ export function createApi(options: ApiOptions): Hono {
     if (row.kind !== kind) {
       throw new ServiceError("BAD_REQUEST", `This action is a ${row.kind} ask, not a ${kind} one`);
     }
-    if (row.answeredAt || row.consumedAt) {
-      throw new ServiceError("CONFLICT", "This action has already been answered");
-    }
-    if (row.expiresAt.getTime() <= pendingActionDeps.now().getTime()) {
-      throw new ServiceError(
-        "GONE",
-        "This action has expired — the agent will ask again if it still needs to",
-      );
-    }
-    return row;
+    return refuseUnlessOpen(row);
   };
 
   /**
@@ -768,6 +889,23 @@ export function createApi(options: ApiOptions): Hono {
         connectionDeps,
       );
       await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, agentDeps);
+      // An authorization-code connection is not connected until the consent completes: the ask
+      // stays open and the callback answers it (`oauth.ts`), so the agent's call says connected only
+      // when the vendor can be called (ADR 0005).
+      const consent = await consentFor(
+        scoped,
+        principal,
+        connection.id,
+        connection.scheme,
+        action.id,
+      );
+      if (consent) {
+        return {
+          connection: consent.connection,
+          pendingAction: action,
+          authorizeUrl: consent.authorizeUrl,
+        };
+      }
       const pendingAction = await answerPendingAction(
         scoped,
         principal,
@@ -804,6 +942,21 @@ export function createApi(options: ApiOptions): Hono {
         body.credential,
         connectionDeps,
       );
+      // A re-entered client secret is followed by a consent, and the callback answers the ask.
+      const consent = await consentFor(
+        scoped,
+        principal,
+        connection.id,
+        connection.scheme,
+        action.id,
+      );
+      if (consent) {
+        return {
+          connection: consent.connection,
+          pendingAction: action,
+          authorizeUrl: consent.authorizeUrl,
+        };
+      }
       const pendingAction = await answerPendingAction(
         scoped,
         principal,

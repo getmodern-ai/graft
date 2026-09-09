@@ -1731,6 +1731,7 @@ describe("the wide event", () => {
     "redirectHops",
     "dryRun",
     "dryRunOutcome",
+    "oauth",
     "credentialEchoed",
     "failure",
   ].sort();
@@ -2297,5 +2298,307 @@ describe("snowflake_keypair_jwt through the proxy", () => {
     expect(h.forwarded[0]?.headers.get("api-auth-signature")).toBe(
       createHmac("sha256", "unleashed-example-api-key").update("pageSize=1").digest("base64"),
     );
+  });
+});
+
+/**
+ * The authorization-code scheme through the ladder (ADR 0005): the stored token injected and the
+ * capability token stripped; an expired token refreshed once under two concurrent calls, the
+ * rotated record handed to the host's `storeCredential` once, and the refresh recorded on the one
+ * event that made it; a vendor 401 refreshed and retried once; a refresh the endpoint refuses
+ * letting the vendor's own 401 through untouched while `credentialRefreshFailed` marks the
+ * connection for re-consent; a connection awaiting consent refused before the vendor is asked.
+ */
+describe("oauth_authorization_code through the proxy", () => {
+  const TOKEN_URL = "https://oauth2.vendor.example/token";
+  const T0 = Date.parse("2026-09-09T10:00:00Z");
+  const EXPIRES_AT = new Date(T0 + 3600_000).toISOString();
+  const STORED = {
+    clientSecret: "client-secret-value",
+    accessToken: "access-1",
+    refreshToken: "refresh-1",
+    expiresAt: EXPIRES_AT,
+  };
+  const AUTH_CODE: ProxyConnection = {
+    ...CONNECTION,
+    id: "conn_a",
+    authScheme: "oauth_authorization_code",
+    primaryHost: "https://gmail.googleapis.com",
+    hosts: ["gmail.googleapis.com"],
+    schemeConfig: {
+      clientId: "client-id-value",
+      authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+      tokenUrl: TOKEN_URL,
+      scopes: "https://www.googleapis.com/auth/gmail.readonly",
+    },
+    credentialCiphertext: cipherFor("conn_a"),
+  };
+
+  const isTokenRequest = (request: UpstreamRequest) => request.url === TOKEN_URL;
+
+  function authCodeHarness(
+    vendor: (request: UpstreamRequest, token: string | null) => UpstreamResponse,
+    options: {
+      credential?: Record<string, string>;
+      now?: () => number;
+      token?: (issued: number) => UpstreamResponse | Promise<UpstreamResponse>;
+      storeCredential?: ProxyDeps["storeCredential"];
+    } = {},
+  ) {
+    const stored: {
+      scope: { personId: string; connectionId: string };
+      fields: Record<string, string>;
+    }[] = [];
+    const failed: { scope: { personId: string; connectionId: string }; detail: unknown }[] = [];
+    const h = harness({}, AUTH_CODE, {
+      now: options.now ?? (() => T0),
+      storeCredential:
+        options.storeCredential ??
+        (async (scope, fields) => {
+          stored.push({ scope, fields: { ...fields } });
+        }),
+      credentialRefreshFailed: async (scope, detail) => {
+        failed.push({ scope, detail });
+      },
+    });
+    h.credentials.set("cipher:conn_a", options.credential ?? STORED);
+    let issued = 0;
+    h.respond((request) => {
+      if (isTokenRequest(request)) {
+        issued += 1;
+        return options.token
+          ? options.token(issued)
+          : new Response(
+              JSON.stringify({
+                access_token: `access-${issued + 1}`,
+                token_type: "Bearer",
+                expires_in: 3600,
+                refresh_token: `refresh-${issued + 1}`,
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+      }
+      const authorization = request.headers.get("authorization");
+      return vendor(request, authorization ? authorization.replace(/^Bearer /, "") : null);
+    });
+    return {
+      ...h,
+      stored,
+      failed,
+      tokenRequests: () => h.forwarded.filter(isTokenRequest),
+      vendorCalls: () => h.forwarded.filter((r) => !isTokenRequest(r)),
+    };
+  }
+
+  const messages = { messages: [{ id: "m1", threadId: "t1" }] };
+
+  it("sends the stored access token as Bearer and nothing else, and asks the token endpoint for nothing while it is good", async () => {
+    const h = authCodeHarness(() => jsonResponse(messages));
+
+    const res = await h.app.request("/c/conn_a/gmail/v1/users/me/messages", {
+      headers: { ...bearer(GOOD), "x-api-key": GOOD },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(messages);
+    expect(h.tokenRequests()).toHaveLength(0);
+    const call = h.vendorCalls()[0];
+    expect(call?.url).toBe("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+    expect(call?.headers.get("authorization")).toBe("Bearer access-1");
+    expect(wire(call)).not.toContain(GOOD);
+    expect(h.events[0]).toMatchObject({ outcome: "forwarded", oauth: null });
+    expect(h.stored).toHaveLength(0);
+  });
+
+  it("an expired token is refreshed once under two concurrent calls, stored once under the connection's scope, and recorded on the call that made it", async () => {
+    const h = authCodeHarness(() => jsonResponse(messages), {
+      now: () => T0 + 7200_000,
+      token: async (issued) => {
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        return new Response(
+          JSON.stringify({ access_token: `access-${issued + 1}`, expires_in: 3600 }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const [first, second] = await Promise.all([
+      h.app.request("/c/conn_a/gmail/v1/users/me/messages", { headers: bearer(GOOD) }),
+      h.app.request("/c/conn_a/gmail/v1/users/me/messages/m1", { headers: bearer(GOOD) }),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(h.tokenRequests()).toHaveLength(1);
+    expect(h.vendorCalls().map((r) => r.headers.get("authorization"))).toEqual([
+      "Bearer access-2",
+      "Bearer access-2",
+    ]);
+    expect(h.stored).toEqual([
+      {
+        scope: { personId: PERSON, connectionId: "conn_a" },
+        fields: {
+          clientSecret: "client-secret-value",
+          accessToken: "access-2",
+          refreshToken: "refresh-1",
+          expiresAt: new Date(T0 + 7200_000 + 3600_000).toISOString(),
+        },
+      },
+    ]);
+    expect(h.events.map((e) => e.oauth).sort()).toEqual([null, "refreshed"]);
+    expect(h.failed).toHaveLength(0);
+  });
+
+  it("a vendor 401 buys a fresh token and retries the same call once; a second 401 is the vendor's answer", async () => {
+    const h = authCodeHarness((request, token) =>
+      token === "access-1"
+        ? new Response('{"error":"expired"}', { status: 401 })
+        : jsonResponse({ ok: true, path: new URL(request.url).pathname }),
+    );
+
+    const res = await h.app.request("/c/conn_a/gmail/v1/users/me/profile", {
+      headers: bearer(GOOD),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, path: "/gmail/v1/users/me/profile" });
+    expect(h.tokenRequests()).toHaveLength(1);
+    expect(h.vendorCalls().map((r) => r.headers.get("authorization"))).toEqual([
+      "Bearer access-1",
+      "Bearer access-2",
+    ]);
+    expect(h.stored.map((s) => s.fields.accessToken)).toEqual(["access-2"]);
+    expect(h.events[0]).toMatchObject({
+      outcome: "forwarded",
+      upstreamStatus: 200,
+      oauth: "refreshed",
+    });
+
+    const again = await h.app.request("/c/conn_a/gmail/v1/users/me/profile", {
+      headers: bearer(GOOD),
+    });
+    expect(again.status).toBe(200);
+    expect(h.tokenRequests()).toHaveLength(1);
+  });
+
+  it("a refresh the endpoint refuses lets the vendor's 401 through untouched, marks the connection for re-consent, and says refresh_failed", async () => {
+    const vendorBody = {
+      error: { code: 401, message: "Invalid Credentials", status: "UNAUTHENTICATED" },
+    };
+    const h = authCodeHarness(
+      () =>
+        new Response(JSON.stringify(vendorBody), {
+          status: 401,
+          headers: {
+            "content-type": "application/json",
+            "www-authenticate": 'Bearer realm="vendor"',
+          },
+        }),
+      {
+        token: () =>
+          new Response(JSON.stringify({ error: "invalid_grant", client_id: "client-id-value" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          }),
+      },
+    );
+
+    const res = await h.app.request("/c/conn_a/gmail/v1/users/me/messages", {
+      headers: bearer(GOOD),
+    });
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual(vendorBody);
+    expect(res.headers.get("www-authenticate")).toBe('Bearer realm="vendor"');
+    expect(h.tokenRequests()).toHaveLength(1);
+    expect(h.vendorCalls()).toHaveLength(1);
+    expect(h.failed).toEqual([
+      {
+        scope: { personId: PERSON, connectionId: "conn_a" },
+        detail: { reason: expect.stringContaining("could not be refreshed"), upstreamStatus: 400 },
+      },
+    ]);
+    expect(String(h.failed[0]?.detail)).not.toContain("invalid_grant");
+    expect(h.stored).toHaveLength(0);
+    expect(h.events[0]).toMatchObject({
+      outcome: "forwarded",
+      status: 401,
+      upstreamStatus: 401,
+      oauth: "refresh_failed",
+    });
+  });
+
+  it("a token past its expiry whose refresh fails is still sent once, so the vendor's answer is the caller's", async () => {
+    const h = authCodeHarness(
+      (_request, token) =>
+        token === "access-1"
+          ? new Response('{"error":"expired"}', { status: 401 })
+          : jsonResponse({ ok: true }),
+      {
+        now: () => T0 + 7200_000,
+        token: () => new Response('{"error":"invalid_grant"}', { status: 400 }),
+      },
+    );
+
+    const res = await h.app.request("/c/conn_a/gmail/v1/users/me/messages", {
+      headers: bearer(GOOD),
+    });
+
+    expect(res.status).toBe(401);
+    expect(h.tokenRequests()).toHaveLength(1);
+    expect(h.vendorCalls().map((r) => r.headers.get("authorization"))).toEqual(["Bearer access-1"]);
+    expect(h.failed).toHaveLength(1);
+    expect(h.events[0]).toMatchObject({ oauth: "refresh_failed", upstreamStatus: 401 });
+  });
+
+  it("a connection awaiting the person's consent is refused consent_required before the vendor is asked", async () => {
+    const h = authCodeHarness(() => jsonResponse(messages), {
+      credential: { clientSecret: "client-secret-value" },
+    });
+
+    const res = await h.app.request("/c/conn_a/gmail/v1/users/me/messages", {
+      headers: bearer(GOOD),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await body(res)).toMatchObject({ error: "conflict", reason: "consent_required" });
+    expect(h.forwarded).toHaveLength(0);
+    expect(h.events[0]).toMatchObject({ outcome: "consent_required", status: 409, oauth: null });
+  });
+
+  it("a dry-run write previews the Authorization header without a decrypt, a token request or a refresh", async () => {
+    const h = authCodeHarness(() => jsonResponse(messages), { now: () => T0 + 7200_000 });
+
+    const res = await h.app.request("/c/conn_a/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: bearer(DRY),
+      body: '{"raw":"..."}',
+    });
+
+    expect(res.status).toBe(202);
+    const preview = (await res.json()) as { request: { headerNames: string[] } };
+    expect(preview.request.headerNames).toContain("authorization");
+    expect(h.forwarded).toHaveLength(0);
+    expect(h.stored).toHaveLength(0);
+  });
+
+  it("a store seam that throws is the proxy's error, on the event by class name and never by message", async () => {
+    const h = authCodeHarness(() => jsonResponse(messages), {
+      now: () => T0 + 7200_000,
+      storeCredential: async () => {
+        throw new Error("disk full while writing client-secret-value");
+      },
+    });
+
+    const res = await h.app.request("/c/conn_a/gmail/v1/users/me/messages", {
+      headers: bearer(GOOD),
+    });
+
+    expect(res.status).toBe(500);
+    expect(await body(res)).toMatchObject({ reason: "proxy_error" });
+    expect(h.events[0]?.failure).toContain("HostDependencyError");
+    expect(h.events[0]?.failure).toContain("storeCredential");
+    expect(h.events[0]?.failure).not.toContain("disk full");
+    expect(h.events[0]?.failure).not.toContain("client-secret-value");
   });
 });

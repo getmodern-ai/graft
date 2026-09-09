@@ -1,5 +1,5 @@
 import { deriveRefusal, type Refused, refuse } from "./failure";
-import type { SchemePlugin } from "./schemes";
+import { CredentialRefreshError, type SchemePlugin } from "./schemes";
 import type {
   AuthScheme,
   CredentialFields,
@@ -90,16 +90,25 @@ export function tryUrl(text: string): URL | null {
   }
 }
 
-/** The credential as it goes on the wire, or the refusal deriving it earned. */
-export type WireCredential = { kind: "wire"; credential: CredentialFields } | Refused;
+/**
+ * The credential as it goes on the wire, or the refusal deriving it earned — or, third, the stored
+ * credential sent **stale**: an authorization-code token the scheme could not refresh, sent as it is
+ * so the vendor's own answer reaches the caller, with why the refresh failed for the host to record
+ * (ADR 0005; `schemes.ts`, `CredentialRefreshError`).
+ */
+export type WireCredential =
+  | { kind: "wire"; credential: CredentialFields }
+  | { kind: "stale"; credential: CredentialFields; reason: string; upstreamStatus: number | null }
+  | Refused;
 
 /**
  * The wire credential: what the row holds, or what the scheme derives from it. A scheme with no
  * `derive` sends what it holds. One with a `derive` is handed the cache through `runtime` and
  * answers from it while the entry lives; `refresh: true` is the 401 retry, where the plugin must
  * not answer from the cache because the vendor just refused what the cache held (`schemes.ts` has
- * the contract). A failed derive is the refusal `deriveRefusal` names; anything else it throws is
- * the proxy's own bug and propagates.
+ * the contract). A failed derive is the refusal `deriveRefusal` names — except a refresh the vendor
+ * refused, which is not a refusal at all but the stored credential going out stale; anything else it
+ * throws is the proxy's own bug and propagates.
  */
 export async function wireCredential(
   plugin: SchemePlugin,
@@ -113,6 +122,14 @@ export async function wireCredential(
   try {
     return { kind: "wire", credential: await plugin.derive(credential, config, runtime, options) };
   } catch (error) {
+    if (error instanceof CredentialRefreshError && error.reason === "refresh_failed") {
+      return {
+        kind: "stale",
+        credential,
+        reason: error.message,
+        upstreamStatus: error.upstreamStatus,
+      };
+    }
     return deriveRefusal(error, requestBytes);
   }
 }

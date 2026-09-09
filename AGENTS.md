@@ -135,6 +135,22 @@ handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTIO
 24) how long that action stays answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the
 rules as code.
 
+**An OAuth consent (ADR 0005) adds no variable and two routes.** `GET /api/oauth/redirect-uri` is
+`GRAFT_AUTH_URL` plus `/api/oauth/callback`, computed by one function (`@graft/core`'s
+`oauthRedirectUri`) that both the form and the callback's mount read, so the URI shown is the URI
+served in both deployment forms — a person registering a Google client pastes it as the redirect
+URI. `GET /api/oauth/callback` takes the vendor's `code` and `state` **with no session**: the state is
+an HMAC under `GRAFT_HANDOFF_SECRET` over the connection, the person and the ask, so the browser that
+arrives from the vendor carries its own authority. `apps/server/src/oauth.ts` is the **second place
+this server decrypts a credential** — the client secret, for the code exchange — beside the proxy
+binding in `app.ts`; `@graft/core` still takes the vault's encrypt half only. The token refresh runs
+in the proxy's scheme plugin, single-flight per connection, and stores the rotated record through
+`ProxyDeps.storeCredential` (`apps/server/src/connections.ts` binds it); a refused refresh passes the
+vendor's 401 through and marks the connection for re-consent. An `oauth_authorization_code`
+connection keeps its client id, endpoints and scopes in `scheme_config` and the client secret and the
+issued tokens in one `credential_ciphertext`; the five `oauth_*` columns from GRA-6 other than
+`oauth_refresh_state` are unwritten and await a drop migration.
+
 `GRAFT_BACKINGS` picks the backing behind each seam (ADR 0002; `apps/server/src/backings.ts`).
 `open`, the default, is what this repository holds — the sandbox `GRAFT_SANDBOX_BACKEND` names, the
 local keyring, a mirror that copies nothing — and is also the self-hosted form in production.

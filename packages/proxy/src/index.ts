@@ -20,10 +20,30 @@
  * the tables a host — or the console's bundle — takes without the Hono app.
  */
 export { createProxyApp, DEFAULT_PROXY_OPTIONS, HOST_SEGMENT_MARKER, proxyPathFor } from "./app";
-export { SCHEME_CREDENTIAL_FIELDS, SCHEME_OPTIONAL_CREDENTIAL_FIELDS } from "./credential-fields";
+export {
+  SCHEME_CREDENTIAL_FIELDS,
+  SCHEME_ISSUED_CREDENTIAL_FIELDS,
+  SCHEME_OPTIONAL_CREDENTIAL_FIELDS,
+} from "./credential-fields";
 export { DRY_RUN_HEADER, DRY_RUN_PREVIEW_STATUS, isSafeMethod } from "./dry-run";
 export { CREDENTIAL_REDACTED, REDACTED_CREDENTIAL, REDACTED_HEADER } from "./echo";
-export { SCHEME_PARAMETERS, type SchemeParameterRule } from "./scheme-parameters";
+export {
+  type ClientAuth,
+  clientAuthOf,
+  isTokenExpiring,
+  OAUTH2_TOKEN_SKEW_MS,
+  requestToken,
+  type TokenRequest,
+  type TokenResponse,
+  tokenEndpointOf,
+  tokenExpiresAt,
+} from "./oauth";
+export { CredentialRefreshError, DerivedCredentialError } from "./scheme-errors";
+export {
+  requiredParametersOf,
+  SCHEME_PARAMETERS,
+  type SchemeParameterRule,
+} from "./scheme-parameters";
 export { SNOWFLAKE_TOKEN_TYPE_HEADER, UNLEASHED_CLIENT_TYPE } from "./schemes";
 export { INBOUND_AUTH_HEADERS, TOKEN_HEADERS } from "./token";
 export type {
@@ -41,3 +61,4 @@ export type {
   UpstreamRequest,
 } from "./types";
 export { AUTH_SCHEMES } from "./types";
+export { createUpstreamFetch } from "./upstream";

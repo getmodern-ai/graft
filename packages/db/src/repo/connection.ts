@@ -79,11 +79,48 @@ export async function setConnectionCredential(
   db: DbOrTx,
   personId: string,
   id: string,
-  args: { ciphertext: Buffer; setAt: Date },
+  args: {
+    ciphertext: Buffer;
+    setAt: Date;
+    /**
+     * The authorization-code state written in the same statement as the record it describes
+     * (ADR 0005): the tokens' expiry when a consent or a refresh wrote them, null when the person
+     * re-entered the client secret and the old tokens went with it. Omitted, the column is left as
+     * it is — a key-shaped scheme never touches it.
+     */
+    oauthRefreshState?: Record<string, unknown> | null;
+  },
 ): Promise<ConnectionRow | null> {
   const [row] = await db
     .update(connection)
-    .set({ credentialCiphertext: args.ciphertext, credentialSetAt: args.setAt, revokedAt: null })
+    .set({
+      credentialCiphertext: args.ciphertext,
+      credentialSetAt: args.setAt,
+      revokedAt: null,
+      ...(args.oauthRefreshState === undefined
+        ? {}
+        : { oauthRefreshState: args.oauthRefreshState }),
+    })
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Replace an authorization-code connection's non-secret state alone — a consent started (the PKCE
+ * verifier written for the callback to read), a refresh refused (the mark the console turns into
+ * Reconnect). The credential is not touched: those two moments change what is known about the
+ * tokens, not the tokens (ADR 0005). Null means no such connection for this person.
+ */
+export async function setConnectionOAuthState(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+  state: Record<string, unknown> | null,
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .update(connection)
+    .set({ oauthRefreshState: state })
     .where(and(eq(connection.id, id), eq(connection.personId, personId)))
     .returning();
   return row ?? null;

@@ -7,6 +7,8 @@ import {
   getConnection,
   getPendingAction,
   HOST_NOT_PUBLIC,
+  isConnectionUsable,
+  isOAuthAuthorizationCode,
   listConnections,
   type ServiceContext,
   ServiceError,
@@ -110,6 +112,12 @@ export type AwaitingHandoff = {
   url: string;
   expiresAt: string;
   message: string;
+  /**
+   * For an authorization-code proposal (ADR 0005): the redirect URI the person pastes into the
+   * client they register at the vendor — the agent is the guide, and this is the one value it has
+   * to relay exactly. Absent for every other scheme.
+   */
+  redirectUri?: string;
 };
 
 export type ConnectionRequestOutcome =
@@ -138,8 +146,12 @@ export function describeSchemes(): string {
         ...rule.required,
         ...rule.optional.map((parameter) => `optional ${parameter}`),
       ];
-      const secrets = SCHEME_CREDENTIAL_FIELDS[scheme].join(", ");
-      return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${secrets})`;
+      // What the person supplies on the form: the scheme's secret fields, and the parameters only
+      // they can know — an OAuth client id (ADR 0005), which the proposal leaves out.
+      const entered = [...(rule.personEntered ?? []), ...SCHEME_CREDENTIAL_FIELDS[scheme]].join(
+        ", ",
+      );
+      return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${entered})`;
     })
     .join("; ");
 }
@@ -250,7 +262,8 @@ export function normaliseProposal(input: ConnectionProposalInput): ProposalVerdi
     );
   }
   const schemeConfig = input.schemeConfig ?? {};
-  const configProblem = validateSchemeConfig(input.scheme, schemeConfig);
+  // A proposal: the person-entered parameters — an OAuth client id — may be absent (ADR 0005).
+  const configProblem = validateSchemeConfig(input.scheme, schemeConfig, { proposal: true });
   if (configProblem) return invalid(configProblem, { field: "schemeConfig" });
   const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
   if (!hostSet.ok) {
@@ -344,11 +357,12 @@ export async function requestConnection(
       getAgentScope(ctx, scope, deps.agent),
       listConnections(ctx, principal, deps.connection),
     ]);
+    // Usable, not merely present: an authorization-code connection whose consent has not completed
+    // is not one the agent can call through (ADR 0005), so the ask proceeds.
     const existing = connections.find(
       (connection) =>
         scopeIds.includes(connection.id) &&
-        connection.revokedAt === null &&
-        connection.credentialSetAt !== null &&
+        isConnectionUsable(connection) &&
         connection.vendor === payload.vendor &&
         connection.primaryHost === payload.primaryHost,
     );
@@ -364,6 +378,8 @@ export async function requestConnection(
       deps.pendingAction,
     ));
 
+  const oauth = isOAuthAuthorizationCode(payload.scheme);
+  const redirectUri = oauth ? deps.oauthRedirectUri : undefined;
   return waitForAnswer(ctx, scope, action, deps, {
     awaiting: "awaiting_connection",
     what: `${payload.displayName} (${payload.vendor})`,
@@ -373,10 +389,21 @@ export async function requestConnection(
       notifier?.changed(scope.agentId);
       return connected(connection, "new");
     },
+    ...(redirectUri ? { awaitingExtra: { redirectUri } } : {}),
     awaitingMessage: (url, expiresAt) =>
-      `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
-      `Relay this link so they can check the hosts and enter it: ${url} It expires at ${expiresAt}. ` +
-      "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
+      oauth
+        ? // The agent is the guide (ADR 0005): which console, what to name the client, which URI.
+          `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) with an OAuth client they register at the vendor — the client secret and the tokens never pass through you. ` +
+          "Guide them in three sentences: open the vendor's developer console and create an OAuth client of the web-application kind; name it after Graft so they recognise it later; " +
+          (redirectUri
+            ? `and paste exactly this redirect URI into it: ${redirectUri} `
+            : "and paste the redirect URI the form shows into it. ") +
+          `Then relay this link so they can enter the client id and secret and complete the consent in a popup: ${url} It expires at ${expiresAt}. ` +
+          "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected. " +
+          "A Google Cloud project in Testing mode expires refresh tokens after seven days, so a Google connection reconnects weekly until the app is published."
+        : `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
+          `Relay this link so they can check the hosts and enter it: ${url} It expires at ${expiresAt}. ` +
+          "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
   });
 }
 
@@ -484,6 +511,8 @@ async function waitForAnswer(
     declinedReason: string;
     onConnected: (connection: ConnectionOutput) => Connected;
     awaitingMessage: (url: string, expiresAt: string) => string;
+    /** What the awaiting answer carries beyond the link — the redirect URI of an OAuth proposal. */
+    awaitingExtra?: Pick<AwaitingHandoff, "redirectUri">;
   },
 ): Promise<ConnectionRequestOutcome> {
   const url = handoffUrl(
@@ -527,6 +556,7 @@ async function waitForAnswer(
     url,
     expiresAt,
     message: ask.awaitingMessage(url, expiresAt),
+    ...ask.awaitingExtra,
   };
   return { isError: true, answer: awaiting };
 }

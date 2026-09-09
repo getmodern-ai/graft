@@ -1,4 +1,9 @@
-import { toProxyConnection } from "@graft/core";
+import {
+  type ConnectionDeps,
+  markOAuthConsentRequired,
+  storeRefreshedCredential,
+  toProxyConnection,
+} from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import { findConnectionByIdUnscoped } from "@graft/db/repo/connection";
 import {
@@ -30,6 +35,42 @@ export function createDatabaseConnections(db: DbOrTx): ProxyDeps["connections"] 
     get: async (connectionId) => {
       const row = await findConnectionByIdUnscoped(db, connectionId);
       return row ? toProxyConnection(row) : null;
+    },
+  };
+}
+
+/**
+ * The proxy's two seams for a credential a scheme rotates on the way to the vendor — an
+ * authorization-code refresh (ADR 0005) — bound to the database through the connection service. The
+ * proxy has already compared the token's `person` claim against the row, so the scope it hands over
+ * is the principal the service writes under; the encrypt half rides in `deps`, and the tokens go back
+ * into the same ciphertext the proxy decrypts. A refused refresh marks the connection for re-consent
+ * and leaves the credential as it is. Only database rows are written: a connection seeded from
+ * `GRAFT_DEV_SEED` has no row, and a refresh for one fails as the proxy's own error, which is what
+ * a laptop's key-shaped seed never meets.
+ */
+export function createDatabaseCredentialRotation(
+  db: DbOrTx,
+  deps: ConnectionDeps,
+): Pick<ProxyDeps, "storeCredential" | "credentialRefreshFailed"> {
+  return {
+    storeCredential: async (scope, fields) => {
+      await storeRefreshedCredential(
+        { db },
+        { personId: scope.personId },
+        scope.connectionId,
+        { ...fields },
+        deps,
+      );
+    },
+    credentialRefreshFailed: async (scope, detail) => {
+      await markOAuthConsentRequired(
+        { db },
+        { personId: scope.personId },
+        scope.connectionId,
+        detail.reason,
+        deps,
+      );
     },
   };
 }
