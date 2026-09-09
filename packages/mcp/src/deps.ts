@@ -95,6 +95,14 @@ export type McpDeps = {
   /** The handoff's configuration — the console's URL, the signing secret, the wait and the TTL (`handoff.ts`). */
   handoff: HandoffConfig;
   /**
+   * Where the callback route of an authorization-code consent answers — `oauthRedirectUri(GRAFT_AUTH_URL)`
+   * (`@graft/core`) — so `request_connection` can tell the agent the one value the person has to paste
+   * into the client they register (ADR 0005; `connection-request.ts`). Optional so a harness with no
+   * OAuth in it needs nothing; `apps/server` always binds it, and the awaiting answer without it
+   * points the person at the form instead.
+   */
+  oauthRedirectUri?: string;
+  /**
    * The `tools/list_changed` notifier, one per process, shared by the endpoint's sessions and the
    * sweep (`sweep.ts`) so a demotion the rule makes reaches the harness exactly as one the agent made
    * does (ADR 0003). `createMcpDeps` makes it; `createMcpHttpApp` makes its own when it is absent.

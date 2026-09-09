@@ -310,6 +310,7 @@ const requestConnectionTool: MetaTool = {
       "The person opens it in the console, checks what you proposed, edits it if need be and enters the secret there; you never see the credential, and this tool never takes one. " +
       "Every host must be a public https host: private, loopback, link-local and cloud-metadata addresses are refused here and again by the proxy. " +
       `Schemes — ${describeSchemes()}. ` +
+      "For oauth_authorization_code — Gmail, Slack user tokens, Notion — propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
       "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the link to relay, and calling again with the same proposal returns the same link until they have, then connected. " +
       "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list; a connection to the same vendor and host already in your scope answers connected at once.",
     inputSchema: {

@@ -26,9 +26,19 @@ import { type ConsoleOptions, createConsoleApp } from "./console";
 export type ServerDeps = {
   /** The deployment's key pair, or null: the proxy then answers 503 `proxy_unconfigured`. */
   keys: CapabilityTokenKeys | null;
-  /** The vault's decrypt half is the one the proxy takes; nothing else on this server decrypts. */
+  /**
+   * The vault's decrypt half is the one the proxy takes. The OAuth callback (`oauth.ts`) is the one
+   * other decrypt on this server, bound through `api.oauth`; nothing else decrypts.
+   */
   vault: Pick<CredentialVault, "decrypt">;
   connections: ProxyDeps["connections"];
+  /**
+   * Where the proxy puts a credential a scheme rotated — an authorization-code refresh — and how it
+   * marks a refresh the vendor refused (ADR 0005); `connections.ts`'s
+   * `createDatabaseCredentialRotation`. Optional so the proxy-only harness needs no database; without
+   * it a refreshed token lives for the process and the console never learns of a refusal.
+   */
+  credentialRotation?: Pick<ProxyDeps, "storeCredential" | "credentialRefreshFailed">;
   /** The break glass from the environment — off unless the deployment says otherwise. */
   followRedirects: boolean;
   /** A test's fake vendor; production takes the proxy's default, undici behind the guarded resolver. */
@@ -85,6 +95,7 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
       ...createCapabilityTokenVerifier(deps.keys),
       connections: deps.connections,
       decryptCredential: (ciphertext, scope) => deps.vault.decrypt(ciphertext, scope),
+      ...deps.credentialRotation,
       log: deps.log ?? ((event) => useLogger().set({ proxy: event })),
       options: { followRedirects: deps.followRedirects },
       ...(deps.upstreamFetch ? { upstreamFetch: deps.upstreamFetch } : {}),

@@ -329,14 +329,32 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         credentialCiphertext: args.ciphertext,
         credentialSetAt: args.setAt,
         revokedAt: null,
+        ...(args.oauthRefreshState === undefined
+          ? {}
+          : { oauthRefreshState: args.oauthRefreshState }),
       };
       store.connections.set(id, updated);
       return updated;
     },
+    setConnectionOAuthState: async (_db, personId, id, state) => {
+      const row = store.connections.get(id);
+      if (!row || row.personId !== personId) return null;
+      const updated = { ...row, oauthRefreshState: state };
+      store.connections.set(id, updated);
+      return updated;
+    },
+    /** The repo's statement: every secret the row holds and the consent state go together (ADR 0007). */
     revokeConnection: async (_db, personId, id, at) => {
       const row = store.connections.get(id);
       if (!row || row.personId !== personId) return null;
-      const updated = { ...row, credentialCiphertext: null, credentialSetAt: null, revokedAt: at };
+      const updated = {
+        ...row,
+        credentialCiphertext: null,
+        credentialSetAt: null,
+        oauthClientSecretCiphertext: null,
+        oauthRefreshState: null,
+        revokedAt: at,
+      };
       store.connections.set(id, updated);
       return updated;
     },
