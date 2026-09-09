@@ -397,6 +397,13 @@ describe("the session door", () => {
     }
   });
 
+  it("answers the liveness probe without a session and nothing else about the deployment", async () => {
+    const { app } = harness(null);
+    const res = await app.request("/api/health");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
   it("hands Better Auth's routes to its handler", async () => {
     const { app } = harness(null);
     const res = await app.request("/api/auth/get-session");

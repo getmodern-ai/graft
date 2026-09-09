@@ -53,6 +53,18 @@ describe("the open form", () => {
     expect(backings.store.root).toBe(toolboxRoot);
   });
 
+  it("builds the Docker backing over the shared toolbox volume when one is named, the store still at the root", async () => {
+    const backings = await selectBackings({
+      ...base,
+      GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev",
+      GRAFT_SANDBOX_NETWORK: "graft-sandbox",
+      GRAFT_TOOLBOX_VOLUME: "graft_toolboxes",
+    });
+
+    expect(backings.sandbox).not.toBeNull();
+    expect(backings.store.root).toBe(toolboxRoot);
+  });
+
   it("builds the fake sandbox with the store inside the fake's own root, so the two see one tree", async () => {
     const backings = await selectBackings({ ...base, GRAFT_SANDBOX_BACKEND: "fake" });
     const sandbox = backings.sandbox;

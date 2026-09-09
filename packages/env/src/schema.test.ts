@@ -4,6 +4,8 @@ import {
   acquireConcurrency,
   acquireMaxAttempts,
   acquireTokenCeiling,
+  adminEmail,
+  adminPassword,
   approvalWaitSeconds,
   authSecret,
   authUrl,
@@ -15,9 +17,11 @@ import {
   corsOrigins,
   databaseUrl,
   defaultProxyPublicUrl,
+  describeEnvIssues,
   finalServerSchema,
   handoffSecret,
   keyringSecret,
+  migrateOnStart,
   modelBackend,
   modelProvider,
   packageAllowlist,
@@ -30,6 +34,7 @@ import {
   serverSchema,
   sweepIntervalSeconds,
   toolboxRoot,
+  toolboxVolume,
   withDerivedDefaults,
 } from "./schema";
 
@@ -229,6 +234,18 @@ describe("GRAFT_TOOLBOX_ROOT", () => {
   });
 });
 
+describe("GRAFT_TOOLBOX_VOLUME", () => {
+  it("is optional, takes a volume name, and refuses a path, naming itself", () => {
+    expect(toolboxVolume.parse(undefined)).toBeUndefined();
+    expect(toolboxVolume.parse("graft_toolboxes")).toBe("graft_toolboxes");
+    for (const bad of ["/var/lib/graft/toolboxes", "./toolboxes", ""]) {
+      const result = toolboxVolume.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_TOOLBOX_VOLUME");
+    }
+  });
+});
+
 describe("the package policy's thresholds and extra names", () => {
   it("default to ninety days and a thousand downloads, coerce whole numbers, and refuse anything else", () => {
     expect(packageMinAgeDays.parse(undefined)).toBe(90);
@@ -325,6 +342,7 @@ describe("finalServerSchema", () => {
       GRAFT_APPROVAL_WAIT_SECONDS: 25,
       GRAFT_PENDING_ACTION_TTL_HOURS: 24,
       GRAFT_SWEEP_INTERVAL_SECONDS: 300,
+      GRAFT_MIGRATE_ON_START: true,
       GRAFT_ACQUIRE_MAX_ATTEMPTS: 4,
       GRAFT_ACQUIRE_TOKEN_CEILING: 400_000,
       GRAFT_ACQUIRE_CONCURRENCY: 2,
@@ -499,22 +517,24 @@ describe("GRAFT_MODEL_BACKEND", () => {
   });
 
   it("is all-or-nothing with its script, and refused in production", () => {
-    expect(serverEnvIssues({ ...SECRET, GRAFT_MODEL_BACKEND: "scripted" })).toEqual([
+    // The open backings' keyring secret beside every input, so the one issue asserted is this rule's.
+    const keyed = { GRAFT_KEYRING_SECRET: "k".repeat(32) };
+    expect(serverEnvIssues({ ...keyed, GRAFT_MODEL_BACKEND: "scripted" })).toEqual([
       expect.stringMatching(/scripted model is partially configured.*Missing: GRAFT_MODEL_SCRIPT/),
     ]);
-    expect(serverEnvIssues({ ...SECRET, GRAFT_MODEL_SCRIPT: "./script.json" })).toEqual([
+    expect(serverEnvIssues({ ...keyed, GRAFT_MODEL_SCRIPT: "./script.json" })).toEqual([
       expect.stringMatching(/Missing: GRAFT_MODEL_BACKEND/),
     ]);
     expect(
       serverEnvIssues({
-        ...SECRET,
+        ...keyed,
         GRAFT_MODEL_BACKEND: "scripted",
         GRAFT_MODEL_SCRIPT: "./script.json",
       }),
     ).toEqual([]);
     expect(
       serverEnvIssues({
-        ...SECRET,
+        ...keyed,
         NODE_ENV: "production",
         GRAFT_MODEL_BACKEND: "scripted",
         GRAFT_MODEL_SCRIPT: "./script.json",
@@ -700,5 +720,66 @@ describe("GRAFT_CONSOLE_DIR", () => {
     const result = consoleDir.safeParse("");
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]?.message).toContain("GRAFT_CONSOLE_DIR");
+  });
+});
+
+describe("the bootstrapped admin (GRA-33)", () => {
+  it("takes an email address and a password of Better Auth's minimum, and is optional", () => {
+    expect(adminEmail.parse(undefined)).toBeUndefined();
+    expect(adminEmail.parse("admin@example.com")).toBe("admin@example.com");
+    expect(adminEmail.safeParse("admin").error?.issues[0]?.message).toContain("GRAFT_ADMIN_EMAIL");
+    expect(adminPassword.parse("eight-ch")).toBe("eight-ch");
+    expect(adminPassword.safeParse("seven77").error?.issues[0]?.message).toContain(
+      "GRAFT_ADMIN_PASSWORD",
+    );
+  });
+
+  it("is all-or-nothing", () => {
+    expect(serverEnvIssues({ ...SECRET, GRAFT_ADMIN_EMAIL: "admin@example.com" })).toEqual([
+      expect.stringMatching(/admin is partially configured.*Missing: GRAFT_ADMIN_PASSWORD/),
+    ]);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_ADMIN_PASSWORD: "change-me-please" })).toEqual([
+      expect.stringMatching(/Missing: GRAFT_ADMIN_EMAIL/),
+    ]);
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        GRAFT_ADMIN_EMAIL: "admin@example.com",
+        GRAFT_ADMIN_PASSWORD: "change-me-please",
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("GRAFT_MIGRATE_ON_START", () => {
+  it("is on unless said otherwise, and reads a stringbool", () => {
+    expect(migrateOnStart.parse(undefined)).toBe(true);
+    expect(migrateOnStart.parse("false")).toBe(false);
+    expect(migrateOnStart.parse("0")).toBe(false);
+    expect(migrateOnStart.safeParse("later").success).toBe(false);
+  });
+});
+
+describe("describeEnvIssues", () => {
+  it("names the variable on every line, says 'is not set' for a missing one, and keeps a cross-field sentence whole", () => {
+    const text = describeEnvIssues([
+      {
+        path: ["GRAFT_AUTH_SECRET"],
+        message: "Invalid input: expected string, received undefined",
+      },
+      { path: ["GRAFT_AUTH_URL"], message: "GRAFT_AUTH_URL must be an absolute http(s) URL" },
+      { message: "The bootstrapped admin is partially configured — set both or neither." },
+    ]);
+    expect(text.split("\n")).toEqual([
+      "GRAFT_AUTH_SECRET is not set",
+      "GRAFT_AUTH_URL must be an absolute http(s) URL",
+      "The bootstrapped admin is partially configured — set both or neither.",
+    ]);
+  });
+
+  it("prefixes a message that does not already name its variable", () => {
+    expect(describeEnvIssues([{ path: [{ key: "PORT" }], message: "Too small" }])).toBe(
+      "PORT: Too small",
+    );
   });
 });

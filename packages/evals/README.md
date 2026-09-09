@@ -7,9 +7,10 @@ check output and dry-run report, and the pending actions. Reshaped from Cando's 
 (ADR 0011): the system under test is the loop as shipped, driven through the MCP client as a harness
 drives it, never a reconstruction of it.
 
-An app-like leaf: nothing imports it, and it must stay out of the server's Docker image the way
-Cando's does — when the image's manifest list is written (GRA-33), `packages/evals/package.json` is
-deliberately absent from it.
+An app-like leaf: nothing imports it, which is what keeps it out of the server's Docker image the
+way Cando's is kept out — `apps/server/Dockerfile`'s `prod-deps` stage installs
+`--filter "@graft/server..."`, the server and what it depends on, and this workspace is not among
+them. A dependency on it from the server would pull it in; do not add one.
 
 ## Running
 

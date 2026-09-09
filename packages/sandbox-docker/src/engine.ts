@@ -13,8 +13,13 @@ import type { Readable } from "node:stream";
  * reads the same `DOCKER_HOST` the CLI does.
  */
 
-/** Pinned so a field we read cannot change shape under us. Docker 24 (2023) and later serve it. */
-export const DOCKER_API_VERSION = "v1.43";
+/**
+ * Pinned so a field we read cannot change shape under us. 1.45 is Docker 26 (March 2024): the first
+ * with `VolumeOptions.Subpath`, which the shared-toolbox arrangement mounts by (`backend.ts`,
+ * `toolboxVolume`). An older daemon would accept the field and ignore it, mounting the whole volume
+ * into a sandbox — so the version is asked for outright and an older daemon refuses every call.
+ */
+export const DOCKER_API_VERSION = "v1.45";
 
 export const DEFAULT_DOCKER_SOCKET = "/var/run/docker.sock";
 

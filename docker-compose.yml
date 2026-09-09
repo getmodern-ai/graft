@@ -1,21 +1,30 @@
 name: graft
 
-# Postgres for local development — the one dialect Graft has in both forms (GRA-1, "Why Postgres in
-# the Docker image and not SQLite"). `pnpm run db:start` brings it up detached, `db:stop` stops it
-# without losing the volume, `db:down` removes the container (and, being a project-level operation,
-# the shared network — prefer `stop` day to day). The full self-hosted image with the server, the
-# proxy and the sandbox network is GRA-33's compose file, not this one.
+# The self-hosted form, and the repository's development environment (GRA-33; ADR 0002, ADR 0013,
+# ADR 0014). `docker compose up` brings up Postgres and Graft — server, proxy, MCP endpoint and
+# console in one image — and builds the sandbox image sandboxes run from. `pnpm run db:start`
+# still brings up Postgres alone, for a server run from source on the host.
+#
+# Values come from `.env` beside this file (`cp .env.example .env`; README, "Self-hosting"): the
+# secrets Graft refuses to start without, the model key ADR 0014 requires of a self-host, and the
+# admin opened on first start. Everything in that file also reaches the `graft` container, so a
+# server setting not named below (`GRAFT_PACKAGE_ALLOWLIST`, say) goes in `.env` and nowhere else.
+#
+# No `container_name` on purpose: the project name prefixes every container, network and volume,
+# so `docker compose -p <name> up` runs a second copy beside the first — two checkouts on one
+# laptop, or a test run beside a development one — and the two share nothing.
+
 services:
   postgres:
     image: postgres:18
-    container_name: graft-postgres
     environment:
       POSTGRES_DB: graft
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     ports:
       # Overridable because a laptop often already runs a Postgres on 5432 for another project; the
-      # matching `GRAFT_DATABASE_URL` goes in `apps/server/.env`.
+      # matching `GRAFT_DATABASE_URL` for a server on the host goes in `apps/server/.env`. The
+      # `graft` service below reaches Postgres by name and never through this port.
       - "${GRAFT_POSTGRES_PORT:-5432}:5432"
     volumes:
       - graft_postgres_data:/var/lib/postgresql
@@ -26,5 +35,95 @@ services:
       retries: 5
     restart: unless-stopped
 
+  graft:
+    # The published image, or a local build of the same Dockerfile when the tag is not pulled
+    # (`docker compose build`, or `docker compose up --build`).
+    image: ghcr.io/getmodern-ai/graft:${GRAFT_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${GRAFT_PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # The fixed wiring of this compose file. Anything here wins over the same name in `.env`.
+      GRAFT_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-password}@postgres:5432/graft
+      # The one origin the browser sees; Better Auth and every handoff URL are built on it. A
+      # deployment behind a domain sets GRAFT_PUBLIC_URL in `.env`.
+      GRAFT_AUTH_URL: ${GRAFT_PUBLIC_URL:-http://localhost:3000}
+      GRAFT_CONSOLE_URL: ${GRAFT_PUBLIC_URL:-http://localhost:3000}
+      # Sandboxes reach the proxy inside this container by the alias below, on the internal network
+      # (`packages/sandbox-docker/README.md`, "Two arrangements"). The server's own port, not the
+      # published one: this URL is resolved by containers, never by the host.
+      GRAFT_PROXY_PUBLIC_URL: http://proxy:3000/api/proxy
+      # The sandbox backing's pair: the image built below and the internal network as compose names
+      # it — `<project>_sandbox`, so a second project on one daemon gets its own.
+      GRAFT_SANDBOX_IMAGE: ${GRAFT_SANDBOX_IMAGE:-ghcr.io/getmodern-ai/graft-sandbox:${GRAFT_IMAGE_TAG:-latest}}
+      GRAFT_SANDBOX_NETWORK: ${COMPOSE_PROJECT_NAME:-graft}_sandbox
+      # The toolbox: one named volume, mounted here at GRAFT_TOOLBOX_ROOT (the image's default) and
+      # into each sandbox by its own subpath, so the server's files and a sandbox's mount are one tree.
+      # Compose names the `toolboxes` volume below `<project>_toolboxes`; this has to be that exact
+      # name, and the backing refuses a name the daemon does not have rather than letting Docker
+      # create a second, empty volume under it.
+      GRAFT_TOOLBOX_VOLUME: ${COMPOSE_PROJECT_NAME:-graft}_toolboxes
+      # The admin opened on first start, into an empty database only. Development defaults —
+      # change both in `.env` before the console is reachable from anywhere but this machine.
+      GRAFT_ADMIN_EMAIL: ${GRAFT_ADMIN_EMAIL:-admin@example.com}
+      GRAFT_ADMIN_PASSWORD: ${GRAFT_ADMIN_PASSWORD:-change-me-before-exposing-this}
+    volumes:
+      # Arrangement 1 of `packages/sandbox-docker/README.md`: the server creates sandboxes as
+      # siblings on this daemon. Root-equivalent access to the host, the surface ADR 0002 accepts.
+      # Arrangement 2, a `docker:dind` sibling, is described in the README under Self-hosting.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - toolboxes:/var/lib/graft/toolboxes
+    # The socket is `root:docker` on a Linux host and `root:root` under Docker Desktop, mode 660
+    # either way; the server runs as an unprivileged user and needs the socket's group. `0` is
+    # Docker Desktop's; on Linux set GRAFT_DOCKER_GID to `stat -c %g /var/run/docker.sock`.
+    group_add:
+      - "${GRAFT_DOCKER_GID:-0}"
+    networks:
+      default: {}
+      sandbox:
+        aliases:
+          - proxy
+    healthcheck:
+      # No curl in the image; Node is.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # Not a running service: the image every sandbox is created from, built here so `docker compose
+  # up` leaves it on the daemon under the name the `graft` service is handed. `scale: 0` builds
+  # (or pulls) the image and starts no container.
+  sandbox:
+    image: ${GRAFT_SANDBOX_IMAGE:-ghcr.io/getmodern-ai/graft-sandbox:${GRAFT_IMAGE_TAG:-latest}}
+    build:
+      context: packages/sandbox-docker
+    scale: 0
+    command: ["true"]
+    networks:
+      - sandbox
+
+networks:
+  default: {}
+  # Where sandboxes live: no gateway, no external DNS, and the `graft` service under the alias
+  # `proxy` as the only other member (ADR 0013). The backing refuses a network that is not internal.
+  sandbox:
+    internal: true
+
 volumes:
+  # Kept under this key so the database of a checkout that ran the Postgres-only compose file is the
+  # same volume, `<project>_graft_postgres_data`, after this one.
   graft_postgres_data:
+  # Every person's toolbox, one subdirectory each, as `<project>_toolboxes` — the name
+  # GRAFT_TOOLBOX_VOLUME above spells out. Survives `docker compose down`; only
+  # `docker compose down -v` or `docker volume rm` would remove it.
+  toolboxes:
