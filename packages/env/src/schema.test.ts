@@ -471,17 +471,24 @@ describe("GRAFT_MODEL_BACKEND", () => {
   });
 
   it("is all-or-nothing with its script, and refused in production", () => {
-    expect(serverEnvIssues({ GRAFT_MODEL_BACKEND: "scripted" })).toEqual([
+    // The open backings' keyring secret beside every input, so the one issue asserted is this rule's.
+    const keyed = { GRAFT_KEYRING_SECRET: "k".repeat(32) };
+    expect(serverEnvIssues({ ...keyed, GRAFT_MODEL_BACKEND: "scripted" })).toEqual([
       expect.stringMatching(/scripted model is partially configured.*Missing: GRAFT_MODEL_SCRIPT/),
     ]);
-    expect(serverEnvIssues({ GRAFT_MODEL_SCRIPT: "./script.json" })).toEqual([
+    expect(serverEnvIssues({ ...keyed, GRAFT_MODEL_SCRIPT: "./script.json" })).toEqual([
       expect.stringMatching(/Missing: GRAFT_MODEL_BACKEND/),
     ]);
     expect(
-      serverEnvIssues({ GRAFT_MODEL_BACKEND: "scripted", GRAFT_MODEL_SCRIPT: "./script.json" }),
+      serverEnvIssues({
+        ...keyed,
+        GRAFT_MODEL_BACKEND: "scripted",
+        GRAFT_MODEL_SCRIPT: "./script.json",
+      }),
     ).toEqual([]);
     expect(
       serverEnvIssues({
+        ...keyed,
         NODE_ENV: "production",
         GRAFT_MODEL_BACKEND: "scripted",
         GRAFT_MODEL_SCRIPT: "./script.json",
