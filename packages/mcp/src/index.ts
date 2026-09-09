@@ -6,6 +6,25 @@
  * transport.
  */
 export {
+  attemptDraftPath,
+  DEFAULT_HEARTBEAT_MS,
+  MAX_DOCS_PER_TURN,
+  MAX_PROOF_READS,
+  PROBE_MODULE,
+  probePath,
+  type RunAcquireJobOptions,
+  runAcquireJob,
+  turnBudgetFor,
+} from "./acquire/job";
+export {
+  type AcquireRunner,
+  type AcquireRunnerEvent,
+  type AcquireRunnerOptions,
+  createAcquireRunner,
+  DEFAULT_POLL_INTERVAL_SECONDS,
+  DEFAULT_STALE_AFTER_SECONDS,
+} from "./acquire/runner";
+export {
   ACQUIRE_FAILURES,
   type AcquireAttemptSummary,
   type AcquireConfig,
@@ -44,6 +63,26 @@ export {
   MAX_COMMAND_TIMEOUT_SECONDS,
   MAX_DETACHED_TIMEOUT_SECONDS,
 } from "./bounds";
+export {
+  type AwaitingHandoff,
+  CONNECTION_ASK_KIND,
+  type Connected,
+  type ConnectionAnswer,
+  type ConnectionProposalInput,
+  type ConnectionProposalPayload,
+  type ConnectionRequestOutcome,
+  CREDENTIAL_ASK_KIND,
+  type CredentialAskPayload,
+  type CredentialRequestInput,
+  describeSchemes,
+  normaliseProposal,
+  PROPOSAL_PROVENANCE_NOTE,
+  type ProposalVerdict,
+  readConnectionAnswer,
+  readConnectionProposal,
+  requestConnection,
+  requestCredential,
+} from "./connection-request";
 export type { SessionContext } from "./context";
 export {
   type CreateMcpDepsInput,
@@ -76,6 +115,7 @@ export {
   DEFAULT_LIST_CHANGED_WINDOW_MS,
   type ToolListChangedNotifier,
 } from "./notifier";
+export { promotePublished } from "./promote";
 export { type Refusal, refusal } from "./result";
 export {
   type AuthoredRunAnswer,

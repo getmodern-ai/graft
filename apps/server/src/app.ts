@@ -6,6 +6,7 @@ import { type EvlogVariables, evlog, useLogger } from "evlog/hono";
 import { Hono } from "hono";
 
 import { type ApiOptions, createApi } from "./api";
+import { type ConsoleOptions, createConsoleApp } from "./console";
 
 /**
  * The server, as a function of what it is handed — so `app.test.ts` drives the same app `index.ts`
@@ -44,6 +45,11 @@ export type ServerDeps = {
    * `index.ts` always binds it.
    */
   mcp?: McpDeps;
+  /**
+   * The console's build, served same-origin (`console.ts`, GRA-26). Optional so the proxy and API
+   * harnesses need no directory; `index.ts` always binds it, to `GRAFT_CONSOLE_DIR`.
+   */
+  console?: Pick<ConsoleOptions, "dir">;
 };
 
 /** Where the proxy answers — the path `GRAFT_PROXY_PUBLIC_URL` defaults to ends in this. */
@@ -98,7 +104,22 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
     app.route(API_MOUNT_PATH, createApi(deps.api));
   }
 
-  app.get("/", (c) => c.text("OK"));
+  /**
+   * The console last, so every server path above has had its match. With a build present it owns
+   * `/` — its `index.html` is a 200, which is what a health check reads — and every other path a
+   * browser navigates to. Without one, `/` stays the plain `OK` and the console's paths answer the
+   * JSON 404 `console.ts` describes, so a deployment with no console is a smaller server, not a
+   * broken one.
+   */
+  const console = deps.console
+    ? createConsoleApp({ ...deps.console, exclude: [API_MOUNT_PATH, MCP_MOUNT_PATH] })
+    : null;
+  if (console?.built) {
+    app.route("/", console.app);
+  } else {
+    app.get("/", (c) => c.text("OK"));
+    if (console) app.route("/", console.app);
+  }
 
   return app;
 }

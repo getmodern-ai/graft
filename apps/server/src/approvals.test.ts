@@ -136,6 +136,7 @@ beforeAll(async () => {
         connection: fake.connection,
         workingSet: fake.workingSet,
         tool: fake.tool,
+        ledger: fake.ledger,
         approval: fake.approval,
         pendingAction: fake.pendingAction,
         modelKey: fakeModelKeyDeps(),

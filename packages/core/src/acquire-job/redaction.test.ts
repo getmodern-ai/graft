@@ -69,6 +69,11 @@ describe("redactText", () => {
     );
   });
 
+  it("leaves the proxy's own marker in place under a secret field's name", () => {
+    const body = '{"apiKey":"[redacted:credential]","message":"bad key [redacted:credential]"}';
+    expect(redactText(body)).toEqual({ text: body, redacted: false });
+  });
+
   it("leaves an ordinary body alone and says so", () => {
     const body = '{"items":[{"id":"itm_1","name":"Widget"}],"vendor":"demo","token_count":3}';
     expect(redactText(body)).toEqual({ text: body, redacted: false });

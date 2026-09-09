@@ -98,9 +98,10 @@ are required, and so is `GRAFT_KEYRING_SECRET` (32+) under the default `GRAFT_BA
 `GRAFT_CORS_ORIGIN` is an optional comma-separated list of origins; the capability token key pair is
 all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the database for a proxy
 smoke test and is refused in production. `GRAFT_APPROVAL_WAIT_SECONDS` (default 25) is how long a
-tool call waits for a person to answer a handoff before returning `awaiting_approval`, and
-`GRAFT_PENDING_ACTION_TTL_HOURS` (default 24) how long that action stays answerable (ADR 0006,
-ADR 0008). `packages/env/src/schema.ts` is the rules as code.
+tool call waits for a person to answer a handoff before returning `awaiting_approval` — or
+`awaiting_connection` / `awaiting_credential` for the two connection handoffs (GRA-28), which share
+the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default 24) how long that action stays
+answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the rules as code.
 
 `GRAFT_BACKINGS` picks the backing behind each seam (ADR 0002; `apps/server/src/backings.ts`).
 `open`, the default, is what this repository holds — the sandbox `GRAFT_SANDBOX_BACKEND` names, the
@@ -130,6 +131,84 @@ function; `packages/mcp/src/sweep.ts` applies it. `pnpm --filter @graft/server s
 prints what a sweep would do without doing it; without `--plan` it demotes, from a process that can
 neither see a running server's in-flight runs nor notify its sessions, so use that form with the
 server stopped.
+
+### The console
+
+`apps/web` (`@graft/web`, GRA-26) is the console (CONTEXT.md, *Console*; ADR 0006): React on Vite,
+TanStack Router with file routes and Query, Tailwind 4, and the shadcn primitives generated into
+`src/components/ui` over Base UI. There is deliberately no `packages/ui`: one SPA does not warrant a
+second workspace, and the primitives are the registry's files, regenerated with
+`npx shadcn@latest add <name> -c apps/web` (the CLI writes `from "cn"` for the utils alias; it is
+`@/lib/utils` here). Biome excludes the generated `src/routeTree.gen.ts` and switches two a11y rules
+off for `src/components/ui/**` — the primitives' own shape trips them, and Cando does the same for its
+`packages/ui`.
+
+**Same-origin with the API, in both forms.** `pnpm --filter @graft/web dev` (or `pnpm run dev`, which
+starts the server too) serves the app on `:3001` with Vite proxying `/api` and `/mcp` to
+`GRAFT_SERVER_URL` (default `http://localhost:3000`), and in production `apps/server` serves
+`pnpm --filter @graft/web build`'s output from `GRAFT_CONSOLE_DIR` (default `../web/dist`, relative
+to the server's working directory) with an SPA fallback (`apps/server/src/console.ts`). The session
+cookie therefore never crosses an origin; `GRAFT_CORS_ORIGIN` remains for a console served from
+elsewhere. A server whose console directory holds no build boots and answers every console path with
+a JSON 404 saying where it looked. `GRAFT_CONSOLE_URL` is a different setting: where handoff URLs
+point (GRA-23), which in development is the Vite origin.
+
+The shape is Cando's: `routes/_auth/route.tsx` is the guard and only the guard (a signed-out visit
+goes to `/login?redirect=<same-origin path>` and returns there, which is how a handoff URL survives a
+fresh browser); `routes/_auth/_shell/` is the chrome; a screen's file placement decides both.
+`src/lib/*-queries.ts` hold the query options and mutations per aggregate, `src/lib/api.ts` is the
+one `fetch`, and every wire type is imported from `@graft/server/api`, `@graft/core`, `@graft/db` or
+`@graft/mcp` and passed through `Jsonified<T>` — never written a second time. The pending-actions
+page dispatches on the ask's `kind` in `components/pending/pending-action-card.tsx`, one card file per
+kind, so a new kind is one branch and one file. Components carry no tests; the pure helpers under
+`src/lib` do, and `check-types` runs `vite build` first so a broken bundle fails CI as a type error
+would.
+
+**The connection form reaches into `@graft/core` and `@graft/proxy` at run time, and three modules
+stay browser-safe for it** (GRA-28): `packages/core/src/connection/connection.rules.ts` is what the
+form validates with — the same functions the connection service applies at create and the
+`request_connection` meta-tool applies to an agent's proposal, so a private, link-local or
+cloud-metadata host is refused with the reason `host_not_public` in all three places and again by the
+proxy at resolution — and `packages/proxy/src/credential-fields.ts` and `scheme-parameters.ts` are the
+two halves of the scheme table the form renders its secret and parameter inputs from. Each imports
+nothing but the others and a type; an import of `@graft/proxy`'s index or of a repo in one of them
+pulls `node:crypto` or drizzle into the bundle, and `vite build` is what fails. Add a scheme by adding
+to both tables and the plugin, never to the form. Accounts are opened at `/signup` — verification is off for the alpha, the reason is in
+`packages/auth/src/index.ts`.
+
+### Running `acquire` locally
+
+`acquire` is the loop (ADR 0004): the meta-tool creates a job and the in-process runner
+(`@graft/mcp`'s `acquire/runner.ts`, GRA-29) works it — reads the documentation, drafts, checks,
+proves with reads, publishes, dry-runs, retries, promotes. The runner is the second plain scheduler
+beside the sweep: `GRAFT_ACQUIRE_CONCURRENCY` (default 2) jobs at once, kicked by the meta-tool and
+polling for what a previous process left queued or running with a stale heartbeat. Each job is bounded
+by `GRAFT_ACQUIRE_MAX_ATTEMPTS` (default 4 — every draft is an attempt, a check refusal included) and
+`GRAFT_ACQUIRE_TOKEN_CEILING` (default 400000 tokens across every model turn); a job that hits either
+ends with a result naming it. Every attempt is an `acquire_attempt` row, every step an `acquire_trace`
+line, redacted on the way in (`@graft/core`'s `redaction.ts`; the proxy redacts an echoed credential
+by value before that, ADR 0010 amended).
+
+Which model answers is `GRAFT_MODEL_BACKEND`. Unset, the server boots with no model and `acquire`
+refuses `acquire_unconfigured`. `scripted` plays a JSON file of canned answers, one per situation the
+job puts (`@graft/model/scripted`, `parseScript` has the shape), for driving the whole loop on a laptop
+with no provider key; it needs `GRAFT_MODEL_SCRIPT=<path>` beside it and is refused in production. The
+provider-backed value arrives with GRA-31.
+
+```bash
+cat >> apps/server/.env <<'ENV'
+GRAFT_SANDBOX_BACKEND=fake
+GRAFT_MODEL_BACKEND=scripted
+GRAFT_MODEL_SCRIPT=./acquire-script.json
+ENV
+```
+
+A script for a public API the proxy can reach without a real key — the connection still needs *a*
+credential entered, since the scheme injects one — is the shortest by-hand proof: `goal` →
+`write_module` with a `ctx.fetch` of a documented `GET`, `proofReads` naming the same path, and a
+`testInput`. `acquire { connectionId, goal }` over MCP answers `{ jobId, status, progress }`;
+`acquire_status { jobId }` answers the progress lines and, at the end, `result` — the tool's wire name,
+version and annotations, or `{ failure, message, lastDiagnostics, tried }`.
 
 ### Publishing a tool by hand
 

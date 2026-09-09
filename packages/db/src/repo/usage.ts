@@ -1,6 +1,8 @@
-import { and, desc, gte, inArray, max } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, max, or } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
+import { agent } from "../schema/agent";
+import { authoredTool } from "../schema/tool";
 import { type NewUsageLedgerRow, usageLedger } from "../schema/usage";
 import { scopedAgentIds } from "./agent";
 import type { AgentScope } from "./scope";
@@ -54,4 +56,39 @@ export async function lastUsedAtByTool(
   return rows.flatMap((row) =>
     row.toolId && row.lastUsedAt ? [{ toolId: row.toolId, lastUsedAt: row.lastUsedAt }] : [],
   );
+}
+
+/** A ledger line with the name of the agent that wrote it — the console's "recent vendor calls" row. */
+export type VendorUsageRow = UsageLedgerRow & { agentName: string };
+
+/**
+ * The person's recent calls against one vendor, across every agent they own, newest first — the
+ * console's "recent vendor calls" on a connection (GRA-26). Person-scoped through `agent.person_id`
+ * the way the pending-action reads are, since a connection is the person's and not one agent's
+ * (ADR 0007). A call is the vendor's when its tool row carries the vendor — how a tool is bound to
+ * a connection — or when its wire name is one the caller names: the connection's own
+ * `execute__<id>` tool has no toolbox row (CONTEXT.md, *Tool*), so it is matched by name.
+ */
+export async function listUsageForVendor(
+  db: DbOrTx,
+  personId: string,
+  args: { vendor: string; toolNames: readonly string[]; limit: number },
+): Promise<VendorUsageRow[]> {
+  const rows = await db
+    .select({ usage: usageLedger, agentName: agent.name })
+    .from(usageLedger)
+    .innerJoin(agent, eq(usageLedger.agentId, agent.id))
+    .leftJoin(authoredTool, eq(usageLedger.toolId, authoredTool.id))
+    .where(
+      and(
+        eq(agent.personId, personId),
+        or(
+          eq(authoredTool.vendor, args.vendor),
+          args.toolNames.length > 0 ? inArray(usageLedger.toolName, args.toolNames) : undefined,
+        ),
+      ),
+    )
+    .orderBy(desc(usageLedger.createdAt), desc(usageLedger.id))
+    .limit(args.limit);
+  return rows.map(({ usage, agentName }) => ({ ...usage, agentName }));
 }

@@ -10,6 +10,7 @@ import {
   revokeConnection,
   setConnectionCredential,
 } from "@graft/db/repo/connection";
+import { expirePendingActionsForConnection } from "@graft/db/repo/pending-action";
 import type { EncryptOnlyVault } from "@graft/vault";
 
 /**
@@ -26,9 +27,10 @@ export type ConnectionDeps = {
   listConnections: typeof listConnections;
   setConnectionCredential: typeof setConnectionCredential;
   revokeConnection: typeof revokeConnection;
-  /** A revoke's two sweeps (ADR 0007): every approval for the vendor's tools, every build approval. */
+  /** A revoke's three sweeps (ADR 0007): every approval for the vendor's tools, every build approval, every open ask about the connection. */
   deleteApprovalsForVendor: typeof deleteApprovalsForVendor;
   deleteBuildApprovalsForConnection: typeof deleteBuildApprovalsForConnection;
+  expirePendingActionsForConnection: typeof expirePendingActionsForConnection;
   vault: EncryptOnlyVault;
   newId: () => string;
   now: () => Date;
@@ -49,6 +51,7 @@ export function createConnectionDeps(vault: EncryptOnlyVault): ConnectionDeps {
     revokeConnection,
     deleteApprovalsForVendor,
     deleteBuildApprovalsForConnection,
+    expirePendingActionsForConnection,
     vault,
     newId: () => crypto.randomUUID(),
     now: () => new Date(),

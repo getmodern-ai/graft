@@ -10,6 +10,7 @@ import {
   backingsForm,
   capabilityTokenPrivateKey,
   capabilityTokenPublicKey,
+  consoleDir,
   consoleUrl,
   corsOrigins,
   databaseUrl,
@@ -318,6 +319,7 @@ describe("finalServerSchema", () => {
       GRAFT_PACKAGE_MIN_AGE_DAYS: 90,
       GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS: 1000,
       GRAFT_PACKAGE_ALLOWLIST: [],
+      GRAFT_CONSOLE_DIR: "../web/dist",
       GRAFT_CONSOLE_URL: minimal.GRAFT_CONSOLE_URL,
       GRAFT_HANDOFF_SECRET: minimal.GRAFT_HANDOFF_SECRET,
       GRAFT_APPROVAL_WAIT_SECONDS: 25,
@@ -685,5 +687,18 @@ describe("Langfuse", () => {
         GRAFT_LANGFUSE_SECRET_KEY: "PLACEHOLDER",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("GRAFT_CONSOLE_DIR", () => {
+  it("defaults to the console workspace's build beside the server, and takes any non-empty path", () => {
+    expect(consoleDir.parse(undefined)).toBe("../web/dist");
+    expect(consoleDir.parse("/srv/graft/console")).toBe("/srv/graft/console");
+  });
+
+  it("refuses an empty value, naming the variable", () => {
+    const result = consoleDir.safeParse("");
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toContain("GRAFT_CONSOLE_DIR");
   });
 });
