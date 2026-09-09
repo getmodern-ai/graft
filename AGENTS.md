@@ -109,6 +109,17 @@ the server up with every run refusing for want of a sandbox; or `fake`, a tempor
 server's own disk for a laptop without a daemon — the toolbox then lives in that directory too, for as
 long as the process does — which is not a sandbox, and `@graft/env` refuses it in production.
 
+The working-set sweep (ADR 0009) runs inside the server on a plain timer, every
+`GRAFT_SWEEP_INTERVAL_SECONDS` (default 300): per agent it demotes what went unused past the idle
+window, then the least recently used beyond the cap — never a tool used inside the window, and never
+while the agent has a run in flight — and fires `tools/list_changed`. Each demotion is a
+`working_set_change` row with cause `idle` or `cap`, which `GET /api/agents/:id/working-set/changes`
+reads for the console. The rule itself is `packages/core/src/working-set/sweep.decision.ts`, a pure
+function; `packages/mcp/src/sweep.ts` applies it. `pnpm --filter @graft/server sweep -- --plan`
+prints what a sweep would do without doing it; without `--plan` it demotes, from a process that can
+neither see a running server's in-flight runs nor notify its sessions, so use that form with the
+server stopped.
+
 ### Publishing a tool by hand
 
 The publish (`@graft/publish`, GRA-18) writes a version into the person's toolbox — a directory tree

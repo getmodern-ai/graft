@@ -286,6 +286,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         const row = store.connections.get(id);
         return row && row.personId === personId ? [row] : [];
       }),
+    listAllActiveAgents: async () => [...store.agents.values()].filter((row) => !row.revokedAt),
     newId: store.newId,
     now: store.now,
   };

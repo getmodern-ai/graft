@@ -19,6 +19,7 @@ import { sandboxPath } from "@graft/toolbox";
 import { type AskChannel, gateToolCall } from "./approval";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
+import { detachedHoldMs, heldInFlight } from "./in-flight";
 import { type Refusal, refusal } from "./result";
 import {
   commandEnvironment,
@@ -46,7 +47,10 @@ import { authoredToolName } from "./tool-names";
  * runner over the version directory the pointer names, with the token in the process environment
  * and nowhere else (ADR 0010); then `last_used_at` and the ledger row, whatever the run said
  * (ADR 0009: every invocation moves the clock; ADR 0012: every outcome is recorded). The approval
- * gate (`approval.ts`, ADR 0008) sits between the scope check and the mint, and nowhere else.
+ * gate (`approval.ts`, ADR 0008) sits between the scope check and the mint, and nowhere else. The
+ * whole call holds the agent in flight — the gate's wait included, so the sweep never demotes a tool
+ * whose ask is open — and a detached start keeps the hold by process name (`in-flight.ts`), which
+ * is what keeps the sweep off a tool while a turn is using it (ADR 0009).
  *
  * A run never reads the toolbox through a store: the sandbox sees the mounted volume, and the runner
  * loads the module from `/tools/<version path>` (ADR 0002's seam is what makes that true on every
@@ -358,6 +362,14 @@ export async function runAuthoredTool(
   scope: AgentScope,
   args: AuthoredRunArgs,
 ): Promise<AuthoredRunAnswer> {
+  return heldInFlight(deps.inFlight, scope.agentId, () => runHeld(deps, scope, args));
+}
+
+async function runHeld(
+  deps: McpDeps,
+  scope: AgentScope,
+  args: AuthoredRunArgs,
+): Promise<AuthoredRunAnswer> {
   const ctx: ServiceContext = { db: deps.db };
   const principal = { personId: scope.personId };
   const wireName = authoredToolName(args.vendor, args.name);
@@ -495,6 +507,12 @@ export async function runAuthoredTool(
     return { answer: run.failure, isError: true };
   }
   if ("detached" in run) {
+    // Before the call's own hold releases, so the agent is never momentarily unheld.
+    deps.inFlight?.track(
+      scope.agentId,
+      run.detached.processName,
+      detachedHoldMs(run.detached.timeoutSeconds),
+    );
     await record("ok", versioned);
     return { answer: describeDetachedStart(run.detached), isError: false };
   }

@@ -9,6 +9,7 @@ import {
   readCommandInput,
 } from "../bounds";
 import type { SessionContext } from "../context";
+import { heldInFlight } from "../in-flight";
 import { toolError, toolRefusal, toolResult } from "../result";
 import { runWithCapability } from "../run";
 import { openAgentSandbox, runCommand, withSandbox } from "../sandbox";
@@ -105,18 +106,21 @@ export async function callExecuteTool(
     return toolError(gate.answer);
   }
 
-  const outcome = await runWithCapability({
-    deps,
-    scope,
-    connectionId,
-    claim: EXECUTE_CLAIM,
-    mode: { detached: parsed.detached, timeoutSeconds: parsed.timeoutSeconds, dryRun },
-    run: (env) =>
-      withSandbox(
-        () => openAgentSandbox(deps, scope),
-        (handle) => runCommand(handle, parsed, env),
-      ),
-  });
+  // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
+  const outcome = await heldInFlight(deps.inFlight, scope.agentId, () =>
+    runWithCapability({
+      deps,
+      scope,
+      connectionId,
+      claim: EXECUTE_CLAIM,
+      mode: { detached: parsed.detached, timeoutSeconds: parsed.timeoutSeconds, dryRun },
+      run: (env) =>
+        withSandbox(
+          () => openAgentSandbox(deps, scope),
+          (handle) => runCommand(handle, parsed, env),
+        ),
+    }),
+  );
 
   const refused = "error" in outcome && outcome.error === "refused";
   const failed = !refused && "error" in outcome;

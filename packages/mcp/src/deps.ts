@@ -28,12 +28,15 @@ import type { CapabilityTokenKeys } from "@graft/token";
 import type { ToolboxStore } from "@graft/toolbox";
 
 import type { HandoffConfig } from "./handoff";
+import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
+import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { type ReadWebPage, readWebPage } from "./web-page";
 
 /**
  * Everything the MCP server is handed rather than owns — the one object `apps/server` builds from
- * its environment and every later ticket extends: GRA-23 adds the approval reads, GRA-24 the
- * contraction sweep's, GRA-29 the `acquire` job engine and the model adapter. A test binds the same
+ * its environment and every later ticket extends: GRA-23 adds the approval reads, GRA-29 the
+ * `acquire` job engine and the model adapter; GRA-24 added the notifier and the in-flight registry
+ * the sweep shares with the endpoint, at the end. A test binds the same
  * shape to in-memory fakes (`./testing/fake-deps.ts`) and the fake sandbox, so the suite in
  * `server.test.ts` runs with no database, no Docker and no network beyond a loopback listener for
  * the proxy.
@@ -91,6 +94,18 @@ export type McpDeps = {
   listPendingActionsByKind: typeof listPendingActionsByKind;
   /** The handoff's configuration — the console's URL, the signing secret, the wait and the TTL (`handoff.ts`). */
   handoff: HandoffConfig;
+  /**
+   * The `tools/list_changed` notifier, one per process, shared by the endpoint's sessions and the
+   * sweep (`sweep.ts`) so a demotion the rule makes reaches the harness exactly as one the agent made
+   * does (ADR 0003). `createMcpDeps` makes it; `createMcpHttpApp` makes its own when it is absent.
+   */
+  notifier?: ToolListChangedNotifier;
+  /**
+   * Which agents have a run in flight — held by every call path, read by the sweep, which skips an
+   * agent while it is (ADR 0009; `in-flight.ts`). One per process; `createMcpDeps` makes it. Absent,
+   * nothing is held and the sweep never skips.
+   */
+  inFlight?: InFlightRegistry;
 };
 
 export type CreateMcpDepsInput = Pick<
@@ -127,6 +142,8 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     readWebPage: (args) => readWebPage(args),
     toolbox: publish?.store ?? null,
     publishTool: publish ? (args) => publishToolVersion(publish, args) : null,
+    notifier: createToolListChangedNotifier({ windowMs: input.listChangedWindowMs }),
+    inFlight: createInFlightRegistry(),
     ...rest,
   };
 }

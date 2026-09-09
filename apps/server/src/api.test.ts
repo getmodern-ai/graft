@@ -4,6 +4,7 @@ import type {
   ConnectionDeps,
   PendingActionDeps,
   ToolDeps,
+  WorkingSetDeps,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { AgentRow } from "@graft/db/repo/agent";
@@ -11,6 +12,7 @@ import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
+import type { WorkingSetChangeRow } from "@graft/db/repo/working-set";
 import { signHandoffToken } from "@graft/mcp";
 import { initLogger } from "evlog";
 import { describe, expect, it, vi } from "vitest";
@@ -145,6 +147,7 @@ function agentDeps(): AgentDeps {
     findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
       ids.map((id) => ({ ...connectionRow, id })),
     ),
+    listAllActiveAgents: vi.fn(async () => [agentRow]),
     newId: () => "agent_new",
     now: () => NOW,
   };
@@ -172,18 +175,78 @@ function connectionDeps(): ConnectionDeps {
   };
 }
 
+const toolRow: AuthoredToolRow = {
+  id: "tool_1",
+  personId: "person_1",
+  vendor: "demo",
+  name: "list-orders",
+  description: "Lists orders",
+  inputSchema: { type: "object", properties: {} },
+  currentVersionId: null,
+  readOnly: true,
+  destructive: false,
+  defaultConnectionId: "conn_1",
+  owner: "person",
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
+/** Newest first, as the repo answers: the rule's demotion, then the promotion it undid. */
+const changeRows: WorkingSetChangeRow[] = [
+  {
+    id: "change_2",
+    agentId: "agent_1",
+    toolId: "tool_1",
+    change: "demote",
+    cause: "idle",
+    owner: "person",
+    createdAt: new Date("2026-10-01T10:00:00Z"),
+  },
+  {
+    id: "change_1",
+    agentId: "agent_1",
+    toolId: "tool_1",
+    change: "promote",
+    cause: "publish",
+    owner: "person",
+    createdAt: NOW,
+  },
+];
+
+/** A dependency this suite never reaches: reaching it is the bug the fake should name. */
+const unused = () =>
+  vi.fn(async (): Promise<never> => {
+    throw new Error("not reached in this suite");
+  });
+
+function workingSetDeps(): WorkingSetDeps {
+  return {
+    listWorkingSet: vi.fn(async () => []),
+    findWorkingSetEntry: vi.fn(async () => null),
+    countWorkingSet: vi.fn(async () => 0),
+    insertWorkingSetEntry: unused(),
+    deleteWorkingSetEntry: unused(),
+    touchWorkingSetUsed: unused(),
+    insertWorkingSetChange: unused(),
+    listWorkingSetChanges: vi.fn(async (_db, _scope, limit: number) => changeRows.slice(0, limit)),
+    findAuthoredToolById: vi.fn(async () => toolRow),
+    newId: () => "change_new",
+    now: () => NOW,
+  };
+}
+
 function toolDeps(): ToolDeps {
   return {
-    insertAuthoredTool: vi.fn(async () => destructiveTool),
-    findAuthoredTool: vi.fn(async () => destructiveTool),
-    findAuthoredToolById: vi.fn(async () => destructiveTool),
-    listAuthoredTools: vi.fn(async () => [destructiveTool]),
-    updateAuthoredTool: vi.fn(async () => destructiveTool),
-    insertToolVersion: vi.fn(async () => ({}) as never),
+    insertAuthoredTool: unused(),
+    findAuthoredTool: vi.fn(async () => toolRow),
+    findAuthoredToolById: vi.fn(async () => toolRow),
+    listAuthoredTools: vi.fn(async () => [toolRow]),
+    updateAuthoredTool: unused(),
+    insertToolVersion: unused(),
     listToolVersions: vi.fn(async () => []),
     findToolVersion: vi.fn(async () => null),
-    setCurrentToolVersion: vi.fn(async () => destructiveTool),
-    recordToolVersionDryRun: vi.fn(async () => null),
+    setCurrentToolVersion: unused(),
+    recordToolVersionDryRun: unused(),
     findConnection: vi.fn(async () => connectionRow),
     newId: () => "tool_new",
     now: () => NOW,
@@ -226,6 +289,7 @@ function harness(session: { user: { id: string } } | null) {
   const deps = {
     agent: agentDeps(),
     connection: connectionDeps(),
+    workingSet: workingSetDeps(),
     tool: toolDeps(),
     approval: approvalDeps(),
     pendingAction: pendingActionDeps(),
@@ -358,6 +422,63 @@ describe("agents", () => {
   });
 });
 
+describe("the working-set history", () => {
+  /** GRA-24: every demotion has a recorded cause, and the console's history reads it. */
+  it("answers each change with its cause and the tool by vendor and name, newest first", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/agents/agent_1/working-set/changes");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      changes: [
+        {
+          id: "change_2",
+          change: "demote",
+          cause: "idle",
+          createdAt: "2026-10-01T10:00:00.000Z",
+          tool: { id: "tool_1", vendor: "demo", name: "list-orders", description: "Lists orders" },
+        },
+        {
+          id: "change_1",
+          change: "promote",
+          cause: "publish",
+          createdAt: NOW.toISOString(),
+          tool: { id: "tool_1", vendor: "demo", name: "list-orders", description: "Lists orders" },
+        },
+      ],
+    });
+    // The read is scoped by the pair, so another person's agent id answers nothing (ADR 0007).
+    expect(deps.workingSet.listWorkingSetChanges).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      50,
+    );
+  });
+
+  it("takes ?limit=, refuses one out of range, and answers 404 for an agent that is not the person's", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const one = await app.request("/api/agents/agent_1/working-set/changes?limit=1");
+    expect(((await one.json()) as { changes: unknown[] }).changes).toHaveLength(1);
+
+    for (const bad of ["0", "501", "many"]) {
+      const res = await app.request(`/api/agents/agent_1/working-set/changes?limit=${bad}`);
+      expect(res.status, bad).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "BAD_REQUEST" });
+    }
+
+    vi.mocked(deps.agent.findAgent).mockResolvedValueOnce(null);
+    const missing = await app.request("/api/agents/agent_x/working-set/changes");
+    expect(missing.status).toBe(404);
+    // Only the in-range request reached the read: a bad limit and a foreign agent stop before it.
+    expect(deps.workingSet.listWorkingSetChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it("needs a session", async () => {
+    const { app } = harness(null);
+    const res = await app.request("/api/agents/agent_1/working-set/changes");
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("connections", () => {
   it("registers a connection and refuses a private host with the rule's sentence", async () => {
     const { app } = harness({ user: { id: "person_1" } });
@@ -478,6 +599,7 @@ describe("pending actions", () => {
 
   it("records an allow as the standing approval, relaxes a destructive tool when asked, and answers both rows", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.tool.findAuthoredToolById).mockResolvedValueOnce(destructiveTool);
     const res = await app.request(
       "/api/pending-actions/pa_1/answer",
       json({ allow: true, relax: true }),
@@ -518,6 +640,7 @@ describe("pending actions", () => {
 
   it("leaves a destructive tool's per-call yes for the agent's next call to take", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.tool.findAuthoredToolById).mockResolvedValueOnce(destructiveTool);
     const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
@@ -528,10 +651,6 @@ describe("pending actions", () => {
 
   it("spends a write tool's yes at once — the approval row is the whole answer", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    vi.mocked(deps.tool.findAuthoredToolById).mockResolvedValueOnce({
-      ...destructiveTool,
-      destructive: false,
-    });
     const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
     expect(res.status).toBe(200);
     expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);

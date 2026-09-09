@@ -133,6 +133,7 @@ beforeAll(async () => {
         db: fake.db,
         agent: fake.agent,
         connection: fake.connection,
+        workingSet: fake.workingSet,
         tool: fake.tool,
         approval: fake.approval,
         pendingAction: fake.pendingAction,

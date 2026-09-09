@@ -18,6 +18,7 @@ export {
 } from "./acquire-job/acquire-job.service";
 export { type AgentDeps, defaultAgentDeps } from "./agent/agent.deps";
 export {
+  type ActiveAgentScope,
   AGENT_NAME_MAX_LENGTH,
   type AgentLimitsPatch,
   type AgentOutput,
@@ -26,6 +27,7 @@ export {
   getAgent,
   getAgentScope,
   IDLE_WINDOW_DAYS_RANGE,
+  listActiveAgentScopes,
   listAgents,
   revokeAgent,
   setAgentScope,
@@ -135,6 +137,15 @@ export {
   updateToolDefinition,
   validateToolDefinition,
 } from "./tool/tool.service";
+export {
+  DAY_MS,
+  type SweepCause,
+  type SweepDecision,
+  type SweepDecisionInput,
+  type SweepDemotion,
+  type SweepEntry,
+  sweepDecision,
+} from "./working-set/sweep.decision";
 export { defaultWorkingSetDeps, type WorkingSetDeps } from "./working-set/working-set.deps";
 export {
   countWorkingSet,
