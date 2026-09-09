@@ -15,7 +15,12 @@
     },
     "test": {
       "dependsOn": ["^test"],
-      "outputs": []
+      "outputs": [],
+      // Strict env mode passes a task nothing it has not declared. The Docker conformance suite
+      // (`packages/sandbox-docker`) reads these three: where the daemon is, whether it may skip when
+      // no daemon answers, and which prebuilt image to test. Declaring them also makes them part of
+      // the cache key, so a run against a different image is not a cache hit on the last one.
+      "env": ["CI", "DOCKER_HOST", "GRAFT_SANDBOX_IMAGE"]
     },
     "dev": {
       "cache": false,

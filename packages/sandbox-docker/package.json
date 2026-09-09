@@ -1,0 +1,31 @@
+{
+  "name": "@graft/sandbox-docker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check-types": "tsc -p tsconfig.json",
+    "image:build": "docker build -t graft-sandbox:dev ."
+  },
+  "dependencies": {
+    "@graft/sandbox": "workspace:*",
+    "tar-stream": "catalog:"
+  },
+  "devDependencies": {
+    "@graft/config": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/tar-stream": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

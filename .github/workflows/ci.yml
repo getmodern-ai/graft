@@ -79,5 +79,17 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      # The sandbox image is built here rather than inside the suite so that a broken Dockerfile is
+      # its own red step, and so the suite tests the image CI built rather than one it found lying
+      # around. `ubuntu-latest` ships a Docker daemon on the default socket, which is all the backing
+      # needs (`packages/sandbox-docker/README.md`).
+      - name: Build the sandbox image
+        run: docker build -t graft-sandbox:ci packages/sandbox-docker
+
+      # `pnpm run test` includes the Docker conformance suite, which under `CI` refuses to skip: a
+      # green run here means the suite ran against the image the step above built. The variables are
+      # declared under the `test` task in `turbo.json`, or strict env mode would withhold them.
       - name: Test
         run: pnpm run test
+        env:
+          GRAFT_SANDBOX_IMAGE: graft-sandbox:ci
