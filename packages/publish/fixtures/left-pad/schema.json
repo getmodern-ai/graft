@@ -1,0 +1,5 @@
+{
+  "type": "object",
+  "properties": { "word": { "type": "string" }, "width": { "type": "integer" } },
+  "required": ["word", "width"]
+}

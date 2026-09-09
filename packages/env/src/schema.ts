@@ -165,6 +165,82 @@ export function defaultProxyPublicUrl(listeningPort: number): string {
 }
 
 /**
+ * Where the server keeps every person's toolbox as files (`@graft/toolbox`, ADR 0002's self-hosted
+ * backing of the storage seam): one directory per toolbox id under this root. Relative to the
+ * server's working directory when not absolute; the store resolves it. The default suits a laptop
+ * and is gitignored; a deployment sets an absolute path that is also the Docker backing's
+ * `toolboxHostRoot`, so the sandboxes mount the same tree.
+ */
+export const toolboxRoot = z
+  .string()
+  .min(1, "GRAFT_TOOLBOX_ROOT must name a directory")
+  .default("./.graft/toolboxes");
+
+/**
+ * The package policy's two thresholds (ADR 0013; `@graft/publish`'s `evaluatePackage`): a package
+ * off the allowlist installs only with npm provenance *and* at least this many days since its first
+ * publish *and* at least this many downloads last week. Whole numbers, zero allowed — a laptop
+ * testing the install step against a fresh package sets both to `0` rather than editing code.
+ */
+export const packageMinAgeDays = z.coerce
+  .number({ error: "GRAFT_PACKAGE_MIN_AGE_DAYS must be a whole number of days" })
+  .int("GRAFT_PACKAGE_MIN_AGE_DAYS must be a whole number of days")
+  .min(0, "GRAFT_PACKAGE_MIN_AGE_DAYS must be zero or more")
+  .default(90);
+
+export const packageMinWeeklyDownloads = z.coerce
+  .number({ error: "GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS must be a whole number" })
+  .int("GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS must be a whole number")
+  .min(0, "GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS must be zero or more")
+  .default(1000);
+
+/**
+ * An npm package name, or a scope pattern `@scope/*` — the shape an allowlist entry takes. A bare
+ * `*` is not one: an allowlist of everything is no policy. The other holder of the name rule is
+ * `@graft/publish`'s `isValidPackageName`, which this package cannot import (the environment is a
+ * leaf); the two must agree on what a name may be.
+ */
+const ALLOWLIST_ENTRY =
+  /^(@[a-z0-9][a-z0-9._~-]*\/([a-z0-9][a-z0-9._~-]*|\*)|[a-z0-9][a-z0-9._~-]*)$/;
+
+/**
+ * Names added to the package policy's allowlist for this deployment, comma-separated — exact package
+ * names or `@scope/*`. The default allowlist is the official vendor SDKs in `@graft/publish`'s
+ * `DEFAULT_PACKAGE_ALLOWLIST` and grows through the review queue (ADR 0013); this is how a
+ * deployment admits one ahead of a release. Parsed to a list here, so no consumer splits the string.
+ */
+export const packageAllowlist = z
+  .string()
+  .optional()
+  .transform((raw, ctx) => {
+    if (raw === undefined) return [] as string[];
+    const names = raw
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    for (const name of names) {
+      if (!ALLOWLIST_ENTRY.test(name) || name.length > 214) {
+        ctx.addIssue({
+          code: "custom",
+          message: `GRAFT_PACKAGE_ALLOWLIST entry "${name}" is not a package name or a scope pattern like @scope/*`,
+        });
+        return z.NEVER;
+      }
+    }
+    return [...new Set(names)];
+  });
+
+/**
+ * The Docker sandbox backing's two settings (`@graft/sandbox-docker`, ADR 0002), all-or-nothing:
+ * the prebuilt image sandboxes are created from, and the internal network they join. Individually
+ * optional so a server with no Docker boots and only the sandbox is unavailable — a publish that
+ * declares packages then refuses with a diagnostic saying no backing is configured — but a partial
+ * pair is a half-finished deploy and would present as every install failing with nothing at boot to
+ * say why.
+ */
+export const sandboxKeys = ["GRAFT_SANDBOX_IMAGE", "GRAFT_SANDBOX_NETWORK"] as const;
+
+/**
  * A group of settings that only makes sense complete. Factored so a second hand-written copy of
  * this comparison is not where two groups drift — one of them getting the `present.length === 0`
  * case wrong and reporting every unconfigured deploy as broken.
@@ -196,6 +272,13 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
     capabilityTokenKeys,
   );
   if (partial) issues.push(partial);
+
+  const partialSandbox = partialGroupIssue(
+    value,
+    "The Docker sandbox backing is partially configured — set both the image and the network or neither.",
+    sandboxKeys,
+  );
+  if (partialSandbox) issues.push(partialSandbox);
 
   /**
    * The seed file is for a laptop: connections with their plaintext credentials in a JSON file the
@@ -277,6 +360,18 @@ export const serverSchema = {
    * in production (`serverEnvIssues`). `apps/server/src/connections.ts` has the shape.
    */
   GRAFT_DEV_SEED: z.string().min(1).optional(),
+
+  /** Where toolboxes live as files — see `toolboxRoot`. */
+  GRAFT_TOOLBOX_ROOT: toolboxRoot,
+
+  /** The package policy's thresholds and extra names — see `packageMinAgeDays`, `packageAllowlist`. */
+  GRAFT_PACKAGE_MIN_AGE_DAYS: packageMinAgeDays,
+  GRAFT_PACKAGE_MIN_WEEKLY_DOWNLOADS: packageMinWeeklyDownloads,
+  GRAFT_PACKAGE_ALLOWLIST: packageAllowlist,
+
+  /** The Docker sandbox backing's image and internal network, all-or-nothing — see `sandboxKeys`. */
+  GRAFT_SANDBOX_IMAGE: z.string().min(1).optional(),
+  GRAFT_SANDBOX_NETWORK: z.string().min(1).optional(),
 };
 
 /** The object schema `createEnv` is handed: the fields, the cross-field rules, the derived default. */
