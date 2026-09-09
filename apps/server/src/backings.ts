@@ -34,7 +34,11 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  * `apps/server/package.json` lists it under `optionalDependencies`, which is what makes the import
  * below resolvable from this file when the package is present: pnpm links an optional workspace
  * dependency into this app's `node_modules` when the workspace has it and installs without
- * complaint — frozen lockfile included — when it does not.
+ * complaint — frozen lockfile included — when it does not. In the image (`apps/server/Dockerfile`,
+ * GRA-38) the same name resolves to the package's own build, laid at
+ * `/app/node_modules/@graft/cloud-backings` by the Dockerfile when the checkout it was built from had
+ * the package; the open image has no such directory, and the import fails there as it fails here
+ * without the package.
  *
  * Nothing about the hosted backings is typed here beyond the seams they implement. What the private
  * module must export is `createCloudBackings(input: CloudBackingsInput)` returning the three

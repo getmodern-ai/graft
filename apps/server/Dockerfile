@@ -10,6 +10,13 @@
 # console and bundles the server; `prod-deps` installs what the bundle imports at run time and
 # nothing else; `runtime` is Node on Debian slim with a dedicated user and the four directories the
 # server needs.
+#
+# The same file builds the hosted image (GRA-38). The hosted form's backings are a private package
+# a checkout links in at `packages/cloud-backings/` — gitignored, so never in this repository's
+# tree, present in the build context only when the checkout has it (ADR 0002). Three places below
+# read that directory and do nothing when it is absent: `build` runs the package's own build,
+# `prod-deps` installs its third-party dependencies because they are in the lockfile it is given, and
+# `runtime` copies its build and its manifest. The open image is built from the same lines.
 
 FROM node:24-slim AS base
 # The pnpm the lockfile was written with — `packageManager` in the root package.json.
@@ -33,10 +40,35 @@ RUN --mount=type=cache,id=graft-pnpm-store,target=/pnpm-store \
 
 # The console's `vite build` and the server's `tsdown` bundle (`apps/server/tsdown.config.ts`, which
 # also lays the runner, the skills and the migration chain beside the bundle).
+#
+# Then the linked backings package, when there is one: the server's bundle loads it by name at run
+# time (`apps/server/src/backings.ts`) from an image that has no TypeScript, so the package has to
+# arrive built — its own `build` script, which inlines the `@graft/*` seam packages it imports the
+# way the server's bundle does, since the runtime has no source copy of them to resolve. When the
+# directory is absent the filter matches no project and pnpm exits 0 saying so, which is what makes
+# the line inert for the open image.
+#
+# The build and the manifest are then staged under `/linked` as `node_modules/@graft/cloud-backings`,
+# the shape the runtime copies over `/app`. Under `node_modules` because that is where the bundle's
+# `import()` of the bare name looks and where the package's own third-party imports already resolve;
+# a real directory rather than pnpm's link because the hoisted install below puts workspace links in
+# `apps/server/node_modules`, not the root, and the runtime copies neither that directory nor the
+# source tree they point at (measured on the `prod-deps` stage, GRA-38). Staged rather than copied
+# straight from the tree so the runtime has one path to copy whether the package is present or not —
+# a `COPY` of a path that may not exist cannot be written. The condition is the directory and not
+# `dist/`, so a linked package that produced no build fails here, at `cp`, and not at the first
+# `GRAFT_BACKINGS=cloud` boot with a sentence about the package not being installed.
 FROM deps AS build
 COPY . .
 RUN pnpm --filter @graft/web build \
- && pnpm --filter @graft/server build
+ && pnpm --filter @graft/server build \
+ && pnpm --filter @graft/cloud-backings build \
+ && mkdir -p /linked \
+ && if [ -d packages/cloud-backings ]; then \
+      mkdir -p /linked/node_modules/@graft/cloud-backings \
+      && cp -r packages/cloud-backings/dist packages/cloud-backings/package.json \
+           /linked/node_modules/@graft/cloud-backings/; \
+    fi
 
 # The bundle inlines every `@graft/*` package and imports every third-party dependency as written,
 # so the runtime needs the production dependencies of the server *and* of each workspace package it
@@ -63,6 +95,11 @@ RUN groupadd --gid 10001 graft \
 
 WORKDIR /app
 COPY --from=prod-deps --chown=graft:graft /app/node_modules ./node_modules
+# The linked backings package, built, as `node_modules/@graft/cloud-backings` — or nothing, when the
+# `build` stage found no package to stage (the comment on that stage). Its third-party dependencies
+# are already in the layer above: `prod-deps` installs from a lockfile that names them whenever the
+# package is in the tree it was given.
+COPY --from=build --chown=graft:graft /linked/ ./
 COPY --from=build --chown=graft:graft /app/apps/server/package.json ./apps/server/package.json
 COPY --from=build --chown=graft:graft /app/apps/server/dist ./apps/server/dist
 COPY --from=build --chown=graft:graft /app/apps/server/skills ./apps/server/skills
