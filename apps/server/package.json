@@ -10,7 +10,8 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "build": "tsdown",
+    "start": "node dist/index.mjs",
     "keys": "tsx src/scripts/generate-keys.ts",
     "mint": "tsx src/scripts/mint-token.ts",
     "sweep": "tsx src/scripts/sweep.ts",
@@ -43,6 +44,7 @@
     "@graft/config": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "catalog:",
+    "tsdown": "^0.23.0",
     "tsx": "^4.23.12",
     "typescript": "catalog:",
     "vitest": "catalog:"

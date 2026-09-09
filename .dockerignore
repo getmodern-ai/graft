@@ -1,0 +1,18 @@
+# What the server image's build context leaves out (`apps/server/Dockerfile`). Dependencies are
+# installed inside the build from the lockfile, so a host's node_modules would only be a stale
+# copy; secrets and local state never enter a layer.
+**/node_modules
+**/dist
+**/.turbo
+**/coverage
+.git
+.claude
+.agents
+.graft
+**/.env
+**/.env.*
+!.env.example
+*.log
+docker-compose.yml
+docker-compose.override.yml
+docs
