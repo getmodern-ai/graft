@@ -58,3 +58,18 @@ is bounded to that connection for those minutes. Two SDK facts the checker and t
 `@slack/web-api` must be constructed with `allowAbsoluteUrls: false`, since it otherwise treats a
 method name that is an absolute URL as the URL to call; and Stripe's SDK has no base-path option, so
 Stripe is raw `ctx.fetch` for now.
+
+## Amended 9 September 2026, second
+
+**The proxy redacts an echoed credential by value on the way back** (GRA-29). A vendor that quotes
+the key it refused in a 401 body, or echoes the request it was sent, would otherwise hand the
+plaintext to the sandbox and on into `acquire`'s trace — and the proxy is the one component that
+holds the plaintext at injection time (GRA-1, "The core and its seams"), so it is the only one that
+can redact by value; everything downstream can redact only by shape. After injecting, the proxy
+replaces every occurrence of each injected value — the stored fields, the derived wire credential,
+and for basic auth the base64 pair the header carries — in response headers and in text-like bodies
+(JSON, text, XML, HTML, a form, and their structured suffixes) with `[redacted:credential]`, sets
+`x-graft-redacted: credential` on the response, and records `credentialEchoed` on the wide event.
+Binary bodies pass through untouched, since a byte sequence that spells a key in an image is not an
+echo. The consequence for a module: a vendor error it reads may carry the marker where the vendor
+wrote the key, which is the one place "verbatim" gives way.
