@@ -156,10 +156,9 @@ describe.skipIf(docker.reason !== undefined)("docker sandbox backing", () => {
 
   describe("docker-specific", () => {
     let fixture: Fixture;
-    const created = new Set<string>();
+    /** Sandboxes made here are destroyed by the fixture's `close`, which lists the backend's own. */
     const ensure = async (label: string) => {
       const name = `specific-${label}`;
-      created.add(name);
       return (await fixture.backend.ensure({ name })).handle;
     };
 
@@ -213,7 +212,6 @@ describe.skipIf(docker.reason !== undefined)("docker sandbox backing", () => {
 
     it("mounts a toolbox around a running sandbox and reports the same sandbox name afterwards", async () => {
       const name = "specific-remount";
-      created.add(name);
       const { handle } = await fixture.backend.ensure({ name });
       const before = await fixture.engine.json<{ Id: string }>(
         "GET",
