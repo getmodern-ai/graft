@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>Graft</title>
+  <rect width="32" height="32" rx="7" fill="#1c1917"/>
+  <path d="M10 22V10h7.5a4.5 4.5 0 0 1 0 9H13" fill="none" stroke="#fafaf9" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M17 19l5 3" fill="none" stroke="#fd6a41" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

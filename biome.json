@@ -13,7 +13,8 @@
       "!**/.turbo",
       "!**/coverage",
       "!**/.agents/skills",
-      "!.claude/worktrees"
+      "!.claude/worktrees",
+      "!apps/web/src/routeTree.gen.ts"
     ]
   },
   "formatter": {
@@ -65,5 +66,18 @@
     "parser": {
       "tailwindDirectives": true
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["apps/web/src/components/ui/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noLabelWithoutControl": "off",
+            "useSemanticElements": "off"
+          }
+        }
+      }
+    }
+  ]
 }

@@ -1,0 +1,95 @@
+import type { AgentOutput } from "@graft/core";
+import type { ToolOutput, WorkingSetChangeOutput, WorkingSetEntryOutput } from "@graft/server/api";
+import { queryOptions } from "@tanstack/react-query";
+
+import { api, type Jsonified } from "./api";
+
+/**
+ * Agents, as the console reads and edits them (ADR 0007: an agent holds a scope and a working set
+ * and nothing else of its own). The shapes are the server's, jsonified — see `api.ts`.
+ */
+
+export type Agent = Jsonified<AgentOutput>;
+export type Tool = Jsonified<ToolOutput>;
+export type WorkingSetEntry = Jsonified<WorkingSetEntryOutput>;
+export type WorkingSetChange = Jsonified<WorkingSetChangeOutput>;
+
+export const agentKeys = {
+  all: ["agents"] as const,
+  one: (agentId: string) => ["agents", agentId] as const,
+  workingSet: (agentId: string) => ["agents", agentId, "working-set"] as const,
+  changes: (agentId: string) => ["agents", agentId, "working-set", "changes"] as const,
+};
+
+export const agentsQuery = queryOptions({
+  queryKey: agentKeys.all,
+  queryFn: () => api<{ agents: Agent[] }>("/agents"),
+});
+
+export const agentQuery = (agentId: string) =>
+  queryOptions({
+    queryKey: agentKeys.one(agentId),
+    queryFn: () =>
+      api<{ agent: Agent; connectionIds: string[] }>(`/agents/${encodeURIComponent(agentId)}`),
+  });
+
+export const workingSetQuery = (agentId: string) =>
+  queryOptions({
+    queryKey: agentKeys.workingSet(agentId),
+    queryFn: () =>
+      api<{ workingSet: WorkingSetEntry[] }>(`/agents/${encodeURIComponent(agentId)}/working-set`),
+  });
+
+/** The history, newest first; the server caps a page at 500 and defaults to 50 (GRA-24). */
+export const workingSetChangesQuery = (agentId: string, limit = 100) =>
+  queryOptions({
+    queryKey: [...agentKeys.changes(agentId), limit] as const,
+    queryFn: () =>
+      api<{ changes: WorkingSetChange[] }>(
+        `/agents/${encodeURIComponent(agentId)}/working-set/changes?limit=${limit}`,
+      ),
+  });
+
+export type CreateAgentInput = {
+  name: string;
+  workingSetCap?: number;
+  idleWindowDays?: number;
+  connectionIds?: string[];
+};
+
+/** The one answer that carries the token (`POST /api/agents`); nothing reads it back afterwards. */
+export type CreatedAgent = {
+  agent: Agent;
+  token: string;
+  connectionIds: string[];
+};
+
+export function createAgent(input: CreateAgentInput) {
+  return api<CreatedAgent>("/agents", { method: "POST", body: input });
+}
+
+export type AgentLimitsPatch = {
+  name?: string;
+  workingSetCap?: number;
+  idleWindowDays?: number;
+};
+
+export function updateAgentLimits(agentId: string, patch: AgentLimitsPatch) {
+  return api<{ agent: Agent }>(`/agents/${encodeURIComponent(agentId)}`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export function revokeAgent(agentId: string) {
+  return api<{ agent: Agent }>(`/agents/${encodeURIComponent(agentId)}/revoke`, {
+    method: "POST",
+  });
+}
+
+export function setAgentScope(agentId: string, connectionIds: string[]) {
+  return api<{ agent: Agent; connectionIds: string[] }>(
+    `/agents/${encodeURIComponent(agentId)}/scope`,
+    { method: "PUT", body: { connectionIds } },
+  );
+}

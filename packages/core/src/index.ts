@@ -86,7 +86,14 @@ export {
 } from "./errors";
 export { isKebabCase } from "./kebab-case";
 export { defaultLedgerDeps, type LedgerDeps } from "./ledger/ledger.deps";
-export { lastUsedAtByTool, listUsage, recordUsage, type UsageInput } from "./ledger/ledger.service";
+export {
+  lastUsedAtByTool,
+  listUsage,
+  listVendorUsage,
+  recordUsage,
+  type UsageInput,
+  type VendorUsageRow,
+} from "./ledger/ledger.service";
 export {
   defaultPendingActionDeps,
   type PendingActionDeps,

@@ -1,9 +1,9 @@
-import type { UsageLedgerRow } from "@graft/db/repo/usage";
+import type { UsageLedgerRow, VendorUsageRow } from "@graft/db/repo/usage";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
-import type { AgentScope } from "../tenancy";
+import type { AgentScope, Principal } from "../tenancy";
 import type { LedgerDeps } from "./ledger.deps";
 
 /**
@@ -63,4 +63,29 @@ export async function lastUsedAtByTool(
   deps: LedgerDeps,
 ): Promise<{ toolId: string; lastUsedAt: Date }[]> {
   return deps.lastUsedAtByTool(ctx.db, scope);
+}
+
+export type { VendorUsageRow };
+
+/**
+ * The person's recent calls against one vendor, every agent's, newest first — what the console shows
+ * beside a connection as its recent vendor calls (GRA-26). The ledger stands in for the proxy's wide
+ * events here because those are not persisted; it records the invocation, not the HTTP exchange, so
+ * a line says which tool ran, for which agent, and how it ended. `toolNames` are wire names to count
+ * as the vendor's beside its tools' rows — the connection's `execute__<id>` tool, which has none.
+ */
+export async function listVendorUsage(
+  ctx: ServiceContext,
+  principal: Principal,
+  args: { vendor: string; toolNames?: readonly string[]; limit: number },
+  deps: LedgerDeps,
+): Promise<VendorUsageRow[]> {
+  if (!Number.isInteger(args.limit) || args.limit < 1) {
+    throw new ServiceError("BAD_REQUEST", "The limit is a whole number of at least 1");
+  }
+  return deps.listUsageForVendor(ctx.db, principal.personId, {
+    vendor: args.vendor,
+    toolNames: args.toolNames ?? [],
+    limit: args.limit,
+  });
 }

@@ -542,6 +542,17 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
             .reverse()
             .slice(0, args.limit)
         : [],
+    listUsageForVendor: async (_db, personId, args) =>
+      store.usage
+        .filter((row) => {
+          const owner = store.agents.get(row.agentId);
+          if (!owner || owner.personId !== personId) return false;
+          const tool = row.toolId ? store.tools.get(row.toolId) : undefined;
+          return tool?.vendor === args.vendor || args.toolNames.includes(row.toolName);
+        })
+        .reverse()
+        .slice(0, args.limit)
+        .map((row) => ({ ...row, agentName: store.agents.get(row.agentId)?.name ?? "" })),
     lastUsedAtByTool: async (_db, scope) => {
       if (!ownsAgent(scope)) return [];
       const latest = new Map<string, Date>();
