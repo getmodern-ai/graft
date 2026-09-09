@@ -140,9 +140,15 @@ try {
   });
 
   const toolboxId = toolboxIdOf(personId);
+  // Where a reader of this output finds a toolbox path: on this disk when the store is a directory
+  // here, else as the backings' own store holds it (`Backings.toolboxRoot`).
+  const locate = (path: string) =>
+    backings.toolboxRoot === null
+      ? `${toolboxId}/${path} (in the ${backings.form} backings' own store)`
+      : join(backings.toolboxRoot, toolboxId, path);
   const draft = draftPath(`fixture-${Date.now().toString(36)}`);
   await store.writeTree(toolboxId, draft, await readModuleDir(dir));
-  console.error(`draft written to ${store.toolboxRoot(toolboxId)}/${draft}`);
+  console.error(`draft written to ${locate(draft)}`);
 
   const outcome = await publishToolVersion(deps, {
     personId,
@@ -163,7 +169,7 @@ try {
           version: {
             id: outcome.version.id,
             number: outcome.version.versionNumber,
-            path: `${store.toolboxRoot(toolboxId)}/${outcome.version.path}`,
+            path: locate(outcome.version.path),
             sourceHash: outcome.version.sourceHash,
             lockfileHash: outcome.version.lockfileHash,
           },

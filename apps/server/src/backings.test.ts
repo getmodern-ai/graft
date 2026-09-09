@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +37,7 @@ describe("the open form", () => {
     expect(backings.form).toBe("open");
     expect(backings.sandbox).toBeNull();
     expect(backings.keyring.id).toBe(LOCAL_KEYRING_ID);
-    expect(backings.store.root).toBe(toolboxRoot);
+    expect(backings.toolboxRoot).toBe(toolboxRoot);
     await expect(backings.mirror.mirrorVersion("person1", "tools/v/t/v1")).resolves.toBeUndefined();
   });
 
@@ -50,7 +50,7 @@ describe("the open form", () => {
 
     expect(backings.sandbox).not.toBeNull();
     expect(typeof backings.sandbox?.install).toBe("function");
-    expect(backings.store.root).toBe(toolboxRoot);
+    expect(backings.toolboxRoot).toBe(toolboxRoot);
   });
 
   it("builds the Docker backing over the shared toolbox volume when one is named, the store still at the root", async () => {
@@ -62,7 +62,7 @@ describe("the open form", () => {
     });
 
     expect(backings.sandbox).not.toBeNull();
-    expect(backings.store.root).toBe(toolboxRoot);
+    expect(backings.toolboxRoot).toBe(toolboxRoot);
   });
 
   it("builds the fake sandbox with the store inside the fake's own root, so the two see one tree", async () => {
@@ -70,8 +70,8 @@ describe("the open form", () => {
     const sandbox = backings.sandbox;
     if (!sandbox) throw new Error("the fake is always a sandbox");
 
-    expect(backings.store.root).not.toBe(toolboxRoot);
-    expect(backings.store.root.endsWith("/toolboxes")).toBe(true);
+    expect(backings.toolboxRoot).not.toBe(toolboxRoot);
+    expect(backings.toolboxRoot?.endsWith("/toolboxes")).toBe(true);
     // What the store writes is what a sandbox of the fake mounts.
     await backings.store.writeTree("person1", "tools/v/t/v1", [{ path: "a.txt", content: "one" }]);
     const { handle } = await sandbox.ensure({ name: "s" });
@@ -97,7 +97,7 @@ describe("the cloud form", () => {
 
     expect(backings.form).toBe("cloud");
     expect(backings.keyring.id).toBe("fake-cloud");
-    expect(backings.store.root).toBe(toolboxRoot);
+    expect(backings.toolboxRoot).toBe(toolboxRoot);
     expect(await backings.sandbox?.list()).toEqual([]);
     await backings.mirror.mirrorVersion("person1", ".drafts/job1");
     expect(JSON.parse(await backings.store.read("person1", ".drafts/job1/mirrored.json"))).toEqual({
@@ -105,6 +105,29 @@ describe("the cloud form", () => {
       proxy: "http://localhost:3000/api/proxy",
       marker: "reached",
     });
+  });
+
+  it("takes the store a factory answers with in place of the filesystem store, and then reports no toolbox directory here", async () => {
+    const backings = await selectBackings(cloud, { cloudModule: fixture("own-store") });
+
+    expect(backings.form).toBe("cloud");
+    expect(backings.keyring.id).toBe("own-store");
+    expect(backings.toolboxRoot).toBeNull();
+    // The factory wrote a marker through its own store before answering; reading it back through
+    // the selector's store is what shows the two are one.
+    expect(await backings.store.read("person1", "tools/own/marker/v1/marker.txt")).toBe(
+      "written by the factory's own store",
+    );
+    // A write through it lands in the factory's store, not in a directory at the toolbox root.
+    await backings.store.writeTree("own-person", ".drafts/job1", [{ path: "a.txt", content: "a" }]);
+    expect(await backings.store.exists("own-person", ".drafts/job1/a.txt")).toBe(true);
+    expect(existsSync(join(toolboxRoot, "own-person"))).toBe(false);
+  });
+
+  it("refuses a factory whose store is not a whole store", async () => {
+    await expect(selectBackings(cloud, { cloudModule: fixture("half-store") })).rejects.toThrow(
+      /returned a store without writeTree\(\)/,
+    );
   });
 
   it("refuses a module that is not installed, saying which and how to boot without it", async () => {
@@ -133,6 +156,15 @@ describe("assertCloudBackings", () => {
     mirror: { mirrorVersion() {} },
   };
 
+  const store = {
+    readTree() {},
+    writeTree() {},
+    read() {},
+    list() {},
+    exists() {},
+    remove() {},
+  };
+
   it("accepts the three seams and names the first missing function or the missing id", () => {
     expect(() => assertCloudBackings(complete, "m")).not.toThrow();
     expect(() =>
@@ -142,5 +174,16 @@ describe("assertCloudBackings", () => {
       assertCloudBackings({ ...complete, keyring: { ...complete.keyring, id: undefined } }, "m"),
     ).toThrow(/keyring with no id/);
     expect(() => assertCloudBackings(null, "m")).toThrow(/no sandbox backing/);
+  });
+
+  it("accepts a store beside the seams, whole or absent, and names the first verb a partial one lacks", () => {
+    expect(() => assertCloudBackings({ ...complete, store }, "m")).not.toThrow();
+    expect(() => assertCloudBackings({ ...complete, store: undefined }, "m")).not.toThrow();
+    expect(() =>
+      assertCloudBackings({ ...complete, store: { ...store, remove: "no" } }, "m"),
+    ).toThrow(/store without remove\(\)/);
+    expect(() => assertCloudBackings({ ...complete, store: null }, "m")).toThrow(
+      /store that is not an object/,
+    );
   });
 });
