@@ -8,7 +8,7 @@ import { z } from "zod";
  * makes sense complete is refused when half-set, because a partial set is always a typo or a
  * half-finished deploy and would otherwise present as a feature that silently never works.
  *
- * Every Graft variable is `GRAFT_*`. GRA-31 adds the provider-backed model to `modelBackend`.
+ * Every Graft variable is `GRAFT_*`.
  */
 
 /**
@@ -315,15 +315,69 @@ export const acquireConcurrency = z.coerce
 /**
  * Which model answers `acquire` (ADR 0004; `@graft/model`'s adapter seam, ADR 0002). Unset, the
  * server boots with no model and `acquire` refuses `acquire_unconfigured`, saying so — the sandbox's
- * posture. `scripted` is `@graft/model/scripted` playing the JSON file `GRAFT_MODEL_SCRIPT` names,
- * for a laptop driving the whole loop without a provider key; it is a canned answer sheet, not a
- * model, and is refused under `NODE_ENV=production` (`serverEnvIssues`). The provider-backed value
- * arrives with GRA-31 and joins this enum.
+ * posture, and allowed only outside production under the open backings (`serverEnvIssues`).
+ * `scripted` is `@graft/model/scripted` playing the JSON file `GRAFT_MODEL_SCRIPT` names, for a
+ * laptop driving the whole loop without a provider key; it is a canned answer sheet, not a model,
+ * and is refused under `NODE_ENV=production`. `provider` is `@graft/model/provider`: a real
+ * provider through the AI SDK, configured by `GRAFT_MODEL_PROVIDER` and `GRAFT_MODEL_API_KEY`
+ * (`modelProviderKeys`), with the two model ids and the base URL optional beside them.
  */
-export const modelBackend = z.enum(["scripted"]).optional();
+export const modelBackend = z.enum(["scripted", "provider"]).optional();
 
 /** The scripted model's script, all-or-nothing with `GRAFT_MODEL_BACKEND=scripted` — see `modelBackend`. */
 export const modelScriptKeys = ["GRAFT_MODEL_BACKEND", "GRAFT_MODEL_SCRIPT"] as const;
+
+/**
+ * The provider behind `GRAFT_MODEL_BACKEND=provider` — `@graft/model/provider`'s two: Anthropic, or
+ * OpenAI, which through `GRAFT_MODEL_BASE_URL` also covers an OpenAI-compatible gateway. The word
+ * is validated here; the model ids are not — a provider's catalogue is not something this schema
+ * can know, so a wrong id fails the first job with the provider's own sentence.
+ */
+export const modelProvider = z.enum(["anthropic", "openai"]).optional();
+
+/**
+ * The provider-backed model's two required settings, read together under
+ * `GRAFT_MODEL_BACKEND=provider` and nowhere else — a provider named with no key can call nothing,
+ * a key with no provider names nothing to call. `GRAFT_MODEL_AUTHORING` and `GRAFT_MODEL_TRIAGE`
+ * (`modelProviderOptionalKeys`) default per provider in `@graft/model/provider`'s
+ * `PROVIDER_MODEL_DEFAULTS` — for Anthropic `claude-fable-5-1` and `claude-haiku-4-5-20251001`,
+ * for OpenAI `gpt-5.6-sol` (the model Cando ships in production for the same work) and
+ * `gpt-5.4-mini` — and `GRAFT_MODEL_BASE_URL` has no default. Any of the five set while
+ * `GRAFT_MODEL_BACKEND` is not `provider` is refused: nothing would read it, and a deploy that
+ * meant to turn the model on would find `acquire` refusing `acquire_unconfigured` with the key
+ * sitting in the environment.
+ */
+export const modelProviderKeys = ["GRAFT_MODEL_PROVIDER", "GRAFT_MODEL_API_KEY"] as const;
+export const modelProviderOptionalKeys = [
+  "GRAFT_MODEL_AUTHORING",
+  "GRAFT_MODEL_TRIAGE",
+  "GRAFT_MODEL_BASE_URL",
+] as const;
+
+/**
+ * Langfuse (`@graft/model/langfuse`), all-or-nothing: with the pair, every model call `acquire`
+ * makes is traced under the job, the person and the attempt; without it nothing is traced and the
+ * call is exactly what it would be otherwise. `GRAFT_LANGFUSE_BASE_URL` sits outside the group
+ * because it has a correct default — the SDK's, the EU cloud — and a region is not a half-finished
+ * deploy. The shape and the reasons are Cando's (ADR 0011).
+ */
+export const langfuseKeys = ["GRAFT_LANGFUSE_PUBLIC_KEY", "GRAFT_LANGFUSE_SECRET_KEY"] as const;
+
+/**
+ * A secret as an environment value: non-empty, and not the placeholder a secrets store leaves in a
+ * variable nobody has populated. A placeholder would pass every other check and fail at the first
+ * call with the provider's own error, far from the boot log; refused here it is one sentence.
+ */
+export function secretValue(name: string) {
+  return z
+    .string()
+    .min(1, `${name} must not be empty`)
+    .refine(
+      (value) => !value.startsWith("PLACEHOLDER"),
+      `${name} still holds the secret store's placeholder; populate it or unset it`,
+    )
+    .optional();
+}
 
 /**
  * The Docker sandbox backing's two settings (`@graft/sandbox-docker`, ADR 0002), all-or-nothing:
@@ -458,21 +512,73 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   }
 
   /**
-   * The scripted model is a script, so it is the pair or nothing: a backend named with no script
-   * has nothing to play, a script with no backend is a file nobody reads — both a half-finished
-   * setup. And an answer sheet in place of a model is refused in production, like the fake sandbox.
+   * The scripted model is a script, so it is the pair or nothing: `scripted` named with no script
+   * has nothing to play, a script beside another backend is a file nobody reads — both a
+   * half-finished setup. And an answer sheet in place of a model is refused in production, like the
+   * fake sandbox.
    */
-  const partialModel = partialGroupIssue(
-    value,
-    "The scripted model is partially configured — set GRAFT_MODEL_BACKEND=scripted and GRAFT_MODEL_SCRIPT together, or neither.",
-    modelScriptKeys,
-  );
-  if (partialModel) issues.push(partialModel);
+  if (value.GRAFT_MODEL_BACKEND === "scripted" && value.GRAFT_MODEL_SCRIPT === undefined) {
+    issues.push(
+      "The scripted model is partially configured — set GRAFT_MODEL_BACKEND=scripted and GRAFT_MODEL_SCRIPT together, or neither. Missing: GRAFT_MODEL_SCRIPT",
+    );
+  }
+  if (value.GRAFT_MODEL_BACKEND !== "scripted" && value.GRAFT_MODEL_SCRIPT !== undefined) {
+    issues.push(
+      "The scripted model is partially configured — set GRAFT_MODEL_BACKEND=scripted and GRAFT_MODEL_SCRIPT together, or neither. Missing: GRAFT_MODEL_BACKEND=scripted",
+    );
+  }
   if (value.NODE_ENV === "production" && value.GRAFT_MODEL_BACKEND === "scripted") {
     issues.push(
       "GRAFT_MODEL_BACKEND=scripted is the canned test model and is refused under NODE_ENV=production.",
     );
   }
+
+  /**
+   * The provider-backed model reads its settings only under `GRAFT_MODEL_BACKEND=provider` — see
+   * `modelProviderKeys`. Under it the pair is required, and what is missing is named; outside it
+   * any of the five settings is a model nobody would use, and is refused for it.
+   */
+  const providerSettings = [...modelProviderKeys, ...modelProviderOptionalKeys].filter(
+    (key) => value[key] !== undefined,
+  );
+  if (value.GRAFT_MODEL_BACKEND === "provider") {
+    const missing = modelProviderKeys.filter((key) => value[key] === undefined);
+    if (missing.length > 0) {
+      issues.push(
+        `GRAFT_MODEL_BACKEND=provider needs GRAFT_MODEL_PROVIDER (anthropic or openai) and GRAFT_MODEL_API_KEY. Missing: ${missing.join(", ")}`,
+      );
+    }
+  } else if (providerSettings.length > 0) {
+    issues.push(
+      `${providerSettings.join(", ")} configure the provider-backed model, but GRAFT_MODEL_BACKEND is not provider, so nothing would read them; set GRAFT_MODEL_BACKEND=provider or unset them.`,
+    );
+  }
+
+  /**
+   * The self-hosted form authors with the deployment's own provider and key and refuses to start
+   * without them (ADR 0014): `acquire` is the product, and a self-hosted server that boots with no
+   * model would answer every `acquire` with `acquire_unconfigured` while looking installed.
+   * Production under the open backings is that form. The hosted form (`cloud`) runs Graft's fixed
+   * model or a person's own key (ADR 0014), and its deployment is checked by the private package's
+   * configuration, not here. Development keeps the scripted backend, or no model at all, so a laptop
+   * needs no key to run the rest.
+   */
+  if (
+    value.NODE_ENV === "production" &&
+    (value.GRAFT_BACKINGS ?? "open") === "open" &&
+    value.GRAFT_MODEL_BACKEND !== "provider"
+  ) {
+    issues.push(
+      "The self-hosted form needs a model to author with (ADR 0014): set GRAFT_MODEL_BACKEND=provider with GRAFT_MODEL_PROVIDER (anthropic or openai) and GRAFT_MODEL_API_KEY.",
+    );
+  }
+
+  const partialLangfuse = partialGroupIssue(
+    value,
+    "Langfuse is partially configured — set GRAFT_LANGFUSE_PUBLIC_KEY and GRAFT_LANGFUSE_SECRET_KEY together, or neither.",
+    langfuseKeys,
+  );
+  if (partialLangfuse) issues.push(partialLangfuse);
 
   // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
   // package brings the sandbox, and a `fake` set beside it would be two answers to one question.
@@ -588,6 +694,29 @@ export const serverSchema = {
   /** Which model answers `acquire`, and the scripted one's script — see `modelBackend`, `modelScriptKeys`. */
   GRAFT_MODEL_BACKEND: modelBackend,
   GRAFT_MODEL_SCRIPT: z.string().min(1).optional(),
+
+  /** The provider-backed model's settings — see `modelProviderKeys` for the group and the defaults. */
+  GRAFT_MODEL_PROVIDER: modelProvider,
+  GRAFT_MODEL_API_KEY: secretValue("GRAFT_MODEL_API_KEY"),
+  GRAFT_MODEL_AUTHORING: z.string().min(1).optional(),
+  GRAFT_MODEL_TRIAGE: z.string().min(1).optional(),
+  GRAFT_MODEL_BASE_URL: z
+    .url({
+      protocol: /^https?$/,
+      error:
+        "GRAFT_MODEL_BASE_URL must be an absolute http(s) URL — the provider's endpoint, or an OpenAI-compatible gateway's",
+    })
+    .optional(),
+
+  /** Langfuse, all-or-nothing, and its region — see `langfuseKeys`. */
+  GRAFT_LANGFUSE_PUBLIC_KEY: secretValue("GRAFT_LANGFUSE_PUBLIC_KEY"),
+  GRAFT_LANGFUSE_SECRET_KEY: secretValue("GRAFT_LANGFUSE_SECRET_KEY"),
+  GRAFT_LANGFUSE_BASE_URL: z
+    .url({
+      protocol: /^https?$/,
+      error: "GRAFT_LANGFUSE_BASE_URL must be an absolute http(s) URL — the Langfuse region's host",
+    })
+    .optional(),
 };
 
 /** The object schema `createEnv` is handed: the fields, the cross-field rules, the derived default. */
