@@ -138,7 +138,6 @@ beforeAll(async () => {
         ledger: fake.ledger,
         approval: fake.approval,
         pendingAction: fake.pendingAction,
-        ledger: fake.ledger,
       },
       corsOrigins: [],
       handoff,
