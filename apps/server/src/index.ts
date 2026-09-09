@@ -4,12 +4,15 @@ import { createAuth } from "@graft/auth";
 import { createConnectionDeps, defaultAgentDeps } from "@graft/core";
 import { createDb } from "@graft/db";
 import { env } from "@graft/env/server";
+import { createMcpDeps } from "@graft/mcp";
+import { createFakeSandboxBackend } from "@graft/sandbox";
+import { createDockerSandboxBackend } from "@graft/sandbox-docker";
 import { importCapabilityTokenKeys } from "@graft/token";
 import { createCredentialVault, createLocalKeyring } from "@graft/vault";
 import { serve } from "@hono/node-server";
 import { initLogger } from "evlog";
 
-import { API_MOUNT_PATH, createServer, PROXY_MOUNT_PATH } from "./app";
+import { API_MOUNT_PATH, createServer, MCP_MOUNT_PATH, PROXY_MOUNT_PATH } from "./app";
 import {
   connectionSeeds,
   createDatabaseConnections,
@@ -79,6 +82,20 @@ if (env.GRAFT_DEV_SEED) {
   connections = layerConnections(seeded, connections);
 }
 
+// The vault's encrypt half is all the connection service may hold (GRA-1: decrypted in exactly
+// one component, and that component is the proxy binding in `app.ts`).
+const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
+
+// The sandbox backing (ADR 0002): Docker by default; the fake is a laptop's, and `@graft/env`
+// refuses it in production. The Docker backing reads `DOCKER_HOST` itself, as the CLI does.
+const sandbox =
+  env.GRAFT_SANDBOX_BACKEND === "fake"
+    ? createFakeSandboxBackend()
+    : createDockerSandboxBackend({
+        image: env.GRAFT_SANDBOX_IMAGE,
+        network: env.GRAFT_SANDBOX_NETWORK,
+      });
+
 const app = createServer({
   keys,
   vault,
@@ -89,21 +106,29 @@ const app = createServer({
       handler: (request) => auth.handler(request),
       getSession: (headers) => auth.api.getSession({ headers }),
     },
-    // The vault's encrypt half is all the connection service may hold (GRA-1: decrypted in exactly
-    // one component, and that component is the proxy binding in `app.ts`).
     deps: {
       db,
       agent: defaultAgentDeps,
-      connection: createConnectionDeps({ encrypt: vault.encrypt }),
+      connection: connectionDeps,
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
   },
+  // What a sandbox is handed as `GRAFT_PROXY_URL` is the proxy's public URL, so relocating the proxy
+  // stays the DNS change GRA-1 promises.
+  mcp: createMcpDeps({
+    db,
+    connection: connectionDeps,
+    sandbox,
+    keys,
+    proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
+  }),
 });
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
-      `auth and the JSON API at ${API_MOUNT_PATH}, ` +
+      `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} ` +
+      `(sandbox: ${env.GRAFT_SANDBOX_BACKEND}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database`,
   );

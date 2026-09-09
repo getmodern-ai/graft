@@ -151,6 +151,25 @@ export const corsOrigins = z
     return [...new Set(origins)];
   });
 
+/**
+ * Which backing authored code runs on (ADR 0002: every seam has two backings behind one interface).
+ * `docker` — `@graft/sandbox-docker`, the self-hosted form's — by default. `fake` is the in-process
+ * directory `@graft/sandbox` ships for unit tests, allowed here so a laptop without a daemon can
+ * drive the MCP endpoint end to end, and refused under `NODE_ENV=production` (`serverEnvIssues`):
+ * it is a directory, not a sandbox, and a run in it reaches whatever the server process can.
+ */
+export const sandboxBackend = z.enum(["docker", "fake"]).default("docker");
+
+/**
+ * What the Docker backing needs: the prebuilt image (`pnpm --filter @graft/sandbox-docker
+ * image:build` tags this default) and the `internal: true` network whose only other member is the
+ * proxy — compose names it `<project>_sandbox`, so the default assumes a project called `graft`.
+ * Neither is checked at boot: the backing inspects the network at the first sandbox, where a
+ * misconfiguration refuses one run rather than the whole server (`packages/sandbox-docker/README.md`).
+ */
+export const sandboxImage = z.string().min(1).default("graft-sandbox:dev");
+export const sandboxNetwork = z.string().min(1).default("graft_sandbox");
+
 /** `PORT` when set, 3000 otherwise: what the dev server listens on and what the proxy URL defaults to. */
 export const port = z.coerce.number().int().min(1).max(65535).default(3000);
 
@@ -206,6 +225,13 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   if (value.NODE_ENV === "production" && value.GRAFT_DEV_SEED !== undefined) {
     issues.push(
       "GRAFT_DEV_SEED is the development seed file and is refused under NODE_ENV=production.",
+    );
+  }
+
+  // The fake backing is a directory on the server's own disk — see `sandboxBackend`.
+  if (value.NODE_ENV === "production" && value.GRAFT_SANDBOX_BACKEND === "fake") {
+    issues.push(
+      "GRAFT_SANDBOX_BACKEND=fake is the in-process test backing and is refused under NODE_ENV=production; use docker.",
     );
   }
 
@@ -277,6 +303,11 @@ export const serverSchema = {
    * in production (`serverEnvIssues`). `apps/server/src/connections.ts` has the shape.
    */
   GRAFT_DEV_SEED: z.string().min(1).optional(),
+
+  /** The sandbox backing and what the Docker one needs — see `sandboxBackend`. */
+  GRAFT_SANDBOX_BACKEND: sandboxBackend,
+  GRAFT_SANDBOX_IMAGE: sandboxImage,
+  GRAFT_SANDBOX_NETWORK: sandboxNetwork,
 };
 
 /** The object schema `createEnv` is handed: the fields, the cross-field rules, the derived default. */

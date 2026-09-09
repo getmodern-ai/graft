@@ -11,6 +11,9 @@ import {
   finalServerSchema,
   keyringSecret,
   port,
+  sandboxBackend,
+  sandboxImage,
+  sandboxNetwork,
   serverEnvIssues,
   serverSchema,
   withDerivedDefaults,
@@ -180,6 +183,9 @@ describe("finalServerSchema", () => {
       GRAFT_KEYRING_SECRET: minimal.GRAFT_KEYRING_SECRET,
       GRAFT_PROXY_FOLLOW_REDIRECTS: false,
       GRAFT_PROXY_PUBLIC_URL: "http://localhost:3000/api/proxy",
+      GRAFT_SANDBOX_BACKEND: "docker",
+      GRAFT_SANDBOX_IMAGE: "graft-sandbox:dev",
+      GRAFT_SANDBOX_NETWORK: "graft_sandbox",
     });
   });
 
@@ -210,5 +216,26 @@ describe("finalServerSchema", () => {
     expect(
       schema.safeParse({ ...minimal, NODE_ENV: "production", GRAFT_DEV_SEED: "seed.json" }).success,
     ).toBe(false);
+  });
+});
+
+describe("the sandbox backing", () => {
+  it("is docker unless said otherwise, with the image and network the compose file names", () => {
+    expect(sandboxBackend.parse(undefined)).toBe("docker");
+    expect(sandboxBackend.parse("fake")).toBe("fake");
+    expect(sandboxBackend.safeParse("blaxel").success).toBe(false);
+    expect(sandboxImage.parse(undefined)).toBe("graft-sandbox:dev");
+    expect(sandboxNetwork.parse(undefined)).toBe("graft_sandbox");
+    expect(sandboxImage.safeParse("").success).toBe(false);
+  });
+
+  it("refuses the fake backing in production and nowhere else", () => {
+    expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "fake" })).toEqual([
+      expect.stringMatching(/GRAFT_SANDBOX_BACKEND=fake.*NODE_ENV=production/),
+    ]);
+    expect(serverEnvIssues({ NODE_ENV: "development", GRAFT_SANDBOX_BACKEND: "fake" })).toEqual([]);
+    expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "docker" })).toEqual(
+      [],
+    );
   });
 });

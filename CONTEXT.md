@@ -58,7 +58,9 @@ _Avoid_: container, VM, worker, isolate (as the name of the thing)
 
 **Tool**:
 A single capability the harness sees as an MCP tool. Everything in an agent's list is either a
-meta-tool or an authored tool.
+meta-tool or an authored tool. On the wire an authored tool is `<vendor>__<name>` — the two
+kebab-case halves joined by a double underscore, which neither can contain — and a connection's
+execute tool is `execute__<connection id>`.
 _Avoid_: function, action, capability, skill
 
 **Meta-tool**:

@@ -96,6 +96,13 @@ required; `GRAFT_CORS_ORIGIN` is an optional comma-separated list of origins; th
 pair is all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the database for a
 proxy smoke test and is refused in production. `packages/env/src/schema.ts` is the rules as code.
 
+The MCP endpoint is `POST /mcp` with `Authorization: Bearer <agent token>` — `POST /api/agents` mints
+the token, shown once. Authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names: `docker` by
+default, which needs the image (`pnpm --filter @graft/sandbox-docker image:build` tags
+`graft-sandbox:dev`, `GRAFT_SANDBOX_IMAGE`) and an `internal: true` network the proxy is attached to
+(`GRAFT_SANDBOX_NETWORK`, `graft_sandbox`); or `fake`, a temporary directory on the server's own disk,
+for a laptop without a daemon — it is not a sandbox, and `@graft/env` refuses it in production.
+
 `check-types`, `test`, `build` and `dev` are Turbo tasks, so they run whatever a workspace declares
 under that script name and nothing for a workspace that declares none. Filter with
 `pnpm exec turbo run <task> -F @graft/<name>`. `pnpm run test --force` skips Turbo's cache; read
