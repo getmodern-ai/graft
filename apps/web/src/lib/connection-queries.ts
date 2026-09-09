@@ -72,11 +72,37 @@ export function isAwaitingCredential(connection: Connection): boolean {
   return connection.credentialSetAt === null;
 }
 
+/**
+ * Where a connection stands, as the card's badge and button read it (ADR 0005 for the two consent
+ * states): revoked; no credential entered; an OAuth consent not yet completed, or refused since;
+ * or connected.
+ */
+export type ConnectionStatus =
+  | "revoked"
+  | "awaiting_credential"
+  | "awaiting_consent"
+  | "consent_required"
+  | "connected";
+
+export function connectionStatus(connection: Connection): ConnectionStatus {
+  if (connection.revokedAt) return "revoked";
+  if (connection.credentialSetAt === null) return "awaiting_credential";
+  if (connection.oauth && connection.oauth.status !== "connected") return connection.oauth.status;
+  return "connected";
+}
+
+/**
+ * The three routes that store a credential answer `authorizeUrl` beside the connection when the
+ * scheme runs a consent (ADR 0005): the console opens it in a popup (`oauth-consent.ts`). Absent
+ * for every other scheme, whose credential is complete as entered.
+ */
+export type StoredCredential = { connection: Connection; authorizeUrl?: string };
+
 /** The person's own Add connection: registered with its credential in one transaction (GRA-28). */
 export function createConnection(
   input: ConnectionRegistration & { credential: Record<string, string> },
 ) {
-  return api<{ connection: Connection }>("/connections", { method: "POST", body: input });
+  return api<StoredCredential>("/connections", { method: "POST", body: input });
 }
 
 /** Re-enter a credential with no agent asking — a rotated key, or the reconnection after a revoke. */
@@ -87,12 +113,15 @@ export function setConnectionCredential(connectionId: string, credential: Record
   );
 }
 
-/** The submit for an agent's `connection` ask: the proposal as edited, and the secret. */
+/**
+ * The submit for an agent's `connection` ask: the proposal as edited, and the secret. For an OAuth
+ * consent the ask comes back still open — the callback answers it once the tokens are stored.
+ */
 export function submitConnectionProposal(
   actionId: string,
   input: ConnectionRegistration & { credential: Record<string, string> },
 ) {
-  return api<{ connection: Connection; pendingAction: PendingAction }>(
+  return api<StoredCredential & { pendingAction: PendingAction }>(
     `/pending-actions/${encodeURIComponent(actionId)}/connection`,
     { method: "POST", body: input },
   );
@@ -100,8 +129,13 @@ export function submitConnectionProposal(
 
 /** The submit for an agent's `credential` ask: the secret alone. */
 export function submitCredentialRequest(actionId: string, credential: Record<string, string>) {
-  return api<{ connection: Connection; pendingAction: PendingAction }>(
+  return api<StoredCredential & { pendingAction: PendingAction }>(
     `/pending-actions/${encodeURIComponent(actionId)}/credential`,
     { method: "POST", body: { credential } },
   );
+}
+
+/** One connection, fresh from the server — the consent's poll reads this. */
+export function fetchConnection(connectionId: string) {
+  return api<{ connection: Connection }>(`/connections/${encodeURIComponent(connectionId)}`);
 }

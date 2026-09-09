@@ -4,6 +4,8 @@ import { toast } from "sonner";
 
 import { ConnectionFormFields, HostsNotice } from "@/components/connection/connection-form";
 import { CredentialFields } from "@/components/connection/credential-fields";
+import { ConsentStatus, OAuthClientNotice } from "@/components/connection/oauth-client-notice";
+import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,6 +21,7 @@ import {
   type ConnectionDraft,
   type DraftErrors,
   emptyDraft,
+  isOAuthDraft,
   validateConnectionDraft,
 } from "@/lib/connection-form";
 import { connectionKeys, createConnection } from "@/lib/connection-queries";
@@ -27,7 +30,8 @@ import { connectionKeys, createConnection } from "@/lib/connection-queries";
  * The person's own Add connection (GRA-28): the same form as an agent's proposal with no pending
  * action behind it. The connection is registered with its credential in one call
  * (`POST /api/connections` with `credential`), and belongs to the person; it reaches an agent when
- * they add it to that agent's scope (ADR 0007).
+ * they add it to that agent's scope (ADR 0007). For an OAuth consent (ADR 0005) the answer carries
+ * the authorize URL and the dialog runs the consent in a popup before it closes.
  */
 export function AddConnectionDialog({
   open,
@@ -39,11 +43,26 @@ export function AddConnectionDialog({
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<ConnectionDraft>(() => emptyDraft());
   const [errors, setErrors] = useState<DraftErrors>({});
+  const consent = useOAuthConsent({
+    onConnected: () => {
+      toast.success(`${draft.displayName} is connected`, {
+        description: "Add it to an agent's scope on the agent's page to let that agent use it.",
+      });
+      close();
+    },
+  });
 
   const create = useMutation({
     mutationFn: createConnection,
-    onSuccess: ({ connection }) => {
+    onSuccess: ({ connection, authorizeUrl }) => {
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
+      if (authorizeUrl) {
+        toast.message(`${connection.displayName}'s client is saved`, {
+          description: "Complete the consent in the popup to connect it.",
+        });
+        void consent.run(authorizeUrl, connection);
+        return;
+      }
       toast.success(`${connection.displayName} is connected`, {
         description: "Add it to an agent's scope on the agent's page to let that agent use it.",
       });
@@ -63,6 +82,7 @@ export function AddConnectionDialog({
       setDraft(emptyDraft());
       setErrors({});
       create.reset();
+      consent.reset();
     }, 200);
   };
 
@@ -75,6 +95,10 @@ export function AddConnectionDialog({
     setErrors({});
     create.mutate(verdict.value);
   };
+
+  const oauth = isOAuthDraft(draft);
+  const consenting = consent.state.phase === "running" || consent.state.phase === "blocked";
+  const busy = create.isPending || consenting;
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
@@ -101,13 +125,14 @@ export function AddConnectionDialog({
                 onChange={setDraft}
                 errors={errors}
                 idPrefix="add-connection"
-                disabled={create.isPending}
+                disabled={busy}
               />
             </FieldGroup>
           </FieldSet>
           <HostsNotice draft={draft} />
+          <OAuthClientNotice draft={draft} />
           <FieldSet>
-            <FieldLegend variant="label">The secret</FieldLegend>
+            <FieldLegend variant="label">{oauth ? "The client secret" : "The secret"}</FieldLegend>
             <FieldGroup>
               <CredentialFields
                 scheme={draft.scheme}
@@ -115,16 +140,23 @@ export function AddConnectionDialog({
                 onChange={(credential) => setDraft({ ...draft, credential })}
                 errors={errors}
                 idPrefix="add-connection"
-                disabled={create.isPending}
+                disabled={busy}
               />
             </FieldGroup>
           </FieldSet>
+          <ConsentStatus state={consent.state} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>
               Cancel
             </Button>
-            <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? "Connecting…" : "Connect"}
+            <Button type="submit" disabled={busy}>
+              {create.isPending
+                ? "Connecting…"
+                : consenting
+                  ? "Waiting for the consent…"
+                  : consent.state.phase === "done" && consent.state.outcome !== "connected"
+                    ? "Connect again"
+                    : "Connect"}
             </Button>
           </DialogFooter>
         </form>
