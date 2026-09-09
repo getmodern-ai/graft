@@ -166,6 +166,18 @@ export const corsOrigins = z
     return [...new Set(origins)];
   });
 
+/**
+ * Which of the open form's backings authored code runs on (ADR 0002: every seam has two backings
+ * behind one interface; under `GRAFT_BACKINGS=cloud` the private package's sandbox is used and this
+ * is not read). `docker` — `@graft/sandbox-docker`, the self-hosted form's — by default, which needs the
+ * `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair (`sandboxKeys`); without the pair the server
+ * boots with no sandbox and every run refuses, saying so. `fake` is the in-process directory
+ * `@graft/sandbox` ships for unit tests, allowed here so a laptop without a daemon can drive the MCP
+ * endpoint end to end, and refused under `NODE_ENV=production` (`serverEnvIssues`): it is a
+ * directory, not a sandbox, and a run in it reaches whatever the server process can.
+ */
+export const sandboxBackend = z.enum(["docker", "fake"]).default("docker");
+
 /** `PORT` when set, 3000 otherwise: what the dev server listens on and what the proxy URL defaults to. */
 export const port = z.coerce.number().int().min(1).max(65535).default(3000);
 
@@ -318,6 +330,21 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
     );
   }
 
+  // The fake backing is a directory on the server's own disk — see `sandboxBackend`.
+  if (value.NODE_ENV === "production" && value.GRAFT_SANDBOX_BACKEND === "fake") {
+    issues.push(
+      "GRAFT_SANDBOX_BACKEND=fake is the in-process test backing and is refused under NODE_ENV=production; use docker.",
+    );
+  }
+
+  // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
+  // package brings the sandbox, and a `fake` set beside it would be two answers to one question.
+  if (value.GRAFT_BACKINGS === "cloud" && value.GRAFT_SANDBOX_BACKEND === "fake") {
+    issues.push(
+      "GRAFT_SANDBOX_BACKEND=fake names an open-form sandbox and has no meaning under GRAFT_BACKINGS=cloud, where the private package's sandbox is used; unset it.",
+    );
+  }
+
   return issues;
 }
 
@@ -401,6 +428,9 @@ export const serverSchema = {
   /** The Docker sandbox backing's image and internal network, all-or-nothing — see `sandboxKeys`. */
   GRAFT_SANDBOX_IMAGE: z.string().min(1).optional(),
   GRAFT_SANDBOX_NETWORK: z.string().min(1).optional(),
+
+  /** Which backing runs authored code, and whether the fake may — see `sandboxBackend`. */
+  GRAFT_SANDBOX_BACKEND: sandboxBackend,
 };
 
 /** The object schema `createEnv` is handed: the fields, the cross-field rules, the derived default. */

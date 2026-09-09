@@ -1,25 +1,37 @@
+import { join } from "node:path";
+
 import type { ServerEnv } from "@graft/env/server";
+import { createFakeSandboxBackend } from "@graft/sandbox/fake";
 import type { SandboxBackend } from "@graft/sandbox/types";
 import { createDockerSandboxBackend } from "@graft/sandbox-docker";
-import { createNoopToolboxMirror, type ToolboxMirror, type ToolboxStore } from "@graft/toolbox";
+import {
+  createFilesystemToolboxStore,
+  createNoopToolboxMirror,
+  type FilesystemToolboxStore,
+  type ToolboxMirror,
+  type ToolboxStore,
+} from "@graft/toolbox";
 import { createLocalKeyring, type Keyring } from "@graft/vault";
 
 /**
  * Which backing stands behind each of the three seams — sandbox, keyring, toolbox mirror — chosen
  * once at boot from `GRAFT_BACKINGS` (ADR 0002: one core, two backings per seam, the commercial
- * half hidden by absence).
+ * half hidden by absence), and the toolbox store beside them, because the store and the sandbox have
+ * to see one tree (`packages/toolbox/README.md`) and which tree depends on the sandbox chosen.
  *
- * `open` is what this repository holds: the Docker sandbox when its pair of variables is set, the
- * local AES keyring, and the mirror that records a call and copies nothing. `cloud` is the hosted
- * form's, from a private package that is not in this repository's dependency graph: it is loaded by
- * a dynamic `import()` of a specifier held in a variable, so the type program never resolves it,
- * `pnpm install` never fetches it, and a checkout without it typechecks, tests and boots as the
- * self-hosted form. The private package arrives by being placed at `packages/cloud-backings/` —
- * gitignored here — where the workspace glob picks it up and its `workspace:*` dependencies on the
- * seam packages resolve. `apps/server/package.json` lists it under `optionalDependencies`, which is
- * what makes the import below resolvable from this file when the package is present: pnpm links an
- * optional workspace dependency into this app's `node_modules` when the workspace has it and
- * installs without complaint — frozen lockfile included — when it does not.
+ * `open` is what this repository holds: the sandbox `GRAFT_SANDBOX_BACKEND` names — Docker when
+ * its pair of variables is set, none when it is not, or the in-process fake for a laptop without a
+ * daemon, whose toolbox then lives in the fake's own temporary directory — the local AES keyring,
+ * and the mirror that records a call and copies nothing. `cloud` is the hosted form's, from a
+ * private package that is not in this repository's dependency graph: it is loaded by a dynamic
+ * `import()` of a specifier held in a variable, so the type program never resolves it, and a
+ * checkout without it typechecks, tests and boots as the self-hosted form. The private package
+ * arrives by being placed at `packages/cloud-backings/` — gitignored here — where the workspace
+ * glob picks it up and its `workspace:*` dependencies on the seam packages resolve.
+ * `apps/server/package.json` lists it under `optionalDependencies`, which is what makes the import
+ * below resolvable from this file when the package is present: pnpm links an optional workspace
+ * dependency into this app's `node_modules` when the workspace has it and installs without
+ * complaint — frozen lockfile included — when it does not.
  *
  * Nothing about the hosted backings is typed here beyond the seams they implement. What the private
  * module must export is `createCloudBackings(input: CloudBackingsInput)` returning the three
@@ -33,12 +45,15 @@ export type BackingsForm = ServerEnv["GRAFT_BACKINGS"];
 export type Backings = {
   form: BackingsForm;
   /**
-   * Null in the open form when the Docker pair is unset: a publish that needs the install step then
-   * refuses with a diagnostic saying so (`@graft/publish`). Never null from the cloud form.
+   * Null in the open form when Docker is named and its pair is unset: the server boots, every run
+   * refuses saying so, and a publish that needs the install step refuses with a diagnostic
+   * (`@graft/publish`). Never null from the cloud form or the fake.
    */
   sandbox: SandboxBackend | null;
   keyring: Keyring;
   mirror: ToolboxMirror;
+  /** The toolbox as the server holds it, rooted where the sandbox backing sees the same tree. */
+  store: FilesystemToolboxStore;
 };
 
 /** What the private module's factory returns: the three seams and nothing else. */
@@ -69,6 +84,7 @@ export type BackingsEnv = Pick<
   | "NODE_ENV"
   | "GRAFT_BACKINGS"
   | "GRAFT_KEYRING_SECRET"
+  | "GRAFT_SANDBOX_BACKEND"
   | "GRAFT_SANDBOX_IMAGE"
   | "GRAFT_SANDBOX_NETWORK"
   | "GRAFT_PROXY_PUBLIC_URL"
@@ -76,7 +92,6 @@ export type BackingsEnv = Pick<
 >;
 
 export type SelectBackingsDeps = {
-  store: ToolboxStore;
   /** `process.env` in the server; a test hands the cloud factory whatever it should see. */
   raw?: Readonly<Record<string, string | undefined>>;
   /** The module imported under `cloud`. Default `CLOUD_BACKINGS_MODULE`; a test points it at a file. */
@@ -85,7 +100,7 @@ export type SelectBackingsDeps = {
 
 export async function selectBackings(
   env: BackingsEnv,
-  deps: SelectBackingsDeps,
+  deps: SelectBackingsDeps = {},
 ): Promise<Backings> {
   if (env.GRAFT_BACKINGS === "cloud") return loadCloudBackings(env, deps);
   return openBackings(env);
@@ -99,21 +114,33 @@ function openBackings(env: BackingsEnv): Backings {
       "GRAFT_KEYRING_SECRET is required with GRAFT_BACKINGS=open: the local keyring derives its key from it",
     );
   }
-  // Bound to the toolbox root so the install step and the store see one tree (`@graft/toolbox`'s
-  // README says how a bind of that directory is what makes them one).
-  const sandbox =
-    env.GRAFT_SANDBOX_IMAGE && env.GRAFT_SANDBOX_NETWORK
-      ? createDockerSandboxBackend({
-          image: env.GRAFT_SANDBOX_IMAGE,
-          network: env.GRAFT_SANDBOX_NETWORK,
-          toolboxHostRoot: env.GRAFT_TOOLBOX_ROOT,
-        })
-      : null;
+  let sandbox: SandboxBackend | null;
+  let toolboxRoot: string;
+  if (env.GRAFT_SANDBOX_BACKEND === "fake") {
+    // The fake mounts a toolbox by symlink from its own root, so the store has to live there too;
+    // a laptop's toolbox then lasts as long as the process. Refused in production by `@graft/env`.
+    const fake = createFakeSandboxBackend();
+    sandbox = fake;
+    toolboxRoot = join(fake.root, "toolboxes");
+  } else {
+    // Bound to the toolbox root so the install step and the store see one tree: every toolbox
+    // volume is a bind of `<root>/<toolboxId>`. The Docker backing reads `DOCKER_HOST` itself.
+    toolboxRoot = env.GRAFT_TOOLBOX_ROOT;
+    sandbox =
+      env.GRAFT_SANDBOX_IMAGE && env.GRAFT_SANDBOX_NETWORK
+        ? createDockerSandboxBackend({
+            image: env.GRAFT_SANDBOX_IMAGE,
+            network: env.GRAFT_SANDBOX_NETWORK,
+            toolboxHostRoot: toolboxRoot,
+          })
+        : null;
+  }
   return {
     form: "open",
     sandbox,
     keyring: createLocalKeyring(env.GRAFT_KEYRING_SECRET),
     mirror: createNoopToolboxMirror(),
+    store: createFilesystemToolboxStore({ root: toolboxRoot }),
   };
 }
 
@@ -135,14 +162,17 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
   if (typeof factory !== "function") {
     throw new Error(`${specifier} does not export createCloudBackings(input)`);
   }
+  // The hosted sandbox mounts its own copy of the toolbox; the store here is the server's, which
+  // the publish writes and the mirror reads (`packages/toolbox/README.md`, "the hosted form").
+  const store = createFilesystemToolboxStore({ root: env.GRAFT_TOOLBOX_ROOT });
   const input: CloudBackingsInput = {
     env: { NODE_ENV: env.NODE_ENV, GRAFT_PROXY_PUBLIC_URL: env.GRAFT_PROXY_PUBLIC_URL },
     raw: deps.raw ?? process.env,
-    store: deps.store,
+    store,
   };
   const created: unknown = await factory(input);
   assertCloudBackings(created, specifier);
-  return { form: "cloud", ...created };
+  return { form: "cloud", ...created, store };
 }
 
 const MODULE_NOT_FOUND_CODES = new Set(["ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]);

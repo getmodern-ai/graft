@@ -38,17 +38,17 @@ the re-entry variant against the existing connection.
 2. **Write the module** in TypeScript — one call, the fields this tool needs.
 3. **Check it** with `check_tool`, against the input schema you will publish, and fix what it names
    until nothing is refused.
-4. **Prove it with reads** through the connection's execute tool, until a read returns what the docs
-   said it would.
+4. **Prove it with reads** through the connection's execute tool, `execute__<connection id>`, until
+   a read returns what the docs said it would.
 5. **Publish with a test input** — `publish_tool` with `testInput`. It runs the same check and
    refuses on the same list, installs any package the module declares if the package policy allows
    it, then **dry-runs** the version it just wrote: reads reach the vendor for real, every write
    stops at the proxy and comes back as a preview of the request that would have left. Read the
    report; compare each previewed write against the vendor's docs; fix and republish until it
    passes.
-6. **Leave the first write to the published tool.** The agent invokes it — `run_published_tool` in
-   the turn it was published, the first-class tool from the next tool list — and the person is asked
-   once before anything is created.
+6. **Leave the first write to the published tool.** The agent invokes it — `run_tool` in the turn
+   it was published, the first-class tool from the next tool list — and the person is asked once
+   before anything is created.
 
 Say what you are about to do before step 1, in a sentence: which vendor, what you will build, and
 that you will test it — reads for real, writes as a dry run — before anything is written. Each step
@@ -213,8 +213,8 @@ reason to publish a module that has not passed it.
 
 ## Proving it with reads
 
-Run the module through the connection's **execute tool** — the one whose description begins "Run
-code against <connection>":
+Run the module through the connection's **execute tool** — `execute__<connection id>`, the one
+whose description begins "Run code against <connection>":
 
 ```sh
 echo '{"itemId":"itm_a","quantity":2}' | node /graft/runner.mjs /tools/.drafts/<job>/demo-orders
@@ -241,8 +241,8 @@ To probe a write endpoint's shape *before* you draft the module — is the path 
 vendor want `itemId` or `item_id` — call the execute tool with `dryRun: true`. The proxy then
 forwards `GET` and `HEAD` as usual and stops every other method, answering `202` with header
 `x-graft-dry-run: intercepted` and a JSON preview of the request that would have been sent; nothing
-reaches the vendor. The same `dryRun: true` on `run_published_tool` re-tests a published version
-after an edit without a republish.
+reaches the vendor. The same `dryRun: true` on `run_tool` re-tests a published version after an
+edit without a republish.
 
 ## Publishing
 
@@ -314,8 +314,8 @@ and `required`; every call, the agent's included, is validated against it.
 ## The first write
 
 The first real write is not part of authoring. It goes through the published tool, invoked by the
-agent — `run_published_tool` in the turn it was published, the first-class tool once the agent's
-tool list refreshes — and that is where the person is asked: a tool that is not read-only asks
+agent — `run_tool` in the turn it was published, the first-class tool once the agent's tool list
+refreshes — and that is where the person is asked: a tool that is not read-only asks
 once, and the answer holds; a destructive tool asks on every call until the person relaxes it in the
 console; a read-only tool asks nothing. Without an elicitation the ask waits in the console as a
 pending action, and the agent relays the handoff. If you are Graft's model inside `acquire`, your
@@ -341,10 +341,10 @@ execute tool (or to `run_command`), with `timeoutSeconds` up to 3600 (default 60
 once with `{ status: "running", processName, resultPath }`. Then call
 `wait_for_process({ processName, maxWaitSeconds })` until it reports `completed` — with the stdout,
 stderr and result — or `failed` or `killed`; `running` means wait again. A published tool takes the
-same pair: `detached` and `timeoutSeconds` on `run_published_tool`, and `_detached` and
-`_timeoutSeconds` beside the tool's own input when it is called first-class. The synchronous limit
-is about a minute and is a convenience for short calls, not a contract; a module that times out
-inside the runner exits `2` and says so.
+same pair, `detached` and `timeoutSeconds`, on `run_tool`; a first-class tool carries only its own
+schema, so a long call goes through `run_tool`. The synchronous limit is about a minute and is a
+convenience for short calls, not a contract; a module that times out inside the runner exits `2`
+and says so.
 
 ## When it fails
 

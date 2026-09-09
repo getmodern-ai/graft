@@ -13,12 +13,7 @@ import {
   publishToolVersion,
 } from "@graft/publish";
 import type { SandboxBackend, SandboxProcessResult } from "@graft/sandbox/types";
-import {
-  createFilesystemToolboxStore,
-  draftPath,
-  type ToolboxFile,
-  toolboxIdOf,
-} from "@graft/toolbox";
+import { draftPath, type ToolboxFile, toolboxIdOf } from "@graft/toolbox";
 import { eq } from "drizzle-orm";
 
 import { selectBackings } from "../backings";
@@ -118,10 +113,10 @@ try {
   }
   if (!personId) throw new Error("unreachable: a person was required above");
 
-  const store = createFilesystemToolboxStore({ root: env.GRAFT_TOOLBOX_ROOT });
-  // The selected backings' sandbox when there is one, else an install that answers with why it
-  // cannot run, which the publish turns into an `install-failed` diagnostic.
-  const backings = await selectBackings(env, { store, raw: process.env });
+  // The selected backings' store, and their sandbox when there is one — else an install that
+  // answers with why it cannot run, which the publish turns into an `install-failed` diagnostic.
+  const backings = await selectBackings(env, { raw: process.env });
+  const { store } = backings;
   const sandbox: Pick<SandboxBackend, "install"> = backings.sandbox ?? {
     install: async (): Promise<SandboxProcessResult> => {
       const logs =

@@ -1,3 +1,4 @@
+import { createMcpHttpApp, type McpDeps } from "@graft/mcp";
 import { createProxyApp, type ProxyDeps, type ProxyEvent, type UpstreamFetch } from "@graft/proxy";
 import { type CapabilityTokenKeys, createCapabilityTokenVerifier } from "@graft/token";
 import type { CredentialVault } from "@graft/vault";
@@ -38,6 +39,11 @@ export type ServerDeps = {
    * the shape GRA-5's tests drive, needs neither a database nor an auth instance.
    */
   api?: ApiOptions;
+  /**
+   * The agent's half — the MCP endpoint (`@graft/mcp`, ADR 0003). Optional for the same reason;
+   * `index.ts` always binds it.
+   */
+  mcp?: McpDeps;
 };
 
 /** Where the proxy answers — the path `GRAFT_PROXY_PUBLIC_URL` defaults to ends in this. */
@@ -45,6 +51,9 @@ export const PROXY_MOUNT_PATH = "/api/proxy";
 
 /** Where Better Auth and the JSON API answer: `/api/auth/*`, `/api/agents`, `/api/connections`. */
 export const API_MOUNT_PATH = "/api";
+
+/** Where a harness connects: one streamable-HTTP endpoint, the agent's bearer token in `Authorization`. */
+export const MCP_MOUNT_PATH = "/mcp";
 
 export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
   const app = new Hono<EvlogVariables>();
@@ -75,6 +84,15 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
       ...(deps.upstreamFetch ? { upstreamFetch: deps.upstreamFetch } : {}),
     }),
   );
+
+  /**
+   * The MCP endpoint, outside `/api` and its CORS: a harness is a server-side client presenting a
+   * bearer token, never a browser with a cookie, and the endpoint checks that token on every request
+   * before the transport sees it (`@graft/mcp`'s `createMcpHttpApp`).
+   */
+  if (deps.mcp) {
+    app.route(MCP_MOUNT_PATH, createMcpHttpApp(deps.mcp));
+  }
 
   if (deps.api) {
     app.route(API_MOUNT_PATH, createApi(deps.api));

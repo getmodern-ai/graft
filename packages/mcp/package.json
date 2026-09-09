@@ -1,0 +1,41 @@
+{
+  "name": "@graft/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check-types": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@graft/check": "workspace:*",
+    "@graft/core": "workspace:*",
+    "@graft/db": "workspace:*",
+    "@graft/proxy": "workspace:*",
+    "@graft/publish": "workspace:*",
+    "@graft/runner": "workspace:*",
+    "@graft/sandbox": "workspace:*",
+    "@graft/token": "workspace:*",
+    "@graft/toolbox": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "hono": "catalog:",
+    "undici": "catalog:"
+  },
+  "devDependencies": {
+    "@graft/config": "workspace:*",
+    "@graft/vault": "workspace:*",
+    "@hono/node-server": "^2.1.1",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
