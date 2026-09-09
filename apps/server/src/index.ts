@@ -10,7 +10,7 @@ import {
 } from "@graft/core";
 import { createDb } from "@graft/db";
 import { env } from "@graft/env/server";
-import { createMcpDeps } from "@graft/mcp";
+import { createMcpDeps, startSweep } from "@graft/mcp";
 import {
   createPublishDeps,
   createRegistryMetadataSource,
@@ -148,6 +148,21 @@ const publish = createPublishDeps({
   },
 });
 
+/**
+ * One `McpDeps` for the endpoint and the sweep. What a sandbox is handed as `GRAFT_PROXY_URL` is the
+ * proxy's public URL, so relocating the proxy stays the DNS change GRA-1 promises. The notifier and
+ * the in-flight registry inside are the process's one of each: the sweep's `tools/list_changed`
+ * reaches the endpoint's sessions, and the endpoint's runs hold the sweep off (ADR 0003, ADR 0009).
+ */
+const mcp = createMcpDeps({
+  db,
+  connection: connectionDeps,
+  sandbox,
+  keys,
+  proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
+  publish,
+});
+
 const app = createServer({
   keys,
   vault,
@@ -167,16 +182,28 @@ const app = createServer({
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
   },
-  // What a sandbox is handed as `GRAFT_PROXY_URL` is the proxy's public URL, so relocating the proxy
-  // stays the DNS change GRA-1 promises.
-  mcp: createMcpDeps({
-    db,
-    connection: connectionDeps,
-    sandbox,
-    keys,
-    proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
-    publish,
-  }),
+  mcp,
+});
+
+/**
+ * The working-set sweep (ADR 0009) on a plain timer — GRA-1's "no durable engine for the alpha". A
+ * sweep that demoted something, or failed for some agent, is one log line; a quiet one is silent.
+ */
+const sweep = startSweep(mcp, {
+  intervalSeconds: env.GRAFT_SWEEP_INTERVAL_SECONDS,
+  onReport: (report) => {
+    if (report.demoted.length === 0 && report.failed.length === 0) return;
+    const skipped =
+      report.skipped.length > 0 ? `, ${report.skipped.length} skipped for a run in flight` : "";
+    const failed =
+      report.failed.length > 0
+        ? `, ${report.failed.length} failed: ${report.failed.map((f) => `${f.agentId} (${f.error})`).join("; ")}`
+        : "";
+    console.log(
+      `working-set sweep: ${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${failed}`,
+    );
+  },
+  onError: (error) => console.error("working-set sweep failed", error),
 });
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
@@ -185,12 +212,16 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} ` +
       `(sandbox: ${env.GRAFT_SANDBOX_BACKEND}${sandbox ? "" : ", unconfigured"}; toolbox: ${store.root}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
-      `${seededCount} connection(s) seeded over the database`,
+      `${seededCount} connection(s) seeded over the database, ` +
+      `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s`,
   );
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
+    sweep.stop();
+    mcp.notifier?.close();
+    mcp.inFlight?.close();
     db.close().finally(() => process.exit(0));
   });
 }

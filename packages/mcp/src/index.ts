@@ -22,6 +22,14 @@ export {
 } from "./deps";
 export { createMcpHttpApp, type McpHttpOptions } from "./http";
 export {
+  createInFlightRegistry,
+  detachedHoldMs,
+  heldInFlight,
+  type InFlightRegistry,
+  isSettledProcess,
+  trackDetachedStart,
+} from "./in-flight";
+export {
   createToolListChangedNotifier,
   DEFAULT_LIST_CHANGED_WINDOW_MS,
   type ToolListChangedNotifier,
@@ -54,6 +62,15 @@ export {
   SERVER_INFO,
   SERVER_INSTRUCTIONS,
 } from "./session";
+export {
+  type RunSweepOptions,
+  runSweep,
+  type StartSweepOptions,
+  type SweepDemotion,
+  type SweepHandle,
+  type SweepReport,
+  startSweep,
+} from "./sweep";
 export {
   authoredToolName,
   EXECUTE_TOOL_PREFIX,
