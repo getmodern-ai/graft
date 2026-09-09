@@ -298,6 +298,9 @@ importers:
       '@graft/proxy':
         specifier: workspace:*
         version: link:../proxy
+      '@graft/publish':
+        specifier: workspace:*
+        version: link:../publish
       '@graft/runner':
         specifier: workspace:*
         version: link:../runner
@@ -307,6 +310,9 @@ importers:
       '@graft/token':
         specifier: workspace:*
         version: link:../token
+      '@graft/toolbox':
+        specifier: workspace:*
+        version: link:../toolbox
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.5.4)

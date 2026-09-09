@@ -4,6 +4,7 @@ import { type ModuleSources, readModuleSources, singleFileModule } from "@graft/
 import type { AgentScope } from "@graft/core";
 import { RESULT_MARKER, RUNNER_DIR, RUNNER_PATH, SKILLS_DIR, skillFiles } from "@graft/runner";
 import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
+import { DRAFTS_DIR, draftPath, sandboxPath, TOOLBOX_MOUNT_PATH } from "@graft/toolbox";
 
 import {
   boundJson,
@@ -30,15 +31,15 @@ import type { McpDeps } from "./deps";
  * tool published for one is on the disk of all.
  */
 
-/** Where the person's toolbox is mounted inside every sandbox. */
-export const TOOLBOX_DIR = "/tools";
+/** Where the person's toolbox is mounted inside every sandbox — `@graft/toolbox`'s layout. */
+export const TOOLBOX_DIR = TOOLBOX_MOUNT_PATH;
 
 /**
  * Drafts live on the toolbox so a half-written module survives the sandbox, under a directory per
- * agent: an `acquire` job (GRA-29) will key its own under a job id; the advanced set's drafts are
- * the agent's.
+ * agent: an `acquire` job (GRA-29) will key its own under a job id (`draftPath(jobId)`); the
+ * advanced set's drafts are the agent's, under the same rule with the agent id as the segment.
  */
-export const DRAFTS_ROOT = `${TOOLBOX_DIR}/.drafts`;
+export const DRAFTS_ROOT = sandboxPath(DRAFTS_DIR);
 
 /** Scratch for a run's input file, stderr file and a detached run's result file. */
 export const RUN_SCRATCH_DIR = "/tmp/graft-runs";
@@ -46,7 +47,16 @@ export const RUN_SCRATCH_DIR = "/tmp/graft-runs";
 export const DEFAULT_SANDBOX_NAME_PREFIX = "agent";
 
 export function draftsDir(agentId: string): string {
-  return `${DRAFTS_ROOT}/${agentId}`;
+  return sandboxPath(draftPath(agentId));
+}
+
+/**
+ * A sandbox path as the toolbox store names it — `/tools/.drafts/a/x` is `.drafts/a/x` — or null
+ * for a path outside the mount, which the store cannot reach. What `publish_tool` hands the publish.
+ */
+export function toolboxRelativePath(path: string): string | null {
+  if (path === TOOLBOX_DIR) return "";
+  return path.startsWith(`${TOOLBOX_DIR}/`) ? path.slice(TOOLBOX_DIR.length + 1) : null;
 }
 
 export function agentSandboxName(prefix: string, agentId: string): string {
@@ -55,6 +65,11 @@ export function agentSandboxName(prefix: string, agentId: string): string {
 
 /** The agent's sandbox, mounted and seeded. Throws what the backing throws; callers wrap it. */
 export async function openAgentSandbox(deps: McpDeps, scope: AgentScope): Promise<SandboxHandle> {
+  if (!deps.sandbox) {
+    throw new Error(
+      "no sandbox backing is configured on this deployment — set GRAFT_SANDBOX_IMAGE and GRAFT_SANDBOX_NETWORK for Docker, or GRAFT_SANDBOX_BACKEND=fake on a laptop",
+    );
+  }
   const name = agentSandboxName(
     deps.sandboxNamePrefix ?? DEFAULT_SANDBOX_NAME_PREFIX,
     scope.agentId,

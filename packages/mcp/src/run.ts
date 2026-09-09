@@ -14,6 +14,7 @@ import type { UsageOutcome } from "@graft/db/schema/usage";
 import { EXIT_TIMEOUT, EXIT_USAGE, MODULE_ENTRIES, RUNNER_PATH } from "@graft/runner";
 import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
+import { sandboxPath } from "@graft/toolbox";
 
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
@@ -27,7 +28,6 @@ import {
   RUN_SCRATCH_DIR,
   remountToolbox,
   startDetached,
-  TOOLBOX_DIR,
 } from "./sandbox";
 import { compileInputSchema } from "./schema";
 import { authoredToolName } from "./tool-names";
@@ -461,7 +461,7 @@ export async function runAuthoredTool(
       }
       return runModule(handle, {
         scope,
-        modulePath: `${TOOLBOX_DIR}/${version.path}`,
+        modulePath: sandboxPath(version.path),
         input: verdict.value,
         env,
         mode: args.mode,

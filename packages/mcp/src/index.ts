@@ -18,7 +18,6 @@ export {
   createMcpDeps,
   type McpDeps,
   type PublishTool,
-  type PublishToolArgs,
   type ToolboxReader,
 } from "./deps";
 export { createMcpHttpApp, type McpHttpOptions } from "./http";

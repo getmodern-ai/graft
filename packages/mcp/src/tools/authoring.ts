@@ -1,7 +1,16 @@
 import { posix } from "node:path";
 
-import { getToolByName, getToolVersion, isKebabCase, validateVendor } from "@graft/core";
+import {
+  getAgentScope,
+  getToolByName,
+  getToolVersion,
+  isKebabCase,
+  listConnections,
+  promoteTool,
+  validateVendor,
+} from "@graft/core";
 import type { SandboxFile } from "@graft/sandbox";
+import { sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import {
@@ -22,7 +31,8 @@ import {
   resolveSandboxPath,
 } from "../bounds";
 import type { SessionContext } from "../context";
-import { isPlainObject, notAvailableYet, toolError, toolRefusal, toolResult } from "../result";
+import { isPlainObject, toolError, toolRefusal, toolResult } from "../result";
+import { runAuthoredTool } from "../run";
 import {
   commandEnvironment,
   errorMessage,
@@ -31,6 +41,7 @@ import {
   readModuleFromSandbox,
   runCommand,
   TOOLBOX_DIR,
+  toolboxRelativePath,
   withSandbox,
 } from "../sandbox";
 import { authoredToolName } from "../tool-names";
@@ -348,9 +359,9 @@ const publishTool: MetaTool = {
     name: PUBLISH_TOOL,
     description:
       ADVANCED +
-      "Publish a module you wrote as a tool in your toolbox, against a vendor. Give the vendor slug, a kebab-case name, a description the person will read, a JSON Schema object for the input, and the module's path. " +
+      "Publish a module you wrote as a tool in your toolbox, against a vendor you are connected to. Give the vendor slug, a kebab-case name, a description the person will read, a JSON Schema object for the input, and the module's path under your drafts directory. " +
       "The module is checked first, exactly as check_tool checks it, and refused with the diagnostics on any refusal; a package it declares installs only under the package policy, into the version. " +
-      "Give testInput to dry-run the version just written: reads real, writes previewed at the proxy, the report in the answer. The tool is promoted into your working set; run it now with run_tool, and first-class as <vendor>__<name> once your tool list refreshes.",
+      "The new version is promoted into your working set at once. Give testInput to dry-run it right away: reads real, writes previewed at the proxy, the report in the answer. Run it now with run_tool, and first-class as <vendor>__<name> once your tool list refreshes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -371,7 +382,7 @@ const publishTool: MetaTool = {
         path: {
           type: "string",
           description:
-            "The module's directory or file, relative to your drafts directory or absolute.",
+            "The module's directory or file, relative to your drafts directory or absolute under /tools.",
         },
         testInput: {
           type: "object",
@@ -381,7 +392,7 @@ const publishTool: MetaTool = {
         connectionId: {
           type: "string",
           description:
-            "The connection the tool runs against by default, when the vendor is connected more than once.",
+            "The connection the tool runs against by default, when the vendor is connected more than once in your scope.",
         },
       },
       required: ["vendor", "name", "description", "inputSchema", "path"],
@@ -404,35 +415,119 @@ const publishTool: MetaTool = {
         'inputSchema must be a JSON Schema object with "type": "object"',
       );
     }
+    const inputSchema = args.inputSchema as Record<string, unknown>;
     const resolved = resolveModulePath(args.path, session.drafts);
     if ("error" in resolved) return toolRefusal("input_invalid", resolved.error);
+    // The publish reads the module through the store, which sees the toolbox and nothing else.
+    const draftPath = toolboxRelativePath(resolved.path);
+    if (draftPath === null || draftPath === "") {
+      return toolRefusal(
+        "input_invalid",
+        `The publish reads the module from your toolbox, and ${resolved.path} is outside ${TOOLBOX_DIR}. Write it under your drafts directory — a relative path lands there — and publish that.`,
+      );
+    }
     if (args.testInput !== undefined && !isPlainObject(args.testInput)) {
       return toolRefusal("input_invalid", "testInput must be an object");
     }
     const publish = session.deps.publishTool;
-    if (!publish) return notAvailableYet("publish_tool", "GRA-18");
+    if (!publish) {
+      return toolRefusal(
+        "publish_unconfigured",
+        "This deployment has no toolbox store, so nothing can be published. Say so rather than retrying.",
+      );
+    }
 
-    return answer(
-      await withSandbox(open(session), async (handle) => {
-        const sources = await readModuleFromSandbox(handle, resolved.path);
-        if (!sources) return unreadable(resolved.path, session.drafts);
-        const published = await publish({
-          personId: session.scope.personId,
-          agentId: session.scope.agentId,
-          vendor,
-          name,
-          description,
-          inputSchema: args.inputSchema as Record<string, unknown>,
-          sourcePath: resolved.path,
-          files: sources.files,
-          testInput: isPlainObject(args.testInput) ? args.testInput : null,
-          connectionId: typeof args.connectionId === "string" ? args.connectionId : null,
-        });
-        // A publish promotes (ADR 0003), so the list changed whatever else it answered with.
-        session.notifier.changed(session.scope.agentId);
-        return published;
-      }),
+    /**
+     * The tool's default binding (CONTEXT.md, *Authored tool*): a connection of the vendor in the
+     * agent's scope. Named when the vendor is connected more than once; a vendor with no connection
+     * in scope has nothing a run could reach, so the publish is refused before a version is written.
+     */
+    const { ctx, principal, scope, deps, notifier } = session;
+    const [scopeIds, connections] = await Promise.all([
+      getAgentScope(ctx, scope, deps.agent),
+      listConnections(ctx, principal, deps.connection),
+    ]);
+    const candidates = connections.filter(
+      (connection) => connection.vendor === vendor && scopeIds.includes(connection.id),
     );
+    let connectionId: string;
+    if (typeof args.connectionId === "string") {
+      if (!candidates.some((connection) => connection.id === args.connectionId)) {
+        return toolRefusal(
+          "connection_not_in_scope",
+          `Connection ${args.connectionId} is not a ${vendor} connection in this agent's scope.`,
+        );
+      }
+      connectionId = args.connectionId;
+    } else if (candidates.length === 1 && candidates[0]) {
+      connectionId = candidates[0].id;
+    } else if (candidates.length === 0) {
+      return toolRefusal(
+        "connection_not_in_scope",
+        `No ${vendor} connection is in this agent's scope, so a ${vendor} tool would have nothing to run against. request_connection proposes one.`,
+      );
+    } else {
+      return toolRefusal(
+        "input_invalid",
+        `${vendor} is connected ${candidates.length} times in this agent's scope; pass connectionId — one of ${candidates.map((connection) => connection.id).join(", ")}.`,
+      );
+    }
+
+    const outcome = await publish({
+      personId: scope.personId,
+      agentId: scope.agentId,
+      toolboxId: toolboxIdOf(scope.personId),
+      vendor,
+      name,
+      description,
+      inputSchema,
+      draftPath,
+      defaultConnectionId: connectionId,
+    });
+    if (!outcome.ok) {
+      return toolError({
+        ...outcome,
+        note: `Fix each refusal at the file, line and column named, ${CHECK_TOOL}, and publish again.`,
+      });
+    }
+
+    // A publish promotes (ADR 0003), which is what fires the notification.
+    const change = await promoteTool(ctx, scope, outcome.tool.id, "publish", deps.workingSet);
+    if (change.changed) notifier.changed(scope.agentId);
+
+    const wire = authoredToolName(vendor, name);
+    const published = {
+      ok: true,
+      tool: wire,
+      version: outcome.version.versionNumber,
+      path: outcome.version.path,
+      annotations: {
+        readOnlyHint: outcome.annotations.readOnly,
+        destructiveHint: outcome.annotations.destructive,
+      },
+      advice: outcome.advice,
+      dependencies: outcome.dependencies,
+      promoted: true,
+    };
+    if (!isPlainObject(args.testInput)) {
+      return toolResult({
+        ...published,
+        note: `Published and promoted. Run it now with run_tool; from your next tool list it is ${wire}.`,
+      });
+    }
+    const dry = await runAuthoredTool(deps, scope, {
+      vendor,
+      name,
+      input: args.testInput,
+      mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true },
+    });
+    return toolResult({
+      ...published,
+      dryRun: dry.answer,
+      note: dry.isError
+        ? "Published and promoted, but the dry run did not run — read dryRun for why."
+        : "Published, promoted and dry-run. Compare each previewed write against the vendor's documentation before the tool's first real use.",
+    });
   },
 };
 
@@ -485,7 +580,7 @@ const readToolSource: MetaTool = {
       }
     } else {
       files = await withSandbox(open(session), (handle) =>
-        handle.downloadDirectory(`${TOOLBOX_DIR}/${version.path}`),
+        handle.downloadDirectory(sandboxPath(version.path)),
       );
     }
     if ("error" in files) return toolError(files);
@@ -500,7 +595,7 @@ const readToolSource: MetaTool = {
             files: [],
             truncated: true,
             head: bounded.text,
-            note: `The version is ${bounded.length} characters of source and was cut at ${MAX_FILE_CHARS}; read_file reads one file at a time from ${TOOLBOX_DIR}/${version.path}.`,
+            note: `The version is ${bounded.length} characters of source and was cut at ${MAX_FILE_CHARS}; read_file reads one file at a time from ${sandboxPath(version.path)}.`,
           }
         : { files }),
     });

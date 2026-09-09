@@ -2,8 +2,15 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { ModuleCheck } from "@graft/check";
+import {
+  createFakeMetadataSource,
+  createPublishDeps,
+  DEFAULT_PACKAGE_POLICY,
+  publishToolVersion,
+} from "@graft/publish";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
+import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
@@ -81,7 +88,7 @@ beforeAll(async () => {
   sandbox = createFakeSandboxBackend();
 
   // The person's toolbox on disk — what a publish writes and every sandbox of theirs mounts.
-  for (const path of ["demo/list-items/v1", "other/ping/v1"]) {
+  for (const path of ["tools/demo/list-items/v1", "tools/other/ping/v1"]) {
     const dir = join(sandbox.toolboxRoot(PERSON), path);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "index.ts"), LIST_ITEMS_MODULE);
@@ -123,7 +130,7 @@ beforeAll(async () => {
     readOnly: true,
     destructive: false,
     defaultConnectionId: CONN_DEMO,
-    path: "demo/list-items/v1",
+    path: "tools/demo/list-items/v1",
   });
   store.addTool({
     id: "tool_other_ping",
@@ -135,7 +142,7 @@ beforeAll(async () => {
     readOnly: true,
     destructive: false,
     defaultConnectionId: CONN_OTHER,
-    path: "other/ping/v1",
+    path: "tools/other/ping/v1",
   });
   store.addTool({
     id: "tool_theirs",
@@ -147,7 +154,7 @@ beforeAll(async () => {
     readOnly: true,
     destructive: false,
     defaultConnectionId: "conn_theirs",
-    path: "demo/their-tool/v1",
+    path: "tools/demo/their-tool/v1",
   });
   // Promoted for agent A alone; agent B holds the same toolbox with an empty working set.
   store.promote(AGENT_A, "tool_list_items");
@@ -163,8 +170,23 @@ beforeAll(async () => {
     };
   };
 
+  // The real store over the fake sandbox's own toolbox directory, so what the publish writes is what a
+  // run mounts (`@graft/toolbox`'s README), and the real publish over the fake check and no registry.
+  const fake = createFakeDeps(store);
+  const toolbox = createFilesystemToolboxStore({ root: join(sandbox.root, "toolboxes") });
+  const publish = createPublishDeps({
+    db: fake.db,
+    store: toolbox,
+    mirror: createNoopToolboxMirror(),
+    sandbox,
+    metadata: createFakeMetadataSource({}),
+    policy: DEFAULT_PACKAGE_POLICY,
+    tool: fake.tool,
+    check: fakeCheck,
+  });
+
   deps = {
-    ...createFakeDeps(store),
+    ...fake,
     sandbox,
     keys,
     proxyPublicUrl: vendor.url,
@@ -183,6 +205,8 @@ beforeAll(async () => {
         },
       }),
     listChangedWindowMs: 300,
+    toolbox,
+    publishTool: (args) => publishToolVersion(publish, args),
   };
 }, 30_000);
 
@@ -690,7 +714,7 @@ describe("the advanced set", () => {
       expect(result).toMatchObject({
         tool: LIST_ITEMS,
         version: 1,
-        path: "demo/list-items/v1",
+        path: "tools/demo/list-items/v1",
         files: [{ path: "index.ts", content: LIST_ITEMS_MODULE }],
       });
     } finally {
@@ -710,22 +734,100 @@ describe("the advanced set", () => {
           "GRA-28",
         ],
         ["request_credential", { connectionId: CONN_DEMO }, "GRA-28"],
-        [
-          "publish_tool",
-          {
-            vendor: "demo",
-            name: "new-tool",
-            description: "A tool",
-            inputSchema: { type: "object" },
-            path: "orders",
-          },
-          "GRA-18",
-        ],
       ] as const) {
         const result = await a.call(name, { ...args });
         expect(result.isError, name).toBe(true);
         expect(body(result)).toMatchObject({ error: "not_available_yet", ticket });
       }
+    } finally {
+      await a.close();
+    }
+  });
+});
+
+describe("publish_tool", () => {
+  it("publishes a draft from the toolbox as a promoted version, notifies, dry-runs it, and the tool then runs first-class", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      await a.call("write_file", { path: "greet/index.ts", content: LIST_ITEMS_MODULE });
+      const result = await a.call("publish_tool", {
+        vendor: "demo",
+        name: "greet",
+        description: "Greets whoever asks, by listing Demo items.",
+        inputSchema: { type: "object", properties: { limit: { type: "integer" } } },
+        path: "greet",
+        testInput: { limit: 3 },
+      });
+      expect(result.isError).toBeFalsy();
+      const published = body(result);
+      expect(published).toMatchObject({
+        ok: true,
+        tool: "demo__greet",
+        version: 1,
+        path: "tools/demo/greet/v1",
+        promoted: true,
+        annotations: { readOnlyHint: true, destructiveHint: false },
+        dependencies: [],
+      });
+      expect(published.dryRun).toMatchObject({ dryRun: { passed: true } });
+      expect(vendor.requests.at(-1)?.url).toBe("https://api.demo.example/v2/items?limit=3");
+
+      // The version is on the toolbox the sandbox mounts, the row is in the toolbox, and the working set has it.
+      expect(store.tools.get(store.tools.keys().next().value ?? "")).toBeDefined();
+      const tool = [...store.tools.values()].find((row) => row.name === "greet");
+      expect(tool).toMatchObject({
+        vendor: "demo",
+        defaultConnectionId: CONN_DEMO,
+        readOnly: true,
+      });
+      expect(store.isPromoted(AGENT_A, tool?.id ?? "")).toBe(true);
+      expect(store.changes.at(-1)).toMatchObject({ change: "promote", cause: "publish" });
+      await until(() => a.notifications.length >= 1);
+      expect(await a.names()).toContain("demo__greet");
+
+      expect(body(await a.call("demo__greet", { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(
+        body(await a.call("read_tool_source", { vendor: "demo", name: "greet" })),
+      ).toMatchObject({
+        version: 1,
+        files: [{ path: "index.ts", content: LIST_ITEMS_MODULE }],
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("refuses a module outside the toolbox, a vendor with no connection in scope, and a bad definition, before writing anything", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const outside = await a.call("publish_tool", {
+        vendor: "demo",
+        name: "x",
+        description: "d",
+        inputSchema: { type: "object" },
+        path: "/workspace/x",
+      });
+      expect(body(outside)).toMatchObject({ error: "refused", reason: "input_invalid" });
+      const unconnected = await a.call("publish_tool", {
+        vendor: "nobody",
+        name: "x",
+        description: "d",
+        inputSchema: { type: "object" },
+        path: "greet",
+      });
+      expect(body(unconnected)).toMatchObject({
+        error: "refused",
+        reason: "connection_not_in_scope",
+      });
+      const badName = await a.call("publish_tool", {
+        vendor: "demo",
+        name: "Not Kebab",
+        description: "d",
+        inputSchema: { type: "object" },
+        path: "greet",
+      });
+      expect(body(badName)).toMatchObject({ error: "refused", reason: "input_invalid" });
+      expect([...store.tools.values()].some((row) => row.name === "x")).toBe(false);
     } finally {
       await a.close();
     }

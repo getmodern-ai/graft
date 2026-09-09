@@ -21,9 +21,11 @@
     "@graft/core": "workspace:*",
     "@graft/db": "workspace:*",
     "@graft/proxy": "workspace:*",
+    "@graft/publish": "workspace:*",
     "@graft/runner": "workspace:*",
     "@graft/sandbox": "workspace:*",
     "@graft/token": "workspace:*",
+    "@graft/toolbox": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "hono": "catalog:",
     "undici": "catalog:"
