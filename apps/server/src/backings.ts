@@ -16,7 +16,10 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  * `pnpm install` never fetches it, and a checkout without it typechecks, tests and boots as the
  * self-hosted form. The private package arrives by being placed at `packages/cloud-backings/` —
  * gitignored here — where the workspace glob picks it up and its `workspace:*` dependencies on the
- * seam packages resolve.
+ * seam packages resolve. `apps/server/package.json` lists it under `optionalDependencies`, which is
+ * what makes the import below resolvable from this file when the package is present: pnpm links an
+ * optional workspace dependency into this app's `node_modules` when the workspace has it and
+ * installs without complaint — frozen lockfile included — when it does not.
  *
  * Nothing about the hosted backings is typed here beyond the seams they implement. What the private
  * module must export is `createCloudBackings(input: CloudBackingsInput)` returning the three

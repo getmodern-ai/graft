@@ -101,8 +101,9 @@ refused in production. `packages/env/src/schema.ts` is the rules as code.
 `open`, the default, is what this repository holds — the Docker sandbox when its pair is set, the
 local keyring, a mirror that copies nothing — and is also the self-hosted form in production.
 `cloud` loads the hosted form's backings from a private package that is not in this repository: it
-is placed at `packages/cloud-backings/`, which is gitignored, where the workspace glob picks it up;
-absent, the server refuses to boot with a sentence saying so. The selector imports it by a name held
+is placed at `packages/cloud-backings/`, which is gitignored, where the workspace glob picks it up
+and `apps/server`'s `optionalDependencies` entry links it into the server's `node_modules`; absent,
+the install still succeeds and the server refuses to boot with a sentence saying so. The selector imports it by a name held
 in a variable, so the type program never resolves it — which is what keeps the package absent rather
 than optional.
 
