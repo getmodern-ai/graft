@@ -1,0 +1,34 @@
+{
+  "name": "@graft/evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "eval": "tsx src/eval.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check-types": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@graft/check": "workspace:*",
+    "@graft/core": "workspace:*",
+    "@graft/db": "workspace:*",
+    "@graft/mcp": "workspace:*",
+    "@graft/model": "workspace:*",
+    "@graft/proxy": "workspace:*",
+    "@graft/publish": "workspace:*",
+    "@graft/runner": "workspace:*",
+    "@graft/sandbox": "workspace:*",
+    "@graft/toolbox": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "dotenv": "catalog:"
+  },
+  "devDependencies": {
+    "@graft/config": "workspace:*",
+    "@octokit/rest": "^22.0.1",
+    "@types/node": "catalog:",
+    "tsx": "^4.23.12",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

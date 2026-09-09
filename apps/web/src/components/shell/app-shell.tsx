@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { BotIcon, InboxIcon, LogOutIcon, PlugIcon } from "lucide-react";
+import { BotIcon, InboxIcon, LogOutIcon, PlugIcon, SettingsIcon } from "lucide-react";
 import type * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,7 @@ import { sessionKeys } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
 
 /**
- * The console's chrome: a narrow sidebar with the three screens and the person's sign-out, and the
+ * The console's chrome: a narrow sidebar with the four screens and the person's sign-out, and the
  * content column beside it. Hung off `routes/_auth/_shell/route.tsx`, which is what decides who
  * wears it; a screen that wants the guard and no chrome files itself beside `_shell`.
  */
@@ -35,6 +35,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <NavLink to="/connections" icon={<PlugIcon />}>
             Connections
           </NavLink>
+          <NavLink to="/settings" icon={<SettingsIcon />}>
+            Settings
+          </NavLink>
         </nav>
         <div className="mt-auto hidden md:block">
           <PersonFooter />
@@ -53,7 +56,7 @@ function NavLink({
   trailing,
   children,
 }: {
-  to: "/agents" | "/pending" | "/connections";
+  to: "/agents" | "/pending" | "/connections" | "/settings";
   icon: React.ReactNode;
   trailing?: React.ReactNode;
   children: React.ReactNode;

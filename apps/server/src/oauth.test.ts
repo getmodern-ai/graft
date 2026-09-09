@@ -21,6 +21,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createServer } from "./app";
 import { createDatabaseCredentialRotation } from "./connections";
+import { fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
  * GRA-30's acceptance criteria where the three doors meet (`connection-handoff.test.ts`'s shape,
@@ -160,6 +161,7 @@ beforeAll(async () => {
         ledger: fake.ledger,
         approval: fake.approval,
         pendingAction: fake.pendingAction,
+        modelKey: fakeModelKeyDeps(),
       },
       corsOrigins: [],
       handoff,

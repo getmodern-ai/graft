@@ -23,6 +23,7 @@ import {
   keyringSecret,
   migrateOnStart,
   modelBackend,
+  modelProvider,
   packageAllowlist,
   packageMinAgeDays,
   packageMinWeeklyDownloads,
@@ -45,6 +46,12 @@ import {
 
 /** The open form's one required cross-field input, so a test about another rule sees that rule alone. */
 const SECRET = { GRAFT_KEYRING_SECRET: "x".repeat(32) };
+/** The self-hosted form authors with a provider and a key (ADR 0014); every production case carries one. */
+const MODEL = {
+  GRAFT_MODEL_BACKEND: "provider",
+  GRAFT_MODEL_PROVIDER: "openai",
+  GRAFT_MODEL_API_KEY: "sk-test-key",
+};
 
 const PRIVATE_PEM = [
   "-----BEGIN PRIVATE KEY-----",
@@ -183,12 +190,17 @@ describe("GRAFT_CORS_ORIGIN", () => {
 describe("GRAFT_DEV_SEED", () => {
   it("is refused under NODE_ENV=production and accepted otherwise", () => {
     expect(
-      serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_DEV_SEED: "./seed.json" }),
+      serverEnvIssues({
+        ...SECRET,
+        ...MODEL,
+        NODE_ENV: "production",
+        GRAFT_DEV_SEED: "./seed.json",
+      }),
     ).toEqual([expect.stringMatching(/GRAFT_DEV_SEED.*production/)]);
     expect(
       serverEnvIssues({ ...SECRET, NODE_ENV: "development", GRAFT_DEV_SEED: "./seed.json" }),
     ).toEqual([]);
-    expect(serverEnvIssues({ ...SECRET, NODE_ENV: "production" })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, ...MODEL, NODE_ENV: "production" })).toEqual([]);
   });
 });
 
@@ -386,7 +398,12 @@ describe("finalServerSchema", () => {
       expect.stringMatching(/partially configured/),
     ]);
     expect(
-      schema.safeParse({ ...minimal, NODE_ENV: "production", GRAFT_DEV_SEED: "seed.json" }).success,
+      schema.safeParse({
+        ...minimal,
+        ...MODEL,
+        NODE_ENV: "production",
+        GRAFT_DEV_SEED: "seed.json",
+      }).success,
     ).toBe(false);
   });
 });
@@ -443,13 +460,23 @@ describe("the sandbox backing", () => {
 
   it("refuses the fake backing in production and nowhere else", () => {
     expect(
-      serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "fake" }),
+      serverEnvIssues({
+        ...SECRET,
+        ...MODEL,
+        NODE_ENV: "production",
+        GRAFT_SANDBOX_BACKEND: "fake",
+      }),
     ).toEqual([expect.stringMatching(/GRAFT_SANDBOX_BACKEND=fake.*NODE_ENV=production/)]);
     expect(
       serverEnvIssues({ ...SECRET, NODE_ENV: "development", GRAFT_SANDBOX_BACKEND: "fake" }),
     ).toEqual([]);
     expect(
-      serverEnvIssues({ ...SECRET, NODE_ENV: "production", GRAFT_SANDBOX_BACKEND: "docker" }),
+      serverEnvIssues({
+        ...SECRET,
+        ...MODEL,
+        NODE_ENV: "production",
+        GRAFT_SANDBOX_BACKEND: "docker",
+      }),
     ).toEqual([]);
   });
 });
@@ -482,9 +509,10 @@ describe("the acquire job's bounds", () => {
 });
 
 describe("GRAFT_MODEL_BACKEND", () => {
-  it("is unset by default — no model, and acquire says so — and admits scripted", () => {
+  it("is unset by default — no model, and acquire says so — and admits scripted and provider", () => {
     expect(modelBackend.parse(undefined)).toBeUndefined();
     expect(modelBackend.parse("scripted")).toBe("scripted");
+    expect(modelBackend.parse("provider")).toBe("provider");
     expect(modelBackend.safeParse("gpt").success).toBe(false);
   });
 
@@ -511,7 +539,174 @@ describe("GRAFT_MODEL_BACKEND", () => {
         GRAFT_MODEL_BACKEND: "scripted",
         GRAFT_MODEL_SCRIPT: "./script.json",
       }),
-    ).toEqual([expect.stringMatching(/GRAFT_MODEL_BACKEND=scripted.*production/)]);
+    ).toEqual([
+      expect.stringMatching(/GRAFT_MODEL_BACKEND=scripted.*production/),
+      expect.stringMatching(/self-hosted form needs a model/),
+    ]);
+  });
+});
+
+/** The full schema and the laptop minimum, for the describes below (the `finalServerSchema` describe has its own). */
+const fullSchema = finalServerSchema(serverSchema);
+const MINIMAL = {
+  GRAFT_DATABASE_URL: "postgresql://postgres:password@localhost:5432/graft",
+  GRAFT_AUTH_SECRET: "auth-secret-that-is-long-enough-32-chars",
+  GRAFT_AUTH_URL: "http://localhost:3000",
+  GRAFT_KEYRING_SECRET: "test-secret-that-is-long-enough-32",
+  GRAFT_CONSOLE_URL: "http://localhost:3001",
+  GRAFT_HANDOFF_SECRET: "handoff-secret-that-is-long-enough-32",
+};
+
+describe("the provider-backed model", () => {
+  const PROVIDER = {
+    ...SECRET,
+    GRAFT_MODEL_BACKEND: "provider",
+    GRAFT_MODEL_PROVIDER: "openai",
+    GRAFT_MODEL_API_KEY: "sk-test-key",
+  };
+
+  it("takes the two provider names and nothing else", () => {
+    expect(modelProvider.parse("anthropic")).toBe("anthropic");
+    expect(modelProvider.parse("openai")).toBe("openai");
+    expect(modelProvider.parse(undefined)).toBeUndefined();
+    expect(modelProvider.safeParse("gemini").success).toBe(false);
+  });
+
+  it("needs the provider and the key together under GRAFT_MODEL_BACKEND=provider, naming what is missing", () => {
+    expect(serverEnvIssues(PROVIDER)).toEqual([]);
+    const { GRAFT_MODEL_API_KEY: _key, ...withoutKey } = PROVIDER;
+    expect(serverEnvIssues(withoutKey)).toEqual([
+      expect.stringMatching(
+        /needs GRAFT_MODEL_PROVIDER.*GRAFT_MODEL_API_KEY.*Missing: GRAFT_MODEL_API_KEY$/,
+      ),
+    ]);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_MODEL_BACKEND: "provider" })).toEqual([
+      expect.stringMatching(/Missing: GRAFT_MODEL_PROVIDER, GRAFT_MODEL_API_KEY$/),
+    ]);
+  });
+
+  it("refuses provider settings that nothing would read — the backend is not provider", () => {
+    const { GRAFT_MODEL_BACKEND: _backend, ...pairAlone } = PROVIDER;
+    expect(serverEnvIssues(pairAlone)).toEqual([
+      expect.stringMatching(
+        /^GRAFT_MODEL_PROVIDER, GRAFT_MODEL_API_KEY configure the provider-backed model, but GRAFT_MODEL_BACKEND is not provider/,
+      ),
+    ]);
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        GRAFT_MODEL_BACKEND: "scripted",
+        GRAFT_MODEL_SCRIPT: "./s.json",
+        GRAFT_MODEL_TRIAGE: "gpt-5.4-mini",
+      }),
+    ).toEqual([expect.stringMatching(/^GRAFT_MODEL_TRIAGE configure/)]);
+  });
+
+  it("is allowed in production, unlike the scripted backend, and takes the optional model ids and base URL", () => {
+    expect(serverEnvIssues({ ...PROVIDER, NODE_ENV: "production" })).toEqual([]);
+    expect(
+      fullSchema.parse({
+        ...MINIMAL,
+        ...PROVIDER,
+        GRAFT_MODEL_AUTHORING: "gpt-5.6-sol",
+        GRAFT_MODEL_TRIAGE: "gpt-5.4-mini",
+        GRAFT_MODEL_BASE_URL: "https://gateway.example/v1",
+      }),
+    ).toMatchObject({
+      GRAFT_MODEL_BACKEND: "provider",
+      GRAFT_MODEL_PROVIDER: "openai",
+      GRAFT_MODEL_AUTHORING: "gpt-5.6-sol",
+      GRAFT_MODEL_TRIAGE: "gpt-5.4-mini",
+      GRAFT_MODEL_BASE_URL: "https://gateway.example/v1",
+    });
+    expect(
+      fullSchema.safeParse({ ...MINIMAL, ...PROVIDER, GRAFT_MODEL_BASE_URL: "gateway.example" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("refuses a key that still holds the secret store's placeholder, and an empty one", () => {
+    const placeholder = fullSchema.safeParse({
+      ...MINIMAL,
+      ...PROVIDER,
+      GRAFT_MODEL_API_KEY: "PLACEHOLDER-populate-me",
+    });
+    expect(placeholder.success).toBe(false);
+    expect(placeholder.error?.issues.map((issue) => issue.message)).toEqual([
+      expect.stringMatching(/GRAFT_MODEL_API_KEY still holds the secret store's placeholder/),
+    ]);
+    // An empty string reads as unset (`emptyStringAsUndefined` in server.ts is the same rule at the door).
+    expect(fullSchema.safeParse({ ...MINIMAL, ...PROVIDER, GRAFT_MODEL_API_KEY: "" }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("the self-hosted form", () => {
+  const PRODUCTION = { ...SECRET, NODE_ENV: "production" };
+
+  it("refuses to boot in production under the open backings without a provider and a key, naming both variables", () => {
+    const issues = serverEnvIssues(PRODUCTION);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(/self-hosted form needs a model/);
+    expect(issues[0]).toContain("GRAFT_MODEL_PROVIDER");
+    expect(issues[0]).toContain("GRAFT_MODEL_API_KEY");
+    expect(issues[0]).toContain("ADR 0014");
+    // The scripted backend is not a model; it is refused in production on its own account too.
+    expect(
+      serverEnvIssues({
+        ...PRODUCTION,
+        GRAFT_MODEL_BACKEND: "scripted",
+        GRAFT_MODEL_SCRIPT: "./s.json",
+      }),
+    ).toEqual([
+      expect.stringMatching(/scripted.*production/),
+      expect.stringMatching(/self-hosted form needs a model/),
+    ]);
+  });
+
+  it("boots in production with the provider and the key; the hosted form and development are not held to it", () => {
+    expect(
+      serverEnvIssues({
+        ...PRODUCTION,
+        GRAFT_MODEL_BACKEND: "provider",
+        GRAFT_MODEL_PROVIDER: "anthropic",
+        GRAFT_MODEL_API_KEY: "sk-ant-test",
+      }),
+    ).toEqual([]);
+    expect(serverEnvIssues({ NODE_ENV: "production", GRAFT_BACKINGS: "cloud" })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, NODE_ENV: "development" })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, NODE_ENV: "test" })).toEqual([]);
+  });
+});
+
+describe("Langfuse", () => {
+  it("is the key pair or nothing, with the region's URL its own setting", () => {
+    expect(serverEnvIssues({ ...SECRET, GRAFT_LANGFUSE_PUBLIC_KEY: "pk-lf-1" })).toEqual([
+      expect.stringMatching(/Langfuse is partially configured.*Missing: GRAFT_LANGFUSE_SECRET_KEY/),
+    ]);
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        GRAFT_LANGFUSE_PUBLIC_KEY: "pk-lf-1",
+        GRAFT_LANGFUSE_SECRET_KEY: "sk-lf-1",
+      }),
+    ).toEqual([]);
+    expect(
+      fullSchema.parse({
+        ...MINIMAL,
+        GRAFT_LANGFUSE_PUBLIC_KEY: "pk-lf-1",
+        GRAFT_LANGFUSE_SECRET_KEY: "sk-lf-1",
+        GRAFT_LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
+      }),
+    ).toMatchObject({ GRAFT_LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com" });
+    expect(
+      fullSchema.safeParse({
+        ...MINIMAL,
+        GRAFT_LANGFUSE_PUBLIC_KEY: "pk-lf-1",
+        GRAFT_LANGFUSE_SECRET_KEY: "PLACEHOLDER",
+      }).success,
+    ).toBe(false);
   });
 });
 

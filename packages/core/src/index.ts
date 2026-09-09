@@ -154,6 +154,21 @@ export {
   type UsageInput,
   type VendorUsageRow,
 } from "./ledger/ledger.service";
+export { createModelKeyDeps, type ModelKeyDeps } from "./model-key/model-key.deps";
+export {
+  deletePersonModelKey,
+  findPersonModelKeyRow,
+  getPersonModelKey,
+  MODEL_ID_MAX_LENGTH,
+  MODEL_KEY_FIELD,
+  MODEL_KEY_MAX_LENGTH,
+  MODEL_KEY_SCOPE,
+  type ModelKeyOutput,
+  modelKeyScope,
+  type SetModelKeyInput,
+  setPersonModelKey,
+  toModelKeyOutput,
+} from "./model-key/model-key.service";
 export {
   defaultPendingActionDeps,
   type PendingActionDeps,

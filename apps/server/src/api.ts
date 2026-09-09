@@ -6,10 +6,12 @@ import {
   type ConnectionDeps,
   consumePendingAction,
   createAgent,
+  deletePersonModelKey,
   getAgent,
   getAgentScope,
   getConnection,
   getPendingActionForPerson,
+  getPersonModelKey,
   getToolById,
   grantBuildApproval,
   isOAuthAuthorizationCode,
@@ -22,6 +24,7 @@ import {
   listVendorUsage,
   listWorkingSet,
   listWorkingSetChanges,
+  type ModelKeyDeps,
   orNotFound,
   type PendingActionDeps,
   type Principal,
@@ -39,6 +42,7 @@ import {
   setAgentScope,
   setApproval,
   setConnectionCredential,
+  setPersonModelKey,
   type ToolDeps,
   updateAgentLimits,
   type WorkingSetDeps,
@@ -119,6 +123,8 @@ export type ApiDeps = {
   /** The pending-action and approval routes (GRA-23) read and write the ask's two records. */
   approval: ApprovalDeps;
   pendingAction: PendingActionDeps;
+  /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
+  modelKey: ModelKeyDeps;
 };
 
 export type ApiOptions = {
@@ -198,6 +204,14 @@ const credentialBody = z.object({ fields: credentialFields });
 /** GRA-28's submit for a `connection` ask: the proposal as the person edited it, and the secret. */
 const connectionSubmitBody = registrationBody.extend({ credential: credentialFields });
 const credentialSubmitBody = z.object({ credential: credentialFields });
+
+const modelKeyBody = z.object({
+  provider: z.string(),
+  apiKey: z.string(),
+  authoringModel: z.string().nullable().optional(),
+  triageModel: z.string().nullable().optional(),
+  baseUrl: z.string().nullable().optional(),
+});
 
 /** Start a consent on an existing connection, answering an open ask about it when one is named. */
 const authorizeUrlBody = z.object({ pendingActionId: z.string().optional() });
@@ -362,7 +376,11 @@ export function createApi(options: ApiOptions): Hono {
   /** Better Auth's own routes: sign-up, sign-in, sign-out, session. */
   api.on(["POST", "GET"], "/auth/*", (c) => options.auth.handler(c.req.raw));
 
-  const { approval: approvalDeps, pendingAction: pendingActionDeps } = options.deps;
+  const {
+    approval: approvalDeps,
+    pendingAction: pendingActionDeps,
+    modelKey: modelKeyDeps,
+  } = options.deps;
   const { handoff } = options;
 
   const principalOf = async (headers: Headers) =>
@@ -435,6 +453,29 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/me", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ personId: principal.personId });
+  });
+
+  /**
+   * The person's own model key (ADR 0014: bring your own key to the hosted form). Three routes on
+   * one resource, because there is one row per person: read what is set — provider, model ids,
+   * base URL, when — enter or replace it, remove it. The key itself goes in over TLS and comes out
+   * of the vault only in the model resolver that runs this person's jobs (`model.ts`); no answer
+   * here carries it, and the console shows "set at" in its place.
+   */
+  api.get("/me/model-key", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json({ modelKey: await getPersonModelKey(ctx, principal, modelKeyDeps) });
+  });
+
+  api.put("/me/model-key", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, modelKeyBody);
+    return c.json({ modelKey: await setPersonModelKey(ctx, principal, body, modelKeyDeps) });
+  });
+
+  api.delete("/me/model-key", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json({ deleted: await deletePersonModelKey(ctx, principal, modelKeyDeps) });
   });
 
   api.get("/agents", async (c) => {

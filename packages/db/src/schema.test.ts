@@ -39,6 +39,7 @@ describe("every owned table", () => {
       "build_approval",
       "connection",
       "pending_action",
+      "person_model_key",
       "tool_version",
       "usage_ledger",
       "working_set",

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { draftProblems } from "./answer";
 import {
   answerAllowed,
   type DocPage,
@@ -9,7 +10,6 @@ import {
   type ModelJobContext,
   type ModelReply,
   type ModelSituation,
-  type ModuleDraft,
 } from "./types";
 
 /**
@@ -32,6 +32,7 @@ export type ModelConformanceFixture = {
 /** What the suite tells the model it is building; a vendor no model will have heard of. */
 export const CONFORMANCE_CONTEXT: ModelJobContext = {
   jobId: "job_conformance",
+  personId: "person_conformance",
   goal: "List the items in the Demo Orders catalogue, up to a limit.",
   hints: "GET /items?limit=<n> returns { items: [{ id, name }] }.",
   connection: {
@@ -58,29 +59,13 @@ export const CONFORMANCE_PAGE: DocPage = {
 };
 
 const MAX_DOC_ROUNDS = 3;
-const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** What the publish would refuse a draft for, checked here first so a backing learns it in its own suite. */
-export function draftProblems(draft: ModuleDraft): string[] {
-  const problems: string[] = [];
-  if (!KEBAB.test(draft.name)) problems.push(`name "${draft.name}" is not kebab-case`);
-  if (draft.description.trim().length === 0) problems.push("description is empty");
-  if (!isRecord(draft.inputSchema) || draft.inputSchema.type !== "object") {
-    problems.push('inputSchema is not a JSON Schema object with type "object"');
-  }
-  if (!draft.files.some((file) => file.path === "index.ts" || file.path === "index.mjs")) {
-    problems.push("files carry no index.ts (or index.mjs) entry");
-  }
-  if (!isRecord(draft.testInput)) problems.push("testInput is not an object");
-  for (const path of draft.proofReads) {
-    if (!path.startsWith("/")) problems.push(`proof read "${path}" is not a vendor-relative path`);
-  }
-  return problems;
-}
+/**
+ * What the publish would refuse a draft for, checked here first so a backing learns it in its own
+ * suite — the same list the provider-backed adapter checks before it lets an answer through
+ * (`./answer.ts`), re-exported so the rule lives once.
+ */
+export { draftProblems };
 
 export function modelConformance(
   name: string,

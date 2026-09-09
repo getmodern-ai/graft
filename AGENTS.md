@@ -127,9 +127,10 @@ all-or-nothing; `GRAFT_DEV_SEED` layers a JSON file of connections over the data
 smoke test and is refused in production. A refusal prints one line per problem with the variable
 named and exits 1 (`packages/env/src/server.ts`). Under `NODE_ENV=production` on the open backings the
 model group ADR 0014 requires — `GRAFT_MODEL_BACKEND=provider` with `GRAFT_MODEL_PROVIDER` and
-`GRAFT_MODEL_API_KEY`, `GRAFT_MODEL_AUTHORING` and `GRAFT_MODEL_TRIAGE` beside them — is required
-too; the fields and that rule are GRA-31's. `GRAFT_APPROVAL_WAIT_SECONDS` (default
-25) is how long a tool call waits for a person to answer a handoff before returning
+`GRAFT_MODEL_API_KEY`; `GRAFT_MODEL_AUTHORING` and `GRAFT_MODEL_TRIAGE` are optional beside them
+and default per provider — is required too; the fields and that rule are GRA-31's (the section
+*Running `acquire` locally* below). `GRAFT_APPROVAL_WAIT_SECONDS` (default 25) is how long a
+tool call waits for a person to answer a handoff before returning
 `awaiting_approval` — or `awaiting_connection` / `awaiting_credential` for the two connection
 handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default
 24) how long that action stays answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the
@@ -271,11 +272,38 @@ ends with a result naming it. Every attempt is an `acquire_attempt` row, every s
 line, redacted on the way in (`@graft/core`'s `redaction.ts`; the proxy redacts an echoed credential
 by value before that, ADR 0010 amended).
 
-Which model answers is `GRAFT_MODEL_BACKEND`. Unset, the server boots with no model and `acquire`
-refuses `acquire_unconfigured`. `scripted` plays a JSON file of canned answers, one per situation the
-job puts (`@graft/model/scripted`, `parseScript` has the shape), for driving the whole loop on a laptop
-with no provider key; it needs `GRAFT_MODEL_SCRIPT=<path>` beside it and is refused in production. The
-provider-backed value arrives with GRA-31.
+Which model answers is `GRAFT_MODEL_BACKEND` (`apps/server/src/model.ts` chooses at boot). Unset, the
+server boots with no model and `acquire` refuses `acquire_unconfigured`. `scripted` plays a JSON file
+of canned answers, one per situation the job puts (`@graft/model/scripted`, `parseScript` has the
+shape), for driving the whole loop on a laptop with no provider key; it needs `GRAFT_MODEL_SCRIPT=<path>`
+beside it and is refused in production. `provider` is the real thing (`@graft/model/provider`, GRA-31):
+one strong coding model authors and one cheap model triages — decides whether the job opens with a
+round of documentation, condenses a long page before it enters the authoring context, never writes
+code — through the AI SDK, with `GRAFT_MODEL_PROVIDER` (`anthropic` | `openai`) and
+`GRAFT_MODEL_API_KEY` read together under it and refused outside it. `GRAFT_MODEL_AUTHORING` and
+`GRAFT_MODEL_TRIAGE` default per provider — Anthropic `claude-fable-5-1` / `claude-haiku-4-5-20251001`,
+OpenAI `gpt-5.6-sol` / `gpt-5.4-mini`, the OpenAI pair confirmed against the live models list on
+9 September 2026 — and `GRAFT_MODEL_BASE_URL` points the OpenAI provider at an OpenAI-compatible
+gateway, which also selects Chat Completions over Responses. The model answers in the `ModelAnswer`
+shape through structured output; an answer the job could not use goes back once, with the problems
+named, before the job records `model_failed`. **The self-hosted form refuses to boot without it**
+(ADR 0014): `NODE_ENV=production` under `GRAFT_BACKINGS=open` needs `GRAFT_MODEL_BACKEND=provider` with
+the provider and the key, and the boot names both.
+
+**A person's own key** (ADR 0014) is `person_model_key`: one row per person, the key envelope-encrypted
+under the person's model-key scope through the vault's encrypt half, write-only after entry.
+`GET`/`PUT`/`DELETE /api/me/model-key` are the console's routes, behind the Settings screen; `model.ts`
+decrypts a key in the one place outside the proxy binding and puts the person's provider in front of
+the fixed model, so their jobs — and the vendor documentation those jobs read — go to their provider
+and nobody else's (`apps/server/src/model.test.ts` proves the isolation through the service seam).
+Routing applies whenever a fixed model exists, and always under `cloud`; under `open` with no fixed
+model `acquire` refuses at the door rather than accepting a job that fails for want of a key.
+
+**Langfuse** traces every model call when `GRAFT_LANGFUSE_PUBLIC_KEY` and `GRAFT_LANGFUSE_SECRET_KEY`
+are set (all-or-nothing; `GRAFT_LANGFUSE_BASE_URL` names the region), per call and never registered
+globally — `@graft/model/langfuse` carries Cando's argument for that. The job is the session, the
+person the user, and every span carries the job id, the attempt and the role (`authoring` | `triage`).
+Absent the pair, the call is exactly what it would be otherwise.
 
 ```bash
 cat >> apps/server/.env <<'ENV'
@@ -291,6 +319,33 @@ credential entered, since the scheme injects one — is the shortest by-hand pro
 `testInput`. `acquire { connectionId, goal }` over MCP answers `{ jobId, status, progress }`;
 `acquire_status { jobId }` answers the progress lines and, at the end, `result` — the tool's wire name,
 version and annotations, or `{ failure, message, lastDiagnostics, tried }`.
+
+### The evals
+
+`packages/evals` (ADR 0012: the eval suite is the gate; GRA-31) runs the real loop against two fake
+vendors behind the real proxy with the provider-backed model and grades what it did with deterministic
+scorers: reads before publish, publish before the first write, no vendor host in the model's code, a
+dry run before any ask, the first write through the published tool, and the supporting facts. It is an
+app-like leaf nothing imports, which is what keeps it out of the server's Docker image
+(`apps/server/Dockerfile`'s `prod-deps` installs `--filter "@graft/server..."`); a server dependency on
+it would pull it in.
+
+```bash
+pnpm --filter @graft/evals eval                      # every scenario; needs GRAFT_MODEL_PROVIDER + GRAFT_MODEL_API_KEY
+pnpm --filter @graft/evals eval -- --scenario write  # one by name
+pnpm --filter @graft/evals eval -- --scripted        # the harness's own test: canned answers, no key, no spend
+```
+
+Without a provider it says what is missing and exits non-zero before opening anything. `pnpm test`
+runs the scorers and the scripted harness test on every commit and never reaches a provider.
+`packages/evals/README.md` has the scorers and how the SDK scenario runs on the fake sandbox.
+
+### The Hermes skill
+
+`skills/hermes-graft/SKILL.md` (ADR 0016; MIT under `skills/LICENSE`) is the thin skill a Hermes person
+installs: when to call `acquire`, how to relay a handoff, how to describe an approval, what
+`acquire_status` means while a job runs, and the `mcp_servers` block with the agent token in
+`~/.hermes/.env`. Nothing else is installed into the harness; `skills/hermes-graft/README.md` says how.
 
 ### Publishing a tool by hand
 

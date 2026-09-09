@@ -22,6 +22,7 @@ import { initLogger } from "evlog";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createServer } from "./app";
+import { fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
  * GRA-28's acceptance criteria at the seam where the two doors meet (`approvals.test.ts`'s shape):
@@ -133,6 +134,7 @@ beforeAll(async () => {
         ledger: fake.ledger,
         approval: fake.approval,
         pendingAction: fake.pendingAction,
+        modelKey: fakeModelKeyDeps(),
       },
       corsOrigins: [],
       handoff,

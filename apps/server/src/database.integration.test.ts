@@ -4,15 +4,20 @@ import { createAuth } from "@graft/auth";
 import {
   createAgent,
   createConnectionDeps,
+  createModelKeyDeps,
   createTool,
   defaultAgentDeps,
   defaultApprovalDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
+  deletePersonModelKey,
+  findPersonModelKeyRow,
   getConnection,
+  getPersonModelKey,
   getToolById,
   listConnections,
   listWorkingSet,
+  modelKeyScope,
   promoteTool,
   registerConnection,
   requireAgent,
@@ -21,6 +26,7 @@ import {
   type ServiceContext,
   setApproval,
   setConnectionCredential,
+  setPersonModelKey,
 } from "@graft/core";
 import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
@@ -75,6 +81,7 @@ initLogger({ silent: true });
 const SECRET = "test-secret-that-is-long-enough-32";
 const AUTH_SECRET = "auth-secret-that-is-long-enough-32-chars";
 const API_KEY = "sk_live_the_real_vendor_key_0123456789";
+const MODEL_API_KEY = "sk-ant-a-persons-own-model-key-0123456789";
 
 describe.skipIf(!adminUrl)("the schema, the account and the services over a real Postgres", () => {
   let admin: Database;
@@ -166,6 +173,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "build_approval",
       "connection",
       "pending_action",
+      "person_model_key",
       "tool_version",
       "usage_ledger",
       "working_set",
@@ -449,5 +457,48 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       sql`select count(*)::text as n from approval where tool_id = ${tool.id}`,
     );
     expect(approvals.rows[0]?.n).toBe("0");
+  });
+
+  it("round-trips a person's model key: ciphertext in the row, opened under that person's model-key scope alone, never in the public shape", async () => {
+    const personId = await signUp("model-key-owner@example.com");
+    const other = await signUp("model-key-other@example.com");
+    const ctx: ServiceContext = { db };
+    const deps = createModelKeyDeps({ encrypt: vault.encrypt });
+
+    const entered = await setPersonModelKey(
+      ctx,
+      { personId },
+      { provider: "openai", apiKey: MODEL_API_KEY, authoringModel: "gpt-test" },
+      deps,
+    );
+    expect(entered).toMatchObject({ provider: "openai", authoringModel: "gpt-test" });
+    expect(JSON.stringify(entered)).not.toContain(MODEL_API_KEY);
+    expect(entered).not.toHaveProperty("keyCiphertext");
+
+    // The resolver's read: the ciphertext, decryptable under this person's model-key scope and no other.
+    const row = await findPersonModelKeyRow(ctx, personId, deps);
+    if (!row) throw new Error("no row");
+    expect(Buffer.isBuffer(row.keyCiphertext)).toBe(true);
+    expect(Buffer.from(row.keyCiphertext).includes(Buffer.from(MODEL_API_KEY))).toBe(false);
+    await expect(vault.decrypt(row.keyCiphertext, modelKeyScope(personId))).resolves.toEqual({
+      apiKey: MODEL_API_KEY,
+    });
+    await expect(vault.decrypt(row.keyCiphertext, modelKeyScope(other))).rejects.toThrow(
+      CredentialScopeMismatchError,
+    );
+    // Nor under a connection's scope for the same person: the slot is part of the binding.
+    await expect(
+      vault.decrypt(row.keyCiphertext, { personId, connectionId: "conn_x" }),
+    ).rejects.toThrow(CredentialScopeMismatchError);
+    expect(await findPersonModelKeyRow(ctx, other, deps)).toBeNull();
+
+    // One row per person: a second entry replaces the first; a delete leaves none.
+    await setPersonModelKey(ctx, { personId }, { provider: "anthropic", apiKey: "second" }, deps);
+    expect(await getPersonModelKey(ctx, { personId }, deps)).toMatchObject({
+      provider: "anthropic",
+      authoringModel: null,
+    });
+    expect(await deletePersonModelKey(ctx, { personId }, deps)).toBe(true);
+    expect(await getPersonModelKey(ctx, { personId }, deps)).toBeNull();
   });
 });

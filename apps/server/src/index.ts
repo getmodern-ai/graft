@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createAuth } from "@graft/auth";
 import {
   createConnectionDeps,
+  createModelKeyDeps,
   defaultAgentDeps,
   defaultApprovalDeps,
   defaultLedgerDeps,
@@ -19,7 +20,6 @@ import { checkMigrationChain, readMigrationChain } from "@graft/db/migration-cha
 import { countPersons } from "@graft/db/repo/person";
 import { env } from "@graft/env/server";
 import { createAcquireRunner, createMcpDeps, startSweep } from "@graft/mcp";
-import { createScriptedModel, type ModelAdapter, parseScript } from "@graft/model";
 import {
   createPublishDeps,
   createRegistryMetadataSource,
@@ -42,6 +42,7 @@ import {
   layerConnections,
   seedConnections,
 } from "./connections";
+import { createModel } from "./model";
 
 /**
  * The server's boot: validated environment in, one listening process out. Everything it decides
@@ -154,6 +155,32 @@ if (env.GRAFT_DEV_SEED) {
 // one component, and that component is the proxy binding in `app.ts`).
 const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
 
+/**
+ * A person's own model key takes the same encrypt-only half on its request path (`@graft/core`'s
+ * `ModelKeyDeps`); the decrypt goes to the model resolver alone (`model.ts`), which is the second
+ * and last place on this server a stored secret becomes plaintext, after the proxy binding.
+ */
+const modelKeyDeps = createModelKeyDeps({ encrypt: vault.encrypt });
+
+/**
+ * Which model answers `acquire` (ADR 0004, ADR 0014; `model.ts`): the deployment's fixed model from
+ * `GRAFT_MODEL_BACKEND`, a person's own key routed in front of it, Langfuse on when its pair is set.
+ * `@graft/env` has already refused a self-hosted production boot without a provider and a key.
+ */
+const modelSetup = await createModel({
+  env,
+  db,
+  decrypt: vault.decrypt,
+  modelKey: modelKeyDeps,
+  onRoute: (route) => {
+    if (route.source === "person") {
+      console.log(
+        `acquire job ${route.jobId}: routed to the person's own model (${route.adapter})`,
+      );
+    }
+  },
+});
+
 const publish = createPublishDeps({
   db,
   store,
@@ -191,19 +218,6 @@ const handoff = {
  * the in-flight registry inside are the process's one of each: the sweep's `tools/list_changed`
  * reaches the endpoint's sessions, and the endpoint's runs hold the sweep off (ADR 0003, ADR 0009).
  */
-/**
- * The model that answers `acquire` (ADR 0004; `@graft/model`'s seam, ADR 0002). `scripted` plays the
- * JSON file `GRAFT_MODEL_SCRIPT` names — a laptop driving the whole loop with no provider key, and
- * refused in production by `@graft/env`; the provider-backed adapter arrives with GRA-31 and is
- * selected here. Unset, the server boots with no model and `acquire` refuses `acquire_unconfigured`.
- */
-let model: ModelAdapter | null = null;
-if (env.GRAFT_MODEL_BACKEND === "scripted" && env.GRAFT_MODEL_SCRIPT) {
-  model = createScriptedModel(
-    parseScript(JSON.parse(await readFile(env.GRAFT_MODEL_SCRIPT, "utf8"))),
-  );
-}
-
 const mcp = createMcpDeps({
   db,
   connection: connectionDeps,
@@ -215,7 +229,7 @@ const mcp = createMcpDeps({
   // What the agent tells the person to paste into the OAuth client they register (ADR 0005) — the
   // same value `GET /api/oauth/redirect-uri` shows and `GET /api/oauth/callback` serves.
   oauthRedirectUri: oauthRedirectUri(env.GRAFT_AUTH_URL),
-  model,
+  model: modelSetup.model,
   acquire: {
     maxAttempts: env.GRAFT_ACQUIRE_MAX_ATTEMPTS,
     tokenCeiling: env.GRAFT_ACQUIRE_TOKEN_CEILING,
@@ -267,6 +281,7 @@ const app = createServer({
       ledger: defaultLedgerDeps,
       approval: defaultApprovalDeps,
       pendingAction: defaultPendingActionDeps,
+      modelKey: modelKeyDeps,
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
     handoff,
@@ -312,7 +327,8 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database, ` +
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
-      `model: ${model ? model.name : "none (acquire refuses)"}, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
+      modelSetup.summary +
+      `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );
 });
@@ -323,6 +339,9 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     acquireRunner.stop();
     mcp.notifier?.close();
     mcp.inFlight?.close();
-    db.close().finally(() => process.exit(0));
+    // The last job's spans are still buffered; a stop that skipped this would lose them.
+    Promise.allSettled([modelSetup.langfuse?.flush()])
+      .then(() => db.close())
+      .finally(() => process.exit(0));
   });
 }

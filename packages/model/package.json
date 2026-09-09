@@ -14,11 +14,24 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:live": "GRAFT_MODEL_LIVE=1 vitest run src/provider.live.test.ts",
     "check-types": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "catalog:",
+    "@ai-sdk/openai": "catalog:",
+    "@langfuse/otel": "catalog:",
+    "@langfuse/tracing": "catalog:",
+    "@langfuse/vercel-ai-sdk": "catalog:",
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/sdk-trace-node": "catalog:",
+    "ai": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@graft/config": "workspace:*",
     "@types/node": "catalog:",
+    "dotenv": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

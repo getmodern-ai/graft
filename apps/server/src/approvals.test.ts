@@ -18,6 +18,7 @@ import { initLogger } from "evlog";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createServer } from "./app";
+import { fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
  * The two doors over one store (GRA-23's acceptance criteria at the seam they meet): an agent's
@@ -138,6 +139,7 @@ beforeAll(async () => {
         ledger: fake.ledger,
         approval: fake.approval,
         pendingAction: fake.pendingAction,
+        modelKey: fakeModelKeyDeps(),
       },
       corsOrigins: [],
       handoff,

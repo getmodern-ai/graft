@@ -10,6 +10,7 @@ import { initLogger } from "evlog";
 import { describe, expect, it } from "vitest";
 
 import { createServer } from "./app";
+import { fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
  * GRA-24's acceptance criterion at the wire: a demotion the sweep makes is a change the console's
@@ -93,6 +94,7 @@ describe("a sweep's demotion reads back through the working-set history route", 
           ledger: fake.ledger,
           approval: fake.approval,
           pendingAction: fake.pendingAction,
+          modelKey: fakeModelKeyDeps(),
         },
         corsOrigins: [],
         handoff: mcp.handoff,
