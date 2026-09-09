@@ -27,6 +27,7 @@ import {
   findPendingAction,
   listPendingActionsByKind,
 } from "./pending-action";
+import { deletePersonModelKey, findPersonModelKey, upsertPersonModelKey } from "./person-model-key";
 import { findToolVersion, listToolVersions, setCurrentToolVersion } from "./tool";
 import { listUsage } from "./usage";
 import { deleteWorkingSetEntry, listWorkingSet, touchWorkingSetUsed } from "./working-set";
@@ -209,6 +210,33 @@ describe("person-scoped statements take the person", () => {
     const s = only();
     expect(s.sql).toContain('"connection"."person_id" = $');
     expect(s.params).toEqual(["conn_1", "person_1", 1]);
+  });
+
+  /** A person's model key (ADR 0014): the scope and the key are one column, on every statement. */
+  it("a model key's read, write and delete", async () => {
+    await findPersonModelKey(db, "person_1");
+    expect(only().sql).toContain('"person_model_key"."person_id" = $');
+    expect(statements[0]?.params).toEqual(["person_1", 1]);
+
+    statements = [];
+    // The fake client answers no row, which the repo refuses after the statement was rendered.
+    await upsertPersonModelKey(db, {
+      personId: "person_1",
+      provider: "openai",
+      keyCiphertext: Buffer.from("ct"),
+      keySetAt: new Date("2026-09-09T00:00:00Z"),
+    }).catch(() => null);
+    expect(only().sql).toMatch(
+      /^insert into "person_model_key" .* on conflict \("person_id"\) do update set/,
+    );
+    expect(statements[0]?.params[0]).toBe("person_1");
+
+    statements = [];
+    await deletePersonModelKey(db, "person_1");
+    expect(only().sql).toMatch(
+      /^delete from "person_model_key" where "person_model_key"\."person_id" = \$1/,
+    );
+    expect(statements[0]?.params).toEqual(["person_1"]);
   });
 
   /** The proxy's read is the one deliberate exception and must stay recognisable as such. */

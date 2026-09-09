@@ -20,6 +20,7 @@
     "@graft/db": "workspace:*",
     "@graft/env": "workspace:*",
     "@graft/mcp": "workspace:*",
+    "@graft/model": "workspace:*",
     "@graft/proxy": "workspace:*",
     "@graft/publish": "workspace:*",
     "@graft/sandbox": "workspace:*",

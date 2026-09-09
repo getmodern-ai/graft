@@ -18,6 +18,7 @@ import { initLogger } from "evlog";
 import { describe, expect, it, vi } from "vitest";
 
 import { createServer } from "./app";
+import { FAKE_MODEL_KEY_CIPHERTEXT, fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
  * The JSON API's wire behaviour with fakes: a fake Better Auth that answers a session or none, and
@@ -293,6 +294,7 @@ function harness(session: { user: { id: string } } | null) {
     tool: toolDeps(),
     approval: approvalDeps(),
     pendingAction: pendingActionDeps(),
+    modelKey: fakeModelKeyDeps({ now: () => NOW }),
   };
   const app = createServer({
     keys: null,
@@ -323,6 +325,9 @@ describe("the session door", () => {
     const { app } = harness(null);
     for (const [path, init] of [
       ["/api/me", undefined],
+      ["/api/me/model-key", undefined],
+      ["/api/me/model-key", json({ provider: "openai", apiKey: "k" }, "PUT")],
+      ["/api/me/model-key", { method: "DELETE" }],
       ["/api/agents", undefined],
       ["/api/agents", json({ name: "x" })],
       ["/api/connections", undefined],
@@ -793,5 +798,69 @@ describe("approvals", () => {
       const res = await app.request(path, init);
       expect(res.status, path).toBe(401);
     }
+  });
+});
+
+describe("the person's model key", () => {
+  const session = { user: { id: "person_1" } };
+
+  it("enters a key, answers the public shape and never the key, reads it back, and removes it", async () => {
+    const { app, deps } = harness(session);
+
+    const empty = await app.request("/api/me/model-key");
+    expect(empty.status).toBe(200);
+    expect(await empty.json()).toEqual({ modelKey: null });
+
+    const put = await app.request(
+      "/api/me/model-key",
+      json(
+        {
+          provider: "anthropic",
+          apiKey: "sk-ant-the-secret",
+          authoringModel: "claude-x",
+          baseUrl: null,
+        },
+        "PUT",
+      ),
+    );
+    expect(put.status).toBe(200);
+    const body = await put.json();
+    expect(body).toEqual({
+      modelKey: {
+        provider: "anthropic",
+        authoringModel: "claude-x",
+        triageModel: null,
+        baseUrl: null,
+        setAt: NOW.toISOString(),
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("sk-ant");
+    // The row holds the vault's ciphertext, not the key.
+    expect(deps.modelKey.rows.get("person_1")?.keyCiphertext).toBe(FAKE_MODEL_KEY_CIPHERTEXT);
+
+    const read = await app.request("/api/me/model-key");
+    const readText = await read.text();
+    expect(JSON.parse(readText)).toMatchObject({ modelKey: { provider: "anthropic" } });
+    expect(readText).not.toContain("sk-ant");
+
+    const gone = await app.request("/api/me/model-key", { method: "DELETE" });
+    expect(await gone.json()).toEqual({ deleted: true });
+    const again = await app.request("/api/me/model-key", { method: "DELETE" });
+    expect(await again.json()).toEqual({ deleted: false });
+  });
+
+  it("refuses a provider it does not know and a body that is not the shape, as 400", async () => {
+    const { app } = harness(session);
+    const provider = await app.request(
+      "/api/me/model-key",
+      json({ provider: "gemini", apiKey: "k" }, "PUT"),
+    );
+    expect(provider.status).toBe(400);
+    expect(await provider.json()).toMatchObject({
+      error: "BAD_REQUEST",
+      details: { field: "provider" },
+    });
+    const shape = await app.request("/api/me/model-key", json({ provider: "openai" }, "PUT"));
+    expect(shape.status).toBe(400);
   });
 });

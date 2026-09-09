@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createAuth } from "@graft/auth";
 import {
   createConnectionDeps,
+  createModelKeyDeps,
   defaultAgentDeps,
   defaultApprovalDeps,
   defaultPendingActionDeps,
@@ -32,6 +33,7 @@ import {
   layerConnections,
   seedConnections,
 } from "./connections";
+import { createModel } from "./model";
 
 /**
  * The server's boot: validated environment in, one listening process out. Everything it decides
@@ -102,6 +104,32 @@ if (env.GRAFT_DEV_SEED) {
 // one component, and that component is the proxy binding in `app.ts`).
 const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
 
+/**
+ * A person's own model key takes the same encrypt-only half on its request path (`@graft/core`'s
+ * `ModelKeyDeps`); the decrypt goes to the model resolver alone (`model.ts`), which is the second
+ * and last place on this server a stored secret becomes plaintext, after the proxy binding.
+ */
+const modelKeyDeps = createModelKeyDeps({ encrypt: vault.encrypt });
+
+/**
+ * Which model answers `acquire` (ADR 0004, ADR 0014; `model.ts`): the deployment's fixed model from
+ * `GRAFT_MODEL_BACKEND`, a person's own key routed in front of it, Langfuse on when its pair is set.
+ * `@graft/env` has already refused a self-hosted production boot without a provider and a key.
+ */
+const modelSetup = await createModel({
+  env,
+  db,
+  decrypt: vault.decrypt,
+  modelKey: modelKeyDeps,
+  onRoute: (route) => {
+    if (route.source === "person") {
+      console.log(
+        `acquire job ${route.jobId}: routed to the person's own model (${route.adapter})`,
+      );
+    }
+  },
+});
+
 const publish = createPublishDeps({
   db,
   store,
@@ -147,6 +175,7 @@ const mcp = createMcpDeps({
   proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
   publish,
   handoff,
+  model: modelSetup.model,
 });
 
 const app = createServer({
@@ -167,6 +196,7 @@ const app = createServer({
       tool: defaultToolDeps,
       approval: defaultApprovalDeps,
       pendingAction: defaultPendingActionDeps,
+      modelKey: modelKeyDeps,
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
     handoff,
@@ -203,7 +233,8 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `keyring ${backings.keyring.id}, toolbox ${store.root}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database, ` +
-      `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s`,
+      `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
+      modelSetup.summary,
   );
 });
 
@@ -212,6 +243,9 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     sweep.stop();
     mcp.notifier?.close();
     mcp.inFlight?.close();
-    db.close().finally(() => process.exit(0));
+    // The last job's spans are still buffered; a stop that skipped this would lose them.
+    Promise.allSettled([modelSetup.langfuse?.flush()])
+      .then(() => db.close())
+      .finally(() => process.exit(0));
   });
 }

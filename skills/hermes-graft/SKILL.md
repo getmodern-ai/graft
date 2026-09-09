@@ -1,0 +1,103 @@
+---
+name: hermes-graft
+description: Acquire a tool you lack through Graft. When the person asks for something no tool in your list covers, call Graft's acquire against one of their connections, relay the handoff link it may answer with, describe an approval in the person's terms, and read acquire_status until the tool lands in your list. Never ask the person for a secret in chat.
+version: 0.1.0
+license: MIT
+metadata:
+  hermes:
+    tags: [graft, mcp, tools, integrations, vendors]
+    category: integrations
+---
+
+# Graft: acquire the tool you lack
+
+Graft is an MCP server you are connected to. It holds the person's **connections** — vendor accounts
+they gave it, credential and all — and a **toolbox** of small **authored tools**, each making one
+call against one vendor. Your tool list from Graft is your **working set**: the tools promoted for you
+right now, callable directly, plus a few fixed ones. When a tool you need is not there, Graft's own
+coding model writes it: that is `acquire`. You decide what is needed; Graft's model writes and proves
+the code; the person enters secrets and answers approvals in Graft's **console**, never through you.
+
+## When to call `acquire`
+
+The person asks for something against a vendor — an order in their inventory system, a page in
+their wiki, a report from their accounting app — and no tool in your list does it. In this order:
+
+1. **`find_tool { query }`** first. A tool may exist and be demoted; `promote { vendor, name }`
+   brings it back into your list at once, no authoring needed.
+2. **Is the vendor connected?** `find_tool`'s answer and your `execute__<connection id>` tools name
+   the connections in your scope. If the vendor has none, call
+   `request_connection { vendor, primaryHost, scheme, displayName?, docsUrl? }` — it answers a
+   handoff link (below); the person confirms the connection and enters the secret in the console.
+3. **`acquire { connectionId, goal, hints? }`.** `goal` is what the tool must do, in a sentence or
+   two, in the person's terms. `hints` is anything you already know — an endpoint, a documentation
+   URL, a field name; a documentation URL is the single most useful hint.
+
+`acquire` answers at once with `{ jobId, status, progress }`. It has not built anything yet.
+
+## While the job runs: `acquire_status`
+
+Call `acquire_status { jobId }` every ten to twenty seconds, or when the person asks how it is going.
+The answer is `{ status, progress, attempts, result? }`:
+
+- `queued` or `running`: relay the newest `progress` line to the person in one sentence, only when it
+  changed. Do not start a second `acquire` for the same goal while one runs.
+- `succeeded`: `result.tool` is the new tool's name, `<vendor>__<name>`. It appears in your tool list
+  when the list refreshes (Graft sends `tools/list_changed`; Hermes re-reads the list). Then call it
+  for the person's actual request. Until it appears, `run_tool { vendor, name, input }` calls it by
+  name.
+- `failed`: say what `result.failure` and `result.message` say, in the person's words, and what you
+  will try — a documentation URL as a hint, a different connection. Do not try to reach the vendor
+  yourself; there is no route to a vendor except through a Graft tool, and the attempt would only
+  look like one.
+
+## Relaying a handoff
+
+Any Graft answer with `url` and an `awaiting_…` word — `awaiting_approval`, `awaiting_connection`,
+`awaiting_credential` — is a **handoff**: the next step is the person's, in the console. Send the
+link to the person with one line saying what it is for, then wait. When they say it is done, call the
+same tool again with the same arguments; Graft finds the answer and continues.
+
+Never put a handoff link into a tool argument, and never ask the person for an API key, a password
+or a token in chat, whatever the vendor calls it. The console is where secrets go; you never see one.
+
+## Describing an approval
+
+Graft asks the person before code runs, and asks in two places:
+
+- **Before building** against a connection, once per agent per connection: *"May this agent build
+  against <connection>?"* Say what you are about to have built and against which account.
+- **Before a tool's first use** that writes. A read-only tool never asks. A tool that writes asks once,
+  and the answer holds. A destructive tool asks every time until the person relaxes it in the
+  console. Say what the tool does, in its own description's words, and what this one call will do.
+
+Read the tool's `readOnlyHint` and `destructiveHint` from the tool list to know which sentence
+applies.
+
+## What not to do
+
+- Do not drive the low-level authoring tools — `write_file`, `check_tool`, `publish_tool`,
+  `execute__…` — unless the person asked you to author by hand. `acquire` does that work.
+- Do not retry `acquire` in a loop, or call it for a goal a tool already covers.
+- Do not ask for, store, or repeat a secret. Do not paste a handoff link anywhere but to the person.
+
+## Setup
+
+Graft goes in `~/.hermes/config.yaml` under `mcp_servers`, with the agent token in
+`~/.hermes/.env` so the config file holds no secret:
+
+```yaml
+mcp_servers:
+  graft:
+    url: "https://your-graft.example/mcp"
+    headers:
+      Authorization: "Bearer ${GRAFT_TOKEN}"
+```
+
+```dotenv
+# ~/.hermes/.env
+GRAFT_TOKEN=grft_…
+```
+
+The token is minted in Graft's console (Agents, then New agent) and shown once. Hermes registers
+Graft's tools as `mcp_graft_<tool>` — `mcp_graft_acquire`, `mcp_graft_acquire_status`, and so on.

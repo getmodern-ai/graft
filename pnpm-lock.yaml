@@ -116,6 +116,9 @@ importers:
       '@graft/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
+      '@graft/model':
+        specifier: workspace:*
+        version: link:../../packages/model
       '@graft/proxy':
         specifier: workspace:*
         version: link:../../packages/proxy

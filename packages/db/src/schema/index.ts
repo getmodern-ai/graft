@@ -10,6 +10,7 @@ export * from "./auth";
 export * from "./columns";
 export * from "./connection";
 export * from "./pending-action";
+export * from "./person-model-key";
 export * from "./tool";
 export * from "./usage";
 export * from "./working-set";
