@@ -16,6 +16,11 @@
     "test:watch": "vitest",
     "check-types": "tsc -p tsconfig.json"
   },
+  "dependencies": {
+    "@graft/db": "workspace:*",
+    "@graft/proxy": "workspace:*",
+    "@graft/vault": "workspace:*"
+  },
   "devDependencies": {
     "@graft/config": "workspace:*",
     "@types/node": "catalog:",
