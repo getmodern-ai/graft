@@ -421,8 +421,12 @@ work on.
 ## Conventions
 
 - **One pnpm override, for a Dependabot alert, not a preference.** `@esbuild-kit/core-utils>esbuild` is
-  pinned to the 0.25 line in the root `package.json` because drizzle-kit's ESM loader still depends on
-  `@esbuild-kit/core-utils`, which resolves `esbuild@0.18`, and esbuild below 0.25 lets any website
-  reach its development server (GRA-41). Nothing here runs esbuild's serve mode, so the exposure was
-  theoretical; the override exists so the alert closes. Drop it when drizzle-kit stops depending on
-  `@esbuild-kit` (`pnpm why @esbuild-kit/core-utils` says whether it still does).
+  pinned to the 0.25 line under `overrides:` in `pnpm-workspace.yaml` because drizzle-kit's ESM loader
+  still depends on `@esbuild-kit/core-utils`, which resolves `esbuild@0.18`, and esbuild below 0.25
+  lets any website reach its development server (GRA-41). Nothing here runs esbuild's serve mode, so
+  the exposure was theoretical; the override exists so the alert closes. Drop it when drizzle-kit
+  stops depending on `@esbuild-kit` (`pnpm why @esbuild-kit/core-utils` says whether it still does).
+  It is in the workspace file rather than under `pnpm` in the root `package.json` because pnpm 11 no
+  longer reads that field and warns on every command that it ignored `pnpm.overrides`, while pnpm
+  10 — the line `packageManager` pins, and what an 11 on a laptop delegates to — reads both places,
+  so the workspace file is the one placement both lines honour.
