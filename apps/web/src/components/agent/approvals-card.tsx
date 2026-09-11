@@ -104,7 +104,7 @@ export function ApprovalsCard({
                     </TableCell>
                     <TableCell>
                       {approval.decision === "allow" ? (
-                        <Badge variant="secondary">allowed</Badge>
+                        <Badge variant="success">allowed</Badge>
                       ) : (
                         <Badge variant="destructive">denied</Badge>
                       )}

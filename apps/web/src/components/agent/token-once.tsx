@@ -1,4 +1,4 @@
-import { CopyButton } from "@/components/copy-button";
+import { CodeBlock } from "@/components/code-block";
 import { KeyIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { exportTokenLine, mcpServersSnippet, TOKEN_ENV_VAR } from "@/lib/mcp-snippet";
@@ -15,7 +15,11 @@ export function TokenOnce({ token }: { token: string }) {
   const snippet = mcpServersSnippet(origin);
 
   return (
-    <div className="flex flex-col gap-4">
+    // `min-w-0`: this is a grid item of `DialogContent`, and a grid track's `auto` minimum takes the
+    // widest unbreakable line inside it — the `export` line below is longer than the dialog — so
+    // without it the track outgrows the popup and the whole dialog scrolls sideways. At zero minimum
+    // the block keeps the dialog's width and each `CodeBlock`'s `pre` scrolls on its own.
+    <div className="flex min-w-0 flex-col gap-4">
       <Alert>
         <KeyIcon />
         <AlertTitle>This token is shown once</AlertTitle>
@@ -25,44 +29,18 @@ export function TokenOnce({ token }: { token: string }) {
         </AlertDescription>
       </Alert>
 
-      <Snippet
+      <CodeBlock
         label="The agent's token"
         code={token}
         copyLabel="Copy token"
         hint={`Put it in the harness's environment as ${TOKEN_ENV_VAR}:`}
       />
-      <Snippet label="In the shell that starts your harness" code={exportLine} copyLabel="Copy" />
-      <Snippet
+      <CodeBlock label="In the shell that starts your harness" code={exportLine} />
+      <CodeBlock
         label="In your harness's MCP configuration"
         code={snippet}
-        copyLabel="Copy"
         hint={`The harness expands \${${TOKEN_ENV_VAR}} from its environment, so this block holds no secret and can live in a config file you commit. Harness-specific variants are on the roadmap (GRA-27).`}
       />
-    </div>
-  );
-}
-
-export function Snippet({
-  label,
-  code,
-  copyLabel,
-  hint,
-}: {
-  label: string;
-  code: string;
-  copyLabel: string;
-  hint?: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-sm">{label}</span>
-        <CopyButton text={code} label={copyLabel} />
-      </div>
-      <pre className="overflow-x-auto rounded-md border bg-muted/50 p-3 font-mono text-xs leading-relaxed">
-        <code>{code}</code>
-      </pre>
-      {hint ? <p className="text-muted-foreground text-xs">{hint}</p> : null}
     </div>
   );
 }

@@ -60,7 +60,7 @@ function AgentRoute() {
             {agent.revokedAt ? (
               <Badge variant="destructive">revoked</Badge>
             ) : (
-              <Badge variant="secondary">active</Badge>
+              <Badge variant="success">active</Badge>
             )}
           </span>
         }
