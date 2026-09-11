@@ -15,7 +15,7 @@ import {
   ElicitRequestSchema,
   type ElicitResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { NO_ELICITATION, requireBuildApproval } from "./approval";
 import type { McpDeps } from "./deps";
@@ -42,9 +42,11 @@ const PERSON = "person_1";
 const AGENT_A = "agent_a";
 const AGENT_B = "agent_b";
 const AGENT_C = "agent_c";
+const AGENT_D = "agent_d";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
+const TOKEN_D = "grft_approval_token_d_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -110,6 +112,7 @@ beforeAll(async () => {
     [AGENT_A, TOKEN_A, "laptop Hermes"],
     [AGENT_B, TOKEN_B, "server OpenClaw"],
     [AGENT_C, TOKEN_C, "elicitation Hermes"],
+    [AGENT_D, TOKEN_D, "Discord Hermes"],
   ] as const) {
     store.addAgent({ id, personId: PERSON, token, name, connectionIds: [CONN_DEMO] });
   }
@@ -126,7 +129,7 @@ beforeAll(async () => {
       defaultConnectionId: CONN_DEMO,
       path: `tools/demo/${tool.name}/v1`,
     });
-    for (const agent of [AGENT_A, AGENT_B, AGENT_C]) store.promote(agent, tool.id);
+    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D]) store.promote(agent, tool.id);
   }
 
   deps = {
@@ -579,8 +582,8 @@ describe("through an elicitation — where the client advertised one", () => {
       expect(formOf(request).requestedSchema).toMatchObject({
         type: "object",
         properties: { allow: { type: "boolean" } },
-        required: ["allow"],
       });
+      expect(formOf(request).requestedSchema.required ?? []).not.toContain("allow");
       expect(formOf(request).requestedSchema.properties).not.toHaveProperty("relax");
 
       expect(approvalOf(AGENT_C, "tool_create")).toMatchObject({ decision: "allow" });
@@ -665,6 +668,106 @@ describe("through an elicitation — where the client advertised one", () => {
       expect(store.pendingActions.size).toBe(0);
     } finally {
       await c.close();
+    }
+  }, 30_000);
+});
+
+/**
+ * Hermes 0.21.1 renders the form as its own approval card and answers every allow button — once,
+ * session, always — with `accept` and empty content (GRA-42). A required `allow` sent each of those
+ * to the handoff; now the accept is the yes, and the field only carries a form client's no or `relax`.
+ */
+describe("through an elicitation answered with no fields — Hermes 0.21.1's approval buttons", () => {
+  const button: Elicitation = async () => ({ action: "accept", content: {} });
+
+  it("on a write tool the empty accept passes the gate, records allow, and holds", async () => {
+    const d = await connect(TOKEN_D, button);
+    try {
+      const result = await d.call(CREATE_ITEM, { limit: 1 });
+      expect(result.isError).toBeFalsy();
+      expect(body(result)).toEqual(VENDOR_BODY);
+      expect(d.elicitations).toHaveLength(1);
+      const schema = formOf(d.elicitations[0]).requestedSchema;
+      expect(schema.required ?? []).not.toContain("allow");
+      expect(schema.properties.allow?.description).toContain("counts as allow");
+      expect(approvalOf(AGENT_D, "tool_create")).toMatchObject({
+        decision: "allow",
+        perCallRelaxed: false,
+      });
+      expect(actionsOf(AGENT_D, "tool")).toEqual([]);
+
+      // Hermes said "once"; ADR 0008 says a write tool's yes holds, so the second call asks nobody.
+      expect(body(await d.call(CREATE_ITEM, { limit: 2 }))).toEqual(VENDOR_BODY);
+      expect(d.elicitations).toHaveLength(1);
+    } finally {
+      await d.close();
+    }
+  }, 60_000);
+
+  it("an accept that says allow: false is still the no — recorded, and holding as tool_denied", async () => {
+    const d = await connect(TOKEN_D, async () => ({ action: "accept", content: { allow: false } }));
+    try {
+      const result = await d.call(UPDATE_ITEM, { limit: 1 });
+      expect(result.isError).toBe(true);
+      expect(body(result)).toMatchObject({ error: "refused", reason: "approval_declined" });
+      expect(approvalOf(AGENT_D, "tool_update")).toMatchObject({ decision: "deny" });
+      expect(body(await d.call(UPDATE_ITEM, { limit: 1 }))).toMatchObject({
+        reason: "tool_denied",
+      });
+      expect(d.elicitations).toHaveLength(1);
+    } finally {
+      await d.close();
+    }
+  });
+
+  it("on a destructive tool the empty accept allows this call only: no button relaxes, and the next call asks again", async () => {
+    const d = await connect(TOKEN_D, button);
+    try {
+      expect(body(await d.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(d.elicitations[0]?.params.message).toContain("whichever way you allow it");
+      expect(approvalOf(AGENT_D, "tool_delete")).toMatchObject({
+        decision: "allow",
+        perCallRelaxed: false,
+      });
+
+      expect(body(await d.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(d.elicitations).toHaveLength(2);
+      expect(approvalOf(AGENT_D, "tool_delete")?.perCallRelaxed).toBe(false);
+    } finally {
+      await d.close();
+    }
+  }, 60_000);
+
+  it("on the build ask the empty accept grants the build approval", async () => {
+    const d = await connect(TOKEN_D, button);
+    try {
+      const ran = body(await d.call(executeToolName(CONN_DEMO), { command: RUN_LIST_ITEMS }));
+      expect(ran.exitCode).toBe(0);
+      expect(d.elicitations).toHaveLength(1);
+      expect(store.buildApprovals.has(`${AGENT_D} ${CONN_DEMO}`)).toBe(true);
+      expect(actionsOf(AGENT_D, "build")).toEqual([]);
+    } finally {
+      await d.close();
+    }
+  }, 30_000);
+
+  it("any other mismatch with the form still falls back to the handoff and records nothing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const d = await connect(TOKEN_D, async () => ({ action: "accept", content: { allow: "yes" } }));
+    try {
+      const before = approvalOf(AGENT_D, "tool_delete");
+      const { action } = awaiting(await d.call(DELETE_ITEM, { limit: 1 }));
+      expect(action).toMatchObject({ agentId: AGENT_D, kind: "tool", answeredAt: null });
+      expect(d.elicitations).toHaveLength(1);
+      expect(approvalOf(AGENT_D, "tool_delete")).toEqual(before);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("falling back to a handoff"),
+        expect.objectContaining({ message: expect.stringContaining("requested schema") }),
+      );
+    } finally {
+      warn.mockRestore();
+      await d.close();
+      for (const row of actionsOf(AGENT_D, "tool")) store.pendingActions.delete(row.id);
     }
   }, 30_000);
 });

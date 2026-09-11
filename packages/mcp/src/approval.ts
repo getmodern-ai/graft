@@ -47,6 +47,18 @@ import { authoredToolName } from "./tool-names";
  * until the console revokes it. Closing the dialog without choosing (`cancel`) is not an answer:
  * nothing is recorded and the next call asks again. A build ask has no deny row (the schema's
  * reason: a declined `acquire` leaves nothing behind), so a build decline simply refuses.
+ *
+ * **An accept is the yes, with or without the form's fields.** Hermes 0.21.1 renders a form
+ * elicitation as its own approval card — Allow Once, Allow Session, Always Allow, Deny — and answers
+ * every allow button with `accept` and empty content (GRA-42; `_consent` in its
+ * `tools/approval_prompt.py`). So `allow` is optional in the requested schema and its absence reads
+ * as true; an `accept` carrying `allow: false` is a form client's no in place, and stays a deny. The
+ * three allow buttons reach this file as one `accept`, so none of them maps to `relax`: a destructive
+ * tool asks before every call whatever button was pressed, until the console relaxes it, and a write
+ * tool's yes holds by ADR 0008's rule even when the button said once. The SDK validates the content
+ * against the schema before this file sees the result (`Server.elicitInput` in
+ * `@modelcontextprotocol/sdk`), so any other mismatch — a wrong-typed field — throws there and falls
+ * back to the handoff.
  */
 
 /** A form elicitation the client will answer — the SDK's `Server.elicitInput`, bound. */
@@ -254,7 +266,7 @@ export function describeAsk(subject: AskSubject, agentName: string): string {
   const { tool } = subject;
   const wire = authoredToolName(tool.vendor, tool.name);
   const consequence = tool.destructive
-    ? "This tool is destructive — it can delete or overwrite data — and asks before every call until you relax it."
+    ? "This tool is destructive — it can delete or overwrite data — and asks before every call, whichever way you allow it here, until you relax it in the console."
     : "This tool can change data at the vendor. Your answer holds for this agent from now on.";
   return (
     `Your agent "${agentName}" wants to run ${wire} against ${where}. ${consequence} ` +
@@ -262,7 +274,11 @@ export function describeAsk(subject: AskSubject, agentName: string): string {
   );
 }
 
-/** The form: one boolean `allow`, and for a destructive tool a second boolean `relax`. */
+/**
+ * The form: a boolean `allow`, optional because an `accept` without it is the yes (the header, on
+ * Hermes 0.21.1), and for a destructive tool a second boolean `relax`. Nothing is required: the SDK
+ * validates the client's content against this schema before `askByElicitation` reads it.
+ */
 export function elicitationSchemaFor(
   subject: AskSubject,
 ): ElicitRequestFormParams["requestedSchema"] {
@@ -273,10 +289,11 @@ export function elicitationSchemaFor(
       allow: {
         type: "boolean",
         title: "Allow",
-        description:
+        description: `${
           subject.kind === "tool"
             ? "Let this agent run this tool."
-            : "Let Graft run code against this connection for this agent.",
+            : "Let Graft run code against this connection for this agent."
+        } Accepting without this field counts as allow.`,
       },
       ...(destructive
         ? {
@@ -290,7 +307,22 @@ export function elicitationSchemaFor(
           }
         : {}),
     },
-    required: ["allow"],
+  };
+}
+
+/**
+ * The elicitation's result as an answer: `null` for a dismissal (`cancel`), a no for `decline`, and
+ * for `accept` a yes unless the content says `allow: false` — absent reads as true (the header, on
+ * Hermes 0.21.1). Only a boolean or nothing can stand under `allow` here: the SDK has validated the
+ * content against `elicitationSchemaFor`'s schema and thrown on anything else.
+ */
+function readElicitationAnswer(result: ElicitResult): ApprovalAnswer | null {
+  if (result.action === "cancel") return null;
+  if (result.action !== "accept") return { allow: false };
+  const content = result.content ?? {};
+  return {
+    allow: content.allow === undefined || content.allow === true,
+    relax: content.relax === true,
   };
 }
 
@@ -313,16 +345,16 @@ async function askByElicitation(
     console.warn("mcp: elicitation failed, falling back to a handoff", error);
     return null;
   }
-  const content = result.content ?? {};
-  if (result.action === "accept" && content.allow === true) {
-    await recordAllow(ctx, scope, subject, content.relax === true, deps);
-    return PASS;
-  }
-  if (result.action === "cancel") {
+  const said = readElicitationAnswer(result);
+  if (said === null) {
     return refuse(
       "approval_declined",
       `The person dismissed the ask for ${whatIsAsked(subject)} without answering. Nothing was recorded; the next call asks again.`,
     );
+  }
+  if (said.allow) {
+    await recordAllow(ctx, scope, subject, said.relax === true, deps);
+    return PASS;
   }
   await recordDeny(ctx, scope, subject, deps);
   return refuse(
