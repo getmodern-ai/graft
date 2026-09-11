@@ -36,3 +36,15 @@ catches an OAuth callback on localhost for people at a terminal.
   record must be durable rather than held in one process's memory.
 - **The handoff URL is a phishing-shaped artefact.** It is signed, short-lived, bound to the
   agent that requested it, and displays the requesting agent and the vendor host on the page.
+- **An elicitation's `accept` is the yes, whatever the client put in the form.** Hermes 0.21.1
+  renders Graft's form-mode approval as its own card — Allow Once, Allow Session, Always Allow,
+  Deny — and answers every allow button with `accept` and empty content, so a schema that required
+  `allow` sent every button press to the handoff (GRA-42). `allow` is therefore optional and absent
+  reads as true; `accept` with `allow: false` remains a form client's no in place. Graft sees one
+  `accept` for all three allow buttons and does not guess which was pressed: none maps to `relax`,
+  so a destructive tool asks before every call whatever button was chosen, until the person relaxes
+  it in the console (ADR 0008), and a write tool's yes holds by rule even when the button said
+  once. Hermes keeps no memory on its elicitation path (`request_elicitation_consent` in its
+  `tools/approval_prompt.py`: Deny is `decline`, no answer is `cancel`, and session and always are
+  not persisted), so its card comes back on every ask. The harness's buttons name the harness's
+  grain; Graft's record keeps Graft's.
