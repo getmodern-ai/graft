@@ -62,9 +62,11 @@ Button — the first of which arrives with Cando's `button.tsx` under GRA-45, no
   across modes while its derived family flips; `check-tokens`
   (`apps/web/scripts/check-token-utilities.mjs`) reports a design-token utility that does not
   compile into the built CSS, because Tailwind emits nothing for an unknown utility. The logic is
-  Cando's, copied into `apps/web/src/tokens/` with its unit tests. Exceptions are one central list,
-  `COLOUR_EXCEPTIONS`, never an inline comment; today it holds only the two `theme-color` hexes,
-  which a `<meta>` attribute cannot take as a `var()`.
+  Cando's, copied into `apps/web/src/tokens/` with its unit tests, and the scan covers `index.html`
+  beside the TypeScript tree since it is a build input like any component. Exceptions are one
+  central list, `COLOUR_EXCEPTIONS`, never an inline comment; today it holds only the two
+  `theme-color` hexes — in `index.html` and in `theme-provider.tsx` — which a `<meta>` attribute
+  cannot take as a `var()`.
 - **Copied text is re-read, not trusted** (ADR 0011). Every comment in the copied CSS, provider,
   generator and guards is repointed at this repository's decisions; where the argument lives in
   Cando, the comment names the Cando file or ticket rather than restating it.

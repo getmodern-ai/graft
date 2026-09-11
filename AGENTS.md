@@ -257,11 +257,14 @@ was composed from what and where it departs. Icons are Material Symbols generate
 `src/components/icons.tsx` by `scripts/generate-icons.mjs` — add a glyph to `NAMES` there and run
 `pnpm --filter @graft/web generate-icons` then `pnpm run check`; there is no `lucide-react`. The theme
 is `next-themes` through `src/components/theme-provider.tsx`, mounted in `routes/__root.tsx` with
-Cando's four settings (class attribute, `system` default, `vite-ui-theme` storage key), and
-`index.html`'s two `theme-color` metas are the one place a colour is a literal on purpose. Two
-guards keep dark mode correct and CI runs both as their own steps: `pnpm run check-colours` (a
-hard-coded colour, a colour literal inside `@theme`, a base token left behind by its family — logic
-in `src/tokens/*.ts`, exceptions in `COLOUR_EXCEPTIONS` there and never inline) and
+Cando's four settings (class attribute, `system` default, `vite-ui-theme` storage key);
+`src/components/ui/sonner.tsx` is Cando's theme-aware `Toaster`, copied ahead of GRA-45 because
+sonner does not read the `.dark` class. The two `theme-color` hexes — in `index.html`'s metas and
+in `theme-provider.tsx` — are the only colours written as literals on purpose, and both are entries
+in `COLOUR_EXCEPTIONS`. Two guards keep dark mode correct and CI runs both as their own steps:
+`pnpm run check-colours` (a hard-coded colour in a component or in `index.html`, a colour literal
+inside `@theme`, a base token left behind by its family — logic in `src/tokens/*.ts`, exceptions in
+`COLOUR_EXCEPTIONS` there and never inline) and
 `pnpm run check-tokens` (every design-token utility compiles into `dist/assets`; it needs a build,
 which `check-types` runs). The type stacks name GT Standard L and GT Standard Mono VF but nothing
 ships the faces until GRA-49 settles the licence; the console renders in the system fallback and

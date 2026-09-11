@@ -18,6 +18,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import {
+  blankHtmlComments,
   COLOUR_EXCEPTIONS,
   checkColourLiterals,
   findStaleExceptions,
@@ -28,6 +29,16 @@ import { checkModePairs, parseModePairs } from "../src/tokens/mode-pairs.ts";
 const root = fileURLToPath(new URL("../../..", import.meta.url));
 const GLOBALS = "apps/web/src/index.css";
 const SOURCE_DIRS = ["apps/web/src"];
+
+/**
+ * Vite's other build input, beside the TypeScript tree. `index.html` is where the two
+ * `theme-color` metas live, and an inline `<style>` or an attribute colour added there would be as
+ * invisible to a reviewer as one in a class string — so it goes through Rule A like a component,
+ * with its comments blanked first (raised by Greptile on #25). `index.css` is the token file
+ * itself and is read separately below: `:root`/`.dark` are *where* a literal belongs, `@theme` is
+ * where one is always wrong, and Rule B compares the pairs.
+ */
+const HTML_FILES = ["apps/web/index.html"];
 
 /**
  * Two exclusions, both for the same reason rather than for convenience: a guard's own fixtures
@@ -57,6 +68,9 @@ for (const dir of SOURCE_DIRS) {
   for await (const path of sources(dir)) {
     files.push({ path, source: await readFile(`${root}${path}`, "utf8") });
   }
+}
+for (const path of HTML_FILES) {
+  files.push({ path, source: blankHtmlComments(await readFile(`${root}${path}`, "utf8")) });
 }
 
 const globals = await readFile(`${root}${GLOBALS}`, "utf8");

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  blankHtmlComments,
   blankNonCode,
   blankSelectorValues,
   type ColourException,
@@ -67,6 +68,25 @@ describe("blanking what is not code", () => {
   it("treats a slash after an identifier as division rather than a regex", () => {
     const source = "const half = width / 2; const q = other / 4;";
     expect(blankNonCode(source)).toBe(source);
+  });
+});
+
+describe("blanking HTML comments", () => {
+  it("removes a hex quoted in an HTML comment, keeps the line count and keeps the attribute", () => {
+    // `index.html`'s shape: prose about the metas above the metas themselves.
+    const blanked = blankHtmlComments(
+      '<!-- the two metas hold #ffffff\n     and #0f0c0a, the sRGB of --background -->\n<meta content="#ffffff" />',
+    );
+    expect(blanked.split("\n")).toHaveLength(3);
+    expect(blanked).not.toContain("#0f0c0a");
+    expect(blanked).toContain('content="#ffffff"');
+  });
+
+  it("reports the attribute's literal on the right line once the comment is gone", () => {
+    const html = '<!-- #abc -->\n<meta content="#0f0c0a" />';
+    expect(findColourLiterals(blankHtmlComments(html))).toEqual([
+      { line: 2, text: "#0f0c0a", kind: "hex" },
+    ]);
   });
 });
 

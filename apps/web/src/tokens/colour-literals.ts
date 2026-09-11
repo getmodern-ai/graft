@@ -67,9 +67,10 @@ export type ColourException = {
 };
 
 /**
- * The one exception in this repo, documented in the file it exempts.
+ * The two exceptions in this repo — one fact, written in two files — each documented in the file
+ * it exempts.
  *
- * It is different in kind from the exceptions Cando carries for its generated artwork: not a
+ * They are different in kind from the exceptions Cando carries for its generated artwork: not a
  * colour that *should* be a token and currently is not, but a browser API —
  * `<meta name="theme-color">` — that structurally cannot take one. A primitive's hard-coded colour
  * is never added here; it is replaced with a token (`bg-scrim` took `bg-black/10`'s place in
@@ -81,6 +82,12 @@ export const COLOUR_EXCEPTIONS: readonly ColourException[] = [
     literals: ["#ffffff", "#0f0c0a"],
     reason:
       '`<meta name="theme-color">`\'s content attribute is a stand-alone browser-chrome colour outside the CSS cascade, so it cannot hold a `var(--…)` reference the way every other colour in this codebase does — there is no token form for it to take. These sRGB values mirror the `--background` token in `apps/web/src/index.css` (`oklch(1 0 0)` / `oklch(0.157 0.0066 55.82)`) by hand; keep them in step with that token if it ever moves (ADR 0017).',
+  },
+  {
+    file: "apps/web/index.html",
+    literals: ["#ffffff", "#0f0c0a"],
+    reason:
+      'The same two values in the media-gated `<meta name="theme-color">` tags that cover the instant before `theme-provider.tsx` mounts — the one place a colour has to be written before any stylesheet or script is in effect. Sanctioned for the reason above, and kept in step with that entry.',
   },
 ];
 
@@ -337,6 +344,18 @@ export function findColourLiterals(source: string): ColourLiteral[] {
 /** Blank `/* … *​/` while keeping offsets, so a CSS line number stays right. */
 export function blankCssComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "));
+}
+
+/**
+ * Blank `<!-- … -->` while keeping offsets, so an HTML line number stays right.
+ *
+ * `index.html` is a build input like any component — an inline `<style>` or an attribute colour
+ * there is as invisible to a reviewer as one in a class string — so the script feeds it through
+ * `findColourLiterals`, whose tokenizer knows TypeScript's comment syntax and not HTML's. Run this
+ * first, or the prose in `index.html`'s comments about what the metas hold becomes findings.
+ */
+export function blankHtmlComments(html: string): string {
+  return html.replace(/<!--[\s\S]*?-->/g, (comment) => comment.replace(/[^\n]/g, " "));
 }
 
 /**

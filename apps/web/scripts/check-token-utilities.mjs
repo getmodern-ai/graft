@@ -19,6 +19,9 @@ const root = fileURLToPath(new URL("../../..", import.meta.url));
 const CSS_DIR = `${root}apps/web/dist/assets`;
 const GLOBALS = `${root}apps/web/src/index.css`;
 const SOURCE_DIRS = [`${root}apps/web/src`];
+// `index.html` too: Tailwind's Vite plugin scans it as a source, so a class written there compiles
+// or silently fails exactly as one in JSX does (raised by Greptile on #25).
+const SOURCE_FILES = [`${root}apps/web/index.html`];
 
 /**
  * The guards' own fixtures name utilities on purpose — `bg-sidebar-border` in a test that checks a
@@ -59,29 +62,30 @@ async function* sourceFiles(dir) {
   }
 }
 
-for (const dir of SOURCE_DIRS) {
-  for await (const path of sourceFiles(dir)) {
-    const src = await readFile(path, "utf8");
-    const label = path.replace(root, "");
-    // Any bare word that looks like a utility, ignoring variant prefixes and opacity modifiers.
-    for (const m of src.matchAll(
-      /[\w[\]="'&>*.:-]*?((?:bg|text|border|ring|fill|stroke|divide|outline)-[a-z0-9-]+)/g,
-    )) {
-      const cls = m[1];
-      const prefix = UTILITIES.find((u) => cls.startsWith(`${u}-`));
-      if (!prefix) continue;
-      const suffix = cls.slice(prefix.length + 1);
-      // Assert on anything in our namespaces, *including* names that are not known tokens — a
-      // typo produces exactly that, and filtering to known tokens would skip the one case worth
-      // catching.
-      const ours =
-        tokens.includes(suffix) ||
-        /^(custom|switch|sidebar|chart|success|warning|info|ring-focus|opacity|scrim)-/.test(
-          suffix,
-        );
-      if (!ours) continue;
-      if (!used.has(cls)) used.set(cls, label);
-    }
+async function* allSources() {
+  for (const dir of SOURCE_DIRS) yield* sourceFiles(dir);
+  yield* SOURCE_FILES;
+}
+
+for await (const path of allSources()) {
+  const src = await readFile(path, "utf8");
+  const label = path.replace(root, "");
+  // Any bare word that looks like a utility, ignoring variant prefixes and opacity modifiers.
+  for (const m of src.matchAll(
+    /[\w[\]="'&>*.:-]*?((?:bg|text|border|ring|fill|stroke|divide|outline)-[a-z0-9-]+)/g,
+  )) {
+    const cls = m[1];
+    const prefix = UTILITIES.find((u) => cls.startsWith(`${u}-`));
+    if (!prefix) continue;
+    const suffix = cls.slice(prefix.length + 1);
+    // Assert on anything in our namespaces, *including* names that are not known tokens — a
+    // typo produces exactly that, and filtering to known tokens would skip the one case worth
+    // catching.
+    const ours =
+      tokens.includes(suffix) ||
+      /^(custom|switch|sidebar|chart|success|warning|info|ring-focus|opacity|scrim)-/.test(suffix);
+    if (!ours) continue;
+    if (!used.has(cls)) used.set(cls, label);
   }
 }
 
