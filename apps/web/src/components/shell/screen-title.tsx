@@ -46,13 +46,21 @@ export function ScreenTitleProvider({ children }: { children: React.ReactNode })
  * to what was passed, and clears itself on unmount: a screen that stops rendering — a navigation
  * away, an error boundary — must not leave its title standing over the next one.
  *
+ * `useLayoutEffect`, not `useEffect`. The bars persist across navigations while the screen under
+ * them is swapped, so a passive effect — which runs after the browser may have painted — lets the
+ * strip show the previous screen's title, or nothing on first load, for one frame above the new
+ * content. A layout effect runs synchronously after commit and before paint, and the leaving
+ * screen's cleanup and the arriving screen's setup land in the same commit, so the bars re-render
+ * with the new title before anything is drawn (Greptile on PR #28; Cando's `useMobileTopBar` pays
+ * that frame, and `theme-provider.tsx` here already takes the same route for the same reason).
+ *
  * A string is drawn in the bars' own type (`ScreenTitle` below); a node is drawn as passed, which
  * is how a detail screen composes its breadcrumb.
  */
 export function useScreenTitle(title: React.ReactNode) {
   const setTitle = React.useContext(SetScreenTitleContext);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     setTitle(title);
     return () => setTitle(null);
   }, [setTitle, title]);
