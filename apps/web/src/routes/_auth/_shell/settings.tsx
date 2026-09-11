@@ -1,7 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { PageHeader } from "@/components/page-header";
+import { PageContainer } from "@/components/page/page-container";
+import {
+  PageHeader,
+  PageHeaderContent,
+  PageHeaderDescription,
+  PageHeaderTitle,
+} from "@/components/page/page-header";
 import { ModelKeyCard } from "@/components/settings/model-key-card";
+import { useScreenTitle } from "@/components/shell/screen-title";
 import { modelKeyQuery } from "@/lib/model-key-queries";
 
 /**
@@ -15,13 +22,19 @@ export const Route = createFileRoute("/_auth/_shell/settings")({
 });
 
 function SettingsRoute() {
+  useScreenTitle("Settings");
+
   return (
-    <>
-      <PageHeader
-        title="Settings"
-        description="What is yours across every agent: the model your acquire jobs run on."
-      />
+    <PageContainer size="medium" className="gap-6">
+      <PageHeader>
+        <PageHeaderContent>
+          <PageHeaderTitle>Settings</PageHeaderTitle>
+          <PageHeaderDescription>
+            What is yours across every agent: the model your acquire jobs run on.
+          </PageHeaderDescription>
+        </PageHeaderContent>
+      </PageHeader>
       <ModelKeyCard />
-    </>
+    </PageContainer>
   );
 }
