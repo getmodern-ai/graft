@@ -246,8 +246,9 @@ warrant a second workspace. **The primitives are Cando's files, not the registry
 `packages/ui/src/components/<name>.tsx` at Cando's `origin/main` with four import rewrites —
 `@cando/ui/lib/utils` → `@/lib/utils`, `@cando/ui/components/icons` → `@/components/icons`,
 `@cando/ui/hooks/use-mobile` → `@/hooks/use-mobile`, `@cando/ui/components/<x>` →
-`@/components/ui/<x>` — and a comment that names a Cando app file qualified as Cando's; nothing
-else. Do not run `npx shadcn add` over them: the registry's base-lyra output is what they replaced,
+`@/components/ui/<x>` — a comment that names a Cando app file qualified as Cando's, and where a
+file has to deviate, a comment on the spot naming why (today only `kbd.tsx`'s `KbdGroup` props).
+Do not run `npx shadcn add` over them: the registry's base-lyra output is what they replaced,
 and it would put `rounded-none` and `text-xs` back. To re-sync one, `git show
 origin/main:packages/ui/src/components/<name>.tsx` in the Cando checkout, apply the same rewrites,
 and read the diff; a local deviation carries a comment naming why. Not every Cando primitive is

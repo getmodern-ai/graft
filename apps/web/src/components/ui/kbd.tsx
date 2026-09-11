@@ -13,7 +13,11 @@ function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
   );
 }
 
-function KbdGroup({ className, ...props }: React.ComponentProps<"div">) {
+// `"kbd"`, not the `"div"` Cando's copy (and the registry) declares: the element rendered is a
+// `<kbd>`, so a `div` contract hands a caller an `HTMLElement` through a ref typed
+// `HTMLDivElement`. The one code deviation from Cando's `kbd.tsx` (Greptile on #26); drop this
+// comment when its copy catches up.
+function KbdGroup({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       data-slot="kbd-group"
