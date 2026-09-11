@@ -138,13 +138,21 @@ handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTIO
 24) how long that action stays answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the
 rules as code.
 
-**An OAuth consent (ADR 0005) adds no variable and two routes.** `GET /api/oauth/redirect-uri` is
-`GRAFT_AUTH_URL` plus `/api/oauth/callback`, computed by one function (`@graft/core`'s
-`oauthRedirectUri`) that both the form and the callback's mount read, so the URI shown is the URI
-served in both deployment forms — a person registering a Google client pastes it as the redirect
-URI. `GET /api/oauth/callback` takes the vendor's `code` and `state` **with no session**: the state is
-an HMAC under `GRAFT_HANDOFF_SECRET` over the connection, the person and the ask, so the browser that
-arrives from the vendor carries its own authority. `apps/server/src/oauth.ts` is the **second place
+**An OAuth consent (ADR 0005) adds no variable, two server routes and one console route.**
+`GET /api/oauth/redirect-uri` is `GRAFT_AUTH_URL` plus `/api/oauth/callback`, computed by one function
+(`@graft/core`'s `oauthRedirectUri`) that both the form and the callback's mount read, so the URI
+shown is the URI served in both deployment forms — a person registering a Google client pastes it as
+the redirect URI. `GET /api/oauth/callback` takes the vendor's `code` and `state` **with no session**:
+the state is an HMAC under `GRAFT_HANDOFF_SECRET` over the connection, the person and the ask, so the
+browser that arrives from the vendor carries its own authority. It renders nothing (GRA-48): once the
+tokens are stored — or the state, the vendor or the exchange refused — it redirects to the console's
+`/oauth/callback` under `GRAFT_CONSOLE_URL` with `status`, `connectionId` and `message` in the query
+and never the code, the state or a token; `apps/web/src/routes/oauth.callback.tsx` draws the outcome
+in Cando's empty-state shape, tells the waiting console over `postMessage` at its own origin and the
+`graft:oauth` `BroadcastChannel`, and closes itself after 1.5 s on success. The writer and the reader
+of that query are one browser-safe file, `@graft/core`'s `oauth.rules.ts`, and the popup contract —
+the console's `awaitConsent` reading the message from its own origin — is exercised on both sides in
+`apps/web/src/lib/oauth-consent.test.ts`. `apps/server/src/oauth.ts` is the **second place
 this server decrypts a credential** — the client secret, for the code exchange — beside the proxy
 binding in `app.ts`; `@graft/core` still takes the vault's encrypt half only. The token refresh runs
 in the proxy's scheme plugin, single-flight per connection, and stores the rotated record through
@@ -307,7 +315,10 @@ point (GRA-23), which in development is the Vite origin.
 
 The shape is Cando's: `routes/_auth/route.tsx` is the guard and only the guard (a signed-out visit
 goes to `/login?redirect=<same-origin path>` and returns there, which is how a handoff URL survives a
-fresh browser); `routes/_auth/_shell/` is the chrome; a screen's file placement decides both.
+fresh browser); `routes/_auth/_shell/` is the chrome; a screen's file placement decides both. Three
+screens sit outside both — the two doors, and `routes/oauth.callback.tsx`, where the server's OAuth
+callback sends the popup (GRA-48): it has no session to wait on, no chrome to wear, and everything
+it shows is in its query.
 `src/lib/*-queries.ts` hold the query options and mutations per aggregate, `src/lib/api.ts` is the
 one `fetch`, and every wire type is imported from `@graft/server/api`, `@graft/core`, `@graft/db` or
 `@graft/mcp` and passed through `Jsonified<T>` — never written a second time. The pending-actions

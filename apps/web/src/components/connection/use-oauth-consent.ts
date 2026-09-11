@@ -8,13 +8,7 @@ import {
   connectionStatus,
   fetchConnection,
 } from "@/lib/connection-queries";
-import {
-  awaitConsent,
-  type ConsentOutcome,
-  openConsentPopup,
-  redirectUriQuery,
-  serverOriginOf,
-} from "@/lib/oauth-consent";
+import { awaitConsent, type ConsentOutcome, openConsentPopup } from "@/lib/oauth-consent";
 import { pendingKeys } from "@/lib/pending-action-queries";
 
 /**
@@ -22,9 +16,10 @@ import { pendingKeys } from "@/lib/pending-action-queries";
  * connection to read as connected (or the callback's message, or the person to stop waiting), then
  * refresh what the consent changed — the connection, the pending actions it answered, the agent's
  * scope. One hook for the four places a consent starts: the agent's proposal card, Add connection,
- * Connect and Reconnect on the card, and a credential ask. The redirect URI's origin is where the
- * callback page lives, so the message filter takes it from the server rather than assuming the
- * console's own origin. `lib/oauth-consent.ts` says why the popup's own state is never read.
+ * Connect and Reconnect on the card, and a credential ask. The page that posts the message is the
+ * console's own `/oauth/callback` route (GRA-48), so the filter reads this page's origin and nothing
+ * has to be fetched before the popup opens. `lib/oauth-consent.ts` says why the popup's own state
+ * is never read.
  */
 
 export type ConsentState =
@@ -41,7 +36,6 @@ export function useOAuthConsent(options: { onConnected?: (connectionId: string) 
 
   const run = useCallback(
     async (authorizeUrl: string, connection: Pick<Connection, "id" | "oauth">) => {
-      const { redirectUri } = await queryClient.fetchQuery(redirectUriQuery);
       const before = connection.oauth?.consentedAt ?? null;
       // Connected means a consent completed *after* this one started, not one that already stood.
       const isConnected = async () => {
@@ -61,7 +55,6 @@ export function useOAuthConsent(options: { onConnected?: (connectionId: string) 
       setState({ phase: "running", connectionId: connection.id });
       const { outcome, message } = await awaitConsent({
         popup,
-        serverOrigin: serverOriginOf(redirectUri),
         connectionId: connection.id,
         isConnected,
         signal: controller.signal,

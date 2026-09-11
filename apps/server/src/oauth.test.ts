@@ -32,8 +32,8 @@ import { fakeModelKeyDeps } from "./testing/fake-model-key";
  * secret, answers the ask, and the waiting tool says connected. Then the proxy injects the token,
  * refreshes it through `apps/server`'s own binding when the vendor refuses it and stores the rotated
  * record, marks the connection for re-consent when the refresh is refused while the vendor's 401
- * reaches the tool, and a revoke clears it all. Nothing any API answers, and nothing the callback
- * page renders, carries a token, a secret or the verifier.
+ * reaches the tool, and a revoke clears it all. Nothing any API answers, and nothing the callback's
+ * redirect to the console carries, is a token, a secret, the code or the verifier.
  */
 
 initLogger({ silent: true });
@@ -238,6 +238,26 @@ const decode = (bytes: Uint8Array | null) =>
 const callback = (query: Record<string, string>) =>
   app.request(`/api/oauth/callback?${new URLSearchParams(query)}`);
 
+/**
+ * Where the callback sends the browser on (GRA-48): a redirect to the console's `/oauth/callback`
+ * under the handoff's console URL, with the outcome in its query and nothing else in it — the
+ * status word, the connection when the state named one, and the sentence the console shows.
+ */
+function landing(res: Response) {
+  expect(res.status).toBe(302);
+  const url = new URL(res.headers.get("location") as string);
+  expect(`${url.origin}${url.pathname}`).toBe(`${CONSOLE_URL}/oauth/callback`);
+  for (const key of url.searchParams.keys()) {
+    expect(["status", "connectionId", "message"], key).toContain(key);
+  }
+  return {
+    href: url.href,
+    status: url.searchParams.get("status"),
+    connectionId: url.searchParams.get("connectionId"),
+    message: url.searchParams.get("message") ?? "",
+  };
+}
+
 /** Every string that must appear in no answer and no page. */
 const SECRETS = ["client-secret-value", "access-", "refresh-", "code_verifier", "verifier"];
 
@@ -346,7 +366,7 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
     }
   });
 
-  it("a tampered state and a vendor error each end on a page that stores nothing and keeps the ask open", async () => {
+  it("a tampered state and a vendor error each send the browser to the console with the refusal, store nothing and keep the ask open", async () => {
     const authorize = new URL(
       (
         (await (
@@ -359,15 +379,20 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
     );
     const state = authorize.searchParams.get("state") as string;
 
-    const tampered = await callback({ code: "c", state: `${state}x` });
-    expect(tampered.status).toBe(400);
-    const tamperedPage = await tampered.text();
-    expect(tamperedPage).toContain("not one Graft issued");
-    expect(tamperedPage).toContain('"status":"failed"');
+    // An unverifiable state names no connection, so no waiting console takes the message as its own.
+    const tampered = landing(await callback({ code: "c", state: `${state}x` }));
+    expect(tampered.status).toBe("failed");
+    expect(tampered.connectionId).toBeNull();
+    expect(tampered.message).toContain("not one Graft issued");
+    expect(tampered.href).not.toContain(state);
 
-    const declined = await callback({ error: "access_denied", state });
-    expect(declined.status).toBe(200);
-    expect(await declined.text()).toContain('"status":"declined"');
+    const declined = landing(await callback({ error: "access_denied", state }));
+    expect(declined).toMatchObject({
+      status: "declined",
+      connectionId,
+      message: expect.stringContaining("You declined to connect Mail"),
+    });
+    expect(declined.href).not.toContain(state);
 
     expect(exchanges).toHaveLength(0);
     expect((await listConnections())[0]?.oauth?.status).toBe("awaiting_consent");
@@ -388,14 +413,17 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
     const state = authorize.searchParams.get("state") as string;
     const verifier = verifierOf(connectionId);
 
-    const res = await callback({ code: "the-code", state });
-    expect(res.status).toBe(200);
-    const page = await res.text();
-    expect(page).toContain("Mail is connected");
-    expect(page).toContain(`"connectionId":"${connectionId}"`);
-    expect(page).toContain(JSON.stringify(CONSOLE_URL));
-    expectNoSecret(page);
-    expect(page).not.toContain("the-code");
+    const landed = landing(await callback({ code: "the-code", state }));
+    expect(landed).toMatchObject({
+      status: "connected",
+      connectionId,
+      message: expect.stringContaining("Mail is connected"),
+    });
+    // The query is the status word, the connection and the sentence; the code and the state that
+    // arrived, the verifier and what the token endpoint answered all stay on this side.
+    expectNoSecret(landed.href);
+    expect(landed.href).not.toContain("the-code");
+    expect(landed.href).not.toContain(state);
 
     // The exchange: RFC 6749 §4.1.3 with RFC 7636's verifier, the client in the body.
     expect(exchanges).toHaveLength(1);
@@ -515,7 +543,7 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
         await app.request(`/api/connections/${connectionId}/oauth/authorize-url`, json({}))
       ).json()) as { authorizeUrl: string };
       const state = new URL(started.authorizeUrl).searchParams.get("state") as string;
-      expect((await callback({ code: "again", state })).status).toBe(200);
+      expect(landing(await callback({ code: "again", state })).status).toBe("connected");
       const after = (await listConnections())[0];
       expect(after?.oauth).toMatchObject({ status: "connected", consentRequired: null });
       api = () => Response.json(MESSAGES);
@@ -557,7 +585,7 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
         )
       ).json()) as { authorizeUrl: string };
       const state = new URL(started.authorizeUrl).searchParams.get("state") as string;
-      expect((await callback({ code: "reconsent", state })).status).toBe(200);
+      expect(landing(await callback({ code: "reconsent", state })).status).toBe("connected");
       expect(store.pendingActions.get(askId)?.answer).toEqual({ connectionId });
 
       const connected = await a.call("request_credential", { connectionId });
@@ -625,7 +653,7 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
       await app.request(`/api/connections/${connectionId}/oauth/authorize-url`, json({}))
     ).json()) as { authorizeUrl: string };
     const state = new URL(started.authorizeUrl).searchParams.get("state") as string;
-    expect((await callback({ code: "after-revoke", state })).status).toBe(200);
+    expect(landing(await callback({ code: "after-revoke", state })).status).toBe("connected");
     expect((await listConnections())[0]).toMatchObject({
       revokedAt: null,
       oauth: { status: "connected" },
