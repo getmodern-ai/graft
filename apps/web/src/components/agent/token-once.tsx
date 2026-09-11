@@ -1,6 +1,5 @@
-import { KeyRoundIcon } from "lucide-react";
-
 import { CopyButton } from "@/components/copy-button";
+import { KeyIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { exportTokenLine, mcpServersSnippet, TOKEN_ENV_VAR } from "@/lib/mcp-snippet";
 
@@ -18,7 +17,7 @@ export function TokenOnce({ token }: { token: string }) {
   return (
     <div className="flex flex-col gap-4">
       <Alert>
-        <KeyRoundIcon />
+        <KeyIcon />
         <AlertTitle>This token is shown once</AlertTitle>
         <AlertDescription>
           Graft keeps only its hash. Copy it now; if it is lost, revoke this agent and create

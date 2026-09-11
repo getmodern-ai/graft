@@ -1,13 +1,12 @@
 import { useMutation } from "@tanstack/react-query";
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-
 import { ConnectionCalls } from "@/components/connection/connection-calls";
 import { ConsentStatus } from "@/components/connection/oauth-client-notice";
 import { ReenterCredentialDialog } from "@/components/connection/reenter-credential-dialog";
 import { RevokeConnectionDialog } from "@/components/connection/revoke-connection-dialog";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
+import { KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
 import { Time } from "@/components/time";
 import { ToolAnnotations } from "@/components/tool-annotations";
 import { Badge } from "@/components/ui/badge";
@@ -219,7 +218,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
           className="self-start"
           onClick={() => setShowCalls((open) => !open)}
         >
-          {showCalls ? <ChevronUpIcon /> : <ChevronDownIcon />}
+          {showCalls ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
           Recent vendor calls
         </Button>
         {showCalls ? <ConnectionCalls connectionId={connection.id} /> : null}

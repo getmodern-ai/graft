@@ -1,8 +1,9 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, HeadContent, Outlet } from "@tanstack/react-router";
-import { Toaster } from "sonner";
 
 import { RouteError } from "@/components/route-error";
+import { ThemeProvider } from "@/components/theme-provider";
+import { Toaster } from "@/components/ui/sonner";
 
 import "../index.css";
 
@@ -27,8 +28,19 @@ function RootComponent() {
   return (
     <>
       <HeadContent />
-      <Outlet />
-      <Toaster richColors position="top-right" />
+      {/* Cando's four settings, unchanged (ADR 0017): the theme is a class on `<html>`, a fresh
+          visitor follows the OS, and a choice is remembered under the key Cando's console uses.
+          `index.html`'s media-gated `theme-color` metas cover the instant before this mounts. */}
+      <ThemeProvider
+        attribute="class"
+        defaultTheme="system"
+        disableTransitionOnChange
+        storageKey="vite-ui-theme"
+      >
+        <Outlet />
+        {/* Inside the provider: the Toaster reads the theme, since sonner does not read `.dark`. */}
+        <Toaster richColors position="top-right" />
+      </ThemeProvider>
     </>
   );
 }

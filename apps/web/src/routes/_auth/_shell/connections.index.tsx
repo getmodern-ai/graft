@@ -1,10 +1,9 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { PlugIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
-
 import { AddConnectionDialog } from "@/components/connection/add-connection-dialog";
 import { ConnectionCard } from "@/components/connection/connection-card";
+import { AddIcon, PowerIcon } from "@/components/icons";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,7 +42,7 @@ function ConnectionsRoute() {
         description="One vendor account each: its scheme, the hosts it may reach, and whether a credential is set. Credentials are never shown."
       >
         <Button onClick={() => setAdding(true)}>
-          <PlusIcon />
+          <AddIcon />
           Add connection
         </Button>
       </PageHeader>
@@ -52,7 +51,7 @@ function ConnectionsRoute() {
         <Empty className="rounded-lg border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <PlugIcon />
+              <PowerIcon />
             </EmptyMedia>
             <EmptyTitle>No connections yet</EmptyTitle>
             <EmptyDescription>

@@ -38,6 +38,8 @@ adopt Graft, not the reverse.
 pnpm install           # Node 24 and pnpm 10; `packageManager` pins the exact pnpm
 pnpm run check         # biome format + lint, writes fixes
 pnpm run lint          # biome ci: what CI runs, no writes
+pnpm run check-colours # the console: a hard-coded colour, a colour literal in @theme, a mode-orphaned token (ADR 0017)
+pnpm run check-tokens  # the console: every design-token utility compiles into apps/web/dist — build first
 pnpm run check-types   # turbo: tsc per package
 pnpm run test          # turbo: vitest per package
 pnpm run build         # turbo: only packages that declare a build script
@@ -245,6 +247,28 @@ second workspace, and the primitives are the registry's files, regenerated with
 `@/lib/utils` here). Biome excludes the generated `src/routeTree.gen.ts` and switches two a11y rules
 off for `src/components/ui/**` — the primitives' own shape trips them, and Cando does the same for its
 `packages/ui`.
+
+**The console is drawn with Cando's design system** (ADR 0017, GRA-44). `src/index.css` is Cando's
+`globals.css` with the product-specific pieces left out — its header says which and why — and the
+values between the `cando:tokens:start`/`end` sentinels are copied whole from Cando's managed block,
+never edited here; Figma stays upstream in Cando. There is no design file for the console, so a
+screen is composed from the system's patterns and its pull request carries a delta list saying what
+was composed from what and where it departs. Icons are Material Symbols generated into
+`src/components/icons.tsx` by `scripts/generate-icons.mjs` — add a glyph to `NAMES` there and run
+`pnpm --filter @graft/web generate-icons` then `pnpm run check`; there is no `lucide-react`. The theme
+is `next-themes` through `src/components/theme-provider.tsx`, mounted in `routes/__root.tsx` with
+Cando's four settings (class attribute, `system` default, `vite-ui-theme` storage key);
+`src/components/ui/sonner.tsx` is Cando's theme-aware `Toaster`, copied ahead of GRA-45 because
+sonner does not read the `.dark` class. The two `theme-color` hexes — in `index.html`'s metas and
+in `theme-provider.tsx` — are the only colours written as literals on purpose, and both are entries
+in `COLOUR_EXCEPTIONS`. Two guards keep dark mode correct and CI runs both as their own steps:
+`pnpm run check-colours` (a hard-coded colour in a component or in `index.html`, a colour literal
+inside `@theme`, a base token left behind by its family — logic in `src/tokens/*.ts`, exceptions in
+`COLOUR_EXCEPTIONS` there and never inline) and
+`pnpm run check-tokens` (every design-token utility compiles into `dist/assets`; it needs a build,
+which `check-types` runs). The type stacks name GT Standard L and GT Standard Mono VF but nothing
+ships the faces until GRA-49 settles the licence; the console renders in the system fallback and
+requests no missing file.
 
 **Same-origin with the API, in both forms.** `pnpm --filter @graft/web dev` (or `pnpm run dev`, which
 starts the server too) serves the app on `:3001` with Vite proxying `/api` and `/mcp` to

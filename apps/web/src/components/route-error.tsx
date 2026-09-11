@@ -1,5 +1,5 @@
 import { type ErrorComponentProps, Link, useRouter } from "@tanstack/react-router";
-import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
+import { RefreshIcon, WarningIcon } from "@/components/icons";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -37,14 +37,14 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
     <Empty className="mx-auto h-full max-w-md px-4">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <TriangleAlertIcon />
+          <WarningIcon />
         </EmptyMedia>
         <EmptyTitle>Something went wrong</EmptyTitle>
         <EmptyDescription>{message}</EmptyDescription>
       </EmptyHeader>
       <div className="flex gap-2">
         <Button onClick={retry}>
-          <RefreshCwIcon />
+          <RefreshIcon />
           Try again
         </Button>
         <Button variant="outline" nativeButton={false} render={<Link to="/agents" />}>

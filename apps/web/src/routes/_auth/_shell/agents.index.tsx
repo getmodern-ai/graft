@@ -1,9 +1,8 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { BotIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
-
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
+import { AddIcon, SmartToyIcon } from "@/components/icons";
 import { PageHeader } from "@/components/page-header";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
@@ -49,7 +48,7 @@ function AgentsRoute() {
         description="Each harness that connects to Graft is an agent, with a token, a scope and a working set of its own."
       >
         <Button onClick={() => setCreating(true)}>
-          <PlusIcon />
+          <AddIcon />
           New agent
         </Button>
       </PageHeader>
@@ -58,7 +57,7 @@ function AgentsRoute() {
         <Empty className="rounded-lg border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <BotIcon />
+              <SmartToyIcon />
             </EmptyMedia>
             <EmptyTitle>No agents yet</EmptyTitle>
             <EmptyDescription>
@@ -67,7 +66,7 @@ function AgentsRoute() {
             </EmptyDescription>
           </EmptyHeader>
           <Button onClick={() => setCreating(true)}>
-            <PlusIcon />
+            <AddIcon />
             New agent
           </Button>
         </Empty>

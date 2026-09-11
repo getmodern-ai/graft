@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, ShieldAlertIcon } from "lucide-react";
+import { ArrowBackIcon, DangerousIcon } from "@/components/icons";
 
 import { Loader } from "@/components/loader";
 import { PendingActionCard } from "@/components/pending/pending-action-card";
@@ -91,7 +91,7 @@ function Selected({ action, onAnswered }: { action: PendingAction; onAnswered: (
     <>
       <div>
         <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/pending" />}>
-          <ArrowLeftIcon />
+          <ArrowBackIcon />
           All pending actions
         </Button>
       </div>
@@ -106,7 +106,7 @@ function Refusal({ title, message }: { title: string; message: string }) {
     <Empty className="mx-auto h-full max-w-md rounded-lg border px-4">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <ShieldAlertIcon />
+          <DangerousIcon />
         </EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
         <EmptyDescription>{message} Nothing has been approved or declined.</EmptyDescription>

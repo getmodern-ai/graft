@@ -1,5 +1,5 @@
-import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { CheckIcon, ContentCopyIcon } from "@/components/icons";
 
 import { Button } from "@/components/ui/button";
 
@@ -23,7 +23,7 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
         setCopied(true);
       }}
     >
-      {copied ? <CheckIcon /> : <CopyIcon />}
+      {copied ? <CheckIcon /> : <ContentCopyIcon />}
       {copied ? "Copied" : label}
     </Button>
   );

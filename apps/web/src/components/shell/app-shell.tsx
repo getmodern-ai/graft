@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { BotIcon, InboxIcon, LogOutIcon, PlugIcon, SettingsIcon } from "lucide-react";
 import type * as React from "react";
+import { InboxIcon, LogoutIcon, PowerIcon, SettingsIcon, SmartToyIcon } from "@/components/icons";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,13 +26,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           Graft
         </Link>
         <nav className="flex flex-row gap-1 md:flex-col" aria-label="Console">
-          <NavLink to="/agents" icon={<BotIcon />}>
+          <NavLink to="/agents" icon={<SmartToyIcon />}>
             Agents
           </NavLink>
           <NavLink to="/pending" icon={<InboxIcon />} trailing={<PendingCount />}>
             Pending actions
           </NavLink>
-          <NavLink to="/connections" icon={<PlugIcon />}>
+          <NavLink to="/connections" icon={<PowerIcon />}>
             Connections
           </NavLink>
           <NavLink to="/settings" icon={<SettingsIcon />}>
@@ -110,7 +110,7 @@ function PersonFooter() {
         <div className="truncate text-muted-foreground text-xs">{session?.user.email}</div>
       </div>
       <Button variant="ghost" size="icon-sm" onClick={signOut} aria-label="Sign out">
-        <LogOutIcon />
+        <LogoutIcon />
       </Button>
     </div>
   );

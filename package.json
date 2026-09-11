@@ -17,6 +17,8 @@
     "test": "turbo run test",
     "check": "biome check --write .",
     "lint": "biome ci .",
+    "check-colours": "node apps/web/scripts/check-design-tokens.mjs",
+    "check-tokens": "node apps/web/scripts/check-token-utilities.mjs",
     "db:push": "turbo run db:push -F @graft/db",
     "db:generate": "turbo run db:generate -F @graft/db",
     "db:migrate": "turbo run db:migrate -F @graft/db",

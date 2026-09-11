@@ -1,4 +1,4 @@
-import { GlobeIcon } from "lucide-react";
+import { LanguageIcon } from "@/components/icons";
 
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -192,7 +192,7 @@ export function HostsNotice({ draft }: { draft: ConnectionDraft }) {
   const hosts = hostsOf(draft);
   return (
     <div className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-xs">
-      <GlobeIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <LanguageIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       <div className="flex flex-col gap-1">
         <p className="font-medium">
           {hosts
