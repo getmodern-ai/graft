@@ -1,11 +1,22 @@
+import { StatusChip } from "@/components/status-chip";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import type { Connection } from "@/lib/connection-queries";
+import { CONNECTION_STATUS_CHIP } from "@/lib/status-chips";
 
 /**
  * The scope as a set of the person's connections (CONTEXT.md, *Scope*): every connection listed,
  * the agent's ticked. A revoked connection stays in the list — it is still the person's, and a tool
  * bound to its vendor re-asks after reconnection (ADR 0007) — and says so.
+ *
+ * Each connection is an `Item` in its outline frame: a checkbox for the media, the name and its
+ * chips for the title, the primary host for the description. A `<ul>` of `<li>` items rather than
+ * the primitive's `ItemGroup`, which is a `div[role=list]` and would want a `listitem` role on
+ * each child that the real elements carry for free — the group's only other contribution, its
+ * 10px gap for `size="sm"`, is one class. The name is the checkbox's label; the checkbox itself is
+ * a button plus a hidden input, so wrapping the whole item in a `<label>` would give one label two
+ * controls.
  */
 export function ConnectionPicker({
   connections,
@@ -21,40 +32,42 @@ export function ConnectionPicker({
   if (connections.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
-        No connections yet. An agent proposes one and you enter its secret here; until then the
+        No connections yet — an agent proposes one and you enter its secret here; until then the
         scope is empty and the agent can only author against nothing.
       </p>
     );
   }
 
   return (
-    <ul className="flex flex-col divide-y rounded-md border">
+    <ul className="flex flex-col gap-2.5">
       {connections.map((connection) => {
         const id = `scope-${connection.id}`;
         return (
-          <li key={connection.id} className="flex items-center gap-3 px-3 py-2">
-            <Checkbox
-              id={id}
-              disabled={disabled}
-              checked={selected.has(connection.id)}
-              onCheckedChange={(checked) => {
-                const next = new Set(selected);
-                if (checked) next.add(connection.id);
-                else next.delete(connection.id);
-                onChange(next);
-              }}
-            />
-            <label htmlFor={id} className="flex min-w-0 flex-1 cursor-pointer flex-col text-sm">
-              <span className="flex items-center gap-2">
-                <span className="font-medium">{connection.displayName}</span>
+          <Item key={connection.id} variant="outline" size="sm" render={<li />}>
+            <ItemMedia>
+              <Checkbox
+                id={id}
+                disabled={disabled}
+                checked={selected.has(connection.id)}
+                onCheckedChange={(checked) => {
+                  const next = new Set(selected);
+                  if (checked) next.add(connection.id);
+                  else next.delete(connection.id);
+                  onChange(next);
+                }}
+              />
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>
+                <label htmlFor={id} className="cursor-pointer">
+                  {connection.displayName}
+                </label>
                 <Badge variant="outline">{connection.vendor}</Badge>
-                {connection.revokedAt ? <Badge variant="destructive">revoked</Badge> : null}
-              </span>
-              <span className="truncate text-muted-foreground text-xs">
-                {connection.primaryHost}
-              </span>
-            </label>
-          </li>
+                {connection.revokedAt ? <StatusChip chip={CONNECTION_STATUS_CHIP.revoked} /> : null}
+              </ItemTitle>
+              <ItemDescription className="truncate">{connection.primaryHost}</ItemDescription>
+            </ItemContent>
+          </Item>
         );
       })}
     </ul>

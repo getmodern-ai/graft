@@ -19,27 +19,34 @@ import {
 } from "@/components/page/page-header";
 import { PageNavBreadcrumb } from "@/components/page/page-nav-breadcrumb";
 import { useScreenTitle } from "@/components/shell/screen-title";
+import { StatusChip } from "@/components/status-chip";
 import { Time } from "@/components/time";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { agentQuery, workingSetChangesQuery, workingSetQuery } from "@/lib/agent-queries";
 import { approvalsQuery } from "@/lib/approval-queries";
 import { connectionsQuery, toolsQuery } from "@/lib/connection-queries";
+import { agentStatusChip } from "@/lib/status-chips";
 
 /**
  * One agent: how to connect it, what it may reach, how its working set contracts, and what is in
  * the set and how it got there. The token is not on this page — `HarnessSnippet` says why.
+ *
+ * The loader awaits the agent and the connections, which the header and the two editors need
+ * before anything can draw, and only *starts* the three table reads: each table owns its query
+ * and paints skeleton rows until it lands, so the page appears once rather than after the slowest
+ * of six. Cando's automation page arrived at the same split (its CAN-546).
  */
 export const Route = createFileRoute("/_auth/_shell/agents/$agentId")({
-  loader: ({ context, params }) =>
-    Promise.all([
+  loader: ({ context, params }) => {
+    void context.queryClient.prefetchQuery(workingSetQuery(params.agentId));
+    void context.queryClient.prefetchQuery(workingSetChangesQuery(params.agentId));
+    void context.queryClient.prefetchQuery(approvalsQuery(params.agentId));
+    void context.queryClient.prefetchQuery(toolsQuery);
+    return Promise.all([
       context.queryClient.ensureQueryData(agentQuery(params.agentId)),
       context.queryClient.ensureQueryData(connectionsQuery),
-      context.queryClient.ensureQueryData(workingSetQuery(params.agentId)),
-      context.queryClient.ensureQueryData(workingSetChangesQuery(params.agentId)),
-      context.queryClient.ensureQueryData(approvalsQuery(params.agentId)),
-      context.queryClient.ensureQueryData(toolsQuery),
-    ]),
+    ]);
+  },
   component: AgentRoute,
 });
 
@@ -47,10 +54,6 @@ function AgentRoute() {
   const { agentId } = Route.useParams();
   const { data } = useSuspenseQuery(agentQuery(agentId));
   const { data: connectionData } = useSuspenseQuery(connectionsQuery);
-  const { data: workingSet } = useSuspenseQuery(workingSetQuery(agentId));
-  const { data: history } = useSuspenseQuery(workingSetChangesQuery(agentId));
-  const { data: approvals } = useSuspenseQuery(approvalsQuery(agentId));
-  const { data: toolbox } = useSuspenseQuery(toolsQuery);
   const [revoking, setRevoking] = useState(false);
   const { agent, connectionIds } = data;
 
@@ -68,11 +71,7 @@ function AgentRoute() {
         <PageHeaderContent>
           <PageHeaderTitle className="flex items-center gap-2">
             {agent.name}
-            {agent.revokedAt ? (
-              <Badge variant="destructive">revoked</Badge>
-            ) : (
-              <Badge variant="success">active</Badge>
-            )}
+            <StatusChip chip={agentStatusChip(agent)} />
           </PageHeaderTitle>
           <PageHeaderDescription>
             Token <code className="font-mono">{agent.tokenPrefix}…</code> · created{" "}
@@ -117,9 +116,9 @@ function AgentRoute() {
         </div>
       </div>
 
-      <WorkingSetTable agent={agent} entries={workingSet.workingSet} />
-      <ApprovalsCard agent={agent} approvals={approvals.approvals} tools={toolbox.tools} />
-      <WorkingSetHistory changes={history.changes} />
+      <WorkingSetTable agent={agent} />
+      <ApprovalsCard agent={agent} />
+      <WorkingSetHistory agentId={agent.id} />
 
       <RevokeAgentDialog agent={agent} open={revoking} onOpenChange={setRevoking} />
     </PageContainer>

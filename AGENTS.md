@@ -290,10 +290,40 @@ question for the title, the blast radius in the description, `AlertDialogCancel`
 the destructive `AlertDialogAction` last with a present-participle label while pending, both
 disabled while it is, and close requests ignored until the mutation settles. A choice among fixed
 options is the `Select` primitive with `items` on the root, so the closed trigger shows the option's
-label — never a raw `<select>`. Status chips use `success` where Cando would (`connected`, `allowed`,
-an `ok` call, an `active` agent), `destructive` for `revoked`, `denied` and `error`, `outline` for
-the awaiting states; `ToolAnnotations` keeps read-only, write and destructive visually distinct.
-GRA-47 gathers the chips into one map.
+label — never a raw `<select>`. **Every status chip comes from `src/lib/status-chips.ts`** (GRA-47):
+one map per vocabulary — agent, connection, call outcome, approval, working-set change, model key,
+tool annotation — to `{ variant, label }`, drawn through `components/status-chip.tsx`, so a call
+site never picks a tone or spells a label. The rule the map encodes: `success` for a state in which
+the thing works (`Connected`, `Allowed`, an `OK` call, an `Active` agent, a key that is `Set`),
+`destructive` for one that will not until someone acts (`Revoked`, `Denied`, `Error`, `Needs
+re-consent`), `outline` for waiting on something (a credential, a consent, a reconnection), and
+`secondary` for the neutral rest; `ToolAnnotations` reads its three from the same file. Labels are
+sentence case, like every label in the console, and its colocated test pins both.
+
+**Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
+column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
+auto — and `DataTableRow` for the 40px rhythm; a column the row cannot afford at 390px steps out
+(`hidden md:table-cell`) and, where it is the row's one load-bearing fact, follows the name in muted
+text instead. Loading, empty and failed are rows *inside* the body, never a spinner or a block
+beside the table: `components/table-body-states.tsx` holds `TableLoadingRows` (one full-span
+skeleton per row) and `TableBodyNote` (one full-span sentence), and the failed note carries
+`components/retry-notice.tsx`, Cando's inline Retry. A table owns its read (`useQuery`, not the
+suspense form) so those states are reachable; the agent page's loader awaits the agent and only
+*starts* the table reads, so the page paints once with skeleton rows. Connections stay cards —
+each carries a status, hosts, tools, two actions and a table — with Cando's card anatomy, and the
+recent calls are a disclosure in the body, not the banded `CardFooter`. A notice inside a form is
+an `Alert`; a labelled control with a sentence beside it is an `Item` (`components/ui/item.tsx`,
+ported with the rest); nothing draws its own `rounded-* border` frame. The settings screen is
+Cando's row family, ported to `components/settings/` — `SettingsSection` (an `h2`), `SettingsCard`,
+`SettingsRowGroup` with inset dividers, and the `SettingsRow` variants — with one section, Model,
+carrying the key's behaviour as rows. A failed **query** toasts once with a working Retry
+(`lib/query-error-retry.ts`, keyed to the query hash so a second failure replaces rather than
+stacks, dismissed on the next success) beside the mutation toast; a read that fails before a screen
+draws toasts *and* shows the route boundary, as Cando's does. A screen-level empty is the `Empty`
+primitive without a frame of its own, in Cando's voice — sentence-case title without a full stop,
+one sentence whose clause after the dash is reassurance — and an in-card empty is one muted
+sentence. `PageContainer` gaps: `gap-4` under the header of a list screen, `gap-6` on a detail or
+settings screen with several regions, as Cando's connections and settings screens pass them.
 
 **Same-origin with the API, in both forms.** `pnpm --filter @graft/web dev` (or `pnpm run dev`, which
 starts the server too) serves the app on `:3001` with Vite proxying `/api` and `/mcp` to

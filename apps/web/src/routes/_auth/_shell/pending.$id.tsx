@@ -106,16 +106,22 @@ function PendingActionRoute() {
   return <PageContainer size="medium">{content}</PageContainer>;
 }
 
-/** The refusal page: what the link was, why it does not open, and that nothing was answered. */
+/**
+ * The refusal page: what the link was, why it does not open, and that nothing was answered. The
+ * frame and voice are `RouteNotFound`'s — the server's sentence, then the reassurance after the
+ * dash — with the server's own full stop lifted so the two read as one sentence.
+ */
 function Refusal({ title, message }: { title: string; message: string }) {
   return (
-    <Empty className="mx-auto h-full max-w-md rounded-lg border px-4">
+    <Empty className="mx-auto h-full max-w-md px-4">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <DangerousIcon />
         </EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{message} Nothing has been approved or declined.</EmptyDescription>
+        <EmptyDescription>
+          {message.replace(/\.$/, "")} — nothing has been approved or declined.
+        </EmptyDescription>
       </EmptyHeader>
       <Button variant="outline" nativeButton={false} render={<Link to="/pending" />}>
         See every pending action
