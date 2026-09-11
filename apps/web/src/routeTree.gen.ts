@@ -14,6 +14,7 @@ import { Route as AuthRouteRouteImport } from './routes/_auth/route'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AuthShellRouteRouteImport } from './routes/_auth/_shell/route'
+import { Route as OauthCallbackRouteImport } from './routes/oauth.callback'
 import { Route as AuthShellSettingsRouteImport } from './routes/_auth/_shell/settings'
 import { Route as AuthShellAgentsIndexRouteImport } from './routes/_auth/_shell/agents.index'
 import { Route as AuthShellAgentsAgentIdRouteImport } from './routes/_auth/_shell/agents.$agentId'
@@ -43,6 +44,11 @@ const SignupRoute = SignupRouteImport.update({
 const AuthShellRouteRoute = AuthShellRouteRouteImport.update({
   id: '/_shell',
   getParentRoute: () => AuthRouteRoute,
+} as any)
+const OauthCallbackRoute = OauthCallbackRouteImport.update({
+  id: '/oauth/callback',
+  path: '/oauth/callback',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AuthShellSettingsRoute = AuthShellSettingsRouteImport.update({
   id: '/settings',
@@ -80,6 +86,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/oauth/callback': typeof OauthCallbackRoute
   '/settings': typeof AuthShellSettingsRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
   '/pending/$id': typeof AuthShellPendingIdRoute
@@ -91,6 +98,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/oauth/callback': typeof OauthCallbackRoute
   '/settings': typeof AuthShellSettingsRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
   '/pending/$id': typeof AuthShellPendingIdRoute
@@ -105,6 +113,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/_auth/_shell': typeof AuthShellRouteRouteWithChildren
+  '/oauth/callback': typeof OauthCallbackRoute
   '/_auth/_shell/settings': typeof AuthShellSettingsRoute
   '/_auth/_shell/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
   '/_auth/_shell/pending/$id': typeof AuthShellPendingIdRoute
@@ -118,6 +127,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/oauth/callback'
     | '/settings'
     | '/agents/$agentId'
     | '/pending/$id'
@@ -129,6 +139,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/oauth/callback'
     | '/settings'
     | '/agents/$agentId'
     | '/pending/$id'
@@ -142,6 +153,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/_auth/_shell'
+    | '/oauth/callback'
     | '/_auth/_shell/settings'
     | '/_auth/_shell/agents/$agentId'
     | '/_auth/_shell/pending/$id'
@@ -155,6 +167,7 @@ export interface RootRouteChildren {
   AuthRouteRoute: typeof AuthRouteRouteWithChildren
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  OauthCallbackRoute: typeof OauthCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -193,6 +206,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AuthShellRouteRouteImport
       parentRoute: typeof AuthRouteRoute
+    }
+    '/oauth/callback': {
+      id: '/oauth/callback'
+      path: '/oauth/callback'
+      fullPath: '/oauth/callback'
+      preLoaderRoute: typeof OauthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_auth/_shell/settings': {
       id: '/_auth/_shell/settings'
@@ -278,6 +298,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRouteRoute: AuthRouteRouteWithChildren,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  OauthCallbackRoute: OauthCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -31,14 +31,91 @@ export const OAUTH_CALLBACK_PATH = "/api/oauth/callback";
 export const OAUTH_STATE_TTL_MS = 10 * 60_000;
 
 /**
- * The same-origin channel the callback page announces itself on beside `postMessage` (ADR 0005;
- * `apps/server/src/oauth.ts`). A vendor whose consent page sends `Cross-Origin-Opener-Policy:
- * same-origin` — Google does — severs the popup from its opener, so `window.opener` is null on the
- * callback page and the opener's handle reports the popup closed; in production the console and the
- * callback share an origin, so a `BroadcastChannel` still reaches it. In development, where they
- * do not, the console's poll of the connection is what notices.
+ * The same-origin channel the console's callback route announces itself on beside `postMessage`
+ * (ADR 0005; `apps/web/src/routes/oauth.callback.tsx`). A vendor whose consent page sends
+ * `Cross-Origin-Opener-Policy: same-origin` — Google does — severs the popup from its opener, so
+ * `window.opener` is null once the popup lands back and the opener's handle reports it closed. The
+ * route is a console page, so it shares the console's origin in both deployment forms and a
+ * `BroadcastChannel` reaches the waiting console whatever the vendor did to the opener; the
+ * console's poll of the connection is the signal that needs neither.
  */
 export const OAUTH_CONSENT_CHANNEL = "graft:oauth";
+
+/** How the consent ended, as the callback tells the console: the three words and nothing finer. */
+export type OAuthCallbackStatus = "connected" | "declined" | "failed";
+
+export const OAUTH_CALLBACK_STATUSES: readonly OAuthCallbackStatus[] = [
+  "connected",
+  "declined",
+  "failed",
+];
+
+/**
+ * What the server's callback route hands the console — a status word, the connection and one
+ * sentence for the person; never a token, the vendor's code or the state (ADR 0005). Three carriers
+ * hold this one shape: the query of the redirect the callback answers with (`oauthCallbackRedirect`),
+ * the `postMessage` the console's `/oauth/callback` route sends its opener, and its announcement on
+ * `OAUTH_CONSENT_CHANNEL`. Declared here, beside the reader, so the server that writes the query
+ * and the console that reads it share one definition.
+ */
+export type OAuthCallbackOutcome = {
+  status: OAuthCallbackStatus;
+  /** Null when the state could not be verified, so no waiting console takes the message as its own. */
+  connectionId: string | null;
+  message: string;
+};
+
+/** The outcome as the console posts it — `type` is what lets a listener tell it from any other message. */
+export type OAuthCallbackMessage = OAuthCallbackOutcome & { type: "graft:oauth" };
+
+export const OAUTH_CALLBACK_MESSAGE_TYPE = "graft:oauth" satisfies OAuthCallbackMessage["type"];
+
+/**
+ * The console route the server's callback redirects to, under `GRAFT_CONSOLE_URL` — the popup ends
+ * on a console page rather than a server-rendered one, so the outcome is drawn with the console's
+ * design system (ADR 0017). The redirect URI the person registers with the vendor is unchanged:
+ * `OAUTH_CALLBACK_PATH` on the server's origin is still where every vendor sends the browser.
+ */
+export const OAUTH_CONSOLE_CALLBACK_PATH = "/oauth/callback";
+
+/**
+ * The redirect the callback answers with: the console route with the outcome in its query, and
+ * nothing else in it. The string handling is `@graft/mcp`'s `handoffUrl`'s — a trailing slash on
+ * `consoleUrl` is not doubled — and so is the constraint: the console's router matches from the
+ * origin's root (`apps/web/src/main.tsx` sets no `basepath`), so a `GRAFT_CONSOLE_URL` that carried
+ * a path would 404 this route and every handoff URL alike — although `@graft/env`'s `consoleUrl`
+ * calls that form legitimate. Closing that gap is GRA-50, one change in the router or the schema
+ * that both URL builders follow; it is not this helper's to decide. A null connection is left out
+ * rather than written as the word `null`, so the reader's absence is the writer's absence.
+ */
+export function oauthCallbackRedirect(consoleUrl: string, outcome: OAuthCallbackOutcome): string {
+  const base = consoleUrl.replace(/\/+$/, "");
+  const query = new URLSearchParams({ status: outcome.status });
+  if (outcome.connectionId !== null) query.set("connectionId", outcome.connectionId);
+  query.set("message", outcome.message);
+  return `${base}${OAUTH_CONSOLE_CALLBACK_PATH}?${query}`;
+}
+
+/**
+ * The console route's search, read back as the outcome — the other half of `oauthCallbackRedirect`.
+ * Anything but the three status words reads as `failed`, a connection that is not a string as
+ * none, a message that is not one as empty: an address typed by hand or cut short by a vendor lands
+ * on a page that says something went wrong and settles no waiting console, since a null connection
+ * matches nothing a listener is waiting for.
+ */
+export function readOAuthCallbackSearch(search: Record<string, unknown>): OAuthCallbackOutcome {
+  const status = OAUTH_CALLBACK_STATUSES.find((word) => word === search.status) ?? "failed";
+  return {
+    status,
+    connectionId: typeof search.connectionId === "string" ? search.connectionId : null,
+    message: typeof search.message === "string" ? search.message : "",
+  };
+}
+
+/** The outcome as the console's callback route posts it. */
+export function oauthCallbackMessage(outcome: OAuthCallbackOutcome): OAuthCallbackMessage {
+  return { type: OAUTH_CALLBACK_MESSAGE_TYPE, ...outcome };
+}
 
 /** `GRAFT_AUTH_URL` plus the callback path — a trailing slash on the origin is not doubled. */
 export function oauthRedirectUri(authUrl: string): string {
