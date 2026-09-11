@@ -240,13 +240,23 @@ server stopped.
 ### The console
 
 `apps/web` (`@graft/web`, GRA-26) is the console (CONTEXT.md, *Console*; ADR 0006): React on Vite,
-TanStack Router with file routes and Query, Tailwind 4, and the shadcn primitives generated into
-`src/components/ui` over Base UI. There is deliberately no `packages/ui`: one SPA does not warrant a
-second workspace, and the primitives are the registry's files, regenerated with
-`npx shadcn@latest add <name> -c apps/web` (the CLI writes `from "cn"` for the utils alias; it is
-`@/lib/utils` here). Biome excludes the generated `src/routeTree.gen.ts` and switches two a11y rules
-off for `src/components/ui/**` — the primitives' own shape trips them, and Cando does the same for its
-`packages/ui`.
+TanStack Router with file routes and Query, Tailwind 4, and Cando's primitives copied into
+`src/components/ui` over Base UI (GRA-45). There is deliberately no `packages/ui`: one SPA does not
+warrant a second workspace. **The primitives are Cando's files, not the registry's.** Each is
+`packages/ui/src/components/<name>.tsx` at Cando's `origin/main` with four import rewrites —
+`@cando/ui/lib/utils` → `@/lib/utils`, `@cando/ui/components/icons` → `@/components/icons`,
+`@cando/ui/hooks/use-mobile` → `@/hooks/use-mobile`, `@cando/ui/components/<x>` →
+`@/components/ui/<x>` — and a comment that names a Cando app file qualified as Cando's; nothing
+else. Do not run `npx shadcn add` over them: the registry's base-lyra output is what they replaced,
+and it would put `rounded-none` and `text-xs` back. To re-sync one, `git show
+origin/main:packages/ui/src/components/<name>.tsx` in the Cando checkout, apply the same rewrites,
+and read the diff; a local deviation carries a comment naming why. Not every Cando primitive is
+here — the product-specific ones (bloom faces, dot sprite, bubble, message, attachment, chart,
+calendar, carousel, combobox, command, inline-edit) are not ported, and the rest arrive as a screen
+needs them; `src/hooks/use-mobile.ts` came with `sidebar.tsx`, and its colocated test pins the
+breakpoint against `index.css`. Biome excludes the generated `src/routeTree.gen.ts` and switches a
+few rules off for `src/components/ui/**` — the primitives' own shape trips them, and Cando does the
+same for its `packages/ui`.
 
 **The console is drawn with Cando's design system** (ADR 0017, GRA-44). `src/index.css` is Cando's
 `globals.css` with the product-specific pieces left out — its header says which and why — and the
@@ -258,8 +268,8 @@ was composed from what and where it departs. Icons are Material Symbols generate
 `pnpm --filter @graft/web generate-icons` then `pnpm run check`; there is no `lucide-react`. The theme
 is `next-themes` through `src/components/theme-provider.tsx`, mounted in `routes/__root.tsx` with
 Cando's four settings (class attribute, `system` default, `vite-ui-theme` storage key);
-`src/components/ui/sonner.tsx` is Cando's theme-aware `Toaster`, copied ahead of GRA-45 because
-sonner does not read the `.dark` class. The two `theme-color` hexes — in `index.html`'s metas and
+`src/components/ui/sonner.tsx` is Cando's theme-aware `Toaster`, the first primitive copied (under
+GRA-44, because sonner does not read the `.dark` class). The two `theme-color` hexes — in `index.html`'s metas and
 in `theme-provider.tsx` — are the only colours written as literals on purpose, and both are entries
 in `COLOUR_EXCEPTIONS`. Two guards keep dark mode correct and CI runs both as their own steps:
 `pnpm run check-colours` (a hard-coded colour in a component or in `index.html`, a colour literal
@@ -269,6 +279,20 @@ inside `@theme`, a base token left behind by its family — logic in `src/tokens
 which `check-types` runs). The type stacks name GT Standard L and GT Standard Mono VF but nothing
 ships the faces until GRA-49 settles the licence; the console renders in the system fallback and
 requests no missing file.
+
+**What the console composes for itself from the primitives** (GRA-45). `src/components/code-block.tsx`
+is the one place a token, a shell line or an ask's raw payload is shown: a label row with
+`CopyButton`, the text on the muted band in the mono stack, an optional hint — Cando has no code
+block, so this is composed from its tokens rather than copied. A destructive confirmation is an
+`AlertDialog` in Cando's shape, and `components/agent/revoke-agent-dialog.tsx` is the reference: a
+question for the title, the blast radius in the description, `AlertDialogCancel` first in the DOM,
+the destructive `AlertDialogAction` last with a present-participle label while pending, both
+disabled while it is, and close requests ignored until the mutation settles. A choice among fixed
+options is the `Select` primitive with `items` on the root, so the closed trigger shows the option's
+label — never a raw `<select>`. Status chips use `success` where Cando would (`connected`, `allowed`,
+an `ok` call, an `active` agent), `destructive` for `revoked`, `denied` and `error`, `outline` for
+the awaiting states; `ToolAnnotations` keeps read-only, write and destructive visually distinct.
+GRA-47 gathers the chips into one map.
 
 **Same-origin with the API, in both forms.** `pnpm --filter @graft/web dev` (or `pnpm run dev`, which
 starts the server too) serves the app on `:3001` with Vite proxying `/api` and `/mcp` to

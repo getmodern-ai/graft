@@ -64,7 +64,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
     ),
     awaiting_consent: <Badge variant="outline">awaiting consent</Badge>,
     consent_required: <Badge variant="destructive">needs re-consent</Badge>,
-    connected: <Badge variant="secondary">connected</Badge>,
+    connected: <Badge variant="success">connected</Badge>,
   }[status];
 
   const description = {

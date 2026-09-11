@@ -13,12 +13,11 @@ import {
 } from "@/components/ui/table";
 import { type ConnectionCall, connectionCallsQuery } from "@/lib/connection-queries";
 
-const OUTCOME_VARIANT: Record<ConnectionCall["outcome"], "secondary" | "destructive" | "outline"> =
-  {
-    ok: "secondary",
-    error: "destructive",
-    refused: "outline",
-  };
+const OUTCOME_VARIANT: Record<ConnectionCall["outcome"], "success" | "destructive" | "outline"> = {
+  ok: "success",
+  error: "destructive",
+  refused: "outline",
+};
 
 /**
  * A connection's recent vendor calls — the ledger's lines for the vendor's tools and the connection's
