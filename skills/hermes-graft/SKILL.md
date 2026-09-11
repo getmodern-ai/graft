@@ -76,6 +76,11 @@ Graft asks the person before code runs, and asks in two places:
 Read the tool's `readOnlyHint` and `destructiveHint` from the tool list to know which sentence
 applies.
 
+Hermes shows Graft's ask as its own approval card. Any of its allow buttons is a yes to Graft — Allow
+Once on a tool that writes holds from then on, because Graft asks once by rule — and no button relaxes
+a destructive tool: it asks again on the next call until the person relaxes it in the console. Say so
+if the person asks why the card came back.
+
 ## What not to do
 
 - Do not drive the low-level authoring tools — `write_file`, `check_tool`, `publish_tool`,
