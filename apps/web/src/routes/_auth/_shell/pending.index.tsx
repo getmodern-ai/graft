@@ -1,9 +1,16 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { InboxIcon } from "@/components/icons";
 
-import { PageHeader } from "@/components/page-header";
+import { InboxIcon } from "@/components/icons";
+import { PageContainer } from "@/components/page/page-container";
+import {
+  PageHeader,
+  PageHeaderContent,
+  PageHeaderDescription,
+  PageHeaderTitle,
+} from "@/components/page/page-header";
 import { PendingActionCard } from "@/components/pending/pending-action-card";
+import { useScreenTitle } from "@/components/shell/screen-title";
 import {
   Empty,
   EmptyDescription,
@@ -22,12 +29,20 @@ export const Route = createFileRoute("/_auth/_shell/pending/")({
 function PendingRoute() {
   const { data } = useSuspenseQuery({ ...pendingActionsQuery, refetchInterval: 15_000 });
 
+  useScreenTitle("Pending actions");
+
   return (
-    <>
-      <PageHeader
-        title="Pending actions"
-        description="Asks your agents could not settle on their own: a write's first call, every call of a destructive tool, an acquire against a connection, a connection to set up or a credential to re-enter."
-      />
+    <PageContainer size="medium" className="gap-6">
+      <PageHeader>
+        <PageHeaderContent>
+          <PageHeaderTitle>Pending actions</PageHeaderTitle>
+          <PageHeaderDescription>
+            Asks your agents could not settle on their own: a write's first call, every call of a
+            destructive tool, an acquire against a connection, a connection to set up or a
+            credential to re-enter.
+          </PageHeaderDescription>
+        </PageHeaderContent>
+      </PageHeader>
 
       {data.pendingActions.length === 0 ? (
         <Empty className="rounded-lg border">
@@ -49,6 +64,6 @@ function PendingRoute() {
           ))}
         </div>
       )}
-    </>
+    </PageContainer>
   );
 }

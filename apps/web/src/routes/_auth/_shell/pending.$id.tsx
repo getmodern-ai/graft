@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowBackIcon, DangerousIcon } from "@/components/icons";
+import type * as React from "react";
 
+import { DangerousIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
+import { PageContainer } from "@/components/page/page-container";
+import { PageNavBreadcrumb } from "@/components/page/page-nav-breadcrumb";
 import { PendingActionCard } from "@/components/pending/pending-action-card";
+import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -13,11 +17,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { ApiError } from "@/lib/api";
-import {
-  type PendingAction,
-  pendingActionQuery,
-  pendingActionsQuery,
-} from "@/lib/pending-action-queries";
+import { pendingActionQuery, pendingActionsQuery } from "@/lib/pending-action-queries";
 
 /**
  * Where a handoff URL lands (ADR 0006): `/pending/<id>?t=<token>`, the shape `@graft/mcp`'s
@@ -62,42 +62,48 @@ function PendingActionRoute() {
   const byLink = useQuery({ ...pendingActionQuery(id, t ?? ""), enabled: t !== undefined });
   const fromList = useQuery({ ...pendingActionsQuery, enabled: t === undefined });
 
-  if (t !== undefined) {
-    if (byLink.isPending) return <Loader />;
-    if (byLink.error) return <Refusal {...handoffRefusal(byLink.error)} />;
-    return (
-      <Selected
-        action={byLink.data.pendingAction}
-        onAnswered={() => navigate({ to: "/pending" })}
-      />
-    );
-  }
+  const action =
+    t !== undefined
+      ? byLink.data?.pendingAction
+      : fromList.data?.pendingActions.find((candidate) => candidate.id === id);
 
-  if (fromList.isPending) return <Loader />;
-  const action = fromList.data?.pendingActions.find((candidate) => candidate.id === id);
-  if (!action) {
-    return (
+  // The bars name the agent whose ask this is once there is one — the card below says the rest —
+  // and fall back to the list's own name while loading or on a refusal, where there is no ask.
+  useScreenTitle(
+    action ? (
+      <PageNavBreadcrumb parentLabel="Pending actions" parentTo="/pending">
+        {action.agent?.name ?? "Ask"}
+      </PageNavBreadcrumb>
+    ) : (
+      "Pending actions"
+    ),
+  );
+
+  const onAnswered = () => navigate({ to: "/pending" });
+
+  let content: React.ReactNode;
+  if (t !== undefined) {
+    content = byLink.isPending ? (
+      <Loader />
+    ) : byLink.error || !action ? (
+      <Refusal {...handoffRefusal(byLink.error)} />
+    ) : (
+      <PendingActionCard action={action} onAnswered={onAnswered} />
+    );
+  } else if (fromList.isPending) {
+    content = <Loader />;
+  } else if (!action) {
+    content = (
       <Refusal
         title="This ask is no longer open"
         message="It was answered, expired, or belongs to another account."
       />
     );
+  } else {
+    content = <PendingActionCard action={action} onAnswered={onAnswered} />;
   }
-  return <Selected action={action} onAnswered={() => navigate({ to: "/pending" })} />;
-}
 
-function Selected({ action, onAnswered }: { action: PendingAction; onAnswered: () => void }) {
-  return (
-    <>
-      <div>
-        <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/pending" />}>
-          <ArrowBackIcon />
-          All pending actions
-        </Button>
-      </div>
-      <PendingActionCard action={action} onAnswered={onAnswered} />
-    </>
-  );
+  return <PageContainer size="medium">{content}</PageContainer>;
 }
 
 /** The refusal page: what the link was, why it does not open, and that nothing was answered. */

@@ -1,6 +1,7 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+
 import { ApprovalsCard } from "@/components/agent/approvals-card";
 import { HarnessSnippet } from "@/components/agent/harness-snippet";
 import { LimitsForm } from "@/components/agent/limits-form";
@@ -8,8 +9,16 @@ import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
 import { ScopeEditor } from "@/components/agent/scope-editor";
 import { WorkingSetHistory } from "@/components/agent/working-set-history";
 import { WorkingSetTable } from "@/components/agent/working-set-table";
-import { ArrowBackIcon } from "@/components/icons";
-import { PageHeader } from "@/components/page-header";
+import { PageContainer } from "@/components/page/page-container";
+import {
+  PageHeader,
+  PageHeaderActions,
+  PageHeaderContent,
+  PageHeaderDescription,
+  PageHeaderTitle,
+} from "@/components/page/page-header";
+import { PageNavBreadcrumb } from "@/components/page/page-nav-breadcrumb";
+import { useScreenTitle } from "@/components/shell/screen-title";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,27 +54,27 @@ function AgentRoute() {
   const [revoking, setRevoking] = useState(false);
   const { agent, connectionIds } = data;
 
+  // The breadcrumb's parent half is the way back to the list; the on-page `PageHeaderTitle` below
+  // repeats the name at every width, as the page's own heading rather than as this breadcrumb.
+  useScreenTitle(
+    <PageNavBreadcrumb parentLabel="Agents" parentTo="/agents">
+      {agent.name}
+    </PageNavBreadcrumb>,
+  );
+
   return (
-    <>
-      <div>
-        <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/agents" />}>
-          <ArrowBackIcon />
-          All agents
-        </Button>
-      </div>
-      <PageHeader
-        title={
-          <span className="flex items-center gap-2">
+    <PageContainer size="large" className="gap-6">
+      <PageHeader>
+        <PageHeaderContent>
+          <PageHeaderTitle className="flex items-center gap-2">
             {agent.name}
             {agent.revokedAt ? (
               <Badge variant="destructive">revoked</Badge>
             ) : (
               <Badge variant="success">active</Badge>
             )}
-          </span>
-        }
-        description={
-          <>
+          </PageHeaderTitle>
+          <PageHeaderDescription>
             Token <code className="font-mono">{agent.tokenPrefix}…</code> · created{" "}
             <Time iso={agent.createdAt} />
             {agent.revokedAt ? (
@@ -74,18 +83,24 @@ function AgentRoute() {
                 · revoked <Time iso={agent.revokedAt} />
               </>
             ) : null}
-          </>
-        }
-      >
+          </PageHeaderDescription>
+        </PageHeaderContent>
         {agent.revokedAt ? null : (
-          <Button variant="destructive" onClick={() => setRevoking(true)}>
-            Revoke token
-          </Button>
+          <PageHeaderActions>
+            <Button variant="destructive" onClick={() => setRevoking(true)}>
+              Revoke token
+            </Button>
+          </PageHeaderActions>
         )}
       </PageHeader>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="flex flex-col gap-6">
+      {/* `grid-cols-1` at every width, not only `lg:grid-cols-2`: an implicit grid track is `auto`,
+          sized to its content's max-content width, and below `lg` the harness snippet's `<pre>`
+          made the one track wider than a 390px viewport — the whole column overflowed, with
+          "Revoke token" off the right edge. `minmax(0, 1fr)`, which `grid-cols-1` expands to, is
+          what lets the track shrink and the `<pre>` scroll inside it. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-6">
           {agent.revokedAt ? null : <HarnessSnippet agent={agent} />}
           <ScopeEditor
             key={connectionIds.join(",")}
@@ -94,7 +109,7 @@ function AgentRoute() {
             connections={connectionData.connections}
           />
         </div>
-        <div className="flex flex-col gap-6">
+        <div className="flex min-w-0 flex-col gap-6">
           <LimitsForm
             key={`${agent.name}:${agent.workingSetCap}:${agent.idleWindowDays}`}
             agent={agent}
@@ -107,6 +122,6 @@ function AgentRoute() {
       <WorkingSetHistory changes={history.changes} />
 
       <RevokeAgentDialog agent={agent} open={revoking} onOpenChange={setRevoking} />
-    </>
+    </PageContainer>
   );
 }

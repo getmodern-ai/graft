@@ -1,9 +1,18 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
+
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
 import { AddIcon, SmartToyIcon } from "@/components/icons";
-import { PageHeader } from "@/components/page-header";
+import { PageContainer } from "@/components/page/page-container";
+import {
+  PageHeader,
+  PageHeaderActions,
+  PageHeaderContent,
+  PageHeaderDescription,
+  PageHeaderTitle,
+} from "@/components/page/page-header";
+import { useScreenTitle } from "@/components/shell/screen-title";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,16 +50,25 @@ function AgentsRoute() {
   const [creating, setCreating] = useState(false);
   const agents = data.agents;
 
+  useScreenTitle("Agents");
+
   return (
-    <>
-      <PageHeader
-        title="Agents"
-        description="Each harness that connects to Graft is an agent, with a token, a scope and a working set of its own."
-      >
-        <Button onClick={() => setCreating(true)}>
-          <AddIcon />
-          New agent
-        </Button>
+    // `large`: the table is the screen, and a table wants the column.
+    <PageContainer size="large" className="gap-6">
+      <PageHeader>
+        <PageHeaderContent>
+          <PageHeaderTitle>Agents</PageHeaderTitle>
+          <PageHeaderDescription>
+            Each harness that connects to Graft is an agent, with a token, a scope and a working set
+            of its own.
+          </PageHeaderDescription>
+        </PageHeaderContent>
+        <PageHeaderActions>
+          <Button onClick={() => setCreating(true)}>
+            <AddIcon />
+            New agent
+          </Button>
+        </PageHeaderActions>
       </PageHeader>
 
       {agents.length === 0 ? (
@@ -122,6 +140,6 @@ function AgentsRoute() {
         onOpenChange={setCreating}
         connections={connectionData.connections}
       />
-    </>
+    </PageContainer>
   );
 }
