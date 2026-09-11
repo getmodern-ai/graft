@@ -1,15 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { agentKeys } from "@/lib/agent-queries";
 import {
   type Connection,
@@ -24,6 +25,9 @@ import { count } from "@/lib/format";
  * for the vendor's tools and every build approval for this connection are deleted, and every open
  * ask about it is closed — for all agents at once — and the tools stay, awaiting reconnection.
  * Re-entering the credential (`reenter-credential-dialog.tsx`) is the reconnection.
+ *
+ * The same `AlertDialog` shape as `agent/revoke-agent-dialog.tsx`, whose comment says why the
+ * close requests are ignored while the revoke is in flight (GRA-45).
  */
 export function RevokeConnectionDialog({
   connection,
@@ -52,25 +56,32 @@ export function RevokeConnectionDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Revoke {connection.displayName}?</DialogTitle>
-          <DialogDescription>
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next || !revoke.isPending) onOpenChange(next);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Revoke {connection.displayName}?</AlertDialogTitle>
+          <AlertDialogDescription>
             The credential is cleared, every agent loses its approvals for {connection.vendor} tools
             at once, and any open ask about this connection is closed. The tools themselves stay in
             the toolbox and ask again once a credential is re-entered.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Keep it
-          </Button>
-          <Button variant="destructive" disabled={revoke.isPending} onClick={() => revoke.mutate()}>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={revoke.isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={revoke.isPending}
+            onClick={() => revoke.mutate()}
+          >
             {revoke.isPending ? "Revoking…" : "Revoke connection"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

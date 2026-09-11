@@ -16,6 +16,13 @@ import {
 } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ApiError } from "@/lib/api";
 import {
   MODEL_KEY_PROVIDERS,
@@ -169,21 +176,32 @@ function ModelKeyForm({
       }}
     >
       <FieldGroup>
-        <Field>
+        <Field data-invalid={errorFor("provider") ? true : undefined}>
           <FieldLabel htmlFor="model-key-provider">Provider</FieldLabel>
-          <select
-            id="model-key-provider"
-            className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          <Select
             value={provider}
-            onChange={(event) => setProvider(event.target.value as ModelKeyProvider)}
+            items={MODEL_KEY_PROVIDERS}
             disabled={save.isPending}
+            onValueChange={(next) => {
+              const option = MODEL_KEY_PROVIDERS.find((candidate) => candidate.value === next);
+              if (option) setProvider(option.value);
+            }}
           >
-            {MODEL_KEY_PROVIDERS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger
+              id="model-key-provider"
+              className="w-full"
+              aria-invalid={errorFor("provider") ? true : undefined}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MODEL_KEY_PROVIDERS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {errorFor("provider") ? <FieldError>{errorFor("provider")}</FieldError> : null}
         </Field>
         <Field data-invalid={errorFor("apiKey") ? true : undefined}>
