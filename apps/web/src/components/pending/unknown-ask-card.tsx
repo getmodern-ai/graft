@@ -1,3 +1,4 @@
+import { CodeBlock } from "@/components/code-block";
 import { AskCard, useAnswerAsk } from "@/components/pending/ask-card";
 import type { PendingAction } from "@/lib/pending-action-queries";
 
@@ -26,9 +27,7 @@ export function UnknownAskCard({
         This console does not know how to show a <code className="font-mono">{action.kind}</code>{" "}
         ask; what the agent sent is below.
       </p>
-      <pre className="overflow-x-auto rounded-md border bg-muted/50 p-3 font-mono text-xs">
-        {JSON.stringify(action.payload, null, 2)}
-      </pre>
+      <CodeBlock label="What the agent sent" code={JSON.stringify(action.payload, null, 2)} />
     </AskCard>
   );
 }

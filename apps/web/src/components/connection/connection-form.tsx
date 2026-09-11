@@ -1,7 +1,15 @@
-import { LanguageIcon } from "@/components/icons";
+import type { AuthScheme } from "@graft/proxy/types";
 
+import { LanguageIcon } from "@/components/icons";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   type ConnectionDraft,
@@ -13,7 +21,10 @@ import {
   SCHEMES,
   withScheme,
 } from "@/lib/connection-form";
-import { cn } from "@/lib/utils";
+
+/** What a scheme is called in the picker: the person's words, then the wire name it maps to. */
+const schemeOption = (scheme: AuthScheme) => `${SCHEME_LABELS[scheme]} · ${scheme}`;
+const SCHEME_ITEMS = SCHEMES.map((scheme) => ({ value: scheme, label: schemeOption(scheme) }));
 
 /**
  * The non-secret half of a connection (ADR 0006: everything the handoff carries): the vendor slug,
@@ -120,24 +131,25 @@ export function ConnectionFormFields({
 
       <Field>
         <FieldLabel htmlFor={id("scheme")}>Auth scheme</FieldLabel>
-        <select
-          id={id("scheme")}
+        <Select
           value={draft.scheme}
+          items={SCHEME_ITEMS}
           disabled={disabled}
-          className={cn(
-            "h-8 w-full min-w-0 rounded-none border border-input bg-transparent px-2 py-1 text-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30",
-          )}
-          onChange={(event) => {
-            const next = event.target.value;
-            if (isScheme(next)) onChange(withScheme(draft, next));
+          onValueChange={(next) => {
+            if (next !== null && isScheme(next)) onChange(withScheme(draft, next));
           }}
         >
-          {SCHEMES.map((scheme) => (
-            <option key={scheme} value={scheme}>
-              {SCHEME_LABELS[scheme]} · {scheme}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger id={id("scheme")} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SCHEMES.map((scheme) => (
+              <SelectItem key={scheme} value={scheme}>
+                {schemeOption(scheme)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <FieldDescription>
           How the proxy presents the credential to the vendor. The secret fields below follow it.
         </FieldDescription>

@@ -21,15 +21,39 @@
  *   - the agent tint palette (`--agent-*`) and its `--color-agent-*` entries — the colours of
  *     Cando's agent faces, which the console has no equivalent of;
  *   - `--chat-input-shadow` / `--shadow-chat-input` — the chat composer's float; there is no chat;
- *   - the two `@utility` sheens, `button-sheen` and `agent-disc-sheen` — the first is the default
- *     Button's hover wash and arrives with Cando's `button.tsx` (GRA-45), the second is the agent
- *     disc's;
+ *   - the `agent-disc-sheen` `@utility` — the agent disc's sheen, which nothing here draws.
+ *     `button-sheen`, the default Button's hover wash, is *not* left out: it is declared below,
+ *     verbatim, because Cando's `button.tsx` applies it (GRA-45);
  *   - the six `@font-face` declarations — GT Standard L and GT Standard Mono VF are licensed to
  *     Cando, not yet to Graft (GRA-49). The `--font-*` stacks below still name them first, so the
  *     day the files land only the `@font-face` block is added; until then the browser falls
  *     through to the system faces and requests no missing file;
  *   - the monorepo `@source` lines — `@tailwindcss/vite` scans this app on its own.
  */
+
+/* The default Button's hover wash: a flat 8% white over the fill, read off the
+ * Button component's `variant=default, state=hover` node. The redesign (CAN-291)
+ * flattened the old top-dark/bottom-light sheen — solid fills are now plain, and
+ * this is the one gradient the component still carries, applied as
+ * `hover:button-sheen` by the default variant only; secondary and destructive
+ * hover change nothing but shadow. One value for both modes, because its only
+ * substrate is `--primary`, the same orange in both.
+ *
+ * `@utility` rather than a `@theme` entry, because Tailwind v4 has no
+ * `--background-image-*` namespace — declaring one there compiles silently and
+ * produces no class at all.
+ *
+ * **Not named `bg-…` on purpose.** `cn` runs tailwind-merge, which reads any
+ * `bg-*` class as a background and keeps only the last one, so a `bg-button-sheen`
+ * would fight `bg-primary` and lose. They set different properties and must both
+ * survive, so the name stays outside that namespace.
+ *
+ * A gradient over the fill rather than `hover:bg-primary/92`: alpha on the fill
+ * would let the surface underneath bleed through, and the frame lightens the fill
+ * itself. */
+@utility button-sheen {
+  background-image: linear-gradient(oklch(1 0 0 / 8%), oklch(1 0 0 / 8%));
+}
 
 /* cando:tokens:start. Managed by cando-import-variables. Edit source tokens, not this block.
  *
@@ -248,15 +272,15 @@
 :root {
   /* The bevel is 1px at rest and deepens to 2px on hover — the design system's Button pads 1px
    * enabled and 2px hovered. Disabled is the rest shadow faded by the element's own opacity, so it
-   * needs no token of its own. Applied by Cando's `button.tsx` when it lands (GRA-45); declared now
-   * so the token set is complete and `shadow-button` is a class. */
+   * needs no token of its own. Applied by `button.tsx` — Cando's, since GRA-45 — as `shadow-button`
+   * and `shadow-button-hover`. */
   --button-shadow: inset 0 -1px 0 0 oklch(0 0 0 / 20%), 0 1px 2px 0 oklch(0 0 0 / 5%);
   --button-shadow-hover:
     inset 0 -2px 0 0 oklch(0 0 0 / 20%), 0 4px 6px -2px oklch(0 0 0 / 5%),
     0 10px 15px -3px oklch(0 0 0 / 10%);
 
-  /* The modal scrim: one token for every overlay — `Dialog` today, `AlertDialog`, `Sheet` and
-   * `Drawer` as they arrive — in place of the `bg-black/10` each used to hard-code.
+  /* The modal scrim: one token for every overlay — `Dialog`, `AlertDialog` and `Sheet` (GRA-45),
+   * and a `Drawer` if one arrives — in place of the `bg-black/10` each used to hard-code.
    *
    * Black in both modes on purpose, and the one value here not derived from the arithmetic above.
    * A scrim dims what is behind it; `--foreground` would invert to a white veil in dark, which

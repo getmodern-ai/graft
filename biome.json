@@ -75,6 +75,12 @@
           "a11y": {
             "noLabelWithoutControl": "off",
             "useSemanticElements": "off"
+          },
+          "correctness": {
+            "useExhaustiveDependencies": "off"
+          },
+          "suspicious": {
+            "noDocumentCookie": "off"
           }
         }
       }

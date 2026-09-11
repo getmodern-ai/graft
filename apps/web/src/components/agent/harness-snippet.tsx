@@ -1,4 +1,4 @@
-import { Snippet } from "@/components/agent/token-once";
+import { CodeBlock } from "@/components/code-block";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Agent } from "@/lib/agent-queries";
 import { mcpServersSnippet, TOKEN_ENV_VAR } from "@/lib/mcp-snippet";
@@ -21,11 +21,7 @@ export function HarnessSnippet({ agent }: { agent: Agent }) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Snippet
-          label="mcpServers"
-          code={mcpServersSnippet(window.location.origin)}
-          copyLabel="Copy"
-        />
+        <CodeBlock label="mcpServers" code={mcpServersSnippet(window.location.origin)} />
       </CardContent>
     </Card>
   );
