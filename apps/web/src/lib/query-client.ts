@@ -18,10 +18,11 @@ import { createQueryErrorRetry } from "./query-error-retry";
  * toasts the same sentence with a Retry that refetches it (`query-error-retry.ts`, GRA-47), and the
  * route's error boundary still frames a read that failed before the screen could draw.
  *
- * A factory rather than a bare constant so a test can build a client of its own with the same
- * wiring; `main.tsx` uses the one instance below.
+ * A factory rather than a constant: `main.tsx` builds the one instance with `onRecover` bound to
+ * the router it creates next (`query-error-retry.ts` says what the hook is for), and the colocated
+ * test builds its own with the same wiring.
  */
-export function createQueryClient() {
+export function createQueryClient(options: { onRecover?: () => void } = {}) {
   const queryCache = new QueryCache();
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -44,11 +45,9 @@ export function createQueryClient() {
 
   // Assigned after construction, not passed into `new QueryCache(...)`: the Retry action needs the
   // client itself, and the client does not exist until this cache has gone into its constructor.
-  const { onError, onSuccess } = createQueryErrorRetry(queryClient);
+  const { onError, onSuccess } = createQueryErrorRetry(queryClient, options);
   queryCache.config.onError = onError;
   queryCache.config.onSuccess = onSuccess;
 
   return queryClient;
 }
-
-export const queryClient = createQueryClient();

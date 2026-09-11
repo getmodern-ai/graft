@@ -9,12 +9,25 @@ vi.mock("sonner", () => ({
 const { toast } = await import("sonner");
 const { createQueryClient } = await import("./query-client");
 
-type ToastOptions = { id: string; action: { label: string; onClick: () => void } };
+type ToastOptions = {
+  id: string;
+  action: { label: string; onClick: (event: { preventDefault: () => void }) => void };
+};
 
-function lastToast(): ToastOptions {
+/** The last toast shown, with its Retry pressed through a click the handler can keep the toast on. */
+function lastToast() {
   const call = vi.mocked(toast.error).mock.calls.at(-1);
   if (!call) throw new Error("no toast was shown");
-  return call[1] as ToastOptions;
+  const options = call[1] as ToastOptions;
+  const preventDefault = vi.fn();
+  return {
+    id: options.id,
+    action: {
+      label: options.action.label,
+      onClick: () => options.action.onClick({ preventDefault }),
+    },
+    preventDefault,
+  };
 }
 
 /** A query that fails on demand: `fail` decides each fetch, `settle` releases a hanging one. */
@@ -103,6 +116,8 @@ describe("the query-error toast", () => {
 
     first.action.onClick();
 
+    // Sonner would dismiss the toast on the click; the handler keeps it so the replacement lands.
+    expect(first.preventDefault).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(toast.error).toHaveBeenCalledTimes(2));
     expect(lastToast().id).toBe(first.id);
     expect(toast.dismiss).not.toHaveBeenCalled();
@@ -124,6 +139,22 @@ describe("the query-error toast", () => {
 
     await vi.waitFor(() => expect(client.getQueryData(["agents"])).toBe("ok"));
     expect(queryFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks the router to recover only when the retried query succeeded", async () => {
+    const onRecover = vi.fn();
+    const client = createQueryClient({ onRecover });
+    const { queryFn, succeedNext } = failingQuery();
+    await client.fetchQuery({ queryKey: ["agent"], queryFn }).catch(() => {});
+
+    lastToast().action.onClick();
+    await vi.waitFor(() => expect(toast.error).toHaveBeenCalledTimes(2));
+    expect(onRecover).not.toHaveBeenCalled();
+
+    succeedNext();
+    lastToast().action.onClick();
+    await vi.waitFor(() => expect(onRecover).toHaveBeenCalledTimes(1));
+    expect(client.getQueryData(["agent"])).toBe("ok");
   });
 
   it("never dismisses for a query that did not fail", async () => {

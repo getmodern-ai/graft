@@ -31,7 +31,8 @@ import { connectionsQuery } from "@/lib/connection-queries";
  * usually run it already (`defaultPreload: "intent"`), so the rows are there on click. Awaiting
  * would hand the wait to the router's whole-screen spinner and leave the table's own pending rows
  * unreachable, which is the state the design draws for this (Cando's CAN-546 makes the same call
- * for its detail page). The connections are the create dialog's, read by the time it opens.
+ * for its detail page). The connections are the create dialog's, which draws its scope as
+ * skeleton rows and holds Create until they arrive (`create-agent-dialog.tsx`).
  */
 export const Route = createFileRoute("/_auth/_shell/agents/")({
   loader: ({ context }) => {
@@ -103,7 +104,16 @@ function AgentsRoute() {
       <CreateAgentDialog
         open={creating}
         onOpenChange={setCreating}
-        connections={connections.data?.connections ?? []}
+        connections={connections.data?.connections}
+        connectionsFailed={
+          connections.isError
+            ? {
+                error: connections.error,
+                onRetry: () => void connections.refetch(),
+                retrying: connections.isFetching,
+              }
+            : undefined
+        }
       />
     </PageContainer>
   );

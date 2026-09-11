@@ -4,8 +4,17 @@ import ReactDOM from "react-dom/client";
 
 import { Loader } from "./components/loader";
 import { RouteNotFound } from "./components/route-not-found";
-import { queryClient } from "./lib/query-client";
+import { createQueryClient } from "./lib/query-client";
 import { routeTree } from "./routeTree.gen";
+
+const queryClient = createQueryClient({
+  /**
+   * A toast Retry that recovers a read a loader had awaited re-runs the loaders too, so the
+   * boundary standing on that read clears with the toast (`lib/query-error-retry.ts`). `router`
+   * is assigned below; this closure runs on a click, long after.
+   */
+  onRecover: () => void router.invalidate(),
+});
 
 const router = createRouter({
   routeTree,

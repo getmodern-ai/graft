@@ -24,7 +24,10 @@ type QueryCacheHandlers = NonNullable<ConstructorParameters<typeof QueryCache>[0
  * fetching, so mashing Retry cannot queue requests, and it goes through the client's public
  * `refetchQueries` rather than the query's own `fetch`, which keeps the disabled/static checks
  * `refetchQueries` does. A retry that fails again runs `onError` on its own — every failed fetch
- * does — so a second failure is never a dead end.
+ * does — so a second failure is never a dead end. **That needs the click to keep the toast up**:
+ * sonner dismisses a toast whose action was pressed unless the handler says otherwise, and a
+ * dismissal in flight swallowed the replacement — measured: a Retry that failed left no toast at
+ * all. `preventDefault` keeps the notice; a retry that succeeds is dismissed by `onSuccess`.
  *
  * The message is the mutation toast's, deliberately, not Cando's `Error: …` prefix: the server's
  * own sentence when it sent one (`api.ts` maps `{ error, message }` onto `ApiError`), and one fixed
@@ -35,9 +38,20 @@ type QueryCacheHandlers = NonNullable<ConstructorParameters<typeof QueryCache>[0
  * well — Cando's arrangement, kept. The toast is the transient announcement and the boundary the
  * durable frame; suppressing one for the other would need the cache to know which query a route
  * depends on, and the toast's `id` already keeps one failure to one notice.
+ *
+ * **A Retry that recovers such a read also clears the boundary** — `onRecover`, which `main.tsx`
+ * wires to `router.invalidate()`. Without it the toast's Retry refetched the query, the toast
+ * went, and the person was left on the error screen until they pressed its own Try again
+ * (raised by Greptile on #30). Invalidating re-runs the loaders of the matched routes, which now
+ * read the refreshed cache without a request, and a route whose loader had failed is drawn anew:
+ * TanStack Router keys a boundary's reset on the match, and a reload produces a new one. Called
+ * only when the retried query *succeeded* — a second failure runs `onError` and the boundary is
+ * still the right thing to show — and harmless when no boundary was standing, since every loader
+ * finds its reads fresh.
  */
 export function createQueryErrorRetry(
   client: QueryClient,
+  options: { onRecover?: () => void } = {},
 ): Pick<QueryCacheHandlers, "onError" | "onSuccess"> {
   const failing = new Set<string>();
 
@@ -47,11 +61,14 @@ export function createQueryErrorRetry(
       id: query.queryHash,
       action: {
         label: "Retry",
-        onClick: () => {
+        onClick: (event) => {
+          event.preventDefault();
           if (query.state.fetchStatus === "fetching") {
             return;
           }
-          void client.refetchQueries({ queryKey: query.queryKey, exact: true });
+          void client.refetchQueries({ queryKey: query.queryKey, exact: true }).then(() => {
+            if (query.state.status === "success") options.onRecover?.();
+          });
         },
       },
     });
