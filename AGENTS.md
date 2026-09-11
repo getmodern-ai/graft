@@ -277,9 +277,9 @@ in `COLOUR_EXCEPTIONS`. Two guards keep dark mode correct and CI runs both as th
 inside `@theme`, a base token left behind by its family — logic in `src/tokens/*.ts`, exceptions in
 `COLOUR_EXCEPTIONS` there and never inline) and
 `pnpm run check-tokens` (every design-token utility compiles into `dist/assets`; it needs a build,
-which `check-types` runs). The type stacks name GT Standard L and GT Standard Mono VF but nothing
-ships the faces until GRA-49 settles the licence; the console renders in the system fallback and
-requests no missing file.
+which `check-types` runs). GT Standard L and GT Standard Mono VF ship with the console: the six
+`.woff2` files under `src/fonts/` and Cando's `@font-face` block in `index.css`, byte-identical to
+Cando's, under the Grilli Type licence Aleks confirmed covers Graft (GRA-49).
 
 **What the console composes for itself from the primitives** (GRA-45). `src/components/code-block.tsx`
 is the one place a token, a shell line or an ask's raw payload is shown: a label row with
