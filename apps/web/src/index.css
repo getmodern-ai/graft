@@ -35,7 +35,13 @@
 /* GT Standard L — licensed from Grilli Type, self-hosted. Obliques are not
  * shipped: nothing in the design system asks for italic. The mono is a variable
  * font whose wght axis runs 300–900 but *defaults to 900*, so the range below is
- * load-bearing — without it every mono glyph renders Black. */
+ * load-bearing — without it every mono glyph renders Black.
+ *
+ * The local consequence (Greptile on #27): the two pending-action blockquotes
+ * that apply `italic` render the browser's synthesized slant of the upright, as
+ * Cando's one italic line does under these same declarations. Cando holds no
+ * oblique file to copy, so shipping one is not a choice this repository has; if
+ * the slant is unwanted, the change is at the two call sites, not here. */
 @font-face {
   font-family: "GT Standard L";
   src: url("./fonts/gt-standard-l-300.woff2") format("woff2");
