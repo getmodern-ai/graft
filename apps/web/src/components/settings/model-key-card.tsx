@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
-import { KeyRoundIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { KeyIcon } from "@/components/icons";
 
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
@@ -41,7 +41,7 @@ export function ModelKeyCard() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <KeyRoundIcon className="size-4" />
+          <KeyIcon className="size-4" />
           Your own model key
           {current ? (
             <Badge variant="secondary">set</Badge>

@@ -1,13 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-
 import { ConnectionFormFields, HostsNotice } from "@/components/connection/connection-form";
 import { CredentialFields } from "@/components/connection/credential-fields";
 import { ConsentStatus, OAuthClientNotice } from "@/components/connection/oauth-client-notice";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
+import { OpenInNewIcon } from "@/components/icons";
 import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
 import { Badge } from "@/components/ui/badge";
 import { FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
@@ -158,7 +157,7 @@ export function ConnectionAskCard({
             className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
           >
             The documentation the agent read: {payload.docsUrl}
-            <ExternalLinkIcon className="size-3" />
+            <OpenInNewIcon className="size-3" />
           </a>
         ) : (
           <p className="text-muted-foreground text-xs">

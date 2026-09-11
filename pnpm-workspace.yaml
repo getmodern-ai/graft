@@ -77,8 +77,16 @@ catalog:
   class-variance-authority: ^0.7.1
   clsx: ^2.1.1
   tailwind-merge: ^3.6.0
-  lucide-react: ^1.43.0
   sonner: ^2.0.8
+  # The design system's three supporting packages (ADR 0017), at Cando's lines. `next-themes` is the
+  # theme provider the console mounts in `__root.tsx`; `shadcn` is the CLI package, a devDependency
+  # only because it ships `shadcn/tailwind.css`, which `apps/web/src/index.css` imports for the
+  # `data-open`/`data-horizontal` variants the primitives are written against; and
+  # `@material-symbols/svg-400` is the glyph source `apps/web/scripts/generate-icons.mjs` reads —
+  # never imported at run time, since the generated `src/components/icons.tsx` embeds the paths.
+  next-themes: ^0.4.6
+  shadcn: ^4.19.0
+  "@material-symbols/svg-400": ^0.47.0
 
 # Overrides live here and not under `pnpm` in the root `package.json`: pnpm 11 no longer reads that
 # field and pnpm 10 reads both, so this is the one placement both honour (AGENTS.md, "Conventions",

@@ -3,7 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Declares that the page renders in either scheme, rather than leaving the browser to
+         assume light-only — `theme-provider.tsx` sets `color-scheme` on the `<html>` element
+         itself once it mounts, but this is the value in effect for the instant before that. -->
     <meta name="color-scheme" content="light dark" />
+    <!-- The browser-chrome color (address bar, status bar) for that same instant: one meta per
+         scheme so the OS picks, matching `defaultTheme="system"` in `src/routes/__root.tsx`. The
+         values are the two `--background` tokens in `src/index.css` converted to sRGB hex, and the
+         one place a colour is written as a literal on purpose (ADR 0017; the sanctioned exception is
+         in `src/tokens/colour-literals.ts`). `ThemeColorMeta` in `src/components/theme-provider.tsx`
+         rewrites both once the resolved theme is known, so an explicit stored choice overrides
+         whichever media query the browser applies. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f0c0a" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Graft</title>
   </head>

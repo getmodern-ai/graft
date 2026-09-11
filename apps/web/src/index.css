@@ -1,119 +1,404 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* The shadcn CLI package's stylesheet: the custom variants and utilities the registry's base-lyra
+ * primitives are written against (`data-open`, `data-closed`, `data-checked`, `data-horizontal`,
+ * `no-scrollbar`, the accordion keyframes, …). Cando's `globals.css` imports the same file; without
+ * it a primitive copied from there compiles some of its classes to nothing, silently (ADR 0017). */
+@import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
 
 /*
-  The console's tokens: shadcn's neutral base, both modes, in the `@theme inline` shape the CLI
-  writes for a Vite project. Graft has one SPA and no design file behind it yet, so these are the
-  library's defaults and not Cando's imported Figma variables (`AGENTS.md`, "The console"); a
-  `packages/ui` and a token import arrive if a second app or a design system ever does.
-*/
+ * The console's tokens are Cando's (ADR 0017). This file is Cando's
+ * `packages/ui/src/styles/globals.css` with the product-specific pieces left out, and the values
+ * between the `cando:tokens:start`/`end` sentinels below are copied verbatim — Figma stays
+ * upstream in Cando, where its `cando-import-variables` skill regenerates that block from the
+ * design-system file, so a re-sync here is a copy of the block and never a hand edit. Everything
+ * outside the block is Cando's text too, repointed at this repository's decisions (ADR 0011).
+ *
+ * Left out on purpose, so a reader diffing the two files knows what is missing and why:
+ *
+ *   - the agent tint palette (`--agent-*`) and its `--color-agent-*` entries — the colours of
+ *     Cando's agent faces, which the console has no equivalent of;
+ *   - `--chat-input-shadow` / `--shadow-chat-input` — the chat composer's float; there is no chat;
+ *   - the two `@utility` sheens, `button-sheen` and `agent-disc-sheen` — the first is the default
+ *     Button's hover wash and arrives with Cando's `button.tsx` (GRA-45), the second is the agent
+ *     disc's;
+ *   - the six `@font-face` declarations — GT Standard L and GT Standard Mono VF are licensed to
+ *     Cando, not yet to Graft (GRA-49). The `--font-*` stacks below still name them first, so the
+ *     day the files land only the `@font-face` block is added; until then the browser falls
+ *     through to the system faces and requests no missing file;
+ *   - the monorepo `@source` lines — `@tailwindcss/vite` scans this app on its own.
+ */
+
+/* cando:tokens:start. Managed by cando-import-variables. Edit source tokens, not this block.
+ *
+ * The complete Mode collection of Cando's design-system file — all 87 colour tokens, both modes,
+ * plus `--radius` — copied from `packages/ui/src/styles/globals.css` at Cando `origin/main`
+ * 78c94829 (2026-09-11). Names mirror the Figma variable path exactly, with `/` as `-`, so
+ * `--custom-bg-input-30` is `custom/bg-input-30` and nothing needs translating in either
+ * direction; that is also why `sidebar/sidebar` is `--sidebar-sidebar` and `chart/chart-1` is
+ * `--chart-chart-1`, with the shadcn names restored as `@theme` aliases further down.
+ *
+ * Two things to know before "fixing" a value here, both inherited from Cando and both deliberate
+ * there: the solid primary is #fd6a41 while every tinted `custom/*-primary-*` variant, `focus` and
+ * `ring-focus` sit on the previous #fd5a2a — the source's own state, imported faithfully; and the
+ * dark `--destructive` and `--destructive-foreground` depart from the Figma source, which mis-aims
+ * both aliases into unreadable contrast (Cando's CAN-130). The argument for each is in Cando's
+ * copy of this comment; ours records only that they are copied, not invented.
+ */
 :root {
   --radius: 0.625rem;
+  --accent: oklch(0.963 0.0042 56.37);
+  --accent-foreground: oklch(0.25 0.0072 67.49);
   --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --border: oklch(0.928 0.0068 53.44);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.157 0.0066 55.82);
+  --chart-chart-1: oklch(0.701 0.1885 36.31);
+  --chart-chart-2: oklch(0.672 0.1574 246.5);
+  --chart-chart-3: oklch(0.642 0.2122 302.97);
+  --chart-chart-4: oklch(0.745 0.1539 159.02);
+  --chart-chart-5: oklch(0.82 0.1433 72.83);
+  --custom-bg-destructive-10: oklch(0.531 0.1933 25.14 / 10%);
+  --custom-bg-destructive-20: oklch(0.531 0.1933 25.14 / 20%);
+  --custom-bg-input-100-80: oklch(0.928 0.0068 53.44);
+  --custom-bg-input-20-30: oklch(0.893 0.0094 52.09 / 20%);
+  --custom-bg-input-20-50: oklch(0.893 0.0094 52.09 / 20%);
+  --custom-bg-input-30: oklch(0.893 0.0094 52.09 / 30%);
+  --custom-bg-input-30-50: oklch(0.893 0.0094 52.09 / 30%);
+  --custom-bg-input-30-trans-light: oklch(1 0 0);
+  --custom-bg-input-50: oklch(0.893 0.0094 52.09 / 50%);
+  --custom-bg-input-50-trans-light: oklch(1 0 0);
+  --custom-bg-input-80: oklch(0.893 0.0094 52.09 / 80%);
+  --custom-bg-input-90: oklch(0.893 0.0094 52.09 / 90%);
+  --custom-bg-muted-50: oklch(0.977 0.0034 67.78 / 50%);
+  --custom-bg-primary-10: oklch(0.68 0.2071 36.25 / 10%);
+  --custom-bg-primary-5: oklch(0.68 0.2071 36.25 / 5%);
+  --custom-bg-primary-80: oklch(0.68 0.2071 36.25 / 80%);
+  --custom-bg-secondary-80: oklch(0.977 0.0034 67.78 / 80%);
+  --custom-border-50: oklch(0.928 0.0068 53.44 / 50%);
+  --custom-border-primary-30: oklch(0.68 0.2071 36.25 / 30%);
+  --custom-border-primary-checked: oklch(0.68 0.2071 36.25 / 30%);
+  --custom-border-subtle: oklch(0.157 0.0066 55.82 / 5%);
+  --custom-brand-amber: oklch(0.82 0.1433 72.83);
+  --custom-brand-blue: oklch(0.672 0.1574 246.5);
+  --custom-brand-green: oklch(0.745 0.1539 159.02);
+  --custom-brand-orange: oklch(0.701 0.1885 36.31);
+  --custom-brand-purple: oklch(0.642 0.2122 302.97);
+  --custom-brand-red: oklch(0.63 0.2294 25.06);
+  --custom-dark-input: oklch(1 0 0 / 0%);
+  --custom-destructive-70: oklch(0.531 0.1933 25.14 / 70%);
+  --custom-destructive-90: oklch(0.531 0.1933 25.14 / 90%);
+  --custom-destructive-border-40: oklch(0.531 0.1933 25.14 / 40%);
+  --custom-destructive-focus: oklch(0.531 0.1933 25.14 / 20%);
+  --custom-foreground-10: oklch(0.157 0.0066 55.82 / 10%);
+  --custom-foreground-5: oklch(0.157 0.0066 55.82 / 5%);
+  --custom-foreground-5-10: oklch(0.157 0.0066 55.82 / 5%);
+  --custom-foreground-70: oklch(0.157 0.0066 55.82 / 70%);
+  --custom-muted-foreground-10: oklch(0.524 0.0078 53.34 / 10%);
+  --custom-switch-off-thumb-bg: oklch(1 0 0);
+  --custom-switch-on-thumb-bg: oklch(1 0 0);
+  --destructive: oklch(0.531 0.1933 25.14);
+  --destructive-foreground: oklch(1 0 0);
+  --foreground: oklch(0.157 0.0066 55.82);
+  --info: oklch(0.471 0.1106 246.53);
+  --info-foreground: oklch(0.99 0.0051 247.88);
+  --info-ring: oklch(0.84 0.0764 246.41);
+  --input: oklch(0.802 0.0088 56.28);
+  --muted: oklch(0.977 0.0034 67.78);
+  --muted-foreground: oklch(0.524 0.0078 53.34);
+  --opacity-100: oklch(1 0 0 / 0%);
+  --opacity-30: oklch(1 0 0 / 70%);
+  --opacity-50: oklch(1 0 0 / 50%);
+  --opacity-80: oklch(1 0 0 / 20%);
+  --opacity-90: oklch(1 0 0 / 10%);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --popover-foreground: oklch(0.157 0.0066 55.82);
+  --primary: oklch(0.701 0.1885 36.31);
+  --primary-foreground: oklch(0.157 0.0066 55.82);
+  --ring: oklch(0.68 0.2071 36.25);
+  --ring-focus: oklch(0.68 0.2071 36.25 / 50%);
+  --secondary: oklch(0.977 0.0034 67.78);
+  --secondary-foreground: oklch(0.25 0.0072 67.49);
+  --sidebar-accent: oklch(0.963 0.0042 56.37);
+  --sidebar-accent-foreground: oklch(0.25 0.0072 67.49);
+  --sidebar-border: oklch(0.928 0.0068 53.44);
+  --sidebar-foreground: oklch(0.157 0.0066 55.82);
+  --sidebar-primary: oklch(0.68 0.2071 36.25);
+  --sidebar-primary-foreground: oklch(0.157 0.0066 55.82);
+  --sidebar-ring: oklch(0.68 0.2071 36.25 / 64%);
+  --sidebar-sidebar: oklch(0.989 0.0017 67.8);
   --success: oklch(0.448 0.1083 151.33);
+  --success-80: oklch(0.448 0.1083 151.33 / 80%);
   --success-foreground: oklch(0.972 0.0368 159.02);
+  --success-ring: oklch(0.869 0.1798 158.99);
   --warning: oklch(0.52 0.1047 73);
   --warning-foreground: oklch(0.99 0.0068 67.75);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --warning-ring: oklch(0.898 0.0769 72.94);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --accent: oklch(0.34 0.0066 48.52);
+  --accent-foreground: oklch(0.963 0.0042 56.37);
+  --background: oklch(0.157 0.0066 55.82);
+  --border: oklch(0.434 0.0072 59.51);
+  --card: oklch(0.203 0.0062 56.01);
+  --card-foreground: oklch(0.963 0.0042 56.37);
+  --chart-chart-1: oklch(0.701 0.1885 36.31);
+  --chart-chart-2: oklch(0.728 0.1345 246.08);
+  --chart-chart-3: oklch(0.703 0.1715 302.76);
+  --chart-chart-4: oklch(0.786 0.1619 159.19);
+  --chart-chart-5: oklch(0.846 0.1202 73.24);
+  --custom-bg-destructive-10: oklch(0.63 0.2294 25.06 / 10%);
+  --custom-bg-destructive-20: oklch(0.63 0.2294 25.06 / 20%);
+  --custom-bg-input-100-80: oklch(0.963 0.0042 56.37 / 12%);
+  --custom-bg-input-20-30: oklch(0.963 0.0042 56.37 / 5%);
+  --custom-bg-input-20-50: oklch(0.963 0.0042 56.37 / 9%);
+  --custom-bg-input-30: oklch(0.963 0.0042 56.37 / 5%);
+  --custom-bg-input-30-50: oklch(0.963 0.0042 56.37 / 9%);
+  --custom-bg-input-30-trans-light: oklch(0.963 0.0042 56.37 / 4%);
+  --custom-bg-input-50: oklch(0.963 0.0042 56.37 / 9%);
+  --custom-bg-input-50-trans-light: oklch(0.963 0.0042 56.37 / 9%);
+  --custom-bg-input-80: oklch(0.963 0.0042 56.37 / 13%);
+  --custom-bg-input-90: oklch(0.963 0.0042 56.37 / 15%);
+  --custom-bg-muted-50: oklch(0.295 0.0069 67.56 / 50%);
+  --custom-bg-primary-10: oklch(0.68 0.2071 36.25 / 10%);
+  --custom-bg-primary-5: oklch(0.68 0.2071 36.25 / 10%);
+  --custom-bg-primary-80: oklch(0.68 0.2071 36.25 / 80%);
+  --custom-bg-secondary-80: oklch(0.295 0.0069 67.56 / 80%);
+  --custom-border-50: oklch(0.295 0.0069 67.56 / 50%);
+  --custom-border-primary-30: oklch(0.68 0.2071 36.25 / 20%);
+  --custom-border-primary-checked: oklch(0.68 0.2071 36.25 / 20%);
+  --custom-border-subtle: oklch(0.963 0.0042 56.37 / 10%);
+  --custom-brand-amber: oklch(0.82 0.1433 72.83);
+  --custom-brand-blue: oklch(0.672 0.1574 246.5);
+  --custom-brand-green: oklch(0.745 0.1539 159.02);
+  --custom-brand-orange: oklch(0.701 0.1885 36.31);
+  --custom-brand-purple: oklch(0.642 0.2122 302.97);
+  --custom-brand-red: oklch(0.63 0.2294 25.06);
+  --custom-dark-input: oklch(0.963 0.0042 56.37 / 15%);
+  --custom-destructive-70: oklch(0.63 0.2294 25.06 / 70%);
+  --custom-destructive-90: oklch(0.63 0.2294 25.06 / 90%);
+  --custom-destructive-border-40: oklch(0.63 0.2294 25.06 / 40%);
+  --custom-destructive-focus: oklch(0.63 0.2294 25.06 / 40%);
+  --custom-foreground-10: oklch(0.963 0.0042 56.37 / 10%);
+  --custom-foreground-5: oklch(0.963 0.0042 56.37 / 5%);
+  --custom-foreground-5-10: oklch(0.963 0.0042 56.37 / 10%);
+  --custom-foreground-70: oklch(0.963 0.0042 56.37 / 70%);
+  --custom-muted-foreground-10: oklch(0.71 0.0091 56.26 / 10%);
+  --custom-switch-off-thumb-bg: oklch(0.963 0.0042 56.37);
+  --custom-switch-on-thumb-bg: oklch(1 0 0);
+  --destructive: oklch(0.63 0.2294 25.06);
+  --destructive-foreground: oklch(1 0 0);
+  --foreground: oklch(0.963 0.0042 56.37);
+  --info: oklch(0.783 0.1049 246.49);
+  --info-foreground: oklch(0.172 0.0403 245.18);
+  --info-ring: oklch(0.371 0.0869 246.57);
+  --input: oklch(0.524 0.0078 53.34);
+  --muted: oklch(0.295 0.0069 67.56);
+  --muted-foreground: oklch(0.71 0.0091 56.26);
+  --opacity-100: oklch(0 0 0 / 0%);
+  --opacity-30: oklch(0 0 0 / 70%);
+  --opacity-50: oklch(0 0 0 / 50%);
+  --opacity-80: oklch(0 0 0 / 20%);
+  --opacity-90: oklch(0 0 0 / 10%);
+  --popover: oklch(0.25 0.0072 67.49);
+  --popover-foreground: oklch(0.963 0.0042 56.37);
+  --primary: oklch(0.701 0.1885 36.31);
+  --primary-foreground: oklch(0.157 0.0066 55.82);
+  --ring: oklch(0.701 0.1885 36.31);
+  --ring-focus: oklch(0.701 0.1885 36.31 / 50%);
+  --secondary: oklch(0.295 0.0069 67.56);
+  --secondary-foreground: oklch(0.928 0.0068 53.44);
+  --sidebar-accent: oklch(0.295 0.0069 67.56);
+  --sidebar-accent-foreground: oklch(0.963 0.0042 56.37);
+  --sidebar-border: oklch(0.295 0.0069 67.56);
+  --sidebar-foreground: oklch(0.893 0.0094 52.09);
+  --sidebar-primary: oklch(0.68 0.2071 36.25);
+  --sidebar-primary-foreground: oklch(0.157 0.0066 55.82);
+  --sidebar-ring: oklch(0.701 0.1885 36.31 / 64%);
+  --sidebar-sidebar: oklch(0.203 0.0062 56.01);
   --success: oklch(0.627 0.1699 149.21);
+  --success-80: oklch(0.627 0.1699 149.21 / 80%);
   --success-foreground: oklch(0.247 0.0516 157.94);
+  --success-ring: oklch(0.445 0.0918 159.1);
   --warning: oklch(0.846 0.1202 73.24);
   --warning-foreground: oklch(0.32 0.0643 73.96);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --warning-ring: oklch(0.52 0.1047 73);
+}
+/* cando:tokens:end */
+
+/* Effects and overlays that no Figma *variable* stands behind — they are read off component
+ * effects and frame fills instead — and which therefore take a mode here rather than importing
+ * one. Outside the managed block because that block is regenerated whole and a re-sync would
+ * clobber anything else in it. Cando's `globals.css` carries the arithmetic behind the dark
+ * alphas; the numbers here are its.
+ *
+ * The raw names are deliberately not the `@theme` keys below. A `@theme` key called
+ * `--shadow-button` cannot be defined as `var(--shadow-button)` without a self-reference, which is
+ * the same reason the managed block pairs `--primary` with `--color-primary` instead of reusing
+ * one name.
+ *
+ * What gets a `.dark` value is what lands on the page. The inset bevel sits on the control's own
+ * fill, which is either identical across modes or dark enough that 20% black still reads, so it
+ * keeps one value. The cast shadow falls on `--background`, which goes from `oklch(1 0 0)` to
+ * `oklch(0.157 …)`, and 5% black on that removes nothing — the dark alphas reproduce the same
+ * removal of lightness over the dark page. */
+:root {
+  /* The bevel is 1px at rest and deepens to 2px on hover — the design system's Button pads 1px
+   * enabled and 2px hovered. Disabled is the rest shadow faded by the element's own opacity, so it
+   * needs no token of its own. Applied by Cando's `button.tsx` when it lands (GRA-45); declared now
+   * so the token set is complete and `shadow-button` is a class. */
+  --button-shadow: inset 0 -1px 0 0 oklch(0 0 0 / 20%), 0 1px 2px 0 oklch(0 0 0 / 5%);
+  --button-shadow-hover:
+    inset 0 -2px 0 0 oklch(0 0 0 / 20%), 0 4px 6px -2px oklch(0 0 0 / 5%),
+    0 10px 15px -3px oklch(0 0 0 / 10%);
+
+  /* The modal scrim: one token for every overlay — `Dialog` today, `AlertDialog`, `Sheet` and
+   * `Drawer` as they arrive — in place of the `bg-black/10` each used to hard-code.
+   *
+   * Black in both modes on purpose, and the one value here not derived from the arithmetic above.
+   * A scrim dims what is behind it; `--foreground` would invert to a white veil in dark, which
+   * *raises* the page towards the `--popover` surface sitting on it and removes the separation
+   * instead of adding it. So the token varies its alpha per mode rather than its hue, which is
+   * the whole reason it has to be a token and not a utility — and `bg-black/10` is exactly what
+   * `check-colours` reports. 10% is the light weight Cando verified against its frames; 60% in
+   * dark is plainly present under `backdrop-blur-xs` without reading as a blackout. */
+  --scrim: oklch(0 0 0 / 10%);
+}
+
+.dark {
+  --button-shadow: inset 0 -1px 0 0 oklch(0 0 0 / 20%), 0 1px 2px 0 oklch(0 0 0 / 55%);
+  --button-shadow-hover:
+    inset 0 -2px 0 0 oklch(0 0 0 / 20%), 0 4px 6px -2px oklch(0 0 0 / 55%),
+    0 10px 15px -3px oklch(0 0 0 / 85%);
+  --scrim: oklch(0 0 0 / 60%);
 }
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /* Cando's literal stacks, unchanged: GT Standard L and GT Standard Mono VF first, the system
+   * faces after. No `@font-face` backs the two names yet (GRA-49) — see the header — so today every
+   * glyph renders in the fallback, and the day the files land only `@font-face` is added. Literal
+   * values rather than a loader-defined variable because a Vite app has none to alias, and a literal
+   * cannot form the cyclic self-reference such a bridge risks. */
+  --font-sans: "GT Standard L", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "GT Standard L", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: Georgia, "Times New Roman", serif;
+  --font-mono: "GT Standard Mono VF", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Solid buttons are not flat: an inset bottom bevel plus a small lift, both deepening on hover.
+   * The values live in `:root`/`.dark` above so they have a mode; these entries only lift them into
+   * Tailwind's `--shadow-*` namespace, which is what makes `shadow-button` a class. */
+  --shadow-button: var(--button-shadow);
+  --shadow-button-hover: var(--button-shadow-hover);
+
+  --color-scrim: var(--scrim);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-border: var(--border);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-chart-chart-1: var(--chart-chart-1);
+  --color-chart-chart-2: var(--chart-chart-2);
+  --color-chart-chart-3: var(--chart-chart-3);
+  --color-chart-chart-4: var(--chart-chart-4);
+  --color-chart-chart-5: var(--chart-chart-5);
+  --color-custom-bg-destructive-10: var(--custom-bg-destructive-10);
+  --color-custom-bg-destructive-20: var(--custom-bg-destructive-20);
+  --color-custom-bg-input-100-80: var(--custom-bg-input-100-80);
+  --color-custom-bg-input-20-30: var(--custom-bg-input-20-30);
+  --color-custom-bg-input-20-50: var(--custom-bg-input-20-50);
+  --color-custom-bg-input-30: var(--custom-bg-input-30);
+  --color-custom-bg-input-30-50: var(--custom-bg-input-30-50);
+  --color-custom-bg-input-30-trans-light: var(--custom-bg-input-30-trans-light);
+  --color-custom-bg-input-50: var(--custom-bg-input-50);
+  --color-custom-bg-input-50-trans-light: var(--custom-bg-input-50-trans-light);
+  --color-custom-bg-input-80: var(--custom-bg-input-80);
+  --color-custom-bg-input-90: var(--custom-bg-input-90);
+  --color-custom-bg-muted-50: var(--custom-bg-muted-50);
+  --color-custom-bg-primary-10: var(--custom-bg-primary-10);
+  --color-custom-bg-primary-5: var(--custom-bg-primary-5);
+  --color-custom-bg-primary-80: var(--custom-bg-primary-80);
+  --color-custom-bg-secondary-80: var(--custom-bg-secondary-80);
+  --color-custom-border-50: var(--custom-border-50);
+  --color-custom-border-primary-30: var(--custom-border-primary-30);
+  --color-custom-border-primary-checked: var(--custom-border-primary-checked);
+  --color-custom-border-subtle: var(--custom-border-subtle);
+  --color-custom-brand-amber: var(--custom-brand-amber);
+  --color-custom-brand-blue: var(--custom-brand-blue);
+  --color-custom-brand-green: var(--custom-brand-green);
+  --color-custom-brand-orange: var(--custom-brand-orange);
+  --color-custom-brand-purple: var(--custom-brand-purple);
+  --color-custom-brand-red: var(--custom-brand-red);
+  --color-custom-dark-input: var(--custom-dark-input);
+  --color-custom-destructive-70: var(--custom-destructive-70);
+  --color-custom-destructive-90: var(--custom-destructive-90);
+  --color-custom-destructive-border-40: var(--custom-destructive-border-40);
+  --color-custom-destructive-focus: var(--custom-destructive-focus);
+  --color-custom-foreground-10: var(--custom-foreground-10);
+  --color-custom-foreground-5: var(--custom-foreground-5);
+  --color-custom-foreground-5-10: var(--custom-foreground-5-10);
+  --color-custom-foreground-70: var(--custom-foreground-70);
+  --color-custom-muted-foreground-10: var(--custom-muted-foreground-10);
+  --color-custom-switch-off-thumb-bg: var(--custom-switch-off-thumb-bg);
+  --color-custom-switch-on-thumb-bg: var(--custom-switch-on-thumb-bg);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-foreground: var(--foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-ring: var(--info-ring);
+  --color-input: var(--input);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-opacity-100: var(--opacity-100);
+  --color-opacity-30: var(--opacity-30);
+  --color-opacity-50: var(--opacity-50);
+  --color-opacity-80: var(--opacity-80);
+  --color-opacity-90: var(--opacity-90);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-ring: var(--ring);
+  --color-ring-focus: var(--ring-focus);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-success: var(--success);
-  --color-success-foreground: var(--success-foreground);
-  --color-warning: var(--warning);
-  --color-warning-foreground: var(--warning-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-sidebar: var(--sidebar-sidebar);
+  --color-success: var(--success);
+  --color-success-80: var(--success-80);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-ring: var(--success-ring);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-ring: var(--warning-ring);
+
+  /* Compatibility aliases. The tokens above mirror Figma, but registry components are written
+   * against the shadcn vocabulary — `bg-sidebar`, `fill-chart-1` — which would otherwise resolve
+   * to nothing and fail silently. */
+  --color-sidebar: var(--sidebar-sidebar);
+  --color-chart-1: var(--chart-chart-1);
+  --color-chart-2: var(--chart-chart-2);
+  --color-chart-3: var(--chart-chart-3);
+  --color-chart-4: var(--chart-chart-4);
+  --color-chart-5: var(--chart-chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
 }
 
 @layer base {
@@ -121,6 +406,9 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply font-sans bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
   }
 }

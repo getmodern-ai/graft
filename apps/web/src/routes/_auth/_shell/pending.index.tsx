@@ -1,6 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { InboxIcon } from "lucide-react";
+import { InboxIcon } from "@/components/icons";
 
 import { PageHeader } from "@/components/page-header";
 import { PendingActionCard } from "@/components/pending/pending-action-card";

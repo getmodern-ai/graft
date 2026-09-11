@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { CompassIcon } from "lucide-react";
+import { ExploreIcon } from "@/components/icons";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +16,7 @@ export function RouteNotFound() {
     <Empty className="mx-auto h-full max-w-md px-4">
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <CompassIcon />
+          <ExploreIcon />
         </EmptyMedia>
         <EmptyTitle>This page does not exist</EmptyTitle>
         <EmptyDescription>

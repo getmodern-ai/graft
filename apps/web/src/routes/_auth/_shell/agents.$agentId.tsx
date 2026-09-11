@@ -1,8 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeftIcon } from "lucide-react";
 import { useState } from "react";
-
 import { ApprovalsCard } from "@/components/agent/approvals-card";
 import { HarnessSnippet } from "@/components/agent/harness-snippet";
 import { LimitsForm } from "@/components/agent/limits-form";
@@ -10,6 +8,7 @@ import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
 import { ScopeEditor } from "@/components/agent/scope-editor";
 import { WorkingSetHistory } from "@/components/agent/working-set-history";
 import { WorkingSetTable } from "@/components/agent/working-set-table";
+import { ArrowBackIcon } from "@/components/icons";
 import { PageHeader } from "@/components/page-header";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
@@ -50,7 +49,7 @@ function AgentRoute() {
     <>
       <div>
         <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/agents" />}>
-          <ArrowLeftIcon />
+          <ArrowBackIcon />
           All agents
         </Button>
       </div>

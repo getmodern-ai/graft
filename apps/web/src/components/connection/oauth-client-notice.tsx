@@ -1,8 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLinkIcon, KeyRoundIcon, TriangleAlertIcon } from "lucide-react";
-
 import type { ConsentState } from "@/components/connection/use-oauth-consent";
 import { CopyButton } from "@/components/copy-button";
+import { KeyIcon, OpenInNewIcon, WarningIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -29,7 +28,7 @@ function RedirectUriNotice() {
   const { data, error, isPending } = useQuery(redirectUriQuery);
   return (
     <div className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-xs">
-      <KeyRoundIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <KeyIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       <div className="flex flex-col gap-1.5">
         <p className="font-medium">
           Register an OAuth client at the vendor — a web application — and paste this redirect URI
@@ -64,7 +63,7 @@ export function GoogleNotice({ draft }: { draft: ConnectionDraft }) {
   if (!notice) return null;
   return (
     <Alert>
-      <TriangleAlertIcon />
+      <WarningIcon />
       <AlertTitle>Google project in Testing mode</AlertTitle>
       <AlertDescription>{notice}</AlertDescription>
     </Alert>
@@ -99,7 +98,7 @@ export function ConsentStatus({ state, onCancel }: { state: ConsentState; onCanc
     case "blocked":
       return (
         <Alert>
-          <TriangleAlertIcon />
+          <WarningIcon />
           <AlertTitle>The browser blocked the popup</AlertTitle>
           <AlertDescription>
             <a
@@ -109,7 +108,7 @@ export function ConsentStatus({ state, onCancel }: { state: ConsentState; onCanc
               className="inline-flex items-center gap-1 underline underline-offset-4"
             >
               Open the vendor's consent page
-              <ExternalLinkIcon className="size-3" />
+              <OpenInNewIcon className="size-3" />
             </a>{" "}
             and come back here once it says connected.
           </AlertDescription>
@@ -118,7 +117,7 @@ export function ConsentStatus({ state, onCancel }: { state: ConsentState; onCanc
     case "done":
       return state.outcome === "connected" ? null : (
         <Alert variant={state.outcome === "failed" ? "destructive" : "default"}>
-          <TriangleAlertIcon />
+          <WarningIcon />
           <AlertTitle>
             {state.outcome === "declined"
               ? "The consent was declined"

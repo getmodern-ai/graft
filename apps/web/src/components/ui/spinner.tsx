@@ -1,9 +1,9 @@
-import { Loader2Icon } from "lucide-react";
+import { ProgressActivityIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
 function Spinner({ className, ...props }: React.ComponentProps<"svg">) {
   return (
-    <Loader2Icon
+    <ProgressActivityIcon
       data-slot="spinner"
       role="status"
       aria-label="Loading"
