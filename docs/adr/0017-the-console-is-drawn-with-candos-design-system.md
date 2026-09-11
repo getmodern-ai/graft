@@ -47,12 +47,13 @@ Button — the first of which arrives with Cando's `button.tsx` under GRA-45, no
 
 ## Consequences and accepted risks
 
-- **The fonts are named and not shipped.** `--font-sans`, `--font-heading` and `--font-mono` are
-  Cando's literal stacks — GT Standard L and GT Standard Mono VF first, system faces after — so
-  nothing else moves the day the files land. Until GRA-49 confirms the licence covers Graft there
-  is no `@font-face` and no font file in the repository; the console renders in the system fallback
-  and requests no missing file. Shipping the faces on Cando's licence would be a breach, not a
-  shortcut.
+- **The fonts were named before they were shipped.** `--font-sans`, `--font-heading` and
+  `--font-mono` are Cando's literal stacks — GT Standard L and GT Standard Mono VF first, system
+  faces after — so nothing else moved the day the files landed. Until GRA-49 confirmed the licence
+  covers Graft there was no `@font-face` and no font file in the repository; the console rendered in
+  the system fallback and requested no missing file, because shipping the faces on Cando's licence
+  would have been a breach, not a shortcut. Aleks confirmed on 2026-09-11 that the licence covers
+  Graft, and the six `.woff2` files and Cando's `@font-face` block now ship under `apps/web/src/`.
 - **Two guards are the mechanism that makes dark mode correct**, and CI runs both. Cando's ADR 0008
   records why: its frames are light-only, dark ships derived from the tokens and is never verified
   per screen, so a hard-coded colour is invisible in light and broken in dark with nothing else
