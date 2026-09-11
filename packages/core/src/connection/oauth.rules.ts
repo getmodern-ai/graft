@@ -80,9 +80,13 @@ export const OAUTH_CONSOLE_CALLBACK_PATH = "/oauth/callback";
 
 /**
  * The redirect the callback answers with: the console route with the outcome in its query, and
- * nothing else in it. `consoleUrl` may carry a path; a trailing slash is not doubled (the same
- * shape `@graft/mcp`'s `handoffUrl` gives a handoff URL). A null connection is left out rather than
- * written as the word `null`, so the reader's absence is the writer's absence.
+ * nothing else in it. The string handling is `@graft/mcp`'s `handoffUrl`'s — a trailing slash on
+ * `consoleUrl` is not doubled — and so is the constraint: the console's router matches from the
+ * origin's root (`apps/web/src/main.tsx` sets no `basepath`), so a `GRAFT_CONSOLE_URL` that carried
+ * a path would 404 this route and every handoff URL alike — although `@graft/env`'s `consoleUrl`
+ * calls that form legitimate. Closing that gap is GRA-50, one change in the router or the schema
+ * that both URL builders follow; it is not this helper's to decide. A null connection is left out
+ * rather than written as the word `null`, so the reader's absence is the writer's absence.
  */
 export function oauthCallbackRedirect(consoleUrl: string, outcome: OAuthCallbackOutcome): string {
   const base = consoleUrl.replace(/\/+$/, "");

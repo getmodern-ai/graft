@@ -39,7 +39,7 @@ describe("the callback's redirect to the console", () => {
     message: "Mail & co is connected — the console updates on its own.",
   };
 
-  it("lands on the console's callback route with the outcome in the query and nothing else, whatever the console URL's shape", () => {
+  it("lands on the console's callback route with the outcome in the query and nothing else", () => {
     const url = new URL(oauthCallbackRedirect("http://localhost:3001", connected));
     expect(`${url.origin}${url.pathname}`).toBe(
       `http://localhost:3001${OAUTH_CONSOLE_CALLBACK_PATH}`,
@@ -49,8 +49,9 @@ describe("the callback's redirect to the console", () => {
     expect(url.searchParams.get("connectionId")).toBe(connected.connectionId);
     expect(url.searchParams.get("message")).toBe(connected.message);
 
-    expect(oauthCallbackRedirect("https://graft.example/console/", connected)).toMatch(
-      /^https:\/\/graft\.example\/console\/oauth\/callback\?status=connected&/,
+    // A trailing slash on the console URL is not doubled — `handoffUrl`'s handling of the same value.
+    expect(oauthCallbackRedirect("https://graft.example/", connected)).toMatch(
+      /^https:\/\/graft\.example\/oauth\/callback\?status=connected&/,
     );
   });
 
