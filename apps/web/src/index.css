@@ -24,12 +24,60 @@
  *   - the two `@utility` sheens, `button-sheen` and `agent-disc-sheen` — the first is the default
  *     Button's hover wash and arrives with Cando's `button.tsx` (GRA-45), the second is the agent
  *     disc's;
- *   - the six `@font-face` declarations — GT Standard L and GT Standard Mono VF are licensed to
- *     Cando, not yet to Graft (GRA-49). The `--font-*` stacks below still name them first, so the
- *     day the files land only the `@font-face` block is added; until then the browser falls
- *     through to the system faces and requests no missing file;
  *   - the monorepo `@source` lines — `@tailwindcss/vite` scans this app on its own.
+ *
+ * The six `@font-face` declarations are *not* left out. GT Standard L and GT Standard Mono VF were
+ * held back while the Grilli Type licence was known to cover only Cando; Aleks confirmed on
+ * 2026-09-11 that it covers Graft too (GRA-49), so the block below is Cando's verbatim and the six
+ * `.woff2` files sit in `./fonts/`, byte-identical to Cando's, hashed into `dist/assets` by Vite.
  */
+
+/* GT Standard L — licensed from Grilli Type, self-hosted. Obliques are not
+ * shipped: nothing in the design system asks for italic. The mono is a variable
+ * font whose wght axis runs 300–900 but *defaults to 900*, so the range below is
+ * load-bearing — without it every mono glyph renders Black. */
+@font-face {
+  font-family: "GT Standard L";
+  src: url("./fonts/gt-standard-l-300.woff2") format("woff2");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "GT Standard L";
+  src: url("./fonts/gt-standard-l-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "GT Standard L";
+  src: url("./fonts/gt-standard-l-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "GT Standard L";
+  src: url("./fonts/gt-standard-l-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "GT Standard L";
+  src: url("./fonts/gt-standard-l-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "GT Standard Mono VF";
+  src: url("./fonts/gt-standard-mono-vf.woff2") format("woff2");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 /* cando:tokens:start. Managed by cando-import-variables. Edit source tokens, not this block.
  *
@@ -278,9 +326,9 @@
 
 @theme inline {
   /* Cando's literal stacks, unchanged: GT Standard L and GT Standard Mono VF first, the system
-   * faces after. No `@font-face` backs the two names yet (GRA-49) — see the header — so today every
-   * glyph renders in the fallback, and the day the files land only `@font-face` is added. Literal
-   * values rather than a loader-defined variable because a Vite app has none to alias, and a literal
+   * faces after. The `@font-face` block above backs both names (GRA-49), so the fallback shows only
+   * while a face is still loading, which is what `font-display: swap` asks for. Literal values
+   * rather than a loader-defined variable because a Vite app has none to alias, and a literal
    * cannot form the cyclic self-reference such a bridge risks. */
   --font-sans: "GT Standard L", ui-sans-serif, system-ui, sans-serif;
   --font-heading: "GT Standard L", ui-sans-serif, system-ui, sans-serif;
