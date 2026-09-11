@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { TokenOnce } from "@/components/agent/token-once";
 import { ConnectionPicker } from "@/components/connection/connection-picker";
+import { RetryNotice } from "@/components/retry-notice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { agentKeys, type CreatedAgent, createAgent } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
 
@@ -21,15 +23,25 @@ import type { Connection } from "@/lib/connection-queries";
  * Create an agent: a name, the cap and the idle window (ADR 0009's two per-agent knobs), and the
  * initial scope. The answer carries the token, and this dialog is where it is shown — once. Closing
  * the dialog is the end of it; the agent's page shows the prefix and the snippet, never the token.
+ *
+ * The connections arrive from a read the agents route starts without awaiting (`agents.index.tsx`),
+ * so the dialog can open before they have: `connections` is `undefined` until then, the scope
+ * draws skeleton rows in the picker's place, and Create waits — a scope chosen from a list that
+ * has not arrived would be an empty one nobody chose (raised by Greptile on #30). A read that
+ * failed shows the same Retry a table body does, and Create still waits.
  */
 export function CreateAgentDialog({
   open,
   onOpenChange,
   connections,
+  connectionsFailed,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  connections: readonly Connection[];
+  /** The person's connections, or `undefined` while the read is pending or has failed. */
+  connections: readonly Connection[] | undefined;
+  /** Set while the connections read has failed: what to show and how to try again. */
+  connectionsFailed?: { error: unknown; onRetry: () => void; retrying: boolean };
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
@@ -139,14 +151,39 @@ export function CreateAgentDialog({
                   The connections this agent may use. Its tools cannot reach a connection outside
                   the scope; you can change it any time.
                 </FieldDescription>
-                <ConnectionPicker connections={connections} selected={scope} onChange={setScope} />
+                {connections ? (
+                  <ConnectionPicker
+                    connections={connections}
+                    selected={scope}
+                    onChange={setScope}
+                  />
+                ) : connectionsFailed ? (
+                  <p className="text-muted-foreground text-sm">
+                    <RetryNotice
+                      error={connectionsFailed.error}
+                      message="Could not load your connections."
+                      onRetry={connectionsFailed.onRetry}
+                      retrying={connectionsFailed.retrying}
+                    />
+                  </p>
+                ) : (
+                  // Two rows at the picker's own height, so the dialog does not jump when it lands.
+                  <div className="flex flex-col gap-2.5" aria-busy="true">
+                    {[0, 1].map((row) => (
+                      <Skeleton key={row} className="h-14 w-full rounded-lg" />
+                    ))}
+                  </div>
+                )}
               </Field>
             </FieldGroup>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={close}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={create.isPending || name.trim().length === 0}>
+              <Button
+                type="submit"
+                disabled={create.isPending || name.trim().length === 0 || connections === undefined}
+              >
                 {create.isPending ? "Creating…" : "Create agent"}
               </Button>
             </DialogFooter>

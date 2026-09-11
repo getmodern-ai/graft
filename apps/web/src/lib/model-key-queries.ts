@@ -39,12 +39,16 @@ export function removeModelKey() {
   return api<{ deleted: boolean }>("/me/model-key", { method: "DELETE" });
 }
 
-/** The two providers the server accepts, with the words the card shows for each. */
+/**
+ * The two providers the server accepts, with the words the settings rows show for each. The
+ * labels are sized to the 240px control a settings row draws them in (`settings-row.tsx`): the
+ * base URL row underneath says what "compatible" means.
+ */
 export const MODEL_KEY_PROVIDERS: { value: ModelKeyProvider; label: string; keyHint: string }[] = [
   { value: "anthropic", label: "Anthropic", keyHint: "An Anthropic API key (sk-ant-…)." },
   {
     value: "openai",
-    label: "OpenAI, or an OpenAI-compatible gateway",
+    label: "OpenAI or a compatible gateway",
     keyHint: "An OpenAI API key (sk-…), or the gateway's key with its base URL below.",
   },
 ];

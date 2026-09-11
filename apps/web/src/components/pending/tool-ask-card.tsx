@@ -3,6 +3,7 @@ import { useState } from "react";
 import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
 import { ToolAnnotations } from "@/components/tool-annotations";
 import { Badge } from "@/components/ui/badge";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { type Ask, isOpen } from "@/lib/pending-action-queries";
@@ -61,23 +62,30 @@ export function ToolAskCard({
         <blockquote className="border-l-2 pl-3 italic">{payload.description}</blockquote>
       </figure>
       {destructive && isOpen(action) ? (
-        <div className="flex items-start gap-3 rounded-md border p-3">
-          <Switch
-            id={`relax-${action.id}`}
-            checked={relax}
-            onCheckedChange={(checked) => setRelax(checked)}
-          />
-          <div className="flex flex-col gap-0.5">
-            <Label htmlFor={`relax-${action.id}`}>
-              Stop asking for every call of this destructive tool
-            </Label>
-            <p className="text-muted-foreground text-xs">
+        // An `Item` in its outline frame — title, description and the control in its actions
+        // slot — rather than a bordered box of this card's own. The clamps the primitive puts on
+        // a list item's lines are lifted: this is a sentence and its consequence, not a row.
+        <Item variant="outline">
+          <ItemContent>
+            <ItemTitle className="line-clamp-none">
+              <Label htmlFor={`relax-${action.id}`}>
+                Stop asking for every call of this destructive tool
+              </Label>
+            </ItemTitle>
+            <ItemDescription className="line-clamp-none">
               A destructive tool asks every time until you relax it. Relaxed, this approval holds
               like an ordinary write's and later calls pass silently for this agent; withdrawing it
               on the agent's page makes it ask again.
-            </p>
-          </div>
-        </div>
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Switch
+              id={`relax-${action.id}`}
+              checked={relax}
+              onCheckedChange={(checked) => setRelax(checked)}
+            />
+          </ItemActions>
+        </Item>
       ) : null}
     </AskCard>
   );

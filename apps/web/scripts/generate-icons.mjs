@@ -73,6 +73,7 @@ const NAMES = [
   "unfold_more",
   "view_sidebar",
   "warning",
+  "wifi_off",
 ];
 
 /**

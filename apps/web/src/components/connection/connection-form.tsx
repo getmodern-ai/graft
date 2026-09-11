@@ -1,6 +1,7 @@
 import type { AuthScheme } from "@graft/proxy/types";
 
 import { LanguageIcon } from "@/components/icons";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -199,28 +200,29 @@ export function ConnectionFormFields({
 /**
  * Where the credential will go, as the form stands — every host the proxy will pin the connection
  * to (ADR 0010), named beside the secret inputs so the person reads them before typing (ADR 0006).
+ * An `Alert`, the primitive's own frame, as every notice in this form is.
  */
 export function HostsNotice({ draft }: { draft: ConnectionDraft }) {
   const hosts = hostsOf(draft);
   return (
-    <div className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-xs">
-      <LanguageIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      <div className="flex flex-col gap-1">
-        <p className="font-medium">
-          {hosts
-            ? "The credential will be sent to these hosts and to nothing else:"
-            : "Fix the hosts above to see where the credential will be sent."}
-        </p>
-        {hosts ? (
+    <Alert>
+      <LanguageIcon />
+      <AlertTitle>
+        {hosts
+          ? "The credential will be sent to these hosts and to nothing else"
+          : "Fix the hosts above to see where the credential will be sent"}
+      </AlertTitle>
+      {hosts ? (
+        <AlertDescription>
           <ul className="flex flex-wrap gap-1.5">
             {hosts.map((host) => (
               <li key={host}>
-                <code className="rounded bg-background px-1.5 py-0.5 font-mono">{host}</code>
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{host}</code>
               </li>
             ))}
           </ul>
-        ) : null}
-      </div>
-    </div>
+        </AlertDescription>
+      ) : null}
+    </Alert>
   );
 }

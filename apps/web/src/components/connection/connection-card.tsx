@@ -7,6 +7,7 @@ import { ReenterCredentialDialog } from "@/components/connection/reenter-credent
 import { RevokeConnectionDialog } from "@/components/connection/revoke-connection-dialog";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
 import { KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
+import { StatusChip } from "@/components/status-chip";
 import { Time } from "@/components/time";
 import { ToolAnnotations } from "@/components/tool-annotations";
 import { Badge } from "@/components/ui/badge";
@@ -16,13 +17,13 @@ import {
   CardAction,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import type { Tool } from "@/lib/agent-queries";
 import { type Connection, connectionStatus } from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
+import { AWAITING_RECONNECTION_CHIP, connectionStatusChips } from "@/lib/status-chips";
 
 /**
  * One connection: the vendor, the hosts the proxy pins its calls to, the scheme, when the credential
@@ -34,6 +35,13 @@ import { startOAuthConsent } from "@/lib/oauth-consent";
  * secret entered and the consent not yet completed, and a refresh the vendor refused so the person
  * has to consent again. Both are one button — Connect, Reconnect — that starts the consent in a
  * popup with the client secret already in place; the secret is asked for again only after a revoke.
+ *
+ * A card rather than a table row, because each connection carries a status, a host list, a tool
+ * list, two actions and a table of its own — more than a row can hold. The anatomy is Cando's
+ * card: title and chips, description, the actions in `CardAction`, and the facts in the body. The
+ * recent calls are a disclosure at the end of the body, not the `CardFooter` they used to sit in:
+ * the footer is Cando's banded action strip, `bg-muted/50` over a rule, and a table drawn on that
+ * band loses its own row hover (the same `bg-muted/50`) and reads as furniture rather than data.
  */
 export function ConnectionCard({ connection, tools }: { connection: Connection; tools: Tool[] }) {
   const [showCalls, setShowCalls] = useState(false);
@@ -49,23 +57,6 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
     onSuccess: ({ authorizeUrl }) => void consent.run(authorizeUrl, connection),
   });
   const consenting = reconsent.isPending || consent.running;
-
-  const badge = {
-    revoked: (
-      <>
-        <Badge variant="destructive">revoked</Badge>
-        <Badge variant="outline">awaiting reconnection</Badge>
-      </>
-    ),
-    awaiting_credential: (
-      <Badge variant="outline">
-        {connection.oauth ? "awaiting client secret" : "awaiting credential"}
-      </Badge>
-    ),
-    awaiting_consent: <Badge variant="outline">awaiting consent</Badge>,
-    consent_required: <Badge variant="destructive">needs re-consent</Badge>,
-    connected: <Badge variant="success">connected</Badge>,
-  }[status];
 
   const description = {
     revoked: (
@@ -142,7 +133,9 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
           {connection.displayName}
           <Badge variant="outline">{connection.vendor}</Badge>
           <Badge variant="outline">{connection.scheme}</Badge>
-          {badge}
+          {connectionStatusChips(connection, status).map((chip) => (
+            <StatusChip key={chip.label} chip={chip} />
+          ))}
         </CardTitle>
         <CardDescription>{description}</CardDescription>
         <CardAction className="flex gap-2">
@@ -203,7 +196,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
                       {tool.vendor}__{tool.name}
                     </code>
                     <ToolAnnotations readOnly={tool.readOnly} destructive={tool.destructive} />
-                    {usable ? null : <Badge variant="outline">awaiting reconnection</Badge>}
+                    {usable ? null : <StatusChip chip={AWAITING_RECONNECTION_CHIP} />}
                   </li>
                 ))}
               </ul>
@@ -211,18 +204,19 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
           </dd>
         </dl>
       </CardContent>
-      <CardFooter className="flex-col items-stretch gap-3">
+      <CardContent className="flex flex-col gap-3">
         <Button
           variant="ghost"
           size="sm"
           className="self-start"
+          aria-expanded={showCalls}
           onClick={() => setShowCalls((open) => !open)}
         >
           {showCalls ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
           Recent vendor calls
         </Button>
         {showCalls ? <ConnectionCalls connectionId={connection.id} /> : null}
-      </CardFooter>
+      </CardContent>
 
       <RevokeConnectionDialog connection={connection} open={revoking} onOpenChange={setRevoking} />
       <ReenterCredentialDialog

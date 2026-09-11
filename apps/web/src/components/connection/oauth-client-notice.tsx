@@ -2,8 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import type { ConsentState } from "@/components/connection/use-oauth-consent";
 import { CopyButton } from "@/components/copy-button";
 import { KeyIcon, OpenInNewIcon, WarningIcon } from "@/components/icons";
+import { RetryNotice } from "@/components/retry-notice";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { type ConnectionDraft, googleNoticeFor, isOAuthDraft } from "@/lib/connection-form";
 import { redirectUriQuery } from "@/lib/oauth-consent";
@@ -24,36 +26,47 @@ export function OAuthClientNotice({ draft }: { draft: ConnectionDraft }) {
   );
 }
 
+/**
+ * An `Alert`, like every other notice in this form: the primitive's frame rather than a box of
+ * this file's own. The URI is a skeleton while it loads and a `RetryNotice` if it does not —
+ * the same two states a table body draws, since a URI that failed to arrive is the one thing
+ * the person cannot proceed without.
+ */
 function RedirectUriNotice() {
-  const { data, error, isPending } = useQuery(redirectUriQuery);
+  const { data, error, isPending, isError, isFetching, refetch } = useQuery(redirectUriQuery);
   return (
-    <div className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-xs">
-      <KeyIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      <div className="flex flex-col gap-1.5">
-        <p className="font-medium">
-          Register an OAuth client at the vendor — a web application — and paste this redirect URI
-          into it:
-        </p>
+    <Alert>
+      <KeyIcon />
+      <AlertTitle>
+        Register an OAuth client at the vendor — a web application — and paste this redirect URI
+        into it
+      </AlertTitle>
+      <AlertDescription>
         {isPending ? (
-          <Spinner className="size-4" />
-        ) : error || !data ? (
-          <p className="text-destructive">
-            The redirect URI could not be fetched from the server; reload and try again.
+          <Skeleton className="h-6 w-72 max-w-full" />
+        ) : isError || !data ? (
+          <p>
+            <RetryNotice
+              error={error}
+              message="The redirect URI could not be fetched from the server."
+              onRetry={() => void refetch()}
+              retrying={isFetching}
+            />
           </p>
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <code className="rounded bg-background px-1.5 py-0.5 font-mono">
+          <p className="flex flex-wrap items-center gap-2">
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
               {data.redirectUri}
             </code>
             <CopyButton text={data.redirectUri} />
-          </div>
+          </p>
         )}
-        <p className="text-muted-foreground">
+        <p>
           Then enter the client's id above and its secret below. Connect opens the vendor's consent
           in a popup; the tokens it yields are stored encrypted and never shown.
         </p>
-      </div>
-    </div>
+      </AlertDescription>
+    </Alert>
   );
 }
 

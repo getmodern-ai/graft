@@ -3,6 +3,7 @@ import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-ro
 import { useState } from "react";
 
 import { AuthCard } from "@/components/auth/auth-card";
+import { AuthHeader } from "@/components/auth/auth-header";
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -55,52 +56,67 @@ function LoginRoute() {
   };
 
   return (
-    <AuthCard
-      title="Sign in"
-      description="Your agents, connections and pending actions are here."
-      footer={
-        <span>
-          New to Graft?{" "}
-          <Link
-            to="/signup"
-            search={{ redirect: returnTo }}
-            className="text-foreground underline underline-offset-4"
-          >
-            Create an account
-          </Link>
-        </span>
-      }
-    >
-      <form onSubmit={submit} className="flex flex-col gap-4">
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor="email">Email</FieldLabel>
-            <Input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="password">Password</FieldLabel>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </Field>
-          {error ? <FieldError>{error}</FieldError> : null}
-        </FieldGroup>
-        <Button type="submit" disabled={pending} className="w-full">
-          {pending ? "Signing in…" : "Sign in"}
-        </Button>
-      </form>
-    </AuthCard>
+    // Cando's pre-auth frame (its `routes/login.tsx`): the header band, the large heading, the
+    // card beneath. Without the strip of faces along the bottom, and so without the `md:pb-40`
+    // that cleared it and the `overflow-hidden` that clipped it (ADR 0017).
+    <div className="flex min-h-svh flex-col">
+      <AuthHeader />
+
+      <main className="flex flex-1 flex-col items-center px-4 pt-9 md:px-6">
+        <h1 className="text-center text-4xl tracking-tight">Sign in to Graft</h1>
+        <AuthCard className="mt-9 md:mt-8">
+          <form onSubmit={submit} className="flex flex-col gap-6">
+            <FieldGroup className="gap-4">
+              <Field>
+                <FieldLabel htmlFor="email" className="leading-none">
+                  Email
+                </FieldLabel>
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  disabled={pending}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="password" className="leading-none">
+                  Password
+                </FieldLabel>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  disabled={pending}
+                />
+              </Field>
+              {error ? <FieldError>{error}</FieldError> : null}
+            </FieldGroup>
+
+            <Button type="submit" className="w-full" disabled={pending}>
+              {pending ? "Signing in…" : "Sign in"}
+            </Button>
+
+            <p className="text-center text-muted-foreground text-sm">
+              New to Graft?{" "}
+              <Link
+                to="/signup"
+                search={{ redirect: returnTo }}
+                className="font-medium text-foreground underline-offset-4 hover:underline"
+              >
+                Create an account
+              </Link>
+            </p>
+          </form>
+        </AuthCard>
+      </main>
+    </div>
   );
 }

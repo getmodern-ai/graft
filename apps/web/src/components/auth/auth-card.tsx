@@ -1,44 +1,27 @@
 import type * as React from "react";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { PageContainer } from "@/components/page/page-container";
+import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
-/** The frame both doors share: the mark, a title, the form, and the link to the other door. */
+/**
+ * The card both doors put their form in: `max-w-md`, with the page column's `xs` inset inside the
+ * card's own padding — Cando's `SignInCard` frame (`apps/web/src/components/auth/sign-in-card.tsx`)
+ * without its two-beat email-then-password flow and its Google button, neither of which Graft
+ * has. The routes own what differs: the fields, the submit's promise, and the footer's cross-link.
+ */
 export function AuthCard({
-  title,
-  description,
-  footer,
+  className,
   children,
 }: {
-  title: string;
-  description: string;
-  footer: React.ReactNode;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <main className="flex min-h-svh items-center justify-center bg-muted/40 px-4 py-12">
-      <div className="flex w-full max-w-sm flex-col gap-6">
-        <div className="flex items-center justify-center gap-2 font-semibold tracking-tight">
-          <span className="flex size-7 items-center justify-center rounded-md bg-foreground font-bold text-background text-sm">
-            G
-          </span>
-          Graft
-        </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>{title}</CardTitle>
-            <CardDescription>{description}</CardDescription>
-          </CardHeader>
-          <CardContent>{children}</CardContent>
-          <CardFooter className="justify-center text-muted-foreground text-sm">{footer}</CardFooter>
-        </Card>
-      </div>
-    </main>
+    <Card className={cn("w-full max-w-md", className)}>
+      <CardContent>
+        <PageContainer size="xs">{children}</PageContainer>
+      </CardContent>
+    </Card>
   );
 }

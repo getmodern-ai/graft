@@ -1,10 +1,19 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+
 import { AddConnectionDialog } from "@/components/connection/add-connection-dialog";
 import { ConnectionCard } from "@/components/connection/connection-card";
 import { AddIcon, PowerIcon } from "@/components/icons";
-import { PageHeader } from "@/components/page-header";
+import { PageContainer } from "@/components/page/page-container";
+import {
+  PageHeader,
+  PageHeaderActions,
+  PageHeaderContent,
+  PageHeaderDescription,
+  PageHeaderTitle,
+} from "@/components/page/page-header";
+import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -35,29 +44,38 @@ function ConnectionsRoute() {
   const { data: toolData } = useSuspenseQuery(toolsQuery);
   const [adding, setAdding] = useState(false);
 
+  useScreenTitle("Connections");
+
   return (
-    <>
-      <PageHeader
-        title="Connections"
-        description="One vendor account each: its scheme, the hosts it may reach, and whether a credential is set. Credentials are never shown."
-      >
-        <Button onClick={() => setAdding(true)}>
-          <AddIcon />
-          Add connection
-        </Button>
+    // `medium`: a stack of cards reads at 896 where a table would want the wider column. `gap-4`
+    // between the header and a list, as Cando's connections screen passes.
+    <PageContainer size="medium" className="gap-4">
+      <PageHeader>
+        <PageHeaderContent>
+          <PageHeaderTitle>Connections</PageHeaderTitle>
+          <PageHeaderDescription>
+            One vendor account each: its scheme, the hosts it may reach, and whether a credential is
+            set. Credentials are never shown.
+          </PageHeaderDescription>
+        </PageHeaderContent>
+        <PageHeaderActions>
+          <Button onClick={() => setAdding(true)}>
+            <AddIcon />
+            Add connection
+          </Button>
+        </PageHeaderActions>
       </PageHeader>
 
       {data.connections.length === 0 ? (
-        <Empty className="rounded-lg border">
+        <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <PowerIcon />
             </EmptyMedia>
             <EmptyTitle>No connections yet</EmptyTitle>
             <EmptyDescription>
-              An agent proposes a connection when it needs a vendor it cannot reach, and you enter
-              the secret here — never in the chat. Or add one yourself and put it in an agent's
-              scope.
+              An agent proposes one when it needs a vendor it cannot reach, and you enter the secret
+              here — never through the agent.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -74,6 +92,6 @@ function ConnectionsRoute() {
       )}
 
       <AddConnectionDialog open={adding} onOpenChange={setAdding} />
-    </>
+    </PageContainer>
   );
 }

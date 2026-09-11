@@ -1,15 +1,14 @@
+import { useQuery } from "@tanstack/react-query";
+
+import { RetryNotice } from "@/components/retry-notice";
+import { StatusChip } from "@/components/status-chip";
+import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states";
 import { Time } from "@/components/time";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import type { WorkingSetChange } from "@/lib/agent-queries";
+import { DataTable, DataTableRow } from "@/components/ui/data-table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { type WorkingSetChange, workingSetChangesQuery } from "@/lib/agent-queries";
+import { WORKING_SET_CHANGE_CHIP } from "@/lib/status-chips";
 
 /**
  * Why the working set changed, in the person's words (ADR 0009: expansion has an author, and
@@ -17,15 +16,27 @@ import type { WorkingSetChange } from "@/lib/agent-queries";
  * the sentence beside it.
  */
 const CAUSE: Record<WorkingSetChange["cause"], string> = {
-  agent: "the agent asked",
-  publish: "published by the agent",
-  idle: "unused past the idle window",
-  cap: "over the working-set cap",
-  revoke: "its connection was revoked",
+  agent: "The agent asked",
+  publish: "Published by the agent",
+  idle: "Unused past the idle window",
+  cap: "Over the working-set cap",
+  revoke: "Its connection was revoked",
 };
 
-/** Every promotion and demotion, newest first — tool-list churn is a first-class event (ADR 0003). */
-export function WorkingSetHistory({ changes }: { changes: readonly WorkingSetChange[] }) {
+const COLUMNS = 4;
+
+/**
+ * Every promotion and demotion, newest first — tool-list churn is a first-class event (ADR 0003).
+ * Owns its read for the reason `working-set-table.tsx` gives. Below `md` the cause column steps
+ * out and the cause follows the tool name in muted text instead, so the one fact the history
+ * exists to show is never off the screen.
+ */
+export function WorkingSetHistory({ agentId }: { agentId: string }) {
+  const { data, isPending, isError, error, isFetching, refetch } = useQuery(
+    workingSetChangesQuery(agentId),
+  );
+  const changes = data?.changes ?? [];
+
   return (
     <Card>
       <CardHeader>
@@ -36,44 +47,62 @@ export function WorkingSetHistory({ changes }: { changes: readonly WorkingSetCha
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {changes.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No changes yet.</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Change</TableHead>
-                <TableHead>Tool</TableHead>
-                <TableHead>Cause</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {changes.map((change) => (
-                <TableRow key={change.id}>
-                  <TableCell>
+        <DataTable layout="grid">
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-26 md:w-36">When</TableHead>
+              <TableHead className="w-24 md:w-28">Change</TableHead>
+              <TableHead>Tool</TableHead>
+              <TableHead className="hidden md:table-cell md:w-56">Cause</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isPending ? (
+              <TableLoadingRows colSpan={COLUMNS} />
+            ) : isError ? (
+              <TableBodyNote colSpan={COLUMNS}>
+                <RetryNotice
+                  error={error}
+                  message="Could not load the history."
+                  onRetry={() => void refetch()}
+                  retrying={isFetching}
+                />
+              </TableBodyNote>
+            ) : changes.length === 0 ? (
+              <TableBodyNote colSpan={COLUMNS}>No changes yet.</TableBodyNote>
+            ) : (
+              changes.map((change) => (
+                <DataTableRow key={change.id}>
+                  <TableCell className="truncate text-muted-foreground">
                     <Time iso={change.createdAt} />
                   </TableCell>
                   <TableCell>
-                    <Badge variant={change.change === "promote" ? "default" : "outline"}>
-                      {change.change === "promote" ? "promoted" : "demoted"}
-                    </Badge>
+                    <StatusChip chip={WORKING_SET_CHANGE_CHIP[change.change]} />
                   </TableCell>
-                  <TableCell>
-                    {change.tool ? (
-                      <code className="font-mono text-xs">
-                        {change.tool.vendor}__{change.tool.name}
-                      </code>
-                    ) : (
-                      <span className="text-muted-foreground">a tool no longer in the toolbox</span>
-                    )}
+                  <TableCell className="truncate">
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      {change.tool ? (
+                        <code className="shrink-0 font-mono text-xs">
+                          {change.tool.vendor}__{change.tool.name}
+                        </code>
+                      ) : (
+                        <span className="truncate text-muted-foreground">
+                          A tool no longer in the toolbox
+                        </span>
+                      )}
+                      <span className="truncate text-muted-foreground text-xs md:hidden">
+                        {CAUSE[change.cause]}
+                      </span>
+                    </span>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{CAUSE[change.cause]}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+                  <TableCell className="hidden text-muted-foreground md:table-cell">
+                    {CAUSE[change.cause]}
+                  </TableCell>
+                </DataTableRow>
+              ))
+            )}
+          </TableBody>
+        </DataTable>
       </CardContent>
     </Card>
   );
