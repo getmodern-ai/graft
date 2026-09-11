@@ -8,6 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "check-types": "vite build && tsc -p tsconfig.json",
+    "check-colours": "node scripts/check-design-tokens.mjs",
+    "check-tokens": "node scripts/check-token-utilities.mjs",
     "generate-icons": "node scripts/generate-icons.mjs",
     "test": "vitest run",
     "test:watch": "vitest"

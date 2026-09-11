@@ -110,6 +110,40 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      # The first of the console's two design-token guards (ADR 0017): a colour written as a literal
+      # rather than a token, a colour literal inside `@theme` where a mode is impossible, and a base
+      # token identical across modes while its derived family flips. The console's frames are
+      # Cando's, light-only, and dark mode ships derived from the tokens and is never verified per
+      # screen — so this rule is the whole mechanism by which dark mode is correct, and a warning
+      # would not be a guard. The logic is `apps/web/src/tokens/*.ts`, unit-tested over fixtures;
+      # this step is the file walk and the exit code, and it names the failure where a red `Test`
+      # would not. Not a Turbo task, deliberately: a guard replayed from cache reports on the tree
+      # it last saw, which is the shape of failure the guard exists to close (`db:check-chain` sets
+      # `cache: false` for the same reason). No build, no database and no credentials — it reads
+      # source, so it costs milliseconds.
+      - name: Check for hardcoded colours and mode-orphaned tokens
+        run: |
+          if ! pnpm run check-colours; then
+            echo "::error::a colour is hardcoded, or a base token was left behind by its family — see the lines above. ADR 0017 makes token discipline the whole mechanism by which dark mode is correct, and dark is never verified per screen."
+            exit 1
+          fi
+
+      # The second guard: every design-token utility the console references must exist in the
+      # compiled CSS. Tailwind emits nothing for a utility whose token has gone — no error, no
+      # warning, the class just never applies — so a rename that misses a call site is silent by
+      # construction and an explicit check is the only signal. It reads `apps/web/dist/assets`,
+      # which the `Typecheck` step above produces (`@graft/web`'s `check-types` is `vite build &&
+      # tsc`); the build is repeated here only if that directory is somehow absent, so the step
+      # never passes on nothing. A plain step and not a Turbo task, for the same reason as the
+      # guard above this one.
+      - name: Check design-token utilities against the built CSS
+        run: |
+          test -d apps/web/dist/assets || pnpm --filter @graft/web build
+          if ! pnpm run check-tokens; then
+            echo "::error::a design-token utility does not compile — see the lines above. Tailwind emits nothing for an unknown utility, so at runtime the class silently does nothing (ADR 0017)."
+            exit 1
+          fi
+
       # `check-types` cannot see schema/migration drift: the schema and the code that reads it agree
       # with each other, and are both wrong about the database. Neither command below needs Postgres
       # — `generate` diffs the TypeScript schema against the last snapshot under `drizzle/meta`, and
