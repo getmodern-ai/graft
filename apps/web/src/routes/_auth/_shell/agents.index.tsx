@@ -1,7 +1,8 @@
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { AgentsTable } from "@/components/agent/agents-table";
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
 import { AddIcon, SmartToyIcon } from "@/components/icons";
 import { PageContainer } from "@/components/page/page-container";
@@ -13,8 +14,6 @@ import {
   PageHeaderTitle,
 } from "@/components/page/page-header";
 import { useScreenTitle } from "@/components/shell/screen-title";
-import { Time } from "@/components/time";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -23,38 +22,40 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { agentsQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
-import { count } from "@/lib/format";
 
+/**
+ * The loader *starts* both reads and awaits neither, so the screen paints at once — header, table
+ * header, skeleton rows — and fills when the agents arrive; a hover on the sidebar link has
+ * usually run it already (`defaultPreload: "intent"`), so the rows are there on click. Awaiting
+ * would hand the wait to the router's whole-screen spinner and leave the table's own pending rows
+ * unreachable, which is the state the design draws for this (Cando's CAN-546 makes the same call
+ * for its detail page). The connections are the create dialog's, read by the time it opens.
+ */
 export const Route = createFileRoute("/_auth/_shell/agents/")({
-  loader: ({ context }) =>
-    Promise.all([
-      context.queryClient.ensureQueryData(agentsQuery),
-      context.queryClient.ensureQueryData(connectionsQuery),
-    ]),
+  loader: ({ context }) => {
+    void context.queryClient.prefetchQuery(agentsQuery);
+    void context.queryClient.prefetchQuery(connectionsQuery);
+  },
   component: AgentsRoute,
 });
 
 function AgentsRoute() {
-  const { data } = useSuspenseQuery(agentsQuery);
-  const { data: connectionData } = useSuspenseQuery(connectionsQuery);
+  // `useQuery`, not the suspense form: the table draws its own pending and failed rows, and a
+  // refetch that fails has to reach it as state rather than as a throw the route boundary would
+  // swallow the whole screen for.
+  const agents = useQuery(agentsQuery);
+  const connections = useQuery(connectionsQuery);
   const [creating, setCreating] = useState(false);
-  const agents = data.agents;
+  const rows = agents.data?.agents ?? [];
 
   useScreenTitle("Agents");
 
   return (
-    // `large`: the table is the screen, and a table wants the column.
-    <PageContainer size="large" className="gap-6">
+    // `large`: the table is the screen, and a table wants the column. `gap-4` between the header
+    // and a list, as Cando's connections screen passes; the detail screens keep `gap-6`.
+    <PageContainer size="large" className="gap-4">
       <PageHeader>
         <PageHeaderContent>
           <PageHeaderTitle>Agents</PageHeaderTitle>
@@ -71,16 +72,16 @@ function AgentsRoute() {
         </PageHeaderActions>
       </PageHeader>
 
-      {agents.length === 0 ? (
-        <Empty className="rounded-lg border">
+      {agents.isSuccess && rows.length === 0 ? (
+        <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <SmartToyIcon />
             </EmptyMedia>
             <EmptyTitle>No agents yet</EmptyTitle>
             <EmptyDescription>
-              Create one to get a token and the block to paste into your harness's MCP
-              configuration.
+              Create one to get a token and the block to paste into your harness's MCP configuration
+              — a name is all it takes.
             </EmptyDescription>
           </EmptyHeader>
           <Button onClick={() => setCreating(true)}>
@@ -89,56 +90,20 @@ function AgentsRoute() {
           </Button>
         </Empty>
       ) : (
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Agent</TableHead>
-                <TableHead>Token</TableHead>
-                <TableHead>Cap</TableHead>
-                <TableHead>Idle window</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {agents.map((agent) => (
-                <TableRow key={agent.id}>
-                  <TableCell>
-                    <Link
-                      to="/agents/$agentId"
-                      params={{ agentId: agent.id }}
-                      className="font-medium underline-offset-4 hover:underline"
-                    >
-                      {agent.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <code className="font-mono text-xs">{agent.tokenPrefix}…</code>
-                  </TableCell>
-                  <TableCell>{count(agent.workingSetCap, "tool")}</TableCell>
-                  <TableCell>{count(agent.idleWindowDays, "day")}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    <Time iso={agent.createdAt} />
-                  </TableCell>
-                  <TableCell>
-                    {agent.revokedAt ? (
-                      <Badge variant="destructive">revoked</Badge>
-                    ) : (
-                      <Badge variant="success">active</Badge>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+        <AgentsTable
+          agents={rows}
+          isPending={agents.isPending}
+          isError={agents.isError}
+          error={agents.error}
+          retrying={agents.isFetching}
+          onRetry={() => void agents.refetch()}
+        />
       )}
 
       <CreateAgentDialog
         open={creating}
         onOpenChange={setCreating}
-        connections={connectionData.connections}
+        connections={connections.data?.connections ?? []}
       />
     </PageContainer>
   );

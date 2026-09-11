@@ -32,7 +32,8 @@ function PendingRoute() {
   useScreenTitle("Pending actions");
 
   return (
-    <PageContainer size="medium" className="gap-6">
+    // `gap-4` between the header and a list, as Cando's connections screen passes.
+    <PageContainer size="medium" className="gap-4">
       <PageHeader>
         <PageHeaderContent>
           <PageHeaderTitle>Pending actions</PageHeaderTitle>
@@ -45,15 +46,15 @@ function PendingRoute() {
       </PageHeader>
 
       {data.pendingActions.length === 0 ? (
-        <Empty className="rounded-lg border">
+        <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <InboxIcon />
             </EmptyMedia>
             <EmptyTitle>Nothing is waiting on you</EmptyTitle>
             <EmptyDescription>
-              Reads never ask. A write asks once, a destructive tool asks every time until you relax
-              it. When an agent asks, it appears here and the link it relayed opens it.
+              Reads never ask, a write asks once, and a destructive tool asks every call until you
+              relax it — when an agent does ask, it appears here.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

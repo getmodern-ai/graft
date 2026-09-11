@@ -9,6 +9,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { isOfflineError } from "@/lib/network-error";
 
 /**
  * What a route renders when its loader or component throws. Without one the router falls back to
@@ -16,13 +17,12 @@ import {
  *
  * Cando's `apps/web/src/components/route-error.tsx`: the offline case gets its own glyph, title
  * and advice, because the advice differs — a network problem is worth retrying, an application
- * error usually is not. A failed `fetch` rejects with a `TypeError` and nothing else in the
- * console's read path throws one (`lib/api.ts` maps every HTTP refusal onto `ApiError`), so that
- * is the check; Cando's `network-error.ts` reaches the same conclusion the long way.
+ * error usually is not. `lib/network-error.ts` is the check, shared with the `RetryNotice` a
+ * table body shows for the same failure.
  */
 export function RouteError({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
-  const offline = error instanceof TypeError;
+  const offline = isOfflineError(error);
   // `error` is `unknown` on the router's props; `ApiError` extends `Error`, so one check covers
   // the server's own sentence and anything else that was thrown with a message.
   const message =

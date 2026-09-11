@@ -47,8 +47,9 @@ function ConnectionsRoute() {
   useScreenTitle("Connections");
 
   return (
-    // `medium`: a stack of cards reads at 896 where a table would want the wider column.
-    <PageContainer size="medium" className="gap-6">
+    // `medium`: a stack of cards reads at 896 where a table would want the wider column. `gap-4`
+    // between the header and a list, as Cando's connections screen passes.
+    <PageContainer size="medium" className="gap-4">
       <PageHeader>
         <PageHeaderContent>
           <PageHeaderTitle>Connections</PageHeaderTitle>
@@ -66,16 +67,15 @@ function ConnectionsRoute() {
       </PageHeader>
 
       {data.connections.length === 0 ? (
-        <Empty className="rounded-lg border">
+        <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <PowerIcon />
             </EmptyMedia>
             <EmptyTitle>No connections yet</EmptyTitle>
             <EmptyDescription>
-              An agent proposes a connection when it needs a vendor it cannot reach, and you enter
-              the secret here — never in the chat. Or add one yourself and put it in an agent's
-              scope.
+              An agent proposes one when it needs a vendor it cannot reach, and you enter the secret
+              here — never through the agent.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
