@@ -305,6 +305,26 @@ elsewhere. A server whose console directory holds no build boots and answers eve
 a JSON 404 saying where it looked. `GRAFT_CONSOLE_URL` is a different setting: where handoff URLs
 point (GRA-23), which in development is the Vite origin.
 
+**The shell is Cando's, less the agent rail** (GRA-46). `src/components/shell/app-shell.tsx` mounts
+the `Sidebar` primitive off canvas at its own 16rem — the `sidebar_state` cookie it writes is read
+back by `src/lib/sidebar-state.ts`, ⌘B toggles it, and below `md` it is the drawer, closed on the
+router's `onBeforeNavigate` — with `SkipNav` first in the tree and the `<main>` region carrying
+`MAIN_CONTENT_ID`. `main-sidebar.tsx` draws the mark (`src/components/graft-mark.tsx`, the favicon
+redrawn in tokens), the four destinations from `src/lib/main-sidebar-nav-items.ts` (a pure data
+module, tested) with the open-ask count as a `SidebarMenuBadge` and the count in the link's own
+name, and `account-menu.tsx` at the foot: name and email, the Theme radio group (label *inside* the
+group — Base UI's `Menu.GroupLabel` throws outside one), Sign out through `src/lib/sign-out.ts`,
+which removes the session entry and clears the cache before anyone navigates. The screen's title is
+written once, with `useScreenTitle` (`shell/screen-title.tsx`), and shown by two bars — the 48px
+`PageNav` strip at `md` and up, which also carries `PageNavCollapsedSidebar`, and `MobileTopBar`
+below it; the strip is mounted once in the shell rather than per screen as in Cando, for the
+reason that file gives. Every screen is a `PageContainer` (`large` for the agents table and the
+agent detail, `medium` for the card stacks and settings) opening with `PageHeader`; a detail screen
+titles the bars with `PageNavBreadcrumb`. The doors share `AuthHeader` and `AuthCard` (`max-w-md`,
+the `xs` container inside); `route-not-found.tsx`, `route-error.tsx` and `loader.tsx` are Cando's.
+Not here, because Graft has none of it (ADR 0017): the agent rail and its faces, the New Thread
+button, the Automations and Recents groups, and the settings shell with its own sidebar.
+
 The shape is Cando's: `routes/_auth/route.tsx` is the guard and only the guard (a signed-out visit
 goes to `/login?redirect=<same-origin path>` and returns there, which is how a handoff URL survives a
 fresh browser); `routes/_auth/_shell/` is the chrome; a screen's file placement decides both.
