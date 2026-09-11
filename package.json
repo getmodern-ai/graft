@@ -34,10 +34,5 @@
     "turbo": "^2.10.12",
     "typescript": "catalog:"
   },
-  "packageManager": "pnpm@10.6.1",
-  "pnpm": {
-    "overrides": {
-      "@esbuild-kit/core-utils>esbuild": "^0.25.0"
-    }
-  }
+  "packageManager": "pnpm@10.6.1"
 }

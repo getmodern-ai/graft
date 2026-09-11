@@ -79,3 +79,10 @@ catalog:
   tailwind-merge: ^3.6.0
   lucide-react: ^1.43.0
   sonner: ^2.0.8
+
+# Overrides live here and not under `pnpm` in the root `package.json`: pnpm 11 no longer reads that
+# field and pnpm 10 reads both, so this is the one placement both honour (AGENTS.md, "Conventions",
+# has the argument for the pin itself; GRA-41). Drop the line when `pnpm why @esbuild-kit/core-utils`
+# comes back empty.
+overrides:
+  "@esbuild-kit/core-utils>esbuild": ^0.25.0
