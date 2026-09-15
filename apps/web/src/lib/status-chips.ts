@@ -102,9 +102,10 @@ export const MODEL_KEY_STATUS_CHIP = {
 } as const satisfies Record<"set" | "unset", StatusChip>;
 
 /**
- * A tool's annotations as the check derived them (ADR 0008): read-only passes without asking, a
- * write asks once, destructive asks every call until relaxed. Three distinct tones because the
- * annotation is what decides whether the person will hear from the tool.
+ * A tool's annotations as the check derived them (ADR 0008): read-only passes without asking; write
+ * and destructive both ask once and hold, and the destructive tone is what tells the person the ask
+ * is about deleting or overwriting. Three distinct tones because the annotation is what decides
+ * whether, and about what, the person will hear from the tool.
  */
 export const TOOL_ANNOTATION_CHIP = {
   "read-only": { variant: "secondary", label: "Read-only" },

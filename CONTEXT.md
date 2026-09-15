@@ -145,7 +145,7 @@ everything that is not secret. The agent relays it; the tool waits or polls.
 _Avoid_: link, redirect, elicitation (which is a different mechanism, used only for approvals)
 
 **Approval**:
-A person's answer to a tool's ask. Reads never ask. A non-read tool asks once and the answer holds.
-A destructive tool asks every time until the person relaxes it. `acquire` asks once per agent per
-connection. Answerable later through the console.
+A person's answer to a tool's ask. Reads never ask. Any other tool, destructive included, asks once
+and the answer holds; the person may set a tool to ask every time, and back. `acquire` asks once
+per agent per connection. Answerable later through the console.
 _Avoid_: grant, permission, consent (fine in prose, not as the noun for the record)

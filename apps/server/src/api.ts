@@ -12,7 +12,6 @@ import {
   getConnection,
   getPendingActionForPerson,
   getPersonModelKey,
-  getToolById,
   grantBuildApproval,
   isOAuthAuthorizationCode,
   type LedgerDeps,
@@ -30,7 +29,6 @@ import {
   type Principal,
   registerConnection,
   registerConnectionWithCredential,
-  relaxDestructiveApproval,
   requirePerson,
   revokeAgent,
   revokeApproval,
@@ -41,6 +39,7 @@ import {
   type SessionLike,
   setAgentScope,
   setApproval,
+  setAskEveryCall,
   setConnectionCredential,
   setPersonModelKey,
   type ToolDeps,
@@ -83,8 +82,8 @@ import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
  * **Pending actions and approvals** (GRA-23; ADR 0006, ADR 0008) are the routes the console's
  * approval pages call: the open actions across the person's agents, one action by its signed
  * handoff link, the answer — which also writes the approval the ask was for, so the agent's next
- * call proceeds whether or not it is still waiting — and the standing approvals per agent, to relax
- * a destructive tool's per-call ask or to withdraw an answer.
+ * call proceeds whether or not it is still waiting — and the standing approvals per agent, to set a
+ * tool to ask every call or back, or to withdraw an answer.
  *
  * **The connection handoff's submits** (GRA-28; ADR 0006) are two more routes on a pending action,
  * apart from the generic answer because their bodies carry a secret and their work is one
@@ -162,7 +161,8 @@ export type PendingActionCard = {
   url: string;
 };
 
-const answerBody = z.object({ allow: z.boolean(), relax: z.boolean().optional() });
+const answerBody = z.object({ allow: z.boolean(), askEveryCall: z.boolean().optional() });
+const askEveryCallBody = z.object({ on: z.boolean() });
 
 /** How a handoff verdict lands on the wire: the reason word rides in `details`. */
 const HANDOFF_REFUSAL_CODE: Record<"tampered" | "expired" | "consumed", ServiceErrorCode> = {
@@ -790,19 +790,21 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
-   * The person's answer, `{ allow, relax? }`. Recording the answer and writing the approval it is
-   * for happen in one transaction: for a `tool` ask the answer becomes the standing `approval` row
-   * (`allow` or `deny` — a no holds too, ADR 0008), and `relax` on a destructive tool lifts its
-   * per-call ask; for a `build` ask an `allow` grants the build approval and a decline writes
-   * nothing, so the next `acquire` asks again.
+   * The person's answer, `{ allow, askEveryCall? }`. Recording the answer and writing the approval
+   * it is for happen in one transaction: for a `tool` ask the answer becomes the standing `approval`
+   * row (`allow` or `deny` — a no holds too, ADR 0008), and `askEveryCall` with an allow sets the
+   * tool's per-call opt-in on or off, absent leaving it as it stands (ADR 0008, amendment of
+   * 2026-09-15); for a `build` ask an `allow` grants the build approval and a decline writes nothing,
+   * so the next `acquire` asks again.
    *
    * **An answer the standing row now carries in full is consumed here.** Otherwise it would outlive
    * the row: a yes left answered-but-unconsumed would still be found and honoured by a call made
    * after the approval was withdrawn, which is exactly what withdrawing is meant to prevent. The two
-   * answers the agent's next call must read for itself stay unconsumed — a destructive tool's
-   * per-call yes (ADR 0008: it asks every call) and a build decline (no row records it). A call that
-   * is waiting sees the consumed action as `CONFLICT` and reads the rule again (`@graft/mcp`'s
-   * `approval.ts`), which is how it proceeds on a yes and refuses on a no.
+   * answers the agent's next call must read for itself stay unconsumed — a yes on a tool set to ask
+   * every call (the row says allow and the rule still says ask, so this call's yes is the action's)
+   * and a build decline (no row records it). A call that is waiting sees the consumed action as
+   * `CONFLICT` and reads the rule again (`@graft/mcp`'s `approval.ts`), which is how it proceeds on
+   * a yes and refuses on a no.
    */
   api.post("/pending-actions/:id/answer", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -812,7 +814,7 @@ export function createApi(options: ApiOptions): Hono {
       const scoped: ServiceContext = { db: tx };
       const answer = {
         allow: body.allow,
-        ...(body.relax === undefined ? {} : { relax: body.relax }),
+        ...(body.askEveryCall === undefined ? {} : { askEveryCall: body.askEveryCall }),
       };
       const action = await answerPendingAction(scoped, principal, id, answer, pendingActionDeps);
       const scope = { personId: principal.personId, agentId: action.agentId };
@@ -827,17 +829,17 @@ export function createApi(options: ApiOptions): Hono {
       };
       if (action.kind === "tool" && typeof action.payload.toolId === "string") {
         const toolId = action.payload.toolId;
-        const tool = await getToolById(scoped, principal, toolId, toolDeps);
-        let approval = await setApproval(
+        // The setting rides the yes in the same write. Not `setAskEveryCall`: that is the agent
+        // page's act and spends waiting answers, and this answer may have to wait for the agent.
+        const approval = await setApproval(
           scoped,
           scope,
           toolId,
           said.allow ? "allow" : "deny",
           approvalDeps,
+          said.allow && said.askEveryCall !== undefined ? { askEveryCall: said.askEveryCall } : {},
         );
-        const relaxed = said.allow && said.relax === true && tool?.destructive === true;
-        if (relaxed) approval = await relaxDestructiveApproval(scoped, scope, toolId, approvalDeps);
-        if (!said.allow || !tool?.destructive || relaxed) await settle();
+        if (!said.allow || !approval.askEveryCall) await settle();
         return { pendingAction: action, approval };
       }
       if (
@@ -1010,19 +1012,24 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(result);
   });
 
-  /** One agent's standing approvals — what the console lists to relax or withdraw. */
+  /** One agent's standing approvals — what the console lists to set how a tool asks, or withdraw. */
   api.get("/approvals", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
     return c.json({ approvals: await listApprovals(ctx, scope, approvalDeps) });
   });
 
-  /** Relax a destructive tool's per-call ask for one agent (ADR 0008). 400 for a tool that is not destructive. */
-  api.post("/approvals/:toolId/relax", async (c) => {
+  /**
+   * Set a tool's ask-every-call opt-in on or off for one agent, `{ on }` (ADR 0008, amendment of
+   * 2026-09-15). A `PUT` because the body is the whole setting and a repeat changes nothing. 400 for
+   * a read-only tool, which never asks; 404 when no approval stands to carry the setting.
+   */
+  api.put("/approvals/:toolId/ask-every-call", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, askEveryCallBody);
     const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
     return c.json({
-      approval: await relaxDestructiveApproval(ctx, scope, c.req.param("toolId"), approvalDeps),
+      approval: await setAskEveryCall(ctx, scope, c.req.param("toolId"), body.on, approvalDeps),
     });
   });
 

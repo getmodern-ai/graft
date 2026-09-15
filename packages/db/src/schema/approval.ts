@@ -11,10 +11,10 @@ export type ApprovalDecision = (typeof approvalDecision)[number];
 
 /**
  * An **approval**: a person's standing answer to a tool's ask, per agent, per tool (CONTEXT.md;
- * ADR 0008). Undecided is the *absence* of a row. Reads never consult this table; a non-read tool
- * asks once and the row holds the answer; a destructive tool asks every call until
- * `perCallRelaxed` is set from the console. Deleted for every tool of a vendor when one of its
- * connections is revoked, so a fresh start means the agent asks from zero (ADR 0007).
+ * ADR 0008). Undecided is the *absence* of a row. Reads never consult this table; any other tool,
+ * destructive included, asks once and the row holds the answer, unless the person has set
+ * `askEveryCall` on it. Deleted for every tool of a vendor when one of its connections is revoked,
+ * so a fresh start means the agent asks from zero (ADR 0007).
  */
 export const approval = pgTable(
   "approval",
@@ -28,10 +28,13 @@ export const approval = pgTable(
     decision: text("decision", { enum: approvalDecision }).notNull(),
     decidedAt: timestamp("decided_at").notNull(),
     /**
-     * For a destructive tool: the person has relaxed the per-call ask, so `allow` here holds like
-     * it does for an ordinary write. False means every call asks again whatever `decision` says.
+     * The person's opt-in, from the ask or the agent's page: true means every call of this tool
+     * asks again whatever `decision` says, and each call's yes is the pending action's rather than
+     * this row's. Off by default, for a new row and for every row that predates the column (ADR
+     * 0008, amendment of 2026-09-15: the column it replaced, `per_call_relaxed`, was dropped rather
+     * than inverted, because a destructive allow recorded under the old rule now holds).
      */
-    perCallRelaxed: boolean("per_call_relaxed").notNull().default(false),
+    askEveryCall: boolean("ask_every_call").notNull().default(false),
     ...owned(),
   },
   (table) => [

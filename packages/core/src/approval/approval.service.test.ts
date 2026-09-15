@@ -7,8 +7,9 @@ import type { ApprovalDeps } from "./approval.deps";
 import {
   decideToolCall,
   grantBuildApproval,
-  relaxDestructiveApproval,
+  revokeApproval,
   setApproval,
+  setAskEveryCall,
 } from "./approval.service";
 
 const NOW = new Date("2026-09-09T10:00:00Z");
@@ -21,12 +22,13 @@ const writeTool = {
   destructive: false,
 } as AuthoredToolRow;
 const destructiveTool = { ...writeTool, destructive: true } as AuthoredToolRow;
+const readTool = { ...writeTool, readOnly: true } as AuthoredToolRow;
 const approval: ApprovalRow = {
   agentId: "agent_1",
   toolId: "tool_1",
   decision: "allow",
   decidedAt: NOW,
-  perCallRelaxed: false,
+  askEveryCall: false,
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,
@@ -46,10 +48,14 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
     findApproval: vi.fn(async () => null),
     listApprovals: vi.fn(async () => []),
     upsertApproval: vi.fn(async (_db, input) => ({ ...approval, ...input }) as ApprovalRow),
-    relaxApproval: vi.fn(async () => ({ ...approval, perCallRelaxed: true })),
+    updateAskEveryCall: vi.fn(async (_db, _scope, _toolId, on) => ({
+      ...approval,
+      askEveryCall: on,
+    })),
     deleteApproval: vi.fn(async () => approval),
     findBuildApproval: vi.fn(async () => null),
     insertBuildApproval: vi.fn(async () => build),
+    settleAnsweredToolActions: vi.fn(async () => []),
     findAuthoredToolById: vi.fn(async () => writeTool),
     findConnection: vi.fn(async () => ({ id: "conn_1" }) as never),
     now: () => NOW,
@@ -58,7 +64,7 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
 }
 
 describe("setApproval", () => {
-  it("records the person's answer for the agent's tool at the clock's moment", async () => {
+  it("records the person's answer for the agent's tool at the clock's moment, leaving the setting as it stands", async () => {
     const deps = fakeDeps();
     await setApproval(ctx, SCOPE, "tool_1", "allow", deps);
     expect(deps.upsertApproval).toHaveBeenCalledWith(ctx.db, {
@@ -67,6 +73,21 @@ describe("setApproval", () => {
       decision: "allow",
       decidedAt: NOW,
     });
+    // The answer path never spends a waiting answer — that is the console's act.
+    expect(deps.settleAnsweredToolActions).not.toHaveBeenCalled();
+  });
+
+  it("writes the setting with the answer when the answer carried one", async () => {
+    const deps = fakeDeps();
+    const row = await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { askEveryCall: true });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(ctx.db, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "allow",
+      decidedAt: NOW,
+      askEveryCall: true,
+    });
+    expect(row.askEveryCall).toBe(true);
   });
 
   it("refuses a tool that is not the person's", async () => {
@@ -78,30 +99,75 @@ describe("setApproval", () => {
   });
 });
 
-describe("relaxDestructiveApproval", () => {
-  it("relaxes a destructive tool's standing approval", async () => {
+describe("setAskEveryCall", () => {
+  it("turns the setting on for a destructive tool, and off again, spending any answer left waiting each time", async () => {
     const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => destructiveTool) });
-    const result = await relaxDestructiveApproval(ctx, SCOPE, "tool_1", deps);
-    expect(result.perCallRelaxed).toBe(true);
-    expect(deps.relaxApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "tool_1");
+    const on = await setAskEveryCall(ctx, SCOPE, "tool_1", true, deps);
+    expect(on.askEveryCall).toBe(true);
+    expect(deps.updateAskEveryCall).toHaveBeenCalledWith(ctx.db, SCOPE, "tool_1", true);
+    expect(deps.settleAnsweredToolActions).toHaveBeenCalledWith(ctx.db, SCOPE, "tool_1", NOW);
+
+    const off = await setAskEveryCall(ctx, SCOPE, "tool_1", false, deps);
+    expect(off.askEveryCall).toBe(false);
+    expect(deps.updateAskEveryCall).toHaveBeenLastCalledWith(ctx.db, SCOPE, "tool_1", false);
+    expect(deps.settleAnsweredToolActions).toHaveBeenCalledTimes(2);
   });
 
-  it("refuses a tool that is not destructive — there is nothing to relax", async () => {
+  it("takes a write tool too — the setting is per tool, not per annotation", async () => {
     const deps = fakeDeps();
-    await expect(relaxDestructiveApproval(ctx, SCOPE, "tool_1", deps)).rejects.toMatchObject({
+    const on = await setAskEveryCall(ctx, SCOPE, "tool_1", true, deps);
+    expect(on.askEveryCall).toBe(true);
+  });
+
+  it("refuses a read-only tool — it never asks, so there is nothing to set", async () => {
+    const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => readTool) });
+    await expect(setAskEveryCall(ctx, SCOPE, "tool_1", true, deps)).rejects.toMatchObject({
       code: "BAD_REQUEST",
     });
-    expect(deps.relaxApproval).not.toHaveBeenCalled();
+    expect(deps.updateAskEveryCall).not.toHaveBeenCalled();
+    expect(deps.settleAnsweredToolActions).not.toHaveBeenCalled();
   });
 
-  it("refuses when no approval stands yet", async () => {
+  it("refuses when no approval stands yet, and spends nothing", async () => {
     const deps = fakeDeps({
       findAuthoredToolById: vi.fn(async () => destructiveTool),
-      relaxApproval: vi.fn(async () => null),
+      updateAskEveryCall: vi.fn(async () => null),
     });
-    await expect(relaxDestructiveApproval(ctx, SCOPE, "tool_1", deps)).rejects.toMatchObject({
+    await expect(setAskEveryCall(ctx, SCOPE, "tool_1", true, deps)).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
+    expect(deps.settleAnsweredToolActions).not.toHaveBeenCalled();
+  });
+
+  it("refuses a tool that is not the person's", async () => {
+    const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => null) });
+    await expect(setAskEveryCall(ctx, SCOPE, "tool_x", true, deps)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(deps.updateAskEveryCall).not.toHaveBeenCalled();
+  });
+});
+
+describe("revokeApproval", () => {
+  it("removes the row and spends any answer left waiting for the agent, so nothing re-creates it", async () => {
+    const deps = fakeDeps();
+    await expect(revokeApproval(ctx, SCOPE, "tool_1", deps)).resolves.toEqual(approval);
+    expect(deps.deleteApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "tool_1");
+    expect(deps.settleAnsweredToolActions).toHaveBeenCalledWith(ctx.db, SCOPE, "tool_1", NOW);
+  });
+
+  it("answers null when nothing stood, and still spends what was waiting", async () => {
+    const deps = fakeDeps({ deleteApproval: vi.fn(async () => null) });
+    await expect(revokeApproval(ctx, SCOPE, "tool_1", deps)).resolves.toBeNull();
+    expect(deps.settleAnsweredToolActions).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a tool that is not the person's", async () => {
+    const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => null) });
+    await expect(revokeApproval(ctx, SCOPE, "tool_x", deps)).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    expect(deps.deleteApproval).not.toHaveBeenCalled();
   });
 });
 
@@ -111,6 +177,7 @@ describe("decideToolCall", () => {
     await expect(
       decideToolCall(ctx, SCOPE, "tool_1", fakeDeps({ findApproval: vi.fn(async () => approval) })),
     ).resolves.toBe("pass");
+    // A destructive tool's allow holds like a write's (the amendment of 2026-09-15).
     await expect(
       decideToolCall(
         ctx,
@@ -119,6 +186,18 @@ describe("decideToolCall", () => {
         fakeDeps({
           findAuthoredToolById: vi.fn(async () => destructiveTool),
           findApproval: vi.fn(async () => approval),
+        }),
+      ),
+    ).resolves.toBe("pass");
+    // Until the person sets it to ask every call.
+    await expect(
+      decideToolCall(
+        ctx,
+        SCOPE,
+        "tool_1",
+        fakeDeps({
+          findAuthoredToolById: vi.fn(async () => destructiveTool),
+          findApproval: vi.fn(async () => ({ ...approval, askEveryCall: true })),
         }),
       ),
     ).resolves.toBe("ask");

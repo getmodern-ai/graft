@@ -69,17 +69,19 @@ Graft asks the person before code runs, and asks in two places:
 
 - **Before building** against a connection, once per agent per connection: *"May this agent build
   against <connection>?"* Say what you are about to have built and against which account.
-- **Before a tool's first use** that writes. A read-only tool never asks. A tool that writes asks once,
-  and the answer holds. A destructive tool asks every time until the person relaxes it in the
-  console. Say what the tool does, in its own description's words, and what this one call will do.
+- **Before a tool's first use** that is not a read. A read-only tool never asks. Any other tool asks
+  once, and the answer holds — a destructive tool too, and its ask says it is destructive. The person
+  can set a tool to ask every time instead, in Graft's console, on the ask or on your agent's page.
+  Say what the tool does, in its own description's words, and what this one call will do.
 
 Read the tool's `readOnlyHint` and `destructiveHint` from the tool list to know which sentence
 applies.
 
-Hermes shows Graft's ask as its own approval card. Any of its allow buttons is a yes to Graft — Allow
-Once on a tool that writes holds from then on, because Graft asks once by rule — and no button relaxes
-a destructive tool: it asks again on the next call until the person relaxes it in the console. Say so
-if the person asks why the card came back.
+Hermes shows Graft's ask as its own approval card. Any of its allow buttons is a standing yes to
+Graft — Allow Once, Allow Session and Always Allow all record the same allow, because Graft asks once
+by rule — and Deny records a no that holds. No button changes whether a tool asks every time; that
+switch is in the console, and the ask's text says so. If the card comes back for a tool the person
+already allowed, they set that tool to ask every time; say so if they ask.
 
 ## What not to do
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { approvalDecision } from "./approval.decision";
 
-/** ADR 0008, one line per rule. */
+/** ADR 0008 (amended 2026-09-15), one line per rule. */
 
 const read = { readOnly: true, destructive: false };
 const write = { readOnly: false, destructive: false };
@@ -14,7 +14,13 @@ describe("approvalDecision", () => {
     expect(
       approvalDecision({
         annotations: read,
-        approval: { decision: "deny", perCallRelaxed: false },
+        approval: { decision: "deny", askEveryCall: false },
+      }),
+    ).toBe("pass");
+    expect(
+      approvalDecision({
+        annotations: read,
+        approval: { decision: "allow", askEveryCall: true },
       }),
     ).toBe("pass");
   });
@@ -24,44 +30,59 @@ describe("approvalDecision", () => {
     expect(
       approvalDecision({
         annotations: write,
-        approval: { decision: "allow", perCallRelaxed: false },
+        approval: { decision: "allow", askEveryCall: false },
       }),
     ).toBe("pass");
     expect(
       approvalDecision({
         annotations: write,
-        approval: { decision: "deny", perCallRelaxed: false },
+        approval: { decision: "deny", askEveryCall: false },
       }),
     ).toBe("deny");
   });
 
-  it("asks a destructive tool every call until the person relaxes it", () => {
+  it("asks once for a destructive tool too, and holds the answer like a write's", () => {
     expect(approvalDecision({ annotations: destructive, approval: null })).toBe("ask");
     expect(
       approvalDecision({
         annotations: destructive,
-        approval: { decision: "allow", perCallRelaxed: false },
+        approval: { decision: "allow", askEveryCall: false },
+      }),
+    ).toBe("pass");
+    expect(
+      approvalDecision({
+        annotations: destructive,
+        approval: { decision: "deny", askEveryCall: false },
+      }),
+    ).toBe("deny");
+  });
+
+  it("asks on every call while the person has the tool set to ask every time, write or destructive", () => {
+    expect(
+      approvalDecision({
+        annotations: write,
+        approval: { decision: "allow", askEveryCall: true },
       }),
     ).toBe("ask");
     expect(
       approvalDecision({
         annotations: destructive,
-        approval: { decision: "allow", perCallRelaxed: true },
+        approval: { decision: "allow", askEveryCall: true },
       }),
-    ).toBe("pass");
+    ).toBe("ask");
   });
 
-  it("refuses a denied destructive tool whether or not it was relaxed", () => {
+  it("refuses a denied tool whether or not it is set to ask every time", () => {
     expect(
       approvalDecision({
         annotations: destructive,
-        approval: { decision: "deny", perCallRelaxed: false },
+        approval: { decision: "deny", askEveryCall: true },
       }),
     ).toBe("deny");
     expect(
       approvalDecision({
-        annotations: destructive,
-        approval: { decision: "deny", perCallRelaxed: true },
+        annotations: write,
+        approval: { decision: "deny", askEveryCall: true },
       }),
     ).toBe("deny");
   });

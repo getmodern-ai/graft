@@ -122,7 +122,7 @@ const approvalRow: ApprovalRow = {
   toolId: "tool_1",
   decision: "allow",
   decidedAt: NOW,
-  perCallRelaxed: false,
+  askEveryCall: false,
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,
@@ -321,10 +321,14 @@ function approvalDeps(): ApprovalDeps {
     findApproval: vi.fn(async () => approvalRow),
     listApprovals: vi.fn(async () => [approvalRow]),
     upsertApproval: vi.fn(async (_db, input) => ({ ...approvalRow, ...input }) as ApprovalRow),
-    relaxApproval: vi.fn(async () => ({ ...approvalRow, perCallRelaxed: true })),
+    updateAskEveryCall: vi.fn(async (_db, _scope, _toolId, on) => ({
+      ...approvalRow,
+      askEveryCall: on,
+    })),
     deleteApproval: vi.fn(async () => approvalRow),
     findBuildApproval: vi.fn(async () => null),
     insertBuildApproval: vi.fn(async () => buildApprovalRow),
+    settleAnsweredToolActions: vi.fn(async () => []),
     findAuthoredToolById: vi.fn(async () => destructiveTool),
     findConnection: vi.fn(async () => connectionRow),
     now: () => NOW,
@@ -1024,26 +1028,19 @@ describe("pending actions", () => {
     expect(unknown.status).toBe(404);
   });
 
-  it("records an allow as the standing approval, relaxes a destructive tool when asked, and answers both rows", async () => {
+  it("records an allow as the standing approval and spends the action — a destructive tool's yes holds like a write's", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    vi.mocked(deps.tool.findAuthoredToolById).mockResolvedValueOnce(destructiveTool);
-    const res = await app.request(
-      "/api/pending-actions/pa_1/answer",
-      json({ allow: true, relax: true }),
-    );
+    const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
-      pendingAction: { id: "pa_1", answer: { allow: true, relax: true } },
-      approval: { agentId: "agent_1", toolId: "tool_1", decision: "allow", perCallRelaxed: true },
+      pendingAction: { id: "pa_1", answer: { allow: true } },
+      approval: { agentId: "agent_1", toolId: "tool_1", decision: "allow", askEveryCall: false },
     });
     expect(deps.pendingAction.answerPendingAction).toHaveBeenCalledWith(
       fakeDb,
       "person_1",
       "pa_1",
-      {
-        answer: { allow: true, relax: true },
-        answeredAt: NOW,
-      },
+      { answer: { allow: true }, answeredAt: NOW },
     );
     expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
       agentId: "agent_1",
@@ -1051,12 +1048,9 @@ describe("pending actions", () => {
       decision: "allow",
       decidedAt: NOW,
     });
-    expect(deps.approval.relaxApproval).toHaveBeenCalledWith(
-      fakeDb,
-      { personId: "person_1", agentId: "agent_1" },
-      "tool_1",
-    );
-    // Relaxed, the row carries the whole yes, so the action is spent here.
+    // The answer left the setting alone, so nothing was set.
+    expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
+    // The row carries the whole yes, so the action is spent here.
     expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledWith(
       fakeDb,
       { personId: "person_1", agentId: "agent_1" },
@@ -1065,23 +1059,48 @@ describe("pending actions", () => {
     );
   });
 
-  it("leaves a destructive tool's per-call yes for the agent's next call to take", async () => {
+  it("turns ask-every-call on with the yes, in the same write, and leaves that per-call yes for the agent's next call to take", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    vi.mocked(deps.tool.findAuthoredToolById).mockResolvedValueOnce(destructiveTool);
-    const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
+    const res = await app.request(
+      "/api/pending-actions/pa_1/answer",
+      json({ allow: true, askEveryCall: true }),
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
-      approval: { decision: "allow", perCallRelaxed: false },
+      pendingAction: { answer: { allow: true, askEveryCall: true } },
+      approval: { decision: "allow", askEveryCall: true },
     });
+    expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "allow",
+      decidedAt: NOW,
+      askEveryCall: true,
+    });
+    // The answer route never takes the agent page's path, which would spend the very answer it
+    // is leaving for the agent.
+    expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
+    expect(deps.approval.settleAnsweredToolActions).not.toHaveBeenCalled();
     expect(deps.pendingAction.consumePendingAction).not.toHaveBeenCalled();
   });
 
-  it("spends a write tool's yes at once — the approval row is the whole answer", async () => {
+  it("turns ask-every-call off with the yes, and then spends the action — the row holds on its own", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    const res = await app.request("/api/pending-actions/pa_1/answer", json({ allow: true }));
+    const res = await app.request(
+      "/api/pending-actions/pa_1/answer",
+      json({ allow: true, askEveryCall: false }),
+    );
     expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ approval: { askEveryCall: false } });
+    expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "allow",
+      decidedAt: NOW,
+      askEveryCall: false,
+    });
+    expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
     expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
-    expect(deps.approval.relaxApproval).not.toHaveBeenCalled();
   });
 
   it("tolerates the agent taking the answer between the two statements", async () => {
@@ -1095,15 +1114,22 @@ describe("pending actions", () => {
     expect(res.status).toBe(200);
   });
 
-  it("records a decline as a standing deny, and never relaxes on a no", async () => {
+  it("records a decline as a standing deny, and never touches the setting on a no", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
     const res = await app.request(
       "/api/pending-actions/pa_1/answer",
-      json({ allow: false, relax: true }),
+      json({ allow: false, askEveryCall: true }),
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ approval: { decision: "deny" } });
-    expect(deps.approval.relaxApproval).not.toHaveBeenCalled();
+    // The setting the body carried is not written with a no: the upsert names no `askEveryCall`.
+    expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "deny",
+      decidedAt: NOW,
+    });
+    expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
     // A no is in the row in full, so the action is spent here too.
     expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
   });
@@ -1173,22 +1199,68 @@ describe("approvals", () => {
     expect(bare.status).toBe(400);
   });
 
-  it("relaxes a destructive tool's per-call ask, and refuses a tool that is not destructive with 400", async () => {
+  it("sets a tool's ask-every-call on and off, on a write as on a destructive tool, and refuses a read-only tool with 400", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    const relaxed = await app.request("/api/approvals/tool_1/relax?agentId=agent_1", {
-      method: "POST",
-    });
-    expect(relaxed.status).toBe(200);
-    expect(await relaxed.json()).toMatchObject({ approval: { perCallRelaxed: true } });
+    const on = await app.request(
+      "/api/approvals/tool_1/ask-every-call?agentId=agent_1",
+      json({ on: true }, "PUT"),
+    );
+    expect(on.status).toBe(200);
+    expect(await on.json()).toMatchObject({ approval: { askEveryCall: true } });
+    expect(deps.approval.updateAskEveryCall).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "tool_1",
+      true,
+    );
+    // A per-call yes left waiting for the agent was given under the old setting, and is spent.
+    expect(deps.approval.settleAnsweredToolActions).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "tool_1",
+      NOW,
+    );
+
+    const off = await app.request(
+      "/api/approvals/tool_1/ask-every-call?agentId=agent_1",
+      json({ on: false }, "PUT"),
+    );
+    expect(off.status).toBe(200);
+    expect(await off.json()).toMatchObject({ approval: { askEveryCall: false } });
 
     vi.mocked(deps.approval.findAuthoredToolById).mockResolvedValueOnce({
       ...destructiveTool,
       destructive: false,
     });
-    const write = await app.request("/api/approvals/tool_1/relax?agentId=agent_1", {
-      method: "POST",
+    const write = await app.request(
+      "/api/approvals/tool_1/ask-every-call?agentId=agent_1",
+      json({ on: true }, "PUT"),
+    );
+    expect(write.status).toBe(200);
+
+    vi.mocked(deps.approval.findAuthoredToolById).mockResolvedValueOnce({
+      ...destructiveTool,
+      destructive: false,
+      readOnly: true,
     });
-    expect(write.status).toBe(400);
+    const read = await app.request(
+      "/api/approvals/tool_1/ask-every-call?agentId=agent_1",
+      json({ on: true }, "PUT"),
+    );
+    expect(read.status).toBe(400);
+
+    const malformed = await app.request(
+      "/api/approvals/tool_1/ask-every-call?agentId=agent_1",
+      json({ on: "yes" }, "PUT"),
+    );
+    expect(malformed.status).toBe(400);
+
+    vi.mocked(deps.approval.updateAskEveryCall).mockResolvedValueOnce(null);
+    const none = await app.request(
+      "/api/approvals/tool_1/ask-every-call?agentId=agent_1",
+      json({ on: true }, "PUT"),
+    );
+    expect(none.status).toBe(404);
   });
 
   it("withdraws an approval, answering the row it removed, and 404 when none stood", async () => {
@@ -1200,6 +1272,13 @@ describe("approvals", () => {
       fakeDb,
       { personId: "person_1", agentId: "agent_1" },
       "tool_1",
+    );
+    // And any yes still waiting for the agent goes with the row, so nothing re-creates it.
+    expect(deps.approval.settleAnsweredToolActions).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "tool_1",
+      NOW,
     );
 
     vi.mocked(deps.approval.deleteApproval).mockResolvedValueOnce(null);
@@ -1214,7 +1293,7 @@ describe("approvals", () => {
       ["/api/pending-actions/pa_1?t=x", undefined],
       ["/api/pending-actions/pa_1/answer", json({ allow: true })],
       ["/api/approvals?agentId=agent_1", undefined],
-      ["/api/approvals/tool_1/relax?agentId=agent_1", { method: "POST" }],
+      ["/api/approvals/tool_1/ask-every-call?agentId=agent_1", json({ on: true }, "PUT")],
       ["/api/approvals/tool_1?agentId=agent_1", { method: "DELETE" }],
     ] as const) {
       const res = await app.request(path, init);

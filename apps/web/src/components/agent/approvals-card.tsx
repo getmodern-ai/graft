@@ -16,7 +16,7 @@ import {
   type Approval,
   approvalKeys,
   approvalsQuery,
-  relaxApproval,
+  setApprovalAskEveryCall,
   withdrawApproval,
 } from "@/lib/approval-queries";
 import { toolsQuery } from "@/lib/connection-queries";
@@ -26,9 +26,11 @@ const COLUMNS = 5;
 
 /**
  * The agent's standing approvals (ADR 0008): what the person has said about each tool, per agent.
- * The relax switch lifts a destructive tool's per-call ask — and cannot be switched back except by
- * withdrawing, which is the server's rule (`relaxDestructiveApproval` has no inverse; `revokeApproval`
- * does): withdrawn, the tool asks again on its next call, which is also the one way back from a no.
+ * The switch is the ask-every-call setting, both ways, on any tool that asks — write or destructive
+ * (ADR 0008, amendment of 2026-09-15); a read-only tool is never listed, because it never asks. It
+ * is live only on an allowed row: a denied tool refuses every call and asks nobody, so the setting
+ * has nothing to change until the no is withdrawn. Withdraw removes the answer, and the tool asks
+ * again on its next call, which is also the one way back from a no.
  *
  * Two reads, both the card's own for the reason `working-set-table.tsx` gives: the approvals, and
  * the toolbox that names them — an approval carries a tool id, and the name and annotations beside
@@ -48,11 +50,16 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(agent.id) });
 
-  const relax = useMutation({
-    mutationFn: (toolId: string) => relaxApproval(agent.id, toolId),
-    onSuccess: async () => {
+  const askEveryCall = useMutation({
+    mutationFn: ({ toolId, on }: { toolId: string; on: boolean }) =>
+      setApprovalAskEveryCall(agent.id, toolId, on),
+    onSuccess: async (_result, { on }) => {
       await invalidate();
-      toast.success("Relaxed", { description: "Its next calls pass without asking." });
+      toast.success(on ? "Asks every time" : "Answer holds", {
+        description: on
+          ? "The tool asks you before each call for this agent."
+          : "The tool's next calls pass without asking.",
+      });
     },
   });
   const withdraw = useMutation({
@@ -62,7 +69,7 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
       toast.success("Withdrawn", { description: "The tool asks again on its next call." });
     },
   });
-  const busy = relax.isPending || withdraw.isPending || agent.revokedAt !== null;
+  const busy = askEveryCall.isPending || withdraw.isPending || agent.revokedAt !== null;
 
   const isPending = approvals.isPending || toolbox.isPending;
   const isError = approvals.isError || toolbox.isError;
@@ -73,8 +80,8 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
       <CardHeader>
         <CardTitle>Approvals</CardTitle>
         <CardDescription>
-          Your standing answers for this agent, per tool. Reads never ask; a write asks once and the
-          answer holds; a destructive tool asks every call until relaxed here or in the ask itself.
+          Your standing answers for this agent, per tool. Reads never ask; any other tool asks once
+          and the answer holds, unless you set it to ask every time here or on the ask itself.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -84,7 +91,7 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
               <TableHead>Tool</TableHead>
               <TableHead className="w-20 md:w-24">Answer</TableHead>
               <TableHead className="hidden md:table-cell md:w-36">Decided</TableHead>
-              <TableHead className="w-24 md:w-36">Asks every call</TableHead>
+              <TableHead className="w-24 md:w-36">Asks every time</TableHead>
               <TableHead className="w-22 md:w-28">
                 <span className="sr-only">Actions</span>
               </TableHead>
@@ -107,7 +114,8 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
               </TableBodyNote>
             ) : rows.length === 0 ? (
               <TableBodyNote colSpan={COLUMNS}>
-                Nothing answered yet — the first write this agent runs will ask.
+                Nothing answered yet — the first tool this agent runs that is not read-only will
+                ask.
               </TableBodyNote>
             ) : (
               rows.map((approval) => {
@@ -135,25 +143,21 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
                       <Time iso={approval.decidedAt} />
                     </TableCell>
                     <TableCell>
-                      {tool?.destructive ? (
+                      {tool?.readOnly ? (
+                        <span className="text-muted-foreground text-xs">Never</span>
+                      ) : (
                         <span className="flex items-center gap-2">
                           <Switch
-                            checked={!approval.perCallRelaxed}
-                            disabled={
-                              busy || approval.perCallRelaxed || approval.decision !== "allow"
+                            checked={approval.askEveryCall}
+                            disabled={busy || approval.decision !== "allow"}
+                            onCheckedChange={(on) =>
+                              askEveryCall.mutate({ toolId: approval.toolId, on })
                             }
-                            onCheckedChange={(checked) => {
-                              if (!checked) relax.mutate(approval.toolId);
-                            }}
-                            aria-label={`Ask on every call of ${name}`}
+                            aria-label={`Ask every time for ${name}`}
                           />
                           <span className="text-muted-foreground text-xs">
-                            {approval.perCallRelaxed ? "Relaxed" : "Yes"}
+                            {approval.askEveryCall ? "Yes" : "No"}
                           </span>
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">
-                          {tool?.readOnly ? "Never" : "Once"}
                         </span>
                       )}
                     </TableCell>

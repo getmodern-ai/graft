@@ -41,10 +41,10 @@ catches an OAuth callback on localhost for people at a terminal.
   Deny — and answers every allow button with `accept` and empty content, so a schema that required
   `allow` sent every button press to the handoff (GRA-42). `allow` is therefore optional and absent
   reads as true; `accept` with `allow: false` remains a form client's no in place. Graft sees one
-  `accept` for all three allow buttons and does not guess which was pressed: none maps to `relax`,
-  so a destructive tool asks before every call whatever button was chosen, until the person relaxes
-  it in the console (ADR 0008), and a write tool's yes holds by rule even when the button said
-  once. Hermes keeps no memory on its elicitation path (`request_elicitation_consent` in its
+  `accept` for all three allow buttons and does not guess which was pressed: every one records a
+  standing allow, on a destructive tool as on a write (ADR 0008, amendment of 2026-09-15), even when
+  the button said once, and none touches the tool's ask-every-call setting, which is the console's.
+  Hermes keeps no memory on its elicitation path (`request_elicitation_consent` in its
   `tools/approval_prompt.py`: Deny is `decline`, no answer is `cancel`, and session and always are
-  not persisted), so its card comes back on every ask. The harness's buttons name the harness's
-  grain; Graft's record keeps Graft's.
+  not persisted), so its card comes back on every ask Graft makes. The harness's buttons name the
+  harness's grain; Graft's record keeps Graft's.

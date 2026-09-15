@@ -38,9 +38,11 @@ export function useAnswerAsk(action: PendingAction, onAnswered?: () => void) {
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
       toast.success(answer.allow ? "Approved" : "Declined", {
-        description: answer.allow
-          ? "The agent's waiting call resumes, and the answer holds for its next calls."
-          : "The agent's waiting call is refused.",
+        description: !answer.allow
+          ? "The agent's waiting call is refused."
+          : answer.askEveryCall
+            ? "The agent's waiting call resumes, and the tool asks again next time."
+            : "The agent's waiting call resumes, and the answer holds for its next calls.",
       });
       onAnswered?.();
     },

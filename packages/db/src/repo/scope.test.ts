@@ -19,7 +19,12 @@ import {
   replaceAgentConnections,
   revokeAgent,
 } from "./agent";
-import { deleteApproval, deleteApprovalsForVendor, findApproval, relaxApproval } from "./approval";
+import {
+  deleteApproval,
+  deleteApprovalsForVendor,
+  findApproval,
+  updateAskEveryCall,
+} from "./approval";
 import { findConnection, findConnectionByIdUnscoped, revokeConnection } from "./connection";
 import {
   answerPendingAction,
@@ -27,6 +32,7 @@ import {
   expirePendingActionsForConnection,
   findPendingAction,
   listPendingActionsByKind,
+  settleAnsweredToolActions,
 } from "./pending-action";
 import { countPersons } from "./person";
 import { deletePersonModelKey, findPersonModelKey, upsertPersonModelKey } from "./person-model-key";
@@ -143,9 +149,23 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(only().sql).toMatch(SCOPED_AGENT);
   });
 
-  it("relaxing an approval", async () => {
-    await relaxApproval(db, SCOPE, "tool_1");
-    expect(only().sql).toMatch(SCOPED_AGENT);
+  it("setting a tool to ask every call, or back", async () => {
+    await updateAskEveryCall(db, SCOPE, "tool_1", true);
+    const s = only();
+    expect(s.sql).toMatch(/^update "approval" set "ask_every_call" = \$1/);
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params.slice(0, 1)).toEqual([true]);
+  });
+
+  it("spending a tool's waiting answers when its approval changes", async () => {
+    await settleAnsweredToolActions(db, SCOPE, "tool_1", new Date("2026-09-09T00:00:00Z"));
+    const s = only();
+    expect(s.sql).toMatch(/^update "pending_action" set "consumed_at" = \$1/);
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.sql).toContain('"pending_action"."kind" = $');
+    expect(s.sql).toContain(`"pending_action"."payload" ->> 'toolId' = $`);
+    expect(s.sql).toContain('"pending_action"."answered_at" is not null');
+    expect(s.sql).toContain('"pending_action"."consumed_at" is null');
   });
 
   it("withdrawing an approval", async () => {

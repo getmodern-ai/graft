@@ -23,7 +23,9 @@ stops using the tool, it leaves the list again.
 
 One entry in the harness's MCP server list, pointing at Graft with a per-agent token, and one thin
 skill that tells the agent: *when no tool covers the ask, call `acquire`.* Secrets and approvals
-happen in a small web console the agent hands the person a link to.
+happen in a small web console the agent hands the person a link to. Reads never ask; any other tool,
+destructive included, asks once per agent and the answer holds, and the person may set a tool to ask
+every time instead (ADR 0008, amended 2026-09-15).
 
 Two forms, one core: **Graft Cloud**, hosted, and a **Docker image** for self-hosting. Both run
 the same loop; they differ only in which sandbox, keyring and storage sit behind the seams.

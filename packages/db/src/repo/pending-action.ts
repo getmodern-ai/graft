@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent } from "../schema/agent";
@@ -187,6 +187,38 @@ export async function expirePendingActionsForConnection(
         inArray(pendingAction.agentId, personAgentIds(db, personId)),
         isNull(pendingAction.consumedAt),
         gt(pendingAction.expiresAt, at),
+      ),
+    )
+    .returning();
+}
+
+/**
+ * Spend every answered, untaken `tool` ask about one tool for one agent (ADR 0008, amendment of
+ * 2026-09-15). A yes given while the tool was set to ask every time waits, answered and unconsumed,
+ * for the agent's next call; when the console then changes the state it was given under — the
+ * setting, or the row itself on a withdraw — that yes is stamped taken here, so no later call finds
+ * it and applies it as if just said. `consumed_at` alone: that is the predicate the agent's lookup
+ * (`listPendingActionsByKind`) and the take (`consumePendingAction`) both read, and the console's
+ * card then says the answer was taken, which for the person's purposes it was. The tool is matched
+ * on the payload because a tool ask names its tool there and nowhere else (the table's header);
+ * the row's scope stays the agent's, as every agent-scoped write here does (ADR 0007).
+ */
+export async function settleAnsweredToolActions(
+  db: DbOrTx,
+  scope: AgentScope,
+  toolId: string,
+  consumedAt: Date,
+): Promise<PendingActionRow[]> {
+  return db
+    .update(pendingAction)
+    .set({ consumedAt })
+    .where(
+      and(
+        inArray(pendingAction.agentId, scopedAgentIds(db, scope)),
+        eq(pendingAction.kind, "tool"),
+        sql`${pendingAction.payload} ->> 'toolId' = ${toolId}`,
+        isNotNull(pendingAction.answeredAt),
+        isNull(pendingAction.consumedAt),
       ),
     )
     .returning();

@@ -202,7 +202,7 @@ describe("the shipped skills", () => {
       "`readOnly` and `destructive`",
       "You do not declare them",
       "asks once, and the answer holds",
-      "asks on every call",
+      "asks on every call only when the person has set it to",
     ]) {
       expect(prose, rule).toContain(rule);
     }

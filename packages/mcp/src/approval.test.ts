@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { answerPendingAction } from "@graft/core";
+import { answerPendingAction, revokeApproval, setAskEveryCall } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -210,8 +210,12 @@ const until = async (predicate: () => boolean, ms = 5_000) => {
 };
 
 /** What the console does when the person answers — GRA-6's service, as the answer endpoint calls it. */
-const answer = (id: string, said: { allow: boolean; relax?: boolean }) =>
+const answer = (id: string, said: { allow: boolean; askEveryCall?: boolean }) =>
   answerPendingAction({ db: deps.db }, { personId: PERSON }, id, said, deps.pendingAction);
+
+/** The agent page's switch — the same service the `PUT /approvals/:toolId/ask-every-call` route calls. */
+const askEveryCall = (agentId: string, toolId: string, on: boolean) =>
+  setAskEveryCall({ db: deps.db }, { personId: PERSON, agentId }, toolId, on, deps.approval);
 
 const actionsOf = (agentId: string, kind: string) =>
   [...store.pendingActions.values()].filter((row) => row.agentId === agentId && row.kind === kind);
@@ -242,7 +246,7 @@ function awaiting(result: CallToolResult): {
 }
 
 describe("the tool list carries the rule the gate applies", () => {
-  it("shows readOnlyHint false on exactly the tools that ask, and destructiveHint on the one that asks every time", async () => {
+  it("shows readOnlyHint false on exactly the tools that ask, and destructiveHint on the one whose ask says so", async () => {
     const a = await connect(TOKEN_A);
     try {
       const { tools } = await a.client.listTools();
@@ -299,6 +303,7 @@ describe("through a handoff — the channel every harness has", () => {
           connectionName: "Demo Orders",
           hosts: ["api.demo.example"],
           note: expect.stringContaining("agent's model"),
+          askEveryCall: false,
         },
       });
       expect(store.usage.at(-1)).toMatchObject({
@@ -337,7 +342,7 @@ describe("through a handoff — the channel every harness has", () => {
         agentId: AGENT_A,
         toolId: "tool_create",
         decision: "allow",
-        perCallRelaxed: false,
+        askEveryCall: false,
       });
 
       const third = await a.call(CREATE_ITEM, { limit: 3 });
@@ -348,32 +353,93 @@ describe("through a handoff — the channel every harness has", () => {
     }
   }, 60_000);
 
-  it("a destructive tool asks on every call; an answer with relax makes the next calls silent", async () => {
+  it("a destructive tool asks once and the yes holds; set to ask every time it asks on each call until set back", async () => {
     const a = await connect(TOKEN_A);
     try {
       const first = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
       expect(first.action.payload).toMatchObject({
         toolId: "tool_delete",
         annotations: { readOnlyHint: false, destructiveHint: true },
+        askEveryCall: false,
       });
       await answer(first.action.id, { allow: true });
 
+      // The yes holds, as a write's does (ADR 0008, amendment of 2026-09-15): no new action.
       expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
       expect(approvalOf(AGENT_A, "tool_delete")).toMatchObject({
         decision: "allow",
-        perCallRelaxed: false,
+        askEveryCall: false,
       });
-
-      // The yes was for one call; the next asks again, with a new action.
-      const third = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
-      expect(third.action.id).not.toBe(first.action.id);
-      await answer(third.action.id, { allow: true, relax: true });
-
-      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
-      expect(approvalOf(AGENT_A, "tool_delete")?.perCallRelaxed).toBe(true);
-      const actionsBefore = actionsOf(AGENT_A, "tool").length;
+      let actionsBefore = actionsOf(AGENT_A, "tool").length;
       expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
       expect(actionsOf(AGENT_A, "tool")).toHaveLength(actionsBefore);
+
+      // The person opts in from the agent's page: the next call asks, and the ask says so.
+      await askEveryCall(AGENT_A, "tool_delete", true);
+      const perCall = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      expect(perCall.action.id).not.toBe(first.action.id);
+      expect(perCall.action.payload).toMatchObject({ askEveryCall: true });
+      // A yes that keeps the setting is for this call: the one after asks again, with a new action.
+      await answer(perCall.action.id, { allow: true, askEveryCall: true });
+      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      const again = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      expect(again.action.id).not.toBe(perCall.action.id);
+
+      // Turning it off in the answer makes the yes hold again.
+      await answer(again.action.id, { allow: true, askEveryCall: false });
+      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(approvalOf(AGENT_A, "tool_delete")?.askEveryCall).toBe(false);
+      actionsBefore = actionsOf(AGENT_A, "tool").length;
+      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(actionsOf(AGENT_A, "tool")).toHaveLength(actionsBefore);
+    } finally {
+      await a.close();
+    }
+  }, 60_000);
+
+  it("a per-call yes left waiting for the agent is spent when the person withdraws or changes the setting, so nothing re-creates the row", async () => {
+    const a = await connect(TOKEN_A);
+    const withdraw = () =>
+      revokeApproval(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_A },
+        "tool_delete",
+        deps.approval,
+      );
+    try {
+      // The setting on, a yes given in the console and not yet taken by the agent.
+      await askEveryCall(AGENT_A, "tool_delete", true);
+      const waiting = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      await answer(waiting.action.id, { allow: true, askEveryCall: true });
+
+      // The person withdraws before the agent calls again: the yes goes with the row.
+      await withdraw();
+      expect(store.approvals.has(`${AGENT_A} tool_delete`)).toBe(false);
+      expect(store.pendingActions.get(waiting.action.id)?.consumedAt).toBeInstanceOf(Date);
+      const afresh = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      expect(afresh.action.id).not.toBe(waiting.action.id);
+      expect(store.approvals.has(`${AGENT_A} tool_delete`)).toBe(false);
+      await answer(afresh.action.id, { allow: true });
+      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(approvalOf(AGENT_A, "tool_delete")).toMatchObject({
+        decision: "allow",
+        askEveryCall: false,
+      });
+
+      // The same for the setting: a yes given under "ask every time" does not outlive turning it off.
+      await askEveryCall(AGENT_A, "tool_delete", true);
+      const perCall = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      await answer(perCall.action.id, { allow: true, askEveryCall: true });
+      await askEveryCall(AGENT_A, "tool_delete", false);
+      expect(store.pendingActions.get(perCall.action.id)?.consumedAt).toBeInstanceOf(Date);
+      // The row holds on its own now; the spent yes is not what lets this call through.
+      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      await withdraw();
+      const again = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      expect(again.action.id).not.toBe(perCall.action.id);
+      expect(store.approvals.has(`${AGENT_A} tool_delete`)).toBe(false);
+      await answer(again.action.id, { allow: true });
+      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
     } finally {
       await a.close();
     }
@@ -584,7 +650,12 @@ describe("through an elicitation — where the client advertised one", () => {
         properties: { allow: { type: "boolean" } },
       });
       expect(formOf(request).requestedSchema.required ?? []).not.toContain("allow");
-      expect(formOf(request).requestedSchema.properties).not.toHaveProperty("relax");
+      // A write's form offers the opt-in too — the setting is per tool, not per annotation.
+      expect(formOf(request).requestedSchema.properties.askEveryCall).toMatchObject({
+        type: "boolean",
+        default: false,
+      });
+      expect(message).toContain("Your answer holds for this agent from now on.");
 
       expect(approvalOf(AGENT_C, "tool_create")).toMatchObject({ decision: "allow" });
       expect(actionsOf(AGENT_C, "tool").filter((r) => r.payload.toolId === "tool_create")).toEqual(
@@ -636,20 +707,41 @@ describe("through an elicitation — where the client advertised one", () => {
     }
   });
 
-  it("a destructive tool's form offers relax; accept with relax makes later calls silent", async () => {
-    const c = await connect(TOKEN_C, accept({ allow: true, relax: true }));
+  it("a destructive tool's form names it destructive and offers ask-every-call; on, the next call asks again; off, the yes holds", async () => {
+    let content: Record<string, boolean> = { allow: true, askEveryCall: true };
+    const c = await connect(TOKEN_C, async () => ({ action: "accept", content }));
     try {
       expect(body(await c.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
       expect(formOf(c.elicitations[0]).requestedSchema).toMatchObject({
-        properties: { allow: { type: "boolean" }, relax: { type: "boolean" } },
+        properties: {
+          allow: { type: "boolean" },
+          askEveryCall: { type: "boolean", title: "Ask every time for this tool", default: false },
+        },
       });
-      expect(c.elicitations[0]?.params.message).toContain("destructive");
+      const message = c.elicitations[0]?.params.message ?? "";
+      expect(message).toContain("This tool is destructive");
+      expect(message).toContain("Your answer holds for this agent from now on.");
+      expect(message).toContain("Ask every time for this tool");
       expect(approvalOf(AGENT_C, "tool_delete")).toMatchObject({
         decision: "allow",
-        perCallRelaxed: true,
+        askEveryCall: true,
       });
+
+      // On: the second call asks again, and the form's default and message now say the setting is on.
       expect(body(await c.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
-      expect(c.elicitations).toHaveLength(1);
+      expect(c.elicitations).toHaveLength(2);
+      expect(formOf(c.elicitations[1]).requestedSchema.properties.askEveryCall).toMatchObject({
+        default: true,
+      });
+      expect(c.elicitations[1]?.params.message).toContain("this answer is for this call only");
+
+      // Off, from the form: the yes holds and the fourth call asks nobody.
+      content = { allow: true, askEveryCall: false };
+      expect(body(await c.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(c.elicitations).toHaveLength(3);
+      expect(approvalOf(AGENT_C, "tool_delete")?.askEveryCall).toBe(false);
+      expect(body(await c.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(c.elicitations).toHaveLength(3);
     } finally {
       await c.close();
     }
@@ -675,7 +767,9 @@ describe("through an elicitation — where the client advertised one", () => {
 /**
  * Hermes 0.21.1 renders the form as its own approval card and answers every allow button — once,
  * session, always — with `accept` and empty content (GRA-42). A required `allow` sent each of those
- * to the handoff; now the accept is the yes, and the field only carries a form client's no or `relax`.
+ * to the handoff; now the accept is the yes, and the fields only carry a form client's no or its
+ * `askEveryCall`. Every allow button is therefore a standing allow, on a destructive tool as on a
+ * write (ADR 0008, amendment of 2026-09-15), and none touches the ask-every-call setting.
  */
 describe("through an elicitation answered with no fields — Hermes 0.21.1's approval buttons", () => {
   const button: Elicitation = async () => ({ action: "accept", content: {} });
@@ -692,7 +786,7 @@ describe("through an elicitation answered with no fields — Hermes 0.21.1's app
       expect(schema.properties.allow?.description).toContain("counts as allow");
       expect(approvalOf(AGENT_D, "tool_create")).toMatchObject({
         decision: "allow",
-        perCallRelaxed: false,
+        askEveryCall: false,
       });
       expect(actionsOf(AGENT_D, "tool")).toEqual([]);
 
@@ -720,21 +814,35 @@ describe("through an elicitation answered with no fields — Hermes 0.21.1's app
     }
   });
 
-  it("on a destructive tool the empty accept allows this call only: no button relaxes, and the next call asks again", async () => {
+  it("on a destructive tool the empty accept records a standing allow, like Always Allow says, and the next call asks nobody", async () => {
     const d = await connect(TOKEN_D, button);
     try {
       expect(body(await d.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
-      expect(d.elicitations[0]?.params.message).toContain("whichever way you allow it");
+      const message = d.elicitations[0]?.params.message ?? "";
+      expect(message).toContain("This tool is destructive");
+      expect(message).toContain("Your answer holds for this agent from now on.");
+      expect(message).toContain("in the console");
       expect(approvalOf(AGENT_D, "tool_delete")).toMatchObject({
         decision: "allow",
-        perCallRelaxed: false,
+        askEveryCall: false,
       });
 
       expect(body(await d.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
-      expect(d.elicitations).toHaveLength(2);
-      expect(approvalOf(AGENT_D, "tool_delete")?.perCallRelaxed).toBe(false);
+      expect(d.elicitations).toHaveLength(1);
+      expect(approvalOf(AGENT_D, "tool_delete")?.askEveryCall).toBe(false);
+
+      // With the opt-in on, the button comes back on every call and each press is that call's yes,
+      // and no press turns the setting off — that is the console's, which the message names.
+      await askEveryCall(AGENT_D, "tool_delete", true);
+      expect(body(await d.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(body(await d.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(d.elicitations).toHaveLength(3);
+      expect(d.elicitations[2]?.params.message).toContain("this answer is for this call only");
+      expect(approvalOf(AGENT_D, "tool_delete")?.askEveryCall).toBe(true);
     } finally {
       await d.close();
+      // The mismatch case below needs a tool D has not answered.
+      store.approvals.delete(`${AGENT_D} tool_delete`);
     }
   }, 60_000);
 
