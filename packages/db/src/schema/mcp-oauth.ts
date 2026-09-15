@@ -118,6 +118,14 @@ export const mcpToken = pgTable(
     expiresAt: timestamp("expires_at"),
     /** A refresh token that has been exchanged for its successor; presented again past the grace window, it is a replay. */
     rotatedAt: timestamp("rotated_at"),
+    /**
+     * The successor pair this retired refresh token earned, sealed under a key derived from the
+     * retired token itself (`@graft/core`'s `mcp-oauth.replay.ts`), for the grace window: a client
+     * that lost the response to its refresh presents the retired token again and is answered the
+     * same pair. Opaque here — the database holds this and the token's hash, and neither yields
+     * the other. Cleared by the prune once the window has long passed.
+     */
+    rotationReplay: text("rotation_replay"),
     revokedAt: timestamp("revoked_at"),
     ...owned(),
   },

@@ -76,9 +76,13 @@ path); RFC 7591 dynamic registration, unauthenticated, with `none`, `client_secr
 offered and a request with no challenge is refused; RFC 8707 `resource`, which must be the MCP
 endpoint's canonical URL when sent and is bound to the token regardless; refresh with rotation,
 one successor per predecessor — the claim is a guarded update inside the transaction that mints
-the pair, so two refreshes racing on one token yield one — and a rotated token presented again is
-refused, within thirty seconds as a benign retry with the grant standing, past that as a replay
-that revokes the grant (OAuth 2.1 §4.3.1); a code spent twice, racing or not, revokes the grant it
+the pair, so two refreshes racing on one token yield one — and a rotated token presented again
+within thirty seconds is **answered the same pair**, opened from a seal kept on the retired row
+under a key derived from the retired token itself (`mcp-oauth.replay.ts`: only its holder can
+open it, the database alone cannot, and that holder could have refreshed a moment earlier anyway),
+so a client that lost the response to a successful refresh recovers without the person; past
+thirty seconds the same presentation is a replay that revokes the grant (OAuth 2.1 §4.3.1). A
+code spent twice, racing or not, revokes the grant it
 opened (RFC 6749 §4.1.2), and a code whose agent was revoked since the consent is refused; RFC 7009
 revocation; RFC 9207's `iss` on every redirect; exact-match redirect URIs, `https` or loopback
 `http` only, and no redirect to a URI the server has not confirmed (OAuth 2.1 §4.1.2.1 — those
@@ -107,8 +111,9 @@ the string is stored and echoed).
   product turns into "reconnect".
 - **An access token is an hour long** and the refresh token has no expiry of its own. The
   specification's "short-lived" is the hour; "for as long as the agent lives" is the refresh.
-  Dead access tokens and expired codes are deleted a day later, on the way past a refresh; refresh
-  tokens are kept in every state as the grant's record.
+  Dead access tokens and expired codes are deleted a day later, on the way past a refresh, and a
+  retired refresh token's seal is cleared then too; refresh tokens are kept in every state as the
+  grant's record.
 - **The consent page is the console's** (ADR 0006), drawn with its design system (ADR 0017), under
   its guard — so a person with no account yet creates one on the way and comes straight back.
   The authorization endpoint judges the request before sending the browser there, and the consent

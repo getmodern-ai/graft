@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent } from "../schema/agent";
@@ -182,6 +182,15 @@ export async function rotateMcpToken(
   return row ?? null;
 }
 
+/** Store the sealed successor on a retired refresh token — what the rotation's winner writes beside its claim. */
+export async function setMcpTokenRotationReplay(
+  db: DbOrTx,
+  tokenId: string,
+  sealed: string,
+): Promise<void> {
+  await db.update(mcpToken).set({ rotationReplay: sealed }).where(eq(mcpToken.id, tokenId));
+}
+
 /** Revoke one token — an access token presented at the revocation endpoint (RFC 7009). */
 export async function revokeMcpToken(db: DbOrTx, tokenId: string, at: Date): Promise<void> {
   await db
@@ -242,4 +251,9 @@ export async function revokeMcpTokensForAgent(
 export async function pruneMcpExpired(db: DbOrTx, before: Date): Promise<void> {
   await db.delete(mcpToken).where(and(eq(mcpToken.kind, "access"), lt(mcpToken.expiresAt, before)));
   await db.delete(mcpAuthorizationCode).where(lt(mcpAuthorizationCode.expiresAt, before));
+  // A seal is for the grace window; long past it, the retired row keeps its record and nothing else.
+  await db
+    .update(mcpToken)
+    .set({ rotationReplay: null })
+    .where(and(lt(mcpToken.rotatedAt, before), isNotNull(mcpToken.rotationReplay)));
 }

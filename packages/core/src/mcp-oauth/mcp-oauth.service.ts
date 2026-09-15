@@ -23,6 +23,7 @@ import {
   type Principal,
 } from "../tenancy";
 import type { McpOAuthDeps } from "./mcp-oauth.deps";
+import { openRotationReplay, sealRotationReplay } from "./mcp-oauth.replay";
 import {
   AUTHORIZATION_SERVER_METADATA_PATH,
   type AuthorizationRequestParams,
@@ -58,11 +59,12 @@ export const MCP_ACCESS_TOKEN_TTL_SECONDS = 3600;
 /** RFC 6749 §4.1.2's recommended maximum. */
 export const MCP_AUTHORIZATION_CODE_TTL_SECONDS = 600;
 /**
- * How long after a refresh token was rotated a second presentation of it is read as a benign retry
- * — refused, but without ending the grant. Past it, the same presentation is a replay and revokes
- * every token of the grant (OAuth 2.1 §4.3.1). Thirty seconds is the window `@better-auth/mcp`
- * settled on for the same clients; Graft refuses inside it rather than answering again, because
- * answering again would either mint a second live successor or mean keeping a token in the clear.
+ * How long after a refresh token was rotated a second presentation of it is read as a retry and
+ * **answered with the same successor pair** — a client whose refresh succeeded but whose response
+ * was lost recovers without the person consenting again. Past it, the same presentation is a
+ * replay and revokes every token of the grant (OAuth 2.1 §4.3.1). Thirty seconds is the window
+ * `@better-auth/mcp` settled on for the same clients. The pair is kept sealed under the retired
+ * token itself (`mcp-oauth.replay.ts`), never in the clear, so the database alone cannot open it.
  */
 export const MCP_REFRESH_GRACE_SECONDS = 30;
 /** RFC 7591 registration bounds — an open, unauthenticated write, so every field it stores is bounded. */
@@ -694,8 +696,11 @@ async function issueTokens(
 
 const invalidGrant = (description: string) => new OAuthProtocolError("invalid_grant", description);
 
-/** A guarded claim's two outcomes, carried out of the transaction so the refusal is thrown after the commit. */
-type Claimed = { won: true; tokens: TokenResponse } | { won: false };
+/**
+ * A guarded claim's two outcomes, carried out of the transaction so what the loser does — a
+ * refusal to throw, a replay to answer — is decided after the commit rather than rolled back with it.
+ */
+type Claimed = { won: true; tokens: TokenResponse } | { won: false; replayed?: TokenResponse };
 
 /**
  * `grant_type=authorization_code` (RFC 6749 §4.1.3 with RFC 7636 §4.6). The code is looked up by
@@ -769,10 +774,11 @@ function consumedGrant(row: McpAuthorizationCodeRow) {
  * is how a chat product learns the person cut the connection and asks them to connect again. A
  * refresh token is rotated on every use: the successor is issued, the predecessor stamped, **one
  * successor per predecessor** — the claim is a guarded update that answers exactly one caller, and
- * the claim and the pair it earns are one transaction, so two refreshes racing on one token mint
- * one pair and the other is refused. A predecessor presented again is refused: inside the grace
- * window as a benign retry, with the grant left standing; past it as a replay, with every token of
- * the grant revoked. The client's way back from either is the successor it was already issued.
+ * the claim, the pair it earns and the seal of that pair under the retired token are one
+ * transaction. A predecessor presented again **inside the grace window is answered the same pair**,
+ * opened from the seal with the token presented — whether it lost a race with a twin request or
+ * comes back after a dropped response — so the client recovers without the person; past the window
+ * it is a replay, and every token of the grant is revoked.
  */
 export async function refreshTokens(
   ctx: ServiceContext,
@@ -782,38 +788,52 @@ export async function refreshTokens(
 ): Promise<TokenResponse> {
   const presented = form.refresh_token;
   if (!presented) throw new OAuthProtocolError("invalid_request", "refresh_token is required");
-  const row = await deps.findMcpRefreshTokenByHash(ctx.db, hashAgentToken(presented));
+  const hash = hashAgentToken(presented);
+  const row = await deps.findMcpRefreshTokenByHash(ctx.db, hash);
   if (!row || row.clientId !== client.id) throw invalidGrant("The refresh token is unknown");
   if (row.revokedAt) throw invalidGrant("The refresh token is revoked");
   if (row.agentRevokedAt) {
     throw invalidGrant("The agent this token belongs to was revoked; connect again");
   }
   const now = deps.now();
+  /** The retired token's retry: the same pair from the seal, or a refusal that opened nothing. */
+  const replay = (sealed: string | null): TokenResponse => {
+    const same = openRotationReplay(presented, row.id, sealed);
+    if (!same) throw invalidGrant("The refresh token was already used");
+    return same;
+  };
   if (row.rotatedAt) {
     if (now.getTime() - row.rotatedAt.getTime() > MCP_REFRESH_GRACE_SECONDS * 1000) {
       await deps.revokeMcpGrant(ctx.db, row.grantId, now);
       throw invalidGrant("The refresh token was already used; every token of the grant is revoked");
     }
-    throw invalidGrant("The refresh token was already used; present the token it was replaced by");
+    return replay(row.rotationReplay);
   }
   await deps.pruneMcpExpired(ctx.db, new Date(now.getTime() - MCP_PRUNE_AFTER_SECONDS * 1000));
   const claimed = await ctx.db.transaction(async (tx): Promise<Claimed> => {
     const won = await deps.rotateMcpToken(tx, row.id, now);
-    if (!won) return { won: false };
-    return {
-      won: true,
-      tokens: await issueTokens(
-        { db: tx },
-        client,
-        { id: row.grantId, agentId: row.agentId, resource: row.resource, scope: row.scope },
-        deps,
-      ),
-    };
+    if (!won) {
+      // Lost to a twin request: its claim, pair and seal are committed by the time the guarded
+      // update answered, so the seal is there to open — the same pair the twin was given.
+      const settled = await deps.findMcpTokenByHash(tx, hash);
+      return { won: false, replayed: replay(settled?.rotationReplay ?? null) };
+    }
+    const tokens = await issueTokens(
+      { db: tx },
+      client,
+      { id: row.grantId, agentId: row.agentId, resource: row.resource, scope: row.scope },
+      deps,
+    );
+    await deps.setMcpTokenRotationReplay(
+      tx,
+      row.id,
+      sealRotationReplay(presented, row.id, tokens, deps.randomBytes),
+    );
+    return { won: true, tokens };
   });
-  if (!claimed.won) {
-    throw invalidGrant("The refresh token was already used; present the token it was replaced by");
-  }
-  return claimed.tokens;
+  if (claimed.won) return claimed.tokens;
+  if (!claimed.replayed) throw invalidGrant("The refresh token was already used");
+  return claimed.replayed;
 }
 
 /** The token endpoint's dispatch on `grant_type`; anything else is `unsupported_grant_type`. */

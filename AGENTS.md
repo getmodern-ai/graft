@@ -207,8 +207,10 @@ authorization code to it. Tokens are opaque and hashed in `mcp_token` (`@graft/d
 `requireAgent` dispatches on the prefix — `grft_` static, `grfta_` access token — and both resolve to
 one agent, so nothing past the door knows which arrived. Access tokens live an hour; refresh tokens
 rotate — one successor per predecessor, the claim and the pair one transaction — and live with the
-agent; a rotated token presented again is refused, and past thirty seconds it also revokes the grant;
-revoking the agent revokes every token in the same transaction. No variable is added: the issuer is `GRAFT_AUTH_URL`'s origin and the
+agent; a rotated token presented again within thirty seconds is answered the same pair, opened from
+a seal on the retired row that only the retired token can open (`mcp-oauth.replay.ts`), and past
+thirty seconds it is a replay that revokes the grant; revoking the agent revokes every token in the
+same transaction. No variable is added: the issuer is `GRAFT_AUTH_URL`'s origin and the
 consent page is under `GRAFT_CONSOLE_URL`. The rules and the service are `packages/core/src/mcp-oauth/`;
 the two suites are `packages/core/src/mcp-oauth/mcp-oauth.service.test.ts` over fakes and
 `apps/server/src/mcp-oauth.integration.test.ts` over Postgres with the SDK's own client. Under `open`,

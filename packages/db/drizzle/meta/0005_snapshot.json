@@ -1,5 +1,5 @@
 {
-  "id": "0632f629-cd77-4d79-88cc-842af6b846a6",
+  "id": "21c8d576-17c4-4282-9bcf-c69d38555867",
   "prevId": "fbaa0ed6-8938-4c67-891a-ebae90445b69",
   "version": "7",
   "dialect": "postgresql",
@@ -1860,6 +1860,12 @@
         "rotated_at": {
           "name": "rotated_at",
           "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rotation_replay": {
+          "name": "rotation_replay",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },

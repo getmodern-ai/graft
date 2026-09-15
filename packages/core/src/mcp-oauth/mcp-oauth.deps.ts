@@ -12,6 +12,7 @@ import {
   revokeMcpGrant,
   revokeMcpToken,
   rotateMcpToken,
+  setMcpTokenRotationReplay,
 } from "@graft/db/repo/mcp-oauth";
 
 /**
@@ -31,12 +32,14 @@ export type McpOAuthDeps = {
   findMcpRefreshTokenByHash: typeof findMcpRefreshTokenByHash;
   findAgentByMcpAccessTokenHash: typeof findAgentByMcpAccessTokenHash;
   rotateMcpToken: typeof rotateMcpToken;
+  /** The rotation's winner seals the successor on the retired row (`mcp-oauth.replay.ts`). */
+  setMcpTokenRotationReplay: typeof setMcpTokenRotationReplay;
   revokeMcpToken: typeof revokeMcpToken;
   revokeMcpGrant: typeof revokeMcpGrant;
   pruneMcpExpired: typeof pruneMcpExpired;
   newId: () => string;
   now: () => Date;
-  /** The entropy behind every code, token and secret — injectable so a test knows the values. */
+  /** The entropy behind every code, token, secret and seal nonce — injectable so a test knows the values. */
   randomBytes?: (bytes: number) => Buffer;
 };
 
@@ -51,6 +54,7 @@ export const defaultMcpOAuthDeps: McpOAuthDeps = {
   findMcpRefreshTokenByHash,
   findAgentByMcpAccessTokenHash,
   rotateMcpToken,
+  setMcpTokenRotationReplay,
   revokeMcpToken,
   revokeMcpGrant,
   pruneMcpExpired,

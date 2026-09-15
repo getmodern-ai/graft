@@ -45,6 +45,7 @@ CREATE TABLE "mcp_token" (
 	"scope" text,
 	"expires_at" timestamp,
 	"rotated_at" timestamp,
+	"rotation_replay" text,
 	"revoked_at" timestamp,
 	"owner" text DEFAULT 'person' NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL,

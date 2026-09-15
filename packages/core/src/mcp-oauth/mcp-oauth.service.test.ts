@@ -155,6 +155,7 @@ function harness(overrides: { clock?: Date } = {}) {
         scope: null,
         expiresAt: null,
         rotatedAt: null,
+        rotationReplay: null,
         revokedAt: null,
         ...input,
       }) as McpTokenRow;
@@ -192,6 +193,10 @@ function harness(overrides: { clock?: Date } = {}) {
       const rotated = { ...row, rotatedAt: at };
       store.tokens.set(id, rotated);
       return rotated;
+    }),
+    setMcpTokenRotationReplay: vi.fn(async (_db, id, sealed) => {
+      const row = store.tokens.get(id);
+      if (row) store.tokens.set(id, { ...row, rotationReplay: sealed });
     }),
     revokeMcpToken: vi.fn(async (_db, id, at) => {
       const row = store.tokens.get(id);
@@ -886,8 +891,8 @@ describe("the token endpoint", () => {
     expect(h.deps.revokeMcpGrant).toHaveBeenCalledTimes(1);
   });
 
-  /** Two refreshes racing on one token: one successor, the other refused, the grant standing. */
-  it("settles two concurrent refreshes of one token in favour of one successor", async () => {
+  /** Two refreshes racing on one token: one successor, answered to both, the grant standing. */
+  it("settles two concurrent refreshes of one token on one successor, answered to both", async () => {
     const h = harness();
     const { client_id } = await registered(h);
     const { code, pkce } = await consented(h, client_id);
@@ -899,19 +904,56 @@ describe("the token endpoint", () => {
       CONFIG,
     );
     const form = { grant_type: "refresh_token", refresh_token: first.refresh_token };
-    const results = await Promise.allSettled([
+    const [a, b] = await Promise.all([
       grantTokens(ctx, client(h, client_id), form, h.deps, CONFIG),
       grantTokens(ctx, client(h, client_id), form, h.deps, CONFIG),
     ]);
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    // Both answered, with the same pair: the loser opened the winner's seal.
+    expect(a).toEqual(b);
+    expect(h.deps.rotateMcpToken).toHaveBeenCalledTimes(2);
+    expect(h.deps.setMcpTokenRotationReplay).toHaveBeenCalledTimes(1);
     // The first pair, plus exactly one successor pair; nothing revoked.
     expect(h.store.tokens.size).toBe(4);
     expect([...h.store.tokens.values()].every((row) => row.revokedAt === null)).toBe(true);
     expect(h.deps.revokeMcpGrant).not.toHaveBeenCalled();
   });
 
-  it("refreshes: a new pair under the same grant, the old refresh token rotated; presented again inside the grace window it is refused with the grant standing, past it the grant is revoked", async () => {
+  it("refuses a retired token whose seal will not open — another row's, or none", async () => {
+    const h = harness();
+    const { client_id } = await registered(h);
+    const { code, pkce } = await consented(h, client_id);
+    const first = await grantTokens(
+      ctx,
+      client(h, client_id),
+      { grant_type: "authorization_code", code, code_verifier: pkce.verifier },
+      h.deps,
+      CONFIG,
+    );
+    await grantTokens(
+      ctx,
+      client(h, client_id),
+      { grant_type: "refresh_token", refresh_token: first.refresh_token },
+      h.deps,
+      CONFIG,
+    );
+    const retired = [...h.store.tokens.values()].find(
+      (row) => row.tokenHash === hashAgentToken(first.refresh_token),
+    );
+    if (!retired) throw new Error("no retired row");
+    h.store.tokens.set(retired.id, { ...retired, rotationReplay: "not-a-seal" });
+    await expect(
+      grantTokens(
+        ctx,
+        client(h, client_id),
+        { grant_type: "refresh_token", refresh_token: first.refresh_token },
+        h.deps,
+        CONFIG,
+      ),
+    ).rejects.toMatchObject({ error: "invalid_grant" });
+    expect(h.store.tokens.size).toBe(4);
+  });
+
+  it("refreshes: a new pair under the same grant, the old refresh token rotated; presented again inside the grace window it answers the same pair, past it the grant is revoked", async () => {
     const h = harness();
     const { client_id } = await registered(h);
     const { code, pkce } = await consented(h, client_id);
@@ -942,18 +984,22 @@ describe("the token endpoint", () => {
     for (const row of h.store.tokens.values()) expect(row.grantId).toBe(grantId);
     expect(h.deps.pruneMcpExpired).toHaveBeenCalled();
 
-    // Inside the grace window the same old token is refused as a benign retry: no successor, the
-    // grant untouched, the client's way back the successor it already holds.
+    // The seal on the retired row is not the pair in the clear.
+    expect(rotated?.rotationReplay).toBeTruthy();
+    expect(rotated?.rotationReplay).not.toContain(second.access_token.slice(6, 20));
+    expect(rotated?.rotationReplay).not.toContain(second.refresh_token.slice(6, 20));
+
+    // Inside the grace window the same old token answers the very same pair — a retry after a
+    // dropped response recovers — and nothing new is minted, nothing revoked.
     h.store.clock.now = new Date(NOW.getTime() + 10_000 + MCP_REFRESH_GRACE_SECONDS * 1000);
-    await expect(
-      grantTokens(
-        ctx,
-        client(h, client_id),
-        { grant_type: "refresh_token", refresh_token: first.refresh_token },
-        h.deps,
-        CONFIG,
-      ),
-    ).rejects.toMatchObject({ error: "invalid_grant" });
+    const retry = await grantTokens(
+      ctx,
+      client(h, client_id),
+      { grant_type: "refresh_token", refresh_token: first.refresh_token },
+      h.deps,
+      CONFIG,
+    );
+    expect(retry).toEqual(second);
     expect(h.store.tokens.size).toBe(4);
     expect([...h.store.tokens.values()].every((row) => row.revokedAt === null)).toBe(true);
 

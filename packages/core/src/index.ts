@@ -168,6 +168,7 @@ export {
   type VendorUsageRow,
 } from "./ledger/ledger.service";
 export { defaultMcpOAuthDeps, type McpOAuthDeps } from "./mcp-oauth/mcp-oauth.deps";
+export { openRotationReplay, sealRotationReplay } from "./mcp-oauth/mcp-oauth.replay";
 export {
   AUTHORIZATION_REQUEST_PARAM_NAMES,
   AUTHORIZATION_SERVER_METADATA_PATH,

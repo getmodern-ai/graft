@@ -78,6 +78,7 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
         scope: null,
         expiresAt: null,
         rotatedAt: null,
+        rotationReplay: null,
         revokedAt: null,
         ...stamp,
         ...input,
@@ -112,6 +113,10 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
       const rotated = { ...row, rotatedAt: at };
       tokens.set(id, rotated);
       return rotated;
+    }),
+    setMcpTokenRotationReplay: vi.fn(async (_db, id, sealed) => {
+      const row = tokens.get(id);
+      if (row) tokens.set(id, { ...row, rotationReplay: sealed });
     }),
     revokeMcpToken: vi.fn(async (_db, id, at) => {
       const row = tokens.get(id);
