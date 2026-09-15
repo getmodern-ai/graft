@@ -328,6 +328,7 @@ function approvalDeps(): ApprovalDeps {
     deleteApproval: vi.fn(async () => approvalRow),
     findBuildApproval: vi.fn(async () => null),
     insertBuildApproval: vi.fn(async () => buildApprovalRow),
+    settleAnsweredToolActions: vi.fn(async () => []),
     findAuthoredToolById: vi.fn(async () => destructiveTool),
     findConnection: vi.fn(async () => connectionRow),
     now: () => NOW,
@@ -1058,7 +1059,7 @@ describe("pending actions", () => {
     );
   });
 
-  it("turns ask-every-call on with the yes, and leaves that per-call yes for the agent's next call to take", async () => {
+  it("turns ask-every-call on with the yes, in the same write, and leaves that per-call yes for the agent's next call to take", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
     const res = await app.request(
       "/api/pending-actions/pa_1/answer",
@@ -1069,43 +1070,35 @@ describe("pending actions", () => {
       pendingAction: { answer: { allow: true, askEveryCall: true } },
       approval: { decision: "allow", askEveryCall: true },
     });
-    expect(deps.approval.updateAskEveryCall).toHaveBeenCalledWith(
-      fakeDb,
-      { personId: "person_1", agentId: "agent_1" },
-      "tool_1",
-      true,
-    );
+    expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "allow",
+      decidedAt: NOW,
+      askEveryCall: true,
+    });
+    // The answer route never takes the agent page's path, which would spend the very answer it
+    // is leaving for the agent.
+    expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
+    expect(deps.approval.settleAnsweredToolActions).not.toHaveBeenCalled();
     expect(deps.pendingAction.consumePendingAction).not.toHaveBeenCalled();
   });
 
-  it("turns ask-every-call off with the yes when the row had it on, and then spends the action", async () => {
+  it("turns ask-every-call off with the yes, and then spends the action — the row holds on its own", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    vi.mocked(deps.approval.upsertApproval).mockResolvedValueOnce({
-      ...approvalRow,
-      askEveryCall: true,
-    });
     const res = await app.request(
       "/api/pending-actions/pa_1/answer",
       json({ allow: true, askEveryCall: false }),
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ approval: { askEveryCall: false } });
-    expect(deps.approval.updateAskEveryCall).toHaveBeenCalledWith(
-      fakeDb,
-      { personId: "person_1", agentId: "agent_1" },
-      "tool_1",
-      false,
-    );
-    expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not re-set a setting the row already carries", async () => {
-    const { app, deps } = harness({ user: { id: "person_1" } });
-    const res = await app.request(
-      "/api/pending-actions/pa_1/answer",
-      json({ allow: true, askEveryCall: false }),
-    );
-    expect(res.status).toBe(200);
+    expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "allow",
+      decidedAt: NOW,
+      askEveryCall: false,
+    });
     expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
     expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
   });
@@ -1129,6 +1122,13 @@ describe("pending actions", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ approval: { decision: "deny" } });
+    // The setting the body carried is not written with a no: the upsert names no `askEveryCall`.
+    expect(deps.approval.upsertApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      toolId: "tool_1",
+      decision: "deny",
+      decidedAt: NOW,
+    });
     expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
     // A no is in the row in full, so the action is spent here too.
     expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
@@ -1213,6 +1213,13 @@ describe("approvals", () => {
       "tool_1",
       true,
     );
+    // A per-call yes left waiting for the agent was given under the old setting, and is spent.
+    expect(deps.approval.settleAnsweredToolActions).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "tool_1",
+      NOW,
+    );
 
     const off = await app.request(
       "/api/approvals/tool_1/ask-every-call?agentId=agent_1",
@@ -1265,6 +1272,13 @@ describe("approvals", () => {
       fakeDb,
       { personId: "person_1", agentId: "agent_1" },
       "tool_1",
+    );
+    // And any yes still waiting for the agent goes with the row, so nothing re-creates it.
+    expect(deps.approval.settleAnsweredToolActions).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "tool_1",
+      NOW,
     );
 
     vi.mocked(deps.approval.deleteApproval).mockResolvedValueOnce(null);

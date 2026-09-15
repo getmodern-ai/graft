@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { answerPendingAction, setAskEveryCall } from "@graft/core";
+import { answerPendingAction, revokeApproval, setAskEveryCall } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -392,6 +392,54 @@ describe("through a handoff — the channel every harness has", () => {
       actionsBefore = actionsOf(AGENT_A, "tool").length;
       expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
       expect(actionsOf(AGENT_A, "tool")).toHaveLength(actionsBefore);
+    } finally {
+      await a.close();
+    }
+  }, 60_000);
+
+  it("a per-call yes left waiting for the agent is spent when the person withdraws or changes the setting, so nothing re-creates the row", async () => {
+    const a = await connect(TOKEN_A);
+    const withdraw = () =>
+      revokeApproval(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_A },
+        "tool_delete",
+        deps.approval,
+      );
+    try {
+      // The setting on, a yes given in the console and not yet taken by the agent.
+      await askEveryCall(AGENT_A, "tool_delete", true);
+      const waiting = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      await answer(waiting.action.id, { allow: true, askEveryCall: true });
+
+      // The person withdraws before the agent calls again: the yes goes with the row.
+      await withdraw();
+      expect(store.approvals.has(`${AGENT_A} tool_delete`)).toBe(false);
+      expect(store.pendingActions.get(waiting.action.id)?.consumedAt).toBeInstanceOf(Date);
+      const afresh = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      expect(afresh.action.id).not.toBe(waiting.action.id);
+      expect(store.approvals.has(`${AGENT_A} tool_delete`)).toBe(false);
+      await answer(afresh.action.id, { allow: true });
+      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(approvalOf(AGENT_A, "tool_delete")).toMatchObject({
+        decision: "allow",
+        askEveryCall: false,
+      });
+
+      // The same for the setting: a yes given under "ask every time" does not outlive turning it off.
+      await askEveryCall(AGENT_A, "tool_delete", true);
+      const perCall = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      await answer(perCall.action.id, { allow: true, askEveryCall: true });
+      await askEveryCall(AGENT_A, "tool_delete", false);
+      expect(store.pendingActions.get(perCall.action.id)?.consumedAt).toBeInstanceOf(Date);
+      // The row holds on its own now; the spent yes is not what lets this call through.
+      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      await withdraw();
+      const again = awaiting(await a.call(DELETE_ITEM, { limit: 1 }));
+      expect(again.action.id).not.toBe(perCall.action.id);
+      expect(store.approvals.has(`${AGENT_A} tool_delete`)).toBe(false);
+      await answer(again.action.id, { allow: true });
+      expect(body(await a.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
     } finally {
       await a.close();
     }

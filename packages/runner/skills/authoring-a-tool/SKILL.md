@@ -325,10 +325,10 @@ and `required`; every call, the agent's included, is validated against it.
 
 The first real write is not part of authoring. It goes through the published tool, invoked by the
 agent — `run_tool` in the turn it was published, the first-class tool once the agent's tool list
-refreshes — and that is where the person is asked: a tool that is not read-only asks
-once, destructive or not, and the answer holds, unless the person has set that tool to ask every
-time; a read-only tool asks nothing. Without an elicitation the ask waits in the console as a
-pending action, and the agent relays the handoff. If you are Graft's model inside `acquire`, your
+refreshes — and that is where the person is asked: a tool that is not read-only, destructive or
+not, asks once, and the answer holds; it asks on every call only when the person has set it to, in
+the console; a read-only tool asks nothing. Without an elicitation the ask waits in the console as
+a pending action, and the agent relays the handoff. If you are Graft's model inside `acquire`, your
 work ends when the dry run passes and the tool is promoted: report its name, its annotations, and
 what its first use will ask.
 

@@ -829,20 +829,16 @@ export function createApi(options: ApiOptions): Hono {
       };
       if (action.kind === "tool" && typeof action.payload.toolId === "string") {
         const toolId = action.payload.toolId;
-        let approval = await setApproval(
+        // The setting rides the yes in the same write. Not `setAskEveryCall`: that is the agent
+        // page's act and spends waiting answers, and this answer may have to wait for the agent.
+        const approval = await setApproval(
           scoped,
           scope,
           toolId,
           said.allow ? "allow" : "deny",
           approvalDeps,
+          said.allow && said.askEveryCall !== undefined ? { askEveryCall: said.askEveryCall } : {},
         );
-        if (
-          said.allow &&
-          said.askEveryCall !== undefined &&
-          said.askEveryCall !== approval.askEveryCall
-        ) {
-          approval = await setAskEveryCall(scoped, scope, toolId, said.askEveryCall, approvalDeps);
-        }
         if (!said.allow || !approval.askEveryCall) await settle();
         return { pendingAction: action, approval };
       }

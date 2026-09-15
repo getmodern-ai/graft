@@ -667,6 +667,24 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.approvals.set(key(scope.agentId, toolId), updated);
       return updated;
     },
+    settleAnsweredToolActions: async (_db, scope, toolId, consumedAt) => {
+      if (!ownsAgent(scope)) return [];
+      const settled: PendingActionRow[] = [];
+      for (const [k, row] of store.pendingActions) {
+        if (
+          row.agentId === scope.agentId &&
+          row.kind === "tool" &&
+          row.payload.toolId === toolId &&
+          row.answeredAt !== null &&
+          row.consumedAt === null
+        ) {
+          const updated = { ...row, consumedAt, updatedAt: store.now() };
+          store.pendingActions.set(k, updated);
+          settled.push(updated);
+        }
+      }
+      return settled;
+    },
     deleteApproval: async (_db, scope, toolId) => {
       if (!ownsAgent(scope)) return null;
       const row = store.approvals.get(key(scope.agentId, toolId)) ?? null;

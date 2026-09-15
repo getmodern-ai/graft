@@ -12,7 +12,6 @@ import {
   type ServiceContext,
   ServiceError,
   setApproval,
-  setAskEveryCall,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
@@ -487,6 +486,11 @@ async function askByHandoff(
     await new Promise((resolve) => setTimeout(resolve, Math.min(poll, remaining)));
   }
 
+  // What the answer will mean to the next call: a tool set to ask every time takes one yes per call.
+  const afterAnswer =
+    subject.kind === "tool" && subject.askEveryCall
+      ? "Call again once they have answered — the person has set this tool to ask every time, so their yes is for that one call and the call after it asks again."
+      : "Call again once they have answered — the answer is kept, and the call then proceeds without asking.";
   const awaiting: AwaitingApproval = {
     error: "awaiting_approval",
     reason: "awaiting_approval",
@@ -495,7 +499,7 @@ async function askByHandoff(
     expiresAt: action.expiresAt.toISOString(),
     message:
       `Graft needs the person's approval before ${whatIsAsked(subject)}. Relay this link so they can answer in the console: ${url} ` +
-      `It expires at ${action.expiresAt.toISOString()}. Call again once they have answered — the answer is kept, and the call then proceeds without asking.`,
+      `It expires at ${action.expiresAt.toISOString()}. ${afterAnswer}`,
   };
   return { pass: false, answer: awaiting };
 }
@@ -540,11 +544,11 @@ async function recordAllow(
     return;
   }
   const standing = await getApproval(ctx, scope, subject.tool.id, deps.approval);
-  if (!standing || standing.decision !== "allow") {
-    await setApproval(ctx, scope, subject.tool.id, "allow", deps.approval);
-  }
-  if (askEveryCall !== undefined && (standing?.askEveryCall ?? false) !== askEveryCall) {
-    await setAskEveryCall(ctx, scope, subject.tool.id, askEveryCall, deps.approval);
+  const settingChanges = askEveryCall !== undefined && standing?.askEveryCall !== askEveryCall;
+  if (!standing || standing.decision !== "allow" || settingChanges) {
+    // One write for the answer and the setting it carried; `setAskEveryCall` is the console's act
+    // and spends waiting answers, which must not happen to the one being applied here.
+    await setApproval(ctx, scope, subject.tool.id, "allow", deps.approval, { askEveryCall });
   }
 }
 

@@ -33,8 +33,10 @@ export async function listApprovals(
 
 /**
  * The person's answer to a tool's ask, recorded so it holds (ADR 0008: any tool that is not
- * read-only asks once). The tool must be the person's. A second answer replaces the first; the
- * ask-every-call setting, if any, is kept.
+ * read-only asks once). The tool must be the person's. A second answer replaces the first. The
+ * ask-every-call setting rides the same write when the answer carried one (the console card's
+ * switch, the form's field) and is kept as it stood when it did not — a Hermes button carries
+ * none. One upsert, so the answer path never has to touch the setting on its own.
  */
 export async function setApproval(
   ctx: ServiceContext,
@@ -42,6 +44,7 @@ export async function setApproval(
   toolId: string,
   decision: ApprovalDecision,
   deps: ApprovalDeps,
+  options: { askEveryCall?: boolean } = {},
 ): Promise<ApprovalRow> {
   orNotFound(await deps.findAuthoredToolById(ctx.db, scope.personId, toolId), "Tool not found");
   return deps.upsertApproval(ctx.db, {
@@ -49,15 +52,22 @@ export async function setApproval(
     toolId,
     decision,
     decidedAt: deps.now(),
+    ...(options.askEveryCall === undefined ? {} : { askEveryCall: options.askEveryCall }),
   });
 }
 
 /**
- * Turn a tool's ask-every-call setting on or off for one agent, from the ask or the agent's page
- * (ADR 0008, amendment of 2026-09-15: asking on every call is the person's opt-in per tool, both
- * ways). Refused as `BAD_REQUEST` for a read-only tool — it never asks, so there is nothing to set
- * — and `NOT_FOUND` when no approval stands yet: the setting is an amendment to an answer, not an
- * answer.
+ * Turn a tool's ask-every-call setting on or off for one agent, from the agent's page (ADR 0008,
+ * amendment of 2026-09-15: asking on every call is the person's opt-in per tool, both ways).
+ * Refused as `BAD_REQUEST` for a read-only tool — it never asks, so there is nothing to set — and
+ * `NOT_FOUND` when no approval stands yet: the setting is an amendment to an answer, not an answer.
+ *
+ * A yes the person gave while the setting was on may still be waiting, answered and unconsumed,
+ * for the agent's next call to take. It was given under the setting as it stood, so it is spent
+ * here rather than carried into the new state — otherwise it would be found by a later call and
+ * applied as if the person had just said it. The answer path does not come through here: it
+ * writes the setting with the answer (`setApproval`), because the answer it is recording is the
+ * one that must stay for the agent.
  */
 export async function setAskEveryCall(
   ctx: ServiceContext,
@@ -76,17 +86,20 @@ export async function setAskEveryCall(
       "A read-only tool never asks, so it cannot ask every call",
     );
   }
-  return orNotFound(
+  const row = orNotFound(
     await deps.updateAskEveryCall(ctx.db, scope, toolId, on),
     "No approval stands for this tool yet — answer its first ask before changing how it asks",
   );
+  await deps.settleAnsweredToolActions(ctx.db, scope, toolId, deps.now());
+  return row;
 }
 
 /**
  * Withdraw the standing answer, from the console (ADR 0008: the record is the person's to revisit).
  * The tool asks again on its next call, as if never answered — the one way back from a `deny`.
- * The ask-every-call setting goes with the row; the next answer starts it off again. Null when
- * nothing stood.
+ * The ask-every-call setting goes with the row; the next answer starts it off again. A per-call
+ * yes still waiting for the agent is spent with it, for the reason `setAskEveryCall` gives: left
+ * behind, it would re-create the row the person just removed. Null when nothing stood.
  */
 export async function revokeApproval(
   ctx: ServiceContext,
@@ -95,7 +108,9 @@ export async function revokeApproval(
   deps: ApprovalDeps,
 ): Promise<ApprovalRow | null> {
   orNotFound(await deps.findAuthoredToolById(ctx.db, scope.personId, toolId), "Tool not found");
-  return deps.deleteApproval(ctx.db, scope, toolId);
+  const row = await deps.deleteApproval(ctx.db, scope, toolId);
+  await deps.settleAnsweredToolActions(ctx.db, scope, toolId, deps.now());
+  return row;
 }
 
 /** ADR 0008 applied to one call: the tool's annotations and the agent's standing approval. */

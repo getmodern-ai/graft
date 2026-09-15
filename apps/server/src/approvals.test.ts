@@ -348,4 +348,48 @@ describe("an ask over MCP, answered over HTTP", () => {
       await a.close();
     }
   }, 60_000);
+
+  it("a per-call yes the agent has not taken is spent by a withdraw over the API, so the next call asks afresh instead of re-creating the allow", async () => {
+    const a = await connect();
+    try {
+      const on = await app.request(
+        `/api/approvals/tool_delete/ask-every-call?agentId=${AGENT}`,
+        json({ on: true }, "PUT"),
+      );
+      expect(on.status).toBe(200);
+      const asks = body(await a.call("demo__delete-item"));
+      expect(asks).toMatchObject({ error: "awaiting_approval" });
+      const actionId = asks.pendingActionId as string;
+      const answered = await app.request(
+        `/api/pending-actions/${actionId}/answer`,
+        json({ allow: true, askEveryCall: true }),
+      );
+      expect(answered.status).toBe(200);
+      // Answered and left for the agent — then withdrawn before the agent calls again.
+      expect(store.pendingActions.get(actionId)?.consumedAt).toBeNull();
+      const withdrawn = await app.request(`/api/approvals/tool_delete?agentId=${AGENT}`, {
+        method: "DELETE",
+      });
+      expect(withdrawn.status).toBe(200);
+      expect(store.pendingActions.get(actionId)?.consumedAt).toBeInstanceOf(Date);
+
+      const afresh = body(await a.call("demo__delete-item"));
+      expect(afresh).toMatchObject({ error: "awaiting_approval" });
+      expect(afresh.pendingActionId).not.toBe(actionId);
+      const listed = (await (await app.request(`/api/approvals?agentId=${AGENT}`)).json()) as {
+        approvals: { toolId: string }[];
+      };
+      expect(listed.approvals.map((r) => r.toolId)).not.toContain("tool_delete");
+
+      // The spent link says so.
+      const action = store.pendingActions.get(actionId);
+      if (!action) throw new Error("no action");
+      const token = signHandoffToken(action, mcp.handoff.secret);
+      const reused = await app.request(`/api/pending-actions/${actionId}?t=${token}`);
+      expect(reused.status).toBe(409);
+      expect(await reused.json()).toMatchObject({ details: { reason: "consumed" } });
+    } finally {
+      await a.close();
+    }
+  }, 60_000);
 });
