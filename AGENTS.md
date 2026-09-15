@@ -197,6 +197,16 @@ directory on the server's own disk for a laptop without a daemon — the toolbox
 directory too, for as long as the process does — which is not a sandbox, and `@graft/env` refuses it
 in production and beside `cloud`.
 
+**The `initialize` result carries the playbook** (GRA-54). `SERVER_INSTRUCTIONS` in
+`packages/mcp/src/session.ts` is what a client that loads no skill — Claude.ai, ChatGPT, a bare MCP
+client — shows its model: the order of operations, the handoff and secrets rules, `run_tool` for a
+client that snapshots its list, and the approval grain. It is held under `INSTRUCTIONS_BUDGET`
+because some clients truncate the field; the long form of each rule is the tool's own description,
+opening with when to call it (`tools/meta.ts`, `tools/authoring.ts`, `tools/execute.ts`).
+`packages/mcp/src/session.test.ts` pins the shared sentences to `skills/hermes-graft/SKILL.md` and
+each description to its "when" sentence, so a rule changed in one place fails until the other says
+the same. Edit both, and re-run the live check the ticket records if the order of operations moves.
+
 ### The self-hosted image
 
 `apps/server/Dockerfile`, built from the repository root, is the one image (GRA-33). Its stages:
