@@ -292,8 +292,7 @@ export function createMcpConsentRoutes(
   const config = { authUrl: options.authUrl };
 
   routes.get("/request", async (c) => {
-    const principal = requirePerson(await options.getSession(c.req.raw.headers));
-    void principal;
+    requirePerson(await options.getSession(c.req.raw.headers));
     const params = readAuthorizationRequestParams(new URL(c.req.url).searchParams);
     const verdict = await judgeAuthorizationRequest(ctx, params, options.deps, config);
     if (!verdict.ok) {

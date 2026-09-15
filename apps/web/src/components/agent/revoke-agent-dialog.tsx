@@ -64,19 +64,16 @@ export function RevokeAgentDialog({
             {agent.tokenPrefix ? (
               <>
                 The token <code className="font-mono">{agent.tokenPrefix}…</code>
-                {client ? <> and the tokens {client} holds</> : null} stop working immediately and
+                {client ? ` and the tokens ${client} holds` : ""} stop working immediately and
                 cannot be restored.
               </>
             ) : (
               <>The tokens {client} holds stop working immediately and cannot be restored.</>
             )}{" "}
-            The agent's working set and history stay here; to reconnect
-            {client ? (
-              <> {client}, connect it again and it will ask for a new agent</>
-            ) : (
-              <> the harness, create a new agent</>
-            )}
-            .
+            The agent's working set and history stay here.{" "}
+            {client
+              ? `To reconnect ${client}, connect it again; it will ask for a new agent.`
+              : "To reconnect the harness, create a new agent."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

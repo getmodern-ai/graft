@@ -1,6 +1,7 @@
 import { readAuthorizationRequestParams } from "@graft/core/mcp-oauth/mcp-oauth.rules";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import type * as React from "react";
 
 import { ConsentCard } from "@/components/agent/consent-card";
 import { DangerousIcon } from "@/components/icons";
