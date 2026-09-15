@@ -10,6 +10,7 @@ import {
   judgeAuthorizationRequest,
   MCP_METADATA_PATHS,
   MCP_OAUTH_PATHS,
+  MCP_REGISTRATION_MAX_BYTES,
   type McpOAuthDeps,
   mcpConsentUrl,
   mcpResourceUrl,
@@ -103,12 +104,31 @@ export function createWellKnownApp(options: Pick<McpOAuthServerOptions, "authUrl
 }
 
 /**
+ * A request body, bounded before it is parsed: the declared `Content-Length` first, so an honest
+ * oversize is refused before a byte is read, and the read text again, because a stream may say one
+ * thing and carry another. The four endpoints are open or nearly so, and none of their legitimate
+ * bodies comes anywhere near the cap — a registration is a few hundred bytes, a token request
+ * less. Refused in the protocol's own shape, with the error word the endpoint's RFC uses.
+ */
+async function boundedBody(request: Request, error: string): Promise<string> {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > MCP_REGISTRATION_MAX_BYTES) {
+    throw new OAuthProtocolError(error, `The body is over ${MCP_REGISTRATION_MAX_BYTES} bytes`);
+  }
+  const text = await request.text();
+  if (text.length > MCP_REGISTRATION_MAX_BYTES) {
+    throw new OAuthProtocolError(error, `The body is over ${MCP_REGISTRATION_MAX_BYTES} bytes`);
+  }
+  return text;
+}
+
+/**
  * The body of a token or revocation request (RFC 6749 §4.1.3: `application/x-www-form-urlencoded`),
  * first value per name. A JSON body is not the protocol's and reads as no fields, which the
  * endpoint refuses as `invalid_request` naming the field it wanted.
  */
 async function formFields(request: Request): Promise<Record<string, string | undefined>> {
-  const text = await request.text();
+  const text = await boundedBody(request, "invalid_request");
   const fields: Record<string, string | undefined> = {};
   for (const [name, value] of new URLSearchParams(text)) {
     if (fields[name] === undefined) fields[name] = value;
@@ -190,9 +210,10 @@ export function createMcpOAuthApp(options: McpOAuthServerOptions): Hono {
    * for a confidential client, the secret — the one time it is shown.
    */
   app.post(under(MCP_OAUTH_PATHS.register), async (c) => {
+    const text = await boundedBody(c.req.raw, "invalid_client_metadata");
     let body: unknown;
     try {
-      body = await c.req.raw.json();
+      body = JSON.parse(text);
     } catch {
       throw new OAuthProtocolError("invalid_client_metadata", "The registration is not JSON");
     }

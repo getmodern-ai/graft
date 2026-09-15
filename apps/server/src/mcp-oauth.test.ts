@@ -61,9 +61,10 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
       codes.set(row.id, row);
       return row;
     }),
-    findMcpAuthorizationCodeByHash: vi.fn(
-      async (_db, hash) => [...codes.values()].find((row) => row.codeHash === hash) ?? null,
-    ),
+    findMcpAuthorizationCodeByHash: vi.fn(async (_db, hash) => {
+      const row = [...codes.values()].find((c) => c.codeHash === hash);
+      return row ? { ...row, agentRevokedAt: agents.get(row.agentId)?.revokedAt ?? null } : null;
+    }),
     consumeMcpAuthorizationCode: vi.fn(async (_db, id, at) => {
       const row = codes.get(id);
       if (!row || row.consumedAt) return null;
@@ -107,7 +108,10 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
     }),
     rotateMcpToken: vi.fn(async (_db, id, at) => {
       const row = tokens.get(id);
-      if (row && !row.rotatedAt) tokens.set(id, { ...row, rotatedAt: at });
+      if (!row || row.rotatedAt) return null;
+      const rotated = { ...row, rotatedAt: at };
+      tokens.set(id, rotated);
+      return rotated;
     }),
     revokeMcpToken: vi.fn(async (_db, id, at) => {
       const row = tokens.get(id);
@@ -290,6 +294,41 @@ describe("registration", () => {
     });
     expect(notJson.status).toBe(400);
     expect(await notJson.json()).toMatchObject({ error: "invalid_client_metadata" });
+  });
+
+  /** An open, unauthenticated write is bounded before it is parsed and before anything is stored. */
+  it("refuses a registration body over the cap, by its declared length and by its real one, and too many redirect URIs", async () => {
+    const { app, clients } = harness();
+    const declared = await app.request(`${AUTH_URL}${MCP_OAUTH_MOUNT_PATH}/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(1024 * 1024) },
+      body: JSON.stringify({ redirect_uris: [REDIRECT] }),
+    });
+    expect(declared.status).toBe(400);
+    expect(await declared.json()).toMatchObject({ error: "invalid_client_metadata" });
+
+    const real = await app.request(
+      `${AUTH_URL}${MCP_OAUTH_MOUNT_PATH}/register`,
+      json({ redirect_uris: [REDIRECT], client_name: "x".repeat(20_000) }),
+    );
+    expect(real.status).toBe(400);
+    expect(await real.json()).toMatchObject({ error: "invalid_client_metadata" });
+
+    const many = await app.request(
+      `${AUTH_URL}${MCP_OAUTH_MOUNT_PATH}/register`,
+      json({ redirect_uris: Array.from({ length: 11 }, (_, i) => `${REDIRECT}/${i}`) }),
+    );
+    expect(many.status).toBe(400);
+    expect(await many.json()).toMatchObject({ error: "invalid_redirect_uri" });
+    expect(clients.size).toBe(0);
+
+    const token = await app.request(`${AUTH_URL}${MCP_OAUTH_MOUNT_PATH}/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `grant_type=refresh_token&refresh_token=${"a".repeat(20_000)}`,
+    });
+    expect(token.status).toBe(400);
+    expect(await token.json()).toMatchObject({ error: "invalid_request" });
   });
 });
 

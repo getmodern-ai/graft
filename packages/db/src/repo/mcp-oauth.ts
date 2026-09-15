@@ -47,17 +47,26 @@ export async function insertMcpAuthorizationCode(
   return row;
 }
 
-/** A code by the hash of the value presented — unscoped by nature; the service checks the rest. */
+/** What the token endpoint needs of a code: the row, and whether the agent it is bound to still stands. */
+export type McpAuthorizationCodeGrant = McpAuthorizationCodeRow & { agentRevokedAt: Date | null };
+
+/**
+ * A code by the hash of the value presented — unscoped by nature; the service checks the rest. The
+ * agent's `revoked_at` rides beside it, carried rather than filtered as the refresh read does, so
+ * a code bound to an agent revoked between the consent and the exchange is refused before a token
+ * that could never resolve is minted.
+ */
 export async function findMcpAuthorizationCodeByHash(
   db: DbOrTx,
   codeHash: string,
-): Promise<McpAuthorizationCodeRow | null> {
+): Promise<McpAuthorizationCodeGrant | null> {
   const [row] = await db
-    .select()
+    .select({ code: mcpAuthorizationCode, agentRevokedAt: agent.revokedAt })
     .from(mcpAuthorizationCode)
+    .innerJoin(agent, eq(agent.id, mcpAuthorizationCode.agentId))
     .where(eq(mcpAuthorizationCode.codeHash, codeHash))
     .limit(1);
-  return row ?? null;
+  return row ? { ...row.code, agentRevokedAt: row.agentRevokedAt } : null;
 }
 
 /**
@@ -155,12 +164,22 @@ export async function findMcpRefreshTokenByHash(
   return row ? { ...row.token, agentRevokedAt: row.agentRevokedAt } : null;
 }
 
-/** Mark a refresh token exchanged for its successor; the first stamp stands, so the grace window has one start. */
-export async function rotateMcpToken(db: DbOrTx, tokenId: string, at: Date): Promise<void> {
-  await db
+/**
+ * Claim a refresh token for rotation. `rotated_at IS NULL` in the predicate makes this a race two
+ * refreshes cannot both win: the statement answers the row to exactly one caller and null to the
+ * other, in the statement, so only the winner mints a successor and the first stamp stands.
+ */
+export async function rotateMcpToken(
+  db: DbOrTx,
+  tokenId: string,
+  at: Date,
+): Promise<McpTokenRow | null> {
+  const [row] = await db
     .update(mcpToken)
     .set({ rotatedAt: at })
-    .where(and(eq(mcpToken.id, tokenId), isNull(mcpToken.rotatedAt)));
+    .where(and(eq(mcpToken.id, tokenId), isNull(mcpToken.rotatedAt)))
+    .returning();
+  return row ?? null;
 }
 
 /** Revoke one token — an access token presented at the revocation endpoint (RFC 7009). */

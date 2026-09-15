@@ -49,7 +49,23 @@ import {
 const NOW = new Date("2026-09-15T10:00:00Z");
 const CONFIG = { authUrl: "https://app.getgraft.ai" };
 const PRINCIPAL = { personId: "person_1" };
-const fakeDb = { transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(fakeDb) };
+
+/**
+ * A transaction fake that **serialises** its bodies, the way Postgres serialises two guarded
+ * updates of one row: the second body starts after the first has committed, so a race the service
+ * settles with a guarded update inside a transaction is a race this fake can stage. Re-entrant —
+ * a body that opens a transaction of its own (`insertNewAgent` inside `decideConsent`) runs it in
+ * place, as a savepoint would — so nothing here deadlocks on itself.
+ */
+const inner = { transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(inner) };
+let chain: Promise<unknown> = Promise.resolve();
+const fakeDb = {
+  transaction: <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    const run = chain.then(() => fn(inner));
+    chain = run.catch(() => undefined);
+    return run;
+  },
+};
 const ctx = { db: fakeDb } as unknown as ServiceContext;
 
 type Store = {
@@ -121,9 +137,11 @@ function harness(overrides: { clock?: Date } = {}) {
       store.codes.set(row.id, row);
       return row;
     }),
-    findMcpAuthorizationCodeByHash: vi.fn(
-      async (_db, hash) => [...store.codes.values()].find((row) => row.codeHash === hash) ?? null,
-    ),
+    findMcpAuthorizationCodeByHash: vi.fn(async (_db, hash) => {
+      const row = [...store.codes.values()].find((candidate) => candidate.codeHash === hash);
+      if (!row) return null;
+      return { ...row, agentRevokedAt: store.agents.get(row.agentId)?.revokedAt ?? null };
+    }),
     consumeMcpAuthorizationCode: vi.fn(async (_db, id, at) => {
       const row = store.codes.get(id);
       if (!row || row.consumedAt) return null;
@@ -170,7 +188,10 @@ function harness(overrides: { clock?: Date } = {}) {
     }),
     rotateMcpToken: vi.fn(async (_db, id, at) => {
       const row = store.tokens.get(id);
-      if (row && !row.rotatedAt) store.tokens.set(id, { ...row, rotatedAt: at });
+      if (!row || row.rotatedAt) return null;
+      const rotated = { ...row, rotatedAt: at };
+      store.tokens.set(id, rotated);
+      return rotated;
     }),
     revokeMcpToken: vi.fn(async (_db, id, at) => {
       const row = store.tokens.get(id);
@@ -409,6 +430,17 @@ describe("registration (RFC 7591)", () => {
     expect(attempt("nope")).toBe("invalid_client_metadata");
   });
 
+  it("bounds the registration: at most ten redirect URIs, none over 2048 characters", () => {
+    const many = Array.from({ length: 11 }, (_, i) => `https://claude.ai/cb/${i}`);
+    expect(() => validateClientRegistration({ redirect_uris: many })).toThrow(OAuthProtocolError);
+    expect(() =>
+      validateClientRegistration({ redirect_uris: [`https://claude.ai/${"x".repeat(2100)}`] }),
+    ).toThrow(OAuthProtocolError);
+    expect(
+      validateClientRegistration({ redirect_uris: many.slice(0, 10) }).redirectUris,
+    ).toHaveLength(10);
+  });
+
   it("keeps an https client_uri and logo_uri and drops one that is not", () => {
     const kept = validateClientRegistration(
       registration({ client_uri: "https://claude.ai", logo_uri: "http://claude.ai/logo.png" }),
@@ -540,7 +572,7 @@ describe("the consent (ADR 0018: it mints the agent)", () => {
     const inserted = vi.mocked(h.agentDeps.insertAgent).mock.calls[0]?.[1];
     expect(inserted).toMatchObject({ tokenHash: null, tokenPrefix: null, name: "Claude" });
     expect(h.agentDeps.replaceAgentConnections).toHaveBeenCalledWith(
-      fakeDb,
+      expect.anything(),
       { personId: "person_1", agentId: outcome.agent?.id },
       ["conn_1"],
     );
@@ -795,23 +827,33 @@ describe("the token endpoint", () => {
     for (const row of h.store.tokens.values()) expect(row.revokedAt).toEqual(h.store.clock.now);
   });
 
-  it("refuses a code bound to an agent revoked since the consent", async () => {
+  it("refuses a code bound to an agent revoked since the consent, minting nothing", async () => {
     const h = harness();
     const { client_id } = await registered(h);
     const { code, pkce, outcome } = await consented(h, client_id);
     const agent = h.store.agents.get(outcome.agent?.id ?? "");
     if (agent) h.store.agents.set(agent.id, { ...agent, revokedAt: NOW });
-    // The code exchange itself does not read the agent; the tokens it mints resolve to nothing.
+    await expect(
+      grantTokens(
+        ctx,
+        client(h, client_id),
+        { grant_type: "authorization_code", code, code_verifier: pkce.verifier },
+        h.deps,
+        CONFIG,
+      ),
+    ).rejects.toMatchObject({ error: "invalid_grant" });
+    expect(h.store.tokens.size).toBe(0);
+    // And a refresh token whose agent is revoked afterwards is refused the same way.
+    h.store.agents.set(agent?.id ?? "", { ...(agent as AgentRow), revokedAt: null });
+    const { code: code2, pkce: pkce2 } = await consented(h, client_id, { agent: "existing" });
     const tokens = await grantTokens(
       ctx,
       client(h, client_id),
-      { grant_type: "authorization_code", code, code_verifier: pkce.verifier },
+      { grant_type: "authorization_code", code: code2, code_verifier: pkce2.verifier },
       h.deps,
       CONFIG,
     );
-    expect(
-      await h.deps.findAgentByMcpAccessTokenHash(ctx.db, hashAgentToken(tokens.access_token)),
-    ).toBeNull();
+    h.store.agents.set("agent_1", agentRow("agent_1", { revokedAt: NOW }));
     await expect(
       grantTokens(
         ctx,
@@ -823,7 +865,53 @@ describe("the token endpoint", () => {
     ).rejects.toMatchObject({ error: "invalid_grant" });
   });
 
-  it("refreshes: a new pair under the same grant, the old refresh token rotated, retried inside the grace window, a replay past it revoking the grant", async () => {
+  /** Two exchanges racing on one code: one pair, and the loser's refusal revokes it (RFC 6749 §4.1.2). */
+  it("settles two concurrent exchanges of one code in favour of one, and the other revokes the winner's tokens", async () => {
+    const h = harness();
+    const { client_id } = await registered(h);
+    const { code, pkce } = await consented(h, client_id);
+    const form = { grant_type: "authorization_code", code, code_verifier: pkce.verifier };
+    const results = await Promise.allSettled([
+      grantTokens(ctx, client(h, client_id), form, h.deps, CONFIG),
+      grantTokens(ctx, client(h, client_id), form, h.deps, CONFIG),
+    ]);
+    const won = results.filter((result) => result.status === "fulfilled");
+    const lost = results.filter((result) => result.status === "rejected");
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect((lost[0] as PromiseRejectedResult).reason).toMatchObject({ error: "invalid_grant" });
+    // Exactly one pair was minted, and the loser's refusal took it down with the grant.
+    expect(h.store.tokens.size).toBe(2);
+    for (const row of h.store.tokens.values()) expect(row.revokedAt).toEqual(NOW);
+    expect(h.deps.revokeMcpGrant).toHaveBeenCalledTimes(1);
+  });
+
+  /** Two refreshes racing on one token: one successor, the other refused, the grant standing. */
+  it("settles two concurrent refreshes of one token in favour of one successor", async () => {
+    const h = harness();
+    const { client_id } = await registered(h);
+    const { code, pkce } = await consented(h, client_id);
+    const first = await grantTokens(
+      ctx,
+      client(h, client_id),
+      { grant_type: "authorization_code", code, code_verifier: pkce.verifier },
+      h.deps,
+      CONFIG,
+    );
+    const form = { grant_type: "refresh_token", refresh_token: first.refresh_token };
+    const results = await Promise.allSettled([
+      grantTokens(ctx, client(h, client_id), form, h.deps, CONFIG),
+      grantTokens(ctx, client(h, client_id), form, h.deps, CONFIG),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    // The first pair, plus exactly one successor pair; nothing revoked.
+    expect(h.store.tokens.size).toBe(4);
+    expect([...h.store.tokens.values()].every((row) => row.revokedAt === null)).toBe(true);
+    expect(h.deps.revokeMcpGrant).not.toHaveBeenCalled();
+  });
+
+  it("refreshes: a new pair under the same grant, the old refresh token rotated; presented again inside the grace window it is refused with the grant standing, past it the grant is revoked", async () => {
     const h = harness();
     const { client_id } = await registered(h);
     const { code, pkce } = await consented(h, client_id);
@@ -854,16 +942,20 @@ describe("the token endpoint", () => {
     for (const row of h.store.tokens.values()) expect(row.grantId).toBe(grantId);
     expect(h.deps.pruneMcpExpired).toHaveBeenCalled();
 
-    // Inside the grace window the same old token still answers — a retry after a dropped response.
+    // Inside the grace window the same old token is refused as a benign retry: no successor, the
+    // grant untouched, the client's way back the successor it already holds.
     h.store.clock.now = new Date(NOW.getTime() + 10_000 + MCP_REFRESH_GRACE_SECONDS * 1000);
-    const retry = await grantTokens(
-      ctx,
-      client(h, client_id),
-      { grant_type: "refresh_token", refresh_token: first.refresh_token },
-      h.deps,
-      CONFIG,
-    );
-    expect(retry.access_token).not.toBe(second.access_token);
+    await expect(
+      grantTokens(
+        ctx,
+        client(h, client_id),
+        { grant_type: "refresh_token", refresh_token: first.refresh_token },
+        h.deps,
+        CONFIG,
+      ),
+    ).rejects.toMatchObject({ error: "invalid_grant" });
+    expect(h.store.tokens.size).toBe(4);
+    expect([...h.store.tokens.values()].every((row) => row.revokedAt === null)).toBe(true);
 
     // Past it, the same presentation is a replay: refused, and every token of the grant is revoked.
     h.store.clock.now = new Date(NOW.getTime() + 10_000 + MCP_REFRESH_GRACE_SECONDS * 1000 + 1);

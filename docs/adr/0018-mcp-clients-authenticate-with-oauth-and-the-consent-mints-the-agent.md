@@ -74,8 +74,12 @@ Implemented, because the products need it: RFC 8414 and RFC 9728 metadata at the
 path); RFC 7591 dynamic registration, unauthenticated, with `none`, `client_secret_basic` and
 `client_secret_post`; the authorization code grant with PKCE `S256` **required** — `plain` is not
 offered and a request with no challenge is refused; RFC 8707 `resource`, which must be the MCP
-endpoint's canonical URL when sent and is bound to the token regardless; refresh with rotation and
-a thirty-second reuse window, past which a replay revokes the grant (OAuth 2.1 §4.3.1); RFC 7009
+endpoint's canonical URL when sent and is bound to the token regardless; refresh with rotation,
+one successor per predecessor — the claim is a guarded update inside the transaction that mints
+the pair, so two refreshes racing on one token yield one — and a rotated token presented again is
+refused, within thirty seconds as a benign retry with the grant standing, past that as a replay
+that revokes the grant (OAuth 2.1 §4.3.1); a code spent twice, racing or not, revokes the grant it
+opened (RFC 6749 §4.1.2), and a code whose agent was revoked since the consent is refused; RFC 7009
 revocation; RFC 9207's `iss` on every redirect; exact-match redirect URIs, `https` or loopback
 `http` only, and no redirect to a URI the server has not confirmed (OAuth 2.1 §4.1.2.1 — those
 requests land on the console as a refusal instead).
@@ -93,8 +97,9 @@ the string is stored and echoed).
 
 - **Registration is an open, unauthenticated write.** Every product registers before any person
   is involved, so it has to be. A registration is one small row that binds to nothing until a
-  consent does; the risk is volume, and the mitigation when it is needed is a rate limit at the
-  edge, not a change to the protocol.
+  consent does, and it is bounded — a 16 KB body, ten redirect URIs of 2 KB, a hundred-character
+  name — so one caller cannot make the server store something large; the remaining risk is volume,
+  and the mitigation when it is needed is a rate limit at the edge, not a change to the protocol.
 - **A revoked agent's tokens die at once, and its client is told to reconnect.** The door's read
   joins `agent.revoked_at IS NULL`, so no token row needs touching for the refusal — they are
   stamped in the same transaction anyway, so the record says what happened. The refresh then

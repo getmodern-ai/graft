@@ -58,12 +58,17 @@ export const MCP_ACCESS_TOKEN_TTL_SECONDS = 3600;
 /** RFC 6749 §4.1.2's recommended maximum. */
 export const MCP_AUTHORIZATION_CODE_TTL_SECONDS = 600;
 /**
- * How long a rotated refresh token may be presented again and still answer — a retried refresh
- * after a dropped response recovers rather than losing the grant. Past it, the same presentation is
- * a replay and ends the grant (OAuth 2.1 §4.3.1). Thirty seconds is the window
- * `@better-auth/mcp` settled on for the same clients.
+ * How long after a refresh token was rotated a second presentation of it is read as a benign retry
+ * — refused, but without ending the grant. Past it, the same presentation is a replay and revokes
+ * every token of the grant (OAuth 2.1 §4.3.1). Thirty seconds is the window `@better-auth/mcp`
+ * settled on for the same clients; Graft refuses inside it rather than answering again, because
+ * answering again would either mint a second live successor or mean keeping a token in the clear.
  */
 export const MCP_REFRESH_GRACE_SECONDS = 30;
+/** RFC 7591 registration bounds — an open, unauthenticated write, so every field it stores is bounded. */
+export const MCP_REGISTRATION_MAX_BYTES = 16 * 1024;
+export const MCP_MAX_REDIRECT_URIS = 10;
+export const MCP_REDIRECT_URI_MAX_LENGTH = 2048;
 /** Dead access tokens and expired codes older than this are deleted on the way past. */
 export const MCP_PRUNE_AFTER_SECONDS = 24 * 60 * 60;
 export const MCP_CLIENT_NAME_MAX_LENGTH = 100;
@@ -185,7 +190,19 @@ export function validateClientRegistration(body: unknown): ClientRegistration {
       "redirect_uris must be a non-empty array of absolute URIs",
     );
   }
+  if (redirectUris.length > MCP_MAX_REDIRECT_URIS) {
+    throw new OAuthProtocolError(
+      "invalid_redirect_uri",
+      `redirect_uris may name at most ${MCP_MAX_REDIRECT_URIS} URIs`,
+    );
+  }
   for (const uri of redirectUris) {
+    if (typeof uri === "string" && uri.length > MCP_REDIRECT_URI_MAX_LENGTH) {
+      throw new OAuthProtocolError(
+        "invalid_redirect_uri",
+        `A redirect URI is at most ${MCP_REDIRECT_URI_MAX_LENGTH} characters`,
+      );
+    }
     if (typeof uri !== "string" || !isAllowedRedirectUri(uri)) {
       throw new OAuthProtocolError(
         "invalid_redirect_uri",
@@ -677,13 +694,20 @@ async function issueTokens(
 
 const invalidGrant = (description: string) => new OAuthProtocolError("invalid_grant", description);
 
+/** A guarded claim's two outcomes, carried out of the transaction so the refusal is thrown after the commit. */
+type Claimed = { won: true; tokens: TokenResponse } | { won: false };
+
 /**
  * `grant_type=authorization_code` (RFC 6749 §4.1.3 with RFC 7636 §4.6). The code is looked up by
  * its hash and must be this client's, unspent, in time, sent to the same redirect URI, and answered
  * by a verifier whose `S256` is the challenge the consent stored; the agent it is bound to must
- * still stand. A code presented twice is refused **and the grant it opened is revoked** (RFC 6749
- * §4.1.2: a second use is evidence the code leaked). The consume is a guarded update, so two
- * exchanges racing on one code yield one token pair.
+ * still stand, or the pair minted could never resolve and the client would learn that only at its
+ * next call. A code presented twice is refused **and the grant it opened is revoked** (RFC 6749
+ * §4.1.2: a second use is evidence the code leaked) — whether the second presentation arrives after
+ * the first or races it. The consume, the revoke a lost race performs and the pair the winner
+ * mints are **one transaction**: the loser's guarded update waits on the winner's row lock, sees
+ * the code spent, and its revoke then reaches the winner's tokens, which are committed by the time
+ * it runs. Thrown after the transaction, so the revoke it recorded is not rolled back with it.
  */
 export async function exchangeAuthorizationCode(
   ctx: ServiceContext,
@@ -713,10 +737,26 @@ export async function exchangeAuthorizationCode(
   if (resource !== undefined && !sameResource(resource, mcpResourceUrl(config.authUrl))) {
     throw new OAuthProtocolError("invalid_target", "resource must be this MCP endpoint");
   }
+  if (row.agentRevokedAt) {
+    throw invalidGrant("The agent this code is for was revoked; connect again");
+  }
 
-  const consumed = await deps.consumeMcpAuthorizationCode(ctx.db, row.id, deps.now());
-  if (!consumed) throw invalidGrant("The code was already used");
-  return issueTokens(ctx, client, consumedGrant(consumed), deps);
+  const now = deps.now();
+  const claimed = await ctx.db.transaction(async (tx): Promise<Claimed> => {
+    const consumed = await deps.consumeMcpAuthorizationCode(tx, row.id, now);
+    if (!consumed) {
+      await deps.revokeMcpGrant(tx, row.id, now);
+      return { won: false };
+    }
+    return {
+      won: true,
+      tokens: await issueTokens({ db: tx }, client, consumedGrant(consumed), deps),
+    };
+  });
+  if (!claimed.won) {
+    throw invalidGrant("The code was already used; every token it issued is revoked");
+  }
+  return claimed.tokens;
 }
 
 function consumedGrant(row: McpAuthorizationCodeRow) {
@@ -727,9 +767,12 @@ function consumedGrant(row: McpAuthorizationCodeRow) {
  * `grant_type=refresh_token` (RFC 6749 §6; OAuth 2.1 §4.3.1). The token must be this client's,
  * unrevoked, and its agent must still stand — a revoked agent's refresh is `invalid_grant`, which
  * is how a chat product learns the person cut the connection and asks them to connect again. A
- * refresh token is rotated on every use: the successor is issued, the predecessor stamped. The
- * predecessor presented again inside the grace window is a retry and gets a fresh pair; past it,
- * it is a replay and the whole grant is revoked.
+ * refresh token is rotated on every use: the successor is issued, the predecessor stamped, **one
+ * successor per predecessor** — the claim is a guarded update that answers exactly one caller, and
+ * the claim and the pair it earns are one transaction, so two refreshes racing on one token mint
+ * one pair and the other is refused. A predecessor presented again is refused: inside the grace
+ * window as a benign retry, with the grant left standing; past it as a replay, with every token of
+ * the grant revoked. The client's way back from either is the successor it was already issued.
  */
 export async function refreshTokens(
   ctx: ServiceContext,
@@ -751,16 +794,26 @@ export async function refreshTokens(
       await deps.revokeMcpGrant(ctx.db, row.grantId, now);
       throw invalidGrant("The refresh token was already used; every token of the grant is revoked");
     }
-  } else {
-    await deps.rotateMcpToken(ctx.db, row.id, now);
+    throw invalidGrant("The refresh token was already used; present the token it was replaced by");
   }
   await deps.pruneMcpExpired(ctx.db, new Date(now.getTime() - MCP_PRUNE_AFTER_SECONDS * 1000));
-  return issueTokens(
-    ctx,
-    client,
-    { id: row.grantId, agentId: row.agentId, resource: row.resource, scope: row.scope },
-    deps,
-  );
+  const claimed = await ctx.db.transaction(async (tx): Promise<Claimed> => {
+    const won = await deps.rotateMcpToken(tx, row.id, now);
+    if (!won) return { won: false };
+    return {
+      won: true,
+      tokens: await issueTokens(
+        { db: tx },
+        client,
+        { id: row.grantId, agentId: row.agentId, resource: row.resource, scope: row.scope },
+        deps,
+      ),
+    };
+  });
+  if (!claimed.won) {
+    throw invalidGrant("The refresh token was already used; present the token it was replaced by");
+  }
+  return claimed.tokens;
 }
 
 /** The token endpoint's dispatch on `grant_type`; anything else is `unsupported_grant_type`. */

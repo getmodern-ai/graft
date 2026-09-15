@@ -108,6 +108,15 @@ function ConsentRoute() {
             : undefined
         }
         agents={agents.data?.agents}
+        agentsFailed={
+          agents.isError
+            ? {
+                error: agents.error,
+                onRetry: () => void agents.refetch(),
+                retrying: agents.isFetching,
+              }
+            : undefined
+        }
       />
     );
   }

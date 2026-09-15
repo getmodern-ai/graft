@@ -50,6 +50,7 @@ export function ConsentCard({
   connections,
   connectionsFailed,
   agents,
+  agentsFailed,
 }: {
   request: ConsentRequest;
   /** The authorization request as the browser arrived with it; sent back with the decision. */
@@ -57,8 +58,9 @@ export function ConsentCard({
   /** The person's connections, or `undefined` while the read is pending or has failed. */
   connections: readonly Connection[] | undefined;
   connectionsFailed?: { error: unknown; onRetry: () => void; retrying: boolean };
-  /** The person's agents; a revoked one is not offered. */
+  /** The person's agents, or `undefined` while the read is pending or has failed; a revoked one is not offered. */
   agents: readonly Agent[] | undefined;
+  agentsFailed?: { error: unknown; onRetry: () => void; retrying: boolean };
 }) {
   const client = request.client.name;
   const [as, setAs] = useState<string>(NEW_AGENT);
@@ -83,8 +85,13 @@ export function ConsentCard({
 
   const minting = as === NEW_AGENT;
   const busy = decide.isPending || leaving;
+  // Connect waits for both reads: a scope chosen from a list that has not arrived would be an
+  // empty one nobody chose, and a choice offered from an agent list that has not arrived would
+  // hide the agents the person already has (the create dialog holds Create the same way).
   const canConnect =
-    !busy && (minting ? name.trim().length > 0 && connections !== undefined : true);
+    !busy &&
+    agents !== undefined &&
+    (minting ? name.trim().length > 0 && connections !== undefined : true);
 
   return (
     <Card>
@@ -118,7 +125,7 @@ export function ConsentCard({
               <Select
                 value={as}
                 items={items}
-                disabled={busy}
+                disabled={busy || agents === undefined}
                 onValueChange={(next) => {
                   if (typeof next === "string") setAs(next);
                 }}
@@ -135,9 +142,22 @@ export function ConsentCard({
                 </SelectContent>
               </Select>
               <FieldDescription>
-                {minting
-                  ? "A new agent, made for this connection. You can rename it and change its scope any time."
-                  : "An agent you already have. Its scope, working set and approvals apply as they are."}
+                {agents === undefined ? (
+                  agentsFailed ? (
+                    <RetryNotice
+                      error={agentsFailed.error}
+                      message="Could not load your agents."
+                      onRetry={agentsFailed.onRetry}
+                      retrying={agentsFailed.retrying}
+                    />
+                  ) : (
+                    "Loading your agents…"
+                  )
+                ) : minting ? (
+                  "A new agent, made for this connection. You can rename it and change its scope any time."
+                ) : (
+                  "An agent you already have. Its scope, working set and approvals apply as they are."
+                )}
               </FieldDescription>
             </Field>
 
