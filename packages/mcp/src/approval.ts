@@ -41,11 +41,17 @@ import { authoredToolName } from "./tool-names";
  * starts reading the person's data — ends in a `build_approval` row per agent per connection, once
  * (`requireBuildApproval`, exported for GRA-29's `acquire`).
  *
- * **A decline holds, a dismissal does not.** The person saying no is an answer, and ADR 0008 says the
- * answer holds — so a decline is recorded as `deny` and every later call is refused `tool_denied`
- * until the console revokes it. Closing the dialog without choosing (`cancel`) is not an answer:
- * nothing is recorded and the next call asks again. A build ask has no deny row (the schema's
- * reason: a declined `acquire` leaves nothing behind), so a build decline simply refuses.
+ * **A decline holds; a dismissal falls through to the handoff.** The person saying no is an answer,
+ * and ADR 0008 says the answer holds — so a decline is recorded as `deny` and every later call is
+ * refused `tool_denied` until the console revokes it. A `cancel` is not an answer: nothing is
+ * recorded, and the ask goes to the handoff exactly as if the client had advertised no elicitation
+ * (ADR 0006, amendment of 2026-09-16). A client can advertise forms it never shows — Claude Code's
+ * non-interactive mode cancels every one — and under the earlier rule, which asked again, such a
+ * client never got the person a link (GRA-55). The fall-through is per ask, not per session: the
+ * next ask offers the form again, unless the console has answered the earlier one meanwhile — a
+ * waiting console answer is taken before any form is offered (`askApproval`). A build ask has no
+ * deny row (the schema's reason: a declined `acquire` leaves nothing behind), so a build decline
+ * simply refuses.
  *
  * **A destructive tool asks once, like a write; asking every call is the person's opt-in** (ADR
  * 0008, amendment of 2026-09-15). The annotation changes what the ask says — the message names the
@@ -265,14 +271,40 @@ async function askApproval(
 ): Promise<GateOutcome | typeof RETRY> {
   const agent = await getAgent(ctx, { personId: scope.personId }, scope.agentId, deps.agent);
   const agentName = agent?.name ?? scope.agentId;
+  const waiting = await findWaitingAsk(ctx, scope, subject, deps);
   const elicit = channel.elicit();
-  if (elicit) {
+  // A console answer already waiting for this ask is taken before any form is offered: it is the
+  // person's answer to this very ask, and a form answered first would overtake it and leave it to be
+  // spent on a later call it was never given for (Greptile on #34). An ask still open is offered in
+  // place; the handoff reuses its row when the form carries no answer.
+  if (elicit && !waiting?.answeredAt) {
     const outcome = await askByElicitation(ctx, scope, subject, agentName, deps, elicit);
     if (outcome) return outcome;
-    // The client advertised elicitation and then could not carry one — fall through to the channel
-    // that works for every harness (ADR 0006), so the person is still asked.
+    // The client advertised elicitation and then carried no answer — the request failed, or the form
+    // came back `cancel` — so fall through to the channel that works for every harness (ADR 0006,
+    // amendment of 2026-09-16), and the person is still asked.
   }
-  return askByHandoff(ctx, scope, subject, agentName, deps);
+  return askByHandoff(ctx, scope, subject, deps, waiting);
+}
+
+/**
+ * The action a previous call left for this ask, if any — answered while the agent was away, or still
+ * open; never one consumed or expired (`listPendingActionsByKind`).
+ */
+async function findWaitingAsk(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  subject: AskSubject,
+  deps: McpDeps,
+): Promise<PendingActionRow | null> {
+  const targetId = subject.kind === "tool" ? subject.tool.id : subject.connection.id;
+  const rows = await deps.listPendingActionsByKind(
+    ctx.db,
+    scope,
+    subject.kind,
+    deps.pendingAction.now(),
+  );
+  return rows.find((row) => targetOf(row) === targetId) ?? null;
 }
 
 /** What the ask is about, in one clause, for the message and the card. */
@@ -360,6 +392,10 @@ function readElicitationAnswer(result: ElicitResult): ApprovalAnswer | null {
   };
 }
 
+/**
+ * The ask through the client's form. `null` when this channel carried no answer — the request
+ * failed, or the form came back `cancel` — and the caller goes to the handoff instead.
+ */
 async function askByElicitation(
   ctx: ServiceContext,
   scope: AgentScope,
@@ -381,10 +417,13 @@ async function askByElicitation(
   }
   const said = readElicitationAnswer(result);
   if (said === null) {
-    return refuse(
-      "approval_declined",
-      `The person dismissed the ask for ${whatIsAsked(subject)} without answering. Nothing was recorded; the next call asks again.`,
+    // The form closed without an answer — by the person, or by a client that never showed it (Claude
+    // Code in `-p` mode, GRA-55). Nothing is recorded; the handoff gets the person a link either way.
+    // One line so an operator can tell a client that cannot render forms from one that never had them.
+    console.info(
+      `mcp: elicitation cancelled by the client for ${whatIsAsked(subject)}, falling back to a handoff`,
     );
+    return null;
   }
   if (said.allow) {
     await recordAllow(ctx, scope, subject, said.askEveryCall, deps);
@@ -431,19 +470,16 @@ function payloadFor(subject: AskSubject): ToolAskPayload | BuildAskPayload {
   };
 }
 
+/** The ask through the console: the waiting action or a new one, and a bounded wait for its answer. */
 async function askByHandoff(
   ctx: ServiceContext,
   scope: AgentScope,
   subject: AskSubject,
-  _agentName: string,
   deps: McpDeps,
+  waiting: PendingActionRow | null,
 ): Promise<GateOutcome | typeof RETRY> {
-  const targetId = subject.kind === "tool" ? subject.tool.id : subject.connection.id;
-  const existing = (
-    await deps.listPendingActionsByKind(ctx.db, scope, subject.kind, deps.pendingAction.now())
-  ).find((row) => targetOf(row) === targetId);
   const action =
-    existing ??
+    waiting ??
     (await createPendingAction(
       ctx,
       scope,
