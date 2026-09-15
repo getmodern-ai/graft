@@ -92,7 +92,7 @@ const findTool: MetaTool = {
       "Call find_tool first, before acquire, whenever a task has no tool in your list. " +
       "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description. " +
       "Each hit carries vendor and name (what promote, demote and run_tool take), whether it is in your working set, and its read-only and destructive hints. " +
-      "A hit that is not promoted is one promote call from your list; an empty answer means acquire is the next step.",
+      "A hit that is not promoted is one promote call from your list. When the answer is empty, call request_connection if the vendor has no connection in your scope (an execute__<connectionId> tool in your list names each one), otherwise acquire.",
     inputSchema: {
       type: "object",
       properties: {
@@ -135,7 +135,7 @@ const findTool: MetaTool = {
       tools: hits,
       note:
         hits.length === 0
-          ? "Nothing in the toolbox matches. acquire authors a new tool against a connection."
+          ? "Nothing in the toolbox matches. If the vendor has a connection in your scope (an execute__<connectionId> tool in your list names it), acquire authors a new tool against it; if not, request_connection comes first."
           : "promote a tool to add it to your list; run_tool runs one without promoting it.",
     });
   },

@@ -187,6 +187,15 @@ describe("every meta-tool description", () => {
     });
   }
 
+  /** An empty search is not always acquire next: a vendor with no connection in scope needs request_connection first (Greptile on #32). */
+  it("find_tool sends an empty answer to request_connection before acquire when the vendor has no connection", () => {
+    const description = META_TOOLS.find((tool) => tool.definition.name === "find_tool")?.definition
+      .description;
+    expect(description).toContain(
+      "call request_connection if the vendor has no connection in your scope",
+    );
+  });
+
   for (const name of HANDS_OFF) {
     it(`${name} says what to do with the handoff it can return`, () => {
       const description = META_TOOLS.find((tool) => tool.definition.name === name)?.definition
