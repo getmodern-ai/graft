@@ -43,10 +43,12 @@ const AGENT_A = "agent_a";
 const AGENT_B = "agent_b";
 const AGENT_C = "agent_c";
 const AGENT_D = "agent_d";
+const AGENT_E = "agent_e";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
 const TOKEN_D = "grft_approval_token_d_000000000000000000000000";
+const TOKEN_E = "grft_approval_token_e_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -113,6 +115,7 @@ beforeAll(async () => {
     [AGENT_B, TOKEN_B, "server OpenClaw"],
     [AGENT_C, TOKEN_C, "elicitation Hermes"],
     [AGENT_D, TOKEN_D, "Discord Hermes"],
+    [AGENT_E, TOKEN_E, "headless Claude Code"],
   ] as const) {
     store.addAgent({ id, personId: PERSON, token, name, connectionIds: [CONN_DEMO] });
   }
@@ -129,7 +132,9 @@ beforeAll(async () => {
       defaultConnectionId: CONN_DEMO,
       path: `tools/demo/${tool.name}/v1`,
     });
-    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D]) store.promote(agent, tool.id);
+    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D, AGENT_E]) {
+      store.promote(agent, tool.id);
+    }
   }
 
   deps = {
@@ -686,27 +691,6 @@ describe("through an elicitation — where the client advertised one", () => {
     }
   });
 
-  it("a dismissed form records nothing, so the next call asks again", async () => {
-    let dismiss = true;
-    const c = await connect(TOKEN_C, async () =>
-      dismiss ? { action: "cancel" } : { action: "accept", content: { allow: false } },
-    );
-    try {
-      const dismissed = await c.call(DELETE_ITEM, { limit: 1 });
-      expect(body(dismissed)).toMatchObject({ error: "refused", reason: "approval_declined" });
-      expect(store.approvals.has(`${AGENT_C} tool_delete`)).toBe(false);
-
-      dismiss = false;
-      const declined = await c.call(DELETE_ITEM, { limit: 1 });
-      expect(body(declined)).toMatchObject({ reason: "approval_declined" });
-      expect(approvalOf(AGENT_C, "tool_delete")).toMatchObject({ decision: "deny" });
-      expect(c.elicitations).toHaveLength(2);
-    } finally {
-      await c.close();
-      store.approvals.delete(`${AGENT_C} tool_delete`);
-    }
-  });
-
   it("a destructive tool's form names it destructive and offers ask-every-call; on, the next call asks again; off, the yes holds", async () => {
     let content: Record<string, boolean> = { allow: true, askEveryCall: true };
     const c = await connect(TOKEN_C, async () => ({ action: "accept", content }));
@@ -746,6 +730,25 @@ describe("through an elicitation — where the client advertised one", () => {
       await c.close();
     }
   }, 60_000);
+
+  it("the build ask's decline refuses and grants nothing, so the next call asks again", async () => {
+    const c = await connect(TOKEN_C, async () => ({ action: "decline" }));
+    // An earlier test left C an open build action from `requireBuildApproval`; none may be added here.
+    const actionsBefore = actionsOf(AGENT_C, "build").length;
+    try {
+      const declined = await c.call(executeToolName(CONN_DEMO), { command: "echo hi" });
+      expect(declined.isError).toBe(true);
+      expect(body(declined)).toMatchObject({ error: "refused", reason: "approval_declined" });
+      expect(store.buildApprovals.has(`${AGENT_C} ${CONN_DEMO}`)).toBe(false);
+      // No deny row for a build (the header): the next call asks afresh, and the person says no again.
+      const again = await c.call(executeToolName(CONN_DEMO), { command: "echo hi" });
+      expect(body(again)).toMatchObject({ error: "refused", reason: "approval_declined" });
+      expect(c.elicitations).toHaveLength(2);
+      expect(actionsOf(AGENT_C, "build")).toHaveLength(actionsBefore);
+    } finally {
+      await c.close();
+    }
+  });
 
   it("the build ask is an elicitation too, and its accept grants the build approval", async () => {
     store.pendingActions.clear();
@@ -878,6 +881,89 @@ describe("through an elicitation answered with no fields — Hermes 0.21.1's app
       for (const row of actionsOf(AGENT_D, "tool")) store.pendingActions.delete(row.id);
     }
   }, 30_000);
+});
+
+/**
+ * Claude Code in non-interactive mode (`claude -p`) advertises `elicitation` in `initialize` and
+ * answers every form `cancel` without showing it (GRA-54's live check). Under the earlier rule a
+ * cancel recorded nothing and the ask repeated, so the person never received a link from such a
+ * client; now a cancel falls through to the handoff, per ask (ADR 0006, amendment of 2026-09-16).
+ * What the agent gets is what a client with no elicitation gets — the same `awaiting_approval`, the
+ * same durable row — and `decline` keeps its meaning.
+ */
+describe("through an elicitation the client cancels without showing it — Claude Code's non-interactive mode", () => {
+  const cancel: Elicitation = async () => ({ action: "cancel" });
+
+  it("on a tool ask the cancel yields the handoff link and a pending action, records nothing, and the call after the console's answer runs", async () => {
+    const e = await connect(TOKEN_E, cancel);
+    try {
+      const { answer: said, action } = awaiting(await e.call(DELETE_ITEM, { limit: 1 }));
+      expect(e.elicitations).toHaveLength(1);
+      expect(action).toMatchObject({
+        agentId: AGENT_E,
+        kind: "tool",
+        answeredAt: null,
+        payload: { toolId: "tool_delete", askEveryCall: false },
+      });
+      expect(store.approvals.has(`${AGENT_E} tool_delete`)).toBe(false);
+      // The message is the handoff's, as a client with no elicitation would read it.
+      expect(said.message).toContain("Relay this link");
+
+      // Per ask, not per session: the next call offers the form again, and the same cancel reaches
+      // the same open action rather than a second one.
+      const again = awaiting(await e.call(DELETE_ITEM, { limit: 1 }));
+      expect(again.action.id).toBe(action.id);
+      expect(e.elicitations).toHaveLength(2);
+      expect(actionsOf(AGENT_E, "tool")).toHaveLength(1);
+
+      // The person answers from the console; the next call finds the answer and runs.
+      await answer(action.id, { allow: true });
+      expect(body(await e.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.pendingActions.get(action.id)?.consumedAt).toBeInstanceOf(Date);
+      expect(approvalOf(AGENT_E, "tool_delete")).toMatchObject({
+        decision: "allow",
+        askEveryCall: false,
+      });
+
+      // The yes holds: no form, no new action.
+      const asked = e.elicitations.length;
+      expect(body(await e.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(e.elicitations).toHaveLength(asked);
+      expect(actionsOf(AGENT_E, "tool")).toHaveLength(1);
+    } finally {
+      await e.close();
+    }
+  }, 60_000);
+
+  it("on the build ask the cancel yields the handoff link and a pending action, grants nothing, and the call after the console's answer runs", async () => {
+    const e = await connect(TOKEN_E, cancel);
+    try {
+      const { action } = awaiting(
+        await e.call(executeToolName(CONN_DEMO), { command: RUN_LIST_ITEMS }),
+      );
+      expect(e.elicitations).toHaveLength(1);
+      expect(action).toMatchObject({
+        agentId: AGENT_E,
+        kind: "build",
+        answeredAt: null,
+        payload: { connectionId: CONN_DEMO, vendor: "demo", connectionName: "Demo Orders" },
+      });
+      expect(store.buildApprovals.has(`${AGENT_E} ${CONN_DEMO}`)).toBe(false);
+      expect(store.usage.at(-1)).toMatchObject({
+        toolName: executeToolName(CONN_DEMO),
+        outcome: "refused",
+      });
+
+      await answer(action.id, { allow: true });
+      const ran = body(await e.call(executeToolName(CONN_DEMO), { command: RUN_LIST_ITEMS }));
+      expect(ran.exitCode).toBe(0);
+      expect(ran.output).toContain(JSON.stringify(VENDOR_BODY));
+      expect(store.buildApprovals.has(`${AGENT_E} ${CONN_DEMO}`)).toBe(true);
+      expect(store.pendingActions.get(action.id)?.consumedAt).toBeInstanceOf(Date);
+    } finally {
+      await e.close();
+    }
+  }, 60_000);
 });
 
 describe("every approval and every pending action is a row with the agent and the tool or connection", () => {

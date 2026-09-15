@@ -48,3 +48,37 @@ catches an OAuth callback on localhost for people at a terminal.
   `tools/approval_prompt.py`: Deny is `decline`, no answer is `cancel`, and session and always are
   not persisted), so its card comes back on every ask Graft makes. The harness's buttons name the
   harness's grain; Graft's record keeps Graft's.
+
+## Amendment 2026-09-16: a cancelled elicitation falls through to the handoff
+
+Decided by Aleks (GRA-55). **A client can advertise forms it never shows.** Claude Code in
+non-interactive mode (`claude -p`) declares `elicitation` in `initialize` and answers every form
+`cancel` without rendering it (GRA-54's live check), and the same shape is plausible for any client
+whose form support depends on the mode it is running in. Under the rule as first applied — a `cancel`
+recorded nothing and the ask repeated — Graft asked such a client again on every call, and the person
+never received a link, so nothing could be approved from that client at all.
+
+**The rule.** An elicitation answered `cancel` is treated as the channel being unavailable for that
+ask: nothing is recorded, and the ask goes to the handoff exactly as it does for a client that
+declared no elicitation — the tool result carries `awaiting_approval` and the console URL, and a
+durable pending action stands for the person to answer. `decline` keeps its meaning: the person said
+no, recorded as a standing deny on a tool ask and a plain refusal on a build ask. `accept` is
+unchanged. The tool ask and the build ask (`acquire`, the execute tool) follow one rule because they
+share the channel (`packages/mcp/src/approval.ts`).
+
+**Per ask, not per session.** Each ask tries the form first when the client advertises one and falls
+through on `cancel`; nothing remembers the cancel. Remembering it for the session would save one
+round trip on a client that cancels every form, and that round trip is milliseconds — the cancel
+comes back at once — while a person who closed one form in a client that does render them would
+then see links for the rest of the session instead of forms. The doomed round trip is also rarer
+than it looks: the console's answer writes the approval the ask was for, so the call after a console
+answer passes at the rule without asking anyone, and only the next *distinct* ask offers a form
+again. A per-session memory stays available if a client turns out to cancel slowly; it would reset
+with the session and be recorded here.
+
+**Where else this shows.** Hermes's buttons never send `cancel` (GRA-42's mapping above: every allow
+is `accept`, Deny is `decline`), so the buttons are unaffected. Hermes's no-answer path, which the
+GRA-42 bullet records as `cancel`, now yields a link rather than the card again — a person who let a
+card lapse answers from the console, which is what "an approval can be answered later" above already
+promises. ADR 0008's "a dismissal records nothing" stays true; what changes is the channel the ask
+falls back to.

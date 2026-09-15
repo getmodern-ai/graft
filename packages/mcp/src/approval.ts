@@ -41,11 +41,15 @@ import { authoredToolName } from "./tool-names";
  * starts reading the person's data — ends in a `build_approval` row per agent per connection, once
  * (`requireBuildApproval`, exported for GRA-29's `acquire`).
  *
- * **A decline holds, a dismissal does not.** The person saying no is an answer, and ADR 0008 says the
- * answer holds — so a decline is recorded as `deny` and every later call is refused `tool_denied`
- * until the console revokes it. Closing the dialog without choosing (`cancel`) is not an answer:
- * nothing is recorded and the next call asks again. A build ask has no deny row (the schema's
- * reason: a declined `acquire` leaves nothing behind), so a build decline simply refuses.
+ * **A decline holds; a dismissal falls through to the handoff.** The person saying no is an answer,
+ * and ADR 0008 says the answer holds — so a decline is recorded as `deny` and every later call is
+ * refused `tool_denied` until the console revokes it. A `cancel` is not an answer: nothing is
+ * recorded, and the ask goes to the handoff exactly as if the client had advertised no elicitation
+ * (ADR 0006, amendment of 2026-09-16). A client can advertise forms it never shows — Claude Code's
+ * non-interactive mode cancels every one — and under the earlier rule, which asked again, such a
+ * client never got the person a link (GRA-55). The fall-through is per ask, not per session: the
+ * next ask offers the form again. A build ask has no deny row (the schema's reason: a declined
+ * `acquire` leaves nothing behind), so a build decline simply refuses.
  *
  * **A destructive tool asks once, like a write; asking every call is the person's opt-in** (ADR
  * 0008, amendment of 2026-09-15). The annotation changes what the ask says — the message names the
@@ -269,8 +273,9 @@ async function askApproval(
   if (elicit) {
     const outcome = await askByElicitation(ctx, scope, subject, agentName, deps, elicit);
     if (outcome) return outcome;
-    // The client advertised elicitation and then could not carry one — fall through to the channel
-    // that works for every harness (ADR 0006), so the person is still asked.
+    // The client advertised elicitation and then carried no answer — the request failed, or the form
+    // came back `cancel` — so fall through to the channel that works for every harness (ADR 0006,
+    // amendment of 2026-09-16), and the person is still asked.
   }
   return askByHandoff(ctx, scope, subject, agentName, deps);
 }
@@ -360,6 +365,10 @@ function readElicitationAnswer(result: ElicitResult): ApprovalAnswer | null {
   };
 }
 
+/**
+ * The ask through the client's form. `null` when this channel carried no answer — the request
+ * failed, or the form came back `cancel` — and the caller goes to the handoff instead.
+ */
 async function askByElicitation(
   ctx: ServiceContext,
   scope: AgentScope,
@@ -381,10 +390,13 @@ async function askByElicitation(
   }
   const said = readElicitationAnswer(result);
   if (said === null) {
-    return refuse(
-      "approval_declined",
-      `The person dismissed the ask for ${whatIsAsked(subject)} without answering. Nothing was recorded; the next call asks again.`,
+    // The form closed without an answer — by the person, or by a client that never showed it (Claude
+    // Code in `-p` mode, GRA-55). Nothing is recorded; the handoff gets the person a link either way.
+    // One line so an operator can tell a client that cannot render forms from one that never had them.
+    console.info(
+      `mcp: elicitation cancelled by the client for ${whatIsAsked(subject)}, falling back to a handoff`,
     );
+    return null;
   }
   if (said.allow) {
     await recordAllow(ctx, scope, subject, said.askEveryCall, deps);
