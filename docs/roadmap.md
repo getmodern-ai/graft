@@ -21,7 +21,7 @@ step and run in parallel where their blockers allow.
 | 2 | Persons, agents, connections and toolbox rows, services without a database | GRA-2, GRA-5 | [GRA-6](https://linear.app/get-modern/issue/GRA-6) |
 | 1 | Publish writes a version, vendors packages under the policy, moves the pointer | GRA-3, GRA-4, GRA-6 | [GRA-18](https://linear.app/get-modern/issue/GRA-18) |
 | 3 | An agent connects over MCP and sees its working set | GRA-4, GRA-6, GRA-18 | [GRA-19](https://linear.app/get-modern/issue/GRA-19) |
-| 3 | Reads pass, writes ask once, destructive asks every time | GRA-19 | [GRA-23](https://linear.app/get-modern/issue/GRA-23) |
+| 3 | Reads pass, writes ask once, destructive asks every time (amended: destructive asks once too, GRA-52) | GRA-19 | [GRA-23](https://linear.app/get-modern/issue/GRA-23) |
 | 3 | The working set contracts by cap and idle window | GRA-19 | [GRA-24](https://linear.app/get-modern/issue/GRA-24) |
 | 5 | Spike: OpenClaw's MCP client against a running Graft | GRA-19 | [GRA-25](https://linear.app/get-modern/issue/GRA-25) |
 | 2 | The console: sign in, agents, pending actions, working sets | GRA-23 | [GRA-26](https://linear.app/get-modern/issue/GRA-26) |
