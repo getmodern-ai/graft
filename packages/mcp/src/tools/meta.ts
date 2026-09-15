@@ -89,9 +89,10 @@ const findTool: MetaTool = {
   definition: {
     name: FIND_TOOL,
     description:
-      "Search your toolbox — every tool authored for this account, demoted ones included — by vendor, name and description. " +
-      "Answers with each tool's vendor and name (what promote, demote and run_tool take), whether it is currently in your working set, and its read-only and destructive hints. " +
-      "A tool that is not promoted is one promote call from appearing in your tool list.",
+      "Call find_tool first, before acquire, whenever a task has no tool in your list. " +
+      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description. " +
+      "Each hit carries vendor and name (what promote, demote and run_tool take), whether it is in your working set, and its read-only and destructive hints. " +
+      "A hit that is not promoted is one promote call from your list. When the answer is empty, call request_connection if the vendor has no connection in your scope (an execute__<connectionId> tool in your list names each one), otherwise acquire.",
     inputSchema: {
       type: "object",
       properties: {
@@ -134,7 +135,7 @@ const findTool: MetaTool = {
       tools: hits,
       note:
         hits.length === 0
-          ? "Nothing in the toolbox matches. acquire authors a new tool against a connection."
+          ? "Nothing in the toolbox matches. If the vendor has a connection in your scope (an execute__<connectionId> tool in your list names it), acquire authors a new tool against it; if not, request_connection comes first."
           : "promote a tool to add it to your list; run_tool runs one without promoting it.",
     });
   },
@@ -144,8 +145,9 @@ const promote: MetaTool = {
   definition: {
     name: PROMOTE,
     description:
-      "Move a tool from your toolbox into your working set, so it appears in your tool list as <vendor>__<name> with its own schema. " +
-      "Your tool list changes; re-fetch it. Answers with the working set's new size.",
+      "Call promote when find_tool found a tool that is not in your working set. " +
+      "It appears in your tool list as vendor__name with its own schema, so re-fetch the list, or call it through run_tool until the list refreshes. " +
+      "Answers the working set's new size. Nothing is authored.",
     inputSchema: {
       type: "object",
       properties: toolKeyProperties,
@@ -175,8 +177,9 @@ const demote: MetaTool = {
   definition: {
     name: DEMOTE,
     description:
-      "Take a tool out of your working set when you no longer need it. It stays in the toolbox, one find_tool and promote away; nothing is deleted. " +
-      "Your tool list changes; re-fetch it. Answers with the working set's new size.",
+      "Call demote when you no longer need a tool in your working set, to keep your list short. " +
+      "The tool stays in the toolbox, one find_tool and promote away; nothing is deleted. " +
+      "Your tool list changes; re-fetch it. Answers the working set's new size.",
     inputSchema: {
       type: "object",
       properties: toolKeyProperties,
@@ -206,10 +209,11 @@ const runTool: MetaTool = {
   definition: {
     name: RUN_TOOL,
     description:
-      "Run a tool from your toolbox by vendor and name, with its input — exactly what calling the tool first-class does, for the turn in which a tool was just published and for a tool that is not promoted. " +
-      "The input is validated against the tool's schema. The vendor's answer, or the tool's failure, comes back verbatim. " +
-      "With dryRun: true reads reach the vendor for real and every other method stops at the proxy with a preview of the request; the answer is a dry-run report instead of a result, and nothing changes at the vendor. " +
-      `For a call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds, pass detached: true — and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}) — and poll the returned processName with wait_for_process. A dry run is always waited for.`,
+      "Call run_tool to run a toolbox tool by vendor and name when it is not in your visible list: the turn a tool was just published or promoted, or a client that snapshots the list per conversation. " +
+      "Exactly what calling the tool first-class does: the input is validated against the tool's schema, and the vendor's answer, or the tool's failure, comes back verbatim. " +
+      "A tool that changes something may answer awaiting_approval with a url on its first call: give the person the link exactly as returned, wait, and call again with the same arguments once they have answered. " +
+      "With dryRun: true reads reach the vendor and every other method stops at the proxy with a preview of the request; the answer is a dry-run report and nothing changes at the vendor. " +
+      `For a call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds, pass detached: true and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}), then poll the returned processName with wait_for_process. A dry run is always waited for.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -275,8 +279,11 @@ const acquire: MetaTool = {
   definition: {
     name: ACQUIRE,
     description:
-      "Ask Graft to author the tool you lack against one of your connections: its model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it, and promotes it into your working set. " +
-      "Returns a job at once; acquire_status reports progress, and the tool appears in your list when it is done.",
+      "Call acquire when find_tool found nothing that covers the task and the vendor has a connection in your scope. " +
+      "Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into your working set. " +
+      "Answers a jobId at once, before anything is built: poll acquire_status with it and relay progress. " +
+      "The first acquire against a connection may answer awaiting_approval with a url: give the person the link exactly as returned, wait, and call acquire again with the same arguments once they have answered. " +
+      "Do not start a second acquire for the same goal while one runs.",
     inputSchema: {
       type: "object",
       properties: {
@@ -360,7 +367,11 @@ const acquireStatus: MetaTool = {
   definition: {
     name: ACQUIRE_STATUS,
     description:
-      "The progress of an acquire job: its status, the lines Graft's model has reported so far, and the tool it published when it is done.",
+      "Call acquire_status with the jobId acquire returned, every ten to twenty seconds while the job is queued or running, or when the person asks how it is going. " +
+      "Answers status, the progress lines so far, the attempt count and, once the job has settled, result. " +
+      "Tell the person a new progress line in one sentence, only when it changed. " +
+      "On succeeded, result.tool is the new tool's wire name, vendor__name: call it for the person's request, through run_tool until it is in your list. " +
+      "On failed, say what result.failure and result.message say in the person's words and what you will try next; never reach the vendor yourself.",
     inputSchema: {
       type: "object",
       properties: { jobId: { type: "string", description: "The id acquire returned." } },
@@ -387,12 +398,13 @@ const requestConnectionTool: MetaTool = {
   definition: {
     name: REQUEST_CONNECTION,
     description:
-      "Propose a new connection to a vendor — its hosts, auth scheme, non-secret parameters and the documentation URL you read — and receive a handoff URL. " +
-      "The person opens it in the console, checks what you proposed, edits it if need be and enters the secret there; you never see the credential, and this tool never takes one. " +
+      "Call request_connection when the vendor a task needs has no connection in your scope: no execute__ tool names it and find_tool shows none. " +
+      "Propose its hosts, auth scheme, non-secret parameters and the documentation URL you read, and receive a handoff url. " +
+      "The person opens it in the console, checks what you proposed, edits it if need be and enters the secret there; you never see the credential, this tool never takes one, and you never ask for one in chat. " +
       "Every host must be a public https host: private, loopback, link-local and cloud-metadata addresses are refused here and again by the proxy. " +
-      `Schemes — ${describeSchemes()}. ` +
-      "For oauth_authorization_code — Gmail, Slack user tokens, Notion — propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
-      "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the link to relay, and calling again with the same proposal returns the same link until they have, then connected. " +
+      `Schemes: ${describeSchemes()}. ` +
+      "For oauth_authorization_code (Gmail, Slack user tokens, Notion) propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
+      "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the url to relay: give them the link exactly as returned, say what it is for, wait, and call again with the same proposal once they say it is done; the same link comes back until they have, then connected. " +
       "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list; a connection to the same vendor and host already in your scope answers connected at once.",
     inputSchema: {
       type: "object",
@@ -451,9 +463,10 @@ const requestCredentialTool: MetaTool = {
   definition: {
     name: REQUEST_CREDENTIAL,
     description:
-      "Ask the person to re-enter a connection's credential in the console — after a vendor 401 or 403, or a rotated key — and receive a handoff URL to relay. " +
-      "The connection must be in your scope. The re-entry replaces the credential and changes no approval; a revoked connection is reconnected by it. " +
-      "The call waits a short while; if the person has not finished it answers awaiting_credential with the link, and calling again returns the same link until they have, then connected.",
+      "Call request_credential when a tool's call comes back with the vendor's 401 or 403, or the person says a key was rotated: it asks them to re-enter the connection's credential in the console and answers a handoff url. " +
+      "Never ask for the new key in chat. The connection must be in your scope. " +
+      "The re-entry replaces the credential and changes no approval; a revoked connection is reconnected by it. " +
+      "The call waits a short while; if the person has not finished it answers awaiting_credential with the url: give them the link exactly as returned, say what it is for, wait, and call again once they say it is done; the same link comes back until they have, then connected.",
     inputSchema: {
       type: "object",
       properties: {
