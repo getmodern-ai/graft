@@ -4,6 +4,7 @@ import { index, integer, pgTable, primaryKey, text, timestamp } from "drizzle-or
 import { user } from "./auth";
 import { owned, ownedRecord } from "./columns";
 import { connection } from "./connection";
+import { mcpClient } from "./mcp-oauth";
 
 /**
  * An **agent**: one harness connection to Graft, authenticating with its own token (CONTEXT.md).
@@ -24,11 +25,23 @@ export const agent = pgTable(
      * SHA-256 of the bearer token, hex. The token itself is shown once, at creation, and never
      * stored: a database copy must not be a set of harness credentials. The unique index is what
      * makes `findAgentByTokenHash` a point read, and what makes a token resolve to one agent and
-     * no other.
+     * no other. Null for an agent an MCP client's consent minted (ADR 0018): that agent is reached
+     * through the tokens in `mcp_token` and holds no static token at all — a token nobody was ever
+     * shown would be a credential with no holder.
      */
-    tokenHash: text("token_hash").notNull().unique(),
-    /** The token's first characters, so a person can tell two tokens apart in the console. */
-    tokenPrefix: text("token_prefix").notNull(),
+    tokenHash: text("token_hash").unique(),
+    /** The token's first characters, so a person can tell two tokens apart in the console; null with `token_hash`. */
+    tokenPrefix: text("token_prefix"),
+    /**
+     * The MCP client whose consent minted this agent, when one did (ADR 0018) — the registration
+     * row, and the client's name as it was at consent, kept beside it so the console still says
+     * "Claude" if the registration is later re-made under another name or gone. Both null for an
+     * agent created in the console with a static token.
+     */
+    connectedViaClientId: text("connected_via_client_id").references(() => mcpClient.id, {
+      onDelete: "set null",
+    }),
+    connectedViaClientName: text("connected_via_client_name"),
     /** ADR 0009's cap: how many tools may be promoted at once. */
     workingSetCap: integer("working_set_cap").notNull().default(20),
     /** ADR 0009's idle window: a tool unused this many days is demoted by the rule. */
@@ -40,7 +53,10 @@ export const agent = pgTable(
     revokedAt: timestamp("revoked_at"),
     ...owned(),
   },
-  (table) => [index("agent_person_id_idx").on(table.personId)],
+  (table) => [
+    index("agent_person_id_idx").on(table.personId),
+    index("agent_connected_via_client_id_idx").on(table.connectedViaClientId),
+  ],
 );
 
 /**

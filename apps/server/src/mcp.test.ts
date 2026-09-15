@@ -37,6 +37,7 @@ function harness() {
     sandbox,
     keys: null,
     proxyPublicUrl: "http://localhost:3000/api/proxy",
+    resourceMetadataUrl: "http://graft.test/.well-known/oauth-protected-resource/mcp",
     checkModule: async () => ({
       entry: null,
       refusals: [],
@@ -91,6 +92,11 @@ describe("the MCP endpoint", () => {
     expect(missing.status).toBe(401);
     expect(await missing.json()).toMatchObject({ error: "unauthorized", reason: "token_missing" });
     expect(missing.headers.get("mcp-session-id")).toBeNull();
+    // ADR 0018: the 401 names the protected resource metadata (RFC 9728 §5.1), and RFC 6750 §3.1
+    // wants no `error` on a challenge to a request that presented no token.
+    expect(missing.headers.get("www-authenticate")).toBe(
+      'Bearer resource_metadata="http://graft.test/.well-known/oauth-protected-resource/mcp"',
+    );
 
     const unknown = await app.request(
       MCP_MOUNT_PATH,
@@ -98,6 +104,9 @@ describe("the MCP endpoint", () => {
     );
     expect(unknown.status).toBe(401);
     expect(await unknown.json()).toMatchObject({ error: "unauthorized", reason: "token_unknown" });
+    expect(unknown.headers.get("www-authenticate")).toContain(
+      'resource_metadata="http://graft.test/.well-known/oauth-protected-resource/mcp", error="invalid_token"',
+    );
 
     const revoked = await app.request(MCP_MOUNT_PATH, post({ authorization: `Bearer ${TOKEN_B}` }));
     expect(revoked.status).toBe(200);

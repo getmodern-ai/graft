@@ -74,8 +74,20 @@ function AgentRoute() {
             <StatusChip chip={agentStatusChip(agent)} />
           </PageHeaderTitle>
           <PageHeaderDescription>
-            Token <code className="font-mono">{agent.tokenPrefix}…</code> · created{" "}
-            <Time iso={agent.createdAt} />
+            {/* Which credential this agent is reached by (ADR 0018): the static token's prefix,
+                the MCP client that connected it, or both. */}
+            {agent.tokenPrefix ? (
+              <>
+                Token <code className="font-mono">{agent.tokenPrefix}…</code>
+              </>
+            ) : null}
+            {agent.connectedVia ? (
+              <>
+                {agent.tokenPrefix ? " · connected" : "Connected"} from{" "}
+                {agent.connectedVia.clientName}
+              </>
+            ) : null}{" "}
+            · created <Time iso={agent.createdAt} />
             {agent.revokedAt ? (
               <>
                 {" "}
@@ -87,7 +99,7 @@ function AgentRoute() {
         {agent.revokedAt ? null : (
           <PageHeaderActions>
             <Button variant="destructive" onClick={() => setRevoking(true)}>
-              Revoke token
+              {agent.tokenPrefix === null ? "Revoke agent" : "Revoke token"}
             </Button>
           </PageHeaderActions>
         )}

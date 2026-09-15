@@ -1,4 +1,4 @@
-import type { AgentRow } from "@graft/db/repo/agent";
+import type { AgentConnectedVia, AgentRow } from "@graft/db/repo/agent";
 
 import type { ServiceContext } from "../context";
 import { orNotFound, ServiceError } from "../errors";
@@ -10,6 +10,11 @@ import type { AgentDeps } from "./agent.deps";
  * the idle window, set the scope. Plain functions — callable from the JSON API, the console later,
  * a script. `deps` is the last argument and is required; `defaultAgentDeps` is what a real caller
  * passes, and a test passes fakes, so nothing here needs a database to be exercised.
+ *
+ * Since ADR 0018 an agent is minted one of two ways: in the console, with a static token the person
+ * copies into a harness (`createAgent`), or at an MCP client's consent, with no static token at all
+ * (`createAgentForClient`) — that agent is reached through the tokens the client holds, and the
+ * row records which client it was connected from.
  */
 
 /** Bounds the console form and the API share — the schema's columns are unbounded on purpose. */
@@ -17,11 +22,16 @@ export const AGENT_NAME_MAX_LENGTH = 100;
 export const WORKING_SET_CAP_RANGE = { min: 1, max: 500 } as const;
 export const IDLE_WINDOW_DAYS_RANGE = { min: 1, max: 3650 } as const;
 
+/** The MCP client an agent was connected from, as the wire sees it (ADR 0018); null for a console-made agent. */
+export type AgentConnectedViaOutput = { clientId: string; clientName: string };
+
 /** The row as the wire sees it: never the token hash. */
 export type AgentOutput = {
   id: string;
   name: string;
-  tokenPrefix: string;
+  /** Null for an agent minted at an MCP client's consent, which holds no static token (ADR 0018). */
+  tokenPrefix: string | null;
+  connectedVia: AgentConnectedViaOutput | null;
   workingSetCap: number;
   idleWindowDays: number;
   revokedAt: Date | null;
@@ -34,6 +44,10 @@ export function toAgentOutput(row: AgentRow): AgentOutput {
     id: row.id,
     name: row.name,
     tokenPrefix: row.tokenPrefix,
+    connectedVia:
+      row.connectedViaClientId && row.connectedViaClientName
+        ? { clientId: row.connectedViaClientId, clientName: row.connectedViaClientName }
+        : null,
     workingSetCap: row.workingSetCap,
     idleWindowDays: row.idleWindowDays,
     revokedAt: row.revokedAt,
@@ -111,15 +125,20 @@ async function assertOwnedConnections(
 }
 
 /**
- * Create an agent. The token is in the answer and nowhere else: the row stores its hash and its
- * first characters, so this is the one time anyone sees it (GRA-6's acceptance criterion).
+ * The insert both mints share: validated limits, a confirmed scope, the row and its scope in one
+ * transaction. The token columns and the origin columns are the caller's — the two mints differ in
+ * exactly those.
  */
-export async function createAgent(
+async function insertNewAgent(
   ctx: ServiceContext,
   principal: Principal,
   input: CreateAgentInput,
+  columns: Pick<
+    AgentRow,
+    "tokenHash" | "tokenPrefix" | "connectedViaClientId" | "connectedViaClientName"
+  >,
   deps: AgentDeps,
-): Promise<{ agent: AgentOutput; token: string; connectionIds: string[] }> {
+): Promise<{ row: AgentRow; connectionIds: string[] }> {
   validateLimits(input);
   const connectionIds = await assertOwnedConnections(
     ctx,
@@ -127,15 +146,12 @@ export async function createAgent(
     input.connectionIds ?? [],
     deps,
   );
-  const minted = mintAgentToken(deps.randomBytes);
-
   const row = await ctx.db.transaction(async (tx) => {
     const inserted = await deps.insertAgent(tx, {
       id: deps.newId(),
       personId: principal.personId,
       name: input.name.trim(),
-      tokenHash: minted.tokenHash,
-      tokenPrefix: minted.tokenPrefix,
+      ...columns,
       ...(input.workingSetCap === undefined ? {} : { workingSetCap: input.workingSetCap }),
       ...(input.idleWindowDays === undefined ? {} : { idleWindowDays: input.idleWindowDays }),
     });
@@ -148,8 +164,90 @@ export async function createAgent(
     }
     return inserted;
   });
+  return { row, connectionIds };
+}
 
+/**
+ * Create an agent. The token is in the answer and nowhere else: the row stores its hash and its
+ * first characters, so this is the one time anyone sees it (GRA-6's acceptance criterion).
+ */
+export async function createAgent(
+  ctx: ServiceContext,
+  principal: Principal,
+  input: CreateAgentInput,
+  deps: AgentDeps,
+): Promise<{ agent: AgentOutput; token: string; connectionIds: string[] }> {
+  const minted = mintAgentToken(deps.randomBytes);
+  const { row, connectionIds } = await insertNewAgent(
+    ctx,
+    principal,
+    input,
+    {
+      tokenHash: minted.tokenHash,
+      tokenPrefix: minted.tokenPrefix,
+      connectedViaClientId: null,
+      connectedViaClientName: null,
+    },
+    deps,
+  );
   return { agent: toAgentOutput(row), token: minted.token, connectionIds };
+}
+
+export type CreateAgentForClientInput = CreateAgentInput & {
+  /** The MCP client whose consent is minting this agent — recorded on the row (ADR 0018). */
+  connectedVia: AgentConnectedVia;
+};
+
+/**
+ * Mint the agent an MCP client's consent asked for (ADR 0018): the same row as `createAgent`'s,
+ * with the client recorded as its origin and **no static token** — no hash, no prefix, no value
+ * shown to anyone. The client reaches it through the tokens the authorization server issues, and
+ * a token nobody was ever shown would be a credential with no holder.
+ */
+export async function createAgentForClient(
+  ctx: ServiceContext,
+  principal: Principal,
+  input: CreateAgentForClientInput,
+  deps: AgentDeps,
+): Promise<{ agent: AgentOutput; connectionIds: string[] }> {
+  const { connectedVia, ...rest } = input;
+  const { row, connectionIds } = await insertNewAgent(
+    ctx,
+    principal,
+    rest,
+    {
+      tokenHash: null,
+      tokenPrefix: null,
+      connectedViaClientId: connectedVia.clientId,
+      connectedViaClientName: connectedVia.clientName,
+    },
+    deps,
+  );
+  return { agent: toAgentOutput(row), connectionIds };
+}
+
+/**
+ * The consent named an agent the person already had (ADR 0018): confirm it is theirs and still
+ * stands, and record the client as its origin when none is recorded yet — an agent that already
+ * says where it came from keeps saying so. A revoked agent cannot be lent to a client; the person
+ * is told to pick another rather than have a dead agent quietly revived.
+ */
+export async function connectExistingAgentToClient(
+  ctx: ServiceContext,
+  principal: Principal,
+  agentId: string,
+  via: AgentConnectedVia,
+  deps: AgentDeps,
+): Promise<AgentOutput> {
+  const row = orNotFound(
+    await deps.findAgent(ctx.db, principal.personId, agentId),
+    "Agent not found",
+  );
+  if (row.revokedAt) {
+    throw new ServiceError("BAD_REQUEST", "This agent is revoked; choose another or create one");
+  }
+  const updated = await deps.setAgentConnectedVia(ctx.db, principal.personId, row.id, via);
+  return toAgentOutput(updated ?? row);
 }
 
 export async function listAgents(
@@ -190,8 +288,10 @@ export async function updateAgentLimits(
 }
 
 /**
- * Revoke: the token stops resolving at once (`findAgentByTokenHash` filters on `revoked_at` in the
- * statement), the row and its history stay. Null for no such agent, or one already revoked.
+ * Revoke: every token stops resolving at once — the static one because `findAgentByTokenHash`
+ * filters on `revoked_at` in the statement, an MCP client's because the door's read joins the same
+ * column (ADR 0018) — and the client's token rows are stamped in the same transaction so the record
+ * says so. The row and its history stay. Null for no such agent, or one already revoked.
  */
 export async function revokeAgent(
   ctx: ServiceContext,
@@ -199,7 +299,17 @@ export async function revokeAgent(
   agentId: string,
   deps: AgentDeps,
 ): Promise<AgentOutput | null> {
-  const row = await deps.revokeAgent(ctx.db, principal.personId, agentId, deps.now());
+  const now = deps.now();
+  const row = await ctx.db.transaction(async (tx) => {
+    const revoked = await deps.revokeAgent(tx, principal.personId, agentId, now);
+    if (!revoked) return null;
+    await deps.revokeMcpTokensForAgent(
+      tx,
+      { personId: principal.personId, agentId: revoked.id },
+      now,
+    );
+    return revoked;
+  });
   return row ? toAgentOutput(row) : null;
 }
 

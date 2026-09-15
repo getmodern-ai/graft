@@ -116,6 +116,8 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         name: input.name ?? input.id,
         tokenHash: hashAgentToken(input.token),
         tokenPrefix: input.token.slice(0, 8),
+        connectedViaClientId: null,
+        connectedViaClientName: null,
         workingSetCap: 20,
         idleWindowDays: 21,
         revokedAt: null,
@@ -248,8 +250,10 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         id: input.id,
         personId: input.personId,
         name: input.name,
-        tokenHash: input.tokenHash,
-        tokenPrefix: input.tokenPrefix,
+        tokenHash: input.tokenHash ?? null,
+        tokenPrefix: input.tokenPrefix ?? null,
+        connectedViaClientId: input.connectedViaClientId ?? null,
+        connectedViaClientName: input.connectedViaClientName ?? null,
         workingSetCap: input.workingSetCap ?? 20,
         idleWindowDays: input.idleWindowDays ?? 21,
         revokedAt: null,
@@ -268,6 +272,21 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     findAgentByTokenHash: async (_db, tokenHash) =>
       [...store.agents.values()].find((row) => row.tokenHash === tokenHash && !row.revokedAt) ??
       null,
+    // The store holds no OAuth tokens (ADR 0018): the suites here drive static tokens, and the
+    // authorization server's own suite in `@graft/core` drives the OAuth path over its own fakes.
+    findAgentByMcpAccessTokenHash: async () => null,
+    revokeMcpTokensForAgent: async () => 0,
+    setAgentConnectedVia: async (_db, personId, agentId, via) => {
+      const row = store.agents.get(agentId);
+      if (!row || row.personId !== personId || row.connectedViaClientId) return null;
+      const updated = {
+        ...row,
+        connectedViaClientId: via.clientId,
+        connectedViaClientName: via.clientName,
+      };
+      store.agents.set(agentId, updated);
+      return updated;
+    },
     listAgents: async (_db, personId) =>
       [...store.agents.values()].filter((row) => row.personId === personId),
     updateAgent: async (_db, personId, agentId, patch) => {

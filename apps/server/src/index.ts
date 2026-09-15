@@ -9,10 +9,12 @@ import {
   defaultAgentDeps,
   defaultApprovalDeps,
   defaultLedgerDeps,
+  defaultMcpOAuthDeps,
   defaultPendingActionDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
   oauthRedirectUri,
+  protectedResourceMetadataUrl,
 } from "@graft/core";
 import { createDb } from "@graft/db";
 import { applyMigrations, MIGRATIONS_DIR } from "@graft/db/migrate";
@@ -229,6 +231,8 @@ const mcp = createMcpDeps({
   // What the agent tells the person to paste into the OAuth client they register (ADR 0005) — the
   // same value `GET /api/oauth/redirect-uri` shows and `GET /api/oauth/callback` serves.
   oauthRedirectUri: oauthRedirectUri(env.GRAFT_AUTH_URL),
+  // The 401's discovery hint (ADR 0018): where the endpoint's protected resource metadata answers.
+  resourceMetadataUrl: protectedResourceMetadataUrl(env.GRAFT_AUTH_URL),
   model: modelSetup.model,
   acquire: {
     maxAttempts: env.GRAFT_ACQUIRE_MAX_ATTEMPTS,
@@ -260,6 +264,20 @@ const acquireRunner = createAcquireRunner(mcp, {
 });
 mcp.acquireRunner = acquireRunner;
 
+/**
+ * Graft as the authorization server for its own MCP endpoint (ADR 0018): the issuer is
+ * `GRAFT_AUTH_URL`'s origin, the consent page is the console's, and no variable is added — the
+ * two URLs every deployment already sets are the two this needs. One object, because the protocol's
+ * endpoints (`createServer`) and the console's consent routes (`api.mcpOAuth`) must agree on all of it.
+ */
+const mcpOAuth = {
+  db,
+  deps: defaultMcpOAuthDeps,
+  agent: defaultAgentDeps,
+  authUrl: env.GRAFT_AUTH_URL,
+  consoleUrl: env.GRAFT_CONSOLE_URL,
+};
+
 const app = createServer({
   keys,
   vault,
@@ -288,7 +306,9 @@ const app = createServer({
     // The consent's two ends (`oauth.ts`): the redirect URI on this server's origin, and the one
     // decrypt outside the proxy binding — the client secret, for the code exchange.
     oauth: { authUrl: env.GRAFT_AUTH_URL, decrypt: vault.decrypt },
+    mcpOAuth,
   },
+  mcpOAuth,
   // The console's build, served from the same origin as the API (`console.ts`); absent, the API is
   // whole and every console path says where the build was expected.
   console: { dir: env.GRAFT_CONSOLE_DIR },
@@ -321,7 +341,7 @@ acquireRunner.start();
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   console.log(
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
-      `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} ` +
+      `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} (OAuth issuer ${env.GRAFT_AUTH_URL}) ` +
       `(${backings.form} backings — sandbox ${sandbox ? "configured" : "unconfigured"}, ` +
       `keyring ${backings.keyring.id}, toolbox ${backings.toolboxRoot ?? "held by the cloud backings"}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +

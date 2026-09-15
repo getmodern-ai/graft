@@ -15,15 +15,24 @@ without a migration.
 _Avoid_: user (in schema and API names), customer, owner, tenant
 
 **Agent**:
-One harness connection to Graft, authenticating with its own token. An agent holds a scope and a
+One harness connection to Graft, authenticating with its own token — a static bearer token the
+harness carries, or the OAuth tokens an MCP client holds for it. An agent holds a scope and a
 working set and nothing else of its own. A person with OpenClaw on a server and Hermes on a laptop
-has two agents and one toolbox.
+has two agents and one toolbox; a person who connects Claude has a third.
 _Avoid_: harness (that is the software), client, bot, session, assistant
 
 **Harness**:
-The agent software a person runs, OpenClaw or Hermes today, that Graft extends. Graft is a server
-the harness connects to over MCP, never a component inside it.
+The agent software a person runs, OpenClaw or Hermes today, or a chat product such as Claude or
+ChatGPT, that Graft extends. Graft is a server the harness connects to over MCP, never a component
+inside it.
 _Avoid_: framework, runtime, client app, host
+
+**MCP client**:
+A harness in its OAuth role: the software that registers itself with Graft's authorization server,
+sends the person to the consent page, and holds the tokens the consent issues. RFC 6749's "client",
+kept to protocol code and the consent page, where it names the software that is asking — never an
+agent, which is the record the client's tokens act as.
+_Avoid_: app, connector (the products' word for the same thing), integration
 
 ### Connections and reach
 
@@ -135,8 +144,9 @@ _Avoid_: allowlist (one part of it), whitelist, dependency check
 ### People in the loop
 
 **Console**:
-The web app where a person enters a secret, completes an OAuth consent, answers an approval, and
-sees each agent's working set. The one channel to a human that works for every harness.
+The web app where a person enters a secret, completes an OAuth consent — a vendor's, or an MCP
+client's, which mints the agent the client will be — answers an approval, and sees each agent's
+working set. The one channel to a human that works for every harness.
 _Avoid_: dashboard, admin, portal, UI
 
 **Handoff**:

@@ -105,6 +105,12 @@ never in the chat (ADR 0006).
 GRA-25 spike confirmed the static bearer header and lazy `tools/list_changed` handling; OpenClaw has
 no MCP elicitation, so approvals arrive as console links.
 
+**Claude and ChatGPT** need no token at all: add `http://localhost:3000/mcp` (or your deployment's
+origin plus `/mcp`) as a custom connector, and the product discovers Graft's own authorization server
+from the endpoint, registers itself and sends you to the console, where the consent page mints the
+agent the connection will be — named for the product, with the scope you pick — or names one you
+already have (ADR 0018). Revoking that agent ends the connection; the product asks you to connect again.
+
 **Behind a domain**, set `GRAFT_PUBLIC_URL` in `.env` to the https origin your reverse proxy serves,
 and put that proxy in front of port 3000. **On Linux**, set `GRAFT_DOCKER_GID` to
 `stat -c %g /var/run/docker.sock` so the unprivileged server can reach the daemon. **Without the
