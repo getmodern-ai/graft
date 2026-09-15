@@ -4,6 +4,7 @@ import { RetryNotice } from "@/components/retry-notice";
 import { StatusChip } from "@/components/status-chip";
 import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states";
 import { Time } from "@/components/time";
+import { Badge } from "@/components/ui/badge";
 import { DataTable, DataTableRow } from "@/components/ui/data-table";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Agent } from "@/lib/agent-queries";
@@ -25,6 +26,11 @@ const COLUMNS = 6;
  * both editable on the agent's page, which the name opens. Cando's mobile frame for its own table
  * narrows every column rather than scrolling (its CAN-360); with two more columns than that
  * frame, narrowing alone does not get there.
+ *
+ * **An agent an MCP client connected wears the client's name as a chip beside its own** (ADR
+ * 0018) — an outline `Badge`, dynamic text like the vendor badge in the connection picker, not a
+ * status from `status-chips.ts`. Its Token cell says "OAuth" when it holds no static token: the
+ * client holds the tokens, and there is no prefix to show.
  *
  * Loading, failed and empty are the body's own rows (`table-body-states.tsx`); the screen-level
  * empty — no agents at all — is the route's `Empty`, because it carries the one action that
@@ -81,9 +87,18 @@ export function AgentsTable({
                 >
                   {agent.name}
                 </Link>
+                {agent.connectedVia ? (
+                  <Badge variant="outline" className="ml-2 align-middle">
+                    {agent.connectedVia.clientName}
+                  </Badge>
+                ) : null}
               </TableCell>
               <TableCell>
-                <code className="font-mono text-xs">{agent.tokenPrefix}…</code>
+                {agent.tokenPrefix ? (
+                  <code className="font-mono text-xs">{agent.tokenPrefix}…</code>
+                ) : (
+                  <span className="text-muted-foreground">OAuth</span>
+                )}
               </TableCell>
               <TableCell className="hidden md:table-cell">
                 {count(agent.workingSetCap, "tool")}

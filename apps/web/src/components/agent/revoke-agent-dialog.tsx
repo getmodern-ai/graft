@@ -34,12 +34,17 @@ export function RevokeAgentDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  // What is being cut (ADR 0018): a static token, the tokens an MCP client holds, or both.
+  const client = agent.connectedVia?.clientName ?? null;
+  const verb = agent.tokenPrefix === null ? "Revoke agent" : "Revoke token";
   const revoke = useMutation({
     mutationFn: () => revokeAgent(agent.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
-      toast.success(`${agent.name}'s token is revoked`, {
-        description: "Its harness is refused at the MCP endpoint from now on.",
+      toast.success(`${agent.name} is revoked`, {
+        description: client
+          ? `${client} is refused at the MCP endpoint from now on and will ask you to connect again.`
+          : "Its harness is refused at the MCP endpoint from now on.",
       });
       onOpenChange(false);
     },
@@ -56,9 +61,22 @@ export function RevokeAgentDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Revoke {agent.name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            The token <code className="font-mono">{agent.tokenPrefix}…</code> stops working
-            immediately and cannot be restored. The agent's working set and history stay here; to
-            reconnect the harness, create a new agent.
+            {agent.tokenPrefix ? (
+              <>
+                The token <code className="font-mono">{agent.tokenPrefix}…</code>
+                {client ? <> and the tokens {client} holds</> : null} stop working immediately and
+                cannot be restored.
+              </>
+            ) : (
+              <>The tokens {client} holds stop working immediately and cannot be restored.</>
+            )}{" "}
+            The agent's working set and history stay here; to reconnect
+            {client ? (
+              <> {client}, connect it again and it will ask for a new agent</>
+            ) : (
+              <> the harness, create a new agent</>
+            )}
+            .
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -68,7 +86,7 @@ export function RevokeAgentDialog({
             disabled={revoke.isPending}
             onClick={() => revoke.mutate()}
           >
-            {revoke.isPending ? "Revoking…" : "Revoke token"}
+            {revoke.isPending ? "Revoking…" : verb}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

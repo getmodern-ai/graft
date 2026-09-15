@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { type AgentScope, bearerTokenFrom, requireAgent, ServiceError } from "@graft/core";
+import {
+  type AgentScope,
+  type AgentTokenRefusal,
+  bearerTokenFrom,
+  requireAgent,
+  ServiceError,
+} from "@graft/core";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Hono } from "hono";
 
@@ -15,10 +21,19 @@ import { type AgentSession, createAgentSession } from "./session";
  *
  * **The token is checked on every request, before the transport sees it.** A missing, unknown or
  * revoked token is a 401 with no MCP handshake (ADR 0007: a revoked agent stops at once, and an
- * unknown token and a revoked one are one refusal). A session is opened by an `initialize` and
- * bound to the agent that opened it; a later request carrying that session id with another agent's
- * token is refused too — a session id is not a credential, and must never become one by being
- * guessed or leaked. Sessions live in this process's memory, as the SDK's transport keeps them.
+ * unknown token and a revoked one are one refusal). The token is one of two shapes — the static
+ * agent token a harness carries, or the access token an MCP client holds after an OAuth consent
+ * (ADR 0018) — and `requireAgent` tells them apart; nothing here does. A session is opened by an
+ * `initialize` and bound to the agent that opened it; a later request carrying that session id
+ * with another agent's token is refused too — a session id is not a credential, and must never
+ * become one by being guessed or leaked. Sessions live in this process's memory, as the SDK's
+ * transport keeps them.
+ *
+ * **Every 401 carries the OAuth discovery hint** the MCP authorization specification requires
+ * (RFC 9728 §5.1): `WWW-Authenticate: Bearer resource_metadata="…"`, naming where the protected
+ * resource metadata answers, so a chat product handed nothing but this endpoint's URL finds the
+ * authorization server. A refused token adds `error="invalid_token"` (RFC 6750 §3.1); a request
+ * with no token gets the bare challenge, as that RFC asks.
  *
  * Refusals share the proxy's body shape, `{ error, reason, message }`, so an agent's code reads one
  * vocabulary from both doors.
@@ -40,8 +55,33 @@ function jsonRpcError(status: 400 | 404, code: number, message: string): Respons
   return Response.json({ jsonrpc: "2.0", error: { code, message }, id: null }, { status });
 }
 
-function unauthorized(reason: string, message: string): Response {
-  return Response.json({ error: "unauthorized", reason, message }, { status: 401 });
+/**
+ * The challenge a 401 carries: the resource metadata's URL always, and the RFC 6750 error only
+ * when a token was presented and refused. `session_mismatch` is a refused token too — the wrong
+ * agent's — so it carries the error as well. The description is cut to the characters RFC 6750
+ * §3 allows in it (printable ASCII without `"` and `\`) — a header value cannot carry the em dash
+ * the JSON body's sentence does, and `Headers.set` throws on it rather than transliterating.
+ */
+export function wwwAuthenticateChallenge(
+  resourceMetadataUrl: string,
+  reason: AgentTokenRefusal | "session_mismatch",
+  message: string,
+): string {
+  const parts = [`resource_metadata="${resourceMetadataUrl}"`];
+  if (reason !== "token_missing") {
+    const description = message
+      .replace(/[—–]/g, "-")
+      .replace(/"/g, "'")
+      .replace(/[^\x20\x21\x23-\x5B\x5D-\x7E]/g, "");
+    parts.push('error="invalid_token"', `error_description="${description}"`);
+  }
+  return `Bearer ${parts.join(", ")}`;
+}
+
+/** The reason word out of a `requireAgent` refusal; `token_unknown` for a refusal that named none. */
+function refusalReasonOf(error: ServiceError): AgentTokenRefusal {
+  const reason = error.details?.reason;
+  return reason === "token_missing" || reason === "token_expired" ? reason : "token_unknown";
 }
 
 export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): Hono {
@@ -55,6 +95,23 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
   const ctx = { db: deps.db };
   const app = new Hono();
 
+  const unauthorized = (
+    reason: AgentTokenRefusal | "session_mismatch",
+    message: string,
+  ): Response => {
+    const headers = new Headers({ "content-type": "application/json" });
+    if (deps.resourceMetadataUrl) {
+      headers.set(
+        "www-authenticate",
+        wwwAuthenticateChallenge(deps.resourceMetadataUrl, reason, message),
+      );
+    }
+    return new Response(JSON.stringify({ error: "unauthorized", reason, message }), {
+      status: 401,
+      headers,
+    });
+  };
+
   app.all("/", async (c) => {
     const request = c.req.raw;
     const token = bearerTokenFrom(request.headers);
@@ -63,7 +120,7 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
       scope = await requireAgent(ctx, token, deps.agent);
     } catch (error) {
       if (error instanceof ServiceError && error.code === "UNAUTHORIZED") {
-        return unauthorized(token ? "token_unknown" : "token_missing", error.message);
+        return unauthorized(refusalReasonOf(error), error.message);
       }
       throw error;
     }

@@ -9,6 +9,7 @@ export * from "./approval";
 export * from "./auth";
 export * from "./columns";
 export * from "./connection";
+export * from "./mcp-oauth";
 export * from "./pending-action";
 export * from "./person-model-key";
 export * from "./tool";

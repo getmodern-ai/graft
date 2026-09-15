@@ -7,6 +7,13 @@ import { Hono } from "hono";
 
 import { type ApiOptions, createApi } from "./api";
 import { type ConsoleOptions, createConsoleApp } from "./console";
+import {
+  createMcpOAuthApp,
+  createWellKnownApp,
+  MCP_OAUTH_MOUNT_PATH,
+  type McpOAuthServerOptions,
+  WELL_KNOWN_PATH,
+} from "./mcp-oauth";
 
 /**
  * The server, as a function of what it is handed — so `app.test.ts` drives the same app `index.ts`
@@ -60,6 +67,13 @@ export type ServerDeps = {
    * harnesses need no directory; `index.ts` always binds it, to `GRAFT_CONSOLE_DIR`.
    */
   console?: Pick<ConsoleOptions, "dir">;
+  /**
+   * Graft as the authorization server for its own MCP endpoint (ADR 0018; `mcp-oauth.ts`): the two
+   * `.well-known` documents at the root and the four endpoints under `/mcp/oauth`. Optional for the
+   * same reason as the rest; `index.ts` always binds it, and the console's consent routes under
+   * `/api` take the same options through `api.mcpOAuth`.
+   */
+  mcpOAuth?: McpOAuthServerOptions;
 };
 
 /** Where the proxy answers — the path `GRAFT_PROXY_PUBLIC_URL` defaults to ends in this. */
@@ -103,6 +117,18 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
   );
 
   /**
+   * The authorization server's doors (ADR 0018), before the MCP endpoint they open: the metadata
+   * documents at the origin's root — where RFC 8414 and RFC 9728 put them and where a chat product
+   * looks, and above the console's SPA fallback, which would otherwise answer a page for them — and
+   * registration, authorization, token and revocation under `/mcp/oauth`, outside `/api` and its
+   * console-shaped CORS because their callers are the products, never the console.
+   */
+  if (deps.mcpOAuth) {
+    app.route("/", createWellKnownApp(deps.mcpOAuth));
+    app.route(MCP_OAUTH_MOUNT_PATH, createMcpOAuthApp(deps.mcpOAuth));
+  }
+
+  /**
    * The MCP endpoint, outside `/api` and its CORS: a harness is a server-side client presenting a
    * bearer token, never a browser with a cookie, and the endpoint checks that token on every request
    * before the transport sees it (`@graft/mcp`'s `createMcpHttpApp`).
@@ -118,12 +144,15 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
   /**
    * The console last, so every server path above has had its match. With a build present it owns
    * `/` — its `index.html` is a 200, which is what a health check reads — and every other path a
-   * browser navigates to. Without one, `/` stays the plain `OK` and the console's paths answer the
-   * JSON 404 `console.ts` describes, so a deployment with no console is a smaller server, not a
-   * broken one.
+   * browser navigates to, `/.well-known/*` excepted: a metadata document nobody mounted is a 404,
+   * never a page. Without one, `/` stays the plain `OK` and the console's paths answer the JSON 404
+   * `console.ts` describes, so a deployment with no console is a smaller server, not a broken one.
    */
   const console = deps.console
-    ? createConsoleApp({ ...deps.console, exclude: [API_MOUNT_PATH, MCP_MOUNT_PATH] })
+    ? createConsoleApp({
+        ...deps.console,
+        exclude: [API_MOUNT_PATH, MCP_MOUNT_PATH, WELL_KNOWN_PATH],
+      })
     : null;
   if (console?.built) {
     app.route("/", console.app);

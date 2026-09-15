@@ -101,7 +101,7 @@ export {
   signHandoffToken,
   verifyHandoff,
 } from "./handoff";
-export { createMcpHttpApp, type McpHttpOptions } from "./http";
+export { createMcpHttpApp, type McpHttpOptions, wwwAuthenticateChallenge } from "./http";
 export {
   createInFlightRegistry,
   detachedHoldMs,

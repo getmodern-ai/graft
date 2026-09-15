@@ -8,7 +8,9 @@ import { hashAgentToken } from "../tenancy";
 import type { AgentDeps } from "./agent.deps";
 import {
   addConnectionToAgentScope,
+  connectExistingAgentToClient,
   createAgent,
+  createAgentForClient,
   revokeAgent,
   setAgentScope,
   toAgentOutput,
@@ -29,6 +31,8 @@ const row: AgentRow = {
   name: "laptop Hermes",
   tokenHash: "hash",
   tokenPrefix: "grft_abc",
+  connectedViaClientId: null,
+  connectedViaClientName: null,
   workingSetCap: 20,
   idleWindowDays: 21,
   revokedAt: null,
@@ -48,9 +52,16 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     insertAgent: vi.fn(async (_db, input) => ({ ...row, ...input }) as AgentRow),
     findAgent: vi.fn(async () => row),
     findAgentByTokenHash: vi.fn(async () => row),
+    findAgentByMcpAccessTokenHash: vi.fn(async () => null),
     listAgents: vi.fn(async () => [row]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...row, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })),
+    revokeMcpTokensForAgent: vi.fn(async () => 0),
+    setAgentConnectedVia: vi.fn(async (_db, _p, _a, via) => ({
+      ...row,
+      connectedViaClientId: via.clientId,
+      connectedViaClientName: via.clientName,
+    })),
     replaceAgentConnections: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
     findConnectionsByIds: vi.fn(async (_db, _p, ids) => ids.map(connectionRow)),
@@ -148,6 +159,23 @@ describe("toAgentOutput", () => {
     const output = toAgentOutput(row);
     expect(output).not.toHaveProperty("tokenHash");
     expect(output.tokenPrefix).toBe("grft_abc");
+    expect(output.connectedVia).toBeNull();
+  });
+
+  it("carries the connecting client as one field, and only when both halves are recorded", () => {
+    expect(
+      toAgentOutput({
+        ...row,
+        tokenHash: null,
+        tokenPrefix: null,
+        connectedViaClientId: "client_1",
+        connectedViaClientName: "Claude",
+      }),
+    ).toMatchObject({
+      tokenPrefix: null,
+      connectedVia: { clientId: "client_1", clientName: "Claude" },
+    });
+    expect(toAgentOutput({ ...row, connectedViaClientId: "client_1" }).connectedVia).toBeNull();
   });
 });
 
@@ -169,11 +197,112 @@ describe("updateAgentLimits", () => {
 });
 
 describe("revokeAgent", () => {
-  it("stamps the clock's moment under the person", async () => {
+  it("stamps the clock's moment under the person, and revokes every MCP client's tokens in the same transaction", async () => {
     const deps = fakeDeps();
     const result = await revokeAgent(ctx, PRINCIPAL, "agent_1", deps);
     expect(deps.revokeAgent).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1", NOW);
+    expect(deps.revokeMcpTokensForAgent).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      NOW,
+    );
     expect(result?.revokedAt).toEqual(NOW);
+  });
+
+  it("touches no token when there is no such agent, or it is revoked already", async () => {
+    const deps = fakeDeps({ revokeAgent: vi.fn(async () => null) });
+    await expect(revokeAgent(ctx, PRINCIPAL, "missing", deps)).resolves.toBeNull();
+    expect(deps.revokeMcpTokensForAgent).not.toHaveBeenCalled();
+  });
+});
+
+/** ADR 0018: the consent mints an agent with no static token and the client recorded as its origin. */
+describe("createAgentForClient", () => {
+  const via = { clientId: "client_1", clientName: "Claude" };
+
+  it("inserts the row with null token columns and the client as its origin, and answers no token", async () => {
+    const deps = fakeDeps();
+    const result = await createAgentForClient(
+      ctx,
+      PRINCIPAL,
+      { name: "Claude", connectionIds: ["conn_1"], connectedVia: via },
+      deps,
+    );
+    const inserted = vi.mocked(deps.insertAgent).mock.calls[0]?.[1];
+    expect(inserted).toMatchObject({
+      id: "agent_new",
+      personId: "person_1",
+      name: "Claude",
+      tokenHash: null,
+      tokenPrefix: null,
+      connectedViaClientId: "client_1",
+      connectedViaClientName: "Claude",
+    });
+    expect(result).not.toHaveProperty("token");
+    expect(result.agent.tokenPrefix).toBeNull();
+    expect(result.agent.connectedVia).toEqual(via);
+    expect(result.connectionIds).toEqual(["conn_1"]);
+    expect(deps.replaceAgentConnections).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_new" },
+      ["conn_1"],
+    );
+  });
+
+  it("applies the same name and scope rules as the console's create", async () => {
+    const deps = fakeDeps({ findConnectionsByIds: vi.fn(async () => []) });
+    await expect(
+      createAgentForClient(ctx, PRINCIPAL, { name: "  ", connectedVia: via }, deps),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      createAgentForClient(
+        ctx,
+        PRINCIPAL,
+        { name: "ok", connectionIds: ["conn_x"], connectedVia: via },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(deps.insertAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe("connectExistingAgentToClient", () => {
+  const via = { clientId: "client_1", clientName: "Claude" };
+
+  it("records the client on an agent that has no origin yet, and answers the agent", async () => {
+    const deps = fakeDeps();
+    const result = await connectExistingAgentToClient(ctx, PRINCIPAL, "agent_1", via, deps);
+    expect(deps.setAgentConnectedVia).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1", via);
+    expect(result.connectedVia).toEqual(via);
+    expect(result.tokenPrefix).toBe("grft_abc");
+  });
+
+  it("keeps the first origin when the row already has one", async () => {
+    const already = {
+      ...row,
+      connectedViaClientId: "client_0",
+      connectedViaClientName: "ChatGPT",
+    };
+    const deps = fakeDeps({
+      findAgent: vi.fn(async () => already),
+      setAgentConnectedVia: vi.fn(async () => null),
+    });
+    const result = await connectExistingAgentToClient(ctx, PRINCIPAL, "agent_1", via, deps);
+    expect(result.connectedVia).toEqual({ clientId: "client_0", clientName: "ChatGPT" });
+  });
+
+  it("refuses an unknown agent as NOT_FOUND and a revoked one as BAD_REQUEST, writing nothing", async () => {
+    const missing = fakeDeps({ findAgent: vi.fn(async () => null) });
+    await expect(
+      connectExistingAgentToClient(ctx, PRINCIPAL, "missing", via, missing),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(missing.setAgentConnectedVia).not.toHaveBeenCalled();
+
+    const revoked = fakeDeps({ findAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })) });
+    await expect(
+      connectExistingAgentToClient(ctx, PRINCIPAL, "agent_1", via, revoked),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(revoked.setAgentConnectedVia).not.toHaveBeenCalled();
   });
 });
 

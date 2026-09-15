@@ -15,6 +15,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AuthShellRouteRouteImport } from './routes/_auth/_shell/route'
 import { Route as OauthCallbackRouteImport } from './routes/oauth.callback'
+import { Route as AuthShellConsentRouteImport } from './routes/_auth/_shell/consent'
 import { Route as AuthShellSettingsRouteImport } from './routes/_auth/_shell/settings'
 import { Route as AuthShellAgentsIndexRouteImport } from './routes/_auth/_shell/agents.index'
 import { Route as AuthShellAgentsAgentIdRouteImport } from './routes/_auth/_shell/agents.$agentId'
@@ -49,6 +50,11 @@ const OauthCallbackRoute = OauthCallbackRouteImport.update({
   id: '/oauth/callback',
   path: '/oauth/callback',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AuthShellConsentRoute = AuthShellConsentRouteImport.update({
+  id: '/consent',
+  path: '/consent',
+  getParentRoute: () => AuthShellRouteRoute,
 } as any)
 const AuthShellSettingsRoute = AuthShellSettingsRouteImport.update({
   id: '/settings',
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/oauth/callback': typeof OauthCallbackRoute
+  '/consent': typeof AuthShellConsentRoute
   '/settings': typeof AuthShellSettingsRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
   '/pending/$id': typeof AuthShellPendingIdRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/oauth/callback': typeof OauthCallbackRoute
+  '/consent': typeof AuthShellConsentRoute
   '/settings': typeof AuthShellSettingsRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
   '/pending/$id': typeof AuthShellPendingIdRoute
@@ -114,6 +122,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_auth/_shell': typeof AuthShellRouteRouteWithChildren
   '/oauth/callback': typeof OauthCallbackRoute
+  '/_auth/_shell/consent': typeof AuthShellConsentRoute
   '/_auth/_shell/settings': typeof AuthShellSettingsRoute
   '/_auth/_shell/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
   '/_auth/_shell/pending/$id': typeof AuthShellPendingIdRoute
@@ -128,6 +137,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/oauth/callback'
+    | '/consent'
     | '/settings'
     | '/agents/$agentId'
     | '/pending/$id'
@@ -140,6 +150,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/oauth/callback'
+    | '/consent'
     | '/settings'
     | '/agents/$agentId'
     | '/pending/$id'
@@ -154,6 +165,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/_auth/_shell'
     | '/oauth/callback'
+    | '/_auth/_shell/consent'
     | '/_auth/_shell/settings'
     | '/_auth/_shell/agents/$agentId'
     | '/_auth/_shell/pending/$id'
@@ -214,6 +226,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OauthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_auth/_shell/consent': {
+      id: '/_auth/_shell/consent'
+      path: '/consent'
+      fullPath: '/consent'
+      preLoaderRoute: typeof AuthShellConsentRouteImport
+      parentRoute: typeof AuthShellRouteRoute
+    }
     '/_auth/_shell/settings': {
       id: '/_auth/_shell/settings'
       path: '/settings'
@@ -260,6 +279,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthShellRouteRouteChildren {
+  AuthShellConsentRoute: typeof AuthShellConsentRoute
   AuthShellSettingsRoute: typeof AuthShellSettingsRoute
   AuthShellAgentsAgentIdRoute: typeof AuthShellAgentsAgentIdRoute
   AuthShellPendingIdRoute: typeof AuthShellPendingIdRoute
@@ -269,6 +289,7 @@ interface AuthShellRouteRouteChildren {
 }
 
 const AuthShellRouteRouteChildren: AuthShellRouteRouteChildren = {
+  AuthShellConsentRoute: AuthShellConsentRoute,
   AuthShellSettingsRoute: AuthShellSettingsRoute,
   AuthShellAgentsAgentIdRoute: AuthShellAgentsAgentIdRoute,
   AuthShellPendingIdRoute: AuthShellPendingIdRoute,

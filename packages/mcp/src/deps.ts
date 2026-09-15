@@ -80,6 +80,13 @@ export type McpDeps = {
   keys: CapabilityTokenKeys | null;
   /** What a sandbox is handed as `GRAFT_PROXY_URL` (ADR 0010) — `GRAFT_PROXY_PUBLIC_URL`. */
   proxyPublicUrl: string;
+  /**
+   * Where the MCP endpoint's protected resource metadata answers (RFC 9728; ADR 0018) —
+   * `@graft/core`'s `protectedResourceMetadataUrl(GRAFT_AUTH_URL)`. Named in the `WWW-Authenticate`
+   * challenge every 401 carries, which is how a chat product discovers the authorization server
+   * from the endpoint alone. Absent, the 401 carries no challenge and only a static token gets in.
+   */
+  resourceMetadataUrl?: string;
   checkModule: ModuleCheck;
   runnerFiles: () => Promise<RunnerFile[]>;
   skills: () => Promise<Skill[]>;

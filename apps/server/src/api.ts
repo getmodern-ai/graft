@@ -67,6 +67,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
+import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 
 /**
@@ -140,6 +141,12 @@ export type ApiOptions = {
    * it refuses with a sentence saying so.
    */
   oauth?: OAuthOptions;
+  /**
+   * The MCP OAuth consent's two routes under `/mcp-oauth` (ADR 0018; `mcp-oauth.ts`): the
+   * console's consent page describes the request and decides it through them, with the person's
+   * session. The same options `createServer` mounts the protocol's endpoints with.
+   */
+  mcpOAuth?: McpOAuthServerOptions;
 };
 
 /**
@@ -412,6 +419,13 @@ export function createApi(options: ApiOptions): Hono {
     isOAuthAuthorizationCode(scheme)
       ? beginConsent(scoped, principal, connectionId, pendingActionId, oauthOptions())
       : null;
+
+  if (options.mcpOAuth) {
+    api.route(
+      "/mcp-oauth",
+      createMcpConsentRoutes({ ...options.mcpOAuth, getSession: options.auth.getSession }),
+    );
+  }
 
   if (options.oauth) {
     api.route(

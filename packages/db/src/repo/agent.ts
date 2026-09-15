@@ -13,6 +13,9 @@ import type { AgentScope } from "./scope";
 export type AgentRow = typeof agent.$inferSelect;
 export type AgentPatch = Partial<Pick<AgentRow, "name" | "workingSetCap" | "idleWindowDays">>;
 
+/** The MCP client an agent was connected from (ADR 0018) — written once, at the consent that bound them. */
+export type AgentConnectedVia = { clientId: string; clientName: string };
+
 /**
  * The agent ids an `AgentScope` names — one, when the agent is the person's, none otherwise. Every
  * agent-scoped repo (`working-set`, `approval`, `pending-action`, `acquire-job`, `usage`) puts
@@ -98,6 +101,28 @@ export async function updateAgent(
     .update(agent)
     .set(patch)
     .where(and(eq(agent.id, agentId), eq(agent.personId, personId)))
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Record which MCP client an existing agent was connected from, when the consent named an agent the
+ * person already had (ADR 0018). `connected_via_client_id IS NULL` in the predicate keeps the first
+ * client: an agent minted by one client and later lent to another keeps saying where it came from,
+ * and the tokens in `mcp_token` say who holds it now.
+ */
+export async function setAgentConnectedVia(
+  db: DbOrTx,
+  personId: string,
+  agentId: string,
+  via: AgentConnectedVia,
+): Promise<AgentRow | null> {
+  const [row] = await db
+    .update(agent)
+    .set({ connectedViaClientId: via.clientId, connectedViaClientName: via.clientName })
+    .where(
+      and(eq(agent.id, agentId), eq(agent.personId, personId), isNull(agent.connectedViaClientId)),
+    )
     .returning();
   return row ?? null;
 }
