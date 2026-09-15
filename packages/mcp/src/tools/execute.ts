@@ -41,10 +41,11 @@ export function executeToolDefinition(connection: ConnectionOutput): Tool {
   return {
     name: executeToolName(connection.id),
     description:
-      `Run code against ${label} (${connection.vendor}): a shell command in your sandbox that can call ${label} through the proxy with this connection's credential injected. Nothing else is granted. ` +
+      `Advanced: run code against ${label} (${connection.vendor}) by hand, when the person asked you to author a tool yourself rather than through acquire. A shell command in your sandbox that can call ${label} through the proxy with this connection's credential injected; nothing else is granted. ` +
       `The process has GRAFT_PROXY_URL, GRAFT_CONNECTION and GRAFT_TOKEN set: a module run as \`echo '{}' | node /graft/runner.mjs <module directory or index.ts>\` reaches ${label} through ctx.fetch('/<vendor path>'). A module you will publish must use ctx alone: the runner removes every GRAFT_* variable before the module loads, and check_tool refuses one that names them. Never write the vendor's host or a key into code. ` +
-      `Answers like run_command — the exit code and the output, cut to its last ${MAX_OUTPUT_CHARS} characters — and is killed after timeoutSeconds (default ${DEFAULT_COMMAND_TIMEOUT_SECONDS}, at most ${MAX_COMMAND_TIMEOUT_SECONDS} when waiting). ` +
+      `Answers like run_command, the exit code and the output cut to its last ${MAX_OUTPUT_CHARS} characters, and is killed after timeoutSeconds (default ${DEFAULT_COMMAND_TIMEOUT_SECONDS}, at most ${MAX_COMMAND_TIMEOUT_SECONDS} when waiting). ` +
       `With dryRun: true the proxy makes GET and HEAD calls for real and stops every other method before it reaches ${label}, answering 202 with header x-graft-dry-run: intercepted and a JSON preview of the request that would have been sent. ` +
+      "The first call against a connection may answer awaiting_approval with a url: give the person the link exactly as returned, wait, and call again once they have answered. " +
       detachedAdvice(),
     inputSchema: {
       type: "object",

@@ -23,17 +23,17 @@ the code; the person enters secrets and answers approvals in Graft's **console**
 The person asks for something against a vendor — an order in their inventory system, a page in
 their wiki, a report from their accounting app — and no tool in your list does it. In this order:
 
-1. **`find_tool { query }`** first. A tool may exist and be demoted; `promote { vendor, name }`
-   brings it back into your list at once, no authoring needed.
+1. **Call `find_tool` first**, with a few words about the task as `query`. A tool may exist and be
+   demoted; `promote { vendor, name }` brings it back into your list at once, no authoring needed.
 2. **Is the vendor connected?** `find_tool`'s answer and your `execute__<connection id>` tools name
    the connections in your scope. If the vendor has none, call
    `request_connection { vendor, primaryHost, scheme, displayName?, docsUrl? }` — it answers a
    handoff link (below); the person confirms the connection and enters the secret in the console.
    A vendor that needs an OAuth consent rather than a key — Gmail, Slack user tokens, Notion — has
    its own note, `connecting-with-oauth.md` beside this file.
-3. **`acquire { connectionId, goal, hints? }`.** `goal` is what the tool must do, in a sentence or
-   two, in the person's terms. `hints` is anything you already know — an endpoint, a documentation
-   URL, a field name; a documentation URL is the single most useful hint.
+3. **`acquire { connectionId, goal, hints? }`, only when nothing fits.** `goal` is what the tool
+   must do, in a sentence or two, in the person's terms. `hints` is anything you already know — an
+   endpoint, a documentation URL, a field name; a documentation URL is the single most useful hint.
 
 `acquire` answers at once with `{ jobId, status, progress }`. It has not built anything yet.
 
@@ -46,8 +46,8 @@ The answer is `{ status, progress, attempts, result? }`:
   changed. Do not start a second `acquire` for the same goal while one runs.
 - `succeeded`: `result.tool` is the new tool's name, `<vendor>__<name>`. It appears in your tool list
   when the list refreshes (Graft sends `tools/list_changed`; Hermes re-reads the list). Then call it
-  for the person's actual request. Until it appears, `run_tool { vendor, name, input }` calls it by
-  name.
+  for the person's actual request. Some clients snapshot the tool list per conversation; until it
+  appears, `run_tool { vendor, name, input }` calls it by name.
 - `failed`: say what `result.failure` and `result.message` say, in the person's words, and what you
   will try — a documentation URL as a hint, a different connection. Do not try to reach the vendor
   yourself; there is no route to a vendor except through a Graft tool, and the attempt would only
@@ -56,9 +56,9 @@ The answer is `{ status, progress, attempts, result? }`:
 ## Relaying a handoff
 
 Any Graft answer with `url` and an `awaiting_…` word — `awaiting_approval`, `awaiting_connection`,
-`awaiting_credential` — is a **handoff**: the next step is the person's, in the console. Send the
-link to the person with one line saying what it is for, then wait. When they say it is done, call the
-same tool again with the same arguments; Graft finds the answer and continues.
+`awaiting_credential` — is a **handoff**: the next step is the person's, in the console. Send them
+the link exactly as returned, with one line saying what it is for, then wait. When they say it is
+done, call the same tool again with the same arguments; Graft finds the answer and continues.
 
 Never put a handoff link into a tool argument, and never ask the person for an API key, a password
 or a token in chat, whatever the vendor calls it. The console is where secrets go; you never see one.
@@ -85,8 +85,9 @@ already allowed, they set that tool to ask every time; say so if they ask.
 
 ## What not to do
 
-- Do not drive the low-level authoring tools — `write_file`, `check_tool`, `publish_tool`,
-  `execute__…` — unless the person asked you to author by hand. `acquire` does that work.
+- Do not drive the low-level authoring tools — `read_web_page`, `write_file`, `check_tool`,
+  `publish_tool`, `execute__…` — unless the person asked you to author by hand. `acquire` does that
+  work, and `read_web_page` reads documentation for it; it is not a way to fetch the person's answer.
 - Do not retry `acquire` in a loop, or call it for a goal a tool already covers.
 - Do not ask for, store, or repeat a secret. Do not paste a handoff link anywhere but to the person.
 
