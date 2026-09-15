@@ -76,6 +76,14 @@ answer passes at the rule without asking anyone, and only the next *distinct* as
 again. A per-session memory stays available if a client turns out to cancel slowly; it would reset
 with the session and be recorded here.
 
+**A waiting console answer is taken before any form is offered.** When the earlier ask went to the
+handoff and the person has since answered it in the console, the next call takes that answer and
+offers no form — it is the person's answer to this very ask. Offering the form first would let a
+form answer overtake it, and a per-call yes the console gave for one call would then wait, unspent,
+to be applied to some later call it was never given for (raised by Greptile on the pull request).
+An ask still open — answered by nobody yet — is offered in place first, and the handoff reuses its
+row when the form carries no answer.
+
 **Where else this shows.** Hermes's buttons never send `cancel` (GRA-42's mapping above: every allow
 is `accept`, Deny is `decline`), so the buttons are unaffected. Hermes's no-answer path, which the
 GRA-42 bullet records as `cancel`, now yields a link rather than the card again — a person who let a

@@ -889,7 +889,8 @@ describe("through an elicitation answered with no fields — Hermes 0.21.1's app
  * cancel recorded nothing and the ask repeated, so the person never received a link from such a
  * client; now a cancel falls through to the handoff, per ask (ADR 0006, amendment of 2026-09-16).
  * What the agent gets is what a client with no elicitation gets — the same `awaiting_approval`, the
- * same durable row — and `decline` keeps its meaning.
+ * same durable row — and `decline` keeps its meaning. A console answer waiting for the ask is taken
+ * before any form is offered, so the call after the console's answer asks nobody.
  */
 describe("through an elicitation the client cancels without showing it — Claude Code's non-interactive mode", () => {
   const cancel: Elicitation = async () => ({ action: "cancel" });
@@ -916,9 +917,11 @@ describe("through an elicitation the client cancels without showing it — Claud
       expect(e.elicitations).toHaveLength(2);
       expect(actionsOf(AGENT_E, "tool")).toHaveLength(1);
 
-      // The person answers from the console; the next call finds the answer and runs.
+      // The person answers from the console; the next call takes that answer before offering any
+      // form, and runs.
       await answer(action.id, { allow: true });
       expect(body(await e.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(e.elicitations).toHaveLength(2);
       expect(store.pendingActions.get(action.id)?.consumedAt).toBeInstanceOf(Date);
       expect(approvalOf(AGENT_E, "tool_delete")).toMatchObject({
         decision: "allow",
@@ -926,9 +929,8 @@ describe("through an elicitation the client cancels without showing it — Claud
       });
 
       // The yes holds: no form, no new action.
-      const asked = e.elicitations.length;
       expect(body(await e.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
-      expect(e.elicitations).toHaveLength(asked);
+      expect(e.elicitations).toHaveLength(2);
       expect(actionsOf(AGENT_E, "tool")).toHaveLength(1);
     } finally {
       await e.close();
@@ -958,8 +960,40 @@ describe("through an elicitation the client cancels without showing it — Claud
       const ran = body(await e.call(executeToolName(CONN_DEMO), { command: RUN_LIST_ITEMS }));
       expect(ran.exitCode).toBe(0);
       expect(ran.output).toContain(JSON.stringify(VENDOR_BODY));
+      expect(e.elicitations).toHaveLength(1);
       expect(store.buildApprovals.has(`${AGENT_E} ${CONN_DEMO}`)).toBe(true);
       expect(store.pendingActions.get(action.id)?.consumedAt).toBeInstanceOf(Date);
+    } finally {
+      await e.close();
+    }
+  }, 60_000);
+
+  it("a per-call yes waiting from the console is taken before any form is offered, so a form's answer cannot overtake it and leave it for a later call", async () => {
+    let said: ElicitResult = { action: "cancel" };
+    const e = await connect(TOKEN_E, async () => said);
+    try {
+      const { action } = awaiting(await e.call(UPDATE_ITEM, { limit: 1 }));
+      expect(e.elicitations).toHaveLength(1);
+      // The console says yes for one call and turns ask-every-call on; that yes waits for the agent.
+      await answer(action.id, { allow: true, askEveryCall: true });
+      expect(store.pendingActions.get(action.id)?.consumedAt).toBeNull();
+
+      // The client would answer the form itself now; it is offered none, the console's yes is taken.
+      said = { action: "accept", content: { allow: true } };
+      expect(body(await e.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(e.elicitations).toHaveLength(1);
+      expect(store.pendingActions.get(action.id)?.consumedAt).toBeInstanceOf(Date);
+      expect(approvalOf(AGENT_E, "tool_update")).toMatchObject({
+        decision: "allow",
+        askEveryCall: true,
+      });
+
+      // Nothing waits any more: the per-call ask goes to the form, and no new action is created.
+      expect(body(await e.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(e.elicitations).toHaveLength(2);
+      expect(
+        actionsOf(AGENT_E, "tool").filter((row) => row.payload.toolId === "tool_update"),
+      ).toHaveLength(1);
     } finally {
       await e.close();
     }
