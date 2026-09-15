@@ -39,8 +39,8 @@ export async function listApprovals(db: DbOrTx, scope: AgentScope): Promise<Appr
 
 /**
  * The person's answer, written or rewritten: one row per (agent, tool), so a second answer
- * replaces the first. `perCallRelaxed` is kept when the caller does not say — relaxing a
- * destructive tool and re-answering it are two acts.
+ * replaces the first. `askEveryCall` is kept when the caller does not say — setting a tool to ask
+ * every time and re-answering it are two acts.
  */
 export async function upsertApproval(db: DbOrTx, input: NewApprovalRow): Promise<ApprovalRow> {
   const [row] = await db
@@ -51,7 +51,7 @@ export async function upsertApproval(db: DbOrTx, input: NewApprovalRow): Promise
       set: {
         decision: input.decision,
         decidedAt: input.decidedAt,
-        ...(input.perCallRelaxed === undefined ? {} : { perCallRelaxed: input.perCallRelaxed }),
+        ...(input.askEveryCall === undefined ? {} : { askEveryCall: input.askEveryCall }),
         updatedAt: new Date(),
       },
     })
@@ -60,15 +60,19 @@ export async function upsertApproval(db: DbOrTx, input: NewApprovalRow): Promise
   return row;
 }
 
-/** Relax a destructive tool's per-call ask (ADR 0008). Null when no approval stands to relax. */
-export async function relaxApproval(
+/**
+ * Turn a tool's ask-every-call setting on or off for one agent (ADR 0008, amendment of
+ * 2026-09-15). Null when no approval stands to carry it.
+ */
+export async function updateAskEveryCall(
   db: DbOrTx,
   scope: AgentScope,
   toolId: string,
+  on: boolean,
 ): Promise<ApprovalRow | null> {
   const [row] = await db
     .update(approval)
-    .set({ perCallRelaxed: true })
+    .set({ askEveryCall: on, updatedAt: new Date() })
     .where(and(eq(approval.toolId, toolId), inArray(approval.agentId, scopedAgentIds(db, scope))))
     .returning();
   return row ?? null;

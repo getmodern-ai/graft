@@ -633,7 +633,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     now: store.now,
   };
 
-  /** The approval rows, with the repo's predicates: the scope on every read and write, the upsert's kept relaxation. */
+  /** The approval rows, with the repo's predicates: the scope on every read and write, the upsert's kept ask-every-call setting. */
   const approval: ApprovalDeps = {
     findApproval: async (_db, scope, toolId) =>
       ownsAgent(scope) ? (store.approvals.get(key(scope.agentId, toolId)) ?? null) : null,
@@ -651,7 +651,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         toolId: input.toolId,
         decision: input.decision,
         decidedAt: input.decidedAt,
-        perCallRelaxed: input.perCallRelaxed ?? existing?.perCallRelaxed ?? false,
+        askEveryCall: input.askEveryCall ?? existing?.askEveryCall ?? false,
         owner: "person",
         createdAt: existing?.createdAt ?? at,
         updatedAt: at,
@@ -659,11 +659,11 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.approvals.set(key(row.agentId, row.toolId), row);
       return row;
     },
-    relaxApproval: async (_db, scope, toolId) => {
+    updateAskEveryCall: async (_db, scope, toolId, on) => {
       if (!ownsAgent(scope)) return null;
       const row = store.approvals.get(key(scope.agentId, toolId));
       if (!row) return null;
-      const updated = { ...row, perCallRelaxed: true, updatedAt: store.now() };
+      const updated = { ...row, askEveryCall: on, updatedAt: store.now() };
       store.approvals.set(key(scope.agentId, toolId), updated);
       return updated;
     },

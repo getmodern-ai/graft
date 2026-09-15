@@ -614,7 +614,7 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
       toolId: "tool_mail_list",
       decision: "allow",
       decidedAt: new Date(),
-      perCallRelaxed: false,
+      askEveryCall: false,
       owner: "person",
       createdAt: new Date(),
       updatedAt: new Date(),

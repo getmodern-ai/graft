@@ -38,9 +38,9 @@ function PendingRoute() {
         <PageHeaderContent>
           <PageHeaderTitle>Pending actions</PageHeaderTitle>
           <PageHeaderDescription>
-            Asks your agents could not settle on their own: a write's first call, every call of a
-            destructive tool, an acquire against a connection, a connection to set up or a
-            credential to re-enter.
+            Asks your agents could not settle on their own: a tool's first call that is not a read,
+            every call of a tool you set to ask every time, an acquire against a connection, a
+            connection to set up or a credential to re-enter.
           </PageHeaderDescription>
         </PageHeaderContent>
       </PageHeader>
@@ -53,8 +53,8 @@ function PendingRoute() {
             </EmptyMedia>
             <EmptyTitle>Nothing is waiting on you</EmptyTitle>
             <EmptyDescription>
-              Reads never ask, a write asks once, and a destructive tool asks every call until you
-              relax it — when an agent does ask, it appears here.
+              Reads never ask, any other tool asks once and the answer holds, unless you set it to
+              ask every time — when an agent does ask, it appears here.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

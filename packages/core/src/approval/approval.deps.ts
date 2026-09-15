@@ -4,7 +4,7 @@ import {
   findBuildApproval,
   insertBuildApproval,
   listApprovals,
-  relaxApproval,
+  updateAskEveryCall,
   upsertApproval,
 } from "@graft/db/repo/approval";
 import { findConnection } from "@graft/db/repo/connection";
@@ -15,7 +15,7 @@ export type ApprovalDeps = {
   findApproval: typeof findApproval;
   listApprovals: typeof listApprovals;
   upsertApproval: typeof upsertApproval;
-  relaxApproval: typeof relaxApproval;
+  updateAskEveryCall: typeof updateAskEveryCall;
   deleteApproval: typeof deleteApproval;
   findBuildApproval: typeof findBuildApproval;
   insertBuildApproval: typeof insertBuildApproval;
@@ -29,7 +29,7 @@ export const defaultApprovalDeps: ApprovalDeps = {
   findApproval,
   listApprovals,
   upsertApproval,
-  relaxApproval,
+  updateAskEveryCall,
   deleteApproval,
   findBuildApproval,
   insertBuildApproval,

@@ -8,10 +8,10 @@ import { type ApprovalVerdict, approvalDecision } from "./approval.decision";
 import type { ApprovalDeps } from "./approval.deps";
 
 /**
- * Approvals (CONTEXT.md; ADR 0008): get and set the standing answer per agent per tool, relax a
- * destructive tool's per-call ask, get and grant the once-per-agent-per-connection build approval,
- * and decide a call. The rule itself is `approvalDecision`, pure; this file reads the rows it
- * needs and applies it.
+ * Approvals (CONTEXT.md; ADR 0008): get and set the standing answer per agent per tool, turn a
+ * tool's ask-every-call setting on or off, get and grant the once-per-agent-per-connection build
+ * approval, and decide a call. The rule itself is `approvalDecision`, pure; this file reads the
+ * rows it needs and applies it.
  */
 
 export async function getApproval(
@@ -32,8 +32,9 @@ export async function listApprovals(
 }
 
 /**
- * The person's answer to a tool's ask, recorded so it holds (ADR 0008: a write asks once). The tool
- * must be the person's. A second answer replaces the first; the relaxation, if any, is kept.
+ * The person's answer to a tool's ask, recorded so it holds (ADR 0008: any tool that is not
+ * read-only asks once). The tool must be the person's. A second answer replaces the first; the
+ * ask-every-call setting, if any, is kept.
  */
 export async function setApproval(
   ctx: ServiceContext,
@@ -52,33 +53,40 @@ export async function setApproval(
 }
 
 /**
- * Relax a destructive tool's per-call ask, from the console (ADR 0008). Refused as `BAD_REQUEST`
- * for a tool that is not destructive — there is nothing to relax — and `NOT_FOUND` when no approval
- * stands yet: relaxing is an amendment to an answer, not an answer.
+ * Turn a tool's ask-every-call setting on or off for one agent, from the ask or the agent's page
+ * (ADR 0008, amendment of 2026-09-15: asking on every call is the person's opt-in per tool, both
+ * ways). Refused as `BAD_REQUEST` for a read-only tool — it never asks, so there is nothing to set
+ * — and `NOT_FOUND` when no approval stands yet: the setting is an amendment to an answer, not an
+ * answer.
  */
-export async function relaxDestructiveApproval(
+export async function setAskEveryCall(
   ctx: ServiceContext,
   scope: AgentScope,
   toolId: string,
+  on: boolean,
   deps: ApprovalDeps,
 ): Promise<ApprovalRow> {
   const tool = orNotFound(
     await deps.findAuthoredToolById(ctx.db, scope.personId, toolId),
     "Tool not found",
   );
-  if (!tool.destructive) {
-    throw new ServiceError("BAD_REQUEST", "Only a destructive tool's per-call ask can be relaxed");
+  if (tool.readOnly) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      "A read-only tool never asks, so it cannot ask every call",
+    );
   }
   return orNotFound(
-    await deps.relaxApproval(ctx.db, scope, toolId),
-    "No approval stands for this tool yet — answer its first ask before relaxing it",
+    await deps.updateAskEveryCall(ctx.db, scope, toolId, on),
+    "No approval stands for this tool yet — answer its first ask before changing how it asks",
   );
 }
 
 /**
  * Withdraw the standing answer, from the console (ADR 0008: the record is the person's to revisit).
- * The tool asks again on its next call, as if never answered — the one way back from a `deny`, and
- * the way to make a relaxed destructive tool ask per call again. Null when nothing stood.
+ * The tool asks again on its next call, as if never answered — the one way back from a `deny`.
+ * The ask-every-call setting goes with the row; the next answer starts it off again. Null when
+ * nothing stood.
  */
 export async function revokeApproval(
   ctx: ServiceContext,
@@ -105,7 +113,7 @@ export async function decideToolCall(
   return approvalDecision({
     annotations: { readOnly: tool.readOnly, destructive: tool.destructive },
     approval: approval
-      ? { decision: approval.decision, perCallRelaxed: approval.perCallRelaxed }
+      ? { decision: approval.decision, askEveryCall: approval.askEveryCall }
       : null,
   });
 }

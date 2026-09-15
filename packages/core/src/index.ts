@@ -72,9 +72,9 @@ export {
   getBuildApproval,
   grantBuildApproval,
   listApprovals,
-  relaxDestructiveApproval,
   revokeApproval,
   setApproval,
+  setAskEveryCall,
 } from "./approval/approval.service";
 export { type ConnectionDeps, createConnectionDeps } from "./connection/connection.deps";
 export {

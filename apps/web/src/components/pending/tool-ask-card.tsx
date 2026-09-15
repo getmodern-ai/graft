@@ -12,8 +12,10 @@ import { type Ask, isOpen } from "@/lib/pending-action-queries";
  * A tool's ask (ADR 0008): the wire name and annotations, the connection and hosts it would reach,
  * and the tool's description — marked as the agent's model's own words, because that is what it is,
  * and a person deciding on a write should know the sentence was not written by anyone accountable.
- * The answer becomes the standing approval; for a destructive tool a switch relaxes the per-call ask
- * in the same answer.
+ * The answer becomes the standing approval, for a destructive tool as for a write; the switch is the
+ * person's opt-in to be asked before every call instead, and rides the same answer (ADR 0008,
+ * amendment of 2026-09-15). It starts where the setting stands, so what the card shows is what the
+ * answer records.
  */
 export function ToolAskCard({
   ask,
@@ -23,7 +25,7 @@ export function ToolAskCard({
   onAnswered?: () => void;
 }) {
   const { action, payload } = ask;
-  const [relax, setRelax] = useState(false);
+  const [askEveryCall, setAskEveryCall] = useState(payload.askEveryCall === true);
   const destructive = payload.annotations.destructiveHint;
   const answer = useAnswerAsk(action, onAnswered);
 
@@ -47,12 +49,14 @@ export function ToolAskCard({
         </>
       }
       settled={(recorded) =>
-        recorded?.allow === true
-          ? "Approved. The answer holds for this agent's next calls until withdrawn on its page."
-          : "Declined. The no holds for this agent until withdrawn on its page."
+        recorded?.allow !== true
+          ? "Declined. The no holds for this agent until withdrawn on its page."
+          : recorded.askEveryCall === true
+            ? "Approved for this call. The tool asks again next time; turn that off on the agent's page."
+            : "Approved. The answer holds for this agent's next calls until withdrawn on its page."
       }
       pending={answer.isPending}
-      onAnswer={(allow) => answer.mutate({ allow, ...(destructive && allow ? { relax } : {}) })}
+      onAnswer={(allow) => answer.mutate({ allow, ...(allow ? { askEveryCall } : {}) })}
     >
       <figure className="flex flex-col gap-1.5">
         <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
@@ -61,28 +65,28 @@ export function ToolAskCard({
         </figcaption>
         <blockquote className="border-l-2 pl-3 italic">{payload.description}</blockquote>
       </figure>
-      {destructive && isOpen(action) ? (
+      {isOpen(action) ? (
         // An `Item` in its outline frame — title, description and the control in its actions
         // slot — rather than a bordered box of this card's own. The clamps the primitive puts on
         // a list item's lines are lifted: this is a sentence and its consequence, not a row.
         <Item variant="outline">
           <ItemContent>
             <ItemTitle className="line-clamp-none">
-              <Label htmlFor={`relax-${action.id}`}>
-                Stop asking for every call of this destructive tool
-              </Label>
+              <Label htmlFor={`ask-every-call-${action.id}`}>Ask every time for this tool</Label>
             </ItemTitle>
             <ItemDescription className="line-clamp-none">
-              A destructive tool asks every time until you relax it. Relaxed, this approval holds
-              like an ordinary write's and later calls pass silently for this agent; withdrawing it
-              on the agent's page makes it ask again.
+              {destructive
+                ? "This tool is destructive: it can delete or overwrite data. "
+                : "This tool can change data at the vendor. "}
+              Off, your answer holds for this agent and later calls pass silently until withdrawn on
+              its page. On, every call asks you first; you can turn it off there too.
             </ItemDescription>
           </ItemContent>
           <ItemActions>
             <Switch
-              id={`relax-${action.id}`}
-              checked={relax}
-              onCheckedChange={(checked) => setRelax(checked)}
+              id={`ask-every-call-${action.id}`}
+              checked={askEveryCall}
+              onCheckedChange={(checked) => setAskEveryCall(checked)}
             />
           </ItemActions>
         </Item>

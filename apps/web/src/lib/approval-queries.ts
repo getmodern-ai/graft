@@ -5,8 +5,9 @@ import { api, type Jsonified } from "./api";
 
 /**
  * An agent's standing approvals (ADR 0008: per agent, per tool; the record is the person's to
- * revisit), on GRA-23's routes. Relaxing lifts a destructive tool's per-call ask; withdrawing makes
- * the tool ask again on its next call — the one way back from a `deny`.
+ * revisit), on GRA-23's routes. The ask-every-call setting is the person's opt-in per tool, both
+ * ways (ADR 0008, amendment of 2026-09-15); withdrawing makes the tool ask again on its next call —
+ * the one way back from a `deny`.
  */
 
 export type Approval = Jsonified<ApprovalRow>;
@@ -22,10 +23,10 @@ export const approvalsQuery = (agentId: string) =>
       api<{ approvals: Approval[] }>(`/approvals?agentId=${encodeURIComponent(agentId)}`),
   });
 
-export function relaxApproval(agentId: string, toolId: string) {
+export function setApprovalAskEveryCall(agentId: string, toolId: string, on: boolean) {
   return api<{ approval: Approval }>(
-    `/approvals/${encodeURIComponent(toolId)}/relax?agentId=${encodeURIComponent(agentId)}`,
-    { method: "POST" },
+    `/approvals/${encodeURIComponent(toolId)}/ask-every-call?agentId=${encodeURIComponent(agentId)}`,
+    { method: "PUT", body: { on } },
   );
 }
 

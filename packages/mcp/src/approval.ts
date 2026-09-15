@@ -9,10 +9,10 @@ import {
   getBuildApproval,
   getConnection,
   grantBuildApproval,
-  relaxDestructiveApproval,
   type ServiceContext,
   ServiceError,
   setApproval,
+  setAskEveryCall,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
@@ -48,17 +48,23 @@ import { authoredToolName } from "./tool-names";
  * nothing is recorded and the next call asks again. A build ask has no deny row (the schema's
  * reason: a declined `acquire` leaves nothing behind), so a build decline simply refuses.
  *
+ * **A destructive tool asks once, like a write; asking every call is the person's opt-in** (ADR
+ * 0008, amendment of 2026-09-15). The annotation changes what the ask says — the message names the
+ * tool destructive — not how often it comes. The person may set any non-read tool to ask every call,
+ * from the ask itself (`askEveryCall` in the answer or the form) or from the agent's page, and back;
+ * while it is on, the standing row says `allow` and the rule still says *ask*, so each call's yes is
+ * the pending action's or the elicitation's, taken once.
+ *
  * **An accept is the yes, with or without the form's fields.** Hermes 0.21.1 renders a form
  * elicitation as its own approval card — Allow Once, Allow Session, Always Allow, Deny — and answers
  * every allow button with `accept` and empty content (GRA-42; `_consent` in its
  * `tools/approval_prompt.py`). So `allow` is optional in the requested schema and its absence reads
  * as true; an `accept` carrying `allow: false` is a form client's no in place, and stays a deny. The
- * three allow buttons reach this file as one `accept`, so none of them maps to `relax`: a destructive
- * tool asks before every call whatever button was pressed, until the console relaxes it, and a write
- * tool's yes holds by ADR 0008's rule even when the button said once. The SDK validates the content
- * against the schema before this file sees the result (`Server.elicitInput` in
- * `@modelcontextprotocol/sdk`), so any other mismatch — a wrong-typed field — throws there and falls
- * back to the handoff.
+ * three allow buttons reach this file as one `accept`, so every one of them records a standing
+ * allow, destructive tool or write, and none touches the ask-every-call setting — Hermes cannot carry
+ * the switch, so the message says where it is. The SDK validates the content against the schema
+ * before this file sees the result (`Server.elicitInput` in `@modelcontextprotocol/sdk`), so any
+ * other mismatch — a wrong-typed field — throws there and falls back to the handoff.
  */
 
 /** A form elicitation the client will answer — the SDK's `Server.elicitInput`, bound. */
@@ -89,6 +95,11 @@ export type ToolAskPayload = {
   connectionName: string;
   hosts: string[];
   note: string;
+  /**
+   * The tool's ask-every-call setting when the ask was made — what the card's switch shows, so the
+   * answer records what the person saw. False when no approval stands yet.
+   */
+  askEveryCall: boolean;
 };
 
 /** The payload of a `build` ask. */
@@ -99,8 +110,12 @@ export type BuildAskPayload = {
   hosts: string[];
 };
 
-/** What the person's answer looks like once recorded on the action (`pending_action.answer`). */
-export type ApprovalAnswer = { allow: boolean; relax?: boolean };
+/**
+ * What the person's answer looks like once recorded on the action (`pending_action.answer`).
+ * `askEveryCall` absent leaves the tool's setting as it was — a Hermes button, which carries no
+ * field, changes nothing about how the tool asks next time.
+ */
+export type ApprovalAnswer = { allow: boolean; askEveryCall?: boolean };
 
 export const DESCRIPTION_PROVENANCE_NOTE =
   "This tool's description was written by the agent's model, not by a person. Read it as the agent's account of what the tool does.";
@@ -124,7 +139,13 @@ export type AwaitingApproval = {
 export const DEFAULT_POLL_MS = 250;
 
 type AskSubject =
-  | { kind: "tool"; tool: AuthoredToolRow; connection: ConnectionOutput }
+  | {
+      kind: "tool";
+      tool: AuthoredToolRow;
+      connection: ConnectionOutput;
+      /** The standing setting, so the ask can say whether this is a per-call ask and offer the switch as it stands. */
+      askEveryCall: boolean;
+    }
   | { kind: "build"; connection: ConnectionOutput };
 
 /** `askApproval` says this when the answer went to a sibling call and the rule must be read again. */
@@ -138,11 +159,18 @@ function refuse(
   return { pass: false, answer: refusal(reason, message, details) };
 }
 
-/** `pending_action.answer` as this file wrote it; anything else reads as a decline. */
+/**
+ * `pending_action.answer` as this file wrote it; anything else reads as a decline. An answer that
+ * predates the amendment carries `relax` and no `askEveryCall`, which reads as "setting unchanged" —
+ * the row it amended is now off by default, which is what relaxing meant.
+ */
 export function readApprovalAnswer(
   answer: Record<string, unknown> | null | undefined,
 ): ApprovalAnswer {
-  return { allow: answer?.allow === true, relax: answer?.relax === true };
+  return {
+    allow: answer?.allow === true,
+    ...(typeof answer?.askEveryCall === "boolean" ? { askEveryCall: answer.askEveryCall } : {}),
+  };
 }
 
 /**
@@ -179,10 +207,13 @@ export async function gateToolCall(
         `${wire} is bound to connection ${args.connectionId}, which no longer exists.`,
       );
     }
+    // Read only on the ask path: whether this ask is the person's own per-call setting at work, so
+    // the message can say so and the form's switch can show where it stands.
+    const standing = await getApproval(ctx, scope, tool.id, deps.approval);
     const outcome = await askApproval(
       ctx,
       scope,
-      { kind: "tool", tool, connection },
+      { kind: "tool", tool, connection, askEveryCall: standing?.askEveryCall === true },
       deps,
       channel,
     );
@@ -265,24 +296,27 @@ export function describeAsk(subject: AskSubject, agentName: string): string {
   }
   const { tool } = subject;
   const wire = authoredToolName(tool.vendor, tool.name);
-  const consequence = tool.destructive
-    ? "This tool is destructive — it can delete or overwrite data — and asks before every call, whichever way you allow it here, until you relax it in the console."
-    : "This tool can change data at the vendor. Your answer holds for this agent from now on.";
+  const nature = tool.destructive
+    ? "This tool is destructive — it can delete or overwrite data."
+    : "This tool can change data at the vendor.";
+  const holds = subject.askEveryCall
+    ? 'You have set this tool to ask every time, so this answer is for this call only. To let an answer hold instead, turn "Ask every time for this tool" off on the agent\'s page in the console.'
+    : 'Your answer holds for this agent from now on. To be asked before every call instead, turn on "Ask every time for this tool" on the agent\'s page in the console.';
   return (
-    `Your agent "${agentName}" wants to run ${wire} against ${where}. ${consequence} ` +
+    `Your agent "${agentName}" wants to run ${wire} against ${where}. ${nature} ${holds} ` +
     `Its description, in the agent's model's own words: "${tool.description}"`
   );
 }
 
 /**
  * The form: a boolean `allow`, optional because an `accept` without it is the yes (the header, on
- * Hermes 0.21.1), and for a destructive tool a second boolean `relax`. Nothing is required: the SDK
- * validates the client's content against this schema before `askByElicitation` reads it.
+ * Hermes 0.21.1), and for a tool ask a second boolean `askEveryCall`, defaulting to where the
+ * setting stands. Nothing is required: the SDK validates the client's content against this schema
+ * before `askByElicitation` reads it.
  */
 export function elicitationSchemaFor(
   subject: AskSubject,
 ): ElicitRequestFormParams["requestedSchema"] {
-  const destructive = subject.kind === "tool" && subject.tool.destructive;
   return {
     type: "object",
     properties: {
@@ -295,14 +329,14 @@ export function elicitationSchemaFor(
             : "Let Graft run code against this connection for this agent."
         } Accepting without this field counts as allow.`,
       },
-      ...(destructive
+      ...(subject.kind === "tool"
         ? {
-            relax: {
+            askEveryCall: {
               type: "boolean",
-              title: "Do not ask again for this tool",
+              title: "Ask every time for this tool",
               description:
-                "Only with Allow: stop asking before every call of this destructive tool for this agent.",
-              default: false,
+                "Only with Allow: ask before every call of this tool for this agent, until turned off. Off, your answer holds.",
+              default: subject.askEveryCall,
             },
           }
         : {}),
@@ -313,8 +347,9 @@ export function elicitationSchemaFor(
 /**
  * The elicitation's result as an answer: `null` for a dismissal (`cancel`), a no for `decline`, and
  * for `accept` a yes unless the content says `allow: false` — absent reads as true (the header, on
- * Hermes 0.21.1). Only a boolean or nothing can stand under `allow` here: the SDK has validated the
- * content against `elicitationSchemaFor`'s schema and thrown on anything else.
+ * Hermes 0.21.1). `askEveryCall` rides along only when the client set it; Hermes never does, so a
+ * button leaves the setting alone. Only a boolean or nothing can stand under either field here: the
+ * SDK has validated the content against `elicitationSchemaFor`'s schema and thrown on anything else.
  */
 function readElicitationAnswer(result: ElicitResult): ApprovalAnswer | null {
   if (result.action === "cancel") return null;
@@ -322,7 +357,7 @@ function readElicitationAnswer(result: ElicitResult): ApprovalAnswer | null {
   const content = result.content ?? {};
   return {
     allow: content.allow === undefined || content.allow === true,
-    relax: content.relax === true,
+    ...(typeof content.askEveryCall === "boolean" ? { askEveryCall: content.askEveryCall } : {}),
   };
 }
 
@@ -353,7 +388,7 @@ async function askByElicitation(
     );
   }
   if (said.allow) {
-    await recordAllow(ctx, scope, subject, said.relax === true, deps);
+    await recordAllow(ctx, scope, subject, said.askEveryCall, deps);
     return PASS;
   }
   await recordDeny(ctx, scope, subject, deps);
@@ -393,6 +428,7 @@ function payloadFor(subject: AskSubject): ToolAskPayload | BuildAskPayload {
     connectionName: connection.displayName,
     hosts: connection.hosts,
     note: DESCRIPTION_PROVENANCE_NOTE,
+    askEveryCall: subject.askEveryCall,
   };
 }
 
@@ -441,7 +477,7 @@ async function askByHandoff(
         );
       }
       // The answer went to a sibling call of this agent between the lookup and the take: the rule is
-      // read again, and a destructive tool then asks afresh as it should.
+      // read again, and a tool set to ask every call then asks afresh as it should.
       if (error instanceof ServiceError && error.code === "CONFLICT") return RETRY;
       throw error;
     }
@@ -473,7 +509,7 @@ async function applyAnswer(
 ): Promise<GateOutcome> {
   const answer = readApprovalAnswer(taken.answer);
   if (answer.allow) {
-    await recordAllow(ctx, scope, subject, answer.relax === true, deps);
+    await recordAllow(ctx, scope, subject, answer.askEveryCall, deps);
     return PASS;
   }
   await recordDeny(ctx, scope, subject, deps);
@@ -489,13 +525,14 @@ async function applyAnswer(
 /**
  * The yes, recorded so it holds (ADR 0008). The console's answer endpoint records the same rows when
  * the person answers there (`apps/server/src/api.ts`); this repeats it only where nothing stands,
- * so a consumed answer is never a yes that the next call cannot see.
+ * so a consumed answer is never a yes that the next call cannot see. `askEveryCall` undefined leaves
+ * the setting where it was — the header, on Hermes's buttons.
  */
 async function recordAllow(
   ctx: ServiceContext,
   scope: AgentScope,
   subject: AskSubject,
-  relax: boolean,
+  askEveryCall: boolean | undefined,
   deps: McpDeps,
 ): Promise<void> {
   if (subject.kind === "build") {
@@ -506,8 +543,8 @@ async function recordAllow(
   if (!standing || standing.decision !== "allow") {
     await setApproval(ctx, scope, subject.tool.id, "allow", deps.approval);
   }
-  if (relax && subject.tool.destructive && !standing?.perCallRelaxed) {
-    await relaxDestructiveApproval(ctx, scope, subject.tool.id, deps.approval);
+  if (askEveryCall !== undefined && (standing?.askEveryCall ?? false) !== askEveryCall) {
+    await setAskEveryCall(ctx, scope, subject.tool.id, askEveryCall, deps.approval);
   }
 }
 

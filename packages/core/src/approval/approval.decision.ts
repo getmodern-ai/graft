@@ -6,16 +6,17 @@ import type { ApprovalDecision } from "@graft/db/schema/approval";
  * has a test that reads like the ADR.
  *
  * - A read-only tool **passes**, whatever the approval says — reads never ask.
- * - A tool that is not read-only with no approval **asks**; with `allow` it passes; with `deny` it
- *   is refused.
- * - A destructive tool **asks on every call** until the person relaxes it in the console, after
- *   which its `allow` holds like an ordinary write's. A `deny` on a destructive tool is a refusal
- *   whether or not it was relaxed.
+ * - Any other tool with no approval **asks**; with `allow` it passes; with `deny` it is refused.
+ *   Destructive and write are one case here (ADR 0008, amendment of 2026-09-15): the destructive
+ *   annotation changes what the ask *says*, not how often it comes.
+ * - A tool the person has set to **ask every call** asks whatever its `allow` says; the standing
+ *   row then carries the setting and the answer, and each call's yes is the pending action's.
+ *   A `deny` is a refusal whether or not the setting is on.
  */
 
 export type ToolAnnotations = { readOnly: boolean; destructive: boolean };
 
-export type ApprovalState = { decision: ApprovalDecision; perCallRelaxed: boolean };
+export type ApprovalState = { decision: ApprovalDecision; askEveryCall: boolean };
 
 export type ApprovalVerdict = "pass" | "ask" | "deny";
 
@@ -27,6 +28,6 @@ export function approvalDecision(input: {
   if (annotations.readOnly) return "pass";
   if (!approval) return "ask";
   if (approval.decision === "deny") return "deny";
-  if (annotations.destructive && !approval.perCallRelaxed) return "ask";
+  if (approval.askEveryCall) return "ask";
   return "pass";
 }

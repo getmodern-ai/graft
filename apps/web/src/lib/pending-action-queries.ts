@@ -55,8 +55,11 @@ export function readAsk(action: PendingAction): Ask {
   return { kind: "other", action };
 }
 
-/** The person's answer: `allow`, and for a destructive tool whether to relax its per-call ask too. */
-export type PendingAnswer = { allow: boolean; relax?: boolean };
+/**
+ * The person's answer: `allow`, and for a tool ask whether it should ask every call from now on
+ * (`@graft/mcp`'s `ApprovalAnswer`; absent leaves the setting as it stands).
+ */
+export type PendingAnswer = { allow: boolean; askEveryCall?: boolean };
 
 export const pendingKeys = {
   all: ["pending-actions"] as const,

@@ -287,21 +287,51 @@ describe("an ask over MCP, answered over HTTP", () => {
     }
   }, 60_000);
 
-  it("a destructive tool asks again; relaxing through the API makes the next call silent; revoking makes it ask afresh", async () => {
+  it("a destructive tool's yes holds; ask-every-call on through the API makes the next call ask; off again makes it hold; revoking makes it ask afresh", async () => {
     const a = await connect();
     try {
-      const again = await a.call("demo__delete-item");
-      expect(body(again)).toMatchObject({ error: "awaiting_approval" });
+      // The yes recorded in the previous case holds — a destructive tool asks once, like a write.
+      const holds = await a.call("demo__delete-item");
+      expect(holds.isError).toBeFalsy();
+      expect(body(holds)).toEqual(VENDOR_BODY);
 
-      const relaxed = await app.request(`/api/approvals/tool_delete/relax?agentId=${AGENT}`, {
-        method: "POST",
+      const on = await app.request(
+        `/api/approvals/tool_delete/ask-every-call?agentId=${AGENT}`,
+        json({ on: true }, "PUT"),
+      );
+      expect(on.status).toBe(200);
+      expect(await on.json()).toMatchObject({ approval: { askEveryCall: true } });
+
+      const asks = await a.call("demo__delete-item");
+      expect(body(asks)).toMatchObject({ error: "awaiting_approval" });
+      const action = [...store.pendingActions.values()].find(
+        (r) => r.payload.toolId === "tool_delete" && r.answeredAt === null,
+      );
+      if (!action) throw new Error("no open action");
+      expect(action.payload.askEveryCall).toBe(true);
+
+      // A yes with the setting still on is for this call: the next asks again.
+      const answered = await app.request(
+        `/api/pending-actions/${action.id}/answer`,
+        json({ allow: true, askEveryCall: true }),
+      );
+      expect(answered.status).toBe(200);
+      expect(body(await a.call("demo__delete-item"))).toEqual(VENDOR_BODY);
+      expect(body(await a.call("demo__delete-item"))).toMatchObject({
+        error: "awaiting_approval",
       });
-      expect(relaxed.status).toBe(200);
-      expect(await relaxed.json()).toMatchObject({ approval: { perCallRelaxed: true } });
 
+      const off = await app.request(
+        `/api/approvals/tool_delete/ask-every-call?agentId=${AGENT}`,
+        json({ on: false }, "PUT"),
+      );
+      expect(off.status).toBe(200);
+      expect(await off.json()).toMatchObject({ approval: { askEveryCall: false } });
+      // The open ask is consumed by the call that now passes by rule, or left; either way it passes.
       const silent = await a.call("demo__delete-item");
       expect(silent.isError).toBeFalsy();
       expect(body(silent)).toEqual(VENDOR_BODY);
+      expect(body(await a.call("demo__delete-item"))).toEqual(VENDOR_BODY);
 
       const listed = (await (await app.request(`/api/approvals?agentId=${AGENT}`)).json()) as {
         approvals: { toolId: string }[];
@@ -312,8 +342,8 @@ describe("an ask over MCP, answered over HTTP", () => {
         method: "DELETE",
       });
       expect(revoked.status).toBe(200);
-      const asks = await a.call("demo__create-item");
-      expect(body(asks)).toMatchObject({ error: "awaiting_approval" });
+      const fresh = await a.call("demo__create-item");
+      expect(body(fresh)).toMatchObject({ error: "awaiting_approval" });
     } finally {
       await a.close();
     }

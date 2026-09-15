@@ -451,7 +451,7 @@ describe("a connection proposed over MCP and entered over HTTP", () => {
         toolId: "tool_acme_list",
         decision: "allow",
         decidedAt: new Date(),
-        perCallRelaxed: false,
+        askEveryCall: false,
         owner: "person",
         createdAt: new Date(),
         updatedAt: new Date(),
