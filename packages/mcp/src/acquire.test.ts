@@ -630,6 +630,100 @@ describe("a job that fails and tries again", () => {
     }
   }, 30_000);
 
+  it("does not publish a draft whose proof read failed when the model answers proceed: the refusal is shown once, and the redraft publishes", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-proven", path: "/nope", proofReads: ["/nope"] }),
+        "Drafted around GET /nope.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing despite the 404." } },
+      write(
+        "proof",
+        draft({ name: "list-proven", proofReads: ["/items?limit=1"] }),
+        "The documented path is /items.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "Every read answered." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items, proven first",
+      });
+      expect(status.status).toBe("succeeded");
+      // v1, not v2: attempt 1 never published (GRA-72).
+      expect(status.result).toMatchObject({
+        tool: authoredToolName("demo", "list-proven"),
+        version: 1,
+      });
+      const proofs = (scripted.conversations[0]?.situations ?? []).filter(
+        (s) => s.kind === "proof",
+      );
+      expect(proofs.map((s) => (s.kind === "proof" ? [s.attempt, s.refused] : null))).toEqual([
+        [1, null],
+        [
+          1,
+          expect.stringContaining(
+            "Your `proceed` was refused: 1 of 1 proof read(s) failed (GET /nope 404), and a draft is published only when every proof read passes.",
+          ),
+        ],
+        [2, null],
+      ]);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([
+        [1, "proof_failed"],
+        [2, "passed"],
+      ]);
+      expect(
+        traces.filter((row) => row.kind === "publish").map((row) => row.attemptNumber),
+      ).toEqual([2]);
+      expect(status.progress).toContain(
+        "Attempt 1: 1 of 1 proof read(s) failed (GET /nope 404), so the draft is not published; asking the model what to change.",
+      );
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("ends model_failed when the model answers proceed a second time over a failed proof read", async () => {
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-stubborn", path: "/nope", proofReads: ["/nope"] }),
+        "Drafted around GET /nope.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing anyway." } },
+      { on: "proof", answer: { kind: "proceed", note: "Publishing anyway, again." } },
+    ]);
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items, stubbornly",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("model_failed");
+      expect(failure.message).toContain("proceed twice after 1 of 1 proof read(s) failed");
+      expect(failure.tried).toEqual([
+        {
+          attempt: 1,
+          outcome: "proof_failed",
+          summary:
+            "1 of 1 proof read(s) failed (GET /nope 404); the model answered proceed a second time.",
+          note: "Drafted around GET /nope.",
+        },
+      ]);
+      const { traces } = rowsOf(jobId);
+      expect(traces.some((row) => row.kind === "publish")).toBe(false);
+      expect(await a.names()).not.toContain(authoredToolName("demo", "list-stubborn"));
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
   it("ends after the attempt budget with the last diagnostics and what was tried", async () => {
     deps.acquire = { maxAttempts: 2, tokenCeiling: 400_000 };
     deps.model = createScriptedModel([
