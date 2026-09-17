@@ -129,8 +129,12 @@ export type ModelSituation =
       refusals: ModelDiagnostic[];
       advice: ModelDiagnostic[];
     }
-  /** Every proof read the draft asked for, passed or failed; the model decides whether to proceed. */
-  | { kind: "proof"; attempt: number; reads: ProofRead[] }
+  /**
+   * Every proof read the draft asked for, passed or failed. `proceed` publishes only when every
+   * read passed; a `proceed` over a failed read is refused once and the situation shown again with
+   * `refused` saying so (GRA-72), null on the first showing.
+   */
+  | { kind: "proof"; attempt: number; reads: ProofRead[]; refused: string | null }
   | {
       kind: "publish_refused";
       attempt: number;
@@ -150,7 +154,8 @@ export type ModelSituationKind = ModelSituation["kind"];
 /**
  * What the model may answer. `note` is one line the job records as the attempt's diagnosis and
  * relays as progress — what the model learned, what it changed. `write_module` always starts a new
- * attempt; `proceed` is only meaningful after a `proof` situation; `give_up` ends the job.
+ * attempt; `proceed` is only meaningful after a `proof` situation whose reads all passed; `give_up`
+ * ends the job.
  */
 export type ModelAnswer =
   | { kind: "read_docs"; urls: string[]; note: string }

@@ -428,6 +428,55 @@ export const pipedreamEnvironment = z
   .optional();
 
 /**
+ * Sign-in with a provider's account (GRA-81; ADR 0020), two groups, each all-or-nothing and off by
+ * default: Google's OAuth client and GitHub's. Two groups rather than one because a deployment with
+ * one provider and not the other is a normal state — Cando's reasoning for its Google and Apple pair
+ * (ADR 0011) — where a single group would call it a broken deploy and refuse the boot. The client id
+ * is an identifier the browser sees in every authorization URL and rides as plain environment; the
+ * secret is held to the placeholder rule. A partial group would present as a button the console
+ * draws and the vendor refuses at the first click, far from the boot log. The redirect URI each
+ * client is registered with is `GRAFT_AUTH_URL` plus `/api/auth/callback/google` or
+ * `/api/auth/callback/github` — Better Auth's own routes under the `/api/auth` mount.
+ */
+export const googleSignInKeys = ["GRAFT_GOOGLE_CLIENT_ID", "GRAFT_GOOGLE_CLIENT_SECRET"] as const;
+export const githubSignInKeys = ["GRAFT_GITHUB_CLIENT_ID", "GRAFT_GITHUB_CLIENT_SECRET"] as const;
+
+/** One provider's OAuth client, as `@graft/auth` takes it. */
+export type SignInClient = { clientId: string; clientSecret: string };
+
+/**
+ * The providers a parsed environment configures, as `createAuth`'s `socialProviders` option: a key
+ * per complete group and no key for an absent one, because Better Auth advertises a provider the
+ * moment its key exists, credentials or not. Pure, so the composition has a test; `serverEnvIssues`
+ * has already refused a half-set group by the time this runs.
+ */
+export function signInProvidersFrom(value: {
+  GRAFT_GOOGLE_CLIENT_ID?: string;
+  GRAFT_GOOGLE_CLIENT_SECRET?: string;
+  GRAFT_GITHUB_CLIENT_ID?: string;
+  GRAFT_GITHUB_CLIENT_SECRET?: string;
+}): { google?: SignInClient; github?: SignInClient } {
+  return {
+    ...(value.GRAFT_GOOGLE_CLIENT_ID && value.GRAFT_GOOGLE_CLIENT_SECRET
+      ? {
+          google: {
+            clientId: value.GRAFT_GOOGLE_CLIENT_ID,
+            clientSecret: value.GRAFT_GOOGLE_CLIENT_SECRET,
+          },
+        }
+      : {}),
+    ...(value.GRAFT_GITHUB_CLIENT_ID && value.GRAFT_GITHUB_CLIENT_SECRET
+      ? {
+          github: {
+            clientId: value.GRAFT_GITHUB_CLIENT_ID,
+            clientSecret: value.GRAFT_GITHUB_CLIENT_SECRET,
+          },
+        }
+      : {}),
+  };
+}
+
+/**
  * A secret as an environment value: non-empty, and not the placeholder a secrets store leaves in a
  * variable nobody has populated. A placeholder would pass every other check and fail at the first
  * call with the provider's own error, far from the boot log; refused here it is one sentence.
@@ -832,6 +881,20 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   );
   if (partialPipedream) issues.push(partialPipedream);
 
+  // Sign-in providers, one rule per provider — see `googleSignInKeys` for why they are not one group.
+  const partialGoogle = partialGroupIssue(
+    value,
+    "Google sign-in is partially configured — set GRAFT_GOOGLE_CLIENT_ID and GRAFT_GOOGLE_CLIENT_SECRET together, or neither.",
+    googleSignInKeys,
+  );
+  if (partialGoogle) issues.push(partialGoogle);
+  const partialGithub = partialGroupIssue(
+    value,
+    "GitHub sign-in is partially configured — set GRAFT_GITHUB_CLIENT_ID and GRAFT_GITHUB_CLIENT_SECRET together, or neither.",
+    githubSignInKeys,
+  );
+  if (partialGithub) issues.push(partialGithub);
+
   // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
   // package brings the sandbox, and a `fake` set beside it would be two answers to one question.
   if (value.GRAFT_BACKINGS === "cloud" && value.GRAFT_SANDBOX_BACKEND === "fake") {
@@ -978,6 +1041,21 @@ export const serverSchema = {
   GRAFT_PIPEDREAM_ENVIRONMENT: pipedreamEnvironment,
   GRAFT_PIPEDREAM_CLIENT_ID: secretValue("GRAFT_PIPEDREAM_CLIENT_ID"),
   GRAFT_PIPEDREAM_CLIENT_SECRET: secretValue("GRAFT_PIPEDREAM_CLIENT_SECRET"),
+
+  /** Sign in with Google or GitHub, each group all-or-nothing and off by default — see `googleSignInKeys`. */
+  GRAFT_GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+  GRAFT_GOOGLE_CLIENT_SECRET: secretValue("GRAFT_GOOGLE_CLIENT_SECRET"),
+  GRAFT_GITHUB_CLIENT_ID: z.string().min(1).optional(),
+  GRAFT_GITHUB_CLIENT_SECRET: secretValue("GRAFT_GITHUB_CLIENT_SECRET"),
+
+  /**
+   * Transactional mail (ADR 0021; GRA-82): set, the password-reset email goes through Loops; unset,
+   * the console transport prints the envelope and the reset link to the server's log, which is the
+   * whole mail stack on a laptop and, until a Loops account exists, on the hosted form too. One key
+   * cannot be half-set, so there is no group — but it is secret-backed, and a value still holding
+   * the secret store's placeholder is refused at boot like every other.
+   */
+  GRAFT_LOOPS_API_KEY: secretValue("GRAFT_LOOPS_API_KEY"),
 
   /** The admin opened on first start, all-or-nothing — see `adminKeys`. */
   GRAFT_ADMIN_EMAIL: adminEmail,

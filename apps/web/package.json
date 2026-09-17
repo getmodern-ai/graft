@@ -30,6 +30,7 @@
     "tailwind-merge": "catalog:"
   },
   "devDependencies": {
+    "@graft/auth": "workspace:*",
     "@graft/config": "workspace:*",
     "@graft/db": "workspace:*",
     "@graft/mcp": "workspace:*",

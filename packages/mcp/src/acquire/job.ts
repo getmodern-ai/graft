@@ -173,6 +173,8 @@ type OpenAttempt = {
   proofFailed: boolean;
   /** The failed reads in one line, once `proofFailed`: what a set-aside attempt's summary opens with. */
   proofSummary: string | null;
+  /** Whether a `proceed` over a failed read has been refused once already (GRA-72). */
+  proceedRefused: boolean;
 };
 
 /**
@@ -410,6 +412,38 @@ class AcquireLoop {
               null,
             );
           }
+          if (attempt.proofFailed) {
+            // The gate (GRA-72): a draft is published only when every proof read passed. The
+            // model's word does not outrank the vendor's answer. Refused once with the reads shown
+            // again — a turn, not an attempt — and a second `proceed` ends the job.
+            const failed = attempt.proofSummary ?? "a proof read failed";
+            if (attempt.proceedRefused) {
+              await this.closeOpen(
+                "proof_failed",
+                this.setAside("the model answered proceed a second time"),
+              );
+              throw this.end(
+                "model_failed",
+                `The model answered proceed twice after ${failed}; a draft is published only when every proof read passes.`,
+                this.lastDiagnostics,
+              );
+            }
+            attempt.proceedRefused = true;
+            await this.trace("model", `Refused proceed on attempt ${attempt.number}: ${failed}.`, {
+              attempt: attempt.number,
+              data: { note: answer.note },
+            });
+            await this.progress(
+              `Attempt ${attempt.number}: ${failed}, so the draft is not published; asking the model what to change.`,
+            );
+            situation = {
+              kind: "proof",
+              attempt: attempt.number,
+              reads: situation.reads,
+              refused: `Your \`proceed\` was refused: ${failed}, and a draft is published only when every proof read passes. Answer \`write_module\` with the module or the proof reads changed, \`read_docs\` for a page, or \`give_up\`.`,
+            };
+            continue;
+          }
           await this.trace(
             "model",
             `Proceeding to publish attempt ${attempt.number}: ${answer.note}`,
@@ -448,6 +482,7 @@ class AcquireLoop {
               kind: "proof",
               attempt: attempt.number,
               reads: await this.prove(attempt, connection),
+              refused: null,
             };
             continue;
           }
@@ -595,6 +630,7 @@ class AcquireLoop {
       usage: { inputTokens: 0, outputTokens: 0 },
       proofFailed: false,
       proofSummary: null,
+      proceedRefused: false,
     };
     this.open = attempt;
     await this.trace(

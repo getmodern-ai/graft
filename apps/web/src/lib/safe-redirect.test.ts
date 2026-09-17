@@ -10,7 +10,14 @@ describe("safeRedirectPath", () => {
   });
 
   it("never returns to a door — the guard and the door would otherwise bounce", () => {
-    for (const door of ["/login", "/login?redirect=%2Fagents", "/signup", "/signup/"]) {
+    for (const door of [
+      "/login",
+      "/login?redirect=%2Fagents",
+      "/signup",
+      "/signup/",
+      "/forgot-password?email=a%40b.c",
+      "/reset-password?token=tok_1",
+    ]) {
       expect(safeRedirectPath(door), door).toBeNull();
     }
     expect(safeRedirectPath("/loginish")).toBe("/loginish");
