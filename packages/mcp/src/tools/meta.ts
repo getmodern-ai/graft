@@ -58,13 +58,17 @@ export const ACQUIRE_STATUS = "acquire_status";
 export const REQUEST_CONNECTION = "request_connection";
 export const REQUEST_CREDENTIAL = "request_credential";
 
-/** A tool as `find_tool` answers it — enough for `promote`, and the annotations a harness gates on (ADR 0008). */
+/**
+ * A tool as `find_tool` answers it — enough for `promote`, the annotations a harness gates on (ADR
+ * 0008), and the input schema `run_tool` needs where the list never refreshes (GRA-78).
+ */
 export type FoundTool = {
   vendor: string;
   name: string;
   tool: string;
   description: string;
   promoted: boolean;
+  inputSchema: Record<string, unknown>;
   annotations: { readOnlyHint: boolean; destructiveHint: boolean };
 };
 
@@ -91,7 +95,7 @@ const findTool: MetaTool = {
     description:
       "Call find_tool first, before acquire, whenever a task has no tool in your list. " +
       "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description; a tool no version of which has passed its dry run is not listed. " +
-      "Each hit carries vendor and name (what promote, demote and run_tool take), whether it is in your working set, and its read-only and destructive hints. " +
+      "Each hit carries vendor and name (what promote, demote and run_tool take), its inputSchema (what run_tool's input must match), whether it is in your working set, and its read-only and destructive hints. " +
       "A hit that is not promoted is one promote call from your list. When the answer is empty, call request_connection if the vendor has no connection in your scope (an execute__<connectionId> tool in your list names each one), otherwise acquire.",
     inputSchema: {
       type: "object",
@@ -132,6 +136,7 @@ const findTool: MetaTool = {
         tool: authoredToolName(tool.vendor, tool.name),
         description: tool.description,
         promoted: promoted.has(tool.id),
+        inputSchema: tool.inputSchema,
         annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
       }));
     return toolResult({
@@ -221,7 +226,7 @@ const runTool: MetaTool = {
     name: RUN_TOOL,
     description:
       "Call run_tool to run a toolbox tool by vendor and name when it is not in your visible list: the turn a tool was just published or promoted, or a client that snapshots the list per conversation. " +
-      "Exactly what calling the tool first-class does: the input is validated against the tool's schema, and the vendor's answer, or the tool's failure, comes back verbatim. " +
+      "Exactly what calling the tool first-class does: the input is validated against the tool's inputSchema, which the acquire result and find_tool's hits carry and an input_invalid refusal answers beside the problems, and the vendor's answer, or the tool's failure, comes back verbatim. " +
       "A tool that changes something may answer awaiting_approval with a url on its first call: give the person the link exactly as returned, wait, and call again with the same arguments once they have answered. " +
       "With dryRun: true reads reach the vendor and every other method stops at the proxy with a preview of the request; the answer is a dry-run report and nothing changes at the vendor. " +
       `For a call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds, pass detached: true and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}), then poll the returned processName with wait_for_process. A dry run is always waited for.`,
@@ -232,7 +237,7 @@ const runTool: MetaTool = {
         input: {
           type: "object",
           description:
-            "The tool's input, matching its published schema. Omit for a tool that takes nothing.",
+            "The tool's input, matching the inputSchema the acquire result or find_tool answered. Omit for a tool that takes nothing.",
         },
         dryRun: {
           type: "boolean",

@@ -461,6 +461,7 @@ describe("find_tool", () => {
           tool: LIST_ITEMS,
           description: "List items from Demo Orders.",
           promoted: false,
+          inputSchema: LIST_ITEMS_SCHEMA,
           annotations: { readOnlyHint: true, destructiveHint: false },
         },
       ]);
@@ -593,6 +594,9 @@ describe("run_tool", () => {
       expect(refused.isError).toBe(true);
       expect(body(refused)).toMatchObject({ error: "refused", reason: "input_invalid" });
       expect(body(refused).message).toContain("limit");
+      // The schema rides beside the problems, so a caller whose list never showed the tool can
+      // make the second call right (GRA-78).
+      expect(body(refused).inputSchema).toEqual(LIST_ITEMS_SCHEMA);
       expect(vendor.requests).toHaveLength(requestsBefore);
 
       const ran = await b.call("run_tool", {

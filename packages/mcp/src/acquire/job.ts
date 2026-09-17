@@ -9,6 +9,7 @@ import {
   getAgentScope,
   getBuildApproval,
   getConnection,
+  getToolById,
   heartbeatAcquireJob,
   listAcquireAttempts,
   type Principal,
@@ -63,6 +64,7 @@ import {
   type AcquireFailure,
   type AcquireFailureKind,
   type AcquireSuccess,
+  acquireNextStep,
   DEFAULT_ACQUIRE_CONFIG,
 } from "./shapes";
 
@@ -280,7 +282,11 @@ class AcquireLoop {
             });
       await this.closeOpen(this.openOutcome(), this.setAside(ended.message)).catch(() => undefined);
       // The attempt closed just now belongs in `tried` too; the result was built at the throw.
-      const failure: AcquireFailure = { ...ended, tried: [...this.tried] };
+      // Through the same redaction as `failure()`, since a summary can quote a vendor's answer.
+      const failure = redactValue<AcquireFailure>(
+        { ...ended, tried: [...this.tried] },
+        this.redaction,
+      ).value;
       await this.trace("result", `Failed (${failure.failure}): ${failure.message}`, {
         data: { ...failure },
       }).catch(() => undefined);
@@ -944,15 +950,23 @@ class AcquireLoop {
     await this.progress(
       `Attempt ${attempt.number}: the dry run passed. ${runsAs} and is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
     );
+    // The tool as it now runs: the activated draft's definition, or — when a later job's version is
+    // current — that version's. `outcome.tool` is the row as the unactivated publish left it, so it
+    // is not read here (GRA-78's `inputSchema` is what `run_tool`'s input must match now).
+    const current = await getToolById(this.ctx, this.principal, outcome.tool.id, this.deps.tool);
     return {
       success: {
         tool: wire,
+        vendor,
+        name: draft.name,
         toolId: outcome.tool.id,
         version: currentVersion,
+        inputSchema: current?.inputSchema ?? draft.inputSchema,
         annotations: {
-          readOnlyHint: outcome.annotations.readOnly,
-          destructiveHint: outcome.annotations.destructive,
+          readOnlyHint: current?.readOnly ?? outcome.annotations.readOnly,
+          destructiveHint: current?.destructive ?? outcome.annotations.destructive,
         },
+        next: acquireNextStep(vendor, draft.name),
       },
     };
   }

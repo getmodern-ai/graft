@@ -405,9 +405,10 @@ async function runHeld(
     reason: string,
     message: string,
     ids?: { toolId?: string; versionId?: string },
+    details?: Record<string, unknown>,
   ): Promise<AuthoredRunAnswer> => {
     await record("refused", ids);
-    return { answer: refusal(reason, message), isError: true };
+    return { answer: refusal(reason, message, details), isError: true };
   };
 
   const tool = await getToolByName(
@@ -464,7 +465,11 @@ async function runHeld(
     return refuse("input_schema_invalid", validator.error, versioned);
   }
   const verdict = validator(args.input);
-  if (!verdict.ok) return refuse("input_invalid", verdict.message, versioned);
+  // The schema rides beside the problems so the second call is right (GRA-78): the caller may be
+  // `run_tool` on a client whose list never showed the tool and its schema.
+  if (!verdict.ok) {
+    return refuse("input_invalid", verdict.message, versioned, { inputSchema: tool.inputSchema });
+  }
 
   // The approval gate (ADR 0008): after the scope check, before the mint. A dry run passes it: reads
   // reach the vendor as they would for a read-only tool and every write stops at the proxy on the
