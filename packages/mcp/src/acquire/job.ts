@@ -37,6 +37,7 @@ import {
   type ModuleDraft,
   type ProofRead,
 } from "@graft/model";
+import { hostSetOf } from "@graft/proxy/credential-source";
 import { isRedirect } from "@graft/proxy/redirects";
 import type { PublishOutcome } from "@graft/publish";
 import type { SandboxHandle } from "@graft/sandbox";
@@ -1101,33 +1102,34 @@ function describeRedirect(
       error: `The vendor redirected GET ${path} without saying where (no Location header).`,
     };
   }
-  let host: string;
+  let target: URL;
   try {
-    host = new URL(location, connection.primaryHost).hostname;
+    target = new URL(location, connection.primaryHost);
   } catch {
     return {
       host: null,
       error: `The vendor redirected GET ${path} to an unreadable Location: ${location.slice(0, 200)}`,
     };
   }
-  if (connection.hosts.includes(host)) {
+  // The host as the proxy judges it — its own normalised set, an entry with or without a port
+  // (`hostSetOf`) — so this sentence and the proxy's `host_not_in_set` agree.
+  const declared = hostSetOf({ primaryHost: connection.primaryHost, hosts: connection.hosts });
+  const host = declared.has(target.host) ? target.host : target.hostname;
+  const where = `${target.pathname}${target.search}`;
+  if (declared.has(host)) {
     return {
       host,
       error:
-        `The vendor redirected GET ${path} to ${host}, a host this connection declares. ` +
-        'The proxy does not follow redirects, so the module must call that host itself: `ctx.proxyBase("' +
-        host +
-        '")` is its base, and the same path there is what the vendor wants.',
+        `The vendor redirected GET ${path} to ${host}${where}, a host this connection declares. ` +
+        `The proxy does not follow redirects, so the module must call that host itself: ctx.proxyBase("${host}") is its base, and ${where} is the path the vendor wants there.`,
     };
   }
   return {
     host,
     error:
-      `The vendor redirected GET ${path} to ${host}, which this connection does not declare ` +
-      `(it declares ${connection.hosts.join(", ")}). ` +
-      "Nothing in this job can add a host. Answer `give_up` with a reason that names " +
-      host +
-      ", so the person can connect the vendor with that host in its set and the tool can be built against it.",
+      `The vendor redirected GET ${path} to ${host}${where}, which this connection does not declare ` +
+      `(it declares ${[...declared].join(", ")}). ` +
+      `Nothing in this job can add a host. Answer give_up with a reason that names ${host}, so the person can connect the vendor with that host in its set and the tool can be built against it.`,
   };
 }
 

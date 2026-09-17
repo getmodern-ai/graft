@@ -152,7 +152,7 @@ beforeAll(async () => {
       if (url.pathname === "/v2/moved-home") {
         return new Response(null, {
           status: 303,
-          headers: { location: "https://files.demo.example/v2/moved-home" },
+          headers: { location: "https://files.demo.example/v3/archive?since=2024" },
         });
       }
       if (url.pathname === "/v2/moved") {
@@ -766,7 +766,7 @@ describe("a job that fails and tries again", () => {
         redirectTo: "customer.demo.example",
       });
       expect(read?.error).toContain(
-        "redirected GET /moved to customer.demo.example, which this connection does not declare (it declares api.demo.example, files.demo.example)",
+        "redirected GET /moved to customer.demo.example/v2/moved, which this connection does not declare (it declares api.demo.example, files.demo.example)",
       );
       expect(read?.error).toContain("give_up");
       const trace = rowsOf(jobId).traces.find((row) => row.kind === "vendor_error");
@@ -794,8 +794,11 @@ describe("a job that fails and tries again", () => {
       const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
       const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
       expect(read).toMatchObject({ ok: false, status: 303, redirectTo: "files.demo.example" });
-      expect(read?.error).toContain("a host this connection declares");
+      expect(read?.error).toContain(
+        "redirected GET /moved-home to files.demo.example/v3/archive?since=2024, a host this connection declares",
+      );
       expect(read?.error).toContain('ctx.proxyBase("files.demo.example")');
+      expect(read?.error).toContain("/v3/archive?since=2024 is the path the vendor wants there");
     } finally {
       await a.close();
     }
