@@ -147,9 +147,13 @@ function run(overrides: Partial<ScenarioRun>): ScenarioRun {
       attempts: 1,
       result: {
         tool: "demo__create-order",
+        vendor: "demo",
+        name: "create-order",
         toolId: "tool_1",
         version: 1,
+        inputSchema: { type: "object" },
         annotations: { readOnlyHint: false, destructiveHint: false },
+        next: "demo__create-order is promoted into your working set.",
       },
     },
     job: null,

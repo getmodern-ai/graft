@@ -470,14 +470,32 @@ describe("a job that passes first time", () => {
       expect(status.status).toBe("succeeded");
       expect(status.attempts).toBe(1);
       const success = status.result as AcquireSuccess;
+      // Three names and the schema on purpose (GRA-78): a client that never refreshes its list
+      // calls the tool through run_tool from this answer alone.
       expect(success).toEqual({
         tool: LIST_ITEMS,
+        vendor: "demo",
+        name: "list-items",
         toolId: expect.any(String),
         version: 1,
+        inputSchema: LIST_ITEMS_SCHEMA,
         annotations: { readOnlyHint: true, destructiveHint: false },
+        next: 'demo__list-items is promoted into your working set; where your tool list has not refreshed, run_tool { vendor: "demo", name: "list-items", input } calls it, with input matching inputSchema.',
       });
       expect(status.progress.length).toBeGreaterThan(3);
       expect(status.progress.at(-1)).toContain("promoted into your working set");
+      // Every line names its phase (GRA-71): the job's opening, a step before the first attempt,
+      // or `Attempt N:`. A poller reading the same line twice knows which step is still running.
+      const labelled =
+        /^(Queued: |Authoring "|Asking the model |Reading the documentation: |Opening the sandbox|Attempt \d+: )/;
+      for (const line of status.progress) expect(line).toMatch(labelled);
+      expect(status.progress).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^Asking the model for a first draft/),
+          "Attempt 1: checking the module.",
+          expect.stringMatching(/^Attempt 1: publishing demo__list-items\.$/),
+        ]),
+      );
 
       await until(() => a.notifications.length >= 1);
       expect(a.notifications.length).toBeGreaterThanOrEqual(1);
@@ -641,9 +659,22 @@ describe("a job that fails and tries again", () => {
       expect(failure.lastDiagnostics).toMatchObject({
         dryRun: { passed: false, reads: [{ method: "GET", path: "/nope", status: 404 }] },
       });
+      // Each summary is how that attempt ended, the model's note beside it (GRA-70): before, the
+      // second draft's note stood in for the first attempt's ending.
+      const listNothing = authoredToolName("demo", "list-nothing");
       expect(failure.tried).toEqual([
-        { attempt: 1, outcome: "dry_run_failed", summary: "First guess: /nope." },
-        { attempt: 2, outcome: "dry_run_failed", summary: "Second guess: /nope again." },
+        {
+          attempt: 1,
+          outcome: "dry_run_failed",
+          summary: `The dry run of ${listNothing} v1 failed: 1 read(s), 0 write(s) previewed, 0 refused; module error: Error: GET 404: {"error":"not found"}.`,
+          note: "First guess: /nope.",
+        },
+        {
+          attempt: 2,
+          outcome: "dry_run_failed",
+          summary: `The dry run of ${listNothing} v2 failed: 1 read(s), 0 write(s) previewed, 0 refused; module error: Error: GET 404: {"error":"not found"}.`,
+          note: "Second guess: /nope again.",
+        },
       ]);
       expect(status.progress.at(-1)).toContain("Stopped");
       const { job, traces } = rowsOf(jobId);
@@ -719,13 +750,17 @@ describe("a job that fails and tries again", () => {
       expect(rowsOf(jobId).job.result).not.toMatchObject({
         message: expect.stringContaining("sk-live-"),
       });
+      // The row keeps the draft's note; the refusal is the attempt's summary (GRA-70).
       expect(
         rowsOf(jobId).attempts.map((r) => ({ outcome: r.outcome, diagnosis: r.diagnosis })),
-      ).toEqual([
+      ).toEqual([{ outcome: "abandoned", diagnosis: "Never reached." }]);
+      expect(failure.tried).toEqual([
         {
+          attempt: 1,
           outcome: "abandoned",
-          diagnosis:
-            "The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
+          summary:
+            "Set aside unpublished; The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403).",
+          note: "Never reached.",
         },
       ]);
       expect(runnerEvents.slice(before)).toContainEqual({
@@ -798,6 +833,18 @@ describe("a job that fails and tries again", () => {
       const failure = status.result as AcquireFailure;
       expect(failure.failure).toBe("model_gave_up");
       expect(failure.message).toContain("customer.demo.example");
+      // The attempt's summary opens with the read that failed it, then the give-up; the note is
+      // the draft's own (GRA-70).
+      expect(failure.tried).toEqual([
+        {
+          attempt: 1,
+          outcome: "proof_failed",
+          summary:
+            "1 of 1 proof read(s) failed (GET /moved 303); the model gave up: The vendor answers at customer.demo.example, which the connection does not declare.",
+          note: "Reading /moved.",
+        },
+      ]);
+      expect(status.progress).toContain("Attempt 1: proof read 1 of 1: GET /moved.");
       // What the model was shown: the status, the host, and the remedy.
       const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
       const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
@@ -1135,6 +1182,9 @@ describe("the runner", () => {
       [2, "passed"],
     ]);
     expect(finished.result).toMatchObject({ tool: LIST_ITEMS });
+    // The abandoned row keeps the dead process's own note (GRA-70): the loop never rewrites a row's
+    // diagnosis, so a resumed job's `tried[].note` is always what opened the draft.
+    expect(attempts[0]).toMatchObject({ diagnosis: "A draft the dead process never finished." });
   }, 30_000);
 
   it("leaves a running job with a live heartbeat alone", async () => {
