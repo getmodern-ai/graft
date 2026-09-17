@@ -43,7 +43,8 @@ and the job acts on it. Where the skill above says to call a tool, answer instea
 
 Situations you will be shown: \`goal\` (once, first), \`docs\` (the pages you asked for),
 \`check_refused\` (the check named refusals), \`proof\` (what the proof reads answered — answer
-\`proceed\` to publish this draft, or \`write_module\` to change it first), \`publish_refused\`,
+\`proceed\` to publish this draft, or \`write_module\` to change it first; a read the vendor
+redirected names the host and what to do about it), \`publish_refused\`,
 \`dry_run_failed\` (the report, or how the run failed). Every \`write_module\` is a new attempt against
 the budget; \`give_up\` ends the job with your reason. \`proceed\` is admitted only after \`proof\`.
 
@@ -157,6 +158,7 @@ export function renderCheckRefused(
 function renderRead(read: ProofRead): string {
   const status = read.status === null ? "no answer" : `HTTP ${read.status}`;
   const lines = [`### GET ${read.path} → ${status}${read.ok ? "" : " (failed)"}`];
+  if (read.redirectTo) lines.push(`Redirected to \`${read.redirectTo}\`.`);
   if (read.error) lines.push(`_${read.error}_`);
   if (read.body !== null) lines.push(fence(clip(read.body, BODY_MAX_CHARS)));
   return lines.join("\n");
@@ -169,6 +171,12 @@ export function renderProof(attempt: number, reads: readonly ProofRead[]): strin
     ...reads.map(renderRead),
     "",
     "Compare each answer with what the documentation said. Answer `proceed` to publish and dry-run this draft as it stands, `write_module` to change it first, `read_docs` for a page, or `give_up`.",
+    ...(reads.some((read) => read.redirectTo)
+      ? [
+          "",
+          "A read the vendor redirected is a question about the connection's hosts, not about the code: no change to the module makes the vendor answer at the path it redirected away from. Do what the read's note says — call the declared host through `ctx.proxyBase(host)`, or `give_up` naming the host so the person can connect it.",
+        ]
+      : []),
   ].join("\n");
 }
 

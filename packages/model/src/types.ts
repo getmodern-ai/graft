@@ -96,6 +96,12 @@ export type ProofRead = {
   body: string | null;
   /** Why the read produced no answer at all — the run failed, the proxy refused. */
   error: string | null;
+  /**
+   * The host a 3xx pointed at, when the vendor redirected the read; null otherwise. The proxy hands
+   * a redirect back unfollowed and the runner does not follow it either (GRA-64), so a redirect is
+   * a fact about the connection's host set, not about the code — `error` says which (GRA-65).
+   */
+  redirectTo: string | null;
 };
 
 /** The dry-run report as the model reads it — `runner.mjs`'s report, the parts a diagnosis turns on. */

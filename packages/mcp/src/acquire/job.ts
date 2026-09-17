@@ -37,10 +37,10 @@ import {
   type ModuleDraft,
   type ProofRead,
 } from "@graft/model";
+import { isRedirect } from "@graft/proxy/redirects";
 import type { PublishOutcome } from "@graft/publish";
 import type { SandboxHandle } from "@graft/sandbox";
 import { draftPath, sandboxPath, toolboxIdOf } from "@graft/toolbox";
-
 import { NO_ELICITATION } from "../approval";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "../bounds";
 import type { McpDeps } from "../deps";
@@ -124,6 +124,7 @@ export const PROBE_MODULE = [
   "  return {",
   "    status: res.status,",
   "    ok: res.ok,",
+  '    location: res.headers.get("location"),',
   '    contentType: res.headers.get("content-type"),',
   `    body: text.slice(0, ${PROOF_BODY_CHARS}),`,
   "  };",
@@ -396,7 +397,7 @@ class AcquireLoop {
             situation = {
               kind: "proof",
               attempt: attempt.number,
-              reads: await this.prove(attempt, connection.id),
+              reads: await this.prove(attempt, connection),
             };
             continue;
           }
@@ -602,7 +603,8 @@ class AcquireLoop {
   }
 
   /** The proof reads, each through the execute path with the dry-run claim on. */
-  private async prove(attempt: OpenAttempt, connectionId: string): Promise<ProofRead[]> {
+  private async prove(attempt: OpenAttempt, connection: ProofConnection): Promise<ProofRead[]> {
+    const connectionId = connection.id;
     const handle = await this.sandbox();
     if (!this.probeWritten) {
       await handle.writeTree(
@@ -631,7 +633,7 @@ class AcquireLoop {
           });
         },
       });
-      const read = describeProofRead(path, outcome);
+      const read = describeProofRead(path, outcome, connection);
       reads.push(read);
       if (read.ok) {
         await this.trace("proof", `Proof read GET ${path}: ${read.status}.`, {
@@ -645,7 +647,13 @@ class AcquireLoop {
           `Proof read GET ${path} failed: ${read.status ?? "no status"} ${read.error ?? read.body ?? ""}`.trim(),
           {
             attempt: attempt.number,
-            data: { path, status: read.status, body: read.body, error: read.error },
+            data: {
+              path,
+              status: read.status,
+              body: read.body,
+              error: read.error,
+              redirectTo: read.redirectTo,
+            },
           },
         );
       }
@@ -988,7 +996,10 @@ function toModelDiagnostic(diagnostic: {
 }
 
 /** A proof read's outcome in the model's terms: the probe's answer, or why there was none. */
-function describeProofRead(path: string, outcome: unknown): ProofRead {
+/** What a proof read needs to know of the connection: its id for the run, its hosts for a redirect. */
+type ProofConnection = { id: string; primaryHost: string; hosts: readonly string[] };
+
+function describeProofRead(path: string, outcome: unknown, connection: ProofConnection): ProofRead {
   if (
     typeof outcome === "object" &&
     outcome !== null &&
@@ -1002,6 +1013,7 @@ function describeProofRead(path: string, outcome: unknown): ProofRead {
       status: null,
       body: null,
       error: `${refusal.reason ?? "refused"}: ${refusal.message ?? ""}`.trim(),
+      redirectTo: null,
     };
   }
   const run = outcome as {
@@ -1019,6 +1031,7 @@ function describeProofRead(path: string, outcome: unknown): ProofRead {
       error: failure
         ? `${failure.error}${failure.stderrTail ? ` — ${failure.stderrTail}` : ""}`
         : "the run failed",
+      redirectTo: null,
     };
   }
   const report = readDryRunReport(run.result);
@@ -1026,19 +1039,95 @@ function describeProofRead(path: string, outcome: unknown): ProofRead {
     status?: number;
     ok?: boolean;
     body?: string;
+    location?: string | null;
   } | null;
   if (report?.moduleError) {
-    return { path, ok: false, status: null, body: null, error: report.moduleError };
+    return {
+      path,
+      ok: false,
+      status: null,
+      body: null,
+      error: report.moduleError,
+      redirectTo: null,
+    };
   }
   if (!probe || typeof probe.status !== "number") {
-    return { path, ok: false, status: null, body: null, error: "The probe returned no answer." };
+    return {
+      path,
+      ok: false,
+      status: null,
+      body: null,
+      error: "The probe returned no answer.",
+      redirectTo: null,
+    };
+  }
+  const body = typeof probe.body === "string" ? probe.body : null;
+  if (isRedirect(probe.status)) {
+    const redirect = describeRedirect(path, probe.location ?? null, connection);
+    return {
+      path,
+      ok: false,
+      status: probe.status,
+      body,
+      error: redirect.error,
+      redirectTo: redirect.host,
+    };
   }
   return {
     path,
     ok: probe.status < 400,
     status: probe.status,
-    body: typeof probe.body === "string" ? probe.body : null,
+    body,
     error: null,
+    redirectTo: null,
+  };
+}
+
+/**
+ * A redirected proof read, in the connection's terms. The proxy returned the 3xx unfollowed and the
+ * runner did not follow it (CONTEXT.md *Proxy*; GRA-64), so the read is a fact about the host set:
+ * a host the connection declares is the module's to call through `ctx.proxyBase(host)`; one it does
+ * not is nobody's inside this job — consent never moves inside the loop (ADR 0004, ADR 0006) — so
+ * the model is told to give up naming it, and the person connects it (GRA-65).
+ */
+function describeRedirect(
+  path: string,
+  location: string | null,
+  connection: ProofConnection,
+): { host: string | null; error: string } {
+  if (!location) {
+    return {
+      host: null,
+      error: `The vendor redirected GET ${path} without saying where (no Location header).`,
+    };
+  }
+  let host: string;
+  try {
+    host = new URL(location, connection.primaryHost).hostname;
+  } catch {
+    return {
+      host: null,
+      error: `The vendor redirected GET ${path} to an unreadable Location: ${location.slice(0, 200)}`,
+    };
+  }
+  if (connection.hosts.includes(host)) {
+    return {
+      host,
+      error:
+        `The vendor redirected GET ${path} to ${host}, a host this connection declares. ` +
+        'The proxy does not follow redirects, so the module must call that host itself: `ctx.proxyBase("' +
+        host +
+        '")` is its base, and the same path there is what the vendor wants.',
+    };
+  }
+  return {
+    host,
+    error:
+      `The vendor redirected GET ${path} to ${host}, which this connection does not declare ` +
+      `(it declares ${connection.hosts.join(", ")}). ` +
+      "Nothing in this job can add a host. Answer `give_up` with a reason that names " +
+      host +
+      ", so the person can connect the vendor with that host in its set and the tool can be built against it.",
   };
 }
 
