@@ -23,9 +23,11 @@ import { connection } from "./connection";
  * **Postgres holds a pointer, never code.** The module lives in the toolbox at the version's
  * `path`; this row carries what the MCP server needs to *list* the tool — the name and
  * description the model reads, the input schema a call is validated against, the annotations the
- * check derived — and which version the pointer currently names. A publish inserts a version row
- * and moves `currentVersionId`; earlier versions stay, so a run that loaded one finishes on it
- * while the next opens the new one, and nothing is ever deleted by the system (ADR 0009).
+ * check derived — and which version the pointer currently names. A publish inserts a version row;
+ * `currentVersionId` moves onto a version only once it has passed its dry run (ADR 0012, L0 as
+ * amended 2026-09-17) — at publish on the by-hand path, at the pass inside an `acquire` job.
+ * Earlier versions stay, so a run that loaded one finishes on it while the next opens the new one,
+ * and nothing is ever deleted by the system (ADR 0009).
  *
  * Bound to a **vendor slug**, never a connection row (ADR 0007): revoking a connection clears its
  * credential and approvals and leaves these rows, which re-ask after reconnection.
@@ -48,9 +50,12 @@ export const authoredTool = pgTable(
     /** A JSON Schema object (`type: "object"`); the MCP server validates every call against it. */
     inputSchema: jsonb("input_schema").$type<Record<string, unknown>>().notNull(),
     /**
-     * The version the tool currently runs as. Null between the tool's insert and its first
-     * version's — a publish writes the version, then moves this. A circular reference with
-     * `tool_version.tool_id`, which Postgres allows and drizzle types through `AnyPgColumn`.
+     * The version the tool currently runs as — always one that passed its dry run. Null until a
+     * version has: between the tool's insert and its first version's activation, and for as long
+     * as every version an `acquire` job published failed its dry run — such a tool is kept with its
+     * reports, absent from `find_tool`, and refused by `promote` and a run as `tool_has_no_version`
+     * (GRA-77). A circular reference with `tool_version.tool_id`, which Postgres allows and drizzle
+     * types through `AnyPgColumn`.
      */
     currentVersionId: text("current_version_id").references((): AnyPgColumn => toolVersion.id, {
       onDelete: "set null",

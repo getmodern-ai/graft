@@ -94,7 +94,7 @@ const findTool: MetaTool = {
     name: FIND_TOOL,
     description:
       "Call find_tool first, before acquire, whenever a task has no tool in your list. " +
-      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description. " +
+      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description; a tool no version of which has passed its dry run is not listed. " +
       "Each hit carries vendor and name (what promote, demote and run_tool take), its inputSchema (what run_tool's input must match), whether it is in your working set, and its read-only and destructive hints. " +
       "A hit that is not promoted is one promote call from your list. When the answer is empty, call request_connection if the vendor has no connection in your scope (an execute__<connectionId> tool in your list names each one), otherwise acquire.",
     inputSchema: {
@@ -121,7 +121,10 @@ const findTool: MetaTool = {
     // Case-insensitive substring over the three fields, in toolbox order. Ranking — by how recently
     // an agent used the tool, by how many agents hold it — belongs here and reads the ledger and the
     // working-set records (ADR 0009, ADR 0012); the alpha has too few tools per toolbox to need it.
+    // A tool with no current version is what an acquire job that never passed its dry run leaves
+    // (GRA-77): nothing runnable, so nothing to find — its versions and reports stay for the console.
     const hits: FoundTool[] = tools
+      .filter((tool) => tool.currentVersionId !== null)
       .filter((tool) =>
         [tool.vendor, tool.name, authoredToolName(tool.vendor, tool.name), tool.description].some(
           (field) => field.toLowerCase().includes(query),
@@ -167,6 +170,14 @@ const promote: MetaTool = {
     const { ctx, principal, scope, deps, notifier } = session;
     const tool = await getToolByName(ctx, principal, key, deps.tool);
     if (!tool) return toolNotFound(key);
+    // The same refusal a run gives (`../run.ts`): a tool no version of which passed its dry run is
+    // not promotable, since the list entry would name nothing that runs (GRA-77).
+    if (!tool.currentVersionId) {
+      return toolRefusal(
+        "tool_has_no_version",
+        `${authoredToolName(tool.vendor, tool.name)} has no version that passed its dry run, so there is nothing to promote. acquire authors one.`,
+      );
+    }
     const change = await promoteTool(ctx, scope, tool.id, "agent", deps.workingSet);
     if (change.changed) notifier.changed(scope.agentId);
     return toolResult({

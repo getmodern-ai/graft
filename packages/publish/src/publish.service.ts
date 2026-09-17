@@ -7,6 +7,7 @@ import {
   UNKNOWN_ANNOTATIONS,
 } from "@graft/check";
 import {
+  addToolVersion,
   createTool,
   nextVersionNumber,
   orNotFound,
@@ -66,6 +67,12 @@ import {
  *     refusal with npm's words in it.
  *  8. The rows: the tool created if this is its first publish, the version inserted, the definition
  *     updated with the check's annotations, the pointer moved — `@graft/core`'s one transaction.
+ *     Under `activate: false` the last two do not happen: the version row is written, the tool row
+ *     is created if there is none (with the draft's definition and a null pointer), and an existing
+ *     tool keeps its definition and its pointer. That is `acquire`'s publish (GRA-77): the pointer
+ *     names only a version that passed its dry run, so the job dry-runs the version by id and
+ *     activates it (`@graft/core`'s `activateToolVersion`) on the pass, and a failed job leaves the
+ *     tool where it was — or, on a first publish, with no current version at all.
  *  9. The mirror is asked to copy the version, and the publish returns without waiting.
  *
  * A directory written and then not recorded (a failed install, a database down at step 8) stays on
@@ -99,10 +106,18 @@ export type PublishArgs = {
   draftPath: string;
   /** The connection the tool was authored against — its default binding at run time. */
   defaultConnectionId?: string | null;
+  /**
+   * Whether the published version becomes the tool's current one — its definition applied and the
+   * pointer moved — as part of the publish. Default `true`, the by-hand path (`publish_tool`,
+   * `publish-fixture`). `false` writes the version and nothing a run or a list reads: the caller
+   * dry-runs it by id and activates it on the pass (step 8 above).
+   */
+  activate?: boolean;
 };
 
 export type PublishSuccess = {
   ok: true;
+  /** The tool's row as the publish left it: under `activate: false`, an existing tool's is unchanged. */
   tool: AuthoredToolRow;
   version: ToolVersionRow;
   /** The check's advice — non-refusing observations the model may act on. */
@@ -251,6 +266,14 @@ export async function publishToolVersion(
     annotations: check.annotations,
     defaultConnectionId: args.defaultConnectionId ?? null,
   };
+  const versionInput = {
+    path: versionPath,
+    sourceHash,
+    lockfileHash,
+    checkOutput: checkOutputOf(check),
+    writesInvolved: !check.annotations.readOnly,
+    publisherJobId: args.jobId ?? null,
+  };
   const recorded = await ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
     const tool =
@@ -261,21 +284,11 @@ export async function publishToolVersion(
         { vendor: args.vendor, name: args.name, ...definition },
         deps.tool,
       ));
-    return recordPublishedVersion(
-      scoped,
-      principal,
-      tool.id,
-      {
-        path: versionPath,
-        sourceHash,
-        lockfileHash,
-        checkOutput: checkOutputOf(check),
-        writesInvolved: !check.annotations.readOnly,
-        publisherJobId: args.jobId ?? null,
-      },
-      definition,
-      deps.tool,
-    );
+    if (args.activate === false) {
+      const version = await addToolVersion(scoped, principal, tool.id, versionInput, deps.tool);
+      return { tool, version };
+    }
+    return recordPublishedVersion(scoped, principal, tool.id, versionInput, definition, deps.tool);
   });
 
   // 9. The mirror, off the path.

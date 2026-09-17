@@ -81,6 +81,16 @@ export const CALL_OUTCOME_CHIP = {
 /** A dry run reached the vendor for reads only (CONTEXT.md, *Dry run*); the chip rides beside the tool name. */
 export const DRY_RUN_CHIP: StatusChip = { variant: "outline", label: "Dry run" };
 
+/**
+ * A tool with no current version: every version an `acquire` job published failed its dry run, so
+ * the pointer never moved (ADR 0012, L0 as amended 2026-09-17; GRA-77). `outline`, as waiting — a
+ * later job over the same vendor and name publishes the version that passes and the chip goes.
+ */
+export const NO_PASSING_VERSION_CHIP: StatusChip = {
+  variant: "outline",
+  label: "Never passed a dry run",
+};
+
 export const APPROVAL_DECISION_CHIP = {
   allow: { variant: "success", label: "Allowed" },
   deny: { variant: "destructive", label: "Denied" },

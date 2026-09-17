@@ -34,13 +34,19 @@ import {
   toolKeys,
 } from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
-import { AWAITING_RECONNECTION_CHIP, connectionStatusChips } from "@/lib/status-chips";
+import {
+  AWAITING_RECONNECTION_CHIP,
+  connectionStatusChips,
+  NO_PASSING_VERSION_CHIP,
+} from "@/lib/status-chips";
 
 /**
  * One connection: the vendor, the hosts the proxy pins its calls to, the scheme, when the credential
  * was set — and never the credential (CONTEXT.md: write-only after entry) — with the tools bound to
  * its vendor and its recent vendor calls. A revoked connection is still listed, awaiting
  * reconnection: its tools are, too, and Re-enter credential is the reconnection (ADR 0007; GRA-28).
+ * A tool with no current version — every version an `acquire` job published failed its dry run
+ * (GRA-77) — is listed with a chip saying so; it is in the toolbox and in no agent's list.
  *
  * An OAuth connection (ADR 0005) has two more states between the secret and connected: the client
  * secret entered and the consent not yet completed, and a refresh the vendor refused so the person
@@ -309,6 +315,9 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
                       {tool.vendor}__{tool.name}
                     </code>
                     <ToolAnnotations readOnly={tool.readOnly} destructive={tool.destructive} />
+                    {tool.currentVersionId === null ? (
+                      <StatusChip chip={NO_PASSING_VERSION_CHIP} />
+                    ) : null}
                     {usable ? null : <StatusChip chip={AWAITING_RECONNECTION_CHIP} />}
                   </li>
                 ))}

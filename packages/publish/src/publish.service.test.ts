@@ -261,6 +261,67 @@ describe("a module with no dependencies", () => {
     expect(destroy.ok && destroy.tool).toMatchObject({ readOnly: false, destructive: true });
   });
 
+  it("under activate: false, a first publish makes the tool with the draft's definition and no current version", async () => {
+    const files = await readFixture("hello");
+    const result = await publish({ draftPath: await draft("job1", files), activate: false });
+
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) return;
+    expect(result.version).toMatchObject({ path: "tools/demo/hello/v1", versionNumber: 1 });
+    expect(result.tool).toMatchObject({
+      vendor: "demo",
+      name: "hello",
+      description: "Greets a name through the vendor",
+      inputSchema: HELLO_SCHEMA,
+      readOnly: true,
+      destructive: false,
+      currentVersionId: null,
+    });
+    expect(h.tool.tools[0]?.currentVersionId).toBeNull();
+    expect(h.tool.versions.map((v) => v.path)).toEqual(["tools/demo/hello/v1"]);
+    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/v1")).toEqual(files);
+    // The mirror is still told: the version is in the toolbox whether or not it is current.
+    await vi.waitFor(() => expect(h.mirrorEvents).toHaveLength(1));
+    expect(h.mirrorEvents[0]).toMatchObject({
+      outcome: "mirrored",
+      versionPath: "tools/demo/hello/v1",
+    });
+  });
+
+  it("under activate: false, a republish writes the version and leaves the definition and the pointer where they were", async () => {
+    const first = await readFixture("hello");
+    const activated = await publish({ draftPath: await draft("job1", first) });
+    expect(activated.ok).toBe(true);
+    if (!activated.ok) return;
+
+    const second = first.map((file) => ({ ...file, content: `${file.content}// v2\n` }));
+    const result = await publish({
+      draftPath: await draft("job2", second),
+      jobId: "job2",
+      description: "Greets a name through the vendor, politely",
+      inputSchema: { ...HELLO_SCHEMA, properties: { name: { type: "string", minLength: 1 } } },
+      activate: false,
+    });
+
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) return;
+    expect(result.version).toMatchObject({ path: "tools/demo/hello/v2", versionNumber: 2 });
+    expect(result.tool).toMatchObject({
+      description: "Greets a name through the vendor",
+      inputSchema: HELLO_SCHEMA,
+      currentVersionId: activated.version.id,
+    });
+    expect(h.tool.tools[0]).toMatchObject({
+      description: "Greets a name through the vendor",
+      currentVersionId: activated.version.id,
+    });
+    expect(h.tool.versions.map((v) => v.path)).toEqual([
+      "tools/demo/hello/v1",
+      "tools/demo/hello/v2",
+    ]);
+    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/v2")).toEqual(second);
+  });
+
   it("carries the check's advice on a success", async () => {
     const result = await publish({
       draftPath: await draft("job1", [
