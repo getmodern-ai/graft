@@ -152,6 +152,7 @@ describe("the shipped skills", () => {
       "ctx.fetch(path, init)",
       "vendor-relative",
       "never names a host, never holds a key",
+      "The vendor sees the proxy, not the person",
       "The bare minimum",
       "curl and Python are not",
       "Reads only, until the tool is published",
