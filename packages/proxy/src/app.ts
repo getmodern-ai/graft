@@ -105,6 +105,10 @@ import { createUpstreamFetch, isTimeoutFailure } from "./upstream";
  * as its value, and the body then carries `code` (the cause's errno or name) and `host` beside the
  * three words (`failure.ts`, GRA-79). A vendor's own 5xx passes through with none of these, so a
  * caller can tell the network's answer from the vendor's and stop trying to fix code against it.
+ * **The `x-graft-` response namespace is the proxy's alone**: any header a vendor sends under it is
+ * dropped with the hop-by-hop set before the proxy sets its own (`passthroughResponseHeaders` in
+ * `headers.ts`), so a vendor cannot mark its answer as a dry-run preview or as a refusal the proxy
+ * never made. The relays return through the same path and are held to the same rule.
  */
 
 export const DEFAULT_PROXY_OPTIONS: ProxyOptions = {

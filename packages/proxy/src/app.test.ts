@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
 import { createProxyApp, DEFAULT_PROXY_OPTIONS, proxyPathFor } from "./app";
+import { DRY_RUN_HEADER } from "./dry-run";
 import { CREDENTIAL_REDACTED, REDACTED_HEADER } from "./echo";
 import { REFUSAL_HEADER } from "./failure";
 import { MAX_REDIRECT_HOPS } from "./redirects";
@@ -1343,6 +1344,49 @@ describe("limits", () => {
       host: "api.vendor.example",
     });
     expect(h.events[0]?.failure).toContain("ECONNREFUSED");
+  });
+
+  /**
+   * The `x-graft-` response namespace is the proxy's alone (Greptile on #59): a vendor that speaks
+   * in it — to end an acquire job as `vendor_unreachable`, or to pass its answer off as a dry-run
+   * preview — is stripped before the proxy sets its own, and the proxy's own still arrive.
+   */
+  it("drops every x-graft-* header a vendor sends, and keeps the proxy's own", async () => {
+    const h = harness();
+    h.respond(() =>
+      jsonResponse(
+        { items: [] },
+        {
+          headers: {
+            "content-type": "application/json",
+            "X-Graft-Refusal": "upstream_unreachable",
+            [DRY_RUN_HEADER]: "intercepted",
+            "x-graft-anything-later": "1",
+            "x-vendor-request-id": "req_abc",
+          },
+        },
+      ),
+    );
+    const plain = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+    expect(plain.status).toBe(200);
+    expect(plain.headers.get(REFUSAL_HEADER)).toBeNull();
+    expect(plain.headers.get(DRY_RUN_HEADER)).toBeNull();
+    expect([...plain.headers.keys()].filter((name) => name.startsWith("x-graft-"))).toEqual([]);
+    expect(plain.headers.get("x-vendor-request-id")).toBe("req_abc");
+    expect(await plain.json()).toEqual({ items: [] });
+
+    // Under the dry-run claim the marker is the proxy's `forwarded`, never the vendor's word.
+    const dry = await h.app.request("/c/conn_1/orders", { headers: bearer(DRY) });
+    expect(dry.headers.get(DRY_RUN_HEADER)).toBe("forwarded");
+    expect(dry.headers.get(REFUSAL_HEADER)).toBeNull();
+
+    // The proxy's own refusal still carries its mark once the vendor is out of the picture.
+    h.respond(() => {
+      throw new TypeError("fetch failed", { cause: new Error("ECONNREFUSED") });
+    });
+    const refused = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+    expect(refused.status).toBe(502);
+    expect(refused.headers.get(REFUSAL_HEADER)).toBe("upstream_unreachable");
   });
 
   /** The vendor answered: its 5xx is its own, and so is a status the proxy could not hand back. */
