@@ -138,6 +138,11 @@ The rules, and why each holds:
   every `GRAFT_*` variable before your module loads — so `process.env.GRAFT_TOKEN` inside a module
   is empty, and a request built from it answers `token_invalid`. `check_tool` and `publish_tool`
   refuse a module whose code names any `GRAFT_*` variable; `ctx` is the whole of what a module needs.
+- **The vendor sees the proxy, not the person.** Every request reaches the vendor from Graft's
+  proxy, never from the person's machine, so whatever the vendor infers from the connection — the
+  source address, its geolocation, a rate limit keyed on it, a "your IP" or "your location" answer —
+  is the proxy's and not the person's, and the tool's description and its output names say so or
+  leave it out. A tool that returns "the caller's IP" is returning Graft's.
 - **The bare minimum.** One call, the fields this tool needs, no pagination, no retries, no client
   for the rest of the API. A tool that does one thing is fast to build, easy to read in an approval,
   and simple enough to trust. Generality is a cost, not a feature.

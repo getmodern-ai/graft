@@ -26,7 +26,7 @@ export function safeRedirectPath(value: unknown): string | null {
 }
 
 /** The public doors, which are never a destination after sign-in. */
-const DOORS = ["/login", "/signup"] as const;
+const DOORS = ["/login", "/signup", "/forgot-password", "/reset-password"] as const;
 
 /** Where a signed-in person lands when nothing asked for somewhere else. */
 export const DEFAULT_SIGNED_IN_PATH = "/agents";

@@ -479,11 +479,17 @@ describe("a job that passes first time", () => {
       expect(status.status).toBe("succeeded");
       expect(status.attempts).toBe(1);
       const success = status.result as AcquireSuccess;
+      // Three names and the schema on purpose (GRA-78): a client that never refreshes its list
+      // calls the tool through run_tool from this answer alone.
       expect(success).toEqual({
         tool: LIST_ITEMS,
+        vendor: "demo",
+        name: "list-items",
         toolId: expect.any(String),
         version: 1,
+        inputSchema: LIST_ITEMS_SCHEMA,
         annotations: { readOnlyHint: true, destructiveHint: false },
+        next: 'demo__list-items is promoted into your working set; where your tool list has not refreshed, run_tool { vendor: "demo", name: "list-items", input } calls it, with input matching inputSchema.',
       });
       expect(status.progress.length).toBeGreaterThan(3);
       expect(status.progress.at(-1)).toContain("promoted into your working set");
