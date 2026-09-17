@@ -43,6 +43,17 @@ export {
   tokenExpiresAt,
 } from "./oauth";
 export {
+  decodePipedreamProxySegment,
+  PIPEDREAM_API_ORIGIN,
+  PIPEDREAM_CONNECT_PROXY_SCHEME,
+  PIPEDREAM_RELAY_FIELDS,
+  PIPEDREAM_RELAY_HEADER_PREFIX,
+  PIPEDREAM_RELAY_ORIGIN_FIELD,
+  PIPEDREAM_RELAY_RULES,
+  pipedreamConnectProxyRelay,
+  pipedreamProxyUrl,
+} from "./pipedream-relay";
+export {
   PASSTHROUGH_RELAY_RULES,
   RELAYS,
   relayHeaders,
