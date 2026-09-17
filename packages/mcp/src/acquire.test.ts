@@ -27,7 +27,6 @@ import {
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-
 import { type AcquireRunner, type AcquireRunnerEvent, createAcquireRunner } from "./acquire/runner";
 import type { AcquireFailure, AcquireStatus, AcquireSuccess } from "./acquire/shapes";
 import type { McpDeps } from "./deps";
@@ -141,12 +140,36 @@ beforeAll(async () => {
         id: CONN_DEMO,
         personId: PERSON,
         primaryHost: "https://api.demo.example/v2",
+        hosts: ["files.demo.example"],
         credential: { apiKey: API_KEY },
       },
     ],
     respond: (request) => {
       const url = new URL(request.url);
       if (url.pathname === "/v2/items") return Response.json(VENDOR_BODY);
+      // A vendor that points elsewhere, as Open-Meteo does for a keyed request (GRA-65): once to a
+      // host the connection declares, once to one it does not. The real proxy hands both back.
+      if (url.pathname === "/v2/moved-home") {
+        return new Response(null, {
+          status: 303,
+          headers: { location: "https://files.demo.example/v3/archive?since=2024" },
+        });
+      }
+      if (url.pathname === "/v2/moved-port") {
+        return new Response(null, {
+          status: 303,
+          headers: { location: "https://api.demo.example:8443/v2/items" },
+        });
+      }
+      if (url.pathname === "/v2/moved-relative") {
+        return new Response(null, { status: 303, headers: { location: "archive?since=2024" } });
+      }
+      if (url.pathname === "/v2/moved") {
+        return new Response(null, {
+          status: 303,
+          headers: { location: "https://customer.demo.example/v2/moved" },
+        });
+      }
       if (url.pathname === "/v2/secret-echo") {
         // The vendor quotes the key it refused — under a field name and in prose.
         return Response.json(
@@ -169,6 +192,7 @@ beforeAll(async () => {
     vendor: "demo",
     displayName: "Demo Orders",
     primaryHost: "https://api.demo.example/v2",
+    hosts: ["files.demo.example"],
   });
   store.addConnection({
     id: CONN_OTHER,
@@ -714,6 +738,122 @@ describe("a job that fails and tries again", () => {
       });
     } finally {
       sandbox.ensure = ensure;
+      await a.close();
+    }
+  });
+
+  it("tells the model a redirected proof read is about the host set: an undeclared host is named, and give_up carries it", async () => {
+    const scripted = createScriptedModel([
+      write("goal", draft({ name: "list-moved", proofReads: ["/moved"] }), "Reading /moved."),
+      {
+        on: "proof",
+        answer: {
+          kind: "give_up",
+          reason:
+            "The vendor answers at customer.demo.example, which the connection does not declare.",
+        },
+      },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List what moved",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("model_gave_up");
+      expect(failure.message).toContain("customer.demo.example");
+      // What the model was shown: the status, the host, and the remedy.
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
+      expect(read).toMatchObject({
+        path: "/moved",
+        ok: false,
+        status: 303,
+        redirectTo: "customer.demo.example",
+      });
+      expect(read?.error).toContain(
+        "redirected GET /moved to customer.demo.example/v2/moved, which this connection does not declare (it declares api.demo.example, files.demo.example)",
+      );
+      expect(read?.error).toContain("give_up");
+      const trace = rowsOf(jobId).traces.find((row) => row.kind === "vendor_error");
+      expect(trace?.data).toMatchObject({ status: 303, redirectTo: "customer.demo.example" });
+      // The sandbox never dialled the vendor: the proxy saw the one read and returned the 303.
+      expect(vendor.events.at(-1)).toMatchObject({ outcome: "redirect_returned", status: 303 });
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("resolves a relative Location against the URL the read went to, base path included", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-moved-rel", proofReads: ["/moved-relative#top"] }),
+        "Reading.",
+      ),
+      { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List what moved, relatively" });
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
+      // `archive?since=2024` beside `/v2/moved-relative` is `/v2/archive?since=2024` on the primary
+      // host; the fragment never reached the vendor and plays no part.
+      expect(read).toMatchObject({ ok: false, status: 303, redirectTo: "api.demo.example" });
+      expect(read?.error).toContain(
+        "redirected GET /moved-relative#top to api.demo.example/v2/archive?since=2024, a host this connection declares",
+      );
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("says a redirect to another port is out of the proxy's reach, whatever the host set declares", async () => {
+    const scripted = createScriptedModel([
+      write("goal", draft({ name: "list-moved-port", proofReads: ["/moved-port"] }), "Reading."),
+      { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List what moved ports" });
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
+      expect(read).toMatchObject({ ok: false, status: 303, redirectTo: "api.demo.example:8443" });
+      expect(read?.error).toContain("on a port the proxy cannot address");
+      expect(read?.error).not.toContain("ctx.proxyBase");
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("describes a redirect to a declared host as the module's to follow through ctx.proxyBase", async () => {
+    const scripted = createScriptedModel([
+      write("goal", draft({ name: "list-moved-home", proofReads: ["/moved-home"] }), "Reading."),
+      { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List what moved home",
+      });
+      expect(status.status).toBe("failed");
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
+      expect(read).toMatchObject({ ok: false, status: 303, redirectTo: "files.demo.example" });
+      expect(read?.error).toContain(
+        "redirected GET /moved-home to files.demo.example/v3/archive?since=2024, a host this connection declares",
+      );
+      expect(read?.error).toContain('ctx.proxyBase("files.demo.example")');
+      expect(read?.error).toContain("/v3/archive?since=2024 is the path the vendor wants there");
+    } finally {
       await a.close();
     }
   });
