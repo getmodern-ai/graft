@@ -82,3 +82,4 @@ first in the outcome.
 | [GRA-53](https://linear.app/get-modern/issue/GRA-53) | [#33](https://github.com/getmodern-ai/graft/pull/33) | 2026-09-15 | MCP clients connect over OAuth and the consent mints the agent |
 | [GRA-54](https://linear.app/get-modern/issue/GRA-54) | [#32](https://github.com/getmodern-ai/graft/pull/32) | 2026-09-15 | the handshake carries the playbook; instructions and descriptions stand in for the skill |
 | [GRA-55](https://linear.app/get-modern/issue/GRA-55) | [#34](https://github.com/getmodern-ai/graft/pull/34) | 2026-09-15 | an elicitation the client cancels falls back to the handoff link |
+| [GRA-81](https://linear.app/get-modern/issue/GRA-81) | [#58](https://github.com/getmodern-ai/graft/pull/58) | 2026-09-17 | sign in with Google or GitHub, through Cando's one door; ADR 0020 |
