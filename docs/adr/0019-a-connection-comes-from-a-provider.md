@@ -109,3 +109,19 @@ private knowledge:
   GRA-58 and GRA-59 give each its flow: routing such a proposal to the keyring's form would store
   in Graft a credential the provider holds itself. With the keyring alone, every answer and every
   card is what it was before this record; the suites pin it.
+- **The Pipedream provider stores one fact and never the other** (2026-09-17, GRA-59). What Graft
+  keeps of a connection made through Pipedream Connect is the Pipedream account id on
+  `provider_ref`, the relay scheme `pipedream_connect_proxy` in `scheme`, and the vendor and host
+  set the proposal named; the row's `credential_ciphertext` is null for its whole life. What Graft
+  never holds is the vendor's token: Pipedream's proxy injects it per call, the Connect client
+  never asks for account credentials (`include_credentials` is set on no call), and what the relay
+  assembles per call is Graft's own Connect access token and the ids that name the account —
+  held for the call and cached only as the client's token cache. The person is keyed at Pipedream
+  by `graft-person-<personId>`, so a shared project cannot mix accounts across products or
+  persons. Pipedream's API does offer account deletion (`DELETE /v1/connect/{project}/accounts/{id}`),
+  and revoke calls it. **A failed release is a fact on the row, not a toast**: the revoke keeps
+  `provider_ref` until the provider has let go — the reference is what the retry releases by — and
+  stamps `provider_release_failed_at` when it has not, which the connection card shows with a
+  Retry that runs the same release; a success clears both. A revoked row whose release is still
+  outstanding is not reconnected in place by a later link, since overwriting its reference would
+  orphan the account at Pipedream; a new row is made beside it.
