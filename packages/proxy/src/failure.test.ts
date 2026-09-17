@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  causeCodeOf,
   deriveRefusal,
   describeFailure,
   guardHostDeps,
   HostDependencyError,
+  REFUSAL_HEADER,
   refusalBody,
   refuse,
   refuseIncomplete,
@@ -12,6 +14,7 @@ import {
   refuseResponseTooLarge,
   refuseResponseUnreadable,
   refuseUpstreamFailure,
+  VENDOR_UNREACHED_REASONS,
 } from "./failure";
 import { DerivedCredentialError, MissingSchemeParameterError } from "./schemes";
 import type { ProxyDeps } from "./types";
@@ -58,6 +61,65 @@ describe("refuse and refusalBody", () => {
     expect(refusalBody(409, "credential_incomplete", "m").error).toBe("conflict");
     expect(refusalBody(403, "host_not_in_set", "m").error).toBe("forbidden");
     expect(refusalBody(418, "proxy_error", "m").error).toBe("error");
+  });
+
+  it("adds code and host only for a refusal made for want of a vendor response (GRA-79)", () => {
+    expect(refusalBody(502, "upstream_unreachable", "m")).toEqual({
+      error: "bad_gateway",
+      reason: "upstream_unreachable",
+      message: "m",
+    });
+    expect(
+      refusalBody(502, "upstream_unreachable", "m", { host: "api.vendor.example", code: null }),
+    ).toEqual({
+      error: "bad_gateway",
+      reason: "upstream_unreachable",
+      message: "m",
+      code: null,
+      host: "api.vendor.example",
+    });
+  });
+});
+
+describe("causeCodeOf", () => {
+  it("answers the first string code down the chain — undici's is one link down", () => {
+    const dns = Object.assign(new Error("getaddrinfo ENOTFOUND api.vendor.example"), {
+      code: "ENOTFOUND",
+    });
+    expect(causeCodeOf(new TypeError("fetch failed", { cause: dns }))).toBe("ENOTFOUND");
+    expect(causeCodeOf(Object.assign(new Error("tls"), { code: "CERT_HAS_EXPIRED" }))).toBe(
+      "CERT_HAS_EXPIRED",
+    );
+    const outerWins = Object.assign(new Error("outer"), {
+      code: "OUTER",
+      cause: Object.assign(new Error("inner"), { code: "INNER" }),
+    });
+    expect(causeCodeOf(outerWins)).toBe("OUTER");
+  });
+
+  it("falls back to the innermost error's name, and is null for nothing or a bare value", () => {
+    expect(causeCodeOf(new TypeError("fetch failed", { cause: named("TimeoutError") }))).toBe(
+      "TimeoutError",
+    );
+    expect(
+      causeCodeOf(
+        new Error("fetch failed", {
+          cause: new PrivateAddressError("api.vendor.example", "10.0.0.1"),
+        }),
+      ),
+    ).toBe("PrivateAddressError");
+    expect(causeCodeOf(new Error("plain"))).toBe("Error");
+    expect(causeCodeOf(undefined)).toBeNull();
+    expect(causeCodeOf("boom")).toBeNull();
+    // A non-string or empty `code` is not a code.
+    expect(causeCodeOf(Object.assign(new Error("n"), { code: 42 }))).toBe("Error");
+    expect(causeCodeOf(Object.assign(new Error("n"), { code: "" }))).toBe("Error");
+  });
+
+  it("stops at the chain's cap, as the walker does", () => {
+    let deep: Error = Object.assign(new Error("0"), { code: "TOO_DEEP" });
+    for (let i = 1; i < 8; i++) deep = new Error(String(i), { cause: deep });
+    expect(causeCodeOf(deep)).toBe("Error");
   });
 });
 
@@ -281,34 +343,59 @@ describe("deriveRefusal", () => {
 });
 
 describe("refuseUpstreamFailure", () => {
+  const HOST = "api.vendor.example";
+
   it("names the resolver's refusal host_not_public, wherever it sits in the cause chain", () => {
     const wrapped = new Error("fetch failed", {
-      cause: new PrivateAddressError("api.vendor.example", "169.254.169.254"),
+      cause: new PrivateAddressError(HOST, "169.254.169.254"),
     });
-    expect(refuseUpstreamFailure(wrapped, 5)).toEqual({
+    expect(refuseUpstreamFailure(wrapped, 5, HOST)).toEqual({
       kind: "refused",
       status: 403,
       reason: "host_not_public",
       message: "The vendor host resolves to a private address",
       requestBytes: 5,
+      unreached: { host: HOST, code: "PrivateAddressError" },
     });
   });
 
   it("names the deadline upstream_timeout", () => {
-    expect(refuseUpstreamFailure(named("AbortError"), 5)).toMatchObject({
+    expect(refuseUpstreamFailure(named("AbortError"), 5, HOST)).toMatchObject({
       status: 504,
       reason: "upstream_timeout",
       message: "The vendor did not answer within the time limit",
+      unreached: { host: HOST, code: "AbortError" },
     });
   });
 
   it("names anything else unreachable and puts the error on the event", () => {
     const error = named("ECONNREFUSED");
-    expect(refuseUpstreamFailure(error, 5)).toMatchObject({
+    expect(refuseUpstreamFailure(error, 5, HOST)).toMatchObject({
       status: 502,
       reason: "upstream_unreachable",
       failure: error,
+      unreached: { host: HOST, code: "ECONNREFUSED" },
     });
+  });
+
+  /** The mark is the header; the three words it may carry are exactly the three made here. */
+  it("marks every refusal it makes as unreached, with the cause's code, under one of the three reasons", () => {
+    const dns = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" }),
+    });
+    const refused = refuseUpstreamFailure(dns, 0, HOST);
+    expect(refused.unreached).toEqual({ host: HOST, code: "ENOTFOUND" });
+    expect(VENDOR_UNREACHED_REASONS).toContain(refused.reason);
+    expect(REFUSAL_HEADER).toBe("x-graft-refusal");
+  });
+
+  it("is the only constructor that marks: a refusal made after the vendor answered carries no unreached", () => {
+    expect(
+      refuseResponseUnreadable(named("ECONNRESET"), { requestBytes: 1, upstreamStatus: 200 }),
+    ).not.toHaveProperty("unreached");
+    expect(refuseResponseTimeout({ requestBytes: 1, upstreamStatus: 200 })).not.toHaveProperty(
+      "unreached",
+    );
   });
 });
 

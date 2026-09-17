@@ -170,6 +170,15 @@ beforeAll(async () => {
           headers: { location: "https://customer.demo.example/v2/moved" },
         });
       }
+      // A vendor the proxy cannot reach (GRA-79): the fetch throws as undici's does when a name
+      // does not resolve, and the real proxy turns it into its marked 502.
+      if (url.pathname === "/v2/unreachable") {
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error("getaddrinfo ENOTFOUND api.demo.example"), {
+            code: "ENOTFOUND",
+          }),
+        });
+      }
       if (url.pathname === "/v2/secret-echo") {
         // The vendor quotes the key it refused — under a field name and in prose.
         return Response.json(
@@ -713,6 +722,142 @@ describe("a job that fails and tries again", () => {
       const { traces } = rowsOf(jobId);
       expect(traces.some((row) => row.kind === "publish")).toBe(false);
       expect(await a.names()).not.toContain(authoredToolName("demo", "list-stubborn"));
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /**
+   * The network's answer is not the vendor's (GRA-79): the job ends on the first proof read the
+   * proxy could not make, naming the host, the reason and the code, and the model is never shown
+   * the 502 as something to fix.
+   */
+  it("ends vendor_unreachable on a proof read the proxy got no response for, after one attempt and no second model turn", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-unreachable", path: "/unreachable", proofReads: ["/unreachable"] }),
+        "Reading /unreachable first.",
+      ),
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items of a vendor that is down",
+      });
+      expect(status.status).toBe("failed");
+      expect(status.attempts).toBe(1);
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("vendor_unreachable");
+      expect(failure.message).toBe(
+        "The proxy got no response from api.demo.example on GET /unreachable: upstream_unreachable [ENOTFOUND]. No change to the module can fix this; try again later, or check the connection's host.",
+      );
+      expect(failure.tried).toEqual([
+        {
+          attempt: 1,
+          outcome: "run_failed",
+          summary:
+            "The proxy got no response from api.demo.example on GET /unreachable: upstream_unreachable [ENOTFOUND].",
+          note: "Reading /unreachable first.",
+        },
+      ]);
+      expect(failure.lastDiagnostics).toMatchObject({
+        proofReads: [
+          {
+            path: "/unreachable",
+            ok: false,
+            status: 502,
+            reason: "upstream_unreachable",
+            error: expect.stringContaining("ENOTFOUND"),
+          },
+        ],
+      });
+      // The model saw the goal and nothing after it: no proof situation, no second draft.
+      expect(scripted.conversations[0]?.situations.map((s) => s.kind)).toEqual(["goal"]);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome, row.versionId])).toEqual([
+        [1, "run_failed", null],
+      ]);
+      expect(traces.some((row) => row.kind === "publish")).toBe(false);
+      const vendorError = traces.find((row) => row.kind === "vendor_error");
+      expect(vendorError?.data).toMatchObject({
+        path: "/unreachable",
+        status: 502,
+        reason: "upstream_unreachable",
+        code: "ENOTFOUND",
+        host: "api.demo.example",
+      });
+      expect(status.progress.at(-1)).toContain("Stopped: The proxy got no response from");
+      // The proxy's side of the same event: its 502, marked, and the sandbox never dialled anyone.
+      expect(vendor.events.at(-1)).toMatchObject({
+        outcome: "upstream_unreachable",
+        status: 502,
+        failure: expect.stringContaining("ENOTFOUND"),
+      });
+      expect(await a.names()).not.toContain(authoredToolName("demo", "list-unreachable"));
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("ends vendor_unreachable when the dry run's read gets no response, with the failed report on the version row", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-unreachable-dry", path: "/unreachable" }),
+        "Drafted around GET /unreachable.",
+      ),
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items of a vendor that is down, unproven",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("vendor_unreachable");
+      expect(failure.message).toContain("api.demo.example");
+      expect(failure.message).toContain("upstream_unreachable [ENOTFOUND]");
+      expect(failure.message).toContain("GET /unreachable");
+      expect(scripted.conversations[0]?.situations.map((s) => s.kind)).toEqual(["goal"]);
+
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({ attemptNumber: 1, outcome: "run_failed" });
+      expect(attempts[0]?.versionId).toEqual(expect.any(String));
+      expect(failure.tried[0]?.summary).toContain("api.demo.example");
+      expect(failure.tried[0]?.summary).toContain("[ENOTFOUND]");
+      // The version was published and dry-run; the report on its row carries the runner's record
+      // of the marked read, which is what the job read the ending from.
+      const version = store.versions.get(attempts[0]?.versionId ?? "");
+      expect(version?.dryRunOutcome).toMatchObject({
+        dryRun: true,
+        passed: false,
+        reads: [
+          {
+            method: "GET",
+            path: "/unreachable",
+            status: 502,
+            reason: "upstream_unreachable",
+            code: "ENOTFOUND",
+            host: "api.demo.example",
+          },
+        ],
+      });
+      expect(failure.lastDiagnostics).toMatchObject({
+        dryRun: { passed: false, reads: [{ reason: "upstream_unreachable" }] },
+      });
+      const vendorError = traces.find((row) => row.kind === "vendor_error");
+      expect(vendorError?.data).toMatchObject({
+        versionId: attempts[0]?.versionId,
+        read: { reason: "upstream_unreachable", code: "ENOTFOUND" },
+      });
+      // Published, never promoted: the tool is not in the agent's list.
+      expect(await a.names()).not.toContain(authoredToolName("demo", "list-unreachable-dry"));
     } finally {
       await a.close();
     }

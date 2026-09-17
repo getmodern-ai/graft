@@ -54,6 +54,16 @@ export function moduleEntryOf(names: readonly string[]): ModuleEntry | null {
 export const DRY_RUN_HEADER = "x-graft-dry-run";
 export const DRY_RUN_INTERCEPTED = "intercepted";
 
+/**
+ * The proxy's mark on a refusal made because no response came from the vendor (`REFUSAL_HEADER` in
+ * `@graft/proxy`'s `failure.ts`, GRA-79), carrying the refusal's reason. In a dry run the runner
+ * records a read bearing it with `reason`, and with the `code` and `host` the proxy's body names,
+ * beside `method`, `path` and `status`; a read without it is recorded as those three alone, so a
+ * report's shape is unchanged for every read the vendor answered. `acquire`'s probe module reads
+ * the same header off a proof read. Asserted equal to `runner.mjs`'s in `runner.test.ts`.
+ */
+export const REFUSAL_HEADER = "x-graft-refusal";
+
 /** What stdout carries in place of the result when `GRAFT_RESULT_PATH` sent it to a file. */
 export const RESULT_MARKER = "__GRAFT_RESULT__:";
 

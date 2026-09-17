@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { createProxyApp, DEFAULT_PROXY_OPTIONS, proxyPathFor } from "./app";
 import { CREDENTIAL_REDACTED, REDACTED_HEADER } from "./echo";
+import { REFUSAL_HEADER } from "./failure";
 import { MAX_REDIRECT_HOPS } from "./redirects";
 import { SNOWFLAKE_TOKEN_TYPE_HEADER, UNLEASHED_CLIENT_TYPE } from "./schemes";
 import type {
@@ -967,8 +968,29 @@ describe("private ranges are refused", () => {
     const res = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
 
     expect(res.status).toBe(403);
-    expect((await body(res)).reason).toBe("host_not_public");
+    expect(res.headers.get(REFUSAL_HEADER)).toBe("host_not_public");
+    expect(await body(res)).toEqual({
+      error: "forbidden",
+      reason: "host_not_public",
+      message: "The vendor host resolves to a private address",
+      code: "PrivateAddressError",
+      host: "api.vendor.example",
+    });
     expect(h.events[0]?.outcome).toBe("host_not_public");
+  });
+
+  /** The literal check refuses before any fetch: no vendor went unanswered, so no mark (GRA-79). */
+  it("does not mark the literal check's host_not_public: no vendor was asked", async () => {
+    const h = harness({}, { ...CONNECTION, hosts: ["api.vendor.example", "10.0.0.5"] });
+    const res = await h.app.request("/c/conn_1/h/10.0.0.5/admin", { headers: bearer(GOOD) });
+
+    expect(res.status).toBe(403);
+    expect(await body(res)).toEqual({
+      error: "forbidden",
+      reason: "host_not_public",
+      message: "The vendor host is not a public address",
+    });
+    expect(res.headers.get(REFUSAL_HEADER)).toBeNull();
   });
 });
 
@@ -1289,20 +1311,58 @@ describe("limits", () => {
     const res = await app.request("/c/conn_1/slow", { headers: bearer(GOOD) });
 
     expect(res.status).toBe(504);
-    expect((await body(res)).reason).toBe("upstream_timeout");
+    expect(res.headers.get(REFUSAL_HEADER)).toBe("upstream_timeout");
+    expect(await body(res)).toEqual({
+      error: "gateway_timeout",
+      reason: "upstream_timeout",
+      message: "The vendor did not answer within the time limit",
+      code: "TimeoutError",
+      host: "api.vendor.example",
+    });
     expect(h.events[0]?.outcome).toBe("upstream_timeout");
   });
 
-  it("answers 502 when the vendor cannot be reached", async () => {
+  it("answers 502 when the vendor cannot be reached, marked as the proxy's with the cause's code and the host", async () => {
     const h = harness();
     h.respond(() => {
-      throw new TypeError("fetch failed", { cause: new Error("ECONNREFUSED") });
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("connect ECONNREFUSED 203.0.113.9:443"), {
+          code: "ECONNREFUSED",
+        }),
+      });
     });
     const res = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
 
     expect(res.status).toBe(502);
-    expect((await body(res)).reason).toBe("upstream_unreachable");
+    expect(res.headers.get(REFUSAL_HEADER)).toBe("upstream_unreachable");
+    expect(await body(res)).toEqual({
+      error: "bad_gateway",
+      reason: "upstream_unreachable",
+      message: "The vendor could not be reached",
+      code: "ECONNREFUSED",
+      host: "api.vendor.example",
+    });
     expect(h.events[0]?.failure).toContain("ECONNREFUSED");
+  });
+
+  /** The vendor answered: its 5xx is its own, and so is a status the proxy could not hand back. */
+  it("marks neither a vendor's own 502 nor the proxy's refusal of an unusable status", async () => {
+    const h = harness();
+    h.respond(() => jsonResponse({ error: "upstream down" }, { status: 502 }));
+    const own = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+    expect(own.status).toBe(502);
+    expect(own.headers.get(REFUSAL_HEADER)).toBeNull();
+    expect(await own.json()).toEqual({ error: "upstream down" });
+
+    h.respond(() => ({ status: 999, statusText: "", headers: new Headers(), body: null }));
+    const unusable = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+    expect(unusable.status).toBe(502);
+    expect(unusable.headers.get(REFUSAL_HEADER)).toBeNull();
+    expect(await body(unusable)).toEqual({
+      error: "bad_gateway",
+      reason: "upstream_unreachable",
+      message: "The vendor answered an unusable status",
+    });
   });
 
   it("has the documented defaults", () => {

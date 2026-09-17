@@ -456,10 +456,15 @@ describe("the ladder relays a gateway connection through the fake gateway", () =
     const res = await h.app.request("/c/conn_g/orders", { headers: bearer(GOOD) });
 
     expect(res.status).toBe(502);
+    // Marked as the proxy's (GRA-79), naming the *vendor* host the caller asked for — the gateway's
+    // own name is the operator's and stays off the wire to the sandbox.
+    expect(res.headers.get("x-graft-refusal")).toBe("upstream_unreachable");
     expect(await res.json()).toEqual({
       error: "bad_gateway",
       reason: "upstream_unreachable",
       message: expect.any(String),
+      code: "ECONNREFUSED",
+      host: "api.vendor.example",
     });
     expect(h.events[0]).toMatchObject({ outcome: "upstream_unreachable", relay: "gateway" });
     expect(h.events[0]?.failure).toMatch(/ECONNREFUSED|fetch failed/);
