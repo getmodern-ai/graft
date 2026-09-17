@@ -127,8 +127,8 @@ catalogs:
       specifier: ^7
       version: 7.0.2
     undici:
-      specifier: ^7.29.0
-      version: 7.29.1
+      specifier: ^8.10.2
+      version: 8.10.2
     vite:
       specifier: ^8.2.2
       version: 8.2.2
@@ -607,7 +607,7 @@ importers:
         version: 4.13.7
       undici:
         specifier: 'catalog:'
-        version: 7.29.1
+        version: 8.10.2
     devDependencies:
       '@graft/config':
         specifier: workspace:*
@@ -700,7 +700,7 @@ importers:
         version: 4.13.7
       undici:
         specifier: 'catalog:'
-        version: 7.29.1
+        version: 8.10.2
     devDependencies:
       '@graft/config':
         specifier: workspace:*
@@ -4330,6 +4330,10 @@ packages:
     resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
     engines: {node: '>=20.18.1'}
 
+  undici@8.10.2:
+    resolution: {integrity: sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==}
+    engines: {node: '>=22.19.0'}
+
   unicorn-magic@0.3.0:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
     engines: {node: '>=18'}
@@ -7550,6 +7554,8 @@ snapshots:
   undici-types@7.18.2: {}
 
   undici@7.29.1: {}
+
+  undici@8.10.2: {}
 
   unicorn-magic@0.3.0: {}
 
