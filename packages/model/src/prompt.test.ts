@@ -10,6 +10,7 @@ const answered: ProofRead = {
   body: '{"items":[]}',
   error: null,
   redirectTo: null,
+  reason: null,
 };
 
 describe("renderProof", () => {
@@ -29,6 +30,7 @@ describe("renderProof", () => {
       error:
         "The vendor redirected GET /v1/forecast to customer-api.open-meteo.com, which this connection does not declare (it declares api.open-meteo.com).",
       redirectTo: "customer-api.open-meteo.com",
+      reason: null,
     };
     const text = renderProof(2, [redirected]);
     expect(text).toContain("### GET /v1/forecast → HTTP 303 (failed)");
@@ -49,6 +51,7 @@ describe("renderProof and the publish gate (GRA-72)", () => {
     body: '{"error":"not found"}',
     error: null,
     redirectTo: null,
+    reason: null,
   };
 
   it("offers proceed only when every read passed", () => {

@@ -96,11 +96,24 @@ export function forwardableRequestHeaders(inbound: Headers): Headers {
 }
 
 /**
+ * The response-header namespace that is the proxy's alone. Every `x-graft-*` header the caller
+ * reads off an answer — `x-graft-dry-run`, `x-graft-redacted`, `x-graft-refusal` — is a statement
+ * *by the proxy* about what it did, and the runner and the acquire job act on those statements
+ * (a dry-run preview, a job ended as `vendor_unreachable`). A vendor's response carrying one is
+ * therefore dropped before anything of the proxy's is set: a vendor may not speak in the proxy's
+ * voice, whether by accident or to end a job it would rather not be built against (GRA-79,
+ * Greptile on #59). The relays run through the same return path, so a gateway's or Pipedream's
+ * answer is held to it too. Family-wide by prefix, for the reason `STRIPPED_PREFIXES` gives.
+ */
+export const PROXY_RESPONSE_HEADER_PREFIX = "x-graft-";
+
+/**
  * The vendor's headers, handed back minus hop-by-hop and minus framing: the proxy buffers the
  * body, so `content-length` is re-derived from the bytes actually sent, and a `content-encoding`
  * the fetch already decoded must not be repeated — the caller would try to decode plain bytes.
- * Everything else — content type, rate-limit hints, request ids, `set-cookie`, `location` — is the
- * vendor's answer and passes through verbatim.
+ * Minus, too, anything in the proxy's own response namespace (`PROXY_RESPONSE_HEADER_PREFIX`) —
+ * the proxy sets its own after this. Everything else — content type, rate-limit hints, request
+ * ids, `set-cookie`, `location` — is the vendor's answer and passes through verbatim.
  */
 export function passthroughResponseHeaders(upstream: Headers): Headers {
   const headers = new Headers(upstream);
@@ -108,6 +121,10 @@ export function passthroughResponseHeaders(upstream: Headers): Headers {
   for (const name of HOP_BY_HOP) headers.delete(name);
   headers.delete("content-length");
   headers.delete("content-encoding");
+  // `Headers` lower-cases every name, so the prefix match is case-insensitive by construction.
+  for (const name of [...headers.keys()]) {
+    if (name.startsWith(PROXY_RESPONSE_HEADER_PREFIX)) headers.delete(name);
+  }
   return headers;
 }
 
