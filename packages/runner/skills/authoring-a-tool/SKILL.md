@@ -39,7 +39,8 @@ the re-entry variant against the existing connection.
 3. **Check it** with `check_tool`, against the input schema you will publish, and fix what it names
    until nothing is refused.
 4. **Prove it with reads** through the connection's execute tool, `execute__<connection id>`, until
-   a read returns what the docs said it would.
+   a read returns what the docs said it would. A draft whose proof read failed is not published:
+   change the module or the read and prove again.
 5. **Publish with a test input** — `publish_tool` with `testInput`. It runs the same check and
    refuses on the same list, installs any package the module declares if the package policy allows
    it, then **dry-runs** the version it just wrote: reads reach the vendor for real, every write
