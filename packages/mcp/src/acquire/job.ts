@@ -409,7 +409,6 @@ class AcquireLoop {
               await this.closeOpen(
                 "proof_failed",
                 this.setAside("the model answered proceed a second time"),
-                { diagnosis: answer.note },
               );
               throw this.end(
                 "model_failed",
