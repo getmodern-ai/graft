@@ -12,7 +12,6 @@ import {
   type LinkCallbackOutcome,
   linkCallbackRedirect,
   linkCallbackUri,
-  listConnections,
   orNotFound,
   type PendingActionDeps,
   type Principal,
@@ -270,15 +269,11 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
     }
 
     // Never the redirect's say-so: ask the provider what it now holds for this person that no
-    // connection of theirs already names.
-    const takenRefs = (await listConnections(ctx, principal, options.connection))
-      .filter((connection) => connection.provider === provider.name)
-      .flatMap(() => [] as string[]);
-    const rows = await options.connection.listConnections(ctx.db, personId);
-    for (const existing of rows) {
-      if (existing.provider === provider.name && existing.providerRef)
-        takenRefs.push(existing.providerRef);
-    }
+    // connection of theirs already names. The rows, not the public shape: the reference is the
+    // provider's and the public shape does not carry it.
+    const takenRefs = (await options.connection.listConnections(ctx.db, personId)).flatMap((row) =>
+      row.provider === provider.name && row.providerRef ? [row.providerRef] : [],
+    );
     let outcome: Awaited<ReturnType<typeof link.complete>>;
     try {
       outcome = await link.complete({
