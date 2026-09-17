@@ -415,10 +415,10 @@ export async function widenProviderConnectionHosts(
 
 /**
  * Reconnect a revoked connection that has no credential to re-enter — one a provider made with no
- * person step (ADR 0019, GRA-58). The keyring's way back is a credential re-entered
- * (`setConnectionCredential` clears the stamp with the ciphertext) and a link provider's is its own
- * flow, so this is the console's Reconnect for the third kind alone, and refuses the other two by
- * saying which way back is theirs. The approvals a revoke deleted stay deleted: every tool bound to
+ * person step (ADR 0019, GRA-58), or a keyring row on a scheme that takes no credential (`none`,
+ * GRA-66). The keyring's way back is otherwise a credential re-entered (`setConnectionCredential`
+ * clears the stamp with the ciphertext) and a link provider's is its own flow, so this refuses
+ * those two by saying which way back is theirs. The approvals a revoke deleted stay deleted: every tool bound to
  * the vendor asks again (ADR 0007), for this kind as for any. A row that is not revoked is answered
  * as it is, so a second click changes nothing.
  */
@@ -439,7 +439,8 @@ export async function reconnectConnection(
       `No connection provider named ${row.provider} is enabled on this deployment`,
     );
   }
-  if (provider.connect.kind !== "none") {
+  const keyless = provider.connect.kind === "form" && !takesCredential(row.scheme);
+  if (provider.connect.kind !== "none" && !keyless) {
     throw new ServiceError(
       "BAD_REQUEST",
       provider.connect.kind === "form"

@@ -1,4 +1,5 @@
 import type { ConnectionOutput, RevokeConnectionResult } from "@graft/core";
+import { takesCredential } from "@graft/core/connection/connection.rules";
 import { GATEWAY_PROVIDER } from "@graft/core/connection/gateway-provider";
 import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
 import type { AuthScheme } from "@graft/proxy/types";
@@ -94,7 +95,7 @@ export function toolsOfConnection(tools: readonly Tool[], connection: Connection
  * `none` connection never has one and is connected from registration (GRA-66).
  */
 export function isAwaitingCredential(connection: Connection): boolean {
-  return connection.credentialSetAt === null && connection.scheme !== "none";
+  return connection.credentialSetAt === null && takesCredential(connection.scheme);
 }
 
 /** A keyring connection's scheme is one the form enters a credential for — never a relay scheme (ADR 0019). */
@@ -152,7 +153,8 @@ export function connectionStatus(connection: Connection): ConnectionStatus {
   // provider, so a null `credentialSetAt` says nothing about it (ADR 0019). A provider with a state
   // of its own between the two — a link not yet followed — adds it with its card (GRA-59).
   if (!isKeyringConnection(connection)) return "connected";
-  if (connection.credentialSetAt === null) return "awaiting_credential";
+  // A `none` connection holds no credential and is connected from registration (GRA-66).
+  if (isAwaitingCredential(connection)) return "awaiting_credential";
   if (connection.oauth && connection.oauth.status !== "connected") return connection.oauth.status;
   return "connected";
 }

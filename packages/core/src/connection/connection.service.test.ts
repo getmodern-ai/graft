@@ -1504,6 +1504,16 @@ describe("a provider with no person step (ADR 0019, GRA-58)", () => {
       code: "BAD_REQUEST",
       message: /re-entering its credential/,
     });
+    // A keyring row on `none` has no credential to re-enter, so Reconnect is its way back (GRA-66).
+    const keylessRow = { ...row, scheme: "none" as const, revokedAt: NOW };
+    const keyless = fakeDeps({
+      providers,
+      findConnection: vi.fn(async () => keylessRow),
+      reconnectConnection: vi.fn(async () => ({ ...keylessRow, revokedAt: null })),
+    });
+    expect((await reconnectConnection(ctx, PRINCIPAL, "conn_1", keyless)).revokedAt).toBeNull();
+    expect(keyless.reconnectConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    expect(keyless.setConnectionCredential).not.toHaveBeenCalled();
     const link = linkProvider();
     const linked = fakeDeps({
       providers: [link, keyringProvider],
