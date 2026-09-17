@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { OpenInNewIcon, WarningIcon } from "@/components/icons";
 import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
+import { BuildApprovalItem } from "@/components/pending/build-approval-item";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,11 @@ import {
  * A failed or abandoned link leaves the ask open with the reason under the button, and Connect
  * tries again with a fresh link. Decline is the generic answer with no connection on it, which the
  * agent reads as a decline — as for the form's card (`connection-ask-card.tsx`).
+ *
+ * The card's one control is the build approval, on by default (GRA-75; ADR 0008, amendment of
+ * 2026-09-18), as on the form's card. It is posted with the button — the connection does not exist
+ * until the return — and the server signs it into the link's state, so the return records it with
+ * the connection it makes.
  */
 export function ProviderLinkAskCard({
   ask,
@@ -52,9 +58,11 @@ export function ProviderLinkAskCard({
   const queryClient = useQueryClient();
   const decline = useAnswerAsk(action, onAnswered);
   const [state, setState] = useState<LinkState>({ phase: "idle" });
+  const [approveBuild, setApproveBuild] = useState(true);
   const stop = useRef<AbortController | null>(null);
   const provider = payload.provider;
   const target = payload.providerTarget ?? null;
+  const agentName = action.agent?.name ?? "the agent";
 
   const settleAndRefresh = useCallback(
     (outcome: LinkOutcome, message: string, connectionId: string | null) => {
@@ -64,17 +72,17 @@ export function ProviderLinkAskCard({
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       if (outcome === "connected") {
         toast.success(`${payload.displayName} is connected through ${provider}`, {
-          description: `In ${action.agent?.name ?? "the agent"}'s scope; its waiting call answers connected. The account's token stays with ${provider}.`,
+          description: `In ${agentName}'s scope${approveBuild ? ", allowed to build tools against it" : ""}; its waiting call answers connected. The account's token stays with ${provider}.`,
         });
         onAnswered?.();
       }
       return connectionId;
     },
-    [queryClient, payload.displayName, provider, action.agent?.name, onAnswered],
+    [queryClient, payload.displayName, provider, agentName, approveBuild, onAnswered],
   );
 
   const start = useMutation({
-    mutationFn: () => startProviderLink(action.id),
+    mutationFn: () => startProviderLink(action.id, { approveBuild }),
     onSuccess: async ({ url }) => {
       const popup = openConsentPopup(url);
       if (!popup) {
@@ -177,12 +185,21 @@ export function ProviderLinkAskCard({
       </dl>
 
       {open ? (
-        <p className="text-muted-foreground text-xs">
-          One click. Connect opens {provider}'s sign-in for {payload.vendor} in a popup, and you
-          sign in at the vendor there. The account's token stays with {provider}; Graft stores only
-          the account's id and relays every call for this connection through {provider}. Nothing is
-          typed here, and nothing secret is stored in Graft.
-        </p>
+        <>
+          <p className="text-muted-foreground text-xs">
+            One click. Connect opens {provider}'s sign-in for {payload.vendor} in a popup, and you
+            sign in at the vendor there. The account's token stays with {provider}; Graft stores
+            only the account's id and relays every call for this connection through {provider}.
+            Nothing is typed here, and nothing secret is stored in Graft.
+          </p>
+          <BuildApprovalItem
+            id={`ask-${action.id}-approve-build`}
+            agentName={agentName}
+            checked={approveBuild}
+            onCheckedChange={setApproveBuild}
+            disabled={busy}
+          />
+        </>
       ) : null}
 
       <LinkStatus state={state} provider={provider} onCancel={cancel} />

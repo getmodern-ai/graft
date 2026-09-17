@@ -282,7 +282,7 @@ const acquire: MetaTool = {
       "Call acquire when find_tool found nothing that covers the task and the vendor has a connection in your scope. " +
       "Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into your working set. " +
       "Answers a jobId at once, before anything is built: poll acquire_status with it and relay progress. " +
-      "The first acquire against a connection may answer awaiting_approval with a url: give the person the link exactly as returned, wait, and call acquire again with the same arguments once they have answered. " +
+      "The first acquire against a connection may answer awaiting_approval with a url, unless the person allowed building when they confirmed the connection: give the person the link exactly as returned, wait, and call acquire again with the same arguments once they have answered. " +
       "Do not start a second acquire for the same goal while one runs.",
     inputSchema: {
       type: "object",
@@ -407,6 +407,7 @@ const requestConnectionTool: MetaTool = {
       "For oauth_authorization_code (Gmail, Slack user tokens, Notion) propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
       "On a deployment with a connection provider such as Pipedream, a vendor it covers (Gmail on Graft Cloud) needs no client and no secret: the awaiting answer names the provider, the person presses one button in the console and signs in at the vendor on the provider's page, and the vendor's token stays with the provider — say so instead of the client instructions. " +
       "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the url to relay: give them the link exactly as returned, say what it is for, wait, and call again with the same proposal once they say it is done; the same link comes back until they have, then connected. " +
+      "The page also offers to allow you to build tools against the connection, on by default: left on, acquire against it starts without a second link, so do not tell the person to expect one. " +
       "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list; a connection to the same vendor and host already in your scope answers connected at once. " +
       "A vendor this deployment's API gateway covers connects with no person step: the call answers connected at once with provider gateway, the gateway holds the credential and the scheme you proposed is not used.",
     inputSchema: {

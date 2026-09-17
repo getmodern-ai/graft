@@ -1,10 +1,12 @@
 import {
   type AgentDeps,
+  type ApprovalDeps,
   addConnectionToAgentScope,
   answerPendingAction,
   type ConnectionDeps,
   connectThroughProvider,
   getPendingActionForPerson,
+  grantBuildApproval,
   KEYRING_PROVIDER,
   LINK_OUTCOME_PARAM,
   LINK_STATE_PARAM,
@@ -48,11 +50,15 @@ import { Hono } from "hono";
  * app, minus every account a connection of theirs already names) and answered a reference. Then,
  * in one transaction: the row (`connectThroughProvider`, which reconnects a revoked row of the same
  * vendor in place), the requesting agent's scope, and the ask's answer `{ connectionId }` so the
- * waiting `request_connection` says connected — exactly what the form's submit records (GRA-28).
- * Every outcome is one redirect to the console's `/link/callback` route with the outcome in its
- * query (`link.rules.ts`), a status word, the ask, the connection when there is one and a sentence
- * — never the state, a token, or anything the provider answered. A failed or abandoned link leaves
- * the ask open with that sentence, so the person can press the button again.
+ * waiting `request_connection` says connected — exactly what the form's submit records (GRA-28) —
+ * and, when the person ticked it on the card before the popup opened, the asking agent's build
+ * approval for that connection (GRA-75; ADR 0008, amendment of 2026-09-18). That choice travels in
+ * the signed state: the card has no connection to name when it is made, and the return has no
+ * session to read a preference from. Every outcome is one redirect to the console's
+ * `/link/callback` route with the outcome in its query (`link.rules.ts`), a status word, the ask,
+ * the connection when there is one and a sentence — never the state, a token, or anything the
+ * provider answered. A failed or abandoned link leaves the ask open with that sentence, so the
+ * person can press the button again.
  *
  * Nothing here touches a credential: a link provider's connection holds none in Graft, and the
  * proxy relays every call for it to the provider's upstream. That is the property this route
@@ -64,6 +70,8 @@ export type ProviderLinkRouteOptions = {
   connection: ConnectionDeps;
   agent: AgentDeps;
   pendingAction: PendingActionDeps;
+  /** For the build approval the return records when the state says to (GRA-75). */
+  approval: ApprovalDeps;
   handoff: Pick<HandoffConfig, "consoleUrl" | "secret">;
   /** `GRAFT_AUTH_URL` — the return URI is `linkCallbackUri(authUrl)`, on the server's own origin. */
   authUrl: string;
@@ -118,16 +126,24 @@ function proposalOf(action: PendingActionRow): ConnectionProposalPayload {
   } as ConnectionProposalPayload;
 }
 
+/** What the person chose on the card before pressing the button (GRA-75). */
+export type ProviderLinkChoices = {
+  /** Record the asking agent's build approval with the connection the return makes. */
+  approveBuild?: boolean;
+};
+
 /**
  * Mint the link for a connection ask the person is looking at. The provider is the one the ask was
  * routed to — never one the body names — and it has to connect with a link; the keyring's asks are
- * the form's and are refused here with a sentence.
+ * the form's and are refused here with a sentence. The card's build choice is signed into the
+ * state, so the return route reads it from something the browser cannot alter.
  */
 export async function startProviderLink(
   ctx: ServiceContext,
   principal: Principal,
   pendingActionId: string,
   options: ProviderLinkRouteOptions,
+  choices: ProviderLinkChoices = {},
 ): Promise<StartedProviderLink> {
   const now = options.pendingAction.now();
   const action = openConnectionAsk(
@@ -158,6 +174,7 @@ export async function startProviderLink(
       provider: provider.name,
       expiresAt: expiresAt.getTime(),
       nonce: options.connection.newId(),
+      ...(choices.approveBuild ? { approveBuild: true } : {}),
     },
     options.handoff.secret,
   );
@@ -315,6 +332,16 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
           connection.id,
           options.agent,
         );
+        // The build approval the person ticked before the popup opened (GRA-75), for the asking
+        // agent and this connection, in the transaction that makes both — as the form's submit does.
+        if (verdict.payload.approveBuild) {
+          await grantBuildApproval(
+            scoped,
+            { personId, agentId: row.agentId },
+            connection.id,
+            options.approval,
+          );
+        }
         // The waiting `request_connection` takes `{ connectionId }` as the answer (GRA-28). An ask
         // answered, expired or closed meanwhile does not undo the connection — it is connected
         // either way — so those refusals are read and let go.
