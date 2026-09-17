@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConnectionCalls } from "@/components/connection/connection-calls";
@@ -6,10 +6,11 @@ import { ConsentStatus } from "@/components/connection/oauth-client-notice";
 import { ReenterCredentialDialog } from "@/components/connection/reenter-credential-dialog";
 import { RevokeConnectionDialog } from "@/components/connection/revoke-connection-dialog";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
-import { KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
+import { KeyboardArrowDownIcon, KeyboardArrowUpIcon, WarningIcon } from "@/components/icons";
 import { StatusChip } from "@/components/status-chip";
 import { Time } from "@/components/time";
 import { ToolAnnotations } from "@/components/tool-annotations";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +22,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { Tool } from "@/lib/agent-queries";
-import { type Connection, connectionStatus, isKeyringConnection } from "@/lib/connection-queries";
+import {
+  type Connection,
+  connectionKeys,
+  connectionStatus,
+  isKeyringConnection,
+  retryProviderRelease,
+} from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
 import { AWAITING_RECONNECTION_CHIP, connectionStatusChips } from "@/lib/status-chips";
 
@@ -62,9 +69,36 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
     onSuccess: ({ authorizeUrl }) => void consent.run(authorizeUrl, connection),
   });
   const consenting = reconsent.isPending || consent.running;
+  const queryClient = useQueryClient();
+  /**
+   * The provider's release failed on the revoke and the account is still at the provider
+   * (ADR 0019); the row says so until a retry succeeds, and this is that retry.
+   */
+  const release = useMutation({
+    mutationFn: () => retryProviderRelease(connection.id),
+    onSuccess: ({ providerRelease }) => {
+      queryClient.invalidateQueries({ queryKey: connectionKeys.all });
+      if (providerRelease.released) {
+        toast.success(`${providerRelease.provider} released ${connection.displayName}`, {
+          description:
+            "The account is gone at the provider; nothing about it is held anywhere now.",
+        });
+      } else {
+        toast.warning(`${providerRelease.provider} still did not release the connection`, {
+          description: "The provider could not be reached; the card keeps offering Retry.",
+        });
+      }
+    },
+  });
 
   const description = {
-    revoked: (
+    revoked: !keyring ? (
+      <>
+        Revoked <Time iso={connection.revokedAt ?? ""} />. The account at {connection.provider} is
+        forgotten and every approval with it; when an agent asks to connect {connection.vendor}{" "}
+        again, one click through {connection.provider} reconnects it.
+      </>
+    ) : (
       <>
         Revoked <Time iso={connection.revokedAt ?? ""} />. The credential is cleared and every
         approval with it;{" "}
@@ -94,8 +128,8 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
     ),
     connected: !keyring ? (
       <>
-        Connected through {connection.provider}. The credential is held there, never here; every
-        call relays through it.
+        Connected through {connection.provider}. The account's token is held there, never here;
+        Graft stores only the account's id, and every call relays through {connection.provider}.
       </>
     ) : connection.oauth ? (
       <>
@@ -169,6 +203,30 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       </CardHeader>
       <CardContent className="flex flex-col gap-4 text-sm">
         <ConsentStatus state={consent.state} onCancel={consent.cancel} />
+        {connection.providerReleaseFailedAt ? (
+          <Alert variant="destructive">
+            <WarningIcon />
+            <AlertTitle>{connection.provider} still holds this account</AlertTitle>
+            <AlertDescription>
+              <p>
+                Everything in Graft is revoked, but {connection.provider} could not be asked to
+                release the account when you revoked (
+                <Time iso={connection.providerReleaseFailedAt} />
+                ). Until it does, the account is still connected there.
+              </p>
+              <p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={release.isPending}
+                  onClick={() => release.mutate()}
+                >
+                  {release.isPending ? "Retrying…" : "Retry release"}
+                </Button>
+              </p>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]">
           <dt className="text-muted-foreground">Hosts</dt>
           <dd className="flex flex-wrap gap-1.5">

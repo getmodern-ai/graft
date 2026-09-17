@@ -14,6 +14,7 @@ import { Route as AuthRouteRouteImport } from './routes/_auth/route'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AuthShellRouteRouteImport } from './routes/_auth/_shell/route'
+import { Route as LinkCallbackRouteImport } from './routes/link.callback'
 import { Route as OauthCallbackRouteImport } from './routes/oauth.callback'
 import { Route as AuthShellConsentRouteImport } from './routes/_auth/_shell/consent'
 import { Route as AuthShellSettingsRouteImport } from './routes/_auth/_shell/settings'
@@ -45,6 +46,11 @@ const SignupRoute = SignupRouteImport.update({
 const AuthShellRouteRoute = AuthShellRouteRouteImport.update({
   id: '/_shell',
   getParentRoute: () => AuthRouteRoute,
+} as any)
+const LinkCallbackRoute = LinkCallbackRouteImport.update({
+  id: '/link/callback',
+  path: '/link/callback',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const OauthCallbackRoute = OauthCallbackRouteImport.update({
   id: '/oauth/callback',
@@ -92,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
   '/consent': typeof AuthShellConsentRoute
   '/settings': typeof AuthShellSettingsRoute
@@ -105,6 +112,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
+  '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
   '/consent': typeof AuthShellConsentRoute
   '/settings': typeof AuthShellSettingsRoute
@@ -121,6 +129,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/signup': typeof SignupRoute
   '/_auth/_shell': typeof AuthShellRouteRouteWithChildren
+  '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
   '/_auth/_shell/consent': typeof AuthShellConsentRoute
   '/_auth/_shell/settings': typeof AuthShellSettingsRoute
@@ -136,6 +145,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/link/callback'
     | '/oauth/callback'
     | '/consent'
     | '/settings'
@@ -149,6 +159,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/signup'
+    | '/link/callback'
     | '/oauth/callback'
     | '/consent'
     | '/settings'
@@ -164,6 +175,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/signup'
     | '/_auth/_shell'
+    | '/link/callback'
     | '/oauth/callback'
     | '/_auth/_shell/consent'
     | '/_auth/_shell/settings'
@@ -179,6 +191,7 @@ export interface RootRouteChildren {
   AuthRouteRoute: typeof AuthRouteRouteWithChildren
   LoginRoute: typeof LoginRoute
   SignupRoute: typeof SignupRoute
+  LinkCallbackRoute: typeof LinkCallbackRoute
   OauthCallbackRoute: typeof OauthCallbackRoute
 }
 
@@ -218,6 +231,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AuthShellRouteRouteImport
       parentRoute: typeof AuthRouteRoute
+    }
+    '/link/callback': {
+      id: '/link/callback'
+      path: '/link/callback'
+      fullPath: '/link/callback'
+      preLoaderRoute: typeof LinkCallbackRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/oauth/callback': {
       id: '/oauth/callback'
@@ -319,6 +339,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRouteRoute: AuthRouteRouteWithChildren,
   LoginRoute: LoginRoute,
   SignupRoute: SignupRoute,
+  LinkCallbackRoute: LinkCallbackRoute,
   OauthCallbackRoute: OauthCallbackRoute,
 }
 export const routeTree = rootRouteImport

@@ -173,7 +173,10 @@ export type ConsentAnnouncers = {
  * throws — swapped, or closed between the check and the post — does not stop the channel. The
  * window's parts arrive as arguments so the test runs without a DOM.
  */
-export function announceConsent(message: OAuthCallbackMessage, via: ConsentAnnouncers): void {
+export function announceConsent(
+  message: OAuthCallbackMessage | { type: string },
+  via: ConsentAnnouncers,
+): void {
   try {
     if (via.opener && !via.opener.closed) via.opener.postMessage(message, via.origin);
   } catch {
