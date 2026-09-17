@@ -17,7 +17,9 @@
  *    by relative path, extension included, and the packages vendored beside it.
  *  - stdin is the JSON input. Empty stdin is `{}`.
  *  - stdout receives exactly the JSON result and nothing else; exit code 0.
- *  - A thrown error puts its message and the tail of its stack on stderr; exit code 1.
+ *  - A thrown error puts its message and the tail of its stack on stderr, then each `cause` in its
+ *    chain on a line of its own — undici's `fetch failed` keeps the host and the errno there and
+ *    nowhere in the stack; exit code 1.
  *  - A timeout — `GRAFT_TIMEOUT_MS`, default sixty seconds — is a distinct message on stderr; exit
  *    code 2. Distinct so the caller can tell "the module is slow" from "the module is wrong".
  *  - Anything wrong with the invocation itself (no path, unparseable stdin) is exit code 64.
@@ -31,7 +33,10 @@
  *    path and adds `Authorization: Bearer ${GRAFT_TOKEN}`. Both halves of the binding are refused
  *    rather than bent: an absolute URL, so the token cannot be sent to any host but the proxy; a path
  *    that walks out of `/c/<connection>/`, so it cannot be sent for any connection but the one this
- *    run was minted for.
+ *    run was minted for. It never follows a redirect (`redirect: "manual"`): a vendor 3xx the proxy
+ *    hands back reaches the module as that status with its `Location`. The proxy does not follow
+ *    redirects (CONTEXT.md, *Proxy*), and a sandbox can reach nothing but the proxy, so following
+ *    one here could only dial a host the egress refuses and die as an opaque `fetch failed` (GRA-64).
  *  - `ctx.proxyBase(host?)` is the base URL an SDK is pointed at: `${GRAFT_PROXY_URL}/c/${connection}`
  *    for the connection's primary host, `…/c/${connection}/h/${host}` for another host the connection
  *    declares (ADR 0010). The proxy pins the request to the connection's host set; this only builds
@@ -206,8 +211,35 @@ function fail(code, message) {
 }
 
 function describe(error) {
-  if (error instanceof Error) return error.stack || `${error.name}: ${error.message}`;
-  return String(error);
+  if (!(error instanceof Error)) return String(error);
+  const lines = [error.stack || `${error.name}: ${error.message}`];
+  // The chain, bounded: `fetch failed` is all undici's TypeError says, and the host it could not
+  // reach is in `cause`. Last, so `fail`'s tail keeps it.
+  let cause = error.cause;
+  for (
+    let depth = 0;
+    cause !== undefined && cause !== null && depth < MAX_CAUSE_DEPTH;
+    depth += 1
+  ) {
+    lines.push(`  caused by: ${describeCause(cause)}`);
+    cause = cause instanceof Error ? cause.cause : undefined;
+  }
+  return lines.join("\n");
+}
+
+const MAX_CAUSE_DEPTH = 5;
+
+function describeCause(cause) {
+  if (cause instanceof Error) {
+    const code = typeof cause.code === "string" ? ` [${cause.code}]` : "";
+    return `${cause.name}${code}: ${cause.message}`;
+  }
+  if (typeof cause === "string") return cause;
+  try {
+    return JSON.stringify(cause);
+  } catch {
+    return String(cause);
+  }
 }
 
 /** The file to import: the path itself when it is a file, else the first entry the directory holds. */
@@ -293,8 +325,11 @@ function boundFetch(path, init = {}) {
 
   const headers = new Headers(init.headers);
   if (token) headers.set("authorization", `Bearer ${token}`);
-  if (!dryRun) return fetch(url, { ...init, headers });
-  return dryRunFetch(url, { ...init, headers }, { method, path: target, headers, init });
+  // Never follow: the proxy returned the vendor's 3xx unfollowed on purpose, and the only host this
+  // sandbox can reach is the proxy — see the header.
+  const request = { ...init, headers, redirect: "manual" };
+  if (!dryRun) return fetch(url, request);
+  return dryRunFetch(url, request, { method, path: target, headers, init });
 }
 
 /**
@@ -424,7 +459,8 @@ async function main() {
 
 /**
  * The dry-run report — the header's contract, built once the module has settled. `passed` is decided
- * on what was verified: every read answered below `400`, every write request reached the proxy's
+ * on what was verified: every read answered with a 2xx — a 3xx is the vendor pointing elsewhere,
+ * not an answer, and `ctx.fetch` does not follow it — every write request reached the proxy's
  * preview, and the module did not fail *before* it got there — a throw with no write intercepted is
  * the module failing on its own, while a throw after one is the unverified half doing what it must
  * with a preview for a response. The module's result rides inside as `moduleResult`, parsed back from
@@ -432,7 +468,7 @@ async function main() {
  */
 function dryRunReport(resultJson, moduleError) {
   const { reads, writesPreviewed, writesRefused, omitted } = dryRunRecord;
-  const readsVerified = reads.every((read) => read.status < 400);
+  const readsVerified = reads.every((read) => read.status < 300);
   const writeRequestsVerified = writesRefused.length === 0;
   const failedBeforeAnyWrite = moduleError !== undefined && writesPreviewed.length === 0;
   const passed = readsVerified && writeRequestsVerified && !failedBeforeAnyWrite;
