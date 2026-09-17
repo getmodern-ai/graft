@@ -1095,6 +1095,90 @@ describe("the connection handoff's submits (GRA-28)", () => {
     expect(deps.pendingAction.answerPendingAction).not.toHaveBeenCalled();
   });
 
+  /** The fakes answer the fixture row's id whatever they were given; the row just inserted is what the route reads back. */
+  const answerTheRowJustInserted = (deps: ReturnType<typeof harness>["deps"]) => {
+    vi.mocked(deps.connection.findConnection).mockImplementation(async (_db, _p, id) => ({
+      ...connectionRow,
+      id,
+    }));
+    vi.mocked(deps.connection.setConnectionCredential).mockImplementation(
+      async (_db, _p, id, args) => ({
+        ...connectionRow,
+        id,
+        credentialCiphertext: args.ciphertext,
+        credentialSetAt: args.setAt,
+      }),
+    );
+  };
+
+  /**
+   * GRA-75 (ADR 0008, amendment of 2026-09-18): the confirmation may record `acquire`'s build
+   * approval for the asking agent, in the transaction that makes the connection.
+   */
+  it("records the asking agent's build approval with the new connection when approveBuild is on, and answers it", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce(
+      connectionAction,
+    );
+    answerTheRowJustInserted(deps);
+    const res = await app.request(
+      "/api/pending-actions/pa_c/connection",
+      json({ ...submission, approveBuild: true }),
+    );
+    expect(res.status).toBe(201);
+    expect(await res.json()).toHaveProperty("buildApproval");
+    // The asking agent and the connection just made — never another agent, never the person's.
+    expect(deps.approval.insertBuildApproval).toHaveBeenCalledWith(fakeDb, {
+      agentId: "agent_1",
+      connectionId: "conn_new",
+      grantedAt: NOW,
+    });
+    expect(deps.pendingAction.answerPendingAction).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "pa_c",
+      {
+        answer: { connectionId: "conn_new" },
+        answeredAt: NOW,
+      },
+    );
+  });
+
+  it("records no build approval when approveBuild is off or absent", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const find = vi.mocked(deps.pendingAction.findPendingActionForPerson);
+    answerTheRowJustInserted(deps);
+    for (const body of [submission, { ...submission, approveBuild: false }]) {
+      find.mockResolvedValueOnce(connectionAction);
+      const res = await app.request("/api/pending-actions/pa_c/connection", json(body));
+      expect(res.status).toBe(201);
+      expect(await res.json()).not.toHaveProperty("buildApproval");
+    }
+    expect(deps.approval.insertBuildApproval).not.toHaveBeenCalled();
+    expect(deps.pendingAction.answerPendingAction).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * The grant runs inside the submit's transaction, before the answer. The fake `transaction` here
+   * runs its body and cannot roll anything back — that is Postgres's — so what this proves is the
+   * order: a grant that fails ends the request before the answer is recorded, and the agent's
+   * waiting call is not told "connected" about a connection the database will not keep.
+   */
+  it("a build approval that cannot be written fails the submit before the answer is recorded", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce(
+      connectionAction,
+    );
+    answerTheRowJustInserted(deps);
+    vi.mocked(deps.approval.insertBuildApproval).mockRejectedValueOnce(new Error("no room"));
+    const res = await app.request(
+      "/api/pending-actions/pa_c/connection",
+      json({ ...submission, approveBuild: true }),
+    );
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(deps.pendingAction.answerPendingAction).not.toHaveBeenCalled();
+  });
+
   it("needs a session on both submits", async () => {
     const { app } = harness(null);
     for (const path of [

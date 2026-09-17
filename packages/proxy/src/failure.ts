@@ -41,7 +41,66 @@ export type Refused = {
   requestBytes?: number;
   /** The error behind the refusal, for `describeFailure`; never a body. */
   failure?: unknown;
+  /**
+   * Set when the refusal is made because no response came from the vendor — the fetch threw, the
+   * deadline passed, the name resolved privately (GRA-79). Marks the answer with `REFUSAL_HEADER`
+   * and puts `host` and `code` on the body, so a caller can tell the proxy's answer from a
+   * vendor's own and say what stood in the way. Never set when the vendor did answer.
+   */
+  unreached?: VendorUnreached;
 };
+
+/**
+ * The response header that marks a refusal made for want of a vendor response, carrying the
+ * refusal's `reason` as its value. The runner reads it off a dry-run read (`REFUSAL_HEADER` in
+ * `@graft/runner`'s `runner-source.ts`, asserted equal there) and `acquire`'s probe reads it off a
+ * proof read; absent it, a 5xx is the vendor's to reason about.
+ */
+export const REFUSAL_HEADER = "x-graft-refusal";
+
+/**
+ * The reasons a refusal can carry under `REFUSAL_HEADER`: the three `refuseUpstreamFailure`
+ * makes. `upstream_unreachable` is also the word for an unusable status and an unreadable body,
+ * but those came *after* a response and are not marked — the header, not the word, is the mark.
+ */
+export const VENDOR_UNREACHED_REASONS = [
+  "upstream_unreachable",
+  "upstream_timeout",
+  "host_not_public",
+] as const satisfies readonly ProxyOutcome[];
+export type VendorUnreachedReason = (typeof VENDOR_UNREACHED_REASONS)[number];
+
+export function isVendorUnreachedReason(
+  reason: string | null | undefined,
+): reason is VendorUnreachedReason {
+  return (VENDOR_UNREACHED_REASONS as readonly string[]).includes(reason ?? "");
+}
+
+/** What a refusal made for want of a vendor response says of the attempt: the host, and the cause's code. */
+export type VendorUnreached = {
+  /** The vendor host the call resolved to — the caller's, never a relay upstream's. */
+  host: string;
+  /** `causeCodeOf` the error: an errno, a TLS code, the error's name; null when there was no error. */
+  code: string | null;
+};
+
+/**
+ * The one word a network failure has for itself: the first string `code` down the cause chain
+ * (`ENOTFOUND`, `ECONNREFUSED`, `CERT_HAS_EXPIRED` — undici's `fetch failed` carries it one link
+ * down), else the innermost `Error`'s `name` (`TimeoutError`, `PrivateAddressError`), else null.
+ * Reads `code`, `name` and `cause` and nothing else, for the same reason `cause-chain.ts` does.
+ */
+export function causeCodeOf(error: unknown): string | null {
+  const { links } = causeChain(error);
+  for (const link of links) {
+    if (typeof link === "object" && link !== null && "code" in link) {
+      const code = (link as { code?: unknown }).code;
+      if (typeof code === "string" && code.length > 0) return code;
+    }
+  }
+  const innermost = [...links].reverse().find((link) => link instanceof Error);
+  return innermost instanceof Error && innermost.name ? innermost.name : null;
+}
 
 /** What a refusal may carry beyond its three words. */
 export type RefusalDetail = Omit<Refused, "kind" | "status" | "reason" | "message">;
@@ -80,9 +139,23 @@ const ERROR_WORDS: Record<number, string> = {
   504: "gateway_timeout",
 };
 
-/** The body every refusal answers — `reason` is the wide event's word, so both readers read one. */
-export function refusalBody(status: number, reason: ProxyOutcome, message: string) {
-  return { error: ERROR_WORDS[status] ?? "error", reason, message };
+/**
+ * The body every refusal answers — `reason` is the wide event's word, so both readers read one. A
+ * refusal made for want of a vendor response adds `code` and `host` (GRA-79); every other body
+ * has the three words and no more.
+ */
+export function refusalBody(
+  status: number,
+  reason: ProxyOutcome,
+  message: string,
+  unreached?: VendorUnreached,
+) {
+  return {
+    error: ERROR_WORDS[status] ?? "error",
+    reason,
+    message,
+    ...(unreached ? { code: unreached.code, host: unreached.host } : {}),
+  };
 }
 
 /**
@@ -246,22 +319,28 @@ export function deriveRefusal(error: unknown, requestBytes: number): Refused {
  * The vendor fetch threw. The resolver's own refusal is `host_not_public` — the name passed the
  * literal check and then resolved somewhere a credential must not go (`upstream.ts`); the call's
  * deadline is `upstream_timeout`; anything else is the vendor unreachable, with the failure on the
- * event so the operator can see which.
+ * event so the operator can see which. All three are marked `unreached` with the host and the
+ * cause's code (GRA-79): no response came from the vendor, and a caller that would otherwise read
+ * a 502 as the vendor's — `acquire`'s model, fixing code — is told it was the network's.
  */
-export function refuseUpstreamFailure(error: unknown, requestBytes: number): Refused {
+export function refuseUpstreamFailure(error: unknown, requestBytes: number, host: string): Refused {
+  const unreached: VendorUnreached = { host, code: causeCodeOf(error) };
   if (isPrivateAddressFailure(error)) {
     return refuse(403, "host_not_public", "The vendor host resolves to a private address", {
       requestBytes,
+      unreached,
     });
   }
   if (isTimeoutFailure(error)) {
     return refuse(504, "upstream_timeout", "The vendor did not answer within the time limit", {
       requestBytes,
+      unreached,
     });
   }
   return refuse(502, "upstream_unreachable", "The vendor could not be reached", {
     requestBytes,
     failure: error,
+    unreached,
   });
 }
 

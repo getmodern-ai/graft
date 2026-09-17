@@ -32,6 +32,14 @@ export {
 export { DRY_RUN_HEADER, DRY_RUN_PREVIEW_STATUS, isSafeMethod } from "./dry-run";
 export { CREDENTIAL_REDACTED, REDACTED_CREDENTIAL, REDACTED_HEADER } from "./echo";
 export {
+  causeCodeOf,
+  isVendorUnreachedReason,
+  REFUSAL_HEADER,
+  VENDOR_UNREACHED_REASONS,
+  type VendorUnreached,
+  type VendorUnreachedReason,
+} from "./failure";
+export {
   GATEWAY_PREFIX_PASS_THROUGH,
   GATEWAY_RELAY_FIELDS,
   GATEWAY_RELAY_RULES,

@@ -94,7 +94,7 @@ const findTool: MetaTool = {
     name: FIND_TOOL,
     description:
       "Call find_tool first, before acquire, whenever a task has no tool in your list. " +
-      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description. " +
+      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description; a tool no version of which has passed its dry run is not listed. " +
       "Each hit carries vendor and name (what promote, demote and run_tool take), its inputSchema (what run_tool's input must match), whether it is in your working set, and its read-only and destructive hints. " +
       "A hit that is not promoted is one promote call from your list. When the answer is empty, call request_connection if the vendor has no connection in your scope (an execute__<connectionId> tool in your list names each one), otherwise acquire.",
     inputSchema: {
@@ -121,7 +121,10 @@ const findTool: MetaTool = {
     // Case-insensitive substring over the three fields, in toolbox order. Ranking — by how recently
     // an agent used the tool, by how many agents hold it — belongs here and reads the ledger and the
     // working-set records (ADR 0009, ADR 0012); the alpha has too few tools per toolbox to need it.
+    // A tool with no current version is what an acquire job that never passed its dry run leaves
+    // (GRA-77): nothing runnable, so nothing to find — its versions and reports stay for the console.
     const hits: FoundTool[] = tools
+      .filter((tool) => tool.currentVersionId !== null)
       .filter((tool) =>
         [tool.vendor, tool.name, authoredToolName(tool.vendor, tool.name), tool.description].some(
           (field) => field.toLowerCase().includes(query),
@@ -167,6 +170,14 @@ const promote: MetaTool = {
     const { ctx, principal, scope, deps, notifier } = session;
     const tool = await getToolByName(ctx, principal, key, deps.tool);
     if (!tool) return toolNotFound(key);
+    // The same refusal a run gives (`../run.ts`): a tool no version of which passed its dry run is
+    // not promotable, since the list entry would name nothing that runs (GRA-77).
+    if (!tool.currentVersionId) {
+      return toolRefusal(
+        "tool_has_no_version",
+        `${authoredToolName(tool.vendor, tool.name)} has no version that passed its dry run, so there is nothing to promote. acquire authors one.`,
+      );
+    }
     const change = await promoteTool(ctx, scope, tool.id, "agent", deps.workingSet);
     if (change.changed) notifier.changed(scope.agentId);
     return toolResult({
@@ -287,7 +298,7 @@ const acquire: MetaTool = {
       "Call acquire when find_tool found nothing that covers the task and the vendor has a connection in your scope. " +
       "Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into your working set. " +
       "Answers a jobId at once, before anything is built: poll acquire_status with it and relay progress. " +
-      "The first acquire against a connection may answer awaiting_approval with a url: give the person the link exactly as returned, wait, and call acquire again with the same arguments once they have answered. " +
+      "The first acquire against a connection may answer awaiting_approval with a url, unless the person allowed building when they confirmed the connection: give the person the link exactly as returned, wait, and call acquire again with the same arguments once they have answered. " +
       "Do not start a second acquire for the same goal while one runs.",
     inputSchema: {
       type: "object",
@@ -412,6 +423,7 @@ const requestConnectionTool: MetaTool = {
       "For oauth_authorization_code (Gmail, Slack user tokens, Notion) propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
       "On a deployment with a connection provider such as Pipedream, a vendor it covers (Gmail on Graft Cloud) needs no client and no secret: the awaiting answer names the provider, the person presses one button in the console and signs in at the vendor on the provider's page, and the vendor's token stays with the provider — say so instead of the client instructions. " +
       "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the url to relay: give them the link exactly as returned, say what it is for, wait, and call again with the same proposal once they say it is done; the same link comes back until they have, then connected. " +
+      "The page also offers to allow you to build tools against the connection, on by default: left on, acquire against it starts without a second link, so do not tell the person to expect one. " +
       "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list; a connection to the same vendor and host already in your scope answers connected at once. " +
       "A vendor this deployment's API gateway covers connects with no person step: the call answers connected at once with provider gateway, the gateway holds the credential and the scheme you proposed is not used.",
     inputSchema: {

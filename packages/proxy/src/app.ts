@@ -27,6 +27,7 @@ import {
 import {
   describeFailure,
   guardHostDeps,
+  REFUSAL_HEADER,
   type Refused,
   refusalBody,
   refuse,
@@ -96,6 +97,18 @@ import { createUpstreamFetch, isTimeoutFailure } from "./upstream";
  * event carries, so the agent's code and the operator read the same category. The token itself is
  * never echoed, and what a host-injected dependency throws reaches the event as a class name,
  * never a message (`guardHostDeps` in `failure.ts`).
+ *
+ * Three response headers are the proxy's own. `x-graft-dry-run` marks a dry-run answer
+ * (`dry-run.ts`); `x-graft-redacted` says a credential the vendor echoed was replaced by value
+ * (`echo.ts`); `x-graft-refusal` marks a refusal made because **no response came from the vendor**
+ * — the fetch threw, the deadline passed, the name resolved privately — with the refusal's `reason`
+ * as its value, and the body then carries `code` (the cause's errno or name) and `host` beside the
+ * three words (`failure.ts`, GRA-79). A vendor's own 5xx passes through with none of these, so a
+ * caller can tell the network's answer from the vendor's and stop trying to fix code against it.
+ * **The `x-graft-` response namespace is the proxy's alone**: any header a vendor sends under it is
+ * dropped with the hop-by-hop set before the proxy sets its own (`passthroughResponseHeaders` in
+ * `headers.ts`), so a vendor cannot mark its answer as a dry-run preview or as a refusal the proxy
+ * never made. The relays return through the same path and are held to the same rule.
  */
 
 export const DEFAULT_PROXY_OPTIONS: ProxyOptions = {
@@ -282,7 +295,13 @@ async function proxyCall(
       failure: describeFailure(result.failure),
     };
     deps.log(event);
-    return c.json(refusalBody(result.status, result.reason, result.message), result.status);
+    // The mark for "no response came from the vendor" (GRA-79) rides as a header and two body
+    // fields; a refusal made after the vendor answered — or before it was asked — carries neither.
+    return c.json(
+      refusalBody(result.status, result.reason, result.message, result.unreached),
+      result.status,
+      result.unreached ? { [REFUSAL_HEADER]: result.reason } : undefined,
+    );
   }
 
   if (result.kind === "intercepted") {
@@ -738,7 +757,9 @@ async function sendHop(
       { signal },
     );
   } catch (error) {
-    return refuseUpstreamFailure(error, requestBytes);
+    // The vendor host, not the wire target: a relayed call's `target` is the upstream's URL, and
+    // what the caller is told is the host it asked for.
+    return refuseUpstreamFailure(error, requestBytes, hop.url.hostname);
   }
   if (response.status < 200 || response.status > 599) {
     await discard(response);
