@@ -22,7 +22,7 @@ import { META_TOOLS } from "./tools/meta";
  * voice; every fixed tool's description opens with when to call it and says what to do with a
  * handoff where it can return one; and the sentences the instructions share with the Hermes skill
  * (`skills/hermes-graft/SKILL.md`) are present in both, so the two cannot disagree on the order of
- * operations, the approval rule, the secrets rule or `run_tool`.
+ * operations, the approval rule, the secrets rule, `run_tool` or where its input schema is read.
  */
 
 const TOKEN = "grft_session_test_token_0000000000000000000000";
@@ -144,6 +144,7 @@ describe("SERVER_INSTRUCTIONS", () => {
       "exactly as returned",
       "then wait",
       "run_tool { vendor, name, input }",
+      "inputSchema for run_tool",
       "notifications/tools/list_changed",
       "vendor__name",
       "the authoring tools (read_web_page, write_file, check_tool, publish_tool) or an execute__ tool",
@@ -263,6 +264,7 @@ const SHARED = [
   // A snapshotted list.
   "some clients snapshot the tool list per conversation",
   "run_tool { vendor, name, input } calls it by name",
+  "the acquire result and find_tool carry the tool's inputSchema for run_tool",
   "tools/list_changed",
   // The approval rule (ADR 0008 as amended).
   "a read-only tool never asks",
