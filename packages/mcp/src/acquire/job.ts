@@ -268,15 +268,15 @@ class AcquireLoop {
         this.deps.acquireJob,
       );
     } catch (error) {
-      const failure =
+      const ended =
         error instanceof JobEnded
           ? error.result
           : this.failure("job_failed", `The job failed: ${errorMessage(error)}`, {
               error: errorMessage(error),
             });
-      await this.closeOpen(this.openOutcome(), this.setAside(failure.message), {
-        diagnosis: failure.message,
-      }).catch(() => undefined);
+      await this.closeOpen(this.openOutcome(), this.setAside(ended.message)).catch(() => undefined);
+      // The attempt closed just now belongs in `tried` too; the result was built at the throw.
+      const failure: AcquireFailure = { ...ended, tried: [...this.tried] };
       await this.trace("result", `Failed (${failure.failure}): ${failure.message}`, {
         data: { ...failure },
       }).catch(() => undefined);
@@ -385,7 +385,6 @@ class AcquireLoop {
           await this.closeOpen(
             this.openOutcome(),
             this.setAside(`the model gave up: ${answer.reason}`),
-            { diagnosis: answer.reason },
           );
           throw this.end("model_gave_up", `The model gave up: ${answer.reason}`, {
             reason: answer.reason,
@@ -493,9 +492,7 @@ class AcquireLoop {
     this.turns += 1;
     const budget = turnBudgetFor(this.config.maxAttempts);
     if (this.turns > budget) {
-      await this.closeOpen(this.openOutcome(), this.setAside("the turn budget ran out"), {
-        diagnosis: "The turn budget ran out.",
-      });
+      await this.closeOpen(this.openOutcome(), this.setAside("the turn budget ran out"));
       throw this.end(
         "turn_budget",
         `The model was asked ${budget} times without the loop ending; the last diagnostics are in lastDiagnostics.`,
@@ -508,7 +505,7 @@ class AcquireLoop {
       reply = await conversation.turn(situation);
     } catch (error) {
       const failed = `the model failed: ${errorMessage(error)}`;
-      await this.closeOpen(this.openOutcome(), this.setAside(failed), { diagnosis: failed });
+      await this.closeOpen(this.openOutcome(), this.setAside(failed));
       throw this.end(
         "model_failed",
         `The model failed to answer ${situation.kind}: ${errorMessage(error)}`,
@@ -551,9 +548,7 @@ class AcquireLoop {
       },
     });
     if (this.tokensSpent > this.config.tokenCeiling) {
-      await this.closeOpen(this.openOutcome(), this.setAside("the token ceiling was reached"), {
-        diagnosis: "The token ceiling was reached.",
-      });
+      await this.closeOpen(this.openOutcome(), this.setAside("the token ceiling was reached"));
       throw this.end(
         "token_ceiling",
         `The token ceiling of ${this.config.tokenCeiling} was reached after ${this.tokensSpent} tokens; the last diagnostics are in lastDiagnostics.`,
@@ -969,14 +964,14 @@ class AcquireLoop {
 
   /**
    * Close the open attempt, if any, and add it to what was tried. `summary` is how the attempt
-   * ended in the loop's words and is what `tried` carries (GRA-70); `diagnosis` is written to the
-   * row only when the loop, not the model's draft, is what closed it — a give-up reason, a bound —
-   * so the row otherwise keeps the note the draft opened with.
+   * ended in the loop's words and is what `tried` carries (GRA-70). The row's `diagnosis` is never
+   * rewritten here: it is the note the draft opened with, which is what a resumed job reads back as
+   * the attempt's `note`; how the attempt ended is in the summary, the trace and the job's result.
    */
   private async closeOpen(
     outcome: Exclude<AcquireAttemptOutcome, "running">,
     summary: string,
-    extra: { diagnosis?: string; checkOutput?: Record<string, unknown>; versionId?: string } = {},
+    extra: { checkOutput?: Record<string, unknown>; versionId?: string } = {},
   ): Promise<void> {
     const attempt = this.open;
     if (!attempt) return;
@@ -991,7 +986,6 @@ class AcquireLoop {
         redaction: this.redaction,
         ...(extra.checkOutput === undefined ? {} : { checkOutput: extra.checkOutput }),
         ...(extra.versionId === undefined ? {} : { versionId: extra.versionId }),
-        ...(extra.diagnosis === undefined ? {} : { diagnosis: extra.diagnosis }),
       },
       this.deps.acquireJob,
     );
@@ -1014,11 +1008,12 @@ class AcquireLoop {
     const stopped = "The process running this attempt stopped; the job resumed from the goal.";
     for (const row of attempts) {
       if (row.outcome === "running") {
+        // The row keeps the dead process's note; the stop is the summary's to tell.
         await finishAcquireAttempt(
           this.ctx,
           this.scope,
           row.id,
-          { outcome: "abandoned", diagnosis: stopped },
+          { outcome: "abandoned" },
           this.deps.acquireJob,
         );
         this.tried.push({
