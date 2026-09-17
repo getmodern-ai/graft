@@ -9,6 +9,10 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
 2. Read the ADRs under `docs/adr/` that touch the area you are about to work in. They are the
    decisions; this file only points at them.
 3. Read `docs/roadmap.md` for what is in scope now and what is deliberately later.
+4. Read the pull request body of any ticket you build on; `docs/reports/README.md` indexes them by
+   ticket. The body is the build record — the contracts later tickets were told to match, what was
+   verified by hand and what was not, the deviations and their reasons — and is where the thing a
+   later ticket trips over is written down. An ADR records a decision; Linear holds the ticket.
 
 ## Working agreement
 
