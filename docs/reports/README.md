@@ -83,3 +83,4 @@ first in the outcome.
 | [GRA-54](https://linear.app/get-modern/issue/GRA-54) | [#32](https://github.com/getmodern-ai/graft/pull/32) | 2026-09-15 | the handshake carries the playbook; instructions and descriptions stand in for the skill |
 | [GRA-55](https://linear.app/get-modern/issue/GRA-55) | [#34](https://github.com/getmodern-ai/graft/pull/34) | 2026-09-15 | an elicitation the client cancels falls back to the handoff link |
 | [GRA-81](https://linear.app/get-modern/issue/GRA-81) | [#58](https://github.com/getmodern-ai/graft/pull/58) | 2026-09-17 | sign in with Google or GitHub, through Cando's one door; ADR 0020 |
+| [GRA-82](https://linear.app/get-modern/issue/GRA-82) | [#60](https://github.com/getmodern-ai/graft/pull/60) | 2026-09-18 | forgot password: Cando's email transport and the reset flow, Loops when a key is set; ADR 0021 |

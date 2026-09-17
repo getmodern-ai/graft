@@ -19,10 +19,10 @@ the door is where a person first meets it, from a handoff URL more often than fr
 (ADR 0006); it is Cando's door, less what Graft does not have. `/signup` stays as a redirect so
 every link written while there were two doors arrives at the one.
 
-Two things Cando's door has are left out, each waiting on something rather than declined:
-*Forgot password?* needs a mail transport, and nothing here sends mail yet
-(`packages/auth/src/index.ts` says why verification is off); the invitation's locked address needs
-an organisation, which is a column awaiting a UI (ADR 0007). The name a password sign-up gets is
+One thing Cando's door has is left out, waiting on something rather than declined: the
+invitation's locked address needs an organisation, which is a column awaiting a UI (ADR 0007).
+*Forgot password?* was left out with it for want of a mail transport and arrived with one
+(ADR 0021, GRA-82). The name a password sign-up gets is
 the address's local part, as in Cando — which asks for the real one in onboarding before anything
 shows it. Graft has no such step, so the account menu shows the placeholder until a settings row
 exists; a provider sign-in carries the provider's name and needs none.
