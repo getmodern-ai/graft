@@ -28,6 +28,7 @@ import {
   orNotFound,
   type PendingActionDeps,
   type Principal,
+  reconnectConnection,
   registerConnection,
   registerConnectionWithCredential,
   requirePerson,
@@ -51,7 +52,6 @@ import {
 import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
-import { connectionScheme } from "@graft/db/schema/connection";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
@@ -65,6 +65,7 @@ import {
   verifyHandoff,
 } from "@graft/mcp";
 import { executeToolName } from "@graft/mcp/tool-names";
+import { AUTH_SCHEMES } from "@graft/proxy";
 import { useLogger } from "evlog/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -214,7 +215,8 @@ const registrationBody = z.object({
   provider: z.string().optional(),
   vendor: z.string(),
   displayName: z.string(),
-  scheme: z.enum(connectionScheme),
+  /** A signing scheme: a relay scheme is a provider's to write, never the form's (ADR 0019). */
+  scheme: z.enum(AUTH_SCHEMES),
   schemeConfig: z.record(z.string(), z.unknown()).optional(),
   primaryHost: z.string(),
   hosts: z.array(z.string()).optional(),
@@ -815,6 +817,17 @@ export function createApi(options: ApiOptions): Hono {
     );
     useLogger().set({ providerRelease: { connectionId, ...result.providerRelease } });
     return c.json(result);
+  });
+
+  /**
+   * Reconnect a revoked connection that holds no credential to re-enter — a provider's with no
+   * person step, the gateway's (ADR 0019, GRA-58). The keyring's way back stays the credential
+   * re-entry above; the service refuses the other kinds, naming theirs.
+   */
+  api.post("/connections/:id/reconnect", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const connection = await reconnectConnection(ctx, principal, c.req.param("id"), connectionDeps);
+    return c.json({ connection });
   });
 
   /**

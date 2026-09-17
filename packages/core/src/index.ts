@@ -107,9 +107,12 @@ export {
   type ProviderRelease,
   type RegisterConnectionInput,
   type RegisterConnectionWithCredentialInput,
+  type RegisterProviderConnectionInput,
   type RevokeConnectionResult,
+  reconnectConnection,
   registerConnection,
   registerConnectionWithCredential,
+  registerProviderConnection,
   retryProviderRelease,
   revokeConnection,
   type StartedOAuthConsent,
@@ -119,7 +122,15 @@ export {
   storeRefreshedCredential,
   toConnectionOutput,
   toProxyConnection,
+  widenProviderConnectionHosts,
 } from "./connection/connection.service";
+export {
+  createGatewayProvider,
+  GATEWAY_PROVIDER,
+  type GatewayProviderConfig,
+  gatewayCovers,
+  gatewayCoversHost,
+} from "./connection/gateway-provider";
 export {
   LINK_CALLBACK_MESSAGE_TYPE,
   LINK_CALLBACK_PATH,
@@ -136,6 +147,7 @@ export {
   linkCallbackUri,
   readLinkCallbackSearch,
 } from "./connection/link.rules";
+
 export {
   LINK_STATE_TTL_MS,
   type LinkStatePayload,

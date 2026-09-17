@@ -21,13 +21,17 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { Tool } from "@/lib/agent-queries";
+import { agentKeys, type Tool } from "@/lib/agent-queries";
 import {
   type Connection,
   connectionKeys,
   connectionStatus,
+  isGatewayConnection,
   isKeyringConnection,
+  providerLabel,
+  reconnectConnection,
   retryProviderRelease,
+  toolKeys,
 } from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
 import { AWAITING_RECONNECTION_CHIP, connectionStatusChips } from "@/lib/status-chips";
@@ -45,7 +49,12 @@ import { AWAITING_RECONNECTION_CHIP, connectionStatusChips } from "@/lib/status-
  *
  * A connection from another provider (ADR 0019) wears the provider's name and says its credential
  * is held there; the credential buttons are the keyring's alone, since there is nothing here to
- * enter. With the keyring alone, nothing on this card changed for providers.
+ * enter. A connection through the person's API gateway (GRA-58) was made with no person step, and
+ * its one button beyond Revoke is Reconnect on a revoked row — nothing to enter, the stamp cleared,
+ * the approvals still gone. A connection through a link provider (GRA-59) comes back through the
+ * provider's own link; when its release failed on a revoke, the card says the account is still at
+ * the provider and offers Retry release. With the keyring alone, nothing on this card changed for
+ * providers.
  *
  * A card rather than a table row, because each connection carries a status, a host list, a tool
  * list, two actions and a table of its own — more than a row can hold. The anatomy is Cando's
@@ -58,9 +67,11 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
   const [showCalls, setShowCalls] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [reentering, setReentering] = useState(false);
+  const queryClient = useQueryClient();
   const status = connectionStatus(connection);
   const usable = status === "connected";
   const keyring = isKeyringConnection(connection);
+  const gateway = isGatewayConnection(connection);
   const consent = useOAuthConsent({
     onConnected: () => toast.success(`${connection.displayName} is connected`),
   });
@@ -69,7 +80,18 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
     onSuccess: ({ authorizeUrl }) => void consent.run(authorizeUrl, connection),
   });
   const consenting = reconsent.isPending || consent.running;
-  const queryClient = useQueryClient();
+  const reconnect = useMutation({
+    mutationFn: () => reconnectConnection(connection.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: connectionKeys.all });
+      queryClient.invalidateQueries({ queryKey: toolKeys.all });
+      queryClient.invalidateQueries({ queryKey: agentKeys.all });
+      toast.success(`${connection.displayName} is reconnected`, {
+        description:
+          "Every call relays through your API gateway again. The approvals the revoke removed stay removed; each tool asks again.",
+      });
+    },
+  });
   /**
    * The provider's release failed on the revoke and the account is still at the provider
    * (ADR 0019); the row says so until a retry succeeds, and this is that retry.
@@ -92,7 +114,13 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
   });
 
   const description = {
-    revoked: !keyring ? (
+    revoked: gateway ? (
+      <>
+        Revoked <Time iso={connection.revokedAt ?? ""} />. Every approval is cleared with it and no
+        call relays through your API gateway until you reconnect it; nothing was stored here to
+        clear.
+      </>
+    ) : !keyring ? (
       <>
         Revoked <Time iso={connection.revokedAt ?? ""} />. The account at {connection.provider} is
         forgotten and every approval with it; when an agent asks to connect {connection.vendor}{" "}
@@ -126,7 +154,12 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         ; consent again to keep the tools working.
       </>
     ),
-    connected: !keyring ? (
+    connected: gateway ? (
+      <>
+        Connected through your API gateway with no person step: it holds the vendor credential and
+        receives every call, and nothing is entered or stored here.
+      </>
+    ) : !keyring ? (
       <>
         Connected through {connection.provider}. The account's token is held there, never here;
         Graft stores only the account's id, and every call relays through {connection.provider}.
@@ -176,7 +209,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         <CardTitle className="flex flex-wrap items-center gap-2">
           {connection.displayName}
           <Badge variant="outline">{connection.vendor}</Badge>
-          {keyring ? null : <Badge variant="outline">via {connection.provider}</Badge>}
+          {keyring ? null : <Badge variant="outline">{providerLabel(connection)}</Badge>}
           <Badge variant="outline">{connection.scheme}</Badge>
           {connectionStatusChips(connection, status).map((chip) => (
             <StatusChip key={chip.label} chip={chip} />
@@ -192,6 +225,11 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
               onClick={primary.onClick}
             >
               {consenting ? "Waiting for the consent…" : primary.label}
+            </Button>
+          ) : null}
+          {gateway && status === "revoked" ? (
+            <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate()}>
+              {reconnect.isPending ? "Reconnecting…" : "Reconnect"}
             </Button>
           ) : null}
           {status === "revoked" ? null : (

@@ -2,7 +2,9 @@ import {
   type AgentDeps,
   type ApprovalDeps,
   type ConnectionDeps,
+  createGatewayProvider,
   DEFAULT_PROVIDERS,
+  keyringProvider,
   type LedgerDeps,
   type PendingActionDeps,
   type ToolDeps,
@@ -196,6 +198,8 @@ function connectionDeps(): ConnectionDeps {
         : { providerReleaseFailedAt: outcome.at }),
     })),
     revokeConnection: vi.fn(async () => ({ ...connectionRow, revokedAt: NOW })),
+    reconnectConnection: vi.fn(async () => ({ ...connectionRow, revokedAt: null })),
+    addConnectionHosts: vi.fn(async (_db, _p, _id, hosts) => ({ ...connectionRow, hosts })),
     deleteApprovalsForVendor: vi.fn(async () => []),
     deleteBuildApprovalsForConnection: vi.fn(async () => []),
     expirePendingActionsForConnection: vi.fn(async () => []),
@@ -760,6 +764,63 @@ describe("connections", () => {
       buildApprovalsDeleted: 0,
       pendingActionsExpired: 0,
     });
+  });
+
+  /** The way back for a revoked gateway row (ADR 0019, GRA-58); a keyring row's stays the credential re-entry. */
+  it("reconnects a revoked gateway connection, and refuses a keyring one by naming its way back", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const gateway = createGatewayProvider({
+      hosts: ["api.demo.example"],
+      upstreamUrl: "https://gateway.corp.example",
+      headerName: "X-Deployment-Token",
+      headerValue: "deployment-identity-secret-value",
+    });
+    deps.connection.providers = [gateway, keyringProvider];
+    const gatewayRow: ConnectionRow = {
+      ...connectionRow,
+      id: "conn_g",
+      provider: "gateway",
+      scheme: "gateway",
+      schemeConfig: {},
+      revokedAt: NOW,
+    };
+    vi.mocked(deps.connection.findConnection).mockResolvedValue(gatewayRow);
+    vi.mocked(deps.connection.reconnectConnection).mockResolvedValue({
+      ...gatewayRow,
+      revokedAt: null,
+    });
+    const res = await app.request("/api/connections/conn_g/reconnect", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      connection: { id: "conn_g", provider: "gateway", revokedAt: null, credentialSetAt: null },
+    });
+    expect(deps.connection.reconnectConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_g");
+
+    vi.mocked(deps.connection.findConnection).mockResolvedValue({
+      ...connectionRow,
+      revokedAt: NOW,
+    });
+    const keyring = await app.request("/api/connections/conn_1/reconnect", { method: "POST" });
+    expect(keyring.status).toBe(400);
+    expect(await keyring.json()).toMatchObject({
+      error: "BAD_REQUEST",
+      message: expect.stringContaining("re-entering its credential"),
+    });
+  });
+
+  it("refuses to register a connection under a relay scheme — that is a provider's to write", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request(
+      "/api/connections",
+      json({
+        vendor: "demo",
+        displayName: "Demo",
+        scheme: "gateway",
+        primaryHost: "https://api.demo.example",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(deps.connection.insertConnection).not.toHaveBeenCalled();
   });
 });
 

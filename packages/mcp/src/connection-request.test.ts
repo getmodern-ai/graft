@@ -6,6 +6,7 @@ import {
   answerPendingAction,
   type ConnectionProvider,
   connectThroughProvider,
+  createGatewayProvider,
   keyringProvider,
   registerConnectionWithCredential,
   revokeConnection,
@@ -18,7 +19,7 @@ import { sandboxPath } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   CONNECTION_ASK_KIND,
@@ -87,7 +88,8 @@ beforeAll(async () => {
     connections: [],
     resolve: async (id) => {
       const row = store.connections.get(id);
-      return row ? toProxyConnection(row) : null;
+      // Through the deployment's providers, so a gateway row made mid-test relays (ADR 0019).
+      return row ? toProxyConnection(row, deps.connection.providers) : null;
     },
   });
   sandbox = createFakeSandboxBackend();
@@ -445,6 +447,7 @@ describe("request_connection through a harness", () => {
       expect(second.isError).toBeFalsy();
       expect(body(second)).toEqual({
         status: "connected",
+        provider: "keyring",
         connectionId: connection.id,
         executeTool: executeToolName(connection.id),
         message: expect.stringContaining("Connected"),
@@ -631,6 +634,7 @@ describe("request_credential through a harness", () => {
       expect(second.isError).toBeFalsy();
       expect(body(second)).toMatchObject({
         status: "connected",
+        provider: "keyring",
         connectionId: connection.id,
         executeTool: executeToolName(connection.id),
       });
@@ -824,12 +828,6 @@ describe("request_connection routes a proposal to the provider that covers it", 
     }),
     revoke: async () => undefined,
   };
-  const gateway: ConnectionProvider = {
-    ...broker,
-    name: "gateway",
-    connect: { kind: "none" },
-    covers: (vendor) => vendor === "acme",
-  };
 
   afterEach(() => {
     deps.connection = { ...deps.connection, providers: [keyringProvider] };
@@ -946,24 +944,6 @@ describe("request_connection routes a proposal to the provider that covers it", 
     }
   });
 
-  it("refuses a proposal a no-step provider covers, naming the provider, and records no ask", async () => {
-    deps.connection = { ...deps.connection, providers: [gateway, keyringProvider] };
-    const a = await connect(TOKEN_B);
-    try {
-      const asks = actionsOf(AGENT_B, CONNECTION_ASK_KIND).length;
-      const said = await a.call("request_connection", PROPOSAL);
-      expect(said.isError).toBe(true);
-      expect(body(said)).toMatchObject({
-        reason: "provider_not_supported",
-        provider: "gateway",
-        connect: "none",
-      });
-      expect(actionsOf(AGENT_B, CONNECTION_ASK_KIND)).toHaveLength(asks);
-    } finally {
-      await a.close();
-    }
-  });
-
   it("refuses a proposal naming a relay scheme — a provider's, never the agent's to propose", async () => {
     const a = await connect(TOKEN_B);
     try {
@@ -1003,6 +983,244 @@ describe("request_connection routes a proposal to the provider that covers it", 
       await a.close();
       store.connections.delete(row.id);
       store.agentConnections.get(AGENT_B)?.delete(row.id);
+    }
+  });
+});
+
+/**
+ * The gateway provider's connect (ADR 0019, GRA-58): a vendor the deployment's API gateway covers
+ * connects with no person step — the row made, the agent's scope grown, `connected` answered, no ask
+ * — and an execute call then relays through the gateway with the identity header and the vendor URL
+ * in the path. The two refusals that keep the person's decisions theirs, and the fall-through to the
+ * keyring for a vendor the gateway does not cover, are here too. The fake vendor's injected fetch
+ * records what left the proxy, so the gateway is never actually reached in this suite; the relay's
+ * own wire is `@graft/proxy`'s `gateway-relay.test.ts`.
+ */
+describe("request_connection through the gateway provider (GRA-58)", () => {
+  const GATEWAY_URL = "https://gateway.corp.example/graft";
+  const IDENTITY = "deployment-identity-secret-value";
+  const gateway = createGatewayProvider({
+    hosts: ["api.unleashed.example", "files.unleashed.example"],
+    upstreamUrl: GATEWAY_URL,
+    headerName: "X-Deployment-Token",
+    headerValue: IDENTITY,
+  });
+  const COVERED = {
+    vendor: "unleashed",
+    displayName: "Acme Unleashed",
+    primaryHost: "https://api.unleashed.example",
+    hosts: ["files.unleashed.example"],
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "api-auth-id" },
+    docsUrl: "https://apidocs.unleashed.example/",
+  };
+  const made: string[] = [];
+
+  beforeEach(() => {
+    deps.connection = { ...deps.connection, providers: [gateway, keyringProvider] };
+  });
+
+  afterEach(() => {
+    deps.connection = { ...deps.connection, providers: [keyringProvider] };
+    for (const id of made) {
+      store.connections.delete(id);
+      for (const scope of store.agentConnections.values()) scope.delete(id);
+    }
+    made.length = 0;
+  });
+
+  const rowsFor = (vendor: string) =>
+    [...store.connections.values()].filter((row) => row.vendor === vendor);
+
+  it("connects a covered vendor with no person step — the row under the gateway with no credential, in this agent's scope alone, no ask — and relays the execute call through the gateway", async () => {
+    const a = await connect(TOKEN_A);
+    const b = await connect(TOKEN_B);
+    try {
+      const asksBefore = store.pendingActions.size;
+      const said = await a.call("request_connection", COVERED);
+      expect(said.isError, JSON.stringify(body(said))).toBeFalsy();
+      const answer = body(said);
+      expect(answer).toMatchObject({
+        status: "connected",
+        provider: "gateway",
+        connectionId: expect.any(String),
+        message: expect.stringContaining("no person step"),
+      });
+      const id = answer.connectionId as string;
+      made.push(id);
+      expect(store.pendingActions.size).toBe(asksBefore);
+
+      const row = store.connections.get(id);
+      expect(row).toMatchObject({
+        provider: "gateway",
+        providerRef: null,
+        scheme: "gateway",
+        schemeConfig: {},
+        vendor: "unleashed",
+        displayName: "Acme Unleashed",
+        primaryHost: "https://api.unleashed.example",
+        hosts: ["api.unleashed.example", "files.unleashed.example"],
+        credentialCiphertext: null,
+        credentialSetAt: null,
+        revokedAt: null,
+      });
+      expect(store.agentConnections.get(AGENT_A)?.has(id)).toBe(true);
+      expect(store.agentConnections.get(AGENT_B)?.has(id)).toBe(false);
+      await until(() => a.listChanged() > 0);
+      expect(await a.toolNames()).toContain(executeToolName(id));
+      expect(await b.toolNames()).not.toContain(executeToolName(id));
+
+      // The execute call reaches the proxy, which relays: the gateway's URL with the vendor URL in
+      // the path, the identity header attached, the capability token nowhere.
+      store.grantBuild(AGENT_A, id);
+      const run = await a.call(executeToolName(id), { command: RUN_LIST_ITEMS });
+      expect(run.isError, JSON.stringify(body(run))).toBeFalsy();
+      expect(JSON.parse(String(body(run).output))).toEqual(VENDOR_BODY);
+      const request = vendor.requests.at(-1);
+      expect(request?.url).toBe(`${GATEWAY_URL}/api.unleashed.example/items`);
+      expect(request?.headers.get("x-deployment-token")).toBe(IDENTITY);
+      expect(request?.headers.get("authorization")).toBeNull();
+      expect(vendor.events.at(-1)).toMatchObject({
+        outcome: "forwarded",
+        relay: "gateway",
+        host: "api.unleashed.example",
+        path: "/items",
+        connectionId: id,
+      });
+
+      // Asked again, the same agent finds it in scope and asks nobody.
+      const again = body(await a.call("request_connection", COVERED));
+      expect(again).toMatchObject({ status: "connected", connectionId: id, provider: "gateway" });
+      expect(again.message).toContain("already connected");
+      expect(rowsFor("unleashed")).toHaveLength(1);
+
+      // A later proposal naming one more covered host widens the same row rather than answering
+      // with one that cannot reach it (Greptile on #45); one the gateway does not cover is the
+      // keyring's, as ever, and the row is untouched.
+      deps.connection = {
+        ...deps.connection,
+        providers: [
+          createGatewayProvider({
+            hosts: ["api.unleashed.example", "files.unleashed.example", "cdn.unleashed.example"],
+            upstreamUrl: GATEWAY_URL,
+            headerName: "X-Deployment-Token",
+            headerValue: IDENTITY,
+          }),
+          keyringProvider,
+        ],
+      };
+      // A session opened before the providers changed reads the list it was opened with; a fresh one
+      // sees the wider coverage, as a harness reconnecting after a redeploy would.
+      const c = await connect(TOKEN_A);
+      const wider = body(
+        await c.call("request_connection", {
+          ...COVERED,
+          hosts: ["files.unleashed.example", "CDN.unleashed.example"],
+        }),
+      );
+      await c.close();
+      expect(wider).toMatchObject({ status: "connected", connectionId: id, provider: "gateway" });
+      expect(wider.message).toContain("now also reaches");
+      expect(store.connections.get(id)?.hosts).toEqual([
+        "api.unleashed.example",
+        "files.unleashed.example",
+        "cdn.unleashed.example",
+      ]);
+      expect(rowsFor("unleashed")).toHaveLength(1);
+      expect(store.pendingActions.size).toBe(asksBefore);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  }, 60_000);
+
+  it("refuses to grow another agent's scope by itself, and to undo a revoke: both name the console step", async () => {
+    const a = await connect(TOKEN_A);
+    const b = await connect(TOKEN_B);
+    try {
+      const id = body(await a.call("request_connection", COVERED)).connectionId as string;
+      made.push(id);
+
+      // Agent B: the person has not given it this connection; the scope picker is theirs.
+      const other = await b.call("request_connection", COVERED);
+      expect(other.isError).toBe(true);
+      expect(body(other)).toMatchObject({
+        reason: "connection_not_in_scope",
+        connectionId: id,
+        provider: "gateway",
+        message: expect.stringContaining("under Scope"),
+      });
+      expect(store.agentConnections.get(AGENT_B)?.has(id)).toBe(false);
+      expect(rowsFor("unleashed")).toHaveLength(1);
+
+      // The person revokes it; the agent that had it cannot connect it back.
+      await revokeConnection(ctx(), principal, id, deps.connection);
+      const revoked = await a.call("request_connection", COVERED);
+      expect(revoked.isError).toBe(true);
+      expect(body(revoked)).toMatchObject({
+        reason: "connection_revoked",
+        connectionId: id,
+        message: expect.stringContaining("Reconnect"),
+      });
+      expect(rowsFor("unleashed")).toHaveLength(1);
+      expect(store.connections.get(id)?.revokedAt).not.toBeNull();
+      // And the proxy resolves the revoked row to nothing it can relay through.
+      expect(
+        toProxyConnection(store.connections.get(id) as never, deps.connection.providers).relay,
+      ).toBeUndefined();
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  }, 60_000);
+
+  it("a vendor the gateway does not cover — or covers only in part — takes the keyring's form, as ever", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const uncovered = body(
+        await a.call("request_connection", {
+          ...COVERED,
+          vendor: "zeta",
+          primaryHost: "https://api.zeta.example",
+          hosts: [],
+        }),
+      );
+      expect(uncovered).toMatchObject({ error: "awaiting_connection" });
+      expect(store.pendingActions.get(uncovered.pendingActionId as string)?.payload).toMatchObject({
+        provider: "keyring",
+        vendor: "zeta",
+      });
+
+      // One host outside the gateway's routes and the whole proposal is the keyring's.
+      const partly = body(
+        await a.call("request_connection", {
+          ...COVERED,
+          hosts: ["files.unleashed.example", "cdn.other.example"],
+        }),
+      );
+      expect(partly).toMatchObject({ error: "awaiting_connection" });
+      expect(store.pendingActions.get(partly.pendingActionId as string)?.payload).toMatchObject({
+        provider: "keyring",
+        vendor: "unleashed",
+      });
+      expect(rowsFor("unleashed")).toHaveLength(0);
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("a relay scheme is never one an agent may propose", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const said = await a.call("request_connection", { ...COVERED, scheme: "gateway" });
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({
+        reason: "input_invalid",
+        message: expect.stringContaining("Unknown scheme"),
+      });
+      expect(rowsFor("unleashed")).toHaveLength(0);
+    } finally {
+      await a.close();
     }
   });
 });

@@ -15,6 +15,7 @@ import { agentKeys } from "@/lib/agent-queries";
 import {
   type Connection,
   connectionKeys,
+  isKeyringConnection,
   revokeConnection,
   toolKeys,
 } from "@/lib/connection-queries";
@@ -39,6 +40,8 @@ export function RevokeConnectionDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  // A relay provider's row holds no credential here to clear (ADR 0019); the copy says what is.
+  const keyring = isKeyringConnection(connection);
   const revoke = useMutation({
     mutationFn: () => revokeConnection(connection.id),
     onSuccess: (result) => {
@@ -46,7 +49,7 @@ export function RevokeConnectionDialog({
       queryClient.invalidateQueries({ queryKey: toolKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       toast.success(`${connection.displayName} is revoked`, {
-        description: `Credential cleared; ${count(result.approvalsDeleted, "tool approval")}, ${count(
+        description: `${keyring ? "Credential cleared; " : ""}${count(result.approvalsDeleted, "tool approval")}, ${count(
           result.buildApprovalsDeleted,
           "build approval",
         )} and ${count(result.pendingActionsExpired, "open ask")} removed. Its tools stay and ask again after reconnection.`,
@@ -74,9 +77,10 @@ export function RevokeConnectionDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Revoke {connection.displayName}?</AlertDialogTitle>
           <AlertDialogDescription>
-            The credential is cleared, every agent loses its approvals for {connection.vendor} tools
-            at once, and any open ask about this connection is closed. The tools themselves stay in
-            the toolbox and ask again once a credential is re-entered.
+            {keyring ? "The credential is cleared, every agent loses" : "Every agent loses"} its
+            approvals for {connection.vendor} tools at once, and any open ask about this connection
+            is closed. The tools themselves stay in the toolbox and ask again once it is reconnected
+            {keyring ? " with a credential re-entered" : ""}.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

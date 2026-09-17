@@ -9,11 +9,12 @@ import { bytea, owned } from "./columns";
  * (ADR 0010). Stored as the plugin's name, never as signing code: the agent proposes a scheme and
  * its parameters, and the proxy owns what each scheme *does*. A relay scheme (ADR 0019) belongs
  * here too: a connection whose provider relays records the relay it goes through as its scheme, so
- * the column says how the request leaves for every row — `pipedream_connect_proxy` is the first
- * (GRA-59). This list and the proxy's `[...AUTH_SCHEMES, ...RELAY_SCHEMES]` are asserted equal in
- * `packages/core`, which depends on both; a scheme added to one without the other fails a test
- * rather than a vendor call. The column is `text` with the enum on the type alone, so adding a name
- * here changes no SQL and needs no migration.
+ * the column says how the request leaves for every row — `gateway` (GRA-58) and
+ * `pipedream_connect_proxy` (GRA-59) are the first two, and neither is one a person or an agent
+ * chooses; the provider writes it. This list and the proxy's `[...AUTH_SCHEMES, ...RELAY_SCHEMES]`
+ * are asserted equal in `packages/core`, which depends on both; a scheme added to one without the
+ * other fails a test rather than a vendor call. The column is `text` with the enum on the type
+ * alone, so adding a name here changes no SQL and needs no migration.
  */
 export const connectionScheme = [
   "api_key_header",
@@ -24,6 +25,7 @@ export const connectionScheme = [
   "oauth_authorization_code",
   "unleashed_hmac",
   "snowflake_keypair_jwt",
+  "gateway",
   "pipedream_connect_proxy",
 ] as const;
 export type ConnectionScheme = (typeof connectionScheme)[number];

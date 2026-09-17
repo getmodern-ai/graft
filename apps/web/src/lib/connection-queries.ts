@@ -1,5 +1,7 @@
 import type { ConnectionOutput, RevokeConnectionResult } from "@graft/core";
+import { GATEWAY_PROVIDER } from "@graft/core/connection/gateway-provider";
 import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
+import type { AuthScheme } from "@graft/proxy/types";
 import type { ConnectionCallOutput } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
@@ -60,6 +62,14 @@ export function revokeConnection(connectionId: string) {
   });
 }
 
+/** The way back for a revoked gateway connection: nothing to enter, the stamp cleared (GRA-58). */
+export function reconnectConnection(connectionId: string) {
+  return api<{ connection: Connection }>(
+    `/connections/${encodeURIComponent(connectionId)}/reconnect`,
+    { method: "POST" },
+  );
+}
+
 /**
  * Ask the provider again to release what it still holds for a revoked connection (ADR 0019): the
  * card's Retry while `providerReleaseFailedAt` says the account is still at the provider.
@@ -84,14 +94,41 @@ export function isAwaitingCredential(connection: Connection): boolean {
   return connection.credentialSetAt === null;
 }
 
+/** A keyring connection's scheme is one the form enters a credential for — never a relay scheme (ADR 0019). */
+export type KeyringConnection<C extends Pick<Connection, "provider"> = Connection> = C & {
+  scheme: AuthScheme;
+};
+
 /**
  * Whether the connection's credential is Graft's to hold — entered in the console, re-entered
  * there, revoked into nothing (ADR 0019). A connection from any other provider holds no credential
  * here: what the card shows is where it is connected through, and the credential buttons are not
- * offered. `@graft/core/connection/provider` is browser-safe for exactly this read.
+ * offered. `@graft/core/connection/provider` is browser-safe for exactly this read. A type
+ * predicate, because the keyring's rows carry a signing scheme by construction (its `connect`
+ * shape lists exactly those), which is what the credential form's helpers take.
  */
-export function isKeyringConnection(connection: Pick<Connection, "provider">): boolean {
+export function isKeyringConnection<C extends Pick<Connection, "provider">>(
+  connection: C,
+): connection is KeyringConnection<C> {
   return connection.provider === KEYRING_PROVIDER;
+}
+
+/**
+ * A connection through the deployment's API gateway (ADR 0019, GRA-58): connected with no person
+ * step, no credential here, and Reconnect as its one way back from a revoke — the keyring's is a
+ * credential re-entered, and a link provider's is its own flow.
+ */
+export function isGatewayConnection(connection: Pick<Connection, "provider">): boolean {
+  return connection.provider === GATEWAY_PROVIDER;
+}
+
+/**
+ * The provider's badge on a card, in the person's words: the gateway is *their* API gateway, and
+ * a provider this console has no words for yet is named as the row names it.
+ */
+export function providerLabel(connection: Pick<Connection, "provider">): string {
+  if (isGatewayConnection(connection)) return "Through your API gateway";
+  return `via ${connection.provider}`;
 }
 
 /**

@@ -19,6 +19,10 @@ import {
   defaultProxyPublicUrl,
   describeEnvIssues,
   finalServerSchema,
+  gatewayHeaderName,
+  gatewayHeaderPrefix,
+  gatewayHosts,
+  gatewayUpstreamUrl,
   handoffSecret,
   keyringSecret,
   migrateOnStart,
@@ -709,6 +713,129 @@ describe("Langfuse", () => {
         GRAFT_LANGFUSE_SECRET_KEY: "PLACEHOLDER",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("the gateway provider (ADR 0019, GRA-58)", () => {
+  const GATEWAY = {
+    GRAFT_GATEWAY_HOSTS: "api.unleashedsoftware.com, *.googleapis.com",
+    GRAFT_GATEWAY_UPSTREAM_URL: "https://gateway.corp.example/graft",
+    GRAFT_GATEWAY_HEADER_NAME: "X-Deployment-Token",
+    GRAFT_GATEWAY_HEADER_VALUE: "deployment-identity-secret",
+  };
+
+  it("parses the covered hosts to a lower-case, de-duplicated list of hostnames and *.suffix patterns", () => {
+    expect(
+      gatewayHosts.parse(" API.Unleashedsoftware.com,*.GoogleAPIs.com ,api.unleashedsoftware.com"),
+    ).toEqual(["api.unleashedsoftware.com", "*.googleapis.com"]);
+    expect(gatewayHosts.parse(undefined)).toBeUndefined();
+  });
+
+  it("refuses an empty list, a bare wildcard, a single label, a port and anything that is not a hostname, naming the variable", () => {
+    for (const bad of [
+      " , ",
+      "*",
+      "*.",
+      "intranet",
+      "api.vendor.example:8443",
+      "https://api.vendor.example",
+      "-bad.example",
+    ]) {
+      const result = gatewayHosts.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_GATEWAY_HOSTS");
+    }
+  });
+
+  it("takes an http(s) upstream with an optional path and refuses a query, a fragment, credentials or another scheme", () => {
+    expect(gatewayUpstreamUrl.parse("https://gateway.corp.example/graft")).toBe(
+      "https://gateway.corp.example/graft",
+    );
+    expect(gatewayUpstreamUrl.parse("http://localhost:9000")).toBe("http://localhost:9000");
+    for (const bad of [
+      "https://gateway.corp.example/graft?tenant=1",
+      "https://gateway.corp.example/#x",
+      "https://user:pass@gateway.corp.example",
+      "ftp://gateway.corp.example",
+      "gateway.corp.example",
+    ]) {
+      const result = gatewayUpstreamUrl.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_GATEWAY_UPSTREAM_URL");
+    }
+  });
+
+  it("takes a header name and a prefix as tokens of letters, digits and hyphens", () => {
+    expect(gatewayHeaderName.parse("X-Api-Key")).toBe("X-Api-Key");
+    expect(gatewayHeaderName.parse("Authorization")).toBe("Authorization");
+    expect(gatewayHeaderPrefix.parse("x-graft-")).toBe("x-graft-");
+    for (const bad of ["X Api Key", "x:key", ""]) {
+      expect(gatewayHeaderName.safeParse(bad).success, bad).toBe(false);
+      expect(gatewayHeaderPrefix.safeParse(bad).success, bad).toBe(false);
+    }
+  });
+
+  it("is the four settings or nothing, and the prefix is refused alone", () => {
+    expect(serverEnvIssues({ ...SECRET })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, ...GATEWAY })).toEqual([]);
+    expect(
+      serverEnvIssues({ ...SECRET, GRAFT_GATEWAY_HOSTS: ["api.unleashedsoftware.com"] }),
+    ).toEqual([
+      expect.stringMatching(
+        /gateway provider is partially configured.*Missing: GRAFT_GATEWAY_UPSTREAM_URL, GRAFT_GATEWAY_HEADER_NAME, GRAFT_GATEWAY_HEADER_VALUE/,
+      ),
+    ]);
+    const { GRAFT_GATEWAY_HEADER_VALUE: _dropped, ...withoutValue } = GATEWAY;
+    expect(serverEnvIssues({ ...SECRET, ...withoutValue })).toEqual([
+      expect.stringMatching(/partially configured.*Missing: GRAFT_GATEWAY_HEADER_VALUE$/),
+    ]);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_GATEWAY_HEADER_PREFIX: "x-graft-" })).toEqual([
+      expect.stringMatching(/GRAFT_GATEWAY_HEADER_PREFIX.*nothing would read it/),
+    ]);
+    expect(
+      serverEnvIssues({ ...SECRET, ...GATEWAY, GRAFT_GATEWAY_HEADER_PREFIX: "x-graft-" }),
+    ).toEqual([]);
+  });
+
+  it("admits a plain-http upstream in development and refuses it in production, where the identity header is a secret", () => {
+    const local = { ...GATEWAY, GRAFT_GATEWAY_UPSTREAM_URL: "http://localhost:9000" };
+    expect(serverEnvIssues({ ...SECRET, ...local })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, ...MODEL, NODE_ENV: "production", ...local })).toEqual([
+      expect.stringMatching(/GRAFT_GATEWAY_UPSTREAM_URL must be https under NODE_ENV=production/),
+    ]);
+    // Spelled in capitals, the same plaintext leg: the parsed protocol is what is judged.
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        ...MODEL,
+        NODE_ENV: "production",
+        ...GATEWAY,
+        GRAFT_GATEWAY_UPSTREAM_URL: "HTTP://Gateway.Corp.Example/graft",
+      }),
+    ).toEqual([expect.stringMatching(/must be https under NODE_ENV=production/)]);
+    expect(serverEnvIssues({ ...SECRET, ...MODEL, NODE_ENV: "production", ...GATEWAY })).toEqual(
+      [],
+    );
+  });
+
+  it("parses the group whole through the final schema, and refuses a placeholder value", () => {
+    expect(fullSchema.parse({ ...MINIMAL, ...GATEWAY })).toMatchObject({
+      GRAFT_GATEWAY_HOSTS: ["api.unleashedsoftware.com", "*.googleapis.com"],
+      GRAFT_GATEWAY_UPSTREAM_URL: "https://gateway.corp.example/graft",
+      GRAFT_GATEWAY_HEADER_NAME: "X-Deployment-Token",
+      GRAFT_GATEWAY_HEADER_VALUE: "deployment-identity-secret",
+    });
+    expect(fullSchema.parse(MINIMAL).GRAFT_GATEWAY_HOSTS).toBeUndefined();
+    const placeholder = fullSchema.safeParse({
+      ...MINIMAL,
+      ...GATEWAY,
+      GRAFT_GATEWAY_HEADER_VALUE: "PLACEHOLDER",
+    });
+    expect(placeholder.success).toBe(false);
+    expect(JSON.stringify(placeholder.error?.issues)).toContain("GRAFT_GATEWAY_HEADER_VALUE");
+    const partial = fullSchema.safeParse({ ...MINIMAL, GRAFT_GATEWAY_HOSTS: "api.vendor.example" });
+    expect(partial.success).toBe(false);
+    expect(JSON.stringify(partial.error?.issues)).toContain("partially configured");
   });
 });
 

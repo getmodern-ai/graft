@@ -48,7 +48,10 @@ export type ServerDeps = {
   credentialRotation?: Pick<ProxyDeps, "storeCredential" | "credentialRefreshFailed">;
   /** The break glass from the environment — off unless the deployment says otherwise. */
   followRedirects: boolean;
-  /** A test's fake vendor; production takes the proxy's default, undici behind the guarded resolver. */
+  /**
+   * A test's fake vendor; production takes the proxy's default, undici behind the guarded resolver
+   * with no exemption — a gateway relay's own fetch rides on its connection (ADR 0019, GRA-58).
+   */
   upstreamFetch?: UpstreamFetch;
   /** Where the proxy's one event per call goes; by default onto the request's wide event. */
   log?: (event: ProxyEvent) => void;

@@ -76,6 +76,22 @@ describe("guardedLookup", () => {
     expect(ok).toBeNull();
   });
 
+  /** The operator's configured upstream may resolve privately — a company gateway (ADR 0019, GRA-58) — and nothing else may. */
+  it("lifts the guard for a named host alone, compared case-insensitively", async () => {
+    const resolve = resolver({
+      "gateway.corp.internal": [{ address: "10.0.0.7", family: 4 }],
+      "evil.example": [{ address: "10.0.0.1", family: 4 }],
+    });
+    const lookup = (hostname: string) =>
+      new Promise<unknown[]>((done) => {
+        guardedLookup(resolve, ["Gateway.Corp.Internal"])(hostname, {}, (...args) => done(args));
+      });
+
+    expect(await lookup("gateway.corp.internal")).toEqual([null, "10.0.0.7", 4]);
+    const [error] = await lookup("evil.example");
+    expect(error).toBeInstanceOf(PrivateAddressError);
+  });
+
   it("passes a resolver error through and treats no answer as a refusal", async () => {
     const failure = Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" });
     const [error] = await lookup(resolver({ gone: failure }), "gone");

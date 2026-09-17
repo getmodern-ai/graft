@@ -3,10 +3,12 @@ import {
   deleteBuildApprovalsForConnection,
 } from "@graft/db/repo/approval";
 import {
+  addConnectionHosts,
   findConnection,
   findConnectionByIdUnscoped,
   insertConnection,
   listConnections,
+  reconnectConnection,
   recordProviderRelease,
   revokeConnection,
   setConnectionCredential,
@@ -38,6 +40,10 @@ export type ConnectionDeps = {
   /** What the provider's release answered after a revoke: the reference gone, or the failure stamped (ADR 0019). */
   recordProviderRelease: typeof recordProviderRelease;
   revokeConnection: typeof revokeConnection;
+  /** The way back for a revoked row that holds no credential — a `none` provider's (GRA-58). */
+  reconnectConnection: typeof reconnectConnection;
+  /** A `none` provider's row widened to a later proposal's hosts, within the provider's coverage — one appending statement (GRA-58). */
+  addConnectionHosts: typeof addConnectionHosts;
   /** A revoke's three sweeps (ADR 0007): every approval for the vendor's tools, every build approval, every open ask about the connection. */
   deleteApprovalsForVendor: typeof deleteApprovalsForVendor;
   deleteBuildApprovalsForConnection: typeof deleteBuildApprovalsForConnection;
@@ -73,6 +79,8 @@ export function createConnectionDeps(
     setConnectionProviderRef,
     recordProviderRelease,
     revokeConnection,
+    reconnectConnection,
+    addConnectionHosts,
     deleteApprovalsForVendor,
     deleteBuildApprovalsForConnection,
     expirePendingActionsForConnection,

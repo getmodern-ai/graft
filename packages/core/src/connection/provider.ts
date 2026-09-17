@@ -52,8 +52,13 @@ export type ProviderConnect =
    * provider sends the browser back. `scheme` is the relay scheme such a connection's row records.
    */
   | ({ kind: "link" } & ProviderLink)
-  /** No person step: the deployment holds the identity the upstream wants (GRA-58). */
-  | { kind: "none" };
+  /**
+   * No person step: the deployment holds the identity the upstream wants (GRA-58). `scheme` is the
+   * relay scheme every row the provider makes records in the `scheme` column (ADR 0019) — fixed for
+   * the provider where the form's is the person's choice — so `registerProviderConnection` writes it
+   * without asking the provider to resolve a row that does not exist yet.
+   */
+  | { kind: "none"; scheme: RelayScheme };
 
 /**
  * What a provider that connects with a link offers beyond the word (ADR 0019; GRA-59). The

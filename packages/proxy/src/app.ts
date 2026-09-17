@@ -464,6 +464,9 @@ async function decide(
       headers,
       options,
       shared,
+      // The relay leg may bring its own way out — a gateway's host exempt from the address guard —
+      // and it is used for the relayed hop alone; a signed call always goes out the proxy's own way.
+      upstream: (source.mode === "relay" && source.upstreamFetch) || shared.upstream,
       plugin,
       config,
       credential,
@@ -555,6 +558,8 @@ type Forwarding = {
   headers: Headers;
   options: ProxyOptions;
   shared: Shared;
+  /** What every hop of this call is sent through: the proxy's own fetch, or a relay's (`ProxyRelay.upstreamFetch`). */
+  upstream: UpstreamFetch;
   plugin: SchemePlugin;
   config: SchemeConfig;
   credential: CredentialFields;
@@ -636,7 +641,7 @@ async function forward(
     // Set as the request leaves, not when it answers: a dry-run read that then times out was still
     // forwarded, and the audit trail says so.
     if (trace.dryRun) trace.dryRunOutcome = "forwarded";
-    const sent = await sendHop(shared.upstream, hop, outgoing.target, signal, requestBytes);
+    const sent = await sendHop(forwarding.upstream, hop, outgoing.target, signal, requestBytes);
     if (sent.kind === "refused") return sent;
     const { response } = sent;
 

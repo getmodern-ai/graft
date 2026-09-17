@@ -32,6 +32,14 @@ export {
 export { DRY_RUN_HEADER, DRY_RUN_PREVIEW_STATUS, isSafeMethod } from "./dry-run";
 export { CREDENTIAL_REDACTED, REDACTED_CREDENTIAL, REDACTED_HEADER } from "./echo";
 export {
+  GATEWAY_PREFIX_PASS_THROUGH,
+  GATEWAY_RELAY_FIELDS,
+  GATEWAY_RELAY_RULES,
+  GATEWAY_RELAY_SCHEME,
+  gatewayRelay,
+  gatewayRelayUrl,
+} from "./gateway-relay";
+export {
   type ClientAuth,
   clientAuthOf,
   isTokenExpiring,
@@ -92,4 +100,4 @@ export type {
   UpstreamRequest,
 } from "./types";
 export { AUTH_SCHEMES, isAuthScheme, isRelayScheme, RELAY_SCHEMES } from "./types";
-export { createUpstreamFetch } from "./upstream";
+export { createUpstreamFetch, type UpstreamFetchOptions } from "./upstream";

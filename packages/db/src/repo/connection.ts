@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { connection, type NewConnection } from "../schema/connection";
@@ -156,6 +156,26 @@ export async function revokeConnection(
 }
 
 /**
+ * Reconnect a revoked connection that holds no credential to re-enter — one a provider made with no
+ * person step (ADR 0019, GRA-58): the revocation stamp is cleared and nothing else is written, since
+ * a revoke of such a row cleared nothing but the stamp and the approvals, and the approvals stay
+ * gone (ADR 0007: every tool re-asks after reconnection). A row that is not revoked is answered as
+ * it is. The service holds this to the provider's kind; the repo is the statement alone.
+ */
+export async function reconnectConnection(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .update(connection)
+    .set({ revokedAt: null })
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .returning();
+  return row ?? null;
+}
+
+/**
  * What the provider's release answered after a revoke (ADR 0019; GRA-59). Released: the reference
  * goes — the row is connected to nothing, and nothing outside Graft holds an account for it any
  * more — and a failure once recorded is cleared. Failed: the moment is stamped and the reference
@@ -186,6 +206,36 @@ export async function recordProviderRelease(
         isNotNull(connection.revokedAt),
       ),
     )
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Add hosts to the row's set — for a provider's row whose later proposal names a host the row did
+ * not declare (GRA-58): the service has already checked that every host is one the provider covers
+ * and that the primary is among them. One statement, appending only what the row lacks at the
+ * moment it runs, so two calls widening the same row at once both land rather than the second
+ * replacing the first's union with its own (Greptile on #45): the declared order is kept, and a
+ * host already present is not added twice. The repo is the statement alone.
+ */
+export async function addConnectionHosts(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+  hosts: string[],
+): Promise<ConnectionRow | null> {
+  // Each host its own bound parameter: an array handed to the template whole would be spread into
+  // a row constructor, `($1, $2)`, which is not a `text[]`.
+  const added = sql`ARRAY[${sql.join(
+    hosts.map((host) => sql`${host}`),
+    sql`, `,
+  )}]::text[]`;
+  const [row] = await db
+    .update(connection)
+    .set({
+      hosts: sql`${connection.hosts} || ARRAY(SELECT h FROM unnest(${added}) AS h WHERE NOT (h = ANY(${connection.hosts})))`,
+    })
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
     .returning();
   return row ?? null;
 }

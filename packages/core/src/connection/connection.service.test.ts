@@ -12,8 +12,10 @@ import {
   connectThroughProvider,
   isConnectionUsable,
   markOAuthConsentRequired,
+  reconnectConnection,
   registerConnection,
   registerConnectionWithCredential,
+  registerProviderConnection,
   retryProviderRelease,
   revokeConnection,
   setConnectionCredential,
@@ -21,7 +23,9 @@ import {
   storeRefreshedCredential,
   toConnectionOutput,
   toProxyConnection,
+  widenProviderConnectionHosts,
 } from "./connection.service";
+import { createGatewayProvider } from "./gateway-provider";
 import { OAUTH_STATE_TTL_MS, pkceChallenge, verifyOAuthState } from "./oauth-consent";
 import { type ConnectionProvider, DEFAULT_PROVIDERS, keyringProvider } from "./provider";
 
@@ -125,6 +129,11 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
         : { providerReleaseFailedAt: outcome.at }),
     })),
     revokeConnection: vi.fn(async () => ({ ...row, revokedAt: NOW })),
+    reconnectConnection: vi.fn(async () => ({ ...row, revokedAt: null })),
+    addConnectionHosts: vi.fn(async (_db, _p, _id, hosts: string[]) => ({
+      ...row,
+      hosts: [...row.hosts, ...hosts.filter((host) => !row.hosts.includes(host))],
+    })),
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
     expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
@@ -1220,10 +1229,249 @@ describe("the consent", () => {
         toConnectionOutput({ ...oauthRow, oauthRefreshState: { consentedAt: NOW.toISOString() } }),
       ),
     ).toBe(true);
-    // A relay provider's row holds no credential here and is connected by existing (ADR 0019).
+    // A relay provider's row holds no credential here and is connected by existing (ADR 0019),
+    // while the deployment enables its provider; under one it no longer enables, the proxy could
+    // not call through it either (GRA-58), so the default list — the keyring alone — says no.
     const relayed = toConnectionOutput({ ...row, provider: "broker", providerRef: "acct_1" });
+    const withBroker = [
+      ...DEFAULT_PROVIDERS,
+      { name: "broker", connect: { kind: "link" as const } },
+    ];
     expect(relayed.credentialSetAt).toBeNull();
-    expect(isConnectionUsable(relayed)).toBe(true);
-    expect(isConnectionUsable({ ...relayed, revokedAt: NOW })).toBe(false);
+    expect(isConnectionUsable(relayed, withBroker)).toBe(true);
+    expect(isConnectionUsable({ ...relayed, revokedAt: NOW }, withBroker)).toBe(false);
+    expect(isConnectionUsable(relayed)).toBe(false);
+  });
+});
+
+describe("a provider with no person step (ADR 0019, GRA-58)", () => {
+  const gateway = createGatewayProvider({
+    hosts: ["api.unleashedsoftware.com", "*.googleapis.com"],
+    upstreamUrl: "https://gateway.corp.example/graft",
+    headerName: "X-Deployment-Token",
+    headerValue: "deployment-identity-secret-value",
+  });
+  const providers = [gateway, keyringProvider];
+  const gatewayRow: ConnectionRow = {
+    ...row,
+    id: "conn_g",
+    provider: "gateway",
+    scheme: "gateway",
+    schemeConfig: {},
+    credentialCiphertext: null,
+    credentialSetAt: null,
+  };
+
+  it("registers the row under the provider's name and relay scheme, with no credential and no provider_ref", async () => {
+    const deps = fakeDeps({ providers, newId: () => "conn_g" });
+    const output = await registerProviderConnection(
+      ctx,
+      PRINCIPAL,
+      gateway,
+      {
+        vendor: "unleashed",
+        displayName: "  Acme Unleashed ",
+        primaryHost: "https://API.unleashedsoftware.com/",
+        hosts: ["api.unleashedsoftware.com"],
+      },
+      deps,
+    );
+    expect(deps.insertConnection).toHaveBeenCalledWith(fakeDb, {
+      id: "conn_g",
+      personId: "person_1",
+      provider: "gateway",
+      providerRef: null,
+      vendor: "unleashed",
+      displayName: "Acme Unleashed",
+      scheme: "gateway",
+      schemeConfig: {},
+      primaryHost: "https://api.unleashedsoftware.com",
+      hosts: ["api.unleashedsoftware.com"],
+    });
+    expect(output).toMatchObject({ provider: "gateway", scheme: "gateway", credentialSetAt: null });
+    expect(deps.vault.encrypt).not.toHaveBeenCalled();
+  });
+
+  it("refuses a form or link provider, one the deployment has not enabled, a vendor it does not cover, and a private host, before writing", async () => {
+    const link = linkProvider();
+    const deps = fakeDeps({ providers: [link, gateway, keyringProvider] });
+    const input = {
+      vendor: "unleashed",
+      displayName: "Acme Unleashed",
+      primaryHost: "https://api.unleashedsoftware.com",
+    };
+    await expect(
+      registerProviderConnection(ctx, PRINCIPAL, keyringProvider, input, deps),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: /with a credential entered/ });
+    await expect(
+      registerProviderConnection(ctx, PRINCIPAL, link, input, deps),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: /with a link/ });
+    await expect(
+      registerProviderConnection(ctx, PRINCIPAL, gateway, input, fakeDeps()),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: /No connection provider named gateway/,
+    });
+    await expect(
+      registerProviderConnection(
+        ctx,
+        PRINCIPAL,
+        gateway,
+        { ...input, vendor: "acme", primaryHost: "https://api.acme.example" },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: /does not cover acme at api.acme.example/,
+    });
+    await expect(
+      registerProviderConnection(
+        ctx,
+        PRINCIPAL,
+        gateway,
+        { ...input, hosts: ["api.unleashedsoftware.com", "10.0.0.7"] },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", details: { reason: "host_not_public" } });
+    expect(deps.insertConnection).not.toHaveBeenCalled();
+  });
+
+  it("is usable by existing: no credential, not revoked, its provider enabled", () => {
+    const output = toConnectionOutput(gatewayRow);
+    expect(isConnectionUsable(output, providers)).toBe(true);
+    expect(isConnectionUsable({ ...output, revokedAt: NOW }, providers)).toBe(false);
+    // The deployment no longer enables the provider: the proxy could not call through it either.
+    expect(isConnectionUsable(output)).toBe(false);
+    // The keyring's rule is unchanged beside it.
+    expect(
+      isConnectionUsable(toConnectionOutput({ ...row, credentialSetAt: NOW }), providers),
+    ).toBe(true);
+    expect(isConnectionUsable(toConnectionOutput(row), providers)).toBe(false);
+  });
+
+  it("the proxy's shape carries the relay for a live row and nothing for a revoked one — a revoke has to hold with no ciphertext to clear", () => {
+    const live = toProxyConnection(gatewayRow, providers);
+    expect(live.relay?.plugin.scheme).toBe("gateway");
+    expect(live.relay?.headerNames).toEqual(["x-deployment-token"]);
+    expect(live).toMatchObject({
+      authScheme: null,
+      schemeConfig: null,
+      credentialCiphertext: null,
+    });
+    const revoked = toProxyConnection({ ...gatewayRow, revokedAt: NOW }, providers);
+    expect(revoked.relay).toBeUndefined();
+    expect(revoked).toMatchObject({ authScheme: null, credentialCiphertext: null });
+    // A revoked keyring row resolves the same way, as it always did through its null ciphertext.
+    expect(
+      toProxyConnection({ ...row, revokedAt: NOW, credentialCiphertext: null }, providers),
+    ).toMatchObject({ authScheme: null, credentialCiphertext: null });
+  });
+
+  it("widens a gateway row's host set to a later proposal's, within the gateway's coverage, and never a keyring row's", async () => {
+    const deps = fakeDeps({ providers, findConnection: vi.fn(async () => gatewayRow) });
+    const output = await widenProviderConnectionHosts(
+      ctx,
+      PRINCIPAL,
+      gateway,
+      "conn_g",
+      ["Files.googleapis.com", "api.unleashedsoftware.com"],
+      deps,
+    );
+    expect(deps.addConnectionHosts).toHaveBeenCalledWith(fakeDb, "person_1", "conn_g", [
+      "api.unleashedsoftware.com",
+      "files.googleapis.com",
+    ]);
+    expect(output.hosts).toEqual(["api.unleashedsoftware.com", "files.googleapis.com"]);
+
+    // Already declared: answered as it is, nothing written.
+    const same = fakeDeps({ providers, findConnection: vi.fn(async () => gatewayRow) });
+    await widenProviderConnectionHosts(
+      ctx,
+      PRINCIPAL,
+      gateway,
+      "conn_g",
+      ["api.unleashedsoftware.com"],
+      same,
+    );
+    expect(same.addConnectionHosts).not.toHaveBeenCalled();
+
+    // A host the gateway does not cover, a private host, and a keyring row are each refused unwritten.
+    const refused = fakeDeps({ providers, findConnection: vi.fn(async () => gatewayRow) });
+    await expect(
+      widenProviderConnectionHosts(
+        ctx,
+        PRINCIPAL,
+        gateway,
+        "conn_g",
+        ["cdn.other.example"],
+        refused,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: /does not cover unleashed/ });
+    await expect(
+      widenProviderConnectionHosts(ctx, PRINCIPAL, gateway, "conn_g", ["10.0.0.7"], refused),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", details: { reason: "host_not_public" } });
+    const keyring = fakeDeps({ providers, findConnection: vi.fn(async () => row) });
+    await expect(
+      widenProviderConnectionHosts(
+        ctx,
+        PRINCIPAL,
+        gateway,
+        "conn_1",
+        ["files.unleashedsoftware.com"],
+        keyring,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: /the person's to change/ });
+    expect(refused.addConnectionHosts).not.toHaveBeenCalled();
+    expect(keyring.addConnectionHosts).not.toHaveBeenCalled();
+  });
+
+  it("reconnects a revoked gateway row by clearing the stamp alone, answers a live one as it is, and refuses the other kinds by naming their way back", async () => {
+    const revoked = { ...gatewayRow, revokedAt: NOW };
+    const deps = fakeDeps({
+      providers,
+      findConnection: vi.fn(async () => revoked),
+      reconnectConnection: vi.fn(async () => ({ ...revoked, revokedAt: null })),
+    });
+    const output = await reconnectConnection(ctx, PRINCIPAL, "conn_g", deps);
+    expect(deps.reconnectConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_g");
+    expect(output.revokedAt).toBeNull();
+    expect(deps.setConnectionCredential).not.toHaveBeenCalled();
+
+    const live = fakeDeps({ providers, findConnection: vi.fn(async () => gatewayRow) });
+    expect((await reconnectConnection(ctx, PRINCIPAL, "conn_g", live)).revokedAt).toBeNull();
+    expect(live.reconnectConnection).not.toHaveBeenCalled();
+
+    const keyring = fakeDeps({
+      providers,
+      findConnection: vi.fn(async () => ({ ...row, revokedAt: NOW })),
+    });
+    await expect(reconnectConnection(ctx, PRINCIPAL, "conn_1", keyring)).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: /re-entering its credential/,
+    });
+    const link = linkProvider();
+    const linked = fakeDeps({
+      providers: [link, keyringProvider],
+      findConnection: vi.fn(async () => ({ ...row, provider: "broker", revokedAt: NOW })),
+    });
+    await expect(reconnectConnection(ctx, PRINCIPAL, "conn_1", linked)).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: /through the broker provider/,
+    });
+    const disabled = fakeDeps({
+      findConnection: vi.fn(async () => ({ ...gatewayRow, revokedAt: NOW })),
+    });
+    await expect(reconnectConnection(ctx, PRINCIPAL, "conn_g", disabled)).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: /No connection provider named gateway/,
+    });
+    await expect(
+      reconnectConnection(
+        ctx,
+        PRINCIPAL,
+        "conn_x",
+        fakeDeps({ findConnection: vi.fn(async () => null) }),
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

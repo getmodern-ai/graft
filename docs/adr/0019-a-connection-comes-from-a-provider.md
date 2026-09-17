@@ -105,10 +105,51 @@ private knowledge:
   addressed, and `credential_incomplete` (409) when the relay's fields lack what the plugin needs,
   the same word an incomplete signing scheme earns. The event carries `relay` — the scheme the call
   left through — beside the vendor `host` and `path` it always named.
-- **`request_connection` refuses a proposal a link or no-step provider covers**, by name, until
-  GRA-58 and GRA-59 give each its flow: routing such a proposal to the keyring's form would store
-  in Graft a credential the provider holds itself. With the keyring alone, every answer and every
-  card is what it was before this record; the suites pin it.
+- **`request_connection` refused a proposal a link or no-step provider covered**, by name, until
+  GRA-58 and GRA-59 gave each its flow (the bullets below): routing such a proposal to the
+  keyring's form would have stored in Graft a credential the provider holds itself. Both flows have
+  landed; with the keyring alone, every answer and every card is what it was before this record,
+  and the suites pin it. With both providers configured the gateway is routed to first, since an
+  operator's explicit host list is the more deliberate claim over a host than a broker's app table
+  (`environmentProviders` in `apps/server/src/backings.ts`).
+- **The gateway provider asks nobody, and an agent can never undo a person's decision** (GRA-58,
+  2026-09-17). A proposal every host of which the configured gateway covers makes the row and puts
+  it in the asking agent's scope in one transaction, and answers `connected` with no ask: the
+  operator gave the standing consent at deployment by naming the hosts in `GRAFT_GATEWAY_HOSTS`,
+  and the only consent a keyring ask carries — the secret typed for this agent — has no
+  counterpart here. Coverage is *every* host, not any, because a connection's calls may go to each
+  host it declares and a gateway fronting only some would relay the rest into a route it has no
+  credential for. Where a person has decided, the agent's call is refused with the console step
+  that would grant it, the smallest consent that exists today: a row the person revoked answers
+  `connection_revoked` and stays revoked until the console's Reconnect (the one way back for a row
+  that holds no credential to re-enter); a row the person has not given this agent — made for
+  another, or taken out of this one's scope — answers `connection_not_in_scope` and is theirs to
+  tick in the scope picker. A one-click ask for the second case is the least-cost connect UX the
+  project defers. An in-scope row is "already connected" only when it reaches every host proposed;
+  the gateway's own narrower row is widened to the union, within the gateway's coverage, rather
+  than answered as a connection whose calls to the new host would fail `host_not_in_set`. **The vendor URL travels to the gateway in the path**,
+  `<upstream>/<vendor host>/<vendor path>?<query>`, because that is how API gateways route — one
+  route per covered host — and what Modern's forward proxy already spoke; a header naming the host
+  was the alternative, and a gateway would have to read it before choosing a route. A revoked row
+  of any provider now resolves to nothing for the proxy (`toProxyConnection`), since a relay row
+  has no ciphertext for a revoke to clear.
+- **The configured gateway is the one trusted private destination** (GRA-58, 2026-09-17), closing
+  the egress question the first consequence above left open. The resolver's private-address rule
+  guards against a host an *agent proposed* being pointed at the metadata service or a neighbour;
+  the gateway's URL is the operator's, set in the environment beside the database URL, and the
+  normal enterprise gateway sits on an internal hostname or a `10.x` address. So the gateway's
+  hostname is exempt from the rule, by exact name, **on the relay leg's own fetch and on no other**:
+  the provider brings the proxy a `createUpstreamFetch({ unguardedHosts })` on `ProxyRelay.
+  upstreamFetch` (built in `apps/server/src/backings.ts`), the ladder sends a relayed hop through it
+  and every signed call through the proxy's shared, fully guarded fetch. On the shared fetch the
+  exemption would reach a *vendor* host spelling the gateway's name — a keyring connection an agent
+  proposed at `gateway.corp.example` passes the literal check and would send its decrypted key to
+  the private address (Greptile on #45) — so a vendor host is judged on its literal before any fetch
+  and on its resolved address inside the resolver, exactly as before, whatever it is called. An
+  IP-literal gateway was never resolved and so never guarded — Node connects to a literal without
+  asking the resolver — which is why the suites address the fake gateway by a name, and why a
+  literal upstream needs no exemption. A DNS answer for the gateway's own name is the operator's
+  DNS to trust; a compromise there is a compromise of the gateway itself.
 - **The Pipedream provider stores one fact and never the other** (2026-09-17, GRA-59). What Graft
   keeps of a connection made through Pipedream Connect is the Pipedream account id on
   `provider_ref`, the relay scheme `pipedream_connect_proxy` in `scheme`, and the vendor and host

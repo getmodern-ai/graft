@@ -4,10 +4,17 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { keyringProvider } from "@graft/core";
+import { createFakePipedreamClient } from "@graft/pipedream/fake";
 import { LOCAL_KEYRING_ID } from "@graft/vault";
 import { describe, expect, it } from "vitest";
 
-import { assertCloudBackings, type BackingsEnv, selectBackings } from "./backings";
+import {
+  assertCloudBackings,
+  type BackingsEnv,
+  environmentProviders,
+  gatewayProviderFrom,
+  selectBackings,
+} from "./backings";
 
 /**
  * The selector's contract (ADR 0002): under `open` it builds the backings this repository holds and
@@ -85,6 +92,92 @@ describe("the open form", () => {
     await expect(selectBackings({ ...base, GRAFT_KEYRING_SECRET: undefined })).rejects.toThrow(
       /GRAFT_KEYRING_SECRET/,
     );
+  });
+});
+
+describe("the gateway provider from the environment (ADR 0019, GRA-58)", () => {
+  const gateway: Partial<BackingsEnv> = {
+    GRAFT_GATEWAY_HOSTS: ["api.unleashedsoftware.com"],
+    GRAFT_GATEWAY_UPSTREAM_URL: "https://gateway.corp.example/graft",
+    GRAFT_GATEWAY_HEADER_NAME: "X-Deployment-Token",
+    GRAFT_GATEWAY_HEADER_VALUE: "deployment-identity-secret-value",
+  };
+
+  it("is null with the group unset, and the provider with it — the prefix carried when set", async () => {
+    expect(gatewayProviderFrom(base)).toBeNull();
+    const provider = gatewayProviderFrom({ ...base, ...gateway });
+    expect(provider?.name).toBe("gateway");
+    expect(provider?.connect).toEqual({ kind: "none", scheme: "gateway" });
+    expect(provider?.covers("unleashed", ["api.unleashedsoftware.com"])).toBe(true);
+    expect(provider?.covers("acme", ["api.acme.example"])).toBe(false);
+    const prefixed = gatewayProviderFrom({
+      ...base,
+      ...gateway,
+      GRAFT_GATEWAY_HEADER_PREFIX: "x-graft-",
+    });
+    const resolution = prefixed?.resolve({} as never);
+    expect(resolution?.mode === "relay" ? resolution.relay.rules : null).toEqual({
+      prefix: "x-graft-",
+      passThrough: ["content-type", "content-length", "accept", "accept-encoding"],
+    });
+  });
+
+  it("goes first in the open form's order, the keyring after it", async () => {
+    const backings = await selectBackings({ ...base, ...gateway });
+    expect(backings.providers.map((provider) => provider.name)).toEqual(["gateway", "keyring"]);
+    expect(backings.providers[1]).toBe(keyringProvider);
+  });
+
+  it("goes first in the cloud form's order too, ahead of what the private package answers", async () => {
+    const backings = await selectBackings(
+      { ...base, ...gateway, GRAFT_BACKINGS: "cloud", GRAFT_KEYRING_SECRET: undefined },
+      { cloudModule: fixture("fake") },
+    );
+    expect(backings.providers.map((provider) => provider.name)).toEqual([
+      "gateway",
+      "fake-broker",
+      "keyring",
+    ]);
+  });
+});
+
+describe("the providers the environment configures, together (ADR 0019)", () => {
+  const gateway: Partial<BackingsEnv> = {
+    GRAFT_GATEWAY_HOSTS: ["api.unleashedsoftware.com"],
+    GRAFT_GATEWAY_UPSTREAM_URL: "https://gateway.corp.example/graft",
+    GRAFT_GATEWAY_HEADER_NAME: "X-Deployment-Token",
+    GRAFT_GATEWAY_HEADER_VALUE: "deployment-identity-secret-value",
+  };
+  const pipedream: Partial<BackingsEnv> = {
+    GRAFT_PIPEDREAM_PROJECT_ID: "proj_test",
+    GRAFT_PIPEDREAM_ENVIRONMENT: "development",
+    GRAFT_PIPEDREAM_CLIENT_ID: "pd_client",
+    GRAFT_PIPEDREAM_CLIENT_SECRET: "pd_secret",
+  };
+
+  it("puts the gateway ahead of Pipedream and both ahead of the keyring, in either form", async () => {
+    const pipedreamClient = createFakePipedreamClient();
+    const names = (providers: readonly { name: string }[]) => providers.map((p) => p.name);
+    expect(names(environmentProviders(base))).toEqual([]);
+    expect(names(environmentProviders({ ...base, ...pipedream }, { pipedreamClient }))).toEqual([
+      "pipedream",
+    ]);
+    const open = await selectBackings({ ...base, ...gateway, ...pipedream }, { pipedreamClient });
+    expect(names(open.providers)).toEqual(["gateway", "pipedream", "keyring"]);
+    expect(open.providers[2]).toBe(keyringProvider);
+    // Under `cloud` the hosted providers sit between the two: the gateway ahead of any broker the
+    // private package answers with (GRA-58), the configured Pipedream provider after them (GRA-59).
+    const cloud = await selectBackings(
+      {
+        ...base,
+        ...gateway,
+        ...pipedream,
+        GRAFT_BACKINGS: "cloud",
+        GRAFT_KEYRING_SECRET: undefined,
+      },
+      { cloudModule: fixture("fake"), pipedreamClient },
+    );
+    expect(names(cloud.providers)).toEqual(["gateway", "fake-broker", "pipedream", "keyring"]);
   });
 });
 

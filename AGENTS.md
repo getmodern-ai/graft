@@ -192,17 +192,41 @@ the row's credential, or `relay` through an upstream that holds it), and what to
 connection read (`apps/server/src/connections.ts`) asks the row's provider how the call resolves.
 The relay engine is `packages/proxy/src/relay.ts`: a relay plugin rewrites the resolved vendor
 request into the upstream's under `RelayHeaderRules` as data, and `relay.test.ts` drives it through
-an in-process upstream. `RELAY_SCHEMES` holds `pipedream_connect_proxy` (GRA-59); the gateway's scheme
-arrives with GRA-58. A row of a relay provider records its relay scheme in the `scheme` column, and
-the enum pin in `packages/core` covers both lists. With the keyring alone nothing observable changed.
+an in-process upstream. `RELAYS` holds the `gateway` plugin (`gateway-relay.ts`, GRA-58) and
+Pipedream's (`pipedream-relay.ts`, GRA-59), and `RELAY_SCHEMES` names both. A row of a relay
+provider records its relay scheme in the `scheme` column, and the enum pin in `packages/core` covers
+both lists — so `connectionScheme` now carries `gateway` and `pipedream_connect_proxy`, which no
+form, proposal or credential entry accepts (`connection.rules.ts` refuses a relay scheme with a
+sentence). With the keyring alone nothing observable changed. With both providers configured the
+gateway is routed to first: an operator's explicit host list wins over Pipedream's app table
+(`environmentProviders` in `apps/server/src/backings.ts`).
+
+**The gateway provider is the environment's** (ADR 0019 as amended 2026-09-17, GRA-58): the
+`GRAFT_GATEWAY_*` group — covered hosts, upstream URL, the identity header's name and value, an
+optional caller-header prefix — all-or-nothing and off by default, read by `gatewayProviderFrom` in
+`apps/server/src/backings.ts`, which puts the provider first in either form's order. A proposal every
+host of which it covers connects with **no person step**: `request_connection` makes the row
+(`registerProviderConnection`, scheme `gateway`, no credential) and grows the asking agent's scope in
+one transaction; a row the person revoked or has not given this agent is refused with the console
+step that would grant it, and a narrower in-scope gateway row is widened to a later proposal's
+hosts within the coverage. The relay carries the vendor URL in the path, `<upstream>/<host>/<path>`,
+and the provider brings the relay leg its own fetch with the gateway's hostname exempt from the
+resolver's private-address rule (`createUpstreamFetch({ unguardedHosts })`, on `ProxyRelay.
+upstreamFetch`) — the proxy's shared fetch keeps the full guard, so a vendor host spelling the
+gateway's name is still judged on its address. A revoked gateway row comes back through the console's
+Reconnect (`POST /api/connections/:id/reconnect`), the one row kind with nothing to re-enter. A fake
+gateway on a loopback port stands in for a company's in `packages/proxy/src/gateway-relay.test.ts`
+and `apps/server/src/app.test.ts`; on a laptop, `GRAFT_GATEWAY_UPSTREAM_URL` may be plain `http`
+(refused in production).
 
 **The Pipedream provider is open code switched on by configuration** (ADR 0019, its 2026-09-17
 bullet; GRA-59). With the all-or-nothing group `GRAFT_PIPEDREAM_PROJECT_ID` (`proj_…`),
 `GRAFT_PIPEDREAM_ENVIRONMENT` (`development` or `production`), `GRAFT_PIPEDREAM_CLIENT_ID` and
 `GRAFT_PIPEDREAM_CLIENT_SECRET` set, `apps/server/src/backings.ts` (`environmentProviders`) puts
-`pipedream` on the list ahead of the keyring in either form and the boot line reads `providers
-pipedream, keyring`; absent — the default — nothing changes, and a partial group or a client secret
-still holding `PLACEHOLDER` refuses the boot. Three homes, one per boundary: `packages/pipedream` is
+`pipedream` on the list ahead of the keyring in either form, after the gateway when that is
+configured too, and the boot line reads `providers pipedream, keyring`; absent — the default —
+nothing changes, and a partial group or a client secret still holding `PLACEHOLDER` refuses the
+boot. Three homes, one per boundary: `packages/pipedream` is
 the Connect client (`createPipedreamClient`: client-credentials access token with a minute of skew
 and single-flight refresh, `createConnectToken`, `listAccounts`, `relayFields`, `deleteAccount`; it
 never sets `include_credentials`), with an in-memory fake at `@graft/pipedream/fake` and Pipedream
