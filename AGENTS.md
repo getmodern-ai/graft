@@ -26,9 +26,11 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
 - **Consent never moves inside the loop.** Secrets are entered in the console, never through a
   tool argument or a chat. Approvals are the person's. If a change would let Graft's own model
   enter a credential or answer an approval, stop and read ADR 0004 and ADR 0006.
-- **The approval grain is ADR 0008 as amended on 2026-09-15.** Reads never ask; any other tool,
-  destructive included, asks once per agent and the answer holds; asking on every call is the
-  person's opt-in per tool (`askEveryCall`), both ways. Read the amendment before changing
+- **The approval grain is ADR 0008 as amended on 2026-09-15 and 2026-09-18.** Reads never ask; any
+  other tool, destructive included, asks once per agent and the answer holds; asking on every call
+  is the person's opt-in per tool (`askEveryCall`), both ways. The connection confirmation may
+  record `acquire`'s build approval for the asking agent (`approveBuild`, on by default): the person
+  answers on the same page, and the grain does not move. Read the amendments before changing
   `packages/core/src/approval/approval.decision.ts` or the ask in `packages/mcp/src/approval.ts`.
 - **The proxy is the only route to a vendor.** A sandbox with any other egress, or a module that
   holds a credential, violates ADR 0010 and ADR 0013 whatever the reason.
@@ -539,7 +541,12 @@ state and folds the outcomes, with its test); *Forgot password?* is on the door'
 
 `acquire` is the loop (ADR 0004): the meta-tool creates a job and the in-process runner
 (`@graft/mcp`'s `acquire/runner.ts`, GRA-29) works it — reads the documentation, drafts, checks,
-proves with reads, publishes, dry-runs, retries, promotes. The runner is the second plain scheduler
+proves with reads, publishes, dry-runs, retries, promotes. **A job's publish moves no pointer**
+(GRA-77): it publishes with `activate: false`, dry-runs the version by id, and on the pass calls
+`@graft/core`'s `activateToolVersion` — definition and pointer, one transaction — before promoting,
+so `authored_tool.current_version_id` names only a version that passed its dry run (ADR 0012, L0 as
+amended 2026-09-17); a job that never passes leaves a tool with no current version, which `find_tool`
+omits and `promote` and a run refuse as `tool_has_no_version`. The runner is the second plain scheduler
 beside the sweep: `GRAFT_ACQUIRE_CONCURRENCY` (default 2) jobs at once, kicked by the meta-tool and
 polling for what a previous process left queued or running with a stale heartbeat. Each job is bounded
 by `GRAFT_ACQUIRE_MAX_ATTEMPTS` (default 4 — every draft is an attempt, a check refusal included) and

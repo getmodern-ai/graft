@@ -1,6 +1,7 @@
 import { type ModuleFile, readModuleSources } from "@graft/check";
 import {
   type AgentScope,
+  activateToolVersion,
   appendAcquireJobProgress,
   appendAcquireTrace,
   completeAcquireJob,
@@ -8,6 +9,7 @@ import {
   getAgentScope,
   getBuildApproval,
   getConnection,
+  getToolById,
   heartbeatAcquireJob,
   listAcquireAttempts,
   type Principal,
@@ -38,6 +40,7 @@ import {
   type ProofRead,
 } from "@graft/model";
 import { hostSetOf } from "@graft/proxy/credential-source";
+import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
 import type { PublishOutcome } from "@graft/publish";
 import type { SandboxHandle } from "@graft/sandbox";
@@ -80,10 +83,15 @@ import {
  * **The model only answers.** The job owns every tool: it reads pages through the server-side page
  * reader, writes the draft onto the agent's sandbox under the job's own drafts path, runs the check,
  * makes each proof read through the connection's execute path with the dry-run claim on
- * (`runWithCapability`, claim `execute`), publishes through GRA-18's publish, and dry-runs through
- * the same path a first-class call takes. The model is never handed a credential, the capability
- * token, or a route to the vendor; what it sees of a vendor is the text the job hands back, with
- * credentials redacted before it is stored (`@graft/core`'s `redactText`).
+ * (`runWithCapability`, claim `execute`), publishes through GRA-18's publish **without activating**
+ * — the version row is written and the tool's pointer stays where it was, null on a first publish
+ * — dry-runs that version by id through the same path a first-class call takes, and on the pass
+ * activates it (`@graft/core`'s `activateToolVersion`: the definition and the pointer, one
+ * transaction) before promoting. So the pointer names only a version that passed its dry run
+ * (ADR 0012, L0 as amended 2026-09-17), and a job that never passes leaves every version with its
+ * report and a tool `find_tool` omits and `promote` refuses (GRA-77). The model is never handed a
+ * credential, the capability token, or a route to the vendor; what it sees of a vendor is the text
+ * the job hands back, with credentials redacted before it is stored (`@graft/core`'s `redactText`).
  *
  * **Consent never moves inside** (ADR 0004, ADR 0006, ADR 0008). The build approval was the
  * meta-tool's to require before the job existed, and is required to still stand when the job runs.
@@ -96,6 +104,15 @@ import {
  * `GRAFT_ACQUIRE_MAX_ATTEMPTS` defaults to four for that reason (`@graft/env`). Every attempt is a
  * row with its files, its outcome, the version it published and the model's own line about it;
  * every step is a trace line; every dry-run report is on the version row the attempt names.
+ *
+ * **A vendor the proxy got no response from ends the job at once** (GRA-79). The proxy marks a
+ * refusal it made because the vendor never answered — the fetch threw, the deadline passed, the
+ * name resolved privately — with `x-graft-refusal` and puts the host and the cause's code on the
+ * body (`@graft/proxy`'s `failure.ts`); the probe carries the mark off a proof read and the runner
+ * off a dry-run read, and the job ends `vendor_unreachable` naming the host, the reason and the
+ * code, the attempt closed `run_failed`, with no further model turn: no change to the module
+ * changes the network, and a model shown that 502 as a vendor's would spend the attempt budget on
+ * code. A vendor's own 5xx bears no mark and stays the model's to reason about.
  *
  * The job holds the agent in flight for its whole length (ADR 0009: the sweep never demotes under a
  * run), and releases in `finally`. It stamps the job's heartbeat while it works so a runner in another
@@ -118,7 +135,11 @@ export const PROOF_BODY_CHARS = 4_000;
 /** How often the job stamps `heartbeat_at`; the runner's stale bound is a multiple of it. */
 export const DEFAULT_HEARTBEAT_MS = 15_000;
 
-/** The probe module every proof read runs through — one `GET` of the path it is handed, and the answer's shape. */
+/**
+ * The probe module every proof read runs through — one `GET` of the path it is handed, and the
+ * answer's shape. `reason` is the proxy's mark for a vendor it got no response from (GRA-79), read
+ * off the same header the runner reads in a dry run; null for any answer the vendor gave.
+ */
 export const PROBE_MODULE = [
   "export default async (input, ctx) => {",
   "  const res = await ctx.fetch(input.path);",
@@ -128,6 +149,7 @@ export const PROBE_MODULE = [
   "    ok: res.ok,",
   '    location: res.headers.get("location"),',
   '    contentType: res.headers.get("content-type"),',
+  `    reason: res.headers.get(${JSON.stringify(REFUSAL_HEADER)}),`,
   `    body: text.slice(0, ${PROOF_BODY_CHARS}),`,
   "  };",
   "};",
@@ -166,6 +188,8 @@ type OpenAttempt = {
   proofFailed: boolean;
   /** The failed reads in one line, once `proofFailed`: what a set-aside attempt's summary opens with. */
   proofSummary: string | null;
+  /** Whether a `proceed` over a failed read has been refused once already (GRA-72). */
+  proceedRefused: boolean;
 };
 
 /**
@@ -189,7 +213,7 @@ const OUTCOME_SENTENCES: Record<Exclude<AcquireAttemptOutcome, "running">, strin
   proof_failed: "A proof read failed and the draft was set aside unpublished.",
   publish_refused: "The publish refused the module.",
   dry_run_failed: "The dry run failed.",
-  run_failed: "The dry run did not run.",
+  run_failed: "The dry run did not run, or the proxy got no response from the vendor.",
   abandoned: "Set aside unpublished.",
 };
 
@@ -403,6 +427,38 @@ class AcquireLoop {
               null,
             );
           }
+          if (attempt.proofFailed) {
+            // The gate (GRA-72): a draft is published only when every proof read passed. The
+            // model's word does not outrank the vendor's answer. Refused once with the reads shown
+            // again — a turn, not an attempt — and a second `proceed` ends the job.
+            const failed = attempt.proofSummary ?? "a proof read failed";
+            if (attempt.proceedRefused) {
+              await this.closeOpen(
+                "proof_failed",
+                this.setAside("the model answered proceed a second time"),
+              );
+              throw this.end(
+                "model_failed",
+                `The model answered proceed twice after ${failed}; a draft is published only when every proof read passes.`,
+                this.lastDiagnostics,
+              );
+            }
+            attempt.proceedRefused = true;
+            await this.trace("model", `Refused proceed on attempt ${attempt.number}: ${failed}.`, {
+              attempt: attempt.number,
+              data: { note: answer.note },
+            });
+            await this.progress(
+              `Attempt ${attempt.number}: ${failed}, so the draft is not published; asking the model what to change.`,
+            );
+            situation = {
+              kind: "proof",
+              attempt: attempt.number,
+              reads: situation.reads,
+              refused: `Your \`proceed\` was refused: ${failed}, and a draft is published only when every proof read passes. Answer \`write_module\` with the module or the proof reads changed, \`read_docs\` for a page, or \`give_up\`.`,
+            };
+            continue;
+          }
           await this.trace(
             "model",
             `Proceeding to publish attempt ${attempt.number}: ${answer.note}`,
@@ -441,6 +497,7 @@ class AcquireLoop {
               kind: "proof",
               attempt: attempt.number,
               reads: await this.prove(attempt, connection),
+              refused: null,
             };
             continue;
           }
@@ -588,6 +645,7 @@ class AcquireLoop {
       usage: { inputTokens: 0, outputTokens: 0 },
       proofFailed: false,
       proofSummary: null,
+      proceedRefused: false,
     };
     this.open = attempt;
     await this.trace(
@@ -686,6 +744,19 @@ class AcquireLoop {
       });
       const read = describeProofRead(path, outcome, connection);
       reads.push(read);
+      const unreached = vendorUnreachedOf(read, refusalFieldsOf(read.body));
+      if (unreached) {
+        // The network's answer, not the vendor's (GRA-79): recorded, and the job ends here. The
+        // model is not asked — the header of this file says why.
+        const ended = describeVendorUnreached(unreached, `GET ${path}`);
+        await this.trace("vendor_error", ended.summary, {
+          attempt: attempt.number,
+          data: { path, status: read.status, body: read.body, ...unreached },
+        });
+        this.lastDiagnostics = { proofReads: reads };
+        await this.closeOpen("run_failed", ended.summary);
+        throw this.end("vendor_unreachable", ended.message, { proofReads: reads });
+      }
       if (read.ok) {
         await this.trace("proof", `Proof read GET ${path}: ${read.status}.`, {
           attempt: attempt.number,
@@ -753,6 +824,9 @@ class AcquireLoop {
         inputSchema: draft.inputSchema,
         draftPath: attempt.row.draftPath,
         defaultConnectionId: connectionId,
+        // The version is written and nothing else moves: the pointer names only a version that
+        // passed its dry run (ADR 0012, L0 as amended 2026-09-17), so it moves below, on the pass.
+        activate: false,
       });
     } catch (error) {
       // A bad name or description is the publish's refusal before it reads anything; the model
@@ -829,6 +903,7 @@ class AcquireLoop {
     const dry = await runAuthoredTool(this.deps, this.scope, {
       vendor,
       name: draft.name,
+      versionId: version.id,
       input: draft.testInput,
       mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true },
       channel: NO_ELICITATION,
@@ -864,6 +939,24 @@ class AcquireLoop {
     });
     // The summary keeps the error's first line; the stack is in the trace and the report.
     const verdict = verdictOf(report.moduleError?.split("\n")[0]);
+    for (const read of summary.reads) {
+      // The runner recorded the proxy's mark on a read (GRA-79): the report is on the version row
+      // above, the attempt closes on it, and the job ends without asking the model.
+      const unreached = vendorUnreachedOf(read, read);
+      if (!unreached) continue;
+      const ended = describeVendorUnreached(unreached, `${read.method} ${read.path}`);
+      await this.trace("vendor_error", ended.summary, {
+        attempt: attempt.number,
+        data: { versionId: version.id, read },
+      });
+      this.lastDiagnostics = { dryRun: summary };
+      await this.closeOpen(
+        "run_failed",
+        `The dry run of ${wire} v${version.versionNumber} did not reach the vendor: ${ended.summary}`,
+        { versionId: version.id },
+      );
+      throw this.end("vendor_unreachable", ended.message, { dryRun: summary });
+    }
     if (
       report.moduleError &&
       (report.reads as { status?: number }[]).some((r) => (r.status ?? 0) >= 400)
@@ -889,6 +982,41 @@ class AcquireLoop {
       };
     }
 
+    // The pass is what moves the pointer: the definition becomes this draft's and the tool runs as
+    // this version, in one transaction, before the attempt closes and the tool is promoted. The
+    // pointer only moves forward (`activateToolVersion`): when another job over the same tool has
+    // activated a later version meanwhile, this one passed but is not current — the tool works, as
+    // the newer version, so the attempt still closes `passed`, the tool is still promoted, and the
+    // result names the version that is current.
+    let currentVersion = version.versionNumber;
+    try {
+      await activateToolVersion(
+        this.ctx,
+        this.principal,
+        outcome.tool.id,
+        version.id,
+        {
+          description: draft.description,
+          inputSchema: draft.inputSchema,
+          annotations: outcome.annotations,
+          defaultConnectionId: connectionId,
+        },
+        this.deps.tool,
+      );
+    } catch (error) {
+      if (!(error instanceof ServiceError) || error.code !== "CONFLICT") throw error;
+      const later = error.details?.currentVersionNumber;
+      if (typeof later !== "number") throw error;
+      currentVersion = later;
+      await this.trace(
+        "publish",
+        `${wire} v${version.versionNumber} passed its dry run but v${later} is already current — a later job activated it — so the pointer stays there.`,
+        {
+          attempt: attempt.number,
+          data: { versionId: version.id, version: version.versionNumber, currentVersion: later },
+        },
+      );
+    }
     await this.closeOpen("passed", verdict, { versionId: version.id });
     const promoted = await promotePublished(
       this.ctx,
@@ -897,20 +1025,28 @@ class AcquireLoop {
       this.deps,
       this.deps.notifier,
     );
+    const runsAs =
+      currentVersion === version.versionNumber
+        ? `${wire} now runs as v${version.versionNumber}`
+        : `v${version.versionNumber} is not current — a later job made v${currentVersion} current first — so ${wire} runs as v${currentVersion}`;
     await this.progress(
-      `Attempt ${attempt.number}: the dry run passed. ${wire} v${version.versionNumber} is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
+      `Attempt ${attempt.number}: the dry run passed. ${runsAs} and is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
     );
+    // The tool as it now runs: the activated draft's definition, or — when a later job's version is
+    // current — that version's. `outcome.tool` is the row as the unactivated publish left it, so it
+    // is not read here (GRA-78's `inputSchema` is what `run_tool`'s input must match now).
+    const current = await getToolById(this.ctx, this.principal, outcome.tool.id, this.deps.tool);
     return {
       success: {
         tool: wire,
         vendor,
         name: draft.name,
         toolId: outcome.tool.id,
-        version: version.versionNumber,
-        inputSchema: outcome.tool.inputSchema,
+        version: currentVersion,
+        inputSchema: current?.inputSchema ?? draft.inputSchema,
         annotations: {
-          readOnlyHint: outcome.annotations.readOnly,
-          destructiveHint: outcome.annotations.destructive,
+          readOnlyHint: current?.readOnly ?? outcome.annotations.readOnly,
+          destructiveHint: current?.destructive ?? outcome.annotations.destructive,
         },
         next: acquireNextStep(vendor, draft.name),
       },
@@ -1118,6 +1254,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body: null,
       error: `${refusal.reason ?? "refused"}: ${refusal.message ?? ""}`.trim(),
       redirectTo: null,
+      reason: null,
     };
   }
   const run = outcome as {
@@ -1136,6 +1273,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
         ? `${failure.error}${failure.stderrTail ? ` — ${failure.stderrTail}` : ""}`
         : "the run failed",
       redirectTo: null,
+      reason: null,
     };
   }
   const report = readDryRunReport(run.result);
@@ -1144,6 +1282,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     ok?: boolean;
     body?: string;
     location?: string | null;
+    reason?: string | null;
   } | null;
   if (report?.moduleError) {
     return {
@@ -1153,6 +1292,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body: null,
       error: report.moduleError,
       redirectTo: null,
+      reason: null,
     };
   }
   if (!probe || typeof probe.status !== "number") {
@@ -1163,9 +1303,27 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body: null,
       error: "The probe returned no answer.",
       redirectTo: null,
+      reason: null,
     };
   }
   const body = typeof probe.body === "string" ? probe.body : null;
+  // The proxy's mark (GRA-79): only a refusal made for want of a vendor response carries one.
+  const reason = isVendorUnreachedReason(probe.reason) ? probe.reason : null;
+  if (reason) {
+    const fields = refusalFieldsOf(body);
+    return {
+      path,
+      ok: false,
+      status: probe.status,
+      body,
+      error: describeVendorUnreached(
+        { reason, host: fields.host ?? "the vendor", code: fields.code },
+        `GET ${path}`,
+      ).summary,
+      redirectTo: null,
+      reason,
+    };
+  }
   if (isRedirect(probe.status)) {
     const redirect = describeRedirect(path, probe.location ?? null, connection);
     return {
@@ -1175,6 +1333,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body,
       error: redirect.error,
       redirectTo: redirect.host,
+      reason: null,
     };
   }
   return {
@@ -1184,6 +1343,58 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     body,
     error: null,
     redirectTo: null,
+    reason: null,
+  };
+}
+
+/**
+ * A read the proxy refused because no response came from the vendor (GRA-79), as the job names it:
+ * the reason off the proxy's mark, the host and the cause's code off the proxy's body. Null for
+ * any read the vendor answered, whatever the status — the mark, not the status, is the test.
+ */
+type VendorUnreached = { reason: string; host: string; code: string | null };
+
+function vendorUnreachedOf(
+  read: { reason?: string | null },
+  fields: { host?: string | null; code?: string | null },
+): VendorUnreached | null {
+  if (!isVendorUnreachedReason(read.reason)) return null;
+  return { reason: read.reason, host: fields.host ?? "the vendor", code: fields.code ?? null };
+}
+
+/** `code` and `host` off the proxy's refusal body, when the probe's body is one; nulls otherwise. */
+function refusalFieldsOf(body: string | null): { host: string | null; code: string | null } {
+  let parsed: unknown = null;
+  try {
+    parsed = body === null ? null : JSON.parse(body);
+  } catch {
+    parsed = null;
+  }
+  const field = (name: "host" | "code") => {
+    const value =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as Record<string, unknown>)[name]
+        : undefined;
+    return typeof value === "string" ? value : null;
+  };
+  return { host: field("host"), code: field("code") };
+}
+
+/**
+ * How a job that could not reach the vendor ends, in two lengths: the `summary` closes the attempt
+ * and the trace, the `message` is the result's, and tells the agent what can be done — nothing to
+ * the module. The code is in brackets as the runner prints a cause's (`describeCause` in
+ * `runner.mjs`), so one failure reads the same from either side.
+ */
+function describeVendorUnreached(
+  unreached: VendorUnreached,
+  call: string,
+): { summary: string; message: string } {
+  const code = unreached.code ? ` [${unreached.code}]` : "";
+  const summary = `The proxy got no response from ${unreached.host} on ${call}: ${unreached.reason}${code}.`;
+  return {
+    summary,
+    message: `${summary} No change to the module can fix this; try again later, or check the connection's host.`,
   };
 }
 

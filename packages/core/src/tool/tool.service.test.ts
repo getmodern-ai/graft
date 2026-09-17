@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ServiceContext } from "../context";
 import type { ToolDeps } from "./tool.deps";
 import {
+  activateToolVersion,
   addToolVersion,
   createTool,
   nextVersionNumber,
@@ -236,6 +237,68 @@ describe("publishToolVersion", () => {
     expect(deps.setCurrentToolVersion).toHaveBeenCalledWith(fakeDb, "person_1", "tool_1", "new_id");
     expect(result.tool.currentVersionId).toBe("new_id");
     expect(result.version.id).toBe("new_id");
+  });
+});
+
+describe("activateToolVersion", () => {
+  it("applies the definition and moves the pointer onto the version, in one transaction, without inserting anything", async () => {
+    const deps = fakeDeps();
+    const result = await activateToolVersion(
+      ctx,
+      PRINCIPAL,
+      "tool_1",
+      "ver_2",
+      {
+        description: "Lists orders, paged",
+        inputSchema: { type: "object", properties: { page: { type: "integer" } } },
+        annotations: { readOnly: true, destructive: false },
+        defaultConnectionId: "conn_1",
+      },
+      deps,
+    );
+
+    expect(deps.insertToolVersion).not.toHaveBeenCalled();
+    expect(deps.updateAuthoredTool).toHaveBeenCalledWith(fakeDb, "person_1", "tool_1", {
+      description: "Lists orders, paged",
+      inputSchema: { type: "object", properties: { page: { type: "integer" } } },
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: "conn_1",
+    });
+    expect(deps.setCurrentToolVersion).toHaveBeenCalledWith(fakeDb, "person_1", "tool_1", "ver_2");
+    expect(result.currentVersionId).toBe("ver_2");
+  });
+
+  it("is NOT_FOUND when the version is not the tool's — the pointer move lands nowhere", async () => {
+    const deps = fakeDeps({ setCurrentToolVersion: vi.fn(async () => null) });
+    await expect(
+      activateToolVersion(ctx, PRINCIPAL, "tool_1", "ver_of_another_tool", {}, deps),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("refuses as CONFLICT a version below the current one, naming both numbers, and writes nothing", async () => {
+    const byId: Record<string, ToolVersionRow> = { ver_1: version(1), ver_2: version(2) };
+    const deps = fakeDeps({
+      findAuthoredToolById: vi.fn(async () => ({ ...tool, currentVersionId: "ver_2" })),
+      findToolVersion: vi.fn(async (_db, _p, id) => byId[id] ?? null),
+    });
+    await expect(
+      activateToolVersion(ctx, PRINCIPAL, "tool_1", "ver_1", { description: "Older" }, deps),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message:
+        "v2 of unleashed/list-orders is already current, so v1 cannot become current: the pointer only moves forward",
+      details: { currentVersionId: "ver_2", currentVersionNumber: 2, versionNumber: 1 },
+    });
+    expect(deps.updateAuthoredTool).not.toHaveBeenCalled();
+    expect(deps.setCurrentToolVersion).not.toHaveBeenCalled();
+
+    // The same version again, and a later one, both pass.
+    for (const id of ["ver_2", "ver_3"]) {
+      byId.ver_3 = version(3);
+      const result = await activateToolVersion(ctx, PRINCIPAL, "tool_1", id, {}, deps);
+      expect(result.currentVersionId).toBe(id);
+    }
   });
 });
 

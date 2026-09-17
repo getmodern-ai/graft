@@ -11,6 +11,7 @@ export {
   type ModuleEntry,
   moduleEntryFor,
   moduleEntryOf,
+  REFUSAL_HEADER,
   RESULT_MARKER,
   RUNNER_DIR,
   RUNNER_FILE,

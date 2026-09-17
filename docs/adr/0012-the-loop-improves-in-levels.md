@@ -43,3 +43,15 @@ schema decisions in the first release, not features of a later one.
   eval results are recorded in the repo.
 - **ADR 0004 is the precondition.** All of this is reachable only because the authoring traces are
   Graft's.
+- **A tool's current version is one that passed its dry run** (GRA-77, 2026-09-17). L0 stores the
+  outcome per version; it also decides which version a tool runs as. Inside `acquire` the publish
+  writes the version row and moves nothing, the dry run runs that version by id and records its
+  report on it, and the pass moves the pointer and applies the draft's definition in one
+  transaction, then promotes. A job that never passes leaves every version with its report
+  (ADR 0009: nothing is deleted) and a tool with no current version — absent from `find_tool`,
+  refused by `promote` and a run as `tool_has_no_version`, shown in the console as never having
+  passed. Chosen over a status column on the version because the pointer already says it, and over
+  moving the pointer back on failure because the failed version was current, findable and runnable
+  in between — a hosted job on 2026-09-17 showed exactly that. `publish_tool`, where the agent
+  drives the loop by hand, keeps its order — promote, then dry-run, the report in the answer —
+  because there the agent reads the report and decides.

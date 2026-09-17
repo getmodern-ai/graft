@@ -352,6 +352,7 @@ export {
 } from "./tenancy";
 export { defaultToolDeps, type ToolDeps } from "./tool/tool.deps";
 export {
+  activateToolVersion,
   addToolVersion,
   type CreateToolInput,
   createTool,

@@ -102,12 +102,31 @@ export type ProofRead = {
    * a fact about the connection's host set, not about the code — `error` says which (GRA-65).
    */
   redirectTo: string | null;
+  /**
+   * The proxy's reason when it refused the read for want of a vendor response — `upstream_unreachable`,
+   * `upstream_timeout`, `host_not_public`, off its `x-graft-refusal` header (GRA-79); null when the
+   * vendor answered, whatever it answered. The job ends on it before the read is shown, so this is
+   * the wire's record rather than the model's cue.
+   */
+  reason: string | null;
 };
 
 /** The dry-run report as the model reads it — `runner.mjs`'s report, the parts a diagnosis turns on. */
 export type DryRunSummary = {
   passed: boolean;
-  reads: { method: string; path: string; status: number }[];
+  /**
+   * A read the proxy refused for want of a vendor response carries `reason`, and the `code` and
+   * `host` the proxy named (GRA-79; the runner's record); a read the vendor answered has the three
+   * fields alone.
+   */
+  reads: {
+    method: string;
+    path: string;
+    status: number;
+    reason?: string;
+    code?: string | null;
+    host?: string | null;
+  }[];
   writesPreviewed: unknown[];
   writesRefused: unknown[];
   moduleError: string | null;
@@ -129,8 +148,12 @@ export type ModelSituation =
       refusals: ModelDiagnostic[];
       advice: ModelDiagnostic[];
     }
-  /** Every proof read the draft asked for, passed or failed; the model decides whether to proceed. */
-  | { kind: "proof"; attempt: number; reads: ProofRead[] }
+  /**
+   * Every proof read the draft asked for, passed or failed. `proceed` publishes only when every
+   * read passed; a `proceed` over a failed read is refused once and the situation shown again with
+   * `refused` saying so (GRA-72), null on the first showing.
+   */
+  | { kind: "proof"; attempt: number; reads: ProofRead[]; refused: string | null }
   | {
       kind: "publish_refused";
       attempt: number;
@@ -150,7 +173,8 @@ export type ModelSituationKind = ModelSituation["kind"];
 /**
  * What the model may answer. `note` is one line the job records as the attempt's diagnosis and
  * relays as progress — what the model learned, what it changed. `write_module` always starts a new
- * attempt; `proceed` is only meaningful after a `proof` situation; `give_up` ends the job.
+ * attempt; `proceed` is only meaningful after a `proof` situation whose reads all passed; `give_up`
+ * ends the job.
  */
 export type ModelAnswer =
   | { kind: "read_docs"; urls: string[]; note: string }
