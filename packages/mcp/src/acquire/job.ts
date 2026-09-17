@@ -163,6 +163,33 @@ type OpenAttempt = {
   usage: ModelUsage;
   /** Whether a proof read failed — what an attempt the model then rewrote is closed as. */
   proofFailed: boolean;
+  /** The failed reads in one line, once `proofFailed`: what a set-aside attempt's summary opens with. */
+  proofSummary: string | null;
+};
+
+/**
+ * What each situation asks the model for, for the progress line written before the turn: a poller
+ * sees the job is waiting on the model and for what, rather than the same line for a minute
+ * (GRA-71).
+ */
+const ASKING: Record<ModelSituation["kind"], string> = {
+  goal: "for a first draft, or the documentation to read first",
+  docs: "what to make of the pages",
+  check_refused: "to fix what the check refused",
+  proof: "whether the proof reads answered as the documentation said",
+  publish_refused: "to fix what the publish refused",
+  dry_run_failed: "to diagnose the failed dry run",
+};
+
+/** A finished attempt row's ending in one line, for a job resumed by another process (GRA-70). */
+const OUTCOME_SENTENCES: Record<Exclude<AcquireAttemptOutcome, "running">, string> = {
+  passed: "The dry run passed.",
+  check_refused: "The check refused the module.",
+  proof_failed: "A proof read failed and the draft was set aside unpublished.",
+  publish_refused: "The publish refused the module.",
+  dry_run_failed: "The dry run failed.",
+  run_failed: "The dry run did not run.",
+  abandoned: "Set aside unpublished.",
 };
 
 /**
@@ -239,13 +266,19 @@ class AcquireLoop {
         this.deps.acquireJob,
       );
     } catch (error) {
-      const failure =
+      const ended =
         error instanceof JobEnded
           ? error.result
           : this.failure("job_failed", `The job failed: ${errorMessage(error)}`, {
               error: errorMessage(error),
             });
-      await this.closeOpen(this.openOutcome(), failure.message).catch(() => undefined);
+      await this.closeOpen(this.openOutcome(), this.setAside(ended.message)).catch(() => undefined);
+      // The attempt closed just now belongs in `tried` too; the result was built at the throw.
+      // Through the same redaction as `failure()`, since a summary can quote a vendor's answer.
+      const failure = redactValue<AcquireFailure>(
+        { ...ended, tried: [...this.tried] },
+        this.redaction,
+      ).value;
       await this.trace("result", `Failed (${failure.failure}): ${failure.message}`, {
         data: { ...failure },
       }).catch(() => undefined);
@@ -346,12 +379,15 @@ class AcquireLoop {
       const answer = await this.turn(conversation, situation);
       switch (answer.kind) {
         case "read_docs": {
-          await this.progress(answer.note);
+          await this.step(`reading the documentation: ${answer.note}`);
           situation = { kind: "docs", pages: await this.readDocs(answer.urls) };
           continue;
         }
         case "give_up": {
-          await this.closeOpen(this.openOutcome(), answer.reason);
+          await this.closeOpen(
+            this.openOutcome(),
+            this.setAside(`the model gave up: ${answer.reason}`),
+          );
           throw this.end("model_gave_up", `The model gave up: ${answer.reason}`, {
             reason: answer.reason,
             last: this.lastDiagnostics,
@@ -379,7 +415,11 @@ class AcquireLoop {
           continue;
         }
         case "write_module": {
-          if (this.open) await this.closeOpen(this.openOutcome(), answer.note);
+          // The note is the new draft's, so it is not what closed the previous attempt (GRA-70):
+          // that attempt ended because the model chose to draft again, after whatever it saw.
+          if (this.open) {
+            await this.closeOpen(this.openOutcome(), this.setAside("the model drafted again"));
+          }
           if (this.attemptsMade >= this.config.maxAttempts) {
             throw this.end(
               "attempt_budget",
@@ -389,6 +429,7 @@ class AcquireLoop {
           }
           const attempt = await this.openAttempt(answer.draft, answer.note);
           await this.progress(`Attempt ${attempt.number}: ${answer.note}`);
+          await this.step("checking the module");
           const checked = await this.check(attempt);
           if (checked) {
             situation = checked;
@@ -419,18 +460,20 @@ class AcquireLoop {
     this.turns += 1;
     const budget = turnBudgetFor(this.config.maxAttempts);
     if (this.turns > budget) {
-      await this.closeOpen(this.openOutcome(), "the turn budget ran out");
+      await this.closeOpen(this.openOutcome(), this.setAside("the turn budget ran out"));
       throw this.end(
         "turn_budget",
         `The model was asked ${budget} times without the loop ending; the last diagnostics are in lastDiagnostics.`,
         this.lastDiagnostics,
       );
     }
+    await this.step(`asking the model ${ASKING[situation.kind]}`);
     let reply: Awaited<ReturnType<ModelConversation["turn"]>>;
     try {
       reply = await conversation.turn(situation);
     } catch (error) {
-      await this.closeOpen(this.openOutcome(), `the model failed: ${errorMessage(error)}`);
+      const failed = `the model failed: ${errorMessage(error)}`;
+      await this.closeOpen(this.openOutcome(), this.setAside(failed));
       throw this.end(
         "model_failed",
         `The model failed to answer ${situation.kind}: ${errorMessage(error)}`,
@@ -473,7 +516,7 @@ class AcquireLoop {
       },
     });
     if (this.tokensSpent > this.config.tokenCeiling) {
-      await this.closeOpen(this.openOutcome(), "the token ceiling was reached");
+      await this.closeOpen(this.openOutcome(), this.setAside("the token ceiling was reached"));
       throw this.end(
         "token_ceiling",
         `The token ceiling of ${this.config.tokenCeiling} was reached after ${this.tokensSpent} tokens; the last diagnostics are in lastDiagnostics.`,
@@ -543,6 +586,7 @@ class AcquireLoop {
       draft,
       usage: { inputTokens: 0, outputTokens: 0 },
       proofFailed: false,
+      proofSummary: null,
     };
     this.open = attempt;
     await this.trace(
@@ -590,11 +634,14 @@ class AcquireLoop {
       `Check refused attempt ${attempt.number}: ${checked.refusals.map((r) => `${r.rule} at ${r.file}:${r.line}`).join("; ")}.`,
       { attempt: attempt.number, data: output },
     );
+    const rules = checked.refusals.map((r) => r.rule).join(", ");
     await this.progress(
-      `Attempt ${attempt.number}: the check refused the module (${checked.refusals.map((r) => r.rule).join(", ")}); asking the model to fix it.`,
+      `Attempt ${attempt.number}: the check refused the module (${rules}); asking the model to fix it.`,
     );
     this.lastDiagnostics = { check: output };
-    await this.closeOpen("check_refused", null, output);
+    await this.closeOpen("check_refused", `The check refused the module: ${rules}.`, {
+      checkOutput: output,
+    });
     return {
       kind: "check_refused",
       attempt: attempt.number,
@@ -616,7 +663,9 @@ class AcquireLoop {
     }
     const reads: ProofRead[] = [];
     const mode = { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true };
-    for (const path of attempt.draft.proofReads.slice(0, MAX_PROOF_READS)) {
+    const paths = attempt.draft.proofReads.slice(0, MAX_PROOF_READS);
+    for (const [index, path] of paths.entries()) {
+      await this.step(`proof read ${index + 1} of ${paths.length}: GET ${path}`);
       const outcome = await runWithCapability({
         deps: this.deps,
         scope: this.scope,
@@ -660,9 +709,15 @@ class AcquireLoop {
       }
     }
     this.lastDiagnostics = { proofReads: reads };
+    const failed = reads.filter((r) => !r.ok);
+    if (attempt.proofFailed) {
+      attempt.proofSummary = `${failed.length} of ${reads.length} proof read(s) failed (${failed
+        .map((r) => `GET ${r.path} ${r.status ?? "no status"}`)
+        .join(", ")})`;
+    }
     await this.progress(
       attempt.proofFailed
-        ? `Attempt ${attempt.number}: ${reads.filter((r) => !r.ok).length} of ${reads.length} proof read(s) failed; asking the model what to change.`
+        ? `Attempt ${attempt.number}: ${failed.length} of ${reads.length} proof read(s) failed; asking the model what to change.`
         : `Attempt ${attempt.number}: ${reads.length} proof read(s) answered as the documentation said.`,
     );
     return reads;
@@ -683,6 +738,7 @@ class AcquireLoop {
     }
     const { draft } = attempt;
     const wire = authoredToolName(vendor, draft.name);
+    await this.step(`publishing ${wire}`);
     let outcome: PublishOutcome;
     try {
       outcome = await publish({
@@ -724,16 +780,22 @@ class AcquireLoop {
         advice: outcome.advice,
         annotations: outcome.annotations,
       };
+      const refused = outcome.refusals.map((r) => `${r.rule}: ${r.message}`).join("; ");
       await this.trace(
         "publish",
-        `Publish refused attempt ${attempt.number} as ${wire}: ${outcome.refusals.map((r) => `${r.rule}: ${r.message}`).join("; ")}`,
-        { attempt: attempt.number, data: output },
+        `Publish refused attempt ${attempt.number} as ${wire}: ${refused}`,
+        {
+          attempt: attempt.number,
+          data: output,
+        },
       );
       await this.progress(
         `Attempt ${attempt.number}: the publish refused ${wire} (${outcome.refusals.map((r) => r.rule).join(", ")}); asking the model to fix it.`,
       );
       this.lastDiagnostics = { publish: output };
-      await this.closeOpen("publish_refused", null, output);
+      await this.closeOpen("publish_refused", `The publish refused ${wire}: ${refused}`, {
+        checkOutput: output,
+      });
       return {
         situation: {
           kind: "publish_refused",
@@ -776,33 +838,31 @@ class AcquireLoop {
     if (!report) {
       const failure = dry.isError ? dry.answer : { error: "The run produced no dry-run report." };
       const line = typeof failure.error === "string" ? failure.error : JSON.stringify(failure);
-      await this.trace(
-        "dry_run",
-        `Dry run of ${wire} v${version.versionNumber} did not run: ${line}`,
-        {
-          attempt: attempt.number,
-          data: { versionId: version.id, failure },
-        },
-      );
+      const didNotRun = `The dry run of ${wire} v${version.versionNumber} did not run: ${line}`;
+      await this.trace("dry_run", didNotRun, {
+        attempt: attempt.number,
+        data: { versionId: version.id, failure },
+      });
       await this.progress(
         `Attempt ${attempt.number}: the dry run of ${wire} did not run (${line}); asking the model what to change.`,
       );
       this.lastDiagnostics = { dryRun: null, failure };
-      await this.closeOpen("run_failed", null, undefined, version.id);
+      await this.closeOpen("run_failed", didNotRun, { versionId: version.id });
       return {
         situation: { kind: "dry_run_failed", attempt: attempt.number, report: null, failure: line },
       };
     }
 
     const summary = summariseDryRun(report);
-    await this.trace(
-      "dry_run",
-      `Dry run of ${wire} v${version.versionNumber} ${report.passed ? "passed" : "failed"}: ${report.reads.length} read(s), ${report.writesPreviewed.length} write(s) previewed, ${report.writesRefused.length} refused${report.moduleError ? `; module error: ${report.moduleError}` : ""}.`,
-      {
-        attempt: attempt.number,
-        data: { versionId: version.id, report: report as unknown as Record<string, unknown> },
-      },
-    );
+    const counts = `${report.reads.length} read(s), ${report.writesPreviewed.length} write(s) previewed, ${report.writesRefused.length} refused`;
+    const verdictOf = (moduleError: string | null | undefined) =>
+      `The dry run of ${wire} v${version.versionNumber} ${report.passed ? "passed" : "failed"}: ${counts}${moduleError ? `; module error: ${moduleError}` : ""}.`;
+    await this.trace("dry_run", verdictOf(report.moduleError), {
+      attempt: attempt.number,
+      data: { versionId: version.id, report: report as unknown as Record<string, unknown> },
+    });
+    // The summary keeps the error's first line; the stack is in the trace and the report.
+    const verdict = verdictOf(report.moduleError?.split("\n")[0]);
     if (
       report.moduleError &&
       (report.reads as { status?: number }[]).some((r) => (r.status ?? 0) >= 400)
@@ -817,7 +877,7 @@ class AcquireLoop {
         `Attempt ${attempt.number}: the dry run of ${wire} v${version.versionNumber} failed; asking the model to diagnose and fix it.`,
       );
       this.lastDiagnostics = { dryRun: summary };
-      await this.closeOpen("dry_run_failed", null, undefined, version.id);
+      await this.closeOpen("dry_run_failed", verdict, { versionId: version.id });
       return {
         situation: {
           kind: "dry_run_failed",
@@ -828,7 +888,7 @@ class AcquireLoop {
       };
     }
 
-    await this.closeOpen("passed", null, undefined, version.id);
+    await this.closeOpen("passed", verdict, { versionId: version.id });
     const promoted = await promotePublished(
       this.ctx,
       this.scope,
@@ -860,12 +920,25 @@ class AcquireLoop {
     return this.open?.proofFailed ? "proof_failed" : "abandoned";
   }
 
-  /** Close the open attempt, if any, and add it to what was tried. */
+  /**
+   * How an attempt the loop sets aside unpublished ended: the failed proof reads first, when there
+   * were any, then what happened next — the model drafted again or gave up, or a bound was hit.
+   */
+  private setAside(then: string): string {
+    const opening = this.open?.proofSummary ?? "Set aside unpublished";
+    return `${opening}; ${then}${/[.!?]$/.test(then) ? "" : "."}`;
+  }
+
+  /**
+   * Close the open attempt, if any, and add it to what was tried. `summary` is how the attempt
+   * ended in the loop's words and is what `tried` carries (GRA-70). The row's `diagnosis` is never
+   * rewritten here: it is the note the draft opened with, which is what a resumed job reads back as
+   * the attempt's `note`; how the attempt ended is in the summary, the trace and the job's result.
+   */
   private async closeOpen(
     outcome: Exclude<AcquireAttemptOutcome, "running">,
-    diagnosis: string | null,
-    checkOutput?: Record<string, unknown>,
-    versionId?: string,
+    summary: string,
+    extra: { checkOutput?: Record<string, unknown>; versionId?: string } = {},
   ): Promise<void> {
     const attempt = this.open;
     if (!attempt) return;
@@ -878,16 +951,16 @@ class AcquireLoop {
         outcome,
         usage: attempt.usage,
         redaction: this.redaction,
-        ...(checkOutput === undefined ? {} : { checkOutput }),
-        ...(versionId === undefined ? {} : { versionId }),
-        ...(diagnosis === null ? {} : { diagnosis }),
+        ...(extra.checkOutput === undefined ? {} : { checkOutput: extra.checkOutput }),
+        ...(extra.versionId === undefined ? {} : { versionId: extra.versionId }),
       },
       this.deps.acquireJob,
     );
     this.tried.push({
       attempt: attempt.number,
       outcome,
-      summary: diagnosis ?? attempt.row.diagnosis ?? `${attempt.draft.name}: ${outcome}`,
+      summary,
+      note: attempt.row.diagnosis ?? null,
     });
   }
 
@@ -899,29 +972,39 @@ class AcquireLoop {
       this.job.id,
       this.deps.acquireJob,
     );
+    const stopped = "The process running this attempt stopped; the job resumed from the goal.";
     for (const row of attempts) {
       if (row.outcome === "running") {
+        // The row keeps the dead process's note; the stop is the summary's to tell.
         await finishAcquireAttempt(
           this.ctx,
           this.scope,
           row.id,
-          {
-            outcome: "abandoned",
-            diagnosis: "The process running this attempt stopped; the job resumed from the goal.",
-          },
+          { outcome: "abandoned" },
           this.deps.acquireJob,
         );
+        this.tried.push({
+          attempt: row.attemptNumber,
+          outcome: "abandoned",
+          summary: stopped,
+          note: row.diagnosis ?? null,
+        });
+        continue;
       }
+      // The row holds its outcome and the model's note, not the loop's line; the sentence for the
+      // outcome stands in.
       this.tried.push({
         attempt: row.attemptNumber,
-        outcome: row.outcome === "running" ? "abandoned" : row.outcome,
-        summary: row.diagnosis ?? row.outcome,
+        outcome: row.outcome,
+        summary: OUTCOME_SENTENCES[row.outcome],
+        note: row.diagnosis ?? null,
       });
     }
   }
 
   private async sandbox(): Promise<SandboxHandle> {
     if (this.handle) return this.handle;
+    await this.step("opening the sandbox");
     try {
       this.handle = await openAgentSandbox(this.deps, this.scope);
     } catch (error) {
@@ -935,6 +1018,21 @@ class AcquireLoop {
   private async progress(line: string): Promise<void> {
     await appendAcquireJobProgress(this.ctx, this.scope, this.job.id, [line], this.deps.acquireJob);
     await this.trace("progress", line);
+  }
+
+  /**
+   * A progress line written as a step *starts*, labelled with its phase: `Attempt N: <text>` while
+   * an attempt is open, the text alone capitalised before one. Every line in a job's progress
+   * therefore says where in the loop it was written, and a poller that reads the same last line
+   * twice knows the step it names is still running (GRA-71).
+   */
+  private async step(text: string): Promise<void> {
+    const open = this.open;
+    await this.progress(
+      open
+        ? `Attempt ${open.number}: ${text}.`
+        : `${text.charAt(0).toUpperCase()}${text.slice(1)}.`,
+    );
   }
 
   private async trace(
