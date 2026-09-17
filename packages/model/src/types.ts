@@ -102,12 +102,31 @@ export type ProofRead = {
    * a fact about the connection's host set, not about the code — `error` says which (GRA-65).
    */
   redirectTo: string | null;
+  /**
+   * The proxy's reason when it refused the read for want of a vendor response — `upstream_unreachable`,
+   * `upstream_timeout`, `host_not_public`, off its `x-graft-refusal` header (GRA-79); null when the
+   * vendor answered, whatever it answered. The job ends on it before the read is shown, so this is
+   * the wire's record rather than the model's cue.
+   */
+  reason: string | null;
 };
 
 /** The dry-run report as the model reads it — `runner.mjs`'s report, the parts a diagnosis turns on. */
 export type DryRunSummary = {
   passed: boolean;
-  reads: { method: string; path: string; status: number }[];
+  /**
+   * A read the proxy refused for want of a vendor response carries `reason`, and the `code` and
+   * `host` the proxy named (GRA-79; the runner's record); a read the vendor answered has the three
+   * fields alone.
+   */
+  reads: {
+    method: string;
+    path: string;
+    status: number;
+    reason?: string;
+    code?: string | null;
+    host?: string | null;
+  }[];
   writesPreviewed: unknown[];
   writesRefused: unknown[];
   moduleError: string | null;

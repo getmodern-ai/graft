@@ -65,7 +65,10 @@
  * dry-run claim, so the proxy forwards `GET` and `HEAD` and stops every other method with a **preview**
  * of the request that would have left, marked `x-graft-dry-run: intercepted`. `ctx.fetch` records each
  * call — a read's path and status, an intercepted write's preview — and hands the module the proxy's
- * response unchanged, so the module runs its own code against the preview. What stdout (or the result
+ * response unchanged, so the module runs its own code against the preview. A read the proxy refused
+ * because **no response came from the vendor** arrives marked `x-graft-refusal: <reason>`, and its
+ * record carries that `reason` with the `code` and `host` the proxy's body names (GRA-79); a vendor's
+ * own status, a 5xx included, carries none of these and is recorded as status alone. What stdout (or the result
  * file) then carries is not the module's result but a **dry-run report** holding it: what was verified
  * — every read that reached the vendor and every write request that reached the proxy — apart from
  * what was not, which is anything the module did after an intercepted write, since no real response
@@ -116,6 +119,13 @@ const dryRun = process.env.GRAFT_DRY_RUN === "1";
 /** The proxy's marker on a dry-run answer and the value for a stopped write — `DRY_RUN_HEADER` in `runner-source.ts`. */
 const DRY_RUN_HEADER = "x-graft-dry-run";
 const DRY_RUN_INTERCEPTED = "intercepted";
+/**
+ * The proxy's mark on a refusal it made because no response came from the vendor, carrying the
+ * reason — `REFUSAL_HEADER` in `runner-source.ts`. A read that bears it is recorded with the reason,
+ * and with the `code` and `host` the proxy's body names, so the report can say the network stood in
+ * the way and not the vendor (GRA-79).
+ */
+const REFUSAL_HEADER = "x-graft-refusal";
 /** Methods the proxy forwards in a dry run; everything else it stops with a preview. */
 const READ_METHODS = new Set(["GET", "HEAD"]);
 /** How much of a previewed body the report carries — the head, since a body's shape is at its start. */
@@ -181,6 +191,26 @@ async function recordPreview(method, path, headers, init, response) {
     headerNames,
     body: boundBody(request !== null && "body" in request ? request.body : init.body),
   });
+}
+
+/**
+ * What the proxy's own refusal body says of a read it could not make: `code` (the cause's errno or
+ * name) and `host`, off a clone so the module still reads the body it was handed. Only ever called
+ * for a response bearing `REFUSAL_HEADER`, whose body is the proxy's and not a vendor's; a body
+ * that will not parse leaves both null rather than the record empty.
+ */
+async function recordRefusal(response) {
+  let refusal = null;
+  try {
+    refusal = await response.clone().json();
+  } catch {
+    refusal = null;
+  }
+  const field = (name) =>
+    refusal !== null && typeof refusal === "object" && typeof refusal[name] === "string"
+      ? refusal[name]
+      : null;
+  return { code: field("code"), host: field("host") };
 }
 
 // Before anything the module wrote can run — see the header. Every variable the runner needs is in a
@@ -339,10 +369,12 @@ function boundFetch(path, init = {}) {
 async function dryRunFetch(url, request, call) {
   const response = await fetch(url, request);
   if (READ_METHODS.has(call.method)) {
+    const reason = response.headers.get(REFUSAL_HEADER);
     recordCall(dryRunRecord.reads, {
       method: call.method,
       path: call.path,
       status: response.status,
+      ...(reason ? { reason, ...(await recordRefusal(response)) } : {}),
     });
     return response;
   }

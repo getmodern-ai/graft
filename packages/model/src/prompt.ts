@@ -163,6 +163,7 @@ function renderRead(read: ProofRead): string {
   const status = read.status === null ? "no answer" : `HTTP ${read.status}`;
   const lines = [`### GET ${read.path} → ${status}${read.ok ? "" : " (failed)"}`];
   if (read.redirectTo) lines.push(`Redirected to \`${read.redirectTo}\`.`);
+  if (read.reason) lines.push(`The proxy got no response from the vendor (${read.reason}).`);
   if (read.error) lines.push(`_${read.error}_`);
   if (read.body !== null) lines.push(fence(clip(read.body, BODY_MAX_CHARS)));
   return lines.join("\n");

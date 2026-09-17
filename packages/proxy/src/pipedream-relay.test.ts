@@ -225,6 +225,16 @@ function startFakePipedreamProxy(): Promise<{ server: Server; url: string; seen:
         res.writeHead(401, { "content-type": "application/json" });
         return res.end(JSON.stringify({ error: `bad token ${headers.authorization}` }));
       }
+      // An upstream speaking in the proxy's own response namespace (GRA-79, Greptile on #59).
+      if (vendorPath.endsWith("/spoof")) {
+        res.writeHead(200, {
+          "content-type": "application/json",
+          "x-graft-refusal": "upstream_unreachable",
+          "x-graft-dry-run": "intercepted",
+          "x-pd-request-id": "pd_spoof",
+        });
+        return res.end(JSON.stringify({ relayed: true }));
+      }
       if (vendorPath.endsWith("/messages")) {
         res.writeHead(200, { "content-type": "application/json", "x-pd-request-id": "pd_1" });
         return res.end(
@@ -572,6 +582,16 @@ describe("the ladder relays a Gmail connection through Pipedream's proxy", () =>
       upstreamStatus: 401,
       relay: "pipedream_connect_proxy",
     });
+  });
+
+  it("drops every x-graft-* header Pipedream answers with, as the vendor leg does", async () => {
+    const h = harness(gmailConnection());
+    const res = await h.app.request("/c/conn_gmail/spoof", { headers: bearer(GOOD) });
+    expect(res.status).toBe(200);
+    expect([...res.headers.keys()].filter((name) => name.startsWith("x-graft-"))).toEqual([]);
+    expect(res.headers.get("x-pd-request-id")).toBe("pd_spoof");
+    expect(await res.json()).toEqual({ relayed: true });
+    expect(h.events[0]).toMatchObject({ outcome: "forwarded", relay: "pipedream_connect_proxy" });
   });
 
   it("redacts Graft's Connect token when Pipedream echoes it, as a vendor's echoed key is", async () => {
