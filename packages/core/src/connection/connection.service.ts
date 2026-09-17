@@ -545,7 +545,10 @@ export async function markOAuthConsentRequired(
  * and the asks were revoked in the transaction before the provider was asked, and a 500 would say
  * otherwise. `failure` is the thrown error's class name, never its message — the provider's
  * messages are its own and may carry anything (the rule `@graft/proxy`'s `failure.ts` states for a
- * host-injected dependency). Revoking the connection again re-runs the release, which is the retry.
+ * host-injected dependency). Revoking the connection again — the same call on the already-revoked
+ * row — re-runs the release; the console's warning offers that as Retry. Nothing on the row records
+ * that a release failed, so a reload cannot offer it again: persisting the release state is the
+ * first relay provider's to add, with the row it needs to release (GRA-58, GRA-59).
  */
 export type ProviderRelease =
   | { provider: string; released: true }
@@ -576,8 +579,9 @@ export type RevokeConnectionResult = {
  * another party and not a row. The revoke stands whatever it answers: a release that throws is
  * reported on the result (`providerRelease`) rather than thrown, because everything local has
  * already been revoked and a failure answer would send the caller to retry a revoke that happened.
- * Revoking again re-runs the release, so the row's page is the retry path. A provider the
- * deployment no longer enables has nothing to be asked; the keyring holds nothing and releases nothing.
+ * Revoking again re-runs the release — the repo's update matches the row revoked or not — which is
+ * what the console's Retry does. A provider the deployment no longer enables has nothing to be
+ * asked; the keyring holds nothing and releases nothing.
  */
 export async function revokeConnection(
   ctx: ServiceContext,

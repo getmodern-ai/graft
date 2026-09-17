@@ -767,7 +767,8 @@ export function createApi(options: ApiOptions): Hono {
    * Revoke (ADR 0007), and say whether the row's provider let go of what it held outside Graft
    * (ADR 0019). The local revoke has committed by the time the provider is asked, so a release that
    * failed rides the answer and the wide event — with the connection id, so an operator can find the
-   * row to release by hand — and never the status: revoking again is the retry.
+   * row to release by hand — and never the status. Calling this again on the revoked row re-runs the
+   * release, which is the console's Retry.
    */
   api.post("/connections/:id/revoke", async (c) => {
     const principal = await principalOf(c.req.raw.headers);

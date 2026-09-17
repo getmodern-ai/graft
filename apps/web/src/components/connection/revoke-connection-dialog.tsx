@@ -15,6 +15,7 @@ import { agentKeys } from "@/lib/agent-queries";
 import {
   type Connection,
   connectionKeys,
+  type RevokeResult,
   revokeConnection,
   toolKeys,
 } from "@/lib/connection-queries";
@@ -28,6 +29,14 @@ import { count } from "@/lib/format";
  *
  * The same `AlertDialog` shape as `agent/revoke-agent-dialog.tsx`, whose comment says why the
  * close requests are ignored while the revoke is in flight (GRA-45).
+ *
+ * A connection from another provider (ADR 0019) has one more outcome: the revoke in Graft stands,
+ * and what the provider held outside Graft may not have let go. That is a warning with a **Retry**
+ * beside it, the console's Retry-toast shape (`lib/query-error-retry.ts`: one toast per connection,
+ * a retry that fails again replaces it, `preventDefault` keeps it up while the retry runs). Retry is
+ * the same revoke on the already-revoked row, which re-runs the release. The retry lives on the
+ * toast because nothing on the row records a failed release yet, so the card cannot offer it after
+ * a reload — which is why Revoke stays hidden on a revoked card and why the toast is the surface.
  */
 export function RevokeConnectionDialog({
   connection,
@@ -39,6 +48,41 @@ export function RevokeConnectionDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const releaseToastId = `provider-release:${connection.id}`;
+
+  /** The provider's release, reported: a warning with Retry when it failed, a dismissal when it held. */
+  const reportRelease = (result: RevokeResult) => {
+    const release = result.providerRelease;
+    if (release.released) {
+      toast.dismiss(releaseToastId);
+      return;
+    }
+    toast.warning(`${release.provider} did not release ${connection.displayName}`, {
+      id: releaseToastId,
+      duration: Number.POSITIVE_INFINITY,
+      description: `Everything in Graft is revoked. ${release.provider} could not be reached to release what it holds; Retry re-runs the release.`,
+      action: {
+        label: "Retry",
+        onClick: (event) => {
+          event.preventDefault();
+          if (retryRelease.isPending) return;
+          retryRelease.mutate();
+        },
+      },
+    });
+  };
+
+  // The same revoke on the already-revoked row: everything local is a no-op, the release runs again.
+  const retryRelease = useMutation({
+    mutationFn: () => revokeConnection(connection.id),
+    onSuccess: (result) => {
+      reportRelease(result);
+      if (result.providerRelease.released) {
+        toast.success(`${result.providerRelease.provider} released ${connection.displayName}`);
+      }
+    },
+  });
+
   const revoke = useMutation({
     mutationFn: () => revokeConnection(connection.id),
     onSuccess: (result) => {
@@ -51,14 +95,7 @@ export function RevokeConnectionDialog({
           "build approval",
         )} and ${count(result.pendingActionsExpired, "open ask")} removed. Its tools stay and ask again after reconnection.`,
       });
-      // The revoke stands; what the provider held outside Graft did not let go (ADR 0019). Revoking
-      // again re-runs the release, which is why the card keeps offering Revoke on a revoked row.
-      if (!result.providerRelease.released) {
-        toast.warning(`${result.providerRelease.provider} did not release the connection`, {
-          description:
-            "Everything in Graft is revoked. The provider could not be reached to release what it holds; revoke again to retry.",
-        });
-      }
+      reportRelease(result);
       onOpenChange(false);
     },
   });

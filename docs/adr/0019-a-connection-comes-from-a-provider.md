@@ -94,6 +94,15 @@ private knowledge:
   null for the keyring. Every relay provider named so far holds one identifier per connection; one
   that comes to need more adds a column named for itself then. Chosen over a JSON column because a
   single opaque identifier needs no shape to read and no shape to migrate.
+- **A provider's release runs after the local revoke and is reported, never thrown.** The row, the
+  approvals and the asks are revoked in one transaction before the provider is asked to release what
+  it holds outside Graft, so a release that fails rides the answer (`providerRelease`, the error's
+  class name and never its message) and the wide event with the connection id, and the console's
+  warning offers Retry — the same revoke on the already-revoked row, which re-runs the release. A
+  500 would have sent the caller to retry a revoke that happened. Nothing on the row records a
+  failed release yet, so the retry lives in the moment; persisting that state, so a reload can offer
+  it and a sweep can retry it, comes with the first provider that holds something to release
+  (GRA-58, GRA-59).
 - **A row under a provider the deployment no longer enables resolves to nothing**, and the proxy
   answers `connection_not_ready` for it. Saying so is better than guessing at the keyring: the row
   was made under a provider that held its credential, and this process cannot reach it.
