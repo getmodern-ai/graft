@@ -99,10 +99,10 @@ describe("the gateway provider", () => {
       [GATEWAY_RELAY_FIELDS.headerName]: CONFIG.headerName,
       [GATEWAY_RELAY_FIELDS.headerValue]: CONFIG.headerValue,
     });
-    // A revoked row, or one with a provider_ref: the provider reads nothing off the row.
-    expect(provider.resolve({ ...row, providerRef: "route-7", revokedAt: new Date() })).toEqual(
-      resolution,
-    );
+    // A revoked row, or one with a provider_ref: the provider reads nothing off the row (the
+    // revoke is honoured one level up, in `toProxyConnection`).
+    const other: ConnectionRow = { ...row, providerRef: "route-7", revokedAt: new Date() };
+    expect(provider.resolve(other)).toEqual(resolution);
   });
 
   it("hands the proxy a prefix rule with the framing passed through when the deployment set one", () => {
