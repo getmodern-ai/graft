@@ -17,6 +17,7 @@ import {
   registerProviderConnection,
   type ServiceContext,
   ServiceError,
+  takesCredential,
   validateDisplayName,
   validateHostSet,
   validateSchemeConfig,
@@ -202,7 +203,7 @@ export function describeSchemes(): string {
     // What the person supplies on the form: the scheme's secret fields, and the parameters only
     // they can know — an OAuth client id (ADR 0005), which the proposal leaves out.
     const entered = [...(rule.personEntered ?? []), ...SCHEME_CREDENTIAL_FIELDS[scheme]].join(", ");
-    return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${entered})`;
+    return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${entered || "nothing"})`;
   }).join("; ");
 }
 
@@ -609,6 +610,14 @@ export async function requestCredential(
     return refuse(
       "credential_not_applicable",
       `${connection.displayName} (${connection.vendor}) relays through ${connection.scheme}; there is no credential in Graft to re-enter.`,
+      { provider: connection.provider },
+    );
+  }
+  // A `none` connection sends no credential (GRA-66): a vendor refusing it is not a key problem.
+  if (!takesCredential(connection.scheme)) {
+    return refuse(
+      "credential_not_applicable",
+      `${connection.displayName} (${connection.vendor}) uses the none scheme and sends no credential; there is nothing to re-enter. If the vendor refuses calls, it is not the key: read its answer.`,
       { provider: connection.provider },
     );
   }

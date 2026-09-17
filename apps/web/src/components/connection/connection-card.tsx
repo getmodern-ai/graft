@@ -72,6 +72,9 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
   const usable = status === "connected";
   const keyring = isKeyringConnection(connection);
   const gateway = isGatewayConnection(connection);
+  // A `none` connection has no credential to enter or re-enter (GRA-66): no primary action while
+  // it stands, and Reconnect — the gateway's route — after a revoke.
+  const keyless = keyring && connection.scheme === "none";
   const consent = useOAuthConsent({
     onConnected: () => toast.success(`${connection.displayName} is connected`),
   });
@@ -87,8 +90,9 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       queryClient.invalidateQueries({ queryKey: toolKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       toast.success(`${connection.displayName} is reconnected`, {
-        description:
-          "Every call relays through your API gateway again. The approvals the revoke removed stay removed; each tool asks again.",
+        description: keyless
+          ? "The vendor is called as-is again. The approvals the revoke removed stay removed; each tool asks again."
+          : "Every call relays through your API gateway again. The approvals the revoke removed stay removed; each tool asks again.",
       });
     },
   });
@@ -217,7 +221,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         </CardTitle>
         <CardDescription>{description}</CardDescription>
         <CardAction className="flex gap-2">
-          {keyring ? (
+          {keyring && !keyless ? (
             <Button
               variant={usable ? "outline" : "default"}
               size="sm"
@@ -227,7 +231,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
               {consenting ? "Waiting for the consent…" : primary.label}
             </Button>
           ) : null}
-          {gateway && status === "revoked" ? (
+          {(gateway || keyless) && status === "revoked" ? (
             <Button size="sm" disabled={reconnect.isPending} onClick={() => reconnect.mutate()}>
               {reconnect.isPending ? "Reconnecting…" : "Reconnect"}
             </Button>

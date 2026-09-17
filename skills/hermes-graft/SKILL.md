@@ -29,6 +29,9 @@ their wiki, a report from their accounting app — and no tool in your list does
    the connections in your scope. If the vendor has none, call
    `request_connection { vendor, primaryHost, scheme, displayName?, docsUrl? }` — it answers a
    handoff link (below); the person confirms the connection and enters the secret in the console.
+   A public API that takes no key — Open-Meteo, an open-data endpoint — is scheme `none`: the
+   person confirms the connection and enters nothing; never invent a key for one, since a vendor
+   may read the key's presence and answer differently.
    A vendor that needs an OAuth consent rather than a key — Gmail, Slack user tokens, Notion — has
    its own note, `connecting-with-oauth.md` beside this file.
 3. **`acquire { connectionId, goal, hints? }`, only when nothing fits.** `goal` is what the tool

@@ -242,7 +242,10 @@ export function validateCredentialFields(
     return `The ${scheme} credential needs ${missing.join(", ")}`;
   }
   if (unknown.length > 0) {
-    return `The ${scheme} credential takes no ${unknown.join(", ")} — its fields are ${[...required, ...optional].join(", ")}`;
+    const fields = [...required, ...optional];
+    return fields.length === 0
+      ? `The ${scheme} scheme sends no credential and takes no fields — not ${unknown.join(", ")}`
+      : `The ${scheme} credential takes no ${unknown.join(", ")} — its fields are ${fields.join(", ")}`;
   }
   for (const [field, value] of Object.entries(fields)) {
     if (typeof value !== "string" || value.length === 0) {
@@ -250,6 +253,21 @@ export function validateCredentialFields(
     }
   }
   return null;
+}
+
+/**
+ * Whether a connection of this scheme holds a credential in Graft at all. `none` does not (GRA-66),
+ * and neither does a relay scheme, whose provider holds it (ADR 0019); every other signing scheme
+ * needs one entered before the connection is usable. The one question `isConnectionUsable`,
+ * `setConnectionCredential` and the console's status ask of a scheme, so they cannot drift.
+ */
+export function takesCredential(scheme: ConnectionScheme): boolean {
+  if (!isAuthScheme(scheme)) return false;
+  return (
+    SCHEME_CREDENTIAL_FIELDS[scheme].length +
+      (SCHEME_OPTIONAL_CREDENTIAL_FIELDS[scheme] ?? []).length >
+    0
+  );
 }
 
 /**

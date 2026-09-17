@@ -256,6 +256,59 @@ describe("the provider a registration names (ADR 0019)", () => {
     expect(deps.setConnectionCredential).not.toHaveBeenCalled();
   });
 
+  it("refuses to enter a credential on a none connection — it sends none (GRA-66)", async () => {
+    const deps = fakeDeps({
+      findConnection: vi.fn(async () => ({ ...row, scheme: "none" as const })),
+    });
+    await expect(
+      setConnectionCredential(ctx, PRINCIPAL, "conn_1", { apiKey: "k" }, deps),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("none") });
+    expect(deps.vault.encrypt).not.toHaveBeenCalled();
+    expect(deps.setConnectionCredential).not.toHaveBeenCalled();
+  });
+
+  it("registers a none connection from the form's empty credential with no ciphertext, no vault call and no transaction (GRA-66)", async () => {
+    const deps = fakeDeps();
+    const transaction = vi.spyOn(fakeDb, "transaction");
+    const output = await registerConnectionWithCredential(
+      ctx,
+      PRINCIPAL,
+      {
+        vendor: "open-meteo",
+        displayName: "Open-Meteo",
+        scheme: "none",
+        schemeConfig: {},
+        primaryHost: "https://api.open-meteo.example",
+        credential: {},
+      },
+      deps,
+    );
+    expect(transaction).not.toHaveBeenCalled();
+    expect(deps.insertConnection).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ scheme: "none", vendor: "open-meteo" }),
+    );
+    expect(deps.vault.encrypt).not.toHaveBeenCalled();
+    expect(deps.setConnectionCredential).not.toHaveBeenCalled();
+    expect(output.credentialSetAt).toBeNull();
+    expect(isConnectionUsable(output)).toBe(true);
+    await expect(
+      registerConnectionWithCredential(
+        ctx,
+        PRINCIPAL,
+        {
+          vendor: "open-meteo",
+          displayName: "Open-Meteo",
+          scheme: "none",
+          schemeConfig: {},
+          primaryHost: "https://api.open-meteo.example",
+          credential: { apiKey: "made-up" },
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   it("asks the row's provider to release what it holds after a revoke, by the reference the revoke left in place, then forgets the reference — and the keyring holds nothing", async () => {
     const broker = linkProvider();
     const brokerRow = { ...row, provider: "broker", providerRef: "acct_1" };
@@ -1223,6 +1276,8 @@ describe("the consent", () => {
     expect(isConnectionUsable(base)).toBe(true);
     expect(isConnectionUsable({ ...base, revokedAt: NOW })).toBe(false);
     expect(isConnectionUsable({ ...base, credentialSetAt: null })).toBe(false);
+    // A `none` connection never has a credential and is connected from registration (GRA-66).
+    expect(isConnectionUsable(toConnectionOutput({ ...row, scheme: "none" }))).toBe(true);
     expect(isConnectionUsable(toConnectionOutput(oauthRow))).toBe(false);
     expect(
       isConnectionUsable(
@@ -1449,6 +1504,16 @@ describe("a provider with no person step (ADR 0019, GRA-58)", () => {
       code: "BAD_REQUEST",
       message: /re-entering its credential/,
     });
+    // A keyring row on `none` has no credential to re-enter, so Reconnect is its way back (GRA-66).
+    const keylessRow = { ...row, scheme: "none" as const, revokedAt: NOW };
+    const keyless = fakeDeps({
+      providers,
+      findConnection: vi.fn(async () => keylessRow),
+      reconnectConnection: vi.fn(async () => ({ ...keylessRow, revokedAt: null })),
+    });
+    expect((await reconnectConnection(ctx, PRINCIPAL, "conn_1", keyless)).revokedAt).toBeNull();
+    expect(keyless.reconnectConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    expect(keyless.setConnectionCredential).not.toHaveBeenCalled();
     const link = linkProvider();
     const linked = fakeDeps({
       providers: [link, keyringProvider],

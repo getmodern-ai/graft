@@ -32,6 +32,7 @@ const draft = {
 
 describe("the scheme tables reach the form", () => {
   it("renders every scheme's secret fields and parameters from the tables, required first", () => {
+    expect(credentialFieldsFor("none")).toEqual([]);
     expect(credentialFieldsFor("basic").map((f) => [f.name, f.required])).toEqual([
       ["username", true],
       ["password", true],
@@ -49,6 +50,8 @@ describe("the scheme tables reach the form", () => {
       ["prefix", false],
     ]);
     for (const scheme of SCHEMES) {
+      // `none` is the one scheme with no secret input; the form says so in its place (GRA-66).
+      if (scheme === "none") continue;
       expect(credentialFieldsFor(scheme).length, scheme).toBeGreaterThan(0);
     }
   });

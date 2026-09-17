@@ -73,3 +73,16 @@ and for basic auth the base64 pair the header carries — in response headers an
 Binary bodies pass through untouched, since a byte sequence that spells a key in an image is not an
 echo. The consequence for a module: a vendor error it reads may carry the marker where the vendor
 wrote the key, which is the one place "verbatim" gives way.
+
+## Amended 17 September 2026
+
+**A keyless connection is a connection all the same** (GRA-66). The proxy injects what the
+connection's scheme says, and the scheme `none` says nothing: no credential is entered, none is
+stored, and the request leaves as the module made it. Everything else this decision rests on is
+unchanged for such a connection — the host set is pinned, egress is the proxy or nothing, the
+public-address rule holds, a dry run intercepts writes, a redirect is handed back. The scheme
+exists because the alternative, a placeholder credential for a public API, is not neutral: on
+2026-09-17 Open-Meteo answered every request carrying an `apikey` — whatever its value — with a 303
+to its paid host, and the first hosted `acquire` against it failed on that alone. A person confirms
+a `none` connection in the console as any other, and enters nothing; consent still never moves
+inside the loop.

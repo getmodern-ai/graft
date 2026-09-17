@@ -435,6 +435,27 @@ describe("the token is the placeholder credential", () => {
     }
   });
 
+  /** A public API's connection has no credential to be ready with, and the vendor gets the call as made (GRA-66). */
+  it("a none connection with no ciphertext is forwarded as the module sent it, the token swept and nothing injected", async () => {
+    const h = harness(
+      {},
+      { ...CONNECTION, authScheme: "none", schemeConfig: {}, credentialCiphertext: null },
+    );
+    const res = await h.app.request(
+      "/c/conn_1/v1/forecast?latitude=52.52&daily=temperature_2m_max",
+      {
+        headers: bearer(GOOD),
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(h.forwarded[0]?.headers.get("authorization")).toBeNull();
+    expect(new URL(h.forwarded[0]?.url ?? "").search).toBe(
+      "?latitude=52.52&daily=temperature_2m_max",
+    );
+    expect(wire(h.forwarded[0])).not.toContain(GOOD);
+  });
+
   /** An SDK the proxy has no header name for still cannot leak the token: the sweep is by value. */
   it("sweeps the token out of a header and a query parameter the proxy has no name for", async () => {
     const h = harness();

@@ -30,6 +30,12 @@ export const AUTH_SCHEMES = [
   "oauth_authorization_code",
   "unleashed_hmac",
   "snowflake_keypair_jwt",
+  /**
+   * Signs nothing: a public API called as-is (GRA-66). A connection all the same — hosts pinned,
+   * egress through the proxy, writes intercepted on a dry run — because a placeholder credential
+   * is not neutral: Open-Meteo redirects any keyed request to its customer host, whatever the key.
+   */
+  "none",
 ] as const;
 export type AuthScheme = (typeof AUTH_SCHEMES)[number];
 

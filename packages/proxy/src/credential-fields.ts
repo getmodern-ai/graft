@@ -25,6 +25,8 @@ export const SCHEME_CREDENTIAL_FIELDS: Record<AuthScheme, readonly string[]> = {
   oauth_authorization_code: ["clientSecret"],
   unleashed_hmac: ["apiId", "apiKey"],
   snowflake_keypair_jwt: ["privateKey"],
+  /** A public API: nothing is entered, and the proxy sends the request as the module made it. */
+  none: [],
 };
 
 /**

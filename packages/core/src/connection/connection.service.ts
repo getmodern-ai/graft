@@ -8,6 +8,7 @@ import type { Principal } from "../tenancy";
 import type { ConnectionDeps } from "./connection.deps";
 import {
   type HostSetRefusal,
+  takesCredential,
   validateCredentialFields,
   validateDisplayName,
   validateHostSet,
@@ -121,7 +122,8 @@ export function isConnectionUsable(
   const provider = providers.find((candidate) => candidate.name === connection.provider);
   if (!provider) return false;
   if (provider.connect.kind !== "form") return true;
-  if (connection.credentialSetAt === null) return false;
+  // A `none` connection holds no credential and is usable from registration (GRA-66).
+  if (connection.credentialSetAt === null && takesCredential(connection.scheme)) return false;
   return connection.oauth === null || connection.oauth.status === "connected";
 }
 
@@ -292,6 +294,10 @@ export async function registerConnectionWithCredential(
   const { credential, ...registration } = input;
   validateRegistration(registration, deps);
   refuse(validateCredentialFields(registration.scheme, credential));
+  // A `none` connection has nothing to encrypt: the row alone is the connected connection (GRA-66).
+  if (!takesCredential(registration.scheme)) {
+    return registerConnection(ctx, principal, registration, deps);
+  }
   return ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
     const registered = await registerConnection(scoped, principal, registration, deps);
@@ -409,10 +415,10 @@ export async function widenProviderConnectionHosts(
 
 /**
  * Reconnect a revoked connection that has no credential to re-enter — one a provider made with no
- * person step (ADR 0019, GRA-58). The keyring's way back is a credential re-entered
- * (`setConnectionCredential` clears the stamp with the ciphertext) and a link provider's is its own
- * flow, so this is the console's Reconnect for the third kind alone, and refuses the other two by
- * saying which way back is theirs. The approvals a revoke deleted stay deleted: every tool bound to
+ * person step (ADR 0019, GRA-58), or a keyring row on a scheme that takes no credential (`none`,
+ * GRA-66). The keyring's way back is otherwise a credential re-entered (`setConnectionCredential`
+ * clears the stamp with the ciphertext) and a link provider's is its own flow, so this refuses
+ * those two by saying which way back is theirs. The approvals a revoke deleted stay deleted: every tool bound to
  * the vendor asks again (ADR 0007), for this kind as for any. A row that is not revoked is answered
  * as it is, so a second click changes nothing.
  */
@@ -433,7 +439,8 @@ export async function reconnectConnection(
       `No connection provider named ${row.provider} is enabled on this deployment`,
     );
   }
-  if (provider.connect.kind !== "none") {
+  const keyless = provider.connect.kind === "form" && !takesCredential(row.scheme);
+  if (provider.connect.kind !== "none" && !keyless) {
     throw new ServiceError(
       "BAD_REQUEST",
       provider.connect.kind === "form"
@@ -609,6 +616,12 @@ export async function setConnectionCredential(
   );
   // A relay provider's connection has no credential here to enter or re-enter (ADR 0019).
   formProviderNamed(deps, row.provider);
+  if (!takesCredential(row.scheme)) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `A ${row.scheme} connection sends no credential; there is nothing to enter`,
+    );
+  }
   refuse(validateCredentialFields(row.scheme, fields));
   const ciphertext = await deps.vault.encrypt(fields as Record<string, string>, {
     personId: principal.personId,

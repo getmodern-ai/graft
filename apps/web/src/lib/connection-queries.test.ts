@@ -45,6 +45,11 @@ describe("a connection's provider on the console", () => {
 
   it("reads a gateway connection as connected with no credential set, and revoked when revoked", () => {
     expect(connectionStatus(base)).toBe("awaiting_credential");
+    // A keyring row on the `none` scheme never has a credential and is connected (GRA-66).
+    expect(connectionStatus({ ...base, scheme: "none" })).toBe("connected");
+    expect(
+      connectionStatus({ ...base, scheme: "none", revokedAt: "2026-09-17T10:00:00.000Z" }),
+    ).toBe("revoked");
     expect(connectionStatus(gateway)).toBe("connected");
     expect(connectionStatus({ ...gateway, revokedAt: "2026-09-17T10:00:00.000Z" })).toBe("revoked");
   });

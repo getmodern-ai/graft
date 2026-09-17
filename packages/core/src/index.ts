@@ -87,6 +87,7 @@ export {
   type HostSetRefusal,
   type HostSetVerdict,
   SCHEME_PARAMETERS,
+  takesCredential,
   VENDOR_MAX_LENGTH,
   validateCredentialFields,
   validateDisplayName,

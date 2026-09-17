@@ -314,6 +314,7 @@ describe("the proposal's rules, before any record exists", () => {
       "api_key_header (parameters: headerName, optional prefix; the person enters: apiKey)",
     );
     expect(text).toContain("basic (parameters: none; the person enters: username, password)");
+    expect(text).toContain("none (parameters: none; the person enters: nothing)");
     expect(text).toContain(
       "oauth2_client_credentials (parameters: tokenUrl, optional scopes, optional clientAuth; the person enters: clientId, clientSecret)",
     );
@@ -954,6 +955,41 @@ describe("request_connection routes a proposal to the provider that covers it", 
       expect(said.isError).toBe(true);
       expect(body(said)).toMatchObject({ reason: "input_invalid", field: "scheme" });
       expect(describeSchemes()).not.toContain("pipedream_connect_proxy");
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("a none connection is connected as soon as the person confirms it, with nothing entered (GRA-66)", async () => {
+    const proposal = {
+      vendor: "open-meteo",
+      displayName: "Open-Meteo",
+      primaryHost: "https://api.open-meteo.example/v1",
+      scheme: "none",
+      docsUrl: "https://open-meteo.example/docs",
+    };
+    const credentialAsksBefore = actionsOf(AGENT_A, CREDENTIAL_ASK_KIND).length;
+    const a = await connect(TOKEN_A);
+    try {
+      const first = await a.call("request_connection", proposal);
+      const { action } = awaiting(first, "awaiting_connection");
+      expect(action.payload).toMatchObject({ scheme: "none", schemeConfig: {} });
+
+      // The console's form shows no secret input; the submit carries an empty credential.
+      const connection = await submitConnection(action.id, {});
+      expect(connection.credentialSetAt).toBeNull();
+      expect(connection.scheme).toBe("none");
+
+      const second = await a.call("request_connection", proposal);
+      expect(second.isError).toBeFalsy();
+      expect(body(second)).toMatchObject({ status: "connected", connectionId: connection.id });
+
+      // Nothing to re-enter, and the call says so rather than opening an ask.
+      const said = await a.call("request_credential", { connectionId: connection.id });
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({ reason: "credential_not_applicable" });
+      expect((body(said) as { message: string }).message).toContain("none scheme");
+      expect(actionsOf(AGENT_A, CREDENTIAL_ASK_KIND)).toHaveLength(credentialAsksBefore);
     } finally {
       await a.close();
     }
