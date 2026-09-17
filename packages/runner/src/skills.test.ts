@@ -153,6 +153,7 @@ describe("the shipped skills", () => {
       "vendor-relative",
       "never names a host, never holds a key",
       "The vendor sees the proxy, not the person",
+      "the tool's description and its output names say so or leave it out",
       "The bare minimum",
       "curl and Python are not",
       "Reads only, until the tool is published",
