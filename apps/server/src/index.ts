@@ -253,7 +253,8 @@ const acquireRunner = createAcquireRunner(mcp, {
         `acquire: job ${event.jobId} for agent ${event.agentId} ${event.resumed ? "resumed" : "started"}`,
       );
     } else if (event.kind === "finished") {
-      console.log(`acquire: job ${event.jobId} for agent ${event.agentId} ${event.status}`);
+      const cause = event.failure ? ` (${event.failure})` : "";
+      console.log(`acquire: job ${event.jobId} for agent ${event.agentId} ${event.status}${cause}`);
     } else {
       console.error(
         `acquire: job ${event.jobId} for agent ${event.agentId} failed: ${event.error}`,
