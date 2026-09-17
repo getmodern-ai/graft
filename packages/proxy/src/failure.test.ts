@@ -128,10 +128,12 @@ describe("describeFailure", () => {
     expect(describeFailure(undefined)).toBeNull();
   });
 
-  it("flattens the cause chain to one line, names and messages only", () => {
-    const inner = named("ECONNREFUSED", "connect refused");
+  it("flattens the cause chain to one line, names, codes and messages only", () => {
+    const inner = Object.assign(new Error("connect refused"), { code: "ECONNREFUSED" });
     const outer = new Error("fetch failed", { cause: inner });
-    expect(describeFailure(outer)).toBe("Error: fetch failed <- ECONNREFUSED: connect refused");
+    expect(describeFailure(outer)).toBe(
+      "Error: fetch failed <- Error [ECONNREFUSED]: connect refused",
+    );
   });
 
   it("describes a thrown non-Error as its text", () => {

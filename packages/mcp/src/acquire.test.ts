@@ -1016,6 +1016,39 @@ describe("a job that fails and tries again", () => {
     }
   });
 
+  it("ends sandbox_unavailable naming every cause and its code when the backing throws an Error with a chain", async () => {
+    // The other thing a backing throws: an Error wrapping undici's `fetch failed`, which says
+    // nothing about what failed — the host and ENOTFOUND are two causes down (GRA-80). One hosted
+    // job reported `TypeError: fetch failed` and nothing else.
+    const ensure = sandbox.ensure;
+    sandbox.ensure = async () => {
+      throw new Error("the toolbox could not be mounted", {
+        cause: new TypeError("fetch failed", {
+          cause: Object.assign(new Error("getaddrinfo ENOTFOUND drives.blaxel.example"), {
+            code: "ENOTFOUND",
+          }),
+        }),
+      });
+    };
+    deps.model = createScriptedModel([write("goal", draft(), "Never reached.")]);
+    const a = await connect(TOKEN_A);
+    try {
+      const { status } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Open a sandbox whose drive host does not resolve",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("sandbox_unavailable");
+      expect(failure.message).toBe(
+        "The sandbox is unavailable: the toolbox could not be mounted (caused by TypeError: fetch failed <- Error [ENOTFOUND]: getaddrinfo ENOTFOUND drives.blaxel.example)",
+      );
+    } finally {
+      sandbox.ensure = ensure;
+      await a.close();
+    }
+  });
+
   it("tells the model a redirected proof read is about the host set: an undeclared host is named, and give_up carries it", async () => {
     const scripted = createScriptedModel([
       write("goal", draft({ name: "list-moved", proofReads: ["/moved"] }), "Reading /moved."),
