@@ -19,8 +19,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { NO_ELICITATION } from "./approval";
 import type { McpDeps } from "./deps";
 import { createToolListChangedNotifier } from "./notifier";
+import { runAuthoredTool } from "./run";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
@@ -480,6 +482,100 @@ describe("find_tool", () => {
       expect(found.tools).toMatchObject([{ promoted: true }]);
     } finally {
       await a.close();
+    }
+  });
+});
+
+describe("a tool with no current version", () => {
+  // What an acquire job that never passed its dry run leaves (GRA-77): the row, no pointer.
+  beforeAll(async () => {
+    await deps.tool.insertAuthoredTool(deps.db, {
+      id: "tool_never_passed",
+      personId: PERSON,
+      vendor: "demo",
+      name: "never-passed",
+      description: "Lists items from Demo Orders, though no version of it has passed.",
+      inputSchema: { type: "object" },
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: CONN_DEMO,
+    });
+  });
+
+  it("is omitted by find_tool, and refused by promote and run_tool as tool_has_no_version", async () => {
+    const b = await connect(TOKEN_B);
+    try {
+      const found = body(await b.call("find_tool", { query: "never-passed" }));
+      expect(found.tools).toEqual([]);
+      // The description matches too, and the tool is still not among the hits.
+      const byDescription = body(await b.call("find_tool", { query: "items from demo" }));
+      expect((byDescription.tools as { name: string }[]).map((t) => t.name)).toEqual([
+        "list-items",
+      ]);
+
+      const promoted = await b.call("promote", { vendor: "demo", name: "never-passed" });
+      expect(promoted.isError).toBe(true);
+      expect(body(promoted)).toMatchObject({ error: "refused", reason: "tool_has_no_version" });
+      expect(store.isPromoted(AGENT_B, "tool_never_passed")).toBe(false);
+
+      const ran = await b.call("run_tool", { vendor: "demo", name: "never-passed" });
+      expect(ran.isError).toBe(true);
+      expect(body(ran)).toMatchObject({ error: "refused", reason: "tool_has_no_version" });
+    } finally {
+      await b.close();
+    }
+  });
+});
+
+describe("runAuthoredTool by version id", () => {
+  const scope = { personId: PERSON, agentId: AGENT_A };
+  const dryRun = { detached: false, timeoutSeconds: 30, dryRun: true };
+
+  it("dry-runs the version named rather than the pointer's, and stamps the report on that version", async () => {
+    // A second version of list-items, published and not activated: same module, its own row.
+    const v2 = await deps.tool.insertToolVersion(deps.db, {
+      id: "tool_list_items_v2",
+      toolId: "tool_list_items",
+      versionNumber: 2,
+      path: "tools/demo/list-items/v1",
+      sourceHash: "fixture",
+      checkOutput: { refusals: [], advice: [] },
+    });
+    expect(store.tools.get("tool_list_items")?.currentVersionId).toBe("tool_list_items_v1");
+    const stampedBefore = store.versions.get("tool_list_items_v1")?.dryRunAt ?? null;
+
+    const answer = await runAuthoredTool(deps, scope, {
+      vendor: "demo",
+      name: "list-items",
+      versionId: v2.id,
+      input: { limit: 1 },
+      mode: dryRun,
+      channel: NO_ELICITATION,
+    });
+    expect(answer.isError).toBe(false);
+    expect((answer.answer as { dryRun: Record<string, unknown> }).dryRun).toMatchObject({
+      passed: true,
+    });
+    expect(store.versions.get(v2.id)).toMatchObject({ dryRunOutcome: { passed: true } });
+    expect(store.versions.get("tool_list_items_v1")?.dryRunAt ?? null).toBe(stampedBefore);
+    expect(store.usage.at(-1)).toMatchObject({ versionId: v2.id, dryRun: true, outcome: "ok" });
+    // The pointer is the caller's to move, not the run's.
+    expect(store.tools.get("tool_list_items")?.currentVersionId).toBe("tool_list_items_v1");
+  }, 30_000);
+
+  it("refuses a version that is another tool's, or nobody's, before anything runs", async () => {
+    for (const versionId of ["tool_other_ping_v1", "tool_theirs_v1", "no_such_version"]) {
+      const answer = await runAuthoredTool(deps, scope, {
+        vendor: "demo",
+        name: "list-items",
+        versionId,
+        input: {},
+        mode: dryRun,
+        channel: NO_ELICITATION,
+      });
+      expect(answer.isError).toBe(true);
+      expect(answer.answer).toMatchObject({ error: "refused", reason: "version_not_found" });
+      expect(store.usage.at(-1)).toMatchObject({ outcome: "refused", toolId: "tool_list_items" });
     }
   });
 });

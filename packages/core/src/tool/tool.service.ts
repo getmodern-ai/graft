@@ -8,9 +8,10 @@ import type { Principal } from "../tenancy";
 import type { ToolDeps } from "./tool.deps";
 
 /**
- * The toolbox (CONTEXT.md; ADR 0003, ADR 0009): create a tool, add a version, move the pointer,
- * list, look up by vendor and name. Postgres holds pointers; the module itself lives in the toolbox
- * directory GRA-18's publish writes. Nothing here deletes anything.
+ * The toolbox (CONTEXT.md; ADR 0003, ADR 0009): create a tool, add a version, activate one — the
+ * pointer and the definition together — list, look up by vendor and name. Postgres holds pointers;
+ * the module itself lives in the toolbox directory GRA-18's publish writes. Nothing here deletes
+ * anything.
  */
 
 export const TOOL_NAME_MAX_LENGTH = 64;
@@ -232,10 +233,38 @@ export async function updateToolDefinition(
 }
 
 /**
+ * Make a version the one the tool runs as: the definition becomes the version's — prose, schema,
+ * the check's annotations, the binding — and the pointer moves onto it, in one transaction, so a
+ * list never shows one version's description over another's schema. The pointer names only a
+ * version that passed its dry run (ADR 0012, L0 as amended 2026-09-17): `acquire`'s job publishes
+ * without activating, dry-runs the version by id and calls this on the pass; `publishToolVersion`
+ * below does it at publish for the by-hand path, where the agent decides. `NOT_FOUND` when the
+ * version is not the tool's, or the tool not the person's — `setCurrentToolVersion` moves nothing.
+ */
+export async function activateToolVersion(
+  ctx: ServiceContext,
+  principal: Principal,
+  toolId: string,
+  versionId: string,
+  definition: ToolDefinitionPatch,
+  deps: ToolDeps,
+): Promise<AuthoredToolRow> {
+  return ctx.db.transaction(async (tx) => {
+    const scoped = { db: tx };
+    await updateToolDefinition(scoped, principal, toolId, definition, deps);
+    return orNotFound(
+      await moveToolPointer(scoped, principal, toolId, versionId, deps),
+      "Tool version not found",
+    );
+  });
+}
+
+/**
  * What a publish does to the rows, in one transaction (GRA-18 calls this): a new version, the
- * definition the check produced, the pointer moved. The version directory is already written by
- * the time this runs; a failure here leaves a directory without a row, which the next publish
- * overwrites, rather than a row without a directory, which a run would trip over.
+ * definition the check produced, the pointer moved — `addToolVersion` then `activateToolVersion`.
+ * The version directory is already written by the time this runs; a failure here leaves a
+ * directory without a row, which the next publish overwrites, rather than a row without a
+ * directory, which a run would trip over.
  */
 export async function publishToolVersion(
   ctx: ServiceContext,
@@ -248,10 +277,13 @@ export async function publishToolVersion(
   return ctx.db.transaction(async (tx) => {
     const scoped = { db: tx };
     const inserted = await addToolVersion(scoped, principal, toolId, version, deps);
-    await updateToolDefinition(scoped, principal, toolId, definition, deps);
-    const tool = orNotFound(
-      await moveToolPointer(scoped, principal, toolId, inserted.id, deps),
-      "Tool not found",
+    const tool = await activateToolVersion(
+      scoped,
+      principal,
+      toolId,
+      inserted.id,
+      definition,
+      deps,
     );
     return { tool, version: inserted };
   });

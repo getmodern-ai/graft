@@ -564,10 +564,20 @@ describe("a job that fails and tries again", () => {
       ),
       write(
         "dry_run_failed",
-        draft({ name: "list-items-retry" }),
+        draft({
+          name: "list-items-retry",
+          description: "Lists items from Demo Orders, up to a limit — the documented path.",
+        }),
         "The dry run read GET /nope and the vendor answered 404; the documented path is /items.",
       ),
     ]);
+    // Every pointer move, so "moved only at the pass" is a fact about the moves and not the end state.
+    const moves: string[] = [];
+    const setCurrent = deps.tool.setCurrentToolVersion;
+    deps.tool.setCurrentToolVersion = async (db, personId, toolId, versionId) => {
+      moves.push(versionId);
+      return setCurrent(db, personId, toolId, versionId);
+    };
     const a = await connect(TOKEN_A);
     try {
       const { status, jobId } = await acquireAndFinish(a, {
@@ -598,16 +608,25 @@ describe("a job that fails and tries again", () => {
       const failedLine = traces.find((row) => row.kind === "dry_run" && row.attemptNumber === 1);
       expect(failedLine?.text).toContain("failed");
       expect(failedLine?.data).toMatchObject({ report: { passed: false } });
-      // Both attempts published a version of the one tool; the pointer is on the one that passed,
-      // and the tool was promoted only then.
+      // Both attempts published a version of the one tool; the pointer moved once, at the pass, onto
+      // the version that passed (GRA-77) — v1 was never current, and keeps its failed report — the
+      // definition is the passing draft's, and the tool was promoted only then.
       const toolId = failedVersion?.toolId ?? "";
       expect(store.versions.get(attempts[1]?.versionId ?? "")?.toolId).toBe(toolId);
-      expect(store.tools.get(toolId)?.currentVersionId).toBe(attempts[1]?.versionId);
+      expect(moves).toEqual([attempts[1]?.versionId]);
+      expect(store.tools.get(toolId)).toMatchObject({
+        currentVersionId: attempts[1]?.versionId,
+        description: "Lists items from Demo Orders, up to a limit — the documented path.",
+      });
+      expect(store.versions.get(attempts[0]?.versionId ?? "")?.dryRunOutcome).toMatchObject({
+        passed: false,
+      });
       expect(store.isPromoted(AGENT_A, toolId)).toBe(true);
       expect(
         store.changes.filter((c) => c.toolId === toolId && c.change === "promote"),
       ).toHaveLength(1);
     } finally {
+      deps.tool.setCurrentToolVersion = setCurrent;
       await a.close();
     }
   }, 30_000);
@@ -646,17 +665,80 @@ describe("a job that fails and tries again", () => {
         { attempt: 2, outcome: "dry_run_failed", summary: "Second guess: /nope again." },
       ]);
       expect(status.progress.at(-1)).toContain("Stopped");
-      const { job, traces } = rowsOf(jobId);
+      const { job, traces, attempts } = rowsOf(jobId);
       expect(job.status).toBe("failed");
       expect(traces.at(-1)).toMatchObject({
         kind: "result",
         text: expect.stringContaining("attempt_budget"),
       });
-      expect(await a.names()).not.toContain(authoredToolName("demo", "list-nothing"));
+      const nothing = authoredToolName("demo", "list-nothing");
+      expect(await a.names()).not.toContain(nothing);
+
+      // What a job that never passed leaves (GRA-77): both versions with their failed reports, the
+      // tool with no current version — findable by nobody, promotable by nobody, runnable by nobody.
+      const versions = attempts.map((row) => store.versions.get(row.versionId ?? ""));
+      expect(versions.map((v) => v?.versionNumber)).toEqual([1, 2]);
+      for (const version of versions) {
+        expect(version?.dryRunOutcome).toMatchObject({ passed: false });
+      }
+      const tool = store.tools.get(versions[0]?.toolId ?? "");
+      expect(tool).toMatchObject({ name: "list-nothing", currentVersionId: null });
+      const found = body(await a.call("find_tool", { query: "list-nothing" }));
+      expect(found.tools).toEqual([]);
+      const promoted = await a.call("promote", { vendor: "demo", name: "list-nothing" });
+      expect(promoted.isError).toBe(true);
+      expect(body(promoted)).toMatchObject({ error: "refused", reason: "tool_has_no_version" });
+      const ran = await a.call("run_tool", { vendor: "demo", name: "list-nothing", input: {} });
+      expect(body(ran)).toMatchObject({ error: "refused", reason: "tool_has_no_version" });
+      expect(store.isPromoted(AGENT_A, tool?.id ?? "")).toBe(false);
     } finally {
       await a.close();
     }
   }, 30_000);
+
+  it("a later job over the same vendor and name publishes v2 and the pointer lands on it", async () => {
+    deps.acquire = { maxAttempts: 1, tokenCeiling: 400_000 };
+    deps.model = createScriptedModel([
+      write("goal", draft({ name: "list-later", path: "/nope" }), "Guessed /nope."),
+    ]);
+    const a = await connect(TOKEN_A);
+    const later = authoredToolName("demo", "list-later");
+    try {
+      const first = await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List later" });
+      expect(first.status.status).toBe("failed");
+      const [v1] = rowsOf(first.jobId).attempts.map((row) =>
+        store.versions.get(row.versionId ?? ""),
+      );
+      expect(v1).toMatchObject({ versionNumber: 1, dryRunOutcome: { passed: false } });
+      const toolId = v1?.toolId ?? "";
+      expect(store.tools.get(toolId)?.currentVersionId).toBeNull();
+      expect(body(await a.call("find_tool", { query: "list-later" })).tools).toEqual([]);
+
+      deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000 };
+      deps.model = createScriptedModel([
+        write("goal", draft({ name: "list-later" }), "Read the documentation this time: /items."),
+      ]);
+      const second = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List later, again",
+      });
+      expect(second.status.status).toBe("succeeded");
+      expect(second.status.result).toMatchObject({ tool: later, toolId, version: 2 });
+      const [v2] = rowsOf(second.jobId).attempts.map((row) =>
+        store.versions.get(row.versionId ?? ""),
+      );
+      expect(v2).toMatchObject({ toolId, versionNumber: 2, dryRunOutcome: { passed: true } });
+      expect(store.tools.get(toolId)?.currentVersionId).toBe(v2?.id);
+      // v1 is still there with its report (ADR 0009), and the tool is now findable and in the list.
+      expect(store.versions.get(v1?.id ?? "")).toMatchObject({ dryRunOutcome: { passed: false } });
+      expect(body(await a.call("find_tool", { query: "list-later" })).tools).toMatchObject([
+        { tool: later, promoted: true },
+      ]);
+      expect(await a.names()).toContain(later);
+    } finally {
+      await a.close();
+    }
+  }, 60_000);
 
   it("ends on the token ceiling with a result naming it", async () => {
     deps.acquire = { maxAttempts: 4, tokenCeiling: 1_000 };

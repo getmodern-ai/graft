@@ -1,6 +1,7 @@
 import { type ModuleFile, readModuleSources } from "@graft/check";
 import {
   type AgentScope,
+  activateToolVersion,
   appendAcquireJobProgress,
   appendAcquireTrace,
   completeAcquireJob,
@@ -79,10 +80,15 @@ import {
  * **The model only answers.** The job owns every tool: it reads pages through the server-side page
  * reader, writes the draft onto the agent's sandbox under the job's own drafts path, runs the check,
  * makes each proof read through the connection's execute path with the dry-run claim on
- * (`runWithCapability`, claim `execute`), publishes through GRA-18's publish, and dry-runs through
- * the same path a first-class call takes. The model is never handed a credential, the capability
- * token, or a route to the vendor; what it sees of a vendor is the text the job hands back, with
- * credentials redacted before it is stored (`@graft/core`'s `redactText`).
+ * (`runWithCapability`, claim `execute`), publishes through GRA-18's publish **without activating**
+ * — the version row is written and the tool's pointer stays where it was, null on a first publish
+ * — dry-runs that version by id through the same path a first-class call takes, and on the pass
+ * activates it (`@graft/core`'s `activateToolVersion`: the definition and the pointer, one
+ * transaction) before promoting. So the pointer names only a version that passed its dry run
+ * (ADR 0012, L0 as amended 2026-09-17), and a job that never passes leaves every version with its
+ * report and a tool `find_tool` omits and `promote` refuses (GRA-77). The model is never handed a
+ * credential, the capability token, or a route to the vendor; what it sees of a vendor is the text
+ * the job hands back, with credentials redacted before it is stored (`@graft/core`'s `redactText`).
  *
  * **Consent never moves inside** (ADR 0004, ADR 0006, ADR 0008). The build approval was the
  * meta-tool's to require before the job existed, and is required to still stand when the job runs.
@@ -696,6 +702,9 @@ class AcquireLoop {
         inputSchema: draft.inputSchema,
         draftPath: attempt.row.draftPath,
         defaultConnectionId: connectionId,
+        // The version is written and nothing else moves: the pointer names only a version that
+        // passed its dry run (ADR 0012, L0 as amended 2026-09-17), so it moves below, on the pass.
+        activate: false,
       });
     } catch (error) {
       // A bad name or description is the publish's refusal before it reads anything; the model
@@ -766,6 +775,7 @@ class AcquireLoop {
     const dry = await runAuthoredTool(this.deps, this.scope, {
       vendor,
       name: draft.name,
+      versionId: version.id,
       input: draft.testInput,
       mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true },
       channel: NO_ELICITATION,
@@ -828,6 +838,21 @@ class AcquireLoop {
       };
     }
 
+    // The pass is what moves the pointer: the definition becomes this draft's and the tool runs as
+    // this version, in one transaction, before the attempt closes and the tool is promoted.
+    await activateToolVersion(
+      this.ctx,
+      this.principal,
+      outcome.tool.id,
+      version.id,
+      {
+        description: draft.description,
+        inputSchema: draft.inputSchema,
+        annotations: outcome.annotations,
+        defaultConnectionId: connectionId,
+      },
+      this.deps.tool,
+    );
     await this.closeOpen("passed", null, undefined, version.id);
     const promoted = await promotePublished(
       this.ctx,
@@ -837,7 +862,7 @@ class AcquireLoop {
       this.deps.notifier,
     );
     await this.progress(
-      `Attempt ${attempt.number}: the dry run passed. ${wire} v${version.versionNumber} is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
+      `Attempt ${attempt.number}: the dry run passed. ${wire} now runs as v${version.versionNumber} and is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
     );
     return {
       success: {
