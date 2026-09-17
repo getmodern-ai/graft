@@ -26,6 +26,7 @@ import {
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { SCHEME_CREDENTIAL_FIELDS } from "@graft/proxy/credential-fields";
+import { hostSetOf } from "@graft/proxy/credential-source";
 import { SCHEME_PARAMETERS } from "@graft/proxy/scheme-parameters";
 import { AUTH_SCHEMES, type AuthScheme, isAuthScheme } from "@graft/proxy/types";
 
@@ -83,6 +84,22 @@ import { executeToolName } from "./tool-names";
  * leaves. What an agent may never do is undo one of those decisions: a row the person revoked, or
  * one the person has not given this agent, is refused with the console step that would grant it —
  * the smallest consent that exists today — rather than re-made or re-scoped by the agent's call.
+ *
+ * **A build approval stays with the connection row, so a rotation re-enters in place** (ADR 0008
+ * as amended 2026-09-18; GRA-76). A proposal naming a vendor and hosts that a connection of the
+ * person's already reaches — live or revoked — is never a second ask: a second row would carry no
+ * scope and no approvals, and the person would answer `acquire`'s build ask again for one account.
+ * `existingConnectionFor` finds that row, and the call answers with it named and the step that
+ * keeps it: `connected` when it is usable and in this agent's scope; otherwise the
+ * `connection_exists` refusal saying whether the step is `request_credential` (a live row in scope
+ * whose credential or consent is missing — the re-entry its card handles, consent included), the
+ * console's Reconnect (a revoked row), or the console's scope picker (a row this agent was not
+ * given). Hosts are matched as the proxy matches them at resolution (`hostSetOf`): the proposal's
+ * set within the row's, so a row reaching more than proposed counts and one reaching less does
+ * not. One row takes a new ask on purpose: a revoked row of a **link** provider, because the
+ * link's return reconnects it in place (GRA-59, `connectThroughProvider`) — the ask *is* its
+ * reconnection. A gateway proposal never reaches this check (`connectWithoutPersonStep` has its
+ * own two refusals, above).
  */
 
 export const CONNECTION_ASK_KIND = "connection";
@@ -368,12 +385,116 @@ function proposalKey(payload: Record<string, unknown>): string {
 }
 
 /**
+ * Whether a connection of the person's reaches everything a proposal names: the same vendor, and
+ * the proposal's host set within the row's, both read as the proxy reads a row at resolution
+ * (`hostSetOf`: lower-case hostnames, the primary's among them). A row reaching more than proposed
+ * covers it — a tool authored against it reaches every proposed host; one reaching less does not,
+ * and the proposal proceeds to an ask for the wider row.
+ */
+export function coversProposal(
+  connection: Pick<ConnectionOutput, "vendor" | "primaryHost" | "hosts">,
+  proposal: Pick<ConnectionProposalPayload, "vendor" | "primaryHost" | "hosts">,
+): boolean {
+  if (connection.vendor !== proposal.vendor) return false;
+  const reach = hostSetOf(connection);
+  for (const host of hostSetOf(proposal)) {
+    if (!reach.has(host)) return false;
+  }
+  return true;
+}
+
+/** The reason word `request_connection` answers when the person already has the connection proposed (GRA-76). */
+export const CONNECTION_EXISTS = "connection_exists";
+
+export type ExistingConnectionVerdict =
+  | { kind: "connected"; connection: ConnectionOutput }
+  | {
+      kind: "refuse";
+      reason: typeof CONNECTION_EXISTS;
+      message: string;
+      details: { connectionId: string; provider: string; revoked: boolean; inScope: boolean };
+    };
+
+const EXISTS_BECAUSE =
+  "Do not propose it again: a new connection would be a new row with no scope and no approvals, and the person would answer the build approval again for the same account.";
+
+/**
+ * The connection a proposal already has, and what the agent does about it (GRA-76; the header's
+ * paragraph on the approval staying with the row). Null when no row of the person's covers the
+ * proposal, and the ask proceeds. Among several — a keyring row and a relay provider's for one
+ * vendor — a live row beats a revoked one and this agent's beats another's, so the sentence names
+ * the shortest step. A row whose provider this deployment no longer enables is not one the person
+ * can act on here and is passed over; so is a revoked row of a link provider, because the link's
+ * return reconnects it in place and the ask is its reconnection (GRA-59).
+ */
+export function existingConnectionFor(
+  connections: readonly ConnectionOutput[],
+  scopeIds: readonly string[],
+  providers: readonly ConnectionProvider[],
+  proposal: Pick<ConnectionProposalPayload, "vendor" | "primaryHost" | "hosts">,
+): ExistingConnectionVerdict | null {
+  const candidates = connections.filter((connection) => {
+    if (!coversProposal(connection, proposal)) return false;
+    const provider = providerNamed(providers, connection.provider);
+    if (!provider) return false;
+    return !(connection.revokedAt !== null && provider.connect.kind === "link");
+  });
+  const inScope = (connection: ConnectionOutput) => scopeIds.includes(connection.id);
+  const usable = candidates.find(
+    (connection) => inScope(connection) && isConnectionUsable(connection, providers),
+  );
+  if (usable) return { kind: "connected", connection: usable };
+
+  const rank = (connection: ConnectionOutput) =>
+    (connection.revokedAt === null ? 0 : 2) + (inScope(connection) ? 0 : 1);
+  const [row] = [...candidates].sort((a, b) => rank(a) - rank(b));
+  if (!row) return null;
+
+  const what = `${row.displayName} (${row.vendor}) is already a connection of the person's, reaching every host you proposed`;
+  const revoked = row.revokedAt !== null;
+  const scoped = inScope(row);
+  const reenter = `request_credential { connectionId: "${row.id}" }`;
+  // A form row that takes a credential is the one `request_credential` re-enters (a consent
+  // included); a `none` row or a provider's has nothing to enter, and the console is the step.
+  const reenterable =
+    providerNamed(providers, row.provider)?.connect.kind === "form" && takesCredential(row.scheme);
+  let message: string;
+  if (revoked) {
+    message =
+      `${what}, and the person revoked it. Ask them to reconnect it in the console (Connections, then Reconnect on the connection)` +
+      (scoped && reenterable ? `; ${reenter} asks them the same, since it is in your scope` : "") +
+      (scoped ? "" : ", and to add it to this agent's scope on this agent's page under Scope") +
+      `. ${EXISTS_BECAUSE}`;
+  } else if (scoped) {
+    message = reenterable
+      ? `${what}, and is in your scope, but its credential or consent is missing. Call ${reenter} so the person re-enters it in the console. ${EXISTS_BECAUSE}`
+      : `${what}, and is in your scope, but is not usable yet. Ask the person to complete it in the console (Connections). ${EXISTS_BECAUSE}`;
+  } else {
+    message =
+      `${what}, but it is not in this agent's scope. Ask the person to add it on this agent's page in the console, under Scope` +
+      (row.credentialSetAt === null && reenterable
+        ? ", and to enter its credential on the connection"
+        : "") +
+      `; a second account at the same vendor is added in the console, not proposed here. ${EXISTS_BECAUSE}`;
+  }
+  return {
+    kind: "refuse",
+    reason: CONNECTION_EXISTS,
+    message,
+    details: { connectionId: row.id, provider: row.provider, revoked, inScope: scoped },
+  };
+}
+
+/**
  * `request_connection`: propose, and wait for the person to create the connection in the console.
  *
- * A connection to the same vendor and primary host already in the agent's scope and holding a
- * credential is answered `connected` at once, with no ask — the agent that calls again after a
+ * A connection to the same vendor reaching every proposed host, already in the agent's scope and
+ * usable, is answered `connected` at once, with no ask — the agent that calls again after a
  * "connected" answer, or after a turn ended, should not have the person asked twice for one
- * account. A person who wants a second account at the same host adds it in the console.
+ * account. One that exists but is not this agent's to call through — its credential missing,
+ * revoked, or outside this agent's scope — is the `connection_exists` refusal naming it and the
+ * step that keeps the row (GRA-76). A person who wants a second account at the same host adds it
+ * in the console.
  */
 export async function requestConnection(
   ctx: ServiceContext,
@@ -420,16 +541,20 @@ export async function requestConnection(
       getAgentScope(ctx, scope, deps.agent),
       listConnections(ctx, principal, deps.connection),
     ]);
-    // Usable, not merely present: an authorization-code connection whose consent has not completed
-    // is not one the agent can call through (ADR 0005), so the ask proceeds.
-    const existing = connections.find(
-      (connection) =>
-        scopeIds.includes(connection.id) &&
-        isConnectionUsable(connection, deps.connection.providers) &&
-        connection.vendor === payload.vendor &&
-        connection.primaryHost === payload.primaryHost,
+    // The row the person already has for this vendor at these hosts, if any (the header's paragraph
+    // on GRA-76): connected when it is usable and this agent's; otherwise the step that keeps it.
+    const existing = existingConnectionFor(
+      connections,
+      scopeIds,
+      deps.connection.providers,
+      payload,
     );
-    if (existing) return { isError: false, answer: connected(existing, "already") };
+    if (existing?.kind === "connected") {
+      return { isError: false, answer: connected(existing.connection, "already") };
+    }
+    if (existing?.kind === "refuse") {
+      return refuse(existing.reason, existing.message, existing.details);
+    }
   }
 
   const action =

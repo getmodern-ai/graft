@@ -285,3 +285,25 @@ describe("the instructions and the Hermes skill", () => {
     }
   });
 });
+
+/**
+ * The rotation rule (ADR 0008 as amended 2026-09-18; GRA-76), carried by the two connection tools'
+ * descriptions and the skill rather than by the instructions: `SERVER_INSTRUCTIONS` sits within
+ * thirty characters of `INSTRUCTIONS_BUDGET`, and the descriptions are the long form a client
+ * reads beside them. One sentence, three texts, compared as words.
+ */
+const ROTATION_RULE =
+  "a rotated or expired credential is request_credential against the existing connection, never a new connection: a new connection is a new row with no scope and no approvals";
+
+describe("the connection descriptions and the Hermes skill", () => {
+  it("say a rotation is request_credential against the existing connection, never a new one", async () => {
+    const skill = words(await readFile(HERMES_SKILL_PATH, "utf8"));
+    const needle = words(ROTATION_RULE);
+    for (const name of ["request_connection", "request_credential"]) {
+      const description = META_TOOLS.find((tool) => tool.definition.name === name)?.definition
+        .description;
+      expect(words(description ?? ""), name).toContain(needle);
+    }
+    expect(skill, "SKILL.md").toContain(needle);
+  });
+});

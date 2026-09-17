@@ -13,6 +13,7 @@ import {
   setConnectionCredential,
   toProxyConnection,
 } from "@graft/core";
+import type { ConnectionRow } from "@graft/db/repo/connection";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { sandboxPath } from "@graft/toolbox";
@@ -23,8 +24,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import {
   CONNECTION_ASK_KIND,
+  CONNECTION_EXISTS,
   type ConnectionProposalPayload,
   CREDENTIAL_ASK_KIND,
+  coversProposal,
   describeSchemes,
   normaliseProposal,
   readConnectionAnswer,
@@ -830,7 +833,24 @@ describe("request_connection routes a proposal to the provider that covers it", 
     revoke: async () => undefined,
   };
 
+  /**
+   * GRA-28's acme row — agent A's, under the keyring — is set aside for this suite: with it present,
+   * agent B's proposal for acme is `connection_exists` (GRA-76, the last suite here), and this
+   * suite is about where a proposal is routed.
+   */
+  const setAside = new Map<string, ConnectionRow>();
+  beforeEach(() => {
+    for (const [id, row] of store.connections) {
+      if (row.vendor === "acme" && row.provider === "keyring") {
+        setAside.set(id, row);
+        store.connections.delete(id);
+      }
+    }
+  });
+
   afterEach(() => {
+    for (const [id, row] of setAside) store.connections.set(id, row);
+    setAside.clear();
     deps.connection = { ...deps.connection, providers: [keyringProvider] };
     started.length = 0;
   });
@@ -917,12 +937,14 @@ describe("request_connection routes a proposal to the provider that covers it", 
       });
       expect(actionsOf(AGENT_B, CONNECTION_ASK_KIND)).toHaveLength(asks);
 
-      // A vendor the broker does not cover falls to the keyring and gets the form, as ever.
+      // A vendor the broker does not cover falls to the keyring and gets the form, as ever. (Not
+      // gamma: an earlier suite connected gamma for agent A, and a proposal for a row another
+      // agent holds is `connection_exists` since GRA-76.)
       const other = body(
         await a.call("request_connection", {
           ...PROPOSAL,
-          vendor: "gamma",
-          primaryHost: "https://api.gamma.example",
+          vendor: "theta",
+          primaryHost: "https://api.theta.example",
           hosts: [],
         }),
       );
@@ -932,7 +954,7 @@ describe("request_connection routes a proposal to the provider that covers it", 
         provider: "keyring",
         providerConnect: "form",
         providerTarget: null,
-        vendor: "gamma",
+        vendor: "theta",
       });
     } finally {
       await a.close();
@@ -1019,6 +1041,43 @@ describe("request_connection routes a proposal to the provider that covers it", 
       await a.close();
       store.connections.delete(row.id);
       store.agentConnections.get(AGENT_B)?.delete(row.id);
+    }
+  });
+
+  it("a revoked row of a link provider takes a new ask: the link's return reconnects it in place (GRA-76)", async () => {
+    deps.connection = { ...deps.connection, providers: [broker, keyringProvider] };
+    const row = store.addConnection({
+      id: "conn_broker_revoked",
+      personId: PERSON,
+      vendor: "acme",
+      displayName: "Acme via broker",
+      primaryHost: "https://api.acme.example/v2",
+      hosts: ["files.acme.example"],
+    });
+    store.connections.set(row.id, {
+      ...row,
+      provider: "broker",
+      providerRef: null,
+      credentialSetAt: null,
+      revokedAt: new Date(),
+    });
+    store.agentConnections.get(AGENT_B)?.add(row.id);
+    const a = await connect(TOKEN_B);
+    try {
+      const { action } = awaiting(
+        await a.call("request_connection", PROPOSAL),
+        "awaiting_connection",
+      );
+      expect(action.payload).toMatchObject({ provider: "broker", providerConnect: "link" });
+    } finally {
+      await a.close();
+      store.connections.delete(row.id);
+      store.agentConnections.get(AGENT_B)?.delete(row.id);
+      for (const [id, pending] of store.pendingActions) {
+        if (pending.agentId === AGENT_B && pending.kind === CONNECTION_ASK_KIND) {
+          store.pendingActions.delete(id);
+        }
+      }
     }
   });
 });
@@ -1255,6 +1314,230 @@ describe("request_connection through the gateway provider (GRA-58)", () => {
         message: expect.stringContaining("Unknown scheme"),
       });
       expect(rowsFor("unleashed")).toHaveLength(0);
+    } finally {
+      await a.close();
+    }
+  });
+});
+
+/**
+ * A build approval stays with the connection row (ADR 0008 as amended 2026-09-18; GRA-76), so a
+ * proposal for a vendor and hosts the person already has is answered with that row and the step
+ * that keeps it, never a second ask. One row in four states, through the harness — live with its
+ * credential, live without it, revoked, and live but another agent's — and the host rule: a row
+ * reaching more than proposed covers it, one reaching less does not. Every refusal here is
+ * `connection_exists` with the row named, and records nothing.
+ */
+describe("request_connection finds the connection the person already has (GRA-76)", () => {
+  const DELTA = {
+    vendor: "delta",
+    displayName: "Delta Books",
+    primaryHost: "https://api.delta.example/v1",
+    hosts: ["files.delta.example"],
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "x-delta-key" },
+  };
+  const made: string[] = [];
+
+  /** A keyring row for Delta as the console would have made it, with the given columns changed. */
+  function deltaRow(id: string, changes: Partial<ConnectionRow> = {}): ConnectionRow {
+    const base = store.addConnection({
+      id,
+      personId: PERSON,
+      vendor: "delta",
+      displayName: "Delta Books",
+      primaryHost: "https://api.delta.example/v1",
+      hosts: ["files.delta.example"],
+      schemeConfig: { headerName: "x-delta-key" },
+    });
+    const row = { ...base, ...changes };
+    store.connections.set(id, row);
+    made.push(id);
+    return row;
+  }
+
+  afterEach(() => {
+    for (const id of made) {
+      store.connections.delete(id);
+      for (const scope of store.agentConnections.values()) scope.delete(id);
+    }
+    made.length = 0;
+    for (const [id, pending] of store.pendingActions) {
+      if (pending.kind === CONNECTION_ASK_KIND && pending.payload.vendor === "delta") {
+        store.pendingActions.delete(id);
+      }
+    }
+  });
+
+  const asksFor = (vendor: string) =>
+    [...store.pendingActions.values()].filter(
+      (row) => row.kind === CONNECTION_ASK_KIND && row.payload.vendor === vendor,
+    );
+
+  it("matches hosts as the proxy does: the proposal's set within the row's, lower-case, the primary's hostname among them", () => {
+    const row = {
+      vendor: "delta",
+      primaryHost: "https://api.delta.example/v1",
+      hosts: ["api.delta.example", "Files.Delta.example"],
+    };
+    const proposal = (primaryHost: string, hosts: string[]) => ({
+      vendor: "delta",
+      primaryHost,
+      hosts,
+    });
+    expect(
+      coversProposal(row, proposal("https://api.delta.example/v1", ["files.delta.example"])),
+    ).toBe(true);
+    // A narrower proposal, a different path, a port: the same hostnames, so covered.
+    expect(coversProposal(row, proposal("https://api.delta.example/v2", []))).toBe(true);
+    expect(
+      coversProposal(row, proposal("https://API.delta.example:443", ["FILES.delta.example"])),
+    ).toBe(true);
+    // A wider one is not, and neither is another vendor at the same hosts.
+    expect(
+      coversProposal(row, proposal("https://api.delta.example/v1", ["cdn.delta.example"])),
+    ).toBe(false);
+    expect(
+      coversProposal({ ...row, vendor: "epsilon" }, proposal("https://api.delta.example/v1", [])),
+    ).toBe(false);
+  });
+
+  it("a live row with its credential, in scope, answers connected — for a narrower proposal too — and a wider proposal is a new ask", async () => {
+    const row = deltaRow("conn_delta_live");
+    store.agentConnections.get(AGENT_A)?.add(row.id);
+    const a = await connect(TOKEN_A);
+    try {
+      expect(body(await a.call("request_connection", DELTA))).toMatchObject({
+        status: "connected",
+        connectionId: row.id,
+        message: expect.stringContaining("already connected"),
+      });
+      expect(
+        body(
+          await a.call("request_connection", {
+            ...DELTA,
+            primaryHost: "https://api.delta.example/v2",
+            hosts: [],
+          }),
+        ),
+      ).toMatchObject({ status: "connected", connectionId: row.id });
+      expect(asksFor("delta")).toHaveLength(0);
+
+      // A host the row does not reach: the row does not cover it, and the ask is for the wider row.
+      const wider = await a.call("request_connection", {
+        ...DELTA,
+        hosts: ["files.delta.example", "cdn.delta.example"],
+      });
+      awaiting(wider, "awaiting_connection");
+      expect(asksFor("delta")).toHaveLength(1);
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("a live row whose credential is missing, in scope, is connection_exists pointing at request_credential — which then asks", async () => {
+    const row = deltaRow("conn_delta_bare", { credentialSetAt: null });
+    store.agentConnections.get(AGENT_A)?.add(row.id);
+    const a = await connect(TOKEN_A);
+    try {
+      const said = await a.call("request_connection", DELTA);
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({
+        error: "refused",
+        reason: CONNECTION_EXISTS,
+        connectionId: row.id,
+        provider: "keyring",
+        revoked: false,
+        inScope: true,
+      });
+      const message = String(body(said).message);
+      expect(message).toContain(`request_credential { connectionId: "${row.id}" }`);
+      expect(message).toContain("no scope and no approvals");
+      expect(message).not.toContain("Reconnect");
+      expect(asksFor("delta")).toHaveLength(0);
+
+      // The path it names works: the re-entry ask, on this row.
+      const { action } = awaiting(
+        await a.call("request_credential", { connectionId: row.id }),
+        "awaiting_credential",
+      );
+      expect(action.connectionId).toBe(row.id);
+      store.pendingActions.delete(action.id);
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("a revoked row is connection_exists pointing at the console's Reconnect — and at request_credential when it is in scope", async () => {
+    const row = deltaRow("conn_delta_revoked", { credentialSetAt: null, revokedAt: new Date() });
+    store.agentConnections.get(AGENT_A)?.add(row.id);
+    const a = await connect(TOKEN_A);
+    const b = await connect(TOKEN_B);
+    try {
+      const mine = body(await a.call("request_connection", DELTA));
+      expect(mine).toMatchObject({
+        reason: CONNECTION_EXISTS,
+        connectionId: row.id,
+        revoked: true,
+        inScope: true,
+      });
+      expect(String(mine.message)).toContain("Reconnect");
+      expect(String(mine.message)).toContain(`request_credential { connectionId: "${row.id}" }`);
+
+      // Another agent: the same row, the console's Reconnect and the scope picker, no request_credential.
+      const theirs = body(await b.call("request_connection", DELTA));
+      expect(theirs).toMatchObject({
+        reason: CONNECTION_EXISTS,
+        connectionId: row.id,
+        revoked: true,
+        inScope: false,
+      });
+      expect(String(theirs.message)).toContain("Reconnect");
+      expect(String(theirs.message)).toContain("under Scope");
+      expect(String(theirs.message)).not.toContain("request_credential");
+      expect(asksFor("delta")).toHaveLength(0);
+      expect(store.connections.get(row.id)?.revokedAt).not.toBeNull();
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it("a live usable row this agent was not given is connection_exists pointing at the scope picker, and grows no scope", async () => {
+    const row = deltaRow("conn_delta_theirs");
+    store.agentConnections.get(AGENT_A)?.add(row.id);
+    const b = await connect(TOKEN_B);
+    try {
+      const said = await b.call("request_connection", DELTA);
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({
+        reason: CONNECTION_EXISTS,
+        connectionId: row.id,
+        revoked: false,
+        inScope: false,
+      });
+      expect(String(body(said).message)).toContain("under Scope");
+      expect(String(body(said).message)).toContain("not proposed here");
+      expect(store.agentConnections.get(AGENT_B)?.has(row.id)).toBe(false);
+      expect(asksFor("delta")).toHaveLength(0);
+      expect(await b.toolNames()).not.toContain(executeToolName(row.id));
+    } finally {
+      await b.close();
+    }
+  });
+
+  it("prefers the live row to the revoked one, and this agent's to another's, when several cover the proposal", async () => {
+    const revoked = deltaRow("conn_delta_old", { revokedAt: new Date() });
+    const live = deltaRow("conn_delta_new", { credentialSetAt: null });
+    store.agentConnections.get(AGENT_A)?.add(revoked.id);
+    store.agentConnections.get(AGENT_A)?.add(live.id);
+    const a = await connect(TOKEN_A);
+    try {
+      expect(body(await a.call("request_connection", DELTA))).toMatchObject({
+        reason: CONNECTION_EXISTS,
+        connectionId: live.id,
+        revoked: false,
+      });
     } finally {
       await a.close();
     }

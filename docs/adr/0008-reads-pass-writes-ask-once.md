@@ -76,3 +76,11 @@ default.
 decline holds; a dismissal records nothing. Revoking a connection deletes every approval for its
 vendor's tools. In Hermes, Allow Once, Allow Session and Always Allow all record a standing allow,
 which is what the buttons say; Deny records a standing deny; the setting is the console's.
+
+## Amendment 2026-09-18: the build approval is the row's, and a rotation re-enters in place
+
+Decided by Aleks (GRA-76). `acquire`'s build approval stays keyed on the connection row, so a
+rotated or expired credential is a re-entry on that row — `request_credential` from the agent,
+Re-enter or Reconnect in the console — which keeps the row, its scope and its approvals, and never
+a new connection, which is a new row with none of them; `request_connection` refuses a proposal
+for a vendor and hosts the person already has and names the row instead.
