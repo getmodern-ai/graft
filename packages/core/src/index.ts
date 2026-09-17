@@ -210,6 +210,7 @@ export {
 export type { ServiceContext } from "./context";
 export {
   HTTP_STATUS_BY_CODE,
+  isUniqueViolation,
   orNotFound,
   ServiceError,
   type ServiceErrorCode,

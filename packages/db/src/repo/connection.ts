@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { connection, type NewConnection } from "../schema/connection";
@@ -160,13 +160,16 @@ export async function revokeConnection(
  * goes — the row is connected to nothing, and nothing outside Graft holds an account for it any
  * more — and a failure once recorded is cleared. Failed: the moment is stamped and the reference
  * kept, so the fact outlives the request and the console can offer a retry that knows which
- * account to release. Null means no such connection for this person.
+ * account to release. Written only where the row is **still revoked and still carries the
+ * reference that was released**: the release runs outside the revoke's transaction, and a link's
+ * return may reconnect the row in between with a new reference, which this statement must neither
+ * erase nor stamp. Null means no such row in that state — gone, another person's, or moved on.
  */
 export async function recordProviderRelease(
   db: DbOrTx,
   personId: string,
   id: string,
-  outcome: { released: true } | { released: false; at: Date },
+  outcome: { released: true; ref: string } | { released: false; ref: string; at: Date },
 ): Promise<ConnectionRow | null> {
   const [row] = await db
     .update(connection)
@@ -175,7 +178,14 @@ export async function recordProviderRelease(
         ? { providerRef: null, providerReleaseFailedAt: null }
         : { providerReleaseFailedAt: outcome.at },
     )
-    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .where(
+      and(
+        eq(connection.id, id),
+        eq(connection.personId, personId),
+        eq(connection.providerRef, outcome.ref),
+        isNotNull(connection.revokedAt),
+      ),
+    )
     .returning();
   return row ?? null;
 }

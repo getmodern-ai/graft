@@ -122,6 +122,11 @@ private knowledge:
   and revoke calls it. **A failed release is a fact on the row, not a toast**: the revoke keeps
   `provider_ref` until the provider has let go — the reference is what the retry releases by — and
   stamps `provider_release_failed_at` when it has not, which the connection card shows with a
-  Retry that runs the same release; a success clears both. A revoked row whose release is still
-  outstanding is not reconnected in place by a later link, since overwriting its reference would
-  orphan the account at Pipedream; a new row is made beside it.
+  Retry that runs the same release; a success clears both. The record is written only against a
+  row still revoked with that same reference, because the release runs outside the revoke's
+  transaction. A revoked row is reconnected in place by a later link only once its reference is
+  cleared — while a release is outstanding, in flight or failed, a new row is made beside it, since
+  writing over the reference would orphan the account at Pipedream. **One row per account at a
+  provider** (`connection_provider_ref_idx`, partial on a non-null reference): a link's return that
+  lands twice at once discovers the account before it writes, so the database refuses the second
+  claim and that landing reads the ask the first answered.

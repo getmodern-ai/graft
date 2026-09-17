@@ -9,6 +9,7 @@ import { ServiceError } from "../errors";
 import type { ConnectionDeps } from "./connection.deps";
 import {
   completeOAuthConsent,
+  connectThroughProvider,
   isConnectionUsable,
   markOAuthConsentRequired,
   registerConnection,
@@ -117,6 +118,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     })),
     recordProviderRelease: vi.fn(async (_db, _p, _id, outcome) => ({
       ...row,
+      providerRef: outcome.ref,
       revokedAt: NOW,
       ...(outcome.released
         ? { providerRef: null, providerReleaseFailedAt: null }
@@ -266,6 +268,7 @@ describe("the provider a registration names (ADR 0019)", () => {
     expect(broker.revokedRefs).toEqual(["acct_1"]);
     expect(deps.recordProviderRelease).toHaveBeenCalledWith(ctx.db, "person_1", "conn_1", {
       released: true,
+      ref: "acct_1",
     });
     expect(result?.connection.providerReleaseFailedAt).toBeNull();
 
@@ -273,6 +276,33 @@ describe("the provider a registration names (ADR 0019)", () => {
     const keyringResult = await revokeConnection(ctx, PRINCIPAL, "conn_1", keyringDeps);
     expect(keyringResult?.providerRelease).toEqual({ provider: "keyring", released: true });
     expect(broker.revoked).toEqual(["conn_1"]);
+    // Nothing to record for a row with no reference.
+    expect(keyringDeps.recordProviderRelease).not.toHaveBeenCalled();
+  });
+
+  /** The release ran outside the revoke's transaction; a link may have reconnected the row meanwhile. */
+  it("records the release against the reference it released, and reads the row back as it now is when that row moved on", async () => {
+    const broker = linkProvider();
+    const reconnected = { ...row, provider: "broker", providerRef: "acct_2", revokedAt: null };
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      revokeConnection: vi.fn(async () => ({
+        ...row,
+        provider: "broker",
+        providerRef: "acct_1",
+        revokedAt: NOW,
+      })),
+      // The statement matched nothing: the row is live again with another account.
+      recordProviderRelease: vi.fn(async () => null),
+      findConnection: vi.fn(async () => reconnected),
+    });
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+    expect(deps.recordProviderRelease).toHaveBeenCalledWith(ctx.db, "person_1", "conn_1", {
+      released: true,
+      ref: "acct_1",
+    });
+    expect(result?.providerRelease).toEqual({ provider: "broker", released: true });
+    expect(result?.connection.revokedAt).toBeNull();
   });
 
   /** The local revoke committed before the provider was asked; its failure is a report, not a throw. */
@@ -310,6 +340,7 @@ describe("the provider a registration names (ADR 0019)", () => {
     // The failure outlives the request: stamped on the row, the reference kept for the retry.
     expect(deps.recordProviderRelease).toHaveBeenCalledWith(ctx.db, "person_1", "conn_1", {
       released: false,
+      ref: "acct_1",
       at: NOW,
     });
     expect(result?.connection.providerReleaseFailedAt).toEqual(NOW);
@@ -333,6 +364,7 @@ describe("the provider a registration names (ADR 0019)", () => {
     expect(result.providerRelease).toEqual({ provider: "broker", released: true });
     expect(deps.recordProviderRelease).toHaveBeenCalledWith(ctx.db, "person_1", "conn_1", {
       released: true,
+      ref: "acct_1",
     });
     expect(result.connection.providerReleaseFailedAt).toBeNull();
 
@@ -379,6 +411,149 @@ describe("the provider a registration names (ADR 0019)", () => {
     expect(toConnectionOutput(row).provider).toBe("keyring");
     expect(toConnectionOutput({ ...row, provider: "broker" }).provider).toBe("broker");
     expect(toConnectionOutput(row)).not.toHaveProperty("providerRef");
+  });
+});
+
+describe("connectThroughProvider (ADR 0019; GRA-59)", () => {
+  const input = {
+    vendor: "gmail",
+    displayName: "Gmail",
+    primaryHost: "https://gmail.googleapis.com/gmail/v1",
+    hosts: ["www.googleapis.com"],
+    ref: "acct_1",
+  };
+  const gmailRow = {
+    ...row,
+    id: "conn_g",
+    provider: "broker",
+    vendor: "gmail",
+    scheme: "pipedream_connect_proxy" as const,
+    schemeConfig: {},
+    primaryHost: "https://gmail.googleapis.com/gmail/v1",
+    hosts: ["gmail.googleapis.com", "www.googleapis.com"],
+  };
+
+  it("makes the row with the provider, its relay scheme, the reference and no credential, under the normalised host set", async () => {
+    const broker = linkProvider();
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      listConnections: vi.fn(async () => []),
+    });
+    const out = await connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, deps);
+    expect(deps.insertConnection).toHaveBeenCalledWith(ctx.db, {
+      id: "conn_new",
+      personId: "person_1",
+      provider: "broker",
+      providerRef: "acct_1",
+      vendor: "gmail",
+      displayName: "Gmail",
+      scheme: "pipedream_connect_proxy",
+      schemeConfig: {},
+      primaryHost: "https://gmail.googleapis.com/gmail/v1",
+      hosts: ["gmail.googleapis.com", "www.googleapis.com"],
+    });
+    expect(out.credentialSetAt).toBeNull();
+    expect(out).not.toHaveProperty("providerRef");
+    expect(deps.vault.encrypt).not.toHaveBeenCalled();
+  });
+
+  it("reconnects a released row of the same vendor and hosts in place, and not one whose release is still outstanding", async () => {
+    const broker = linkProvider();
+    const released = { ...gmailRow, providerRef: null, revokedAt: NOW };
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      listConnections: vi.fn(async () => [released]),
+    });
+    const out = await connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, deps);
+    expect(deps.setConnectionProviderRef).toHaveBeenCalledWith(
+      ctx.db,
+      "person_1",
+      "conn_g",
+      "acct_1",
+    );
+    expect(deps.insertConnection).not.toHaveBeenCalled();
+    expect(out.id).toBe("conn_g");
+
+    const outstanding = {
+      ...gmailRow,
+      providerRef: "acct_old",
+      revokedAt: NOW,
+      providerReleaseFailedAt: NOW,
+    };
+    const deps2 = fakeDeps({
+      providers: [broker, keyringProvider],
+      listConnections: vi.fn(async () => [outstanding]),
+    });
+    await connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, deps2);
+    expect(deps2.setConnectionProviderRef).not.toHaveBeenCalled();
+    expect(deps2.insertConnection).toHaveBeenCalled();
+  });
+
+  it("answers CONFLICT when the database refuses a reference another row already carries — two landings claimed one account", async () => {
+    const broker = linkProvider();
+    const duplicate = Object.assign(new Error("duplicate key"), { code: "23505" });
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      listConnections: vi.fn(async () => []),
+      insertConnection: vi.fn(async () => {
+        throw new Error("wrapped", { cause: duplicate });
+      }),
+    });
+    await expect(
+      connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, deps),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("claimed the account first"),
+    });
+    // Any other failure of the write is the write's own.
+    const other = fakeDeps({
+      providers: [broker, keyringProvider],
+      listConnections: vi.fn(async () => []),
+      insertConnection: vi.fn(async () => {
+        throw new Error("connection reset");
+      }),
+    });
+    await expect(
+      connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, other),
+    ).rejects.toThrow("connection reset");
+  });
+
+  it("refuses a provider that does not connect with a link, one not enabled, an uncovered host set and an empty reference, before anything is written", async () => {
+    const broker = linkProvider();
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      listConnections: vi.fn(async () => []),
+    });
+    await expect(
+      connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: keyringProvider }, deps),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("does not connect a vendor with a link"),
+    });
+    await expect(
+      connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, fakeDeps()),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("No connection provider named broker"),
+    });
+    await expect(
+      connectThroughProvider(
+        ctx,
+        PRINCIPAL,
+        { ...input, provider: broker, vendor: "notion" },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("does not cover"),
+    });
+    await expect(
+      connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker, ref: " " }, deps),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("named no account"),
+    });
+    expect(deps.insertConnection).not.toHaveBeenCalled();
   });
 });
 

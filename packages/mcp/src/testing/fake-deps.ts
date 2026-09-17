@@ -323,8 +323,26 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     now: store.now,
   };
 
+  /** The database's own refusal (`connection_provider_ref_idx`): one row per account at a provider. */
+  const refuseDuplicateRef = (
+    provider: string,
+    providerRef: string | null | undefined,
+    id: string,
+  ) => {
+    if (!providerRef) return;
+    for (const other of store.connections.values()) {
+      if (other.id !== id && other.provider === provider && other.providerRef === providerRef) {
+        throw Object.assign(
+          new Error('duplicate key value violates unique constraint "connection_provider_ref_idx"'),
+          { code: "23505" },
+        );
+      }
+    }
+  };
+
   const connection: ConnectionDeps = {
     insertConnection: async (_db, input) => {
+      refuseDuplicateRef(input.provider ?? "keyring", input.providerRef, input.id);
       const at = store.now();
       const row = {
         ...input,
@@ -382,14 +400,19 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     setConnectionProviderRef: async (_db, personId, id, providerRef) => {
       const row = store.connections.get(id);
       if (!row || row.personId !== personId) return null;
+      refuseDuplicateRef(row.provider, providerRef, id);
       const updated = { ...row, providerRef, revokedAt: null, providerReleaseFailedAt: null };
       store.connections.set(id, updated);
       return updated;
     },
-    /** The repo's statement: released clears the reference, a failure stamps the moment (ADR 0019). */
+    /**
+     * The repo's statement: released clears the reference, a failure stamps the moment, and either
+     * only on a row still revoked with the reference that was released (ADR 0019).
+     */
     recordProviderRelease: async (_db, personId, id, outcome) => {
       const row = store.connections.get(id);
       if (!row || row.personId !== personId) return null;
+      if (row.revokedAt === null || row.providerRef !== outcome.ref) return null;
       const updated = outcome.released
         ? { ...row, providerRef: null, providerReleaseFailedAt: null }
         : { ...row, providerReleaseFailedAt: outcome.at };

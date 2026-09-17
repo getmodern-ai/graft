@@ -478,6 +478,34 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     }
   });
 
+  it("two landings of one link at once make one connection — the database refuses the second claim and it reads the ask the first answered", async () => {
+    // A fresh agent, so the ask is new and the person's existing Gmail connection is not in scope.
+    store.addAgent({ id: "agent_c", personId: PERSON, token: `${TOKEN_B}c`, name: "third" });
+    const a = await connect(`${TOKEN_B}c`);
+    try {
+      const said = body(await a.call("request_connection", PROPOSAL));
+      expect(said).toMatchObject({ error: "awaiting_connection", provider: "pipedream" });
+      const askId = said.pendingActionId as string;
+      await app.request(`/api/pending-actions/${askId}/link`, { method: "POST" });
+      const minted = pipedream.tokens.at(-1);
+      pipedream.connect({ externalUserId: EXTERNAL_USER, app: "gmail", name: "aleks@example.com" });
+      const before = (await listConnections()).length;
+
+      const [first, second] = await Promise.all([
+        landing(minted?.success ?? ""),
+        landing(minted?.success ?? ""),
+      ]);
+      const outcomes = [consoleOutcome(first), consoleOutcome(second)];
+      expect(outcomes.map((o) => o.status)).toEqual(["connected", "connected"]);
+      expect(new Set(outcomes.map((o) => o.connectionId)).size).toBe(1);
+      expect((await listConnections()).length).toBe(before + 1);
+      const refs = [...store.connections.values()].map((r) => r.providerRef).filter(Boolean);
+      expect(new Set(refs).size).toBe(refs.length);
+    } finally {
+      await a.close();
+    }
+  });
+
   it("an ask of another kind, a keyring ask and an unknown ask refuse the button with the answer route's codes", async () => {
     const a = await connect(TOKEN_B);
     try {

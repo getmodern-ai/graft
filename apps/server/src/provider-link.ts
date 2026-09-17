@@ -337,6 +337,28 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
         return connection.id;
       });
     } catch (error) {
+      // Two landings of one link claimed the same account and the database let one in
+      // (`connection_provider_ref_idx`): the ask says what the other did. Read a few times over
+      // half a second — the winner's transaction is committing as the loser's is refused.
+      if (error instanceof ServiceError && error.code === "CONFLICT") {
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          const settled = await getPendingActionForPerson(
+            ctx,
+            principal,
+            pendingActionId,
+            options.pendingAction,
+          );
+          if (settled?.answeredAt && typeof settled.answer?.connectionId === "string") {
+            return land({
+              status: "connected",
+              pendingActionId,
+              connectionId: settled.answer.connectionId,
+              message: `${proposal.displayName} is connected through ${provider.name} — the console updates on its own.`,
+            });
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
       const detail =
         error instanceof ServiceError ? error.message : "the connection could not be made";
       return failed(

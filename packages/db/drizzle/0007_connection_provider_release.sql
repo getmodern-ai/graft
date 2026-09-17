@@ -1,1 +1,2 @@
-ALTER TABLE "connection" ADD COLUMN "provider_release_failed_at" timestamp;
+ALTER TABLE "connection" ADD COLUMN "provider_release_failed_at" timestamp;--> statement-breakpoint
+CREATE UNIQUE INDEX "connection_provider_ref_idx" ON "connection" USING btree ("provider","provider_ref") WHERE "connection"."provider_ref" is not null;

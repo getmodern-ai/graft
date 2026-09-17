@@ -63,8 +63,27 @@ export function readLinkMessage(
 /** How often the ask is read while the link runs. */
 export const LINK_POLL_MS = 1000;
 
-/** What the caller's read of the ask answers: settled or not, and the connection when it is. */
+/**
+ * What the caller's read of the ask answers: settled or not, and the connection when it is. A
+ * settled ask with no connection is a decline — the person's, in this tab or another — never a
+ * success by another name.
+ */
 export type LinkSettled = { settled: false } | { settled: true; connectionId: string | null };
+
+/** The outcome a settled read means, pure so it has a test. */
+export function linkOutcomeOf(read: Extract<LinkSettled, { settled: true }>): {
+  outcome: LinkOutcome;
+  message: string;
+  connectionId: string | null;
+} {
+  return read.connectionId
+    ? { outcome: "connected", message: "", connectionId: read.connectionId }
+    : {
+        outcome: "declined",
+        message: "This ask was declined — nothing was connected.",
+        connectionId: null,
+      };
+}
 
 /**
  * Wait for the link to end: the callback route's message (opener or channel), the ask reading as
@@ -114,7 +133,9 @@ export function awaitLink(args: {
     const poll = setInterval(async () => {
       if (settled) return;
       const read = await args.isSettled().catch((): LinkSettled => ({ settled: false }));
-      if (read.settled) settle("connected", "", read.connectionId);
+      if (!read.settled) return;
+      const ended = linkOutcomeOf(read);
+      settle(ended.outcome, ended.message, ended.connectionId);
     }, LINK_POLL_MS);
     const deadline = setTimeout(
       () => settle("expired", "The link took too long; press Connect to start it again."),

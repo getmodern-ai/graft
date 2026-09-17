@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError, api } from "@/lib/api";
-import { connectionKeys } from "@/lib/connection-queries";
+import { type Connection, connectionKeys } from "@/lib/connection-queries";
 import { openConsentPopup } from "@/lib/oauth-consent";
 import {
   type Ask,
@@ -88,7 +88,7 @@ export function ProviderLinkAskCard({
       const { outcome, message, connectionId } = await awaitLink({
         popup,
         pendingActionId: action.id,
-        isSettled: () => readSettled(action),
+        isSettled: () => readSettled(action, payload),
         signal: controller.signal,
       });
       if (stop.current === controller) stop.current = null;
@@ -264,11 +264,16 @@ function LinkStatus({
 }
 
 /**
- * The card's read of its own ask while the link runs: answered with a connection is connected;
- * the link the card was opened from carries the token the read needs (`action.url`), and the
- * server answers `409 consumed` once the agent has taken the answer, which is settled too.
+ * The card's read of its own ask while the link runs: answered with a connection is connected,
+ * answered without one is a decline; the link the card was opened from carries the token the read
+ * needs (`action.url`). Once the agent has taken the answer the server answers `409 consumed` and
+ * the answer is out of reach, so the read turns to the connections list: a live connection of this
+ * provider at this vendor and primary host is what the ask was for, and its absence is the decline.
  */
-async function readSettled(action: PendingAction): Promise<LinkSettled> {
+async function readSettled(
+  action: PendingAction,
+  payload: { provider: string; vendor: string; primaryHost: string },
+): Promise<LinkSettled> {
   const token = new URL(action.url).searchParams.get(HANDOFF_TOKEN_PARAM_NAME) ?? "";
   try {
     const { pendingAction } = await api<{ pendingAction: PendingAction }>(
@@ -278,8 +283,15 @@ async function readSettled(action: PendingAction): Promise<LinkSettled> {
     const connectionId = pendingAction.answer?.connectionId;
     return { settled: true, connectionId: typeof connectionId === "string" ? connectionId : null };
   } catch (error) {
-    if (error instanceof ApiError && error.status === 409)
-      return { settled: true, connectionId: null };
-    throw error;
+    if (!(error instanceof ApiError && error.status === 409)) throw error;
+    const { connections } = await api<{ connections: Connection[] }>("/connections");
+    const made = connections.find(
+      (connection) =>
+        connection.provider === payload.provider &&
+        connection.vendor === payload.vendor &&
+        connection.primaryHost === payload.primaryHost &&
+        connection.revokedAt === null,
+    );
+    return { settled: true, connectionId: made?.id ?? null };
   }
 }

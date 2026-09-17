@@ -6,7 +6,7 @@ import {
 } from "@graft/core/connection/link.rules";
 import { describe, expect, it } from "vitest";
 
-import { readLinkMessage } from "./provider-link";
+import { linkOutcomeOf, readLinkMessage } from "./provider-link";
 
 /**
  * The link's message filter (GRA-59), on both sides: what the console's `/link/callback` route
@@ -66,5 +66,20 @@ describe("readLinkMessage", () => {
       readLinkCallbackSearch(Object.fromEntries(url.searchParams)),
     );
     expect(readLinkMessage({ origin: ORIGIN, data: posted }, ORIGIN, "pa_1")).toEqual(MESSAGE);
+  });
+});
+
+describe("linkOutcomeOf", () => {
+  it("reads a settled ask with a connection as connected, and one without as a decline — never as a success", () => {
+    expect(linkOutcomeOf({ settled: true, connectionId: "conn_1" })).toEqual({
+      outcome: "connected",
+      message: "",
+      connectionId: "conn_1",
+    });
+    expect(linkOutcomeOf({ settled: true, connectionId: null })).toMatchObject({
+      outcome: "declined",
+      connectionId: null,
+      message: expect.stringContaining("declined"),
+    });
   });
 });

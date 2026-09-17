@@ -1,5 +1,5 @@
 {
-  "id": "421ee435-2dff-499e-9cd3-d81f97a148f8",
+  "id": "6be1405c-f78c-4b2b-b9f2-a31506ba9116",
   "prevId": "25b7fa27-71d4-41bc-b49f-aee46cf8293c",
   "version": "7",
   "dialect": "postgresql",
@@ -1533,6 +1533,28 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "connection_provider_ref_idx": {
+          "name": "connection_provider_ref_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_ref",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"connection\".\"provider_ref\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}

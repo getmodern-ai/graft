@@ -3,7 +3,7 @@ import type { ConnectionScheme } from "@graft/db/schema/connection";
 import type { ProxyConnection } from "@graft/proxy";
 
 import type { ServiceContext } from "../context";
-import { orNotFound, ServiceError } from "../errors";
+import { isUniqueViolation, orNotFound, ServiceError } from "../errors";
 import type { Principal } from "../tenancy";
 import type { ConnectionDeps } from "./connection.deps";
 import {
@@ -309,7 +309,12 @@ export type ConnectThroughProviderInput = {
  * A revoked row of the same provider at the same vendor, primary host and host set is
  * **reconnected in place** rather than shadowed by a second row — the reconnection a credential
  * re-entry is for a keyring row (ADR 0007) — so the connection id stays what every agent's scope
- * names. Any other row makes a new one; a person may well hold two accounts at one vendor.
+ * names. Only once the provider has released it: a revoked row still carrying its reference has a
+ * release outstanding — in flight, or failed and awaiting the retry — and writing a new reference
+ * over it would orphan the account at the provider. Any other row makes a new one; a person may
+ * well hold two accounts at one vendor. A reference already on another row is the database's
+ * refusal (`connection_provider_ref_idx`), answered `CONFLICT`: two landings claimed one account,
+ * and the caller re-reads what the first did.
  */
 export async function connectThroughProvider(
   ctx: ServiceContext,
@@ -345,39 +350,57 @@ export async function connectThroughProvider(
     throw new ServiceError("BAD_REQUEST", `The ${provider.name} provider named no account`);
   }
 
-  // Not a row whose release is still outstanding: its reference is what the retry releases by, and
-  // overwriting it would orphan an account at the provider. Such a row stays revoked and a new one
-  // is made beside it.
+  // A released row and no other: `provider_ref` is null once the provider let go
+  // (`recordProviderRelease`), and still set while the release is outstanding.
   const hostsKey = [...hostSet.hosts].sort().join(" ");
-  const revoked = (await deps.listConnections(ctx.db, principal.personId)).find(
+  const released = (await deps.listConnections(ctx.db, principal.personId)).find(
     (row) =>
       row.revokedAt !== null &&
-      row.providerReleaseFailedAt === null &&
+      row.providerRef === null &&
       row.provider === provider.name &&
       row.vendor === input.vendor &&
       row.primaryHost === hostSet.primaryHost &&
       [...row.hosts].sort().join(" ") === hostsKey,
   );
-  if (revoked) {
-    const reconnected = orNotFound(
-      await deps.setConnectionProviderRef(ctx.db, principal.personId, revoked.id, input.ref),
-      "Connection not found",
+  const claimed = () =>
+    new ServiceError(
+      "CONFLICT",
+      `${input.displayName.trim()} at ${provider.name} is already connected — another landing of this link claimed the account first`,
     );
-    return toConnectionOutput(reconnected);
+  if (released) {
+    let reconnected: ConnectionRow | null;
+    try {
+      reconnected = await deps.setConnectionProviderRef(
+        ctx.db,
+        principal.personId,
+        released.id,
+        input.ref,
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) throw claimed();
+      throw error;
+    }
+    return toConnectionOutput(orNotFound(reconnected, "Connection not found"));
   }
 
-  const row = await deps.insertConnection(ctx.db, {
-    id: deps.newId(),
-    personId: principal.personId,
-    provider: provider.name,
-    providerRef: input.ref,
-    vendor: input.vendor,
-    displayName: input.displayName.trim(),
-    scheme: link.scheme,
-    schemeConfig: {},
-    primaryHost: hostSet.primaryHost,
-    hosts: hostSet.hosts,
-  });
+  let row: ConnectionRow;
+  try {
+    row = await deps.insertConnection(ctx.db, {
+      id: deps.newId(),
+      personId: principal.personId,
+      provider: provider.name,
+      providerRef: input.ref,
+      vendor: input.vendor,
+      displayName: input.displayName.trim(),
+      scheme: link.scheme,
+      schemeConfig: {},
+      primaryHost: hostSet.primaryHost,
+      hosts: hostSet.hosts,
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) throw claimed();
+    throw error;
+  }
   return toConnectionOutput(row);
 }
 
@@ -765,6 +788,9 @@ export async function retryProviderRelease(
  * as a record on the row (`recordProviderRelease`): released, the reference goes; failed, the
  * moment is stamped and the reference kept for the retry. The row handed to the provider is the
  * row as it stands, reference included, which is why the revoke's statement leaves it in place.
+ * The record is written against that same reference on a row still revoked, so a link that
+ * reconnected the row while the provider was being asked keeps its new reference; a row that moved
+ * on is read back as it now is. A row with no reference — the keyring's — has nothing to record.
  */
 async function releaseFromProvider(
   ctx: ServiceContext,
@@ -786,11 +812,14 @@ async function releaseFromProvider(
       providerRelease = { provider: provider.name, released: false, failure };
     }
   }
+  const ref = row.providerRef;
+  if (ref === null) return { row, providerRelease };
   const recorded = await deps.recordProviderRelease(
     ctx.db,
     principal.personId,
     row.id,
-    providerRelease.released ? { released: true } : { released: false, at: deps.now() },
+    providerRelease.released ? { released: true, ref } : { released: false, ref, at: deps.now() },
   );
-  return { row: recorded ?? row, providerRelease };
+  const current = recorded ?? (await deps.findConnection(ctx.db, principal.personId, row.id));
+  return { row: current ?? row, providerRelease };
 }

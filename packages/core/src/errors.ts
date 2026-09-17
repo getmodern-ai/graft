@@ -50,3 +50,18 @@ export function orNotFound<T>(value: T | null | undefined, message: string): T {
   if (value === null || value === undefined) throw new ServiceError("NOT_FOUND", message);
   return value;
 }
+
+/**
+ * Whether a failure anywhere in a `cause` chain is Postgres refusing a duplicate — SQLSTATE
+ * `23505`, `unique_violation`. The one constraint a service reads this for is the provider
+ * reference's (`connection_provider_ref_idx`, ADR 0019): two claims of one account at a provider,
+ * of which the database lets one land and the service turns the other into a `CONFLICT`.
+ */
+export function isUniqueViolation(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 8 && typeof current === "object" && current !== null; depth += 1) {
+    if ((current as { code?: unknown }).code === "23505") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}

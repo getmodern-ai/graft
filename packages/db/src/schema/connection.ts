@@ -1,5 +1,5 @@
-import { relations } from "drizzle-orm";
-import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 import { user } from "./auth";
 import { bytea, owned } from "./columns";
@@ -147,6 +147,15 @@ export const connection = pgTable(
     index("connection_person_id_idx").on(table.personId),
     // "The person's connections for this vendor" — what a revoke and a tool binding both ask.
     index("connection_person_id_vendor_idx").on(table.personId, table.vendor),
+    /**
+     * One row per account at a provider (ADR 0019; GRA-59): a link's return that lands twice at
+     * once would otherwise claim the same account for two rows, since the account is discovered
+     * before the write. The database refuses the second, and the return re-reads the ask the first
+     * answered. Partial, because the keyring's rows have no reference and are as many as they are.
+     */
+    uniqueIndex("connection_provider_ref_idx")
+      .on(table.provider, table.providerRef)
+      .where(sql`${table.providerRef} is not null`),
   ],
 );
 
