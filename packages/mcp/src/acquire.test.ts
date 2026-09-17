@@ -155,6 +155,12 @@ beforeAll(async () => {
           headers: { location: "https://files.demo.example/v3/archive?since=2024" },
         });
       }
+      if (url.pathname === "/v2/moved-port") {
+        return new Response(null, {
+          status: 303,
+          headers: { location: "https://api.demo.example:8443/v2/items" },
+        });
+      }
       if (url.pathname === "/v2/moved-relative") {
         return new Response(null, { status: 303, headers: { location: "archive?since=2024" } });
       }
@@ -802,6 +808,25 @@ describe("a job that fails and tries again", () => {
       expect(read?.error).toContain(
         "redirected GET /moved-relative#top to api.demo.example/v2/archive?since=2024, a host this connection declares",
       );
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("says a redirect to another port is out of the proxy's reach, whatever the host set declares", async () => {
+    const scripted = createScriptedModel([
+      write("goal", draft({ name: "list-moved-port", proofReads: ["/moved-port"] }), "Reading."),
+      { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List what moved ports" });
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
+      expect(read).toMatchObject({ ok: false, status: 303, redirectTo: "api.demo.example:8443" });
+      expect(read?.error).toContain("on a port the proxy cannot address");
+      expect(read?.error).not.toContain("ctx.proxyBase");
     } finally {
       await a.close();
     }

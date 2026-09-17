@@ -1124,8 +1124,19 @@ function describeRedirect(
   // The host as the proxy judges it — its own normalised set, an entry with or without a port
   // (`hostSetOf`) — so this sentence and the proxy's `host_not_in_set` agree.
   const declared = hostSetOf({ primaryHost: connection.primaryHost, hosts: connection.hosts });
-  const host = declared.has(target.host) ? target.host : target.hostname;
   const where = `${target.pathname}${target.search}`;
+  // The proxy's host segment names a host on its default port and nothing else (`HOSTNAME` in
+  // app.ts), so a redirect to another port is out of reach whatever the connection declares.
+  if (target.port) {
+    return {
+      host: target.host,
+      error:
+        `The vendor redirected GET ${path} to ${target.host}${where}, on a port the proxy cannot ` +
+        "address: a connection's host is reached on its default port only. Nothing in this job can change that. " +
+        `Answer give_up with a reason that names ${target.host}, so the person can see what the vendor wants.`,
+    };
+  }
+  const host = target.hostname;
   if (declared.has(host)) {
     return {
       host,
