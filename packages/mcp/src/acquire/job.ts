@@ -1102,9 +1102,16 @@ function describeRedirect(
       error: `The vendor redirected GET ${path} without saying where (no Location header).`,
     };
   }
+  // Resolved against the URL the read went to — the primary host's base path plus the proof path,
+  // as the proxy builds it (`resolveTarget`) — so a relative `Location` lands where the vendor meant.
   let target: URL;
   try {
-    target = new URL(location, connection.primaryHost);
+    const base = new URL(connection.primaryHost);
+    const [pathname = "", search] = path.split("?", 2);
+    const request = new URL(base.href);
+    request.pathname = `${base.pathname.replace(/\/+$/, "")}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
+    request.search = search ? `?${search}` : "";
+    target = new URL(location, request);
   } catch {
     return {
       host: null,

@@ -155,6 +155,9 @@ beforeAll(async () => {
           headers: { location: "https://files.demo.example/v3/archive?since=2024" },
         });
       }
+      if (url.pathname === "/v2/moved-relative") {
+        return new Response(null, { status: 303, headers: { location: "archive?since=2024" } });
+      }
       if (url.pathname === "/v2/moved") {
         return new Response(null, {
           status: 303,
@@ -773,6 +776,27 @@ describe("a job that fails and tries again", () => {
       expect(trace?.data).toMatchObject({ status: 303, redirectTo: "customer.demo.example" });
       // The sandbox never dialled the vendor: the proxy saw the one read and returned the 303.
       expect(vendor.events.at(-1)).toMatchObject({ outcome: "redirect_returned", status: 303 });
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("resolves a relative Location against the URL the read went to, base path included", async () => {
+    const scripted = createScriptedModel([
+      write("goal", draft({ name: "list-moved-rel", proofReads: ["/moved-relative"] }), "Reading."),
+      { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List what moved, relatively" });
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
+      // `archive?since=2024` beside `/v2/moved-relative` is `/v2/archive?since=2024` on the primary host.
+      expect(read).toMatchObject({ ok: false, status: 303, redirectTo: "api.demo.example" });
+      expect(read?.error).toContain(
+        "redirected GET /moved-relative to api.demo.example/v2/archive?since=2024, a host this connection declares",
+      );
     } finally {
       await a.close();
     }
