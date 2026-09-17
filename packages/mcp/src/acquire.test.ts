@@ -983,13 +983,17 @@ describe("a job that fails and tries again", () => {
       expect(rowsOf(jobId).job.result).not.toMatchObject({
         message: expect.stringContaining("sk-live-"),
       });
+      // The row keeps the draft's note; the refusal is the attempt's summary (GRA-70).
       expect(
         rowsOf(jobId).attempts.map((r) => ({ outcome: r.outcome, diagnosis: r.diagnosis })),
-      ).toEqual([
+      ).toEqual([{ outcome: "abandoned", diagnosis: "Never reached." }]);
+      expect(failure.tried).toEqual([
         {
+          attempt: 1,
           outcome: "abandoned",
-          diagnosis:
-            "The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
+          summary:
+            "Set aside unpublished; The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403).",
+          note: "Never reached.",
         },
       ]);
       expect(runnerEvents.slice(before)).toContainEqual({
@@ -1378,14 +1382,9 @@ describe("the runner", () => {
       [2, "passed"],
     ]);
     expect(finished.result).toMatchObject({ tool: LIST_ITEMS });
-    // The abandoned attempt is in the trace with the loop's sentence and the dead process's note.
-    const abandoned = rowsOf(job.id).traces.find(
-      (row) => row.kind === "progress" && row.text.startsWith("Resumed"),
-    );
-    expect(abandoned).toBeDefined();
-    expect(attempts[0]).toMatchObject({
-      diagnosis: "The process running this attempt stopped; the job resumed from the goal.",
-    });
+    // The abandoned row keeps the dead process's own note (GRA-70): the loop never rewrites a row's
+    // diagnosis, so a resumed job's `tried[].note` is always what opened the draft.
+    expect(attempts[0]).toMatchObject({ diagnosis: "A draft the dead process never finished." });
   }, 30_000);
 
   it("leaves a running job with a live heartbeat alone", async () => {
