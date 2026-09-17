@@ -377,10 +377,13 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return updated;
     },
     /** The repo's statement: every secret the row holds and the consent state go together (ADR 0007). */
-    setConnectionHosts: async (_db, personId, id, hosts) => {
+    addConnectionHosts: async (_db, personId, id, hosts) => {
       const row = store.connections.get(id);
       if (!row || row.personId !== personId) return null;
-      const updated = { ...row, hosts };
+      const updated = {
+        ...row,
+        hosts: [...row.hosts, ...hosts.filter((host) => !row.hosts.includes(host))],
+      };
       store.connections.set(id, updated);
       return updated;
     },

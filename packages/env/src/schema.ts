@@ -607,6 +607,15 @@ export const gatewayKeys = [
   "GRAFT_GATEWAY_HEADER_VALUE",
 ] as const;
 
+/** The protocol a URL parses to, lower-cased by the parser, or null for text that is not a URL. */
+function urlProtocolOf(value: string): string | null {
+  try {
+    return new URL(value).protocol;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * A group of settings that only makes sense complete. Factored so a second hand-written copy of
  * this comparison is not where two groups drift — one of them getting the `present.length === 0`
@@ -770,10 +779,12 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
       "GRAFT_GATEWAY_HEADER_PREFIX configures the gateway provider, but the gateway group is not set, so nothing would read it; set the four GRAFT_GATEWAY_* settings or unset it.",
     );
   }
+  // Judged on the parsed protocol, which the URL parser lower-cases: `HTTP://` spelled in capitals
+  // is the same plaintext leg (Greptile on #45). A value that is not a URL is the field's own refusal.
   if (
     value.NODE_ENV === "production" &&
     typeof value.GRAFT_GATEWAY_UPSTREAM_URL === "string" &&
-    value.GRAFT_GATEWAY_UPSTREAM_URL.startsWith("http:")
+    urlProtocolOf(value.GRAFT_GATEWAY_UPSTREAM_URL) === "http:"
   ) {
     issues.push(
       "GRAFT_GATEWAY_UPSTREAM_URL must be https under NODE_ENV=production: the deployment identity header is a secret and does not travel in the clear.",

@@ -186,7 +186,7 @@ function connectionDeps(): ConnectionDeps {
     })),
     revokeConnection: vi.fn(async () => ({ ...connectionRow, revokedAt: NOW })),
     reconnectConnection: vi.fn(async () => ({ ...connectionRow, revokedAt: null })),
-    setConnectionHosts: vi.fn(async (_db, _p, _id, hosts) => ({ ...connectionRow, hosts })),
+    addConnectionHosts: vi.fn(async (_db, _p, _id, hosts) => ({ ...connectionRow, hosts })),
     deleteApprovalsForVendor: vi.fn(async () => []),
     deleteBuildApprovalsForConnection: vi.fn(async () => []),
     expirePendingActionsForConnection: vi.fn(async () => []),

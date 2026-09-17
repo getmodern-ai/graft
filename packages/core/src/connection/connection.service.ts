@@ -353,7 +353,10 @@ export async function registerProviderConnection(
  * is and against the provider's coverage — the gateway has a route for every host it covers, and
  * nothing outside that can be added — so widening grants nothing the deployment did not. A row of
  * any other kind is refused: the keyring's host set is what the person confirmed on the handoff
- * page, and is not an agent's to grow. A union already declared is answered as it is.
+ * page, and is not an agent's to grow. A union already declared is answered as it is. The write is
+ * one statement appending what the row lacks when it runs (`addConnectionHosts`), so two calls
+ * widening the same row at once both land: each was checked against the coverage, and a union of
+ * covered sets is covered.
  */
 export async function widenProviderConnectionHosts(
   ctx: ServiceContext,
@@ -383,7 +386,7 @@ export async function widenProviderConnectionHosts(
   }
   if (union.hosts.every((host) => row.hosts.includes(host))) return toConnectionOutput(row);
   const updated = orNotFound(
-    await deps.setConnectionHosts(ctx.db, principal.personId, row.id, union.hosts),
+    await deps.addConnectionHosts(ctx.db, principal.personId, row.id, union.hosts),
     "Connection not found",
   );
   return toConnectionOutput(updated);

@@ -30,6 +30,7 @@ import {
 } from "@graft/core";
 import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
+import { addConnectionHosts } from "@graft/db/repo/connection";
 import type { UpstreamRequest } from "@graft/proxy";
 import {
   CAPABILITY_TOKEN_ALG,
@@ -412,6 +413,53 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
   });
 
   /** ADR 0007: a revoke clears the credential and the approvals for every agent, and leaves the tool. */
+  /**
+   * The one statement behind a gateway row's widening (GRA-58): an array union computed in SQL, so
+   * two widenings at once both land — the read-modify-write Greptile found on #45 would have kept
+   * one. Against real Postgres because `unnest`, `ANY` and the `text[]` parameter are exactly what
+   * a fake cannot show.
+   */
+  it("appends hosts to a connection in one statement: concurrent widenings both land, nothing is doubled, the order is kept", async () => {
+    const personId = await signUp("widener@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    const connection = await registerConnection(
+      ctx,
+      principal,
+      {
+        vendor: "acme",
+        displayName: "Acme",
+        scheme: "api_key_header",
+        schemeConfig: { headerName: "x-key" },
+        primaryHost: "https://api.acme.example",
+        hosts: ["files.acme.example"],
+      },
+      connectionDeps,
+    );
+    expect(connection.hosts).toEqual(["api.acme.example", "files.acme.example"]);
+
+    const [first, second] = await Promise.all([
+      addConnectionHosts(db, personId, connection.id, ["files.acme.example", "cdn.acme.example"]),
+      addConnectionHosts(db, personId, connection.id, ["uploads.acme.example", "api.acme.example"]),
+    ]);
+    const final = await getConnection(ctx, principal, connection.id, connectionDeps);
+    expect(final?.hosts.slice(0, 2)).toEqual(["api.acme.example", "files.acme.example"]);
+    expect([...(final?.hosts ?? [])].sort()).toEqual([
+      "api.acme.example",
+      "cdn.acme.example",
+      "files.acme.example",
+      "uploads.acme.example",
+    ]);
+    expect(new Set(final?.hosts).size).toBe(final?.hosts.length);
+    // Each statement answered the row as it stood after its own write; the later one saw both.
+    expect([first, second].some((row) => row?.hosts.length === 4)).toBe(true);
+
+    // Another person's id reaches no row.
+    expect(
+      await addConnectionHosts(db, "someone-else", connection.id, ["x.acme.example"]),
+    ).toBeNull();
+  });
+
   it("revokes a connection: ciphertext and approvals gone, the authored tool still there", async () => {
     const personId = await signUp("revoker@example.com");
     const ctx: ServiceContext = { db };

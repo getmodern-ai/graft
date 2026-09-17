@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { connection, type NewConnection } from "../schema/connection";
@@ -173,19 +173,30 @@ export async function reconnectConnection(
 }
 
 /**
- * Replace the row's host set — for a provider's row whose later proposal names a host the row did
+ * Add hosts to the row's set — for a provider's row whose later proposal names a host the row did
  * not declare (GRA-58): the service has already checked that every host is one the provider covers
- * and that the primary is among them. The one column written; the repo is the statement alone.
+ * and that the primary is among them. One statement, appending only what the row lacks at the
+ * moment it runs, so two calls widening the same row at once both land rather than the second
+ * replacing the first's union with its own (Greptile on #45): the declared order is kept, and a
+ * host already present is not added twice. The repo is the statement alone.
  */
-export async function setConnectionHosts(
+export async function addConnectionHosts(
   db: DbOrTx,
   personId: string,
   id: string,
   hosts: string[],
 ): Promise<ConnectionRow | null> {
+  // Each host its own bound parameter: an array handed to the template whole would be spread into
+  // a row constructor, `($1, $2)`, which is not a `text[]`.
+  const added = sql`ARRAY[${sql.join(
+    hosts.map((host) => sql`${host}`),
+    sql`, `,
+  )}]::text[]`;
   const [row] = await db
     .update(connection)
-    .set({ hosts })
+    .set({
+      hosts: sql`${connection.hosts} || ARRAY(SELECT h FROM unnest(${added}) AS h WHERE NOT (h = ANY(${connection.hosts})))`,
+    })
     .where(and(eq(connection.id, id), eq(connection.personId, personId)))
     .returning();
   return row ?? null;

@@ -801,6 +801,16 @@ describe("the gateway provider (ADR 0019, GRA-58)", () => {
     expect(serverEnvIssues({ ...SECRET, ...MODEL, NODE_ENV: "production", ...local })).toEqual([
       expect.stringMatching(/GRAFT_GATEWAY_UPSTREAM_URL must be https under NODE_ENV=production/),
     ]);
+    // Spelled in capitals, the same plaintext leg: the parsed protocol is what is judged.
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        ...MODEL,
+        NODE_ENV: "production",
+        ...GATEWAY,
+        GRAFT_GATEWAY_UPSTREAM_URL: "HTTP://Gateway.Corp.Example/graft",
+      }),
+    ).toEqual([expect.stringMatching(/must be https under NODE_ENV=production/)]);
     expect(serverEnvIssues({ ...SECRET, ...MODEL, NODE_ENV: "production", ...GATEWAY })).toEqual(
       [],
     );

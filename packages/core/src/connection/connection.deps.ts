@@ -3,6 +3,7 @@ import {
   deleteBuildApprovalsForConnection,
 } from "@graft/db/repo/approval";
 import {
+  addConnectionHosts,
   findConnection,
   findConnectionByIdUnscoped,
   insertConnection,
@@ -10,7 +11,6 @@ import {
   reconnectConnection,
   revokeConnection,
   setConnectionCredential,
-  setConnectionHosts,
   setConnectionOAuthState,
 } from "@graft/db/repo/connection";
 import { expirePendingActionsForConnection } from "@graft/db/repo/pending-action";
@@ -36,8 +36,8 @@ export type ConnectionDeps = {
   revokeConnection: typeof revokeConnection;
   /** The way back for a revoked row that holds no credential — a `none` provider's (GRA-58). */
   reconnectConnection: typeof reconnectConnection;
-  /** A `none` provider's row widened to a later proposal's hosts, within the provider's coverage (GRA-58). */
-  setConnectionHosts: typeof setConnectionHosts;
+  /** A `none` provider's row widened to a later proposal's hosts, within the provider's coverage — one appending statement (GRA-58). */
+  addConnectionHosts: typeof addConnectionHosts;
   /** A revoke's three sweeps (ADR 0007): every approval for the vendor's tools, every build approval, every open ask about the connection. */
   deleteApprovalsForVendor: typeof deleteApprovalsForVendor;
   deleteBuildApprovalsForConnection: typeof deleteBuildApprovalsForConnection;
@@ -72,7 +72,7 @@ export function createConnectionDeps(
     setConnectionOAuthState,
     revokeConnection,
     reconnectConnection,
-    setConnectionHosts,
+    addConnectionHosts,
     deleteApprovalsForVendor,
     deleteBuildApprovalsForConnection,
     expirePendingActionsForConnection,

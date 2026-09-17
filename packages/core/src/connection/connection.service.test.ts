@@ -112,7 +112,10 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     })),
     revokeConnection: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     reconnectConnection: vi.fn(async () => ({ ...row, revokedAt: null })),
-    setConnectionHosts: vi.fn(async (_db, _p, _id, hosts) => ({ ...row, hosts })),
+    addConnectionHosts: vi.fn(async (_db, _p, _id, hosts: string[]) => ({
+      ...row,
+      hosts: [...row.hosts, ...hosts.filter((host) => !row.hosts.includes(host))],
+    })),
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
     expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
@@ -1075,7 +1078,7 @@ describe("a provider with no person step (ADR 0019, GRA-58)", () => {
       ["Files.googleapis.com", "api.unleashedsoftware.com"],
       deps,
     );
-    expect(deps.setConnectionHosts).toHaveBeenCalledWith(fakeDb, "person_1", "conn_g", [
+    expect(deps.addConnectionHosts).toHaveBeenCalledWith(fakeDb, "person_1", "conn_g", [
       "api.unleashedsoftware.com",
       "files.googleapis.com",
     ]);
@@ -1091,7 +1094,7 @@ describe("a provider with no person step (ADR 0019, GRA-58)", () => {
       ["api.unleashedsoftware.com"],
       same,
     );
-    expect(same.setConnectionHosts).not.toHaveBeenCalled();
+    expect(same.addConnectionHosts).not.toHaveBeenCalled();
 
     // A host the gateway does not cover, a private host, and a keyring row are each refused unwritten.
     const refused = fakeDeps({ providers, findConnection: vi.fn(async () => gatewayRow) });
@@ -1119,8 +1122,8 @@ describe("a provider with no person step (ADR 0019, GRA-58)", () => {
         keyring,
       ),
     ).rejects.toMatchObject({ code: "BAD_REQUEST", message: /the person's to change/ });
-    expect(refused.setConnectionHosts).not.toHaveBeenCalled();
-    expect(keyring.setConnectionHosts).not.toHaveBeenCalled();
+    expect(refused.addConnectionHosts).not.toHaveBeenCalled();
+    expect(keyring.addConnectionHosts).not.toHaveBeenCalled();
   });
 
   it("reconnects a revoked gateway row by clearing the stamp alone, answers a live one as it is, and refuses the other kinds by naming their way back", async () => {
