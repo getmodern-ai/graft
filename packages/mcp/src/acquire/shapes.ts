@@ -61,12 +61,20 @@ export const ACQUIRE_FAILURES = [
 ] as const;
 export type AcquireFailureKind = (typeof ACQUIRE_FAILURES)[number];
 
-/** One attempt as the failure result summarises it — what was tried, in order. */
+/**
+ * One attempt as the failure result summarises it — what was tried, in order. `summary` is the
+ * loop's account of how *this* attempt ended (the rules the check refused, the reads that failed,
+ * the dry run's verdict, the reason the model gave up); `note` is what the model said when it
+ * drafted it. The two were one field until GRA-70, when the next draft's note was found standing
+ * in for the previous attempt's ending.
+ */
 export type AcquireAttemptSummary = {
   attempt: number;
   outcome: string;
-  /** The model's line on the draft, or the loop's one-line account of where it stopped. */
+  /** How the attempt ended, in the loop's words: the one line that stopped it. */
   summary: string;
+  /** The model's note on the draft that opened the attempt; null when the row has none. */
+  note: string | null;
 };
 
 export type AcquireFailure = {
