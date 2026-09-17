@@ -274,7 +274,11 @@ class AcquireLoop {
             });
       await this.closeOpen(this.openOutcome(), this.setAside(ended.message)).catch(() => undefined);
       // The attempt closed just now belongs in `tried` too; the result was built at the throw.
-      const failure: AcquireFailure = { ...ended, tried: [...this.tried] };
+      // Through the same redaction as `failure()`, since a summary can quote a vendor's answer.
+      const failure = redactValue<AcquireFailure>(
+        { ...ended, tried: [...this.tried] },
+        this.redaction,
+      ).value;
       await this.trace("result", `Failed (${failure.failure}): ${failure.message}`, {
         data: { ...failure },
       }).catch(() => undefined);
