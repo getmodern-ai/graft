@@ -25,6 +25,7 @@ export const connectionScheme = [
   "oauth_authorization_code",
   "unleashed_hmac",
   "snowflake_keypair_jwt",
+  "none",
   "gateway",
   "pipedream_connect_proxy",
 ] as const;

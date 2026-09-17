@@ -30,6 +30,16 @@ export function CredentialFields({
   autoFocus?: boolean;
 }) {
   const fields = credentialFieldsFor(scheme);
+  // A scheme with no secret fields is `none` (GRA-66): say so where the inputs would be, so the
+  // form does not look like it forgot them.
+  if (fields.length === 0) {
+    return (
+      <FieldDescription id={`${idPrefix}-credential-none`}>
+        This scheme sends no credential. The vendor is called as the tool makes the request, through
+        the proxy, at the hosts above and nowhere else.
+      </FieldDescription>
+    );
+  }
   return (
     <>
       {fields.map((field, index) => {
