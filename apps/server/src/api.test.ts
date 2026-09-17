@@ -1,11 +1,12 @@
-import type {
-  AgentDeps,
-  ApprovalDeps,
-  ConnectionDeps,
-  LedgerDeps,
-  PendingActionDeps,
-  ToolDeps,
-  WorkingSetDeps,
+import {
+  type AgentDeps,
+  type ApprovalDeps,
+  type ConnectionDeps,
+  DEFAULT_PROVIDERS,
+  type LedgerDeps,
+  type PendingActionDeps,
+  type ToolDeps,
+  type WorkingSetDeps,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { AgentRow } from "@graft/db/repo/agent";
@@ -53,6 +54,8 @@ const agentRow: AgentRow = {
 const connectionRow: ConnectionRow = {
   id: "conn_1",
   personId: "person_1",
+  provider: "keyring",
+  providerRef: null,
   vendor: "demo",
   displayName: "Demo",
   scheme: "api_key_header",
@@ -184,6 +187,7 @@ function connectionDeps(): ConnectionDeps {
     deleteBuildApprovalsForConnection: vi.fn(async () => []),
     expirePendingActionsForConnection: vi.fn(async () => []),
     vault: { encrypt: vi.fn(async () => Buffer.from("ciphertext")) },
+    providers: DEFAULT_PROVIDERS,
     newId: () => "conn_new",
     now: () => NOW,
   };

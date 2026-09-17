@@ -103,7 +103,9 @@ export type HostDependency =
   | "connections.get"
   | "decryptCredential"
   | "storeCredential"
-  | "credentialRefreshFailed";
+  | "credentialRefreshFailed"
+  /** A relayed connection's `obtain` — the host's, handed over on the row rather than on `ProxyDeps` (ADR 0019). */
+  | "relay.obtain";
 
 /**
  * What a host-injected dependency threw, as the proxy is allowed to know it: which dependency, and
@@ -170,7 +172,12 @@ export function guardHostDeps(deps: ProxyDeps): ProxyDeps {
   };
 }
 
-async function fromHost<T>(dependency: HostDependency, call: () => Promise<T>): Promise<T> {
+/**
+ * One host-bound call under the boundary above. Exported for the one host function that arrives on
+ * a connection rather than on `ProxyDeps` — a relay's `obtain` (`credential-source.ts`) — so it is
+ * held to the same rule as the rest: its class names reach the event, its message never does.
+ */
+export async function fromHost<T>(dependency: HostDependency, call: () => Promise<T>): Promise<T> {
   try {
     return await call();
   } catch (thrown) {

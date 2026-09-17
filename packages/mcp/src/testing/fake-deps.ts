@@ -3,6 +3,7 @@ import {
   type AgentDeps,
   type ApprovalDeps,
   type ConnectionDeps,
+  DEFAULT_PROVIDERS,
   hashAgentToken,
   type LedgerDeps,
   type PendingActionDeps,
@@ -135,6 +136,8 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
       const row: ConnectionRow = {
         id: input.id,
         personId: input.personId,
+        provider: "keyring",
+        providerRef: null,
         vendor: input.vendor,
         displayName: input.displayName ?? input.vendor,
         scheme: input.scheme ?? "api_key_header",
@@ -324,6 +327,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const at = store.now();
       const row = {
         ...input,
+        provider: input.provider ?? "keyring",
+        providerRef: input.providerRef ?? null,
         schemeConfig: input.schemeConfig ?? {},
         hosts: input.hosts ?? [],
         credentialCiphertext: null,
@@ -428,6 +433,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return closed;
     },
     vault: { encrypt: async () => Buffer.from("ciphertext") },
+    providers: DEFAULT_PROVIDERS,
     newId: store.newId,
     now: store.now,
   };

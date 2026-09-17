@@ -1732,6 +1732,7 @@ describe("the wide event", () => {
     "dryRun",
     "dryRunOutcome",
     "oauth",
+    "relay",
     "credentialEchoed",
     "failure",
   ].sort();

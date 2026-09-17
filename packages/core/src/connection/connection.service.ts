@@ -29,6 +29,7 @@ import {
   type OAuthStatePayload,
   signOAuthState,
 } from "./oauth-consent";
+import { type ConnectionProvider, DEFAULT_PROVIDERS, providerNamed } from "./provider";
 
 /**
  * Connections (CONTEXT.md; ADR 0007, ADR 0010): register, enter or re-enter the credential, revoke,
@@ -47,6 +48,8 @@ import {
 /** The row as the wire sees it: never a ciphertext, never a token, never the PKCE verifier. */
 export type ConnectionOutput = {
   id: string;
+  /** Where the connection comes from (ADR 0019) — `keyring` for every row until another provider is enabled. */
+  provider: string;
   vendor: string;
   displayName: string;
   scheme: ConnectionScheme;
@@ -65,6 +68,7 @@ export type ConnectionOutput = {
 export function toConnectionOutput(row: ConnectionRow): ConnectionOutput {
   return {
     id: row.id,
+    provider: row.provider,
     vendor: row.vendor,
     displayName: row.displayName,
     scheme: row.scheme,
@@ -92,20 +96,43 @@ export function isConnectionUsable(connection: ConnectionOutput): boolean {
 }
 
 /**
- * The proxy's view of a row: the identity it compares against the token and the columns that decide
- * where and how the credential goes. Built field by field, so a column added to the table later does
- * not ride into the proxy by accident. A revoked connection has a null ciphertext and the proxy
- * answers `connection_not_ready` for it; nothing else about the row has to say "revoked".
+ * The proxy's view of a row: the identity it compares against the token, the host set it pins to,
+ * and — from the row's provider (ADR 0019) — how the call resolves: the columns to decrypt and
+ * inject from, or the relay to send it through. Built field by field, so a column added to the table
+ * later does not ride into the proxy by accident. A revoked connection has a null ciphertext and the
+ * proxy answers `connection_not_ready` for it; nothing else about the row has to say "revoked". A
+ * row whose provider the deployment has not enabled resolves to nothing, which the proxy answers the
+ * same way: a connection made under a provider that is now absent is not one this deployment can
+ * call through, and saying so is better than guessing at the keyring.
  */
-export function toProxyConnection(row: ConnectionRow): ProxyConnection {
-  return {
+export function toProxyConnection(
+  row: ConnectionRow,
+  providers: readonly ConnectionProvider[] = DEFAULT_PROVIDERS,
+): ProxyConnection {
+  const identity = {
     id: row.id,
     personId: row.personId,
-    authScheme: row.scheme,
     primaryHost: row.primaryHost,
     hosts: row.hosts,
-    schemeConfig: row.schemeConfig,
-    credentialCiphertext: row.credentialCiphertext,
+  };
+  const resolution = providerNamed(providers, row.provider)?.resolve(row) ?? null;
+  if (!resolution) {
+    return { ...identity, authScheme: null, schemeConfig: null, credentialCiphertext: null };
+  }
+  if (resolution.mode === "relay") {
+    return {
+      ...identity,
+      authScheme: null,
+      schemeConfig: null,
+      credentialCiphertext: null,
+      relay: resolution.relay,
+    };
+  }
+  return {
+    ...identity,
+    authScheme: resolution.scheme,
+    schemeConfig: resolution.schemeConfig,
+    credentialCiphertext: resolution.credentialCiphertext,
   };
 }
 

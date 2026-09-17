@@ -21,6 +21,7 @@ import {
   toProxyConnection,
 } from "./connection.service";
 import { OAUTH_STATE_TTL_MS, pkceChallenge, verifyOAuthState } from "./oauth-consent";
+import { DEFAULT_PROVIDERS } from "./provider";
 
 /**
  * The connection service with fakes and no database. The vault is a fake too — what is asserted is
@@ -35,6 +36,8 @@ const CIPHERTEXT = Buffer.from("ciphertext-bytes");
 const row: ConnectionRow = {
   id: "conn_1",
   personId: "person_1",
+  provider: "keyring",
+  providerRef: null,
   vendor: "unleashed",
   displayName: "Acme Unleashed",
   scheme: "api_key_header",
@@ -108,6 +111,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
     expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
     vault: fakeVault(),
+    providers: DEFAULT_PROVIDERS,
     newId: () => "conn_new",
     now: () => NOW,
     ...overrides,

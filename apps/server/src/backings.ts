@@ -1,5 +1,6 @@
 import { join } from "node:path";
 
+import { type ConnectionProvider, keyringProvider, providerListProblem } from "@graft/core";
 import type { ServerEnv } from "@graft/env/server";
 import { createFakeSandboxBackend } from "@graft/sandbox/fake";
 import type { SandboxBackend } from "@graft/sandbox/types";
@@ -13,14 +14,21 @@ import {
 import { createLocalKeyring, type Keyring } from "@graft/vault";
 
 /**
- * Which backing stands behind each of the three seams — sandbox, keyring, toolbox mirror — chosen
- * once at boot from `GRAFT_BACKINGS` (ADR 0002: one core, two backings per seam, the commercial
- * half hidden by absence), and the toolbox store beside them, because the store and the sandbox have
- * to see one tree (`packages/toolbox/README.md`) and which tree depends on the sandbox chosen. Under
- * `open` that is the filesystem store, rooted where the sandbox backing sees the same directory;
- * under `cloud` the private package may answer with a store of its own — one over the drives its
- * sandboxes mount (GRA-39) — and the selector takes that in place of the filesystem store, since a
- * version written to this machine's disk is one no hosted sandbox would ever see.
+ * Which backing stands behind each of the four seams — sandbox, keyring, toolbox mirror, and the
+ * connection providers (ADR 0019) — chosen once at boot from `GRAFT_BACKINGS` (ADR 0002: one core,
+ * two backings per seam, the commercial half hidden by absence), and the toolbox store beside them,
+ * because the store and the sandbox have to see one tree (`packages/toolbox/README.md`) and which
+ * tree depends on the sandbox chosen. Under `open` that is the filesystem store, rooted where the
+ * sandbox backing sees the same directory; under `cloud` the private package may answer with a store
+ * of its own — one over the drives its sandboxes mount (GRA-39) — and the selector takes that in
+ * place of the filesystem store, since a version written to this machine's disk is one no hosted
+ * sandbox would ever see.
+ *
+ * The providers are a list rather than one backing, because a deployment runs several at once — a
+ * broker for the vendors it has, the keyring for the rest — and a proposal is routed to the first
+ * that covers it. The keyring is always present and last: `open` enables it alone, and `cloud`
+ * appends it after whatever the private package answers, so today's behaviour is every deployment's
+ * floor and no hosted provider can shadow it (`providerListProblem` refuses a list that tries).
  *
  * `open` is what this repository holds: the sandbox `GRAFT_SANDBOX_BACKEND` names — Docker when
  * its pair of variables is set, none when it is not, or the in-process fake for a laptop without a
@@ -59,6 +67,12 @@ export type Backings = {
   sandbox: SandboxBackend | null;
   keyring: Keyring;
   mirror: ToolboxMirror;
+  /**
+   * The connection providers, in routing order, the keyring last (ADR 0019). `["keyring"]` under
+   * `open`; whatever the private package answers, then the keyring, under `cloud`. The boot line
+   * names them.
+   */
+  providers: readonly ConnectionProvider[];
   /** The toolbox as the server holds it, where the sandbox backing sees the same tree. */
   store: ToolboxStore;
   /**
@@ -71,15 +85,18 @@ export type Backings = {
 };
 
 /**
- * What the private module's factory returns: the three seams, and a toolbox store when the hosted
- * form holds the toolbox somewhere this machine's disk is not (GRA-39). Absent, the selector's
- * filesystem store at `GRAFT_TOOLBOX_ROOT` is what the publish writes.
+ * What the private module's factory returns: the three seams; a toolbox store when the hosted form
+ * holds the toolbox somewhere this machine's disk is not (GRA-39) — absent, the selector's
+ * filesystem store at `GRAFT_TOOLBOX_ROOT` is what the publish writes; and the connection providers
+ * the hosted tier enables beyond the keyring (ADR 0019), in routing order, the keyring not among
+ * them — the selector appends it. Absent, the keyring alone.
  */
 export type CloudBackings = {
   sandbox: SandboxBackend;
   keyring: Keyring;
   mirror: ToolboxMirror;
   store?: ToolboxStore;
+  providers?: ConnectionProvider[];
 };
 
 /**
@@ -166,6 +183,7 @@ function openBackings(env: BackingsEnv): Backings {
     sandbox,
     keyring: createLocalKeyring(env.GRAFT_KEYRING_SECRET),
     mirror: createNoopToolboxMirror(),
+    providers: [keyringProvider],
     store,
     toolboxRoot: store.root,
   };
@@ -200,10 +218,17 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
   };
   const created: unknown = await factory(input);
   assertCloudBackings(created, specifier);
-  const { store: own, ...seams } = created;
+  const { store: own, providers: hosted, ...seams } = created;
+  // The keyring after the hosted providers, always: the floor every deployment has (ADR 0019).
+  const providers = [...(hosted ?? []), keyringProvider];
+  const problem = providerListProblem(providers);
+  if (problem) {
+    throw new Error(`${specifier}'s createCloudBackings returned connection providers: ${problem}`);
+  }
   return {
     form: "cloud",
     ...seams,
+    providers,
     store: own ?? filesystem,
     toolboxRoot: own ? null : filesystem.root,
   };
@@ -232,9 +257,14 @@ const SEAM_MEMBERS = {
 /** The store's verbs (`ToolboxStore` in `@graft/toolbox`), for the factory that answers with one. */
 const STORE_MEMBERS = ["readTree", "writeTree", "read", "list", "exists", "remove"] as const;
 
+/** A connection provider's functions (`ConnectionProvider` in `@graft/core`), and how it connects. */
+const PROVIDER_MEMBERS = ["covers", "resolve", "revoke"] as const;
+const PROVIDER_CONNECT_KINDS = new Set(["form", "link", "none"]);
+
 /**
- * Throw unless `value` carries the three seams — and, when it carries a store, the whole store —
- * naming the first thing that is missing.
+ * Throw unless `value` carries the three seams — and, when it carries a store, the whole store,
+ * and, when it carries providers, a list of whole providers — naming the first thing that is
+ * missing.
  */
 export function assertCloudBackings(
   value: unknown,
@@ -267,6 +297,36 @@ export function assertCloudBackings(
     for (const member of STORE_MEMBERS) {
       if (typeof (record.store as Record<string, unknown>)[member] !== "function") {
         throw new Error(`${specifier}'s createCloudBackings returned a store without ${member}()`);
+      }
+    }
+  }
+  if (record.providers !== undefined) {
+    if (!Array.isArray(record.providers)) {
+      throw new Error(`${specifier}'s createCloudBackings returned providers that are not a list`);
+    }
+    for (const [index, provider] of (record.providers as unknown[]).entries()) {
+      const at = `provider ${index}`;
+      if (typeof provider !== "object" || provider === null) {
+        throw new Error(
+          `${specifier}'s createCloudBackings returned a ${at} that is not an object`,
+        );
+      }
+      const p = provider as Record<string, unknown>;
+      if (typeof p.name !== "string" || p.name.length === 0) {
+        throw new Error(`${specifier}'s createCloudBackings returned a ${at} with no name`);
+      }
+      const connect = p.connect as Record<string, unknown> | undefined;
+      if (typeof connect?.kind !== "string" || !PROVIDER_CONNECT_KINDS.has(connect.kind)) {
+        throw new Error(
+          `${specifier}'s createCloudBackings returned provider ${p.name} with no connect kind (form, link or none)`,
+        );
+      }
+      for (const member of PROVIDER_MEMBERS) {
+        if (typeof p[member] !== "function") {
+          throw new Error(
+            `${specifier}'s createCloudBackings returned provider ${p.name} without ${member}()`,
+          );
+        }
       }
     }
   }

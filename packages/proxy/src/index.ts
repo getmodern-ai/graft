@@ -18,6 +18,10 @@
  * package's `./*` export for a reader who wants one piece: `@graft/proxy/types` for the rest of the
  * vocabulary, and `/public-host`, `/credential-fields`, `/scheme-parameters` and `/cause-chain` for
  * the tables a host — or the console's bundle — takes without the Hono app.
+ *
+ * The relay (ADR 0019; `relay.ts`) is exported for the two hands that build one: a provider in
+ * `@graft/core` picks a plugin from `RELAYS` and hands it to the proxy on the connection, and a new
+ * relay plugin applies `relayHeaders` under its rules rather than writing the loop again.
  */
 export { createProxyApp, DEFAULT_PROXY_OPTIONS, HOST_SEGMENT_MARKER, proxyPathFor } from "./app";
 export {
@@ -38,6 +42,14 @@ export {
   tokenEndpointOf,
   tokenExpiresAt,
 } from "./oauth";
+export {
+  PASSTHROUGH_RELAY_RULES,
+  RELAYS,
+  relayHeaders,
+  relayPassesThrough,
+  relayRefuses,
+  relayRulesOf,
+} from "./relay";
 export { CredentialRefreshError, DerivedCredentialError } from "./scheme-errors";
 export {
   requiredParametersOf,
@@ -47,6 +59,7 @@ export {
 export { SNOWFLAKE_TOKEN_TYPE_HEADER, UNLEASHED_CLIENT_TYPE } from "./schemes";
 export { INBOUND_AUTH_HEADERS, TOKEN_HEADERS } from "./token";
 export type {
+  AuthScheme,
   CapabilityClaims,
   CredentialFields,
   CredentialScope,
@@ -56,9 +69,16 @@ export type {
   ProxyEvent,
   ProxyOptions,
   ProxyOutcome,
+  ProxyRelay,
+  ProxyScheme,
+  RelayHeaderRules,
+  RelayPlugin,
+  RelayScheme,
+  SchemeConfig,
+  SchemeTarget,
   TokenVerdict,
   UpstreamFetch,
   UpstreamRequest,
 } from "./types";
-export { AUTH_SCHEMES } from "./types";
+export { AUTH_SCHEMES, isAuthScheme, isRelayScheme, RELAY_SCHEMES } from "./types";
 export { createUpstreamFetch } from "./upstream";

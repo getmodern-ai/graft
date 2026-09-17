@@ -3,8 +3,9 @@ import { type Context, Hono } from "hono";
 import { declaredLength, readCapped } from "./body";
 import { createDerivedCredentialCache } from "./cache";
 import {
-  type CredentialSource,
+  type CallSource,
   credentialSource,
+  relaySchemePlugin,
   tryUrl,
   wireCredential,
 } from "./credential-source";
@@ -80,6 +81,13 @@ import { createUpstreamFetch, isTimeoutFailure } from "./upstream";
  * or `HEAD` takes the ladder above unchanged and comes back marked `x-graft-dry-run: forwarded`,
  * and every other method stops after the host check — before a credential is obtained — with a
  * 202 preview of the request that would have left (`dry-run.ts`).
+ *
+ * One rung is conditional on the connection: a connection whose provider **relays** (ADR 0019)
+ * takes every rung above the credential exactly as one the proxy signs for — the token, the row,
+ * the vendor host judged, the body accepted, the dry run — and then, where a scheme plugin would
+ * attach a decrypted credential, the resolved vendor request is rewritten into a request to the
+ * upstream proxy that holds it (`credential-source.ts`, `relay.ts`). The event still names the
+ * vendor host and path, and says which relay carried the call.
  *
  * This file is the ladder and the vendor leg; three questions it answers by delegation are modules
  * of their own: `credential-source.ts` says where the credential comes from and what goes on the
@@ -183,6 +191,8 @@ type Trace = {
   dryRunOutcome: DryRunOutcome | null;
   /** What an authorization-code token did on this call; `forward` sets it (`ProxyEvent.oauth`). */
   oauth: ProxyEvent["oauth"];
+  /** The relay scheme the call left through, once the connection resolved to one (`ProxyEvent.relay`). */
+  relay: string | null;
 };
 
 type Answered = {
@@ -237,6 +247,7 @@ async function proxyCall(
     dryRun: false,
     dryRunOutcome: null,
     oauth: null,
+    relay: null,
   };
 
   let result: Refused | Answered | Intercepted;
@@ -376,7 +387,10 @@ async function decide(
 
   const source = credentialSource(connection, deps);
   if (source.kind === "refused") return source;
-  const plugin = SCHEMES[source.authScheme];
+  // Inject or relay (ADR 0019): the same plugin shape either way, so the rungs below read one.
+  const plugin = source.mode === "relay" ? relaySchemePlugin(source) : SCHEMES[source.authScheme];
+  const config: SchemeConfig = source.mode === "relay" ? {} : source.schemeConfig;
+  trace.relay = source.mode === "relay" ? source.plugin.scheme : null;
 
   const target = resolveTarget(source, call);
   if (target.kind === "refused") return target;
@@ -428,7 +442,7 @@ async function decide(
    * claim falls through to `forward` exactly as an ordinary call does.
    */
   if (claims.dryRun && !isSafeMethod(call.method)) {
-    const named = schemeHeaderNames(headers, plugin, source.schemeConfig);
+    const named = schemeHeaderNames(headers, plugin, config);
     if (!named.ok) return refuse(409, named.reason, named.message, { requestBytes });
     trace.dryRunOutcome = "intercepted";
     return intercept(call.method, target.url, named.headerNames, body, requestBytes);
@@ -451,7 +465,7 @@ async function decide(
       options,
       shared,
       plugin,
-      config: source.schemeConfig,
+      config,
       credential,
       connectionId: connection.id,
       hosts: source.hosts,
@@ -504,7 +518,7 @@ type Target = { kind: "target"; base: URL; url: URL };
  * construction under which nothing in the caller's path can move the host — and checked afterwards
  * anyway, because host pinning is the property everything else here rests on.
  */
-function resolveTarget(source: CredentialSource, call: Call): Target | Refused {
+function resolveTarget(source: CallSource, call: Call): Target | Refused {
   let base: URL | null;
   if (call.host === null) {
     base = tryUrl(source.primaryHost);

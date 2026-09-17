@@ -217,6 +217,7 @@ describe("the authoring set and the execute tool", () => {
   it("execute__<connection id> says it is the by-hand path and what to do with the build ask", () => {
     const definition = executeToolDefinition({
       id: "conn_1",
+      provider: "keyring",
       vendor: "demo",
       displayName: "Demo Orders",
       scheme: "api_key_header",

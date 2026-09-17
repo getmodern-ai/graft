@@ -150,6 +150,20 @@ export {
   signOAuthState,
   verifyOAuthState,
 } from "./connection/oauth-consent";
+export {
+  type ConnectionProvider,
+  DEFAULT_PROVIDERS,
+  describeProviders,
+  KEYRING_PROVIDER,
+  keyringProvider,
+  type ProviderConnect,
+  type ProviderConnectionRow,
+  type ProviderDescription,
+  type ProviderResolution,
+  providerFor,
+  providerListProblem,
+  providerNamed,
+} from "./connection/provider";
 export type { ServiceContext } from "./context";
 export {
   HTTP_STATUS_BY_CODE,

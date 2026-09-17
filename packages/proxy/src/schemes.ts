@@ -24,7 +24,13 @@ import {
   signSnowflakeJwt,
   snowflakeCredentialSignature,
 } from "./snowflake-jwt";
-import type { AuthScheme, CredentialFields, SchemeConfig, SchemeRuntime } from "./types";
+import type {
+  AuthScheme,
+  CredentialFields,
+  SchemeConfig,
+  SchemeRuntime,
+  SchemeTarget,
+} from "./types";
 
 /**
  * The scheme plugins. A plugin is code *we* wrote, parameterised by the connection's non-secret
@@ -62,8 +68,8 @@ export {
   MissingSchemeParameterError,
 } from "./scheme-errors";
 
-/** The outgoing request as a plugin sees it: the URL and the headers, nothing else. */
-export type SchemeTarget = { url: URL; headers: Headers };
+/** The outgoing request as a plugin sees it — `types.ts` holds it, since the relay plugins share it. */
+export type { SchemeTarget } from "./types";
 
 export type SchemeApply = (
   target: SchemeTarget,
