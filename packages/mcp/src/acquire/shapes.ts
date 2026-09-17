@@ -5,6 +5,12 @@ import type { AcquireJobRow } from "@graft/db/repo/acquire-job";
  * one file, so the meta-tool, the job and a reader of the row cannot disagree about a field name.
  * GRA-31's evals and GRA-33's compose read these shapes; a change here is an `interface:` commit.
  *
+ * A success names the tool three ways on purpose (GRA-78): the wire name a refreshed list shows,
+ * `vendor` and `name` as `run_tool` takes them, and `inputSchema`, because a client that snapshots
+ * its list per conversation (Claude.ai, 2026-09-17) never sees the promoted tool and `run_tool` is
+ * the only path to it; `next` says so in one sentence. No `outputSchema`: authored tools declare
+ * none, and `run_tool` answers the vendor verbatim.
+ *
  * The refusals follow GRA-23's conventions and `result.ts`'s shape: `{ error: "refused", reason,
  * message }`, with the build ask's `awaiting_approval` body passed through from `approval.ts`.
  */
@@ -20,10 +26,22 @@ export type AcquireStarted = {
 export type AcquireSuccess = {
   /** The wire name, `<vendor>__<name>`. */
   tool: string;
+  /** The two halves of the wire name, as `run_tool` takes them. */
+  vendor: string;
+  name: string;
   toolId: string;
   version: number;
+  /** The tool's published JSON Schema; what `run_tool`'s `input` must match. */
+  inputSchema: Record<string, unknown>;
   annotations: { readOnlyHint: boolean; destructiveHint: boolean };
+  /** One sentence on what to do now, for a client whose tool list has not refreshed. */
+  next: string;
 };
+
+/** `AcquireSuccess.next`: the tool is promoted; where the list has not refreshed, `run_tool` calls it. */
+export function acquireNextStep(vendor: string, name: string): string {
+  return `${vendor}__${name} is promoted into your working set; where your tool list has not refreshed, run_tool { vendor: "${vendor}", name: "${name}", input } calls it, with input matching inputSchema.`;
+}
 
 /**
  * Why a job ended without a tool — one word the agent and the console can branch on, and the
@@ -43,12 +61,20 @@ export const ACQUIRE_FAILURES = [
 ] as const;
 export type AcquireFailureKind = (typeof ACQUIRE_FAILURES)[number];
 
-/** One attempt as the failure result summarises it — what was tried, in order. */
+/**
+ * One attempt as the failure result summarises it — what was tried, in order. `summary` is the
+ * loop's account of how *this* attempt ended (the rules the check refused, the reads that failed,
+ * the dry run's verdict, the reason the model gave up); `note` is what the model said when it
+ * drafted it. The two were one field until GRA-70, when the next draft's note was found standing
+ * in for the previous attempt's ending.
+ */
 export type AcquireAttemptSummary = {
   attempt: number;
   outcome: string;
-  /** The model's line on the draft, or the loop's one-line account of where it stopped. */
+  /** How the attempt ended, in the loop's words: the one line that stopped it. */
   summary: string;
+  /** The model's note on the draft that opened the attempt; null when the row has none. */
+  note: string | null;
 };
 
 export type AcquireFailure = {

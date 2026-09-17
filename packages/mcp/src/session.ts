@@ -28,18 +28,18 @@ export const SERVER_INFO = { name: "graft", version: "0.1.0" } as const;
  * The playbook a client that loads no skill reads (GRA-54): the `instructions` field of the
  * `initialize` result, which Claude.ai, ChatGPT and a bare MCP client show their model, and which
  * a harness with the Hermes skill installed reads beside it. It carries the order of operations,
- * the handoff rule, the secrets rule, `run_tool` for a client that snapshots its list, and the
- * approval grain (ADR 0003, ADR 0006, ADR 0008 as amended); the long form of each is the tool's own
- * description in `tools/`. Held under `INSTRUCTIONS_BUDGET` because some clients truncate the
- * field, and pinned sentence for sentence to `skills/hermes-graft/SKILL.md` by `session.test.ts`,
- * so the skill and the handshake cannot disagree on a rule. Graft's vocabulary, sentence case, no
- * em dashes, no exclamation marks.
+ * the handoff rule, the secrets rule, `run_tool` for a client that snapshots its list and where its
+ * input schema is read (GRA-78), and the approval grain (ADR 0003, ADR 0006, ADR 0008 as amended);
+ * the long form of each is the tool's own description in `tools/`. Held under `INSTRUCTIONS_BUDGET`
+ * because some clients truncate the field, and pinned sentence for sentence to
+ * `skills/hermes-graft/SKILL.md` by `session.test.ts`, so the skill and the handshake cannot
+ * disagree on a rule. Graft's vocabulary, sentence case, no em dashes, no exclamation marks.
  */
 export const SERVER_INSTRUCTIONS = [
-  "Graft extends your tool list. Its tools there are your working set: the authored tools promoted for you, callable as vendor__name, plus these fixed ones.",
-  "When a task has no tool, work in this order. Call find_tool first: a matching tool may exist and be demoted. If one matches, promote it; it is in your list at once, no authoring needed. If the vendor has no connection in your scope, call request_connection. Call acquire only when nothing fits, with the connection id and a goal. It answers a jobId before anything is built: poll acquire_status and relay the newest progress line in one sentence, only when it changed. Do not start a second acquire for the same goal, and do not drive the authoring tools (read_web_page, write_file, check_tool, publish_tool) or an execute__ tool unless the person asked you to author by hand; they build tools and do not answer the person.",
+  "Graft extends your tool list with your working set: the authored tools promoted for you, callable as vendor__name, plus these fixed ones.",
+  "When a task has no tool, work in this order. Call find_tool first: a match may exist and be demoted. If one does, promote it; it is in your list at once, no authoring needed. If the vendor has no connection in your scope, call request_connection. Call acquire only when nothing fits, with the connection id and a goal. It answers a jobId at once: poll acquire_status and relay the newest progress line in one sentence, only when it changed. Do not start a second acquire for the same goal, and do not drive the authoring tools (read_web_page, write_file, check_tool, publish_tool) or an execute__ tool unless the person asked you to author by hand; they build tools and do not answer the person.",
   "Any answer with a url and an awaiting_ word (approval, connection, credential) is a handoff: the next step is the person's, in the console. Send them the link exactly as returned, say what it is for, then wait; when they say it is done, call the same tool again with the same arguments. Never ask the person for an API key, a password or a token in chat, whatever the vendor calls it. The console is where secrets go; you never see one.",
-  "Some clients snapshot the tool list per conversation, so a tool just promoted or acquired may be missing from yours: run_tool { vendor, name, input } calls it by name. Re-fetch the list on notifications/tools/list_changed.",
+  "Some clients snapshot the tool list per conversation, so a tool just promoted or acquired may not be in yours: run_tool { vendor, name, input } calls it by name. The acquire result and find_tool carry the tool's inputSchema for run_tool. Re-fetch on notifications/tools/list_changed.",
   "Approvals are the person's. A read-only tool never asks. Any other tool asks once, and the answer holds, a destructive tool too; the person can set a tool to ask every time in the console. acquire asks once per agent per connection.",
 ].join("\n\n");
 
