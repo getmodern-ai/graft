@@ -1107,10 +1107,13 @@ function describeRedirect(
   let target: URL;
   try {
     const base = new URL(connection.primaryHost);
-    const [pathname = "", search] = path.split("?", 2);
-    const request = new URL(base.href);
-    request.pathname = `${base.pathname.replace(/\/+$/, "")}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
-    request.search = search ? `?${search}` : "";
+    const request = new URL(
+      path.replace(/^\/+/, ""),
+      `${base.origin}${base.pathname.replace(/\/+$/, "")}/`,
+    );
+    // A fragment never leaves the sandbox — `fetch` drops it — so it is not part of what the
+    // vendor answered, and a relative `Location` must not resolve against it.
+    request.hash = "";
     target = new URL(location, request);
   } catch {
     return {

@@ -783,7 +783,11 @@ describe("a job that fails and tries again", () => {
 
   it("resolves a relative Location against the URL the read went to, base path included", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ name: "list-moved-rel", proofReads: ["/moved-relative"] }), "Reading."),
+      write(
+        "goal",
+        draft({ name: "list-moved-rel", proofReads: ["/moved-relative#top"] }),
+        "Reading.",
+      ),
       { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
     ]);
     deps.model = scripted;
@@ -792,10 +796,11 @@ describe("a job that fails and tries again", () => {
       await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List what moved, relatively" });
       const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
       const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
-      // `archive?since=2024` beside `/v2/moved-relative` is `/v2/archive?since=2024` on the primary host.
+      // `archive?since=2024` beside `/v2/moved-relative` is `/v2/archive?since=2024` on the primary
+      // host; the fragment never reached the vendor and plays no part.
       expect(read).toMatchObject({ ok: false, status: 303, redirectTo: "api.demo.example" });
       expect(read?.error).toContain(
-        "redirected GET /moved-relative to api.demo.example/v2/archive?since=2024, a host this connection declares",
+        "redirected GET /moved-relative#top to api.demo.example/v2/archive?since=2024, a host this connection declares",
       );
     } finally {
       await a.close();
