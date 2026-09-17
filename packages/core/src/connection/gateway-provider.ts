@@ -4,7 +4,7 @@ import {
   GATEWAY_RELAY_SCHEME,
   gatewayRelay,
 } from "@graft/proxy/gateway-relay";
-import type { ProxyRelay } from "@graft/proxy/types";
+import type { ProxyRelay, UpstreamFetch } from "@graft/proxy/types";
 
 import type { ConnectionProvider } from "./provider";
 
@@ -48,6 +48,14 @@ export type GatewayProviderConfig = {
    * names (the default; ADR 0019's header rules as data).
    */
   headerPrefix?: string | null;
+  /**
+   * How the relay leg reaches the gateway: the host binds `@graft/proxy`'s `createUpstreamFetch`
+   * with the gateway's hostname exempt from the address guard, since a company gateway commonly
+   * sits on a private network (`apps/server/src/backings.ts`). On the relay alone — the proxy's own
+   * fetch keeps the full guard for every vendor host, the gateway's name included. Absent, the relay
+   * goes out the proxy's way, fully guarded; a test with an injected fetch needs none.
+   */
+  upstreamFetch?: UpstreamFetch;
 };
 
 /** Whether one vendor host matches one covered-host pattern, both lower-case. */
@@ -88,6 +96,7 @@ export function createGatewayProvider(config: GatewayProviderConfig): Connection
     // The identity header, named for the dry run's preview; the plugin knows it only as a field.
     headerNames: [headerName.toLowerCase()],
     ...(prefix === null ? {} : { rules: { prefix, passThrough: GATEWAY_PREFIX_PASS_THROUGH } }),
+    ...(config.upstreamFetch ? { upstreamFetch: config.upstreamFetch } : {}),
   };
   return {
     name: GATEWAY_PROVIDER,

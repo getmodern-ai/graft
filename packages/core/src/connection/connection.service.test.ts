@@ -21,6 +21,7 @@ import {
   storeRefreshedCredential,
   toConnectionOutput,
   toProxyConnection,
+  widenProviderConnectionHosts,
 } from "./connection.service";
 import { createGatewayProvider } from "./gateway-provider";
 import { OAUTH_STATE_TTL_MS, pkceChallenge, verifyOAuthState } from "./oauth-consent";
@@ -111,6 +112,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     })),
     revokeConnection: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     reconnectConnection: vi.fn(async () => ({ ...row, revokedAt: null })),
+    setConnectionHosts: vi.fn(async (_db, _p, _id, hosts) => ({ ...row, hosts })),
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
     expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
@@ -1061,6 +1063,64 @@ describe("a provider with no person step (ADR 0019, GRA-58)", () => {
     expect(
       toProxyConnection({ ...row, revokedAt: NOW, credentialCiphertext: null }, providers),
     ).toMatchObject({ authScheme: null, credentialCiphertext: null });
+  });
+
+  it("widens a gateway row's host set to a later proposal's, within the gateway's coverage, and never a keyring row's", async () => {
+    const deps = fakeDeps({ providers, findConnection: vi.fn(async () => gatewayRow) });
+    const output = await widenProviderConnectionHosts(
+      ctx,
+      PRINCIPAL,
+      gateway,
+      "conn_g",
+      ["Files.googleapis.com", "api.unleashedsoftware.com"],
+      deps,
+    );
+    expect(deps.setConnectionHosts).toHaveBeenCalledWith(fakeDb, "person_1", "conn_g", [
+      "api.unleashedsoftware.com",
+      "files.googleapis.com",
+    ]);
+    expect(output.hosts).toEqual(["api.unleashedsoftware.com", "files.googleapis.com"]);
+
+    // Already declared: answered as it is, nothing written.
+    const same = fakeDeps({ providers, findConnection: vi.fn(async () => gatewayRow) });
+    await widenProviderConnectionHosts(
+      ctx,
+      PRINCIPAL,
+      gateway,
+      "conn_g",
+      ["api.unleashedsoftware.com"],
+      same,
+    );
+    expect(same.setConnectionHosts).not.toHaveBeenCalled();
+
+    // A host the gateway does not cover, a private host, and a keyring row are each refused unwritten.
+    const refused = fakeDeps({ providers, findConnection: vi.fn(async () => gatewayRow) });
+    await expect(
+      widenProviderConnectionHosts(
+        ctx,
+        PRINCIPAL,
+        gateway,
+        "conn_g",
+        ["cdn.other.example"],
+        refused,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: /does not cover unleashed/ });
+    await expect(
+      widenProviderConnectionHosts(ctx, PRINCIPAL, gateway, "conn_g", ["10.0.0.7"], refused),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", details: { reason: "host_not_public" } });
+    const keyring = fakeDeps({ providers, findConnection: vi.fn(async () => row) });
+    await expect(
+      widenProviderConnectionHosts(
+        ctx,
+        PRINCIPAL,
+        gateway,
+        "conn_1",
+        ["files.unleashedsoftware.com"],
+        keyring,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST", message: /the person's to change/ });
+    expect(refused.setConnectionHosts).not.toHaveBeenCalled();
+    expect(keyring.setConnectionHosts).not.toHaveBeenCalled();
   });
 
   it("reconnects a revoked gateway row by clearing the stamp alone, answers a live one as it is, and refuses the other kinds by naming their way back", async () => {

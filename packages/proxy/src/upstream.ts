@@ -27,10 +27,12 @@ import type { UpstreamFetch } from "./types";
  * on a private network. The guard exists because a vendor host is *proposed* by an agent's model
  * and could be pointed at the metadata service; a URL the operator set beside the database URL
  * carries the operator's own trust, and refusing it would make every private gateway unusable.
- * The exemption never reaches a vendor host: the ladder judges the vendor host's literal before
- * the fetch (`app.ts`), and the relay URL is the only one that names the gateway. One thing the
- * guard cannot see for either leg: an IP literal, which Node connects to without resolving — the
- * vendor's is refused by the ladder's literal check, and a relay URL's is the operator's to write.
+ * A fetch built with the exemption is the **relay leg's own** (`ProxyRelay.upstreamFetch`), never
+ * the proxy's shared one: a vendor host may spell the gateway's name — a keyring connection an
+ * agent proposed at `gateway.corp.example` passes the literal check — and must still be judged on
+ * the address it resolves to. One thing the guard cannot see for either leg: an IP literal, which
+ * Node connects to without resolving — the vendor's is refused by the ladder's literal check, and
+ * a relay URL's is the operator's to write.
  */
 
 /** The vendor name resolved to an address a credential must not be sent to. */
@@ -83,8 +85,9 @@ export type UpstreamFetchOptions = {
   /** The DNS the guard reads; a test scripts one. */
   resolveAll?: ResolveAll;
   /**
-   * Hostnames the address guard does not apply to — the operator-configured upstreams a relay leg
-   * goes to, never a vendor host (the header of this file says why). Compared exactly, lower-case.
+   * Hostnames the address guard does not apply to — the operator-configured upstream a relay leg
+   * goes to. Only ever set on a fetch a provider hands the proxy for its relay (`ProxyRelay.
+   * upstreamFetch`); the header of this file says why the shared fetch takes none. Exact, lower-case.
    */
   unguardedHosts?: readonly string[];
 };

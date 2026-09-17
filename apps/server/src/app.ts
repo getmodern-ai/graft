@@ -49,9 +49,8 @@ export type ServerDeps = {
   /** The break glass from the environment — off unless the deployment says otherwise. */
   followRedirects: boolean;
   /**
-   * The proxy's way out. `index.ts` binds undici behind the guarded resolver, with the configured
-   * gateway's host exempt from the address rule (ADR 0019, GRA-58); a test binds a fake vendor.
-   * Absent, the proxy's own default — the guarded resolver with no exemption.
+   * A test's fake vendor; production takes the proxy's default, undici behind the guarded resolver
+   * with no exemption — a gateway relay's own fetch rides on its connection (ADR 0019, GRA-58).
    */
   upstreamFetch?: UpstreamFetch;
   /** Where the proxy's one event per call goes; by default onto the request's wide event. */

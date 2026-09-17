@@ -171,3 +171,22 @@ export async function reconnectConnection(
     .returning();
   return row ?? null;
 }
+
+/**
+ * Replace the row's host set — for a provider's row whose later proposal names a host the row did
+ * not declare (GRA-58): the service has already checked that every host is one the provider covers
+ * and that the primary is among them. The one column written; the repo is the statement alone.
+ */
+export async function setConnectionHosts(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+  hosts: string[],
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .update(connection)
+    .set({ hosts })
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .returning();
+  return row ?? null;
+}

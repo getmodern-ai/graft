@@ -7,6 +7,7 @@ import {
   providerListProblem,
 } from "@graft/core";
 import type { ServerEnv } from "@graft/env/server";
+import { createUpstreamFetch } from "@graft/proxy";
 import { createFakeSandboxBackend } from "@graft/sandbox/fake";
 import type { SandboxBackend } from "@graft/sandbox/types";
 import { createDockerSandboxBackend } from "@graft/sandbox-docker";
@@ -168,6 +169,11 @@ export function gatewayProviderFrom(
     headerName,
     headerValue,
     headerPrefix: env.GRAFT_GATEWAY_HEADER_PREFIX ?? null,
+    // The relay leg's own way out (ADR 0019 as amended for GRA-58): the gateway's hostname exempt
+    // from the resolver's private-address rule, on this fetch and on no other — the proxy's shared
+    // fetch keeps the full guard for every vendor host, so a keyring connection spelling the
+    // gateway's name is still judged on the address it resolves to (`@graft/proxy`'s `upstream.ts`).
+    upstreamFetch: createUpstreamFetch({ unguardedHosts: [new URL(upstreamUrl).hostname] }),
   });
 }
 

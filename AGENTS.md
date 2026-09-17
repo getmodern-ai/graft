@@ -205,9 +205,12 @@ optional caller-header prefix — all-or-nothing and off by default, read by `ga
 host of which it covers connects with **no person step**: `request_connection` makes the row
 (`registerProviderConnection`, scheme `gateway`, no credential) and grows the asking agent's scope in
 one transaction; a row the person revoked or has not given this agent is refused with the console
-step that would grant it. The relay carries the vendor URL in the path, `<upstream>/<host>/<path>`,
-and `index.ts` exempts the gateway's hostname from the resolver's private-address rule
-(`createUpstreamFetch({ unguardedHosts })`). A revoked gateway row comes back through the console's
+step that would grant it, and a narrower in-scope gateway row is widened to a later proposal's
+hosts within the coverage. The relay carries the vendor URL in the path, `<upstream>/<host>/<path>`,
+and the provider brings the relay leg its own fetch with the gateway's hostname exempt from the
+resolver's private-address rule (`createUpstreamFetch({ unguardedHosts })`, on `ProxyRelay.
+upstreamFetch`) — the proxy's shared fetch keeps the full guard, so a vendor host spelling the
+gateway's name is still judged on its address. A revoked gateway row comes back through the console's
 Reconnect (`POST /api/connections/:id/reconnect`), the one row kind with nothing to re-enter. A fake
 gateway on a loopback port stands in for a company's in `packages/proxy/src/gateway-relay.test.ts`
 and `apps/server/src/app.test.ts`; on a laptop, `GRAFT_GATEWAY_UPSTREAM_URL` may be plain `http`

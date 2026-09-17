@@ -346,6 +346,50 @@ export async function registerProviderConnection(
 }
 
 /**
+ * Widen a provider-made row's host set to a later proposal's (GRA-58): an agent that already holds
+ * `api.vendor.example` through the gateway proposes the same vendor and primary host with
+ * `files.vendor.example` beside it, and answering "already connected" with the narrower row would
+ * have its calls to the new host refused as `host_not_in_set`. The union is checked as any host set
+ * is and against the provider's coverage — the gateway has a route for every host it covers, and
+ * nothing outside that can be added — so widening grants nothing the deployment did not. A row of
+ * any other kind is refused: the keyring's host set is what the person confirmed on the handoff
+ * page, and is not an agent's to grow. A union already declared is answered as it is.
+ */
+export async function widenProviderConnectionHosts(
+  ctx: ServiceContext,
+  principal: Principal,
+  provider: ConnectionProvider,
+  connectionId: string,
+  hosts: readonly string[],
+  deps: ConnectionDeps,
+): Promise<ConnectionOutput> {
+  const row = orNotFound(
+    await deps.findConnection(ctx.db, principal.personId, connectionId),
+    "Connection not found",
+  );
+  if (row.provider !== provider.name || provider.connect.kind !== "none") {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `${row.displayName}'s host set is the person's to change, not a provider's`,
+    );
+  }
+  const union = validateHostSet(row.primaryHost, [...row.hosts, ...hosts]);
+  if (!union.ok) refuseHostSet(union);
+  if (!provider.covers(row.vendor, union.hosts)) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `The ${provider.name} provider does not cover ${row.vendor} at ${union.hosts.join(", ")}`,
+    );
+  }
+  if (union.hosts.every((host) => row.hosts.includes(host))) return toConnectionOutput(row);
+  const updated = orNotFound(
+    await deps.setConnectionHosts(ctx.db, principal.personId, row.id, union.hosts),
+    "Connection not found",
+  );
+  return toConnectionOutput(updated);
+}
+
+/**
  * Reconnect a revoked connection that has no credential to re-enter — one a provider made with no
  * person step (ADR 0019, GRA-58). The keyring's way back is a credential re-entered
  * (`setConnectionCredential` clears the stamp with the ciphertext) and a link provider's is its own

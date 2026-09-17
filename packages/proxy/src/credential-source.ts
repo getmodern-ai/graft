@@ -10,6 +10,7 @@ import type {
   RelayPlugin,
   SchemeConfig,
   SchemeRuntime,
+  UpstreamFetch,
 } from "./types";
 
 /**
@@ -56,6 +57,8 @@ export type RelaySource = {
   rules: RelayHeaderRules;
   /** The headers this connection's relay sets beyond the plugin's own (`ProxyRelay.headerNames`). */
   headerNames: readonly string[];
+  /** The relay leg's own way out, when the provider brought one (`ProxyRelay.upstreamFetch`). */
+  upstreamFetch: UpstreamFetch | null;
   primaryHost: string;
   hosts: ReadonlySet<string>;
   obtain: () => Promise<CredentialFields>;
@@ -79,6 +82,7 @@ export function credentialSource(
       plugin: relay.plugin,
       rules: relayRulesOf(relay.plugin, relay.rules),
       headerNames: relay.headerNames ?? [],
+      upstreamFetch: relay.upstreamFetch ?? null,
       primaryHost: connection.primaryHost,
       hosts: hostSetOf(connection),
       obtain: () => fromHost("relay.obtain", relay.obtain),

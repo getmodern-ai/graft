@@ -491,17 +491,23 @@ describe("the ladder relays a gateway connection through the fake gateway", () =
    * about the vendor host, never the relay URL, which is the operator's (`upstream.ts`). So the
    * gateway here is addressed as `localhost`, which the resolver answers privately.
    */
-  it("through the real upstream fetch, the address guard is lifted for the configured gateway hostname and for nothing else", async () => {
+  it("through the real upstream fetch, the relay's own fetch lifts the address guard for the gateway's hostname; the proxy's shared fetch lifts it for nothing", async () => {
     const byName = gateway.url.replace("127.0.0.1", "localhost");
+    // The provider brought the relay leg its own way out; the proxy's shared fetch is fully guarded.
     const exempt = harness(
-      connection(gatewayRelayFor(byName)),
-      createUpstreamFetch({ unguardedHosts: ["localhost"] }),
+      connection(
+        gatewayRelayFor(byName, {
+          upstreamFetch: createUpstreamFetch({ unguardedHosts: ["localhost"] }),
+        }),
+      ),
+      createUpstreamFetch(),
     );
     const res = await exempt.app.request("/c/conn_g/orders", { headers: bearer(GOOD) });
     expect(res.status).toBe(200);
     expect(gateway.seen).toHaveLength(1);
 
-    // The default guard, with no exemption, refuses the name once it resolves to the loopback.
+    // A relay with no fetch of its own goes out the shared, guarded one, and the name is refused
+    // once it resolves to the loopback.
     const guarded = harness(connection(gatewayRelayFor(byName)), createUpstreamFetch());
     const refused = await guarded.app.request("/c/conn_g/orders", { headers: bearer(GOOD) });
     expect(refused.status).toBe(403);
@@ -510,8 +516,12 @@ describe("the ladder relays a gateway connection through the fake gateway", () =
 
     // And an exemption for another name lifts nothing for this one.
     const other = harness(
-      connection(gatewayRelayFor(byName)),
-      createUpstreamFetch({ unguardedHosts: ["gateway.corp.internal"] }),
+      connection(
+        gatewayRelayFor(byName, {
+          upstreamFetch: createUpstreamFetch({ unguardedHosts: ["gateway.corp.internal"] }),
+        }),
+      ),
+      createUpstreamFetch(),
     );
     expect((await other.app.request("/c/conn_g/orders", { headers: bearer(GOOD) })).status).toBe(
       403,

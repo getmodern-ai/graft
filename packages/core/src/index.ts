@@ -119,6 +119,7 @@ export {
   storeRefreshedCredential,
   toConnectionOutput,
   toProxyConnection,
+  widenProviderConnectionHosts,
 } from "./connection/connection.service";
 export {
   createGatewayProvider,

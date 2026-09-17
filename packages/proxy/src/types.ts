@@ -190,6 +190,16 @@ export type ProxyRelay = {
    * to the upstream would have been present, without `obtain` ever running.
    */
   headerNames?: readonly string[];
+  /**
+   * How the upstream is reached, when the proxy's own way out will not do: a company gateway on a
+   * private network needs the address guard lifted for its hostname (GRA-58), and lifting it on the
+   * proxy's shared fetch would lift it for a *vendor* host of the same name too — a keyring
+   * connection naming the gateway's public-looking name would then send its decrypted credential
+   * to the private address. So the exemption rides on the relay leg alone: the ladder sends a
+   * relayed hop through this fetch and every other request through its own. Absent, the relay goes
+   * out the proxy's way, fully guarded.
+   */
+  upstreamFetch?: UpstreamFetch;
 };
 
 /**

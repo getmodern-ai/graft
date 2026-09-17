@@ -988,6 +988,41 @@ describe("request_connection through the gateway provider (GRA-58)", () => {
       expect(again).toMatchObject({ status: "connected", connectionId: id, provider: "gateway" });
       expect(again.message).toContain("already connected");
       expect(rowsFor("unleashed")).toHaveLength(1);
+
+      // A later proposal naming one more covered host widens the same row rather than answering
+      // with one that cannot reach it (Greptile on #45); one the gateway does not cover is the
+      // keyring's, as ever, and the row is untouched.
+      deps.connection = {
+        ...deps.connection,
+        providers: [
+          createGatewayProvider({
+            hosts: ["api.unleashed.example", "files.unleashed.example", "cdn.unleashed.example"],
+            upstreamUrl: GATEWAY_URL,
+            headerName: "X-Deployment-Token",
+            headerValue: IDENTITY,
+          }),
+          keyringProvider,
+        ],
+      };
+      // A session opened before the providers changed reads the list it was opened with; a fresh one
+      // sees the wider coverage, as a harness reconnecting after a redeploy would.
+      const c = await connect(TOKEN_A);
+      const wider = body(
+        await c.call("request_connection", {
+          ...COVERED,
+          hosts: ["files.unleashed.example", "CDN.unleashed.example"],
+        }),
+      );
+      await c.close();
+      expect(wider).toMatchObject({ status: "connected", connectionId: id, provider: "gateway" });
+      expect(wider.message).toContain("now also reaches");
+      expect(store.connections.get(id)?.hosts).toEqual([
+        "api.unleashed.example",
+        "files.unleashed.example",
+        "cdn.unleashed.example",
+      ]);
+      expect(rowsFor("unleashed")).toHaveLength(1);
+      expect(store.pendingActions.size).toBe(asksBefore);
     } finally {
       await a.close();
       await b.close();

@@ -21,6 +21,7 @@ import {
   validateHostSet,
   validateSchemeConfig,
   validateVendor,
+  widenProviderConnectionHosts,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { SCHEME_CREDENTIAL_FIELDS } from "@graft/proxy/credential-fields";
@@ -472,12 +473,29 @@ async function connectWithoutPersonStep(
     (connection) =>
       connection.vendor === payload.vendor && connection.primaryHost === payload.primaryHost,
   );
-  // Already connected and in scope, under any provider: the rule every proposal answers to first.
-  const inScope = sameAccount.find(
+  const reaches = (connection: ConnectionOutput) =>
+    payload.hosts.every((host) => connection.hosts.includes(host));
+  // Already connected and in scope, under any provider: the rule every proposal answers to first —
+  // for a row that reaches every host proposed. A narrower row would answer "already" and then
+  // refuse the new host as `host_not_in_set`; the provider's own row is widened instead, below.
+  const inScope = sameAccount.filter(
     (connection) =>
       scopeIds.includes(connection.id) && isConnectionUsable(connection, deps.connection.providers),
   );
-  if (inScope) return { isError: false, answer: connected(inScope, "already") };
+  const whole = inScope.find(reaches);
+  if (whole) return { isError: false, answer: connected(whole, "already") };
+  const narrower = inScope.find((connection) => connection.provider === provider.name);
+  if (narrower) {
+    const widened = await widenProviderConnectionHosts(
+      ctx,
+      principal,
+      provider,
+      narrower.id,
+      payload.hosts,
+      deps.connection,
+    );
+    return { isError: false, answer: connected(widened, "widened") };
+  }
 
   const what = `${payload.displayName} (${payload.vendor})`;
   const existing = sameAccount.find((connection) => connection.provider === provider.name);
@@ -607,7 +625,7 @@ export async function requestCredential(
 
 function connected(
   connection: ConnectionOutput,
-  how: "new" | "already" | "credential" | "provider",
+  how: "new" | "already" | "credential" | "provider" | "widened",
 ): Connected {
   const executeTool = executeToolName(connection.id);
   const what = `${connection.displayName} (${connection.vendor})`;
@@ -616,9 +634,11 @@ function connected(
       ? `The credential for ${what} was re-entered. Call the vendor again; nothing else changed.`
       : how === "already"
         ? `${what} is already connected and in your scope as ${executeTool}; no new ask was made.`
-        : how === "provider"
-          ? `Connected with no person step. ${what} is reachable through the API gateway this deployment is configured with (the ${connection.provider} provider), which holds the credential and receives every call; nothing was entered by anyone, and the scheme you proposed is not used. It is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`
-          : `Connected. ${what} is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`;
+        : how === "widened"
+          ? `${what} is already connected and in your scope as ${executeTool}; its host set now also reaches the hosts you proposed (${connection.hosts.join(", ")}). No new ask was made.`
+          : how === "provider"
+            ? `Connected with no person step. ${what} is reachable through the API gateway this deployment is configured with (the ${connection.provider} provider), which holds the credential and receives every call; nothing was entered by anyone, and the scheme you proposed is not used. It is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`
+            : `Connected. ${what} is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`;
   return {
     status: "connected",
     connectionId: connection.id,

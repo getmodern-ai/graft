@@ -122,7 +122,9 @@ private knowledge:
   that holds no credential to re-enter); a row the person has not given this agent — made for
   another, or taken out of this one's scope — answers `connection_not_in_scope` and is theirs to
   tick in the scope picker. A one-click ask for the second case is the least-cost connect UX the
-  project defers. **The vendor URL travels to the gateway in the path**,
+  project defers. An in-scope row is "already connected" only when it reaches every host proposed;
+  the gateway's own narrower row is widened to the union, within the gateway's coverage, rather
+  than answered as a connection whose calls to the new host would fail `host_not_in_set`. **The vendor URL travels to the gateway in the path**,
   `<upstream>/<vendor host>/<vendor path>?<query>`, because that is how API gateways route — one
   route per covered host — and what Modern's forward proxy already spoke; a header naming the host
   was the alternative, and a gateway would have to read it before choosing a route. A revoked row
@@ -133,11 +135,15 @@ private knowledge:
   guards against a host an *agent proposed* being pointed at the metadata service or a neighbour;
   the gateway's URL is the operator's, set in the environment beside the database URL, and the
   normal enterprise gateway sits on an internal hostname or a `10.x` address. So the gateway's
-  hostname is exempt from the rule, by exact name (`createUpstreamFetch({ unguardedHosts })`,
-  bound in `apps/server/src/index.ts`), and nothing else is: a vendor host is judged on its literal
-  before any fetch and on its resolved address inside the resolver, exactly as before, and an
-  exemption for one name lifts nothing for another. An IP-literal gateway was never resolved and so
-  never guarded — Node connects to a literal without asking the resolver — which is why the fake
-  gateway in the suites is addressed as `localhost` to exercise the exemption, and why a literal
-  upstream needs none. A DNS answer for the gateway's own name is the operator's DNS to trust; a
-  compromise there is a compromise of the gateway itself.
+  hostname is exempt from the rule, by exact name, **on the relay leg's own fetch and on no other**:
+  the provider brings the proxy a `createUpstreamFetch({ unguardedHosts })` on `ProxyRelay.
+  upstreamFetch` (built in `apps/server/src/backings.ts`), the ladder sends a relayed hop through it
+  and every signed call through the proxy's shared, fully guarded fetch. On the shared fetch the
+  exemption would reach a *vendor* host spelling the gateway's name — a keyring connection an agent
+  proposed at `gateway.corp.example` passes the literal check and would send its decrypted key to
+  the private address (Greptile on #45) — so a vendor host is judged on its literal before any fetch
+  and on its resolved address inside the resolver, exactly as before, whatever it is called. An
+  IP-literal gateway was never resolved and so never guarded — Node connects to a literal without
+  asking the resolver — which is why the suites address the fake gateway by a name, and why a
+  literal upstream needs no exemption. A DNS answer for the gateway's own name is the operator's
+  DNS to trust; a compromise there is a compromise of the gateway itself.
