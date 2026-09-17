@@ -126,39 +126,21 @@ export async function withSandbox<T>(
  * so the cap (five links, then `...`) and the cycle guard are the same one. undici's `fetch failed`
  * says nothing else about what failed — the host, and `ENOTFOUND`, are in the cause.
  *
- * For anything that is not an `Error`, the sentence inside the value before `String(value)`: a
- * provider SDK throws the vendor API's error body as a plain object (`@blaxel/core` on a refused
- * create or drive call), and `String` of that is `[object Object]` — which is all a job's result
- * once carried of the refusal (GRA-60). A plain object sitting in a cause is read the same way.
+ * Anything that is not an `Error` — thrown, or sitting in a cause — is `describeLink`'s reading:
+ * the sentence inside a plain object before `String(value)`, because a provider SDK throws the
+ * vendor API's error body as a plain object (`@blaxel/core` on a refused create or drive call) and
+ * `String` of that is `[object Object]`, which is all a job's result once carried of the refusal
+ * (GRA-60). `sandbox.test.ts` pins those shapes here, where the job's result is made.
  */
 export function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    const { links, truncated } = causeChain(error);
-    const causes = links
-      .slice(1)
-      .map((link) => (link instanceof Error ? describeLink(link) : errorMessage(link)));
-    if (truncated) causes.push(TRUNCATED);
-    const code = (error as { code?: unknown }).code;
-    const own = typeof code === "string" ? ` [${code}]` : "";
-    const chain = causes.length > 0 ? ` (caused by ${causes.join(" <- ")})` : "";
-    return `${error.message}${own}${chain}`;
-  }
-  if (typeof error === "object" && error !== null) {
-    const body = error as Record<string, unknown>;
-    const text = [body.message, body.error, body.detail].find(
-      (value): value is string => typeof value === "string" && value.length > 0,
-    );
-    const code = [body.code, body.status].find(
-      (value) => typeof value === "number" || (typeof value === "string" && value.length > 0),
-    );
-    if (text !== undefined) return code === undefined ? text : `${text} (${code})`;
-    try {
-      return JSON.stringify(error);
-    } catch {
-      return String(error);
-    }
-  }
-  return String(error);
+  if (!(error instanceof Error)) return describeLink(error);
+  const { links, truncated } = causeChain(error);
+  const causes = links.slice(1).map(describeLink);
+  if (truncated) causes.push(TRUNCATED);
+  const code = (error as { code?: unknown }).code;
+  const own = typeof code === "string" ? ` [${code}]` : "";
+  const chain = causes.length > 0 ? ` (caused by ${causes.join(" <- ")})` : "";
+  return `${error.message}${own}${chain}`;
 }
 
 /**

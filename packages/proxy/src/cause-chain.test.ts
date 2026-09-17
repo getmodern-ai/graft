@@ -58,6 +58,20 @@ describe("describeLink", () => {
     expect(describeLink(new TypeError("fetch failed"))).toBe("TypeError: fetch failed");
     expect(describeLink("just a string")).toBe("just a string");
   });
+
+  it("reads the sentence out of a plain-object link rather than printing [object Object]", () => {
+    // A provider SDK's thrown body sitting in a cause — GRA-60's shape, one link down.
+    const wrapped = new Error("the drive call was refused", {
+      cause: { error: "forbidden", detail: "Drives feature is not enabled", code: 403 },
+    });
+
+    expect(describeCauseChain(wrapped)).toBe(
+      "Error: the drive call was refused <- forbidden (403)",
+    );
+    expect(describeCauseChain(wrapped)).not.toContain("[object Object]");
+    expect(describeLink({ message: "not found", status: "404" })).toBe("not found (404)");
+    expect(describeLink({ code: 500 })).toBe('{"code":500}');
+  });
 });
 
 describe("describeCauseChain", () => {
