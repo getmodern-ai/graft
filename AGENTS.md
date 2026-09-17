@@ -524,6 +524,17 @@ is in `packages/auth/src/index.ts`) a password account does not link yet, and th
 (`socialSignInMessage` in `apps/web/src/lib/sign-in.ts`). The provider marks are flat `.svg` files
 under `apps/web/src/assets`, outside the colour guard on purpose, as Cando's are.
 
+**A forgotten password is reset by email** (ADR 0021, GRA-82): `@graft/email` is Cando's
+`@cando/email` less the invitation — a transport seam (`console` | `loops`, one `SendResult`
+shape), the Loops transport, and a registry naming the one template's transactional id and
+variables. `GRAFT_LOOPS_API_KEY` set means Loops; unset, the default in every form, means the console
+transport prints the envelope and the reset link to the server's log — on Graft Cloud, the
+`/ecs/graft-server` log group, which is how a hosted password is reset until a Loops account
+exists. `createAuth`'s `passwordReset` option binds the hook; the link is `GRAFT_CONSOLE_URL` plus
+`/reset-password?token=…`. The screens are `/forgot-password` (the same answer whether or not an
+account exists) and `/reset-password` (`apps/web/src/lib/reset-password.ts` decides the dead-link
+state and folds the outcomes, with its test); *Forgot password?* is on the door's password step.
+
 ### Running `acquire` locally
 
 `acquire` is the loop (ADR 0004): the meta-tool creates a job and the in-process runner

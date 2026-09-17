@@ -1,7 +1,8 @@
 import type { Database } from "@graft/db";
+import type { EmailTransport, SendRequest } from "@graft/email";
 import type { BetterAuthOptions } from "better-auth";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createAuth } from "./index";
 
@@ -74,6 +75,75 @@ describe("createAuth", () => {
       sameSite: "none",
       secure: true,
       httpOnly: true,
+    });
+  });
+
+  it("sets no reset hook without a transport, so a script that never resets builds no mail stack", () => {
+    expect(options.emailAndPassword?.sendResetPassword).toBeUndefined();
+  });
+
+  /**
+   * The reset link is the console's route under the console's origin — not Better Auth's own
+   * callback URL, which points at the API (GRA-82). Driven through the option Better Auth reads.
+   */
+  describe("the reset email", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    function capture(fail = false) {
+      const sent: SendRequest[] = [];
+      const transport: EmailTransport = {
+        name: "console",
+        send: async (request) => {
+          if (fail) throw new Error("mail is down");
+          sent.push(request);
+          return { delivered: true, transport: "console" };
+        },
+      };
+      return { sent, transport };
+    }
+    const data = {
+      user: {
+        id: "per_1",
+        email: "person@example.com",
+        name: "P",
+        emailVerified: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      url: "http://localhost:3000/api/auth/reset-password/tok_1?callbackURL=/",
+      token: "tok_1",
+    };
+
+    it("sends the console's reset route with the token, to the account's address", async () => {
+      const { sent, transport } = capture();
+      const withMail = createAuth({
+        ...base,
+        passwordReset: { consoleUrl: "http://localhost:3001/", transport },
+      });
+      await withMail.options.emailAndPassword?.sendResetPassword?.(data);
+      expect(sent).toEqual([
+        expect.objectContaining({
+          to: "person@example.com",
+          template: "passwordReset",
+          actionUrl: "http://localhost:3001/reset-password?token=tok_1",
+        }),
+      ]);
+    });
+
+    it("logs a failed send with context and never throws — the requester is told nothing", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const { transport } = capture(true);
+      const withMail = createAuth({
+        ...base,
+        passwordReset: { consoleUrl: "http://localhost:3001", transport },
+      });
+      await expect(
+        withMail.options.emailAndPassword?.sendResetPassword?.(data),
+      ).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls[0]?.[1]).toMatchObject({ personId: "per_1", transport: "console" });
+      // The address is not in the log line — the context names the person by id.
+      expect(JSON.stringify(error.mock.calls[0])).not.toContain("person@example.com");
     });
   });
 

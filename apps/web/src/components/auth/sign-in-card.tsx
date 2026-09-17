@@ -1,4 +1,5 @@
 import type { SocialProviderName } from "@graft/auth";
+import { Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import githubMark from "@/assets/github-mark.svg";
@@ -13,9 +14,8 @@ import { cn } from "@/lib/utils";
 
 /**
  * Cando's sign-in card (its `apps/web/src/components/auth/sign-in-card.tsx`, CAN-64; GRA-81), less
- * two things Graft does not have: the *Forgot password?* link, which needs a mail transport nobody
- * has configured (`packages/auth/src/index.ts`), and the invitation's locked address, which needs
- * an organisation (ADR 0007). The provider buttons are drawn from the list the server answers
+ * one thing Graft does not have: the invitation's locked address, which needs an organisation
+ * (ADR 0007). *Forgot password?* arrived with the mail transport (GRA-82). The provider buttons are drawn from the list the server answers
  * rather than fixed to Apple and Google — Graft's are Google and GitHub, and a self-host may have
  * neither (`lib/sign-in.ts`).
  *
@@ -87,9 +87,22 @@ function SignInCard({
 
           {step === "password" && (
             <Field>
-              <FieldLabel htmlFor="sign-in-password" className="leading-none">
-                Password
-              </FieldLabel>
+              {/* The link shares the label's row, and exists only once the password field
+                  does — "Forgot password?" is an answer to a question this card has not
+                  asked before this step. It carries the typed address so the request form
+                  starts filled. */}
+              <div className="flex items-center justify-between">
+                <FieldLabel htmlFor="sign-in-password" className="leading-none">
+                  Password
+                </FieldLabel>
+                <Link
+                  to="/forgot-password"
+                  search={{ email: email || undefined }}
+                  className="text-muted-foreground text-sm underline-offset-4 hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <Input
                 id="sign-in-password"
                 name="password"
