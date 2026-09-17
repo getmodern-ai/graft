@@ -13,7 +13,13 @@ import type { CloudBackings, CloudBackingsInput } from "../backings";
  */
 export const fakeCloudProvider: ConnectionProvider = {
   name: "fake-broker",
-  connect: { kind: "link" },
+  connect: {
+    kind: "link",
+    scheme: "pipedream_connect_proxy",
+    target: (vendor) => (vendor === "gmail" ? "gmail" : null),
+    start: async () => ({ url: "https://fake-broker.example/link", expiresAt: new Date(0) }),
+    complete: async () => ({ ok: true, ref: "acct_fake", label: null }),
+  },
   covers: (vendor) => vendor === "gmail",
   resolve: () => ({ mode: "inject", scheme: null, schemeConfig: {}, credentialCiphertext: null }),
   revoke: async () => undefined,

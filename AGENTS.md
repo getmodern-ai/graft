@@ -192,10 +192,48 @@ the row's credential, or `relay` through an upstream that holds it), and what to
 connection read (`apps/server/src/connections.ts`) asks the row's provider how the call resolves.
 The relay engine is `packages/proxy/src/relay.ts`: a relay plugin rewrites the resolved vendor
 request into the upstream's under `RelayHeaderRules` as data, and `relay.test.ts` drives it through
-an in-process upstream. `RELAY_SCHEMES` and `RELAYS` are empty until the gateway (GRA-58) and
-Pipedream (GRA-59) plugins land; a row of a relay provider records its relay scheme in the `scheme`
-column, and the enum pin in `packages/core` covers both lists. Every row and every suite in this
-repository is a keyring connection, and with the keyring alone nothing observable changed.
+an in-process upstream. `RELAY_SCHEMES` holds `pipedream_connect_proxy` (GRA-59); the gateway's scheme
+arrives with GRA-58. A row of a relay provider records its relay scheme in the `scheme` column, and
+the enum pin in `packages/core` covers both lists. With the keyring alone nothing observable changed.
+
+**The Pipedream provider is open code switched on by configuration** (ADR 0019, its 2026-09-17
+bullet; GRA-59). With the all-or-nothing group `GRAFT_PIPEDREAM_PROJECT_ID` (`proj_…`),
+`GRAFT_PIPEDREAM_ENVIRONMENT` (`development` or `production`), `GRAFT_PIPEDREAM_CLIENT_ID` and
+`GRAFT_PIPEDREAM_CLIENT_SECRET` set, `apps/server/src/backings.ts` (`environmentProviders`) puts
+`pipedream` on the list ahead of the keyring in either form and the boot line reads `providers
+pipedream, keyring`; absent — the default — nothing changes, and a partial group or a client secret
+still holding `PLACEHOLDER` refuses the boot. Three homes, one per boundary: `packages/pipedream` is
+the Connect client (`createPipedreamClient`: client-credentials access token with a minute of skew
+and single-flight refresh, `createConnectToken`, `listAccounts`, `relayFields`, `deleteAccount`; it
+never sets `include_credentials`), with an in-memory fake at `@graft/pipedream/fake` and Pipedream
+on a loopback port at `@graft/pipedream/testing/fake-pipedream`; `packages/proxy/src/pipedream-relay.ts`
+is the relay plugin (the vendor URL base64url'd into `/v1/connect/<project>/proxy/`,
+`external_user_id` and `account_id` in the query, `Authorization: Bearer <Graft's Connect token>` and
+`x-pd-environment`, every caller header under `x-pd-proxy-` with `content-type`/`accept` through and
+Pipedream's restricted list plus `user-agent` dropped); `packages/core/src/connection/pipedream-provider.ts`
+is the provider, and **`PIPEDREAM_APPS` there is the vendor table** — `gmail` at
+`gmail.googleapis.com` and `www.googleapis.com` → Pipedream app `gmail` — where a vendor is added as
+one row with Pipedream's own app slug (their catalogue is the source, ADR 0001); `covers` demands
+every proposed host be in the entry's set, because the relay injects the account's token into
+whatever vendor URL it is handed. The person is `graft-person-<personId>` at Pipedream
+(`externalUserIdFor`). **The link**: `request_connection` records `providerConnect: "link"` and
+`providerTarget` (the app slug) on the ask's payload and names the provider in the awaiting answer;
+the console's card (`apps/web/src/components/pending/provider-link-ask-card.tsx`) posts
+`POST /api/pending-actions/:id/link`, which mints Pipedream's Connect Link with both redirect URIs
+pointing at `GET /api/providers/link/callback?state=…&outcome=success|error` — the state signed
+under `GRAFT_HANDOFF_SECRET` for fifteen minutes (`packages/core/src/connection/link-state.ts`), the
+connect token held to the same window — and opens it in a popup; the return
+(`apps/server/src/provider-link.ts`, no session) never trusts the redirect's word but asks Pipedream
+which account the person now holds under the app, minus the ids the person's other rows already
+name, then in one transaction makes the row (`connectThroughProvider`: `provider_ref` = the account
+id, `scheme` = `pipedream_connect_proxy`, `credential_ciphertext` null for life, a revoked row of
+the same vendor and hosts reconnected in place), adds it to the requesting agent's scope, answers
+the ask, and redirects to the console's `/link/callback` (`link.rules.ts` writes and reads the
+query). A revoke calls Pipedream's `DELETE …/accounts/{id}`; the revoke keeps `provider_ref` until
+that succeeds, and a failure is stamped on `provider_release_failed_at` (migration 0007), which the
+connection card shows with **Retry release** (`POST /api/connections/:id/release`).
+`apps/server/src/scripts/pipedream-proof.ts` boots the whole server against the fake Pipedream for
+a laptop proof; `apps/server/src/provider-link.test.ts` is the same flow as a suite.
 
 **In the image the package arrives built** (GRA-38). The bundled server runs where there is Node and
 `node_modules` and nothing else — no TypeScript, no workspace — so a linked package ships a `build`

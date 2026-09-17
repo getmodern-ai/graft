@@ -9,6 +9,7 @@ import {
   KEYRING_PROVIDER,
   keyringProvider,
   providerFor,
+  providerLinkOf,
   providerListProblem,
   providerNamed,
 } from "./provider";
@@ -40,6 +41,7 @@ const row: ConnectionRow = {
   oauthTokenUrl: null,
   oauthScopes: null,
   oauthRefreshState: null,
+  providerReleaseFailedAt: null,
   revokedAt: null,
   owner: "person",
   createdAt: NOW,
@@ -59,7 +61,13 @@ function linkProvider(name = "broker", covers = (vendor: string) => vendor === "
   const revoked: string[] = [];
   const provider: ConnectionProvider = {
     name,
-    connect: { kind: "link" },
+    connect: {
+      kind: "link",
+      scheme: "pipedream_connect_proxy",
+      target: (vendor) => (covers(vendor) ? `${vendor}-app` : null),
+      start: async () => ({ url: "https://broker.example/link", expiresAt: NOW }),
+      complete: async () => ({ ok: true, ref: "acct_1", label: null }),
+    },
     covers,
     resolve: (r) => ({
       mode: "relay",
@@ -150,5 +158,11 @@ describe("the provider list", () => {
       { name: "broker", connect: { kind: "link" } },
       { name: "keyring", connect: { kind: "form", schemes: AUTH_SCHEMES } },
     ]);
+    // A link's functions and its scheme are the server's; the wire carries the word alone.
+    expect(JSON.parse(JSON.stringify(describeProviders([provider])))).toEqual([
+      { name: "broker", connect: { kind: "link" } },
+    ]);
+    expect(providerLinkOf(provider)?.scheme).toBe("pipedream_connect_proxy");
+    expect(providerLinkOf(keyringProvider)).toBeNull();
   });
 });

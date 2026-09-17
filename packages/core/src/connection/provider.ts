@@ -4,6 +4,7 @@ import {
   type AuthScheme,
   isAuthScheme,
   type ProxyRelay,
+  type RelayScheme,
   type SchemeConfig,
 } from "@graft/proxy/types";
 
@@ -43,10 +44,74 @@ export type ProviderConnect =
    * parameters and its secret fields, from the two tables in `@graft/proxy` — today's form.
    */
   | { kind: "form"; schemes: readonly AuthScheme[] }
-  /** The person opens a link the provider mints and consents there; nothing is typed in the console (GRA-59). */
-  | { kind: "link" }
+  /**
+   * The person opens a link the provider mints and consents there; nothing is typed in the console
+   * (GRA-59). The three functions are the link's flow as the server runs it (`apps/server`'s
+   * `provider-link.ts`): `target` names the vendor on the provider's side for the card, `start`
+   * mints the link the console opens, `complete` confirms what the person connected once the
+   * provider sends the browser back. `scheme` is the relay scheme such a connection's row records.
+   */
+  | ({ kind: "link" } & ProviderLink)
   /** No person step: the deployment holds the identity the upstream wants (GRA-58). */
   | { kind: "none" };
+
+/**
+ * What a provider that connects with a link offers beyond the word (ADR 0019; GRA-59). The
+ * functions are async and may reach the provider — a connect token minted, an account list read —
+ * which is why they sit here, on the server's side of the seam, and not in a rule the console
+ * runs; the console reads the `kind` and the ask's payload alone (`describeProviders`).
+ */
+export type ProviderLink = {
+  /** The relay scheme this provider's rows record — a `RELAY_SCHEMES` entry the proxy implements. */
+  readonly scheme: RelayScheme;
+  /**
+   * The provider's own name for the vendor — Pipedream's app slug — or null when the provider does
+   * not cover the vendor at these hosts. What the ask's card shows beside the vendor, and what the
+   * link preselects, so `request_connection` records it on the payload at proposal time.
+   */
+  target(vendor: string, hosts: readonly string[]): string | null;
+  /**
+   * Mint the link the person opens. `returnTo` is where the provider sends the browser afterwards
+   * — Graft's return route with its signed state already in the query, one URI for a success and
+   * one for the provider's own failure — and `personId` is whose account the link may connect.
+   */
+  start(input: ProviderLinkStart): Promise<ProviderLinkStarted>;
+  /**
+   * The browser is back: confirm what the person connected and answer the provider's reference for
+   * it — a broker's account id — or why nothing was. `takenRefs` are the references the person's
+   * other connections of this provider already hold, so a second account at the same vendor is the
+   * new one and never one already claimed. Never trusts the provider's redirect alone: the
+   * reference comes from asking the provider what it now holds.
+   */
+  complete(input: ProviderLinkComplete): Promise<ProviderLinkOutcome>;
+};
+
+export type ProviderLinkStart = {
+  personId: string;
+  vendor: string;
+  hosts: readonly string[];
+  returnTo: { success: string; error: string };
+};
+
+export type ProviderLinkStarted = {
+  /** What the console opens in a popup. */
+  url: string;
+  /** Until when the provider honours the link. */
+  expiresAt: Date;
+};
+
+export type ProviderLinkComplete = {
+  personId: string;
+  vendor: string;
+  hosts: readonly string[];
+  takenRefs: readonly string[];
+};
+
+export type ProviderLinkOutcome =
+  /** `ref` goes on the row's `provider_ref`; `label` is the account's own name at the provider, for the card. */
+  | { ok: true; ref: string; label: string | null }
+  /** One sentence for the person; the ask stays open for another try. */
+  | { ok: false; message: string };
 
 /**
  * What the proxy needs to make a call through a connection of this provider — the two modes
@@ -81,6 +146,7 @@ export type ProviderConnectionRow = Pick<
   | "credentialCiphertext"
   | "provider"
   | "providerRef"
+  | "revokedAt"
 >;
 
 export type ConnectionProvider = {
@@ -173,9 +239,28 @@ export function providerListProblem(providers: readonly ConnectionProvider[]): s
   return null;
 }
 
+/**
+ * How a provider connects, as the wire carries it: the kind, and for the form its schemes. A link's
+ * functions and its scheme stay on the server — they are code, and the console reads the ask's
+ * payload for the target (`ConnectionProposalPayload.providerTarget` in `@graft/mcp`).
+ */
+export type ProviderConnectDescription =
+  | { kind: "form"; schemes: readonly AuthScheme[] }
+  | { kind: "link" }
+  | { kind: "none" };
+
 /** A provider as the API describes it to the console: its name and how it connects, nothing else. */
-export type ProviderDescription = { name: string; connect: ProviderConnect };
+export type ProviderDescription = { name: string; connect: ProviderConnectDescription };
 
 export function describeProviders(providers: readonly ConnectionProvider[]): ProviderDescription[] {
-  return providers.map(({ name, connect }) => ({ name, connect }));
+  return providers.map(({ name, connect }) => ({
+    name,
+    connect:
+      connect.kind === "form" ? { kind: "form", schemes: connect.schemes } : { kind: connect.kind },
+  }));
+}
+
+/** The link half of a provider, when it connects with one — the server's read for the two link routes. */
+export function providerLinkOf(provider: ConnectionProvider): ProviderLink | null {
+  return provider.connect.kind === "link" ? provider.connect : null;
 }

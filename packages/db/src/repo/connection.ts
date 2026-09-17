@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { connection, type NewConnection } from "../schema/connection";
@@ -130,7 +130,10 @@ export async function setConnectionOAuthState(
  * Revoke: clear every secret the row holds — the credential, the OAuth client secret, the refresh
  * state — and stamp the moment. The row itself stays, because its vendor slug is what keeps the
  * person's authored tools bound (ADR 0007) and because the ledger and the jobs reference it. The
- * approvals are the approval repo's to delete; the service does both in one transaction.
+ * approvals are the approval repo's to delete; the service does both in one transaction. What the
+ * row's provider holds outside Graft (`provider_ref`, ADR 0019) is **not** cleared here: the
+ * service asks the provider to release it after the transaction, and `recordProviderRelease` writes
+ * what came of that — the reference is what the release is by, and a failed one is retried from it.
  */
 export async function revokeConnection(
   db: DbOrTx,
@@ -147,6 +150,62 @@ export async function revokeConnection(
       oauthRefreshState: null,
       revokedAt: at,
     })
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * What the provider's release answered after a revoke (ADR 0019; GRA-59). Released: the reference
+ * goes — the row is connected to nothing, and nothing outside Graft holds an account for it any
+ * more — and a failure once recorded is cleared. Failed: the moment is stamped and the reference
+ * kept, so the fact outlives the request and the console can offer a retry that knows which
+ * account to release. Written only where the row is **still revoked and still carries the
+ * reference that was released**: the release runs outside the revoke's transaction, and a link's
+ * return may reconnect the row in between with a new reference, which this statement must neither
+ * erase nor stamp. Null means no such row in that state — gone, another person's, or moved on.
+ */
+export async function recordProviderRelease(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+  outcome: { released: true; ref: string } | { released: false; ref: string; at: Date },
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .update(connection)
+    .set(
+      outcome.released
+        ? { providerRef: null, providerReleaseFailedAt: null }
+        : { providerReleaseFailedAt: outcome.at },
+    )
+    .where(
+      and(
+        eq(connection.id, id),
+        eq(connection.personId, personId),
+        eq(connection.providerRef, outcome.ref),
+        isNotNull(connection.revokedAt),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * A relay provider's row connected — or reconnected — to what the provider now holds for it
+ * (ADR 0019; GRA-59): the provider's reference written, `revoked_at` cleared in the same statement,
+ * the reconnection a credential re-entry is for a keyring row (`setConnectionCredential`). No
+ * credential is touched, because there is none here for such a row. Null means no such connection
+ * for this person.
+ */
+export async function setConnectionProviderRef(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+  providerRef: string,
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .update(connection)
+    .set({ providerRef, revokedAt: null, providerReleaseFailedAt: null })
     .where(and(eq(connection.id, id), eq(connection.personId, personId)))
     .returning();
   return row ?? null;

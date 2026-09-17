@@ -1,3 +1,4 @@
+import type { AuthScheme } from "@graft/proxy/types";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ import {
   credentialFieldsFor,
   type DraftErrors,
   emptyFields,
+  isScheme,
   validateCredentialDraft,
 } from "@/lib/connection-form";
 import {
@@ -48,8 +50,12 @@ export function ReenterCredentialDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  // The dialog is the keyring's (ADR 0019): a relay provider's row records its relay scheme and has
+  // no credential to enter, so the hooks run on a signing scheme and the render below is empty for
+  // any other. `connection-card.tsx` never mounts it for such a row; this is the type's guard.
+  const scheme: AuthScheme = isScheme(connection.scheme) ? connection.scheme : "api_key_header";
   const [credential, setCredential] = useState<Record<string, string>>(() =>
-    emptyFields(credentialFieldsFor(connection.scheme)),
+    emptyFields(credentialFieldsFor(scheme)),
   );
   const [errors, setErrors] = useState<DraftErrors>({});
   const reconnecting = connection.revokedAt !== null;
@@ -98,7 +104,7 @@ export function ReenterCredentialDialog({
   const close = () => {
     onOpenChange(false);
     setTimeout(() => {
-      setCredential(emptyFields(credentialFieldsFor(connection.scheme)));
+      setCredential(emptyFields(credentialFieldsFor(scheme)));
       setErrors({});
       save.reset();
       consent.reset();
@@ -106,7 +112,7 @@ export function ReenterCredentialDialog({
   };
 
   const submit = () => {
-    const verdict = validateCredentialDraft(connection.scheme, credential);
+    const verdict = validateCredentialDraft(scheme, credential);
     if (!verdict.ok) {
       setErrors(verdict.errors);
       return;
@@ -117,6 +123,8 @@ export function ReenterCredentialDialog({
 
   const consenting = consent.state.phase === "running" || consent.state.phase === "blocked";
   const busy = save.isPending || consenting;
+
+  if (!isScheme(connection.scheme)) return null;
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
@@ -149,7 +157,7 @@ export function ReenterCredentialDialog({
           </DialogHeader>
           <FieldGroup>
             <CredentialFields
-              scheme={connection.scheme}
+              scheme={scheme}
               value={credential}
               onChange={setCredential}
               errors={errors}

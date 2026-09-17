@@ -10,6 +10,7 @@ import {
   SCHEME_PARAMETERS,
   type SchemeParameterRule,
 } from "@graft/proxy/scheme-parameters";
+import { type AuthScheme, isAuthScheme } from "@graft/proxy/types";
 
 import { isKebabCase } from "../kebab-case";
 
@@ -145,6 +146,18 @@ export type SchemeRule = SchemeParameterRule;
 const HEADER_NAME = /^[A-Za-z0-9-]+$/;
 
 /**
+ * A relay scheme is never one a person chooses or a form takes (ADR 0019): a connection's provider
+ * decides that it relays, and the three tables below are keyed by the signing schemes alone. So a
+ * scheme from the column is narrowed here first, and a relay's name answers the sentence a person
+ * would need rather than an indexing error.
+ */
+function signingScheme(scheme: ConnectionScheme): AuthScheme | string {
+  return isAuthScheme(scheme)
+    ? scheme
+    : `The ${scheme} scheme is a relay's — its provider connects the vendor, and it cannot be chosen or configured here`;
+}
+
+/**
  * The scheme's parameters against its table. Two stages, one rule: an agent's **proposal** may omit
  * the parameters the person supplies on the form — an OAuth client id the person registered
  * (ADR 0005; `personEntered` in `@graft/proxy/scheme-parameters`) — and a **registration** may not.
@@ -156,6 +169,7 @@ export function validateSchemeConfig(
   config: Record<string, unknown>,
   options: { proposal?: boolean } = {},
 ): string | null {
+  if (!isAuthScheme(scheme)) return signingScheme(scheme);
   const rule = SCHEME_PARAMETERS[scheme];
   const required = options.proposal ? rule.required : requiredParametersOf(rule);
   const known = [...requiredParametersOf(rule), ...rule.optional];
@@ -218,6 +232,7 @@ export function validateCredentialFields(
   scheme: ConnectionScheme,
   fields: Record<string, unknown>,
 ): string | null {
+  if (!isAuthScheme(scheme)) return signingScheme(scheme);
   const required = SCHEME_CREDENTIAL_FIELDS[scheme];
   const optional = SCHEME_OPTIONAL_CREDENTIAL_FIELDS[scheme] ?? [];
   const given = Object.keys(fields);
@@ -247,6 +262,7 @@ export function validateIssuedCredentialFields(
   scheme: ConnectionScheme,
   fields: Record<string, unknown>,
 ): string | null {
+  if (!isAuthScheme(scheme)) return signingScheme(scheme);
   const entered = [
     ...SCHEME_CREDENTIAL_FIELDS[scheme],
     ...(SCHEME_OPTIONAL_CREDENTIAL_FIELDS[scheme] ?? []),

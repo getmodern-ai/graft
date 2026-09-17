@@ -24,8 +24,17 @@ export type Ask =
   | { kind: "tool"; action: PendingAction; payload: Jsonified<ToolAskPayload> }
   | { kind: "build"; action: PendingAction; payload: Jsonified<BuildAskPayload> }
   | { kind: "connection"; action: PendingAction; payload: Jsonified<ConnectionProposalPayload> }
+  /** A `connection` ask a provider that connects with a link covers (ADR 0019; GRA-59): one button, no form. */
+  | {
+      kind: "connection-link";
+      action: PendingAction;
+      payload: Jsonified<ConnectionProposalPayload> & { provider: string };
+    }
   | { kind: "credential"; action: PendingAction; payload: Jsonified<CredentialAskPayload> }
   | { kind: "other"; action: PendingAction };
+
+/** The handoff token's query parameter, as `@graft/mcp`'s `handoff.ts` names it in every `url`. */
+export const HANDOFF_TOKEN_PARAM_NAME = "t";
 
 /** Narrow a card's payload by its kind. A payload missing what its kind promises reads as `other`. */
 export function readAsk(action: PendingAction): Ask {
@@ -43,6 +52,15 @@ export function readAsk(action: PendingAction): Ask {
     typeof payload.scheme === "string" &&
     Array.isArray(payload.hosts)
   ) {
+    // The provider the proposal was routed to draws the card: a link provider's has a button where
+    // the keyring's has the form. An ask recorded before providers existed is the keyring's.
+    if (payload.providerConnect === "link" && typeof payload.provider === "string") {
+      return {
+        kind: "connection-link",
+        action,
+        payload: payload as Jsonified<ConnectionProposalPayload> & { provider: string },
+      };
+    }
     return { kind: "connection", action, payload: payload as Jsonified<ConnectionProposalPayload> };
   }
   if (

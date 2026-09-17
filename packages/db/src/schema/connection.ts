@@ -1,5 +1,5 @@
-import { relations } from "drizzle-orm";
-import { index, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 import { user } from "./auth";
 import { bytea, owned } from "./columns";
@@ -8,10 +8,12 @@ import { bytea, owned } from "./columns";
  * How the proxy presents the request to the vendor — the scheme plugins of `@graft/proxy`
  * (ADR 0010). Stored as the plugin's name, never as signing code: the agent proposes a scheme and
  * its parameters, and the proxy owns what each scheme *does*. A relay scheme (ADR 0019) belongs
- * here too, once one exists: a connection whose provider relays records the relay it goes through
- * as its scheme, so the column says how the request leaves for every row. This list and the proxy's
- * `[...AUTH_SCHEMES, ...RELAY_SCHEMES]` are asserted equal in `packages/core`, which depends on
- * both; a scheme added to one without the other fails a test rather than a vendor call.
+ * here too: a connection whose provider relays records the relay it goes through as its scheme, so
+ * the column says how the request leaves for every row — `pipedream_connect_proxy` is the first
+ * (GRA-59). This list and the proxy's `[...AUTH_SCHEMES, ...RELAY_SCHEMES]` are asserted equal in
+ * `packages/core`, which depends on both; a scheme added to one without the other fails a test
+ * rather than a vendor call. The column is `text` with the enum on the type alone, so adding a name
+ * here changes no SQL and needs no migration.
  */
 export const connectionScheme = [
   "api_key_header",
@@ -22,6 +24,7 @@ export const connectionScheme = [
   "oauth_authorization_code",
   "unleashed_hmac",
   "snowflake_keypair_jwt",
+  "pipedream_connect_proxy",
 ] as const;
 export type ConnectionScheme = (typeof connectionScheme)[number];
 
@@ -59,8 +62,18 @@ export const connection = pgTable(
      * for a keyring connection, which is identified by its own ciphertext. One text column rather
      * than one per provider (ADR 0019): every relay provider named so far holds one identifier per
      * connection, and a provider that comes to need more adds a column named for itself then.
+     * Kept through a revoke until the provider has released what it holds (`repo/connection.ts`,
+     * `recordProviderRelease`), because the release is *by* this identifier and a failed one is
+     * retried from it; cleared the moment the release succeeds.
      */
     providerRef: text("provider_ref"),
+    /**
+     * When the provider last failed to release what it held for this row on a revoke (ADR 0019;
+     * GRA-59) — a broker that could not be reached to delete the account. Set on the failure, so the
+     * fact outlives the request that met it, and cleared by the retry that succeeds
+     * (`recordProviderRelease`). Null for a row whose provider holds nothing or has let go.
+     */
+    providerReleaseFailedAt: timestamp("provider_release_failed_at"),
     /**
      * The vendor slug — `gmail`, `unleashed`, `cartoncloud` — the key an authored tool binds to
      * (ADR 0007: a tool is bound to a vendor, not a connection row, so it survives a revoke and
@@ -134,6 +147,15 @@ export const connection = pgTable(
     index("connection_person_id_idx").on(table.personId),
     // "The person's connections for this vendor" — what a revoke and a tool binding both ask.
     index("connection_person_id_vendor_idx").on(table.personId, table.vendor),
+    /**
+     * One row per account at a provider (ADR 0019; GRA-59): a link's return that lands twice at
+     * once would otherwise claim the same account for two rows, since the account is discovered
+     * before the write. The database refuses the second, and the return re-reads the ask the first
+     * answered. Partial, because the keyring's rows have no reference and are as many as they are.
+     */
+    uniqueIndex("connection_provider_ref_idx")
+      .on(table.provider, table.providerRef)
+      .where(sql`${table.providerRef} is not null`),
   ],
 );
 

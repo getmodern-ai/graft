@@ -31,6 +31,7 @@ import {
   registerConnection,
   registerConnectionWithCredential,
   requirePerson,
+  retryProviderRelease,
   revokeAgent,
   revokeApproval,
   revokeConnection,
@@ -71,6 +72,7 @@ import { z } from "zod";
 
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
+import { createProviderLinkRoutes, startProviderLink } from "./provider-link";
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -105,6 +107,13 @@ import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
  * actually call the vendor. `POST /connections/:id/oauth/authorize-url` starts a consent on its own
  * — the console's Connect and Reconnect — and `GET /oauth/redirect-uri` and `GET /oauth/callback`
  * are the consent's two ends.
+ *
+ * **A link provider's ask has a button rather than a form** (GRA-59; ADR 0019). `POST
+ * /pending-actions/:id/link` mints the provider's link for the ask — Pipedream's Connect Link, for
+ * the person's external user id — and the console opens it in a popup; `GET /providers/link/callback`
+ * is where the provider sends the browser back, with no session and a signed state, and is what
+ * makes the connection and answers the ask once the provider has confirmed the account
+ * (`provider-link.ts`). No secret is entered anywhere in that flow, and none is stored.
  */
 
 /** The slice of Better Auth the API reads — structural, so a test fakes it without a database. */
@@ -149,6 +158,12 @@ export type ApiOptions = {
    * session. The same options `createServer` mounts the protocol's endpoints with.
    */
   mcpOAuth?: McpOAuthServerOptions;
+  /**
+   * `GRAFT_AUTH_URL` — the server's own origin, on which a link provider's return route answers
+   * (`provider-link.ts`; ADR 0019). Optional so a harness with no link provider binds nothing;
+   * `index.ts` always binds it, and the link routes are mounted only with it.
+   */
+  authUrl?: string;
 };
 
 /**
@@ -443,6 +458,28 @@ export function createApi(options: ApiOptions): Hono {
         oauth: options.oauth,
       }),
     );
+  }
+
+  /** What the link's two ends need (`provider-link.ts`); a harness that bound no `authUrl` has neither. */
+  const linkOptions = () => {
+    if (!options.authUrl) {
+      throw new ServiceError(
+        "BAD_REQUEST",
+        "This server has no public URL configured, so a provider's link cannot be started",
+      );
+    }
+    return {
+      db: options.deps.db,
+      connection: connectionDeps,
+      agent: agentDeps,
+      pendingAction: pendingActionDeps,
+      handoff,
+      authUrl: options.authUrl,
+    };
+  };
+
+  if (options.authUrl) {
+    api.route("/providers/link", createProviderLinkRoutes(linkOptions()));
   }
 
   /** `?agentId=` on the approval routes — an approval is per agent, and the path names the tool. */
@@ -780,6 +817,20 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(result);
   });
 
+  /**
+   * The retry of a provider's release that failed on a revoke (ADR 0019; GRA-59): the card offers
+   * it while the row says the account is still at the provider (`providerReleaseFailedAt`), and
+   * this runs the same release, recorded the same way, so a success clears the mark and a second
+   * failure keeps it. The status is the request's, never the release's, for the revoke's reason.
+   */
+  api.post("/connections/:id/release", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const connectionId = c.req.param("id");
+    const result = await retryProviderRelease(ctx, principal, connectionId, connectionDeps);
+    useLogger().set({ providerRelease: { connectionId, ...result.providerRelease } });
+    return c.json(result);
+  });
+
   /** The console's inbox: every open action across the person's agents, newest first, each with its link. */
   api.get("/pending-actions", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -996,6 +1047,20 @@ export function createApi(options: ApiOptions): Hono {
       return { connection, pendingAction };
     });
     return c.json(result, 201);
+  });
+
+  /**
+   * The person's button for a `connection` ask a **link** provider covers (GRA-59; ADR 0019): the
+   * provider mints the link the console opens in a popup, for this person, with this server's
+   * return route as where the provider sends the browser back. The ask stays open — the return
+   * route answers it once the provider has confirmed the account (`provider-link.ts`) — so a popup
+   * closed half-way leaves the button where it was. No body: everything the link needs is on the
+   * ask, and nothing about it is the person's to edit.
+   */
+  api.post("/pending-actions/:id/link", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const started = await startProviderLink(ctx, principal, c.req.param("id"), linkOptions());
+    return c.json(started);
   });
 
   /**
