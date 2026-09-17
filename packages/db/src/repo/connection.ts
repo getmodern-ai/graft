@@ -151,3 +151,23 @@ export async function revokeConnection(
     .returning();
   return row ?? null;
 }
+
+/**
+ * Reconnect a revoked connection that holds no credential to re-enter — one a provider made with no
+ * person step (ADR 0019, GRA-58): the revocation stamp is cleared and nothing else is written, since
+ * a revoke of such a row cleared nothing but the stamp and the approvals, and the approvals stay
+ * gone (ADR 0007: every tool re-asks after reconnection). A row that is not revoked is answered as
+ * it is. The service holds this to the provider's kind; the repo is the statement alone.
+ */
+export async function reconnectConnection(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .update(connection)
+    .set({ revokedAt: null })
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .returning();
+  return row ?? null;
+}

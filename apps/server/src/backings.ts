@@ -1,6 +1,11 @@
 import { join } from "node:path";
 
-import { type ConnectionProvider, keyringProvider, providerListProblem } from "@graft/core";
+import {
+  type ConnectionProvider,
+  createGatewayProvider,
+  keyringProvider,
+  providerListProblem,
+} from "@graft/core";
 import type { ServerEnv } from "@graft/env/server";
 import { createFakeSandboxBackend } from "@graft/sandbox/fake";
 import type { SandboxBackend } from "@graft/sandbox/types";
@@ -28,7 +33,11 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  * broker for the vendors it has, the keyring for the rest — and a proposal is routed to the first
  * that covers it. The keyring is always present and last: `open` enables it alone, and `cloud`
  * appends it after whatever the private package answers, so today's behaviour is every deployment's
- * floor and no hosted provider can shadow it (`providerListProblem` refuses a list that tries).
+ * floor and no hosted provider can shadow it (`providerListProblem` refuses a list that tries). The
+ * **gateway** provider (ADR 0019, GRA-58) is open code configured by the environment — the
+ * `GRAFT_GATEWAY_*` group — and goes first in either form when its group is set: an operator who
+ * named a vendor host as covered by their gateway meant it, ahead of any broker the hosted package
+ * answers with.
  *
  * `open` is what this repository holds: the sandbox `GRAFT_SANDBOX_BACKEND` names — Docker when
  * its pair of variables is set, none when it is not, or the in-process fake for a laptop without a
@@ -126,7 +135,47 @@ export type BackingsEnv = Pick<
   | "GRAFT_PROXY_PUBLIC_URL"
   | "GRAFT_TOOLBOX_ROOT"
   | "GRAFT_TOOLBOX_VOLUME"
+  | "GRAFT_GATEWAY_HOSTS"
+  | "GRAFT_GATEWAY_UPSTREAM_URL"
+  | "GRAFT_GATEWAY_HEADER_NAME"
+  | "GRAFT_GATEWAY_HEADER_VALUE"
+  | "GRAFT_GATEWAY_HEADER_PREFIX"
 >;
+
+/**
+ * The gateway provider the environment configures, or null when the group is unset. `@graft/env`
+ * has refused a partial group by the time this runs, so the four are read as one; the check on each
+ * is what makes the narrowing true for a caller that assembled the environment some other way.
+ */
+export function gatewayProviderFrom(
+  env: Pick<
+    BackingsEnv,
+    | "GRAFT_GATEWAY_HOSTS"
+    | "GRAFT_GATEWAY_UPSTREAM_URL"
+    | "GRAFT_GATEWAY_HEADER_NAME"
+    | "GRAFT_GATEWAY_HEADER_VALUE"
+    | "GRAFT_GATEWAY_HEADER_PREFIX"
+  >,
+): ConnectionProvider | null {
+  const hosts = env.GRAFT_GATEWAY_HOSTS;
+  const upstreamUrl = env.GRAFT_GATEWAY_UPSTREAM_URL;
+  const headerName = env.GRAFT_GATEWAY_HEADER_NAME;
+  const headerValue = env.GRAFT_GATEWAY_HEADER_VALUE;
+  if (!hosts || !upstreamUrl || !headerName || !headerValue) return null;
+  return createGatewayProvider({
+    hosts,
+    upstreamUrl,
+    headerName,
+    headerValue,
+    headerPrefix: env.GRAFT_GATEWAY_HEADER_PREFIX ?? null,
+  });
+}
+
+/** The environment's providers ahead of the keyring — the gateway when configured, nothing otherwise. */
+function environmentProviders(env: BackingsEnv): ConnectionProvider[] {
+  const gateway = gatewayProviderFrom(env);
+  return gateway ? [gateway] : [];
+}
 
 export type SelectBackingsDeps = {
   /** `process.env` in the server; a test hands the cloud factory whatever it should see. */
@@ -183,7 +232,7 @@ function openBackings(env: BackingsEnv): Backings {
     sandbox,
     keyring: createLocalKeyring(env.GRAFT_KEYRING_SECRET),
     mirror: createNoopToolboxMirror(),
-    providers: [keyringProvider],
+    providers: [...environmentProviders(env), keyringProvider],
     store,
     toolboxRoot: store.root,
   };
@@ -219,8 +268,9 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
   const created: unknown = await factory(input);
   assertCloudBackings(created, specifier);
   const { store: own, providers: hosted, ...seams } = created;
-  // The keyring after the hosted providers, always: the floor every deployment has (ADR 0019).
-  const providers = [...(hosted ?? []), keyringProvider];
+  // The environment's gateway first, the keyring after the hosted providers, always: the floor every
+  // deployment has (ADR 0019).
+  const providers = [...environmentProviders(env), ...(hosted ?? []), keyringProvider];
   const problem = providerListProblem(providers);
   if (problem) {
     throw new Error(`${specifier}'s createCloudBackings returned connection providers: ${problem}`);

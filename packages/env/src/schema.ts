@@ -506,6 +506,108 @@ export const adminKeys = ["GRAFT_ADMIN_EMAIL", "GRAFT_ADMIN_PASSWORD"] as const;
 export const migrateOnStart = z.stringbool().default(true);
 
 /**
+ * The gateway provider (ADR 0019, GRA-58): a company's API gateway fronts the vendors it covers and
+ * holds their credentials, and a vendor whose hosts it covers connects with no person step and
+ * relays every call through it. Four settings, all-or-nothing (`gatewayKeys`) and off by default —
+ * a deployment without them has the keyring alone, exactly as before — because each without the
+ * others is a half-finished setup: covered hosts with nowhere to relay to, an upstream that would
+ * refuse every call for want of the identity header, a header with no gateway to present it to.
+ *
+ * The hosts are a comma-separated list, each an exact hostname (`api.vendor.example`) or a wildcard
+ * suffix (`*.googleapis.com`, any host at least one label under it); lower-cased and de-duplicated
+ * here so the provider compares what the operator wrote once. A bare `*` is refused — a gateway that
+ * covers every vendor would shadow the keyring for every proposal, which is a decision to make by
+ * naming the hosts, not by a wildcard that also catches a typo.
+ */
+/** A DNS name: labels of letters, digits and hyphens, dot-separated, no port, no scheme. */
+const HOSTNAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
+
+export const gatewayHosts = z
+  .string()
+  .transform((raw, ctx) => {
+    const entries = raw
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry) => entry.length > 0);
+    if (entries.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "GRAFT_GATEWAY_HOSTS must name at least one vendor host the gateway covers",
+      });
+      return z.NEVER;
+    }
+    for (const entry of entries) {
+      const host = entry.startsWith("*.") ? entry.slice(2) : entry;
+      if (!HOSTNAME.test(host) || !host.includes(".")) {
+        ctx.addIssue({
+          code: "custom",
+          message: `GRAFT_GATEWAY_HOSTS entry ${JSON.stringify(entry)} is not a hostname or a *.suffix pattern — expected something like api.vendor.example or *.googleapis.com`,
+        });
+        return z.NEVER;
+      }
+    }
+    return [...new Set(entries)];
+  })
+  .optional();
+
+/**
+ * Where the gateway answers: an absolute URL with an origin and an optional base path, and nothing
+ * a relayed request would have to merge with — no query, no fragment, no credentials in the URL.
+ * `http` is admitted here so a laptop can point at a fake gateway on a loopback port, and refused
+ * under `NODE_ENV=production` by `serverEnvIssues`: the identity header is a secret, and a
+ * production deployment does not send one in the clear.
+ */
+export const gatewayUpstreamUrl = z
+  .url({
+    protocol: /^https?$/,
+    error:
+      "GRAFT_GATEWAY_UPSTREAM_URL must be an absolute http(s) URL — where your API gateway answers",
+  })
+  .refine((value) => {
+    // zod runs a refinement even after the format check failed; a non-URL is that check's to name.
+    try {
+      const url = new URL(value);
+      return url.search === "" && url.hash === "" && url.username === "" && url.password === "";
+    } catch {
+      return true;
+    }
+  }, "GRAFT_GATEWAY_UPSTREAM_URL takes an origin and an optional path, with no query, fragment or credentials")
+  .optional();
+
+/** An HTTP header name is a token; letters, digits and hyphens is the shape every gateway's is. */
+const HEADER_NAME = /^[A-Za-z0-9-]+$/;
+
+/** The header the deployment identifies itself to the gateway with: `Authorization`, `X-Api-Key`, a gateway's own. */
+export const gatewayHeaderName = z
+  .string()
+  .regex(
+    HEADER_NAME,
+    "GRAFT_GATEWAY_HEADER_NAME must be a header name — letters, digits and hyphens, like X-Api-Key",
+  )
+  .optional();
+
+/**
+ * The prefix the gateway wants on caller headers, for a gateway that forwards a caller's header to
+ * the vendor only when it carries one (Pipedream's `x-pd-proxy-` is the shape). Unset, the default:
+ * caller headers travel under their own names, minus the credential-shaped ones the proxy strips
+ * anyway. Read only beside the group; set without it, refused as a setting nothing would read.
+ */
+export const gatewayHeaderPrefix = z
+  .string()
+  .regex(
+    HEADER_NAME,
+    "GRAFT_GATEWAY_HEADER_PREFIX must be a header-name prefix — letters, digits and hyphens, like x-gateway-",
+  )
+  .optional();
+
+export const gatewayKeys = [
+  "GRAFT_GATEWAY_HOSTS",
+  "GRAFT_GATEWAY_UPSTREAM_URL",
+  "GRAFT_GATEWAY_HEADER_NAME",
+  "GRAFT_GATEWAY_HEADER_VALUE",
+] as const;
+
+/**
  * A group of settings that only makes sense complete. Factored so a second hand-written copy of
  * this comparison is not where two groups drift — one of them getting the `present.length === 0`
  * case wrong and reporting every unconfigured deploy as broken.
@@ -651,6 +753,33 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   );
   if (partialLangfuse) issues.push(partialLangfuse);
 
+  /**
+   * The gateway provider is the four settings or nothing (`gatewayKeys`); the prefix rides beside
+   * them and is refused alone, as a provider setting nothing would read. In production the upstream
+   * is https: the identity header is a secret (ADR 0019, GRA-58).
+   */
+  const partialGateway = partialGroupIssue(
+    value,
+    "The gateway provider is partially configured — set GRAFT_GATEWAY_HOSTS, GRAFT_GATEWAY_UPSTREAM_URL, GRAFT_GATEWAY_HEADER_NAME and GRAFT_GATEWAY_HEADER_VALUE together, or none of them.",
+    gatewayKeys,
+  );
+  if (partialGateway) issues.push(partialGateway);
+  const gatewayConfigured = gatewayKeys.every((key) => value[key] !== undefined);
+  if (!gatewayConfigured && value.GRAFT_GATEWAY_HEADER_PREFIX !== undefined) {
+    issues.push(
+      "GRAFT_GATEWAY_HEADER_PREFIX configures the gateway provider, but the gateway group is not set, so nothing would read it; set the four GRAFT_GATEWAY_* settings or unset it.",
+    );
+  }
+  if (
+    value.NODE_ENV === "production" &&
+    typeof value.GRAFT_GATEWAY_UPSTREAM_URL === "string" &&
+    value.GRAFT_GATEWAY_UPSTREAM_URL.startsWith("http:")
+  ) {
+    issues.push(
+      "GRAFT_GATEWAY_UPSTREAM_URL must be https under NODE_ENV=production: the deployment identity header is a secret and does not travel in the clear.",
+    );
+  }
+
   // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
   // package brings the sandbox, and a `fake` set beside it would be two answers to one question.
   if (value.GRAFT_BACKINGS === "cloud" && value.GRAFT_SANDBOX_BACKEND === "fake") {
@@ -795,6 +924,13 @@ export const serverSchema = {
   /** The admin opened on first start, all-or-nothing — see `adminKeys`. */
   GRAFT_ADMIN_EMAIL: adminEmail,
   GRAFT_ADMIN_PASSWORD: adminPassword,
+
+  /** The gateway provider, all-or-nothing, and its optional header prefix — see `gatewayKeys` (ADR 0019, GRA-58). */
+  GRAFT_GATEWAY_HOSTS: gatewayHosts,
+  GRAFT_GATEWAY_UPSTREAM_URL: gatewayUpstreamUrl,
+  GRAFT_GATEWAY_HEADER_NAME: gatewayHeaderName,
+  GRAFT_GATEWAY_HEADER_VALUE: secretValue("GRAFT_GATEWAY_HEADER_VALUE"),
+  GRAFT_GATEWAY_HEADER_PREFIX: gatewayHeaderPrefix,
 
   /** Whether the boot applies the committed migrations — see `migrateOnStart`. */
   GRAFT_MIGRATE_ON_START: migrateOnStart,

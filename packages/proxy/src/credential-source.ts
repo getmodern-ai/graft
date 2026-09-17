@@ -54,6 +54,8 @@ export type RelaySource = {
   mode: "relay";
   plugin: RelayPlugin;
   rules: RelayHeaderRules;
+  /** The headers this connection's relay sets beyond the plugin's own (`ProxyRelay.headerNames`). */
+  headerNames: readonly string[];
   primaryHost: string;
   hosts: ReadonlySet<string>;
   obtain: () => Promise<CredentialFields>;
@@ -76,6 +78,7 @@ export function credentialSource(
       mode: "relay",
       plugin: relay.plugin,
       rules: relayRulesOf(relay.plugin, relay.rules),
+      headerNames: relay.headerNames ?? [],
       primaryHost: connection.primaryHost,
       hosts: hostSetOf(connection),
       obtain: () => fromHost("relay.obtain", relay.obtain),
@@ -124,7 +127,9 @@ export function credentialSource(
  * modes. `apply` is the relay: the caller's headers under the rules, then the plugin's own rewrite
  * of URL and authentication. No `derive` — the upstream owns the vendor token and its refresh, so a
  * vendor 401 passes through as the vendor's answer — and no `scrubRedirect`, because the relay puts
- * nothing on the *vendor's* URL for a `Location` to carry back.
+ * nothing on the *vendor's* URL for a `Location` to carry back. `headerNames` is the plugin's for
+ * every connection plus this connection's own (a gateway's configured identity header), which is
+ * what a dry run previews without assembling the fields.
  */
 export function relaySchemePlugin(source: RelaySource): SchemePlugin {
   return {
@@ -132,7 +137,7 @@ export function relaySchemePlugin(source: RelaySource): SchemePlugin {
       relayHeaders(target.headers, source.rules);
       source.plugin.relay(target, fields, source.rules);
     },
-    headerNames: () => source.plugin.headerNames(),
+    headerNames: () => [...source.plugin.headerNames(), ...source.headerNames],
   };
 }
 

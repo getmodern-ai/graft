@@ -192,10 +192,26 @@ the row's credential, or `relay` through an upstream that holds it), and what to
 connection read (`apps/server/src/connections.ts`) asks the row's provider how the call resolves.
 The relay engine is `packages/proxy/src/relay.ts`: a relay plugin rewrites the resolved vendor
 request into the upstream's under `RelayHeaderRules` as data, and `relay.test.ts` drives it through
-an in-process upstream. `RELAY_SCHEMES` and `RELAYS` are empty until the gateway (GRA-58) and
-Pipedream (GRA-59) plugins land; a row of a relay provider records its relay scheme in the `scheme`
-column, and the enum pin in `packages/core` covers both lists. Every row and every suite in this
-repository is a keyring connection, and with the keyring alone nothing observable changed.
+an in-process upstream. `RELAYS` holds the `gateway` plugin (`gateway-relay.ts`, GRA-58); Pipedream's
+is GRA-59's to add. A row of a relay provider records its relay scheme in the `scheme` column, and
+the enum pin in `packages/core` covers both lists — so `connectionScheme` now carries `gateway`,
+which no form, proposal or credential entry accepts (`connection.rules.ts` refuses a relay scheme
+with a sentence). With the keyring alone nothing observable changed.
+
+**The gateway provider is the environment's** (ADR 0019 as amended 2026-09-17, GRA-58): the
+`GRAFT_GATEWAY_*` group — covered hosts, upstream URL, the identity header's name and value, an
+optional caller-header prefix — all-or-nothing and off by default, read by `gatewayProviderFrom` in
+`apps/server/src/backings.ts`, which puts the provider first in either form's order. A proposal every
+host of which it covers connects with **no person step**: `request_connection` makes the row
+(`registerProviderConnection`, scheme `gateway`, no credential) and grows the asking agent's scope in
+one transaction; a row the person revoked or has not given this agent is refused with the console
+step that would grant it. The relay carries the vendor URL in the path, `<upstream>/<host>/<path>`,
+and `index.ts` exempts the gateway's hostname from the resolver's private-address rule
+(`createUpstreamFetch({ unguardedHosts })`). A revoked gateway row comes back through the console's
+Reconnect (`POST /api/connections/:id/reconnect`), the one row kind with nothing to re-enter. A fake
+gateway on a loopback port stands in for a company's in `packages/proxy/src/gateway-relay.test.ts`
+and `apps/server/src/app.test.ts`; on a laptop, `GRAFT_GATEWAY_UPSTREAM_URL` may be plain `http`
+(refused in production).
 
 **In the image the package arrives built** (GRA-38). The bundled server runs where there is Node and
 `node_modules` and nothing else — no TypeScript, no workspace — so a linked package ships a `build`

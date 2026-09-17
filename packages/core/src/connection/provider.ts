@@ -4,6 +4,7 @@ import {
   type AuthScheme,
   isAuthScheme,
   type ProxyRelay,
+  type RelayScheme,
   type SchemeConfig,
 } from "@graft/proxy/types";
 
@@ -45,8 +46,13 @@ export type ProviderConnect =
   | { kind: "form"; schemes: readonly AuthScheme[] }
   /** The person opens a link the provider mints and consents there; nothing is typed in the console (GRA-59). */
   | { kind: "link" }
-  /** No person step: the deployment holds the identity the upstream wants (GRA-58). */
-  | { kind: "none" };
+  /**
+   * No person step: the deployment holds the identity the upstream wants (GRA-58). `scheme` is the
+   * relay scheme every row the provider makes records in the `scheme` column (ADR 0019) — fixed for
+   * the provider where the form's is the person's choice — so `registerProviderConnection` writes it
+   * without asking the provider to resolve a row that does not exist yet.
+   */
+  | { kind: "none"; scheme: RelayScheme };
 
 /**
  * What the proxy needs to make a call through a connection of this provider — the two modes

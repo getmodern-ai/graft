@@ -33,6 +33,7 @@ import {
   type ConnectionProvider,
   DEFAULT_PROVIDERS,
   KEYRING_PROVIDER,
+  type ProviderDescription,
   providerNamed,
 } from "./provider";
 
@@ -91,12 +92,24 @@ export function toConnectionOutput(row: ConnectionRow): ConnectionOutput {
 }
 
 /**
- * Whether a vendor call through this connection can succeed today: not revoked, a credential
- * entered, and — for an authorization-code connection — the consent completed and not since refused.
- * What `request_connection` reads before saying "already connected", and the console's "connected".
+ * Whether a vendor call through this connection can succeed today: not revoked, its provider
+ * enabled on this deployment, and — for a provider whose credential is entered here — a credential
+ * set and, for an authorization-code connection, the consent completed and not since refused. A
+ * provider with no person step (ADR 0019) has nothing to enter, so its row is usable by existing;
+ * one the deployment no longer enables resolves to nothing the proxy can call through
+ * (`toProxyConnection`), and is not usable for the same reason. What `request_connection` reads
+ * before saying "already connected". `providers` takes the descriptions the console holds as
+ * readily as the providers themselves; the default is the keyring alone.
  */
-export function isConnectionUsable(connection: ConnectionOutput): boolean {
-  if (connection.revokedAt !== null || connection.credentialSetAt === null) return false;
+export function isConnectionUsable(
+  connection: ConnectionOutput,
+  providers: readonly ProviderDescription[] = DEFAULT_PROVIDERS,
+): boolean {
+  if (connection.revokedAt !== null) return false;
+  const provider = providers.find((candidate) => candidate.name === connection.provider);
+  if (!provider) return false;
+  if (provider.connect.kind === "none") return true;
+  if (connection.credentialSetAt === null) return false;
   return connection.oauth === null || connection.oauth.status === "connected";
 }
 
@@ -104,11 +117,13 @@ export function isConnectionUsable(connection: ConnectionOutput): boolean {
  * The proxy's view of a row: the identity it compares against the token, the host set it pins to,
  * and — from the row's provider (ADR 0019) — how the call resolves: the columns to decrypt and
  * inject from, or the relay to send it through. Built field by field, so a column added to the table
- * later does not ride into the proxy by accident. A revoked connection has a null ciphertext and the
- * proxy answers `connection_not_ready` for it; nothing else about the row has to say "revoked". A
- * row whose provider the deployment has not enabled resolves to nothing, which the proxy answers the
- * same way: a connection made under a provider that is now absent is not one this deployment can
- * call through, and saying so is better than guessing at the keyring.
+ * later does not ride into the proxy by accident. A revoked connection resolves to nothing and the
+ * proxy answers `connection_not_ready` for it — asked here rather than left to the null ciphertext
+ * a revoke leaves, because a relay provider's row never had one (ADR 0019): the revoke is the
+ * person's, and a capability token minted from a scope that still names the row must not relay
+ * through it. A row whose provider the deployment has not enabled resolves to nothing, which the
+ * proxy answers the same way: a connection made under a provider that is now absent is not one this
+ * deployment can call through, and saying so is better than guessing at the keyring.
  */
 export function toProxyConnection(
   row: ConnectionRow,
@@ -120,7 +135,8 @@ export function toProxyConnection(
     primaryHost: row.primaryHost,
     hosts: row.hosts,
   };
-  const resolution = providerNamed(providers, row.provider)?.resolve(row) ?? null;
+  const resolution =
+    row.revokedAt === null ? (providerNamed(providers, row.provider)?.resolve(row) ?? null) : null;
   if (!resolution) {
     return { ...identity, authScheme: null, schemeConfig: null, credentialCiphertext: null };
   }
@@ -266,6 +282,109 @@ export async function registerConnectionWithCredential(
     const registered = await registerConnection(scoped, principal, registration, deps);
     return setConnectionCredential(scoped, principal, registered.id, credential, deps);
   });
+}
+
+export type RegisterProviderConnectionInput = {
+  vendor: string;
+  displayName: string;
+  primaryHost: string;
+  hosts?: readonly string[];
+};
+
+/**
+ * Register a connection a provider makes with **no person step** (ADR 0019; the gateway, GRA-58):
+ * the vendor, the name and the host set as the agent proposed them, the provider's name and the
+ * relay scheme its `connect` shape names, no credential and no `provider_ref`. Refused for a
+ * provider of any other kind — a form provider's rows come with a credential and a link provider's
+ * through its own flow — for one the deployment has not enabled, and for a vendor the provider does
+ * not cover at these hosts: the caller routed the proposal with `providerFor`, and this is the
+ * check that the row written is one the provider will resolve. The host rule is the same one every
+ * registration passes; a gateway does not make a private host reachable.
+ */
+export async function registerProviderConnection(
+  ctx: ServiceContext,
+  principal: Principal,
+  provider: ConnectionProvider,
+  input: RegisterProviderConnectionInput,
+  deps: ConnectionDeps,
+): Promise<ConnectionOutput> {
+  if (providerNamed(deps.providers, provider.name) !== provider) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `No connection provider named ${provider.name} is enabled on this deployment`,
+    );
+  }
+  if (provider.connect.kind !== "none") {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `The ${provider.name} provider connects a vendor ${provider.connect.kind === "form" ? "with a credential entered in the console" : "with a link"}, not without a person step`,
+    );
+  }
+  refuse(validateVendor(input.vendor));
+  refuse(validateDisplayName(input.displayName));
+  const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
+  if (!hostSet.ok) refuseHostSet(hostSet);
+  if (!provider.covers(input.vendor, hostSet.hosts)) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `The ${provider.name} provider does not cover ${input.vendor} at ${hostSet.hosts.join(", ")}`,
+    );
+  }
+  const row = await deps.insertConnection(ctx.db, {
+    id: deps.newId(),
+    personId: principal.personId,
+    provider: provider.name,
+    providerRef: null,
+    vendor: input.vendor,
+    displayName: input.displayName.trim(),
+    scheme: provider.connect.scheme,
+    schemeConfig: {},
+    primaryHost: hostSet.primaryHost,
+    hosts: hostSet.hosts,
+  });
+  return toConnectionOutput(row);
+}
+
+/**
+ * Reconnect a revoked connection that has no credential to re-enter — one a provider made with no
+ * person step (ADR 0019, GRA-58). The keyring's way back is a credential re-entered
+ * (`setConnectionCredential` clears the stamp with the ciphertext) and a link provider's is its own
+ * flow, so this is the console's Reconnect for the third kind alone, and refuses the other two by
+ * saying which way back is theirs. The approvals a revoke deleted stay deleted: every tool bound to
+ * the vendor asks again (ADR 0007), for this kind as for any. A row that is not revoked is answered
+ * as it is, so a second click changes nothing.
+ */
+export async function reconnectConnection(
+  ctx: ServiceContext,
+  principal: Principal,
+  connectionId: string,
+  deps: ConnectionDeps,
+): Promise<ConnectionOutput> {
+  const row = orNotFound(
+    await deps.findConnection(ctx.db, principal.personId, connectionId),
+    "Connection not found",
+  );
+  const provider = providerNamed(deps.providers, row.provider);
+  if (!provider) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `No connection provider named ${row.provider} is enabled on this deployment`,
+    );
+  }
+  if (provider.connect.kind !== "none") {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      provider.connect.kind === "form"
+        ? `${row.displayName} is reconnected by re-entering its credential`
+        : `${row.displayName} is reconnected through the ${provider.name} provider`,
+    );
+  }
+  if (row.revokedAt === null) return toConnectionOutput(row);
+  const updated = orNotFound(
+    await deps.reconnectConnection(ctx.db, principal.personId, row.id),
+    "Connection not found",
+  );
+  return toConnectionOutput(updated);
 }
 
 export async function listConnections(

@@ -7,6 +7,7 @@ import {
   findConnectionByIdUnscoped,
   insertConnection,
   listConnections,
+  reconnectConnection,
   revokeConnection,
   setConnectionCredential,
   setConnectionOAuthState,
@@ -32,6 +33,8 @@ export type ConnectionDeps = {
   /** The consent's non-secret state alone — a verifier written, a refusal marked (ADR 0005). */
   setConnectionOAuthState: typeof setConnectionOAuthState;
   revokeConnection: typeof revokeConnection;
+  /** The way back for a revoked row that holds no credential — a `none` provider's (GRA-58). */
+  reconnectConnection: typeof reconnectConnection;
   /** A revoke's three sweeps (ADR 0007): every approval for the vendor's tools, every build approval, every open ask about the connection. */
   deleteApprovalsForVendor: typeof deleteApprovalsForVendor;
   deleteBuildApprovalsForConnection: typeof deleteBuildApprovalsForConnection;
@@ -65,6 +68,7 @@ export function createConnectionDeps(
     setConnectionCredential,
     setConnectionOAuthState,
     revokeConnection,
+    reconnectConnection,
     deleteApprovalsForVendor,
     deleteBuildApprovalsForConnection,
     expirePendingActionsForConnection,

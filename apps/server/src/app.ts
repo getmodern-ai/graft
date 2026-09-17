@@ -48,7 +48,11 @@ export type ServerDeps = {
   credentialRotation?: Pick<ProxyDeps, "storeCredential" | "credentialRefreshFailed">;
   /** The break glass from the environment — off unless the deployment says otherwise. */
   followRedirects: boolean;
-  /** A test's fake vendor; production takes the proxy's default, undici behind the guarded resolver. */
+  /**
+   * The proxy's way out. `index.ts` binds undici behind the guarded resolver, with the configured
+   * gateway's host exempt from the address rule (ADR 0019, GRA-58); a test binds a fake vendor.
+   * Absent, the proxy's own default — the guarded resolver with no exemption.
+   */
   upstreamFetch?: UpstreamFetch;
   /** Where the proxy's one event per call goes; by default onto the request's wide event. */
   log?: (event: ProxyEvent) => void;

@@ -1,4 +1,13 @@
-import { DRY_RUN_HEADER, type ProxyEvent, type UpstreamRequest } from "@graft/proxy";
+import { createServer as createHttpServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createGatewayProvider, keyringProvider, toProxyConnection } from "@graft/core";
+import type { ConnectionRow } from "@graft/db/repo/connection";
+import {
+  createUpstreamFetch,
+  DRY_RUN_HEADER,
+  type ProxyEvent,
+  type UpstreamRequest,
+} from "@graft/proxy";
 import {
   CAPABILITY_TOKEN_ALG,
   type CapabilityTokenKeys,
@@ -8,7 +17,7 @@ import {
 import { createCredentialVault, createLocalKeyring } from "@graft/vault";
 import { initLogger } from "evlog";
 import { decodeProtectedHeader, exportPKCS8, exportSPKI, generateKeyPair } from "jose";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createServer, type ServerDeps } from "./app";
 import { type ConnectionSeed, createInMemoryConnections, seedConnections } from "./connections";
@@ -357,5 +366,111 @@ describe("the seed", () => {
       ]),
     ).resolves.toBeUndefined();
     expect(store.ids()).toEqual(["conn_1"]);
+  });
+});
+
+/**
+ * A connection through a company's API gateway (ADR 0019, GRA-58), end to end at this seam: the
+ * real verifier, the real provider's resolution of a database-shaped row, the real `createUpstreamFetch`
+ * with the gateway's hostname exempt from the address guard (`index.ts` binds it so), and a fake
+ * gateway on a loopback port addressed as `localhost` — the name the guard would otherwise refuse.
+ */
+describe("a gateway connection through the server", () => {
+  const IDENTITY = "deployment-identity-secret-value";
+  const gatewayRow: ConnectionRow = {
+    id: "conn_g",
+    personId: PERSON,
+    provider: "gateway",
+    providerRef: null,
+    vendor: "demo",
+    displayName: "Demo through the gateway",
+    scheme: "gateway",
+    schemeConfig: {},
+    primaryHost: "https://api.demo.example/v2",
+    hosts: ["api.demo.example"],
+    credentialCiphertext: null,
+    credentialSetAt: null,
+    oauthClientId: null,
+    oauthClientSecretCiphertext: null,
+    oauthAuthorizeUrl: null,
+    oauthTokenUrl: null,
+    oauthScopes: null,
+    oauthRefreshState: null,
+    revokedAt: null,
+    owner: "person",
+    createdAt: new Date("2026-09-17T09:00:00Z"),
+    updatedAt: new Date("2026-09-17T09:00:00Z"),
+  };
+  let gateway: Server;
+  let gatewayUrl: string;
+  const seen: { url: string; identity: string | undefined }[] = [];
+
+  beforeAll(async () => {
+    gateway = createHttpServer((req, res) => {
+      seen.push({ url: req.url ?? "", identity: req.headers["x-deployment-token"] as string });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"gateway":true}');
+    });
+    // Every interface, so `localhost` reaches it whether the resolver answers `::1` or `127.0.0.1`.
+    await new Promise<void>((resolve) => gateway.listen(0, () => resolve()));
+    gatewayUrl = `http://localhost:${(gateway.address() as AddressInfo).port}/graft`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => gateway.close(() => resolve()));
+  });
+
+  async function gatewayHarness(row: ConnectionRow, unguardedHosts: string[]) {
+    const provider = createGatewayProvider({
+      hosts: ["api.demo.example"],
+      upstreamUrl: gatewayUrl,
+      headerName: "X-Deployment-Token",
+      headerValue: IDENTITY,
+    });
+    const h = await harness({ upstreamFetch: createUpstreamFetch({ unguardedHosts }) });
+    h.connections.put(toProxyConnection(row, [provider, keyringProvider]));
+    return h;
+  }
+
+  it("relays a minted token's call through the gateway with the identity header and the vendor URL in the path", async () => {
+    const h = await gatewayHarness(gatewayRow, [new URL(gatewayUrl).hostname]);
+    const token = await mint({ connectionIds: ["conn_g"] });
+    const res = await h.app.request("/api/proxy/c/conn_g/items?limit=2", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ gateway: true });
+    expect(seen.at(-1)).toEqual({
+      url: "/graft/api.demo.example/v2/items?limit=2",
+      identity: IDENTITY,
+    });
+    expect(h.events[0]).toMatchObject({
+      outcome: "forwarded",
+      relay: "gateway",
+      host: "api.demo.example",
+      path: "/items",
+      connectionId: "conn_g",
+    });
+    expect(JSON.stringify(h.events)).not.toContain(IDENTITY);
+  });
+
+  it("with no exemption the guarded resolver refuses the gateway's private address; a revoked row is not ready", async () => {
+    const guarded = await gatewayHarness(gatewayRow, []);
+    const token = await mint({ connectionIds: ["conn_g"] });
+    const refused = await guarded.app.request("/api/proxy/c/conn_g/items", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ reason: "host_not_public" });
+
+    const revoked = await gatewayHarness({ ...gatewayRow, revokedAt: new Date() }, [
+      new URL(gatewayUrl).hostname,
+    ]);
+    const notReady = await revoked.app.request("/api/proxy/c/conn_g/items", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(notReady.status).toBe(409);
+    expect(await notReady.json()).toMatchObject({ reason: "connection_not_ready" });
   });
 });

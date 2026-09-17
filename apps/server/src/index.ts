@@ -22,6 +22,7 @@ import { checkMigrationChain, readMigrationChain } from "@graft/db/migration-cha
 import { countPersons } from "@graft/db/repo/person";
 import { env } from "@graft/env/server";
 import { createAcquireRunner, createMcpDeps, startSweep } from "@graft/mcp";
+import { createUpstreamFetch } from "@graft/proxy";
 import {
   createPublishDeps,
   createRegistryMetadataSource,
@@ -280,10 +281,23 @@ const mcpOAuth = {
   consoleUrl: env.GRAFT_CONSOLE_URL,
 };
 
+/**
+ * The proxy's way out: undici behind the resolver that refuses a private address — for every vendor
+ * host, and not for the one upstream the operator configured (ADR 0019, GRA-58): a company's API
+ * gateway commonly sits on a private network, and its address was set beside the database URL, by
+ * the operator, never proposed by an agent. `@graft/proxy`'s `upstream.ts` says why the exemption
+ * is by exact hostname and can never reach a vendor host.
+ */
+const gatewayHost = env.GRAFT_GATEWAY_UPSTREAM_URL
+  ? new URL(env.GRAFT_GATEWAY_UPSTREAM_URL).hostname
+  : null;
+const upstreamFetch = createUpstreamFetch({ unguardedHosts: gatewayHost ? [gatewayHost] : [] });
+
 const app = createServer({
   keys,
   vault,
   connections,
+  upstreamFetch,
   // An authorization-code token the proxy refreshes goes back into the row it came from (ADR 0005).
   credentialRotation: createDatabaseCredentialRotation(db, connectionDeps),
   followRedirects: env.GRAFT_PROXY_FOLLOW_REDIRECTS,

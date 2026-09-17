@@ -8,10 +8,12 @@ import { bytea, owned } from "./columns";
  * How the proxy presents the request to the vendor — the scheme plugins of `@graft/proxy`
  * (ADR 0010). Stored as the plugin's name, never as signing code: the agent proposes a scheme and
  * its parameters, and the proxy owns what each scheme *does*. A relay scheme (ADR 0019) belongs
- * here too, once one exists: a connection whose provider relays records the relay it goes through
- * as its scheme, so the column says how the request leaves for every row. This list and the proxy's
+ * here too: a connection whose provider relays records the relay it goes through as its scheme, so
+ * the column says how the request leaves for every row — `gateway` is the first (GRA-58), and is
+ * never one a person or an agent chooses; the provider writes it. This list and the proxy's
  * `[...AUTH_SCHEMES, ...RELAY_SCHEMES]` are asserted equal in `packages/core`, which depends on
- * both; a scheme added to one without the other fails a test rather than a vendor call.
+ * both; a scheme added to one without the other fails a test rather than a vendor call. The enum is
+ * TypeScript's alone — the column is `text` — so a scheme added here is no migration.
  */
 export const connectionScheme = [
   "api_key_header",
@@ -22,6 +24,7 @@ export const connectionScheme = [
   "oauth_authorization_code",
   "unleashed_hmac",
   "snowflake_keypair_jwt",
+  "gateway",
 ] as const;
 export type ConnectionScheme = (typeof connectionScheme)[number];
 

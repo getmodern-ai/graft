@@ -1,6 +1,8 @@
 import {
   type AgentScope,
+  addConnectionToAgentScope,
   type ConnectionOutput,
+  type ConnectionProvider,
   consumePendingAction,
   createPendingAction,
   getAgentScope,
@@ -12,6 +14,7 @@ import {
   listConnections,
   providerFor,
   providerNamed,
+  registerProviderConnection,
   type ServiceContext,
   ServiceError,
   validateDisplayName,
@@ -20,9 +23,9 @@ import {
   validateVendor,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
-import { type ConnectionScheme, connectionScheme } from "@graft/db/schema/connection";
 import { SCHEME_CREDENTIAL_FIELDS } from "@graft/proxy/credential-fields";
 import { SCHEME_PARAMETERS } from "@graft/proxy/scheme-parameters";
+import { AUTH_SCHEMES, type AuthScheme, isAuthScheme } from "@graft/proxy/types";
 
 import { DEFAULT_POLL_MS } from "./approval";
 import type { McpDeps } from "./deps";
@@ -57,10 +60,22 @@ import { executeToolName } from "./tool-names";
  * **The proposal is routed to a provider** (ADR 0019): the first of the deployment's providers that
  * covers the vendor at these hosts decides how the person connects it. The keyring covers every
  * vendor and is always last, so with it alone every proposal takes the form below and the ask,
- * the answer and the card are exactly what they were before providers existed. A provider that
- * connects with a link or with no person step gets its flow with GRA-59 and GRA-58; until then a
- * proposal it covers is refused by name rather than routed to a form that would store a credential
- * the provider holds itself.
+ * the answer and the card are exactly what they were before providers existed. A provider with
+ * **no person step** — the gateway (GRA-58) — makes the row and puts it in this agent's scope in
+ * one transaction and answers `connected` at once (`connectWithoutPersonStep`); a provider that
+ * connects with a link gets its flow with GRA-59, and until then a proposal it covers is refused by
+ * name rather than routed to a form that would store a credential the provider holds itself.
+ *
+ * **Why the gateway asks nobody, and where it stops** (GRA-58's connect decision). The person's
+ * consent for a keyring connection is the secret they type for *this* agent's ask; a gateway
+ * connection has no secret, and the operator gave the standing consent at deployment by naming the
+ * vendor's hosts as covered — a per-agent ask would re-ask a decision already made, and "no person
+ * step" is what the provider is for. The person keeps every later control: the connection is on the
+ * console with its provider, the scope picker takes it away from an agent, Revoke takes it from
+ * all, and every approval ADR 0008 asks still asks before code is authored against it or a write
+ * leaves. What an agent may never do is undo one of those decisions: a row the person revoked, or
+ * one the person has not given this agent, is refused with the console step that would grant it —
+ * the smallest consent that exists today — rather than re-made or re-scoped by the agent's call.
  */
 
 export const CONNECTION_ASK_KIND = "connection";
@@ -72,7 +87,8 @@ export type ConnectionProposalPayload = {
   provider: string;
   vendor: string;
   displayName: string;
-  scheme: ConnectionScheme;
+  /** A signing scheme: what the form enters a credential for; a relay scheme is never proposed. */
+  scheme: AuthScheme;
   schemeConfig: Record<string, string>;
   /** Normalised: origin plus an optional path, no trailing slash. */
   primaryHost: string;
@@ -89,7 +105,8 @@ export type CredentialAskPayload = {
   connectionId: string;
   vendor: string;
   connectionName: string;
-  scheme: ConnectionScheme;
+  /** A signing scheme: a relay provider's connection is refused before an ask is made (ADR 0019). */
+  scheme: AuthScheme;
   hosts: string[];
   /** What the vendor answered, in the agent's words; the card shows it as such. */
   reason: string | null;
@@ -107,10 +124,12 @@ export type ConnectionAnswer = { connectionId: string };
 export const PROPOSAL_PROVENANCE_NOTE =
   "This proposal was written by the agent's model from the documentation it read. Check the hosts and the documentation link before entering a secret: the credential will be sent to every host listed, and to nothing else.";
 
-/** What either tool answers once the person has entered the secret — and nothing about the secret. */
+/** What either tool answers once the connection can be called through — and nothing about a secret. */
 export type Connected = {
   status: "connected";
   connectionId: string;
+  /** Where the connection comes from (ADR 0019): `keyring`, or the provider that connected it with no person step. */
+  provider: string;
   /** The connection's execute tool, `execute__<id>`, now in the agent's list. */
   executeTool: string;
   message: string;
@@ -151,21 +170,17 @@ export type CredentialRequestInput = { connectionId: string; reason?: string };
 
 /** The scheme table in one sentence, for the tool's description — generated so it cannot drift. */
 export function describeSchemes(): string {
-  return connectionScheme
-    .map((scheme) => {
-      const rule = SCHEME_PARAMETERS[scheme];
-      const parameters = [
-        ...rule.required,
-        ...rule.optional.map((parameter) => `optional ${parameter}`),
-      ];
-      // What the person supplies on the form: the scheme's secret fields, and the parameters only
-      // they can know — an OAuth client id (ADR 0005), which the proposal leaves out.
-      const entered = [...(rule.personEntered ?? []), ...SCHEME_CREDENTIAL_FIELDS[scheme]].join(
-        ", ",
-      );
-      return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${entered})`;
-    })
-    .join("; ");
+  return AUTH_SCHEMES.map((scheme) => {
+    const rule = SCHEME_PARAMETERS[scheme];
+    const parameters = [
+      ...rule.required,
+      ...rule.optional.map((parameter) => `optional ${parameter}`),
+    ];
+    // What the person supplies on the form: the scheme's secret fields, and the parameters only
+    // they can know — an OAuth client id (ADR 0005), which the proposal leaves out.
+    const entered = [...(rule.personEntered ?? []), ...SCHEME_CREDENTIAL_FIELDS[scheme]].join(", ");
+    return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${entered})`;
+  }).join("; ");
 }
 
 function refuse(
@@ -265,9 +280,10 @@ export function normaliseProposal(input: ConnectionProposalInput): ProposalVerdi
   const displayName = (input.displayName ?? vendor).trim();
   const nameProblem = validateDisplayName(displayName);
   if (nameProblem) return invalid(nameProblem, { field: "displayName" });
-  if (!isConnectionScheme(input.scheme)) {
+  // The signing schemes alone: a relay scheme is a provider's to write, never an agent's to propose.
+  if (!isAuthScheme(input.scheme)) {
     return invalid(
-      `Unknown scheme ${JSON.stringify(input.scheme)} — one of ${connectionScheme.join(", ")}`,
+      `Unknown scheme ${JSON.stringify(input.scheme)} — one of ${AUTH_SCHEMES.join(", ")}`,
       {
         field: "scheme",
       },
@@ -311,10 +327,6 @@ export function normaliseProposal(input: ConnectionProposalInput): ProposalVerdi
   };
 }
 
-function isConnectionScheme(value: string): value is ConnectionScheme {
-  return (connectionScheme as readonly string[]).includes(value);
-}
-
 /** Two proposals are the same ask when everything the form would pre-fill is the same. */
 function proposalKey(payload: Record<string, unknown>): string {
   const config = isPlainObject(payload.schemeConfig) ? payload.schemeConfig : {};
@@ -353,10 +365,13 @@ export async function requestConnection(
     verdict.payload.vendor,
     verdict.payload.hosts,
   );
+  if (provider.connect.kind === "none") {
+    return connectWithoutPersonStep(ctx, scope, provider, verdict.payload, deps, notifier);
+  }
   if (provider.connect.kind !== "form") {
     return refuse(
       "provider_not_supported",
-      `${verdict.payload.displayName} (${verdict.payload.vendor}) is covered by the ${provider.name} provider, which connects it with ${provider.connect.kind === "link" ? "a link the person opens" : "no person step"} rather than a credential entered in the console — and request_connection has no flow for that yet. Tell the person which provider covers the vendor; do not propose it under another.`,
+      `${verdict.payload.displayName} (${verdict.payload.vendor}) is covered by the ${provider.name} provider, which connects it with a link the person opens rather than a credential entered in the console — and request_connection has no flow for that yet. Tell the person which provider covers the vendor; do not propose it under another.`,
       { provider: provider.name, connect: provider.connect.kind },
     );
   }
@@ -386,7 +401,7 @@ export async function requestConnection(
     const existing = connections.find(
       (connection) =>
         scopeIds.includes(connection.id) &&
-        isConnectionUsable(connection) &&
+        isConnectionUsable(connection, deps.connection.providers) &&
         connection.vendor === payload.vendor &&
         connection.primaryHost === payload.primaryHost,
     );
@@ -432,6 +447,79 @@ export async function requestConnection(
 }
 
 /**
+ * A proposal a provider with no person step covers (ADR 0019; the gateway, GRA-58): the row is
+ * made under the provider with no credential and put in this agent's scope in one transaction, and
+ * the call answers `connected` at once — no ask, no link, nobody typed anything. The header of this
+ * file says why nobody is asked. Two refusals guard the person's decisions: a row the person
+ * revoked stays revoked until they reconnect it in the console, and a row the person has not given
+ * this agent — made for another agent, or taken out of this one's scope — is theirs to add in the
+ * scope picker; both answers name the console step, and neither is undone by asking again.
+ */
+async function connectWithoutPersonStep(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  provider: ConnectionProvider,
+  payload: Omit<ConnectionProposalPayload, "provider">,
+  deps: McpDeps,
+  notifier?: ToolListChangedNotifier,
+): Promise<ConnectionRequestOutcome> {
+  const principal = { personId: scope.personId };
+  const [scopeIds, connections] = await Promise.all([
+    getAgentScope(ctx, scope, deps.agent),
+    listConnections(ctx, principal, deps.connection),
+  ]);
+  const sameAccount = connections.filter(
+    (connection) =>
+      connection.vendor === payload.vendor && connection.primaryHost === payload.primaryHost,
+  );
+  // Already connected and in scope, under any provider: the rule every proposal answers to first.
+  const inScope = sameAccount.find(
+    (connection) =>
+      scopeIds.includes(connection.id) && isConnectionUsable(connection, deps.connection.providers),
+  );
+  if (inScope) return { isError: false, answer: connected(inScope, "already") };
+
+  const what = `${payload.displayName} (${payload.vendor})`;
+  const existing = sameAccount.find((connection) => connection.provider === provider.name);
+  if (existing) {
+    if (existing.revokedAt !== null) {
+      return refuse(
+        "connection_revoked",
+        `${what} was connected through the ${provider.name} provider and the person revoked it. Ask them to reconnect it in the console (Connections, then Reconnect on the connection); do not propose it under another provider.`,
+        { connectionId: existing.id, provider: provider.name },
+      );
+    }
+    return refuse(
+      "connection_not_in_scope",
+      `${what} is connected through the ${provider.name} provider but is not in this agent's scope. The person can add it in the console, on this agent's page under Scope.`,
+      { connectionId: existing.id, provider: provider.name },
+    );
+  }
+
+  const connection = await ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const created = await registerProviderConnection(
+      scoped,
+      principal,
+      provider,
+      {
+        vendor: payload.vendor,
+        displayName: payload.displayName,
+        primaryHost: payload.primaryHost,
+        hosts: payload.hosts,
+      },
+      deps.connection,
+    );
+    // The agent that asked gets it, and no other (ADR 0007), as the console's submit does.
+    await addConnectionToAgentScope(scoped, principal, scope.agentId, created.id, deps.agent);
+    return created;
+  });
+  // The connection's execute tool is now in this agent's list (ADR 0003).
+  notifier?.changed(scope.agentId);
+  return { isError: false, answer: connected(connection, "provider") };
+}
+
+/**
  * `request_credential`: ask the person to re-enter an existing connection's credential. The
  * connection must be in the agent's scope — the same rule as its execute tool, since a vendor 401
  * can only have reached an agent that could call the vendor. A revoked connection qualifies: the
@@ -461,13 +549,15 @@ export async function requestCredential(
   if (!connection) {
     return refuse("connection_not_found", `Connection ${connectionId} does not exist.`);
   }
-  // A relay provider's connection has no credential in Graft to re-enter (ADR 0019).
+  // A relay provider's connection has no credential in Graft to re-enter (ADR 0019) — judged by
+  // the provider, and by the row's scheme for a row whose provider this deployment no longer enables.
   const provider = providerNamed(deps.connection.providers, connection.provider);
-  if (provider && provider.connect.kind !== "form") {
+  if ((provider && provider.connect.kind !== "form") || !isAuthScheme(connection.scheme)) {
+    const name = provider?.name ?? connection.provider;
     return refuse(
       "credential_not_applicable",
-      `${connection.displayName} (${connection.vendor}) is connected through the ${provider.name} provider, which holds its credential; there is nothing to re-enter in the console. Tell the person to reconnect it through ${provider.name}.`,
-      { provider: provider.name },
+      `${connection.displayName} (${connection.vendor}) is connected through the ${name} provider, which holds its credential; there is nothing to re-enter in the console. Tell the person to reconnect it through ${name}.`,
+      { provider: name },
     );
   }
   const reason = typeof input.reason === "string" ? input.reason.trim().slice(0, 500) : "";
@@ -515,15 +605,27 @@ export async function requestCredential(
   });
 }
 
-function connected(connection: ConnectionOutput, how: "new" | "already" | "credential"): Connected {
+function connected(
+  connection: ConnectionOutput,
+  how: "new" | "already" | "credential" | "provider",
+): Connected {
   const executeTool = executeToolName(connection.id);
+  const what = `${connection.displayName} (${connection.vendor})`;
   const message =
     how === "credential"
-      ? `The credential for ${connection.displayName} (${connection.vendor}) was re-entered. Call the vendor again; nothing else changed.`
+      ? `The credential for ${what} was re-entered. Call the vendor again; nothing else changed.`
       : how === "already"
-        ? `${connection.displayName} (${connection.vendor}) is already connected and in your scope as ${executeTool}; no new ask was made.`
-        : `Connected. ${connection.displayName} (${connection.vendor}) is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`;
-  return { status: "connected", connectionId: connection.id, executeTool, message };
+        ? `${what} is already connected and in your scope as ${executeTool}; no new ask was made.`
+        : how === "provider"
+          ? `Connected with no person step. ${what} is reachable through the API gateway this deployment is configured with (the ${connection.provider} provider), which holds the credential and receives every call; nothing was entered by anyone, and the scheme you proposed is not used. It is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`
+          : `Connected. ${what} is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`;
+  return {
+    status: "connected",
+    connectionId: connection.id,
+    provider: connection.provider,
+    executeTool,
+    message,
+  };
 }
 
 /**

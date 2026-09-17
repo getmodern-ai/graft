@@ -105,9 +105,12 @@ export {
   type ProviderRelease,
   type RegisterConnectionInput,
   type RegisterConnectionWithCredentialInput,
+  type RegisterProviderConnectionInput,
   type RevokeConnectionResult,
+  reconnectConnection,
   registerConnection,
   registerConnectionWithCredential,
+  registerProviderConnection,
   revokeConnection,
   type StartedOAuthConsent,
   type StartOAuthConsentInput,
@@ -117,6 +120,13 @@ export {
   toConnectionOutput,
   toProxyConnection,
 } from "./connection/connection.service";
+export {
+  createGatewayProvider,
+  GATEWAY_PROVIDER,
+  type GatewayProviderConfig,
+  gatewayCovers,
+  gatewayCoversHost,
+} from "./connection/gateway-provider";
 export {
   GOOGLE_TESTING_MODE_NOTICE,
   hasGoogleHost,

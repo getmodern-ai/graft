@@ -11,7 +11,7 @@ import {
   listWorkingSet,
   promoteTool,
 } from "@graft/core";
-import { connectionScheme } from "@graft/db/schema/connection";
+import { AUTH_SCHEMES } from "@graft/proxy";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { type AcquireStarted, acquireStatusOf } from "../acquire/shapes";
@@ -405,7 +405,8 @@ const requestConnectionTool: MetaTool = {
       `Schemes: ${describeSchemes()}. ` +
       "For oauth_authorization_code (Gmail, Slack user tokens, Notion) propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
       "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the url to relay: give them the link exactly as returned, say what it is for, wait, and call again with the same proposal once they say it is done; the same link comes back until they have, then connected. " +
-      "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list; a connection to the same vendor and host already in your scope answers connected at once.",
+      "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list; a connection to the same vendor and host already in your scope answers connected at once. " +
+      "A vendor this deployment's API gateway covers connects with no person step: the call answers connected at once with provider gateway, the gateway holds the credential and the scheme you proposed is not used.",
     inputSchema: {
       type: "object",
       properties: {
@@ -432,7 +433,7 @@ const requestConnectionTool: MetaTool = {
         },
         scheme: {
           type: "string",
-          enum: [...connectionScheme],
+          enum: [...AUTH_SCHEMES],
           description: "The auth scheme, as the proxy names them.",
         },
         schemeConfig: {

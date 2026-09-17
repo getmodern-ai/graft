@@ -21,6 +21,16 @@ import type { UpstreamFetch } from "./types";
  *
  * TLS is unaffected: undici still passes the hostname as `servername`, so certificate validation
  * is against the vendor's name while the socket goes to the address this resolver vouched for.
+ *
+ * One exemption, by exact hostname (`unguardedHosts`): an upstream the *operator* configured in the
+ * environment — a company's API gateway a relay leg goes to (ADR 0019, GRA-58), which commonly sits
+ * on a private network. The guard exists because a vendor host is *proposed* by an agent's model
+ * and could be pointed at the metadata service; a URL the operator set beside the database URL
+ * carries the operator's own trust, and refusing it would make every private gateway unusable.
+ * The exemption never reaches a vendor host: the ladder judges the vendor host's literal before
+ * the fetch (`app.ts`), and the relay URL is the only one that names the gateway. One thing the
+ * guard cannot see for either leg: an IP literal, which Node connects to without resolving — the
+ * vendor's is refused by the ladder's literal check, and a relay URL's is the operator's to write.
  */
 
 /** The vendor name resolved to an address a credential must not be sent to. */
@@ -49,11 +59,17 @@ const defaultResolveAll: ResolveAll = (hostname, callback) => {
  * race address families itself (the default since Node 20) and expects an array back; otherwise it
  * expects one address and its family. Both are honoured.
  */
-export function guardedLookup(resolveAll: ResolveAll = defaultResolveAll): LookupFunction {
+export function guardedLookup(
+  resolveAll: ResolveAll = defaultResolveAll,
+  unguardedHosts: readonly string[] = [],
+): LookupFunction {
+  const unguarded = new Set(unguardedHosts.map((host) => host.trim().toLowerCase()));
   return (hostname, options, callback) => {
     resolveAll(hostname, (error, addresses) => {
       if (error) return callback(error, []);
-      const offender = addresses.find((entry) => !isPublicHost(entry.address));
+      const offender = unguarded.has(hostname.toLowerCase())
+        ? undefined
+        : addresses.find((entry) => !isPublicHost(entry.address));
       if (offender) return callback(new PrivateAddressError(hostname, offender.address), []);
       const first = addresses[0];
       if (!first) return callback(new PrivateAddressError(hostname, "(no address)"), []);
@@ -63,15 +79,25 @@ export function guardedLookup(resolveAll: ResolveAll = defaultResolveAll): Looku
   };
 }
 
+export type UpstreamFetchOptions = {
+  /** The DNS the guard reads; a test scripts one. */
+  resolveAll?: ResolveAll;
+  /**
+   * Hostnames the address guard does not apply to — the operator-configured upstreams a relay leg
+   * goes to, never a vendor host (the header of this file says why). Compared exactly, lower-case.
+   */
+  unguardedHosts?: readonly string[];
+};
+
 /**
  * undici's fetch over an `Agent` whose connector resolves through `guardedLookup`. undici's own
  * fetch rather than the global one, with a plain init rather than a `Request` instance, because
  * the two are different copies of the same library and a `Request` from one is an opaque object
  * to the other. `redirect: "manual"` always — the proxy decides about redirects, never the fetch.
  */
-export function createUpstreamFetch(resolveAll?: ResolveAll): UpstreamFetch {
+export function createUpstreamFetch(options: UpstreamFetchOptions = {}): UpstreamFetch {
   const agent = new Agent({
-    connect: { lookup: guardedLookup(resolveAll) },
+    connect: { lookup: guardedLookup(options.resolveAll, options.unguardedHosts) },
   });
 
   return async (request, { signal }) => {

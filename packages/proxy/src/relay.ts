@@ -1,3 +1,4 @@
+import { gatewayRelay } from "./gateway-relay";
 import type { RelayHeaderRules, RelayPlugin, RelayScheme } from "./types";
 
 /**
@@ -71,10 +72,10 @@ export function relayRulesOf(
 
 /**
  * The relay plugins this package implements, keyed by the scheme name a connection row carries —
- * the open catalogue GRA-58 (the gateway) and GRA-59 (Pipedream's Connect proxy) add to. A
- * connection's provider (`@graft/core`'s `ConnectionProvider`) picks one of these and hands it to
- * the proxy on `ProxyConnection.relay`; the proxy never looks a scheme up by name itself, which is
- * what lets a test drive the engine with a plugin of its own before any entry exists here.
- * `relay.test.ts` holds each entry's `scheme` to its key.
+ * the open catalogue: `gateway` is a company's API gateway (`gateway-relay.ts`, GRA-58), and
+ * Pipedream's Connect proxy is GRA-59's to add. A connection's provider (`@graft/core`'s
+ * `ConnectionProvider`) picks one of these and hands it to the proxy on `ProxyConnection.relay`;
+ * the proxy never looks a scheme up by name itself, which is what lets a test drive the engine
+ * with a plugin of its own. `relay.test.ts` holds each entry's `scheme` to its key.
  */
-export const RELAYS: Record<RelayScheme, RelayPlugin> = {};
+export const RELAYS: Record<RelayScheme, RelayPlugin> = { gateway: gatewayRelay };

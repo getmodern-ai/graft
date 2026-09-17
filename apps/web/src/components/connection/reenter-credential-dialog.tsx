@@ -23,8 +23,8 @@ import {
   validateCredentialDraft,
 } from "@/lib/connection-form";
 import {
-  type Connection,
   connectionKeys,
+  type KeyringConnection,
   setConnectionCredential,
   toolKeys,
 } from "@/lib/connection-queries";
@@ -43,7 +43,8 @@ export function ReenterCredentialDialog({
   open,
   onOpenChange,
 }: {
-  connection: Connection;
+  /** The keyring's alone: a relay provider's row has no credential here (ADR 0019). */
+  connection: KeyringConnection;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {

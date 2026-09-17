@@ -1,5 +1,9 @@
 import type { ConnectionScheme } from "@graft/db/schema/connection";
-import { SCHEME_CREDENTIAL_FIELDS, SCHEME_OPTIONAL_CREDENTIAL_FIELDS } from "@graft/proxy";
+import {
+  isAuthScheme,
+  SCHEME_CREDENTIAL_FIELDS,
+  SCHEME_OPTIONAL_CREDENTIAL_FIELDS,
+} from "@graft/proxy";
 
 /**
  * Redaction for what an `acquire` job records (ADR 0012: every vendor error body is stored with
@@ -180,10 +184,10 @@ export function secretFieldNamesFor(
   scheme: ConnectionScheme,
   schemeConfig: Record<string, unknown> | null | undefined,
 ): string[] {
-  const names = [
-    ...SCHEME_CREDENTIAL_FIELDS[scheme],
-    ...(SCHEME_OPTIONAL_CREDENTIAL_FIELDS[scheme] ?? []),
-  ];
+  // A relay scheme's credential is the upstream's, never in a trace (ADR 0019): no field names.
+  const names = isAuthScheme(scheme)
+    ? [...SCHEME_CREDENTIAL_FIELDS[scheme], ...(SCHEME_OPTIONAL_CREDENTIAL_FIELDS[scheme] ?? [])]
+    : [];
   for (const key of ["headerName", "queryParam"]) {
     const value = schemeConfig?.[key];
     if (typeof value === "string" && value.trim()) names.push(value.trim());

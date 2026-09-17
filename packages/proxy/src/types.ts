@@ -40,11 +40,11 @@ export type AuthScheme = (typeof AUTH_SCHEMES)[number];
  * only the fields that address the upstream. Kept apart from `AUTH_SCHEMES` on purpose: those are
  * the schemes a person may choose on the console's form, and a relay is never one of them — a
  * connection's *provider* decides that it relays (`ProxyConnection.relay`), and nothing a person
- * types can. Empty until the two relay providers land: GRA-58 adds the gateway's scheme, GRA-59
- * Pipedream's; the engine (`relay.ts`, `app.ts`) and its tests stand on a plugin defined in the
- * test, which is what lets those two start against a finished mechanism.
+ * types can. `gateway` is a company's API gateway fronting the vendor (`gateway-relay.ts`, GRA-58);
+ * the engine (`relay.ts`, `app.ts`) and its own tests still stand on a plugin defined in the test,
+ * so a scheme is added here by adding its plugin to `RELAYS` and nothing in the ladder changes.
  */
-export const RELAY_SCHEMES = [] as const;
+export const RELAY_SCHEMES = ["gateway"] as const;
 export type RelayScheme = (typeof RELAY_SCHEMES)[number];
 
 /** Every scheme name a connection row may carry: what it signs with, or what it relays through. */
@@ -182,6 +182,14 @@ export type ProxyRelay = {
    */
   obtain: () => Promise<CredentialFields>;
   rules?: Partial<RelayHeaderRules>;
+  /**
+   * Header names the relay sets for *this* connection beyond the ones the plugin names for every
+   * connection (`RelayPlugin.headerNames`), lower-cased — a gateway's deployment identity header,
+   * whose name is the deployment's configuration and reaches the plugin only as one of `fields`
+   * (GRA-58). The dry run lists them beside the plugin's so a write's preview says authentication
+   * to the upstream would have been present, without `obtain` ever running.
+   */
+  headerNames?: readonly string[];
 };
 
 /**
