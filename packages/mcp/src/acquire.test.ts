@@ -2,7 +2,6 @@ import { join } from "node:path";
 
 import { checkModule, type ModuleCheck } from "@graft/check";
 import type { AcquireJobRow } from "@graft/db/repo/acquire-job";
-import type { ProofRead } from "@graft/model";
 import {
   createScriptedModel,
   type ModelAdapter,
@@ -735,7 +734,7 @@ describe("a job that fails and tries again", () => {
   });
 
   it("tells the model a redirected proof read is about the host set: an undeclared host is named, and give_up carries it", async () => {
-    deps.model = createScriptedModel([
+    const scripted = createScriptedModel([
       write("goal", draft({ name: "list-moved", proofReads: ["/moved"] }), "Reading /moved."),
       {
         on: "proof",
@@ -746,6 +745,7 @@ describe("a job that fails and tries again", () => {
         },
       },
     ]);
+    deps.model = scripted;
     const a = await connect(TOKEN_A);
     try {
       const { status, jobId } = await acquireAndFinish(a, {
@@ -756,8 +756,9 @@ describe("a job that fails and tries again", () => {
       const failure = status.result as AcquireFailure;
       expect(failure.failure).toBe("model_gave_up");
       expect(failure.message).toContain("customer.demo.example");
-      // What the model was shown, as the job recorded it: the status, the host, and the remedy.
-      const read = (failure.lastDiagnostics as { proofReads: ProofRead[] }).proofReads[0];
+      // What the model was shown: the status, the host, and the remedy.
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
       expect(read).toMatchObject({
         path: "/moved",
         ok: false,
@@ -778,18 +779,20 @@ describe("a job that fails and tries again", () => {
   });
 
   it("describes a redirect to a declared host as the module's to follow through ctx.proxyBase", async () => {
-    deps.model = createScriptedModel([
+    const scripted = createScriptedModel([
       write("goal", draft({ name: "list-moved-home", proofReads: ["/moved-home"] }), "Reading."),
       { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
     ]);
+    deps.model = scripted;
     const a = await connect(TOKEN_A);
     try {
       const { status } = await acquireAndFinish(a, {
         connectionId: CONN_DEMO,
         goal: "List what moved home",
       });
-      const failure = status.result as AcquireFailure;
-      const read = (failure.lastDiagnostics as { proofReads: ProofRead[] }).proofReads[0];
+      expect(status.status).toBe("failed");
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
       expect(read).toMatchObject({ ok: false, status: 303, redirectTo: "files.demo.example" });
       expect(read?.error).toContain("a host this connection declares");
       expect(read?.error).toContain('ctx.proxyBase("files.demo.example")');
