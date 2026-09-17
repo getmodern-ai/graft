@@ -233,11 +233,50 @@ describe("the provider a registration names (ADR 0019)", () => {
     });
     const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
     expect(result?.connection.provider).toBe("broker");
+    expect(result?.providerRelease).toEqual({ provider: "broker", released: true });
     expect(broker.revoked).toEqual(["conn_1"]);
 
     const keyringDeps = fakeDeps({ providers: [broker, keyringProvider] });
-    await revokeConnection(ctx, PRINCIPAL, "conn_1", keyringDeps);
+    const keyringResult = await revokeConnection(ctx, PRINCIPAL, "conn_1", keyringDeps);
+    expect(keyringResult?.providerRelease).toEqual({ provider: "keyring", released: true });
     expect(broker.revoked).toEqual(["conn_1"]);
+  });
+
+  /** The local revoke committed before the provider was asked; its failure is a report, not a throw. */
+  it("reports a provider release that failed on the result, by class name, and never fails the revoke", async () => {
+    class BrokerDown extends Error {
+      constructor() {
+        super("account 42 at broker.example: connection refused, token sk_live_secret");
+        this.name = "BrokerDown";
+      }
+    }
+    const broker: ConnectionProvider = {
+      ...linkProvider(),
+      revoke: async () => {
+        throw new BrokerDown();
+      },
+    };
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      revokeConnection: vi.fn(async () => ({ ...row, provider: "broker", revokedAt: NOW })),
+    });
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+    expect(result?.connection.revokedAt).toEqual(NOW);
+    expect(result?.approvalsDeleted).toBe(2);
+    expect(result?.providerRelease).toEqual({
+      provider: "broker",
+      released: false,
+      failure: "BrokerDown",
+    });
+    expect(JSON.stringify(result)).not.toContain("sk_live_secret");
+  });
+
+  it("a row under a provider the deployment no longer enables revokes with nothing to release", async () => {
+    const deps = fakeDeps({
+      revokeConnection: vi.fn(async () => ({ ...row, provider: "gone", revokedAt: NOW })),
+    });
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+    expect(result?.providerRelease).toEqual({ provider: "gone", released: true });
   });
 
   it("the public shape carries the provider's name", () => {

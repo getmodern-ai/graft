@@ -792,6 +792,24 @@ describe("the connection handoff's submits (GRA-28)", () => {
     credential: { apiKey: "sk_live_1" },
   };
 
+  /** The person edits the proposal, never its routing (ADR 0019): the row is the ask's provider's. */
+  it("binds the row to the provider the ask was routed to and refuses a body naming another", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValue({
+      ...connectionAction,
+      payload: { ...connectionAction.payload, provider: "keyring" },
+    });
+    const refused = await app.request(
+      "/api/pending-actions/pa_c/connection",
+      json({ ...submission, provider: "broker" }),
+    );
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      message: expect.stringContaining("routed to the keyring provider"),
+    });
+    expect(deps.connection.insertConnection).not.toHaveBeenCalled();
+  });
+
   it("creates the connection as edited, with its credential, gives it to the requesting agent, records the answer, and echoes nothing of the secret", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
     vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce(
@@ -822,6 +840,8 @@ describe("the connection handoff's submits (GRA-28)", () => {
       fakeDb,
       expect.objectContaining({
         id: "conn_new",
+        // The provider the ask was routed to — the keyring, for an ask recorded without one (ADR 0019).
+        provider: "keyring",
         vendor: "acme",
         displayName: "Acme Orders (production)",
         primaryHost: "https://api.acme.example/v1",

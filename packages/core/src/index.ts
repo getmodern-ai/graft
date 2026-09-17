@@ -102,6 +102,7 @@ export {
   isConnectionUsable,
   listConnections,
   markOAuthConsentRequired,
+  type ProviderRelease,
   type RegisterConnectionInput,
   type RegisterConnectionWithCredentialInput,
   type RevokeConnectionResult,

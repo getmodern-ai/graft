@@ -538,12 +538,26 @@ export async function markOAuthConsentRequired(
   return toConnectionOutput(updated);
 }
 
+/**
+ * Whether the row's provider released what it held for the connection outside Graft (ADR 0019).
+ * `released` for the keyring always — it holds nothing — and for a provider whose release answered.
+ * A release that threw is reported here and never as the revoke's failure: the row, the approvals
+ * and the asks were revoked in the transaction before the provider was asked, and a 500 would say
+ * otherwise. `failure` is the thrown error's class name, never its message — the provider's
+ * messages are its own and may carry anything (the rule `@graft/proxy`'s `failure.ts` states for a
+ * host-injected dependency). Revoking the connection again re-runs the release, which is the retry.
+ */
+export type ProviderRelease =
+  | { provider: string; released: true }
+  | { provider: string; released: false; failure: string };
+
 export type RevokeConnectionResult = {
   connection: ConnectionOutput;
   approvalsDeleted: number;
   buildApprovalsDeleted: number;
   /** Open asks about the connection closed with it — a per-call yes among them (GRA-28). */
   pendingActionsExpired: number;
+  providerRelease: ProviderRelease;
 };
 
 /**
@@ -559,8 +573,11 @@ export type RevokeConnectionResult = {
  *
  * Then the row's provider releases what it holds for the connection outside Graft — a broker's
  * account, a gateway's registration (ADR 0019) — after the transaction, since that is a call to
- * another party and not a row; the revoke stands whatever it answers, and a provider the deployment
- * no longer enables has nothing to be asked. The keyring holds nothing and releases nothing.
+ * another party and not a row. The revoke stands whatever it answers: a release that throws is
+ * reported on the result (`providerRelease`) rather than thrown, because everything local has
+ * already been revoked and a failure answer would send the caller to retry a revoke that happened.
+ * Revoking again re-runs the release, so the row's page is the retry path. A provider the
+ * deployment no longer enables has nothing to be asked; the keyring holds nothing and releases nothing.
  */
 export async function revokeConnection(
   ctx: ServiceContext,
@@ -591,6 +608,22 @@ export async function revokeConnection(
     };
   });
   if (!revoked) return null;
-  await providerNamed(deps.providers, revoked.row.provider)?.revoke(revoked.row);
-  return revoked.result;
+  return { ...revoked.result, providerRelease: await releaseFromProvider(deps, revoked.row) };
+}
+
+/** The provider's release, as a report and never as a throw — the local revoke has committed. */
+async function releaseFromProvider(
+  deps: ConnectionDeps,
+  row: ConnectionRow,
+): Promise<ProviderRelease> {
+  const provider = providerNamed(deps.providers, row.provider);
+  if (!provider) return { provider: row.provider, released: true };
+  try {
+    await provider.revoke(row);
+    return { provider: provider.name, released: true };
+  } catch (error) {
+    const failure =
+      error instanceof Error ? error.name || "Error" : error === null ? "null" : typeof error;
+    return { provider: provider.name, released: false, failure };
+  }
 }
