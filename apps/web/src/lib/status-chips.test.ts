@@ -11,6 +11,7 @@ import {
   connectionStatusChips,
   DRY_RUN_CHIP,
   MODEL_KEY_STATUS_CHIP,
+  NO_PASSING_VERSION_CHIP,
   type StatusChip,
   TOOL_ANNOTATION_CHIP,
   toolAnnotationChip,
@@ -24,6 +25,7 @@ const EVERY_CHIP: StatusChip[] = [
   AWAITING_RECONNECTION_CHIP,
   ...Object.values(CALL_OUTCOME_CHIP),
   DRY_RUN_CHIP,
+  NO_PASSING_VERSION_CHIP,
   ...Object.values(APPROVAL_DECISION_CHIP),
   ...Object.values(WORKING_SET_CHANGE_CHIP),
   ...Object.values(MODEL_KEY_STATUS_CHIP),
@@ -63,6 +65,7 @@ describe("status chips", () => {
     expect(CONNECTION_STATUS_CHIP.awaiting_consent.variant).toBe("outline");
     expect(AWAITING_CLIENT_SECRET_CHIP.variant).toBe("outline");
     expect(AWAITING_RECONNECTION_CHIP.variant).toBe("outline");
+    expect(NO_PASSING_VERSION_CHIP.variant).toBe("outline");
     expect(MODEL_KEY_STATUS_CHIP.unset.variant).toBe("outline");
   });
 
