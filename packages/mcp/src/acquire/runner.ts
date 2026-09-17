@@ -39,7 +39,14 @@ export type AcquireRunnerOptions = {
 
 export type AcquireRunnerEvent =
   | { kind: "claimed"; jobId: string; agentId: string; resumed: boolean }
-  | { kind: "finished"; jobId: string; agentId: string; status: AcquireJobRow["status"] | "gone" }
+  | {
+      kind: "finished";
+      jobId: string;
+      agentId: string;
+      status: AcquireJobRow["status"] | "gone";
+      /** A failed job's `failure: message`, so the process log names the cause beside the status. */
+      failure?: string;
+    }
   | { kind: "failed"; jobId: string; agentId: string; error: string };
 
 export type AcquireRunner = {
@@ -91,6 +98,7 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
             jobId: job.id,
             agentId: job.agentId,
             status: row?.status ?? "gone",
+            ...(row?.status === "failed" ? { failure: describeFailure(row.result) } : {}),
           });
         },
         (error: unknown) => {
@@ -170,4 +178,11 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
     },
     running: () => running.size,
   };
+}
+
+/** `failure: message` from a failed job's result — the shape `shapes.ts`'s `AcquireFailure` writes. */
+function describeFailure(result: AcquireJobRow["result"]): string {
+  const failure = typeof result?.failure === "string" ? result.failure : "failed";
+  const message = typeof result?.message === "string" ? result.message : "";
+  return message ? `${failure}: ${message}` : failure;
 }

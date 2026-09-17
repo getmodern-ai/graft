@@ -28,7 +28,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { type AcquireRunner, createAcquireRunner } from "./acquire/runner";
+import { type AcquireRunner, type AcquireRunnerEvent, createAcquireRunner } from "./acquire/runner";
 import type { AcquireFailure, AcquireStatus, AcquireSuccess } from "./acquire/shapes";
 import type { McpDeps } from "./deps";
 import { createInFlightRegistry } from "./in-flight";
@@ -126,6 +126,7 @@ const write = (on: ModelSituationKind, module: ModuleDraft, note: string): Scrip
 });
 
 let sandbox: FakeSandboxBackend;
+const runnerEvents: AcquireRunnerEvent[] = [];
 let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
@@ -249,6 +250,7 @@ beforeAll(async () => {
     pollIntervalSeconds: 3600,
     staleAfterSeconds: 60,
     heartbeatMs: 200,
+    onEvent: (event) => runnerEvents.push(event),
   });
   deps.acquireRunner = runner;
 }, 30_000);
@@ -656,6 +658,62 @@ describe("a job that fails and tries again", () => {
       expect(rowsOf(jobId).job.tokenSpend).toBe(1_100);
       expect(rowsOf(jobId).attempts).toHaveLength(0);
     } finally {
+      await a.close();
+    }
+  });
+
+  it("ends sandbox_unavailable with the backing's own sentence when the backing throws a plain object, and the runner's event names it", async () => {
+    // What a provider SDK throws: the vendor API's error body, not an Error. `String` of it is
+    // `[object Object]`, which is all one hosted job could report of a refused drive call.
+    // The body echoes a credential too, as a vendor's can: the result must carry the sentence and
+    // not the value — the final result is stored and logged without a repo's redaction (job.ts).
+    const refusal = {
+      code: 403,
+      error:
+        "Drives feature is not enabled for this workspace; authorization: Bearer sk-live-0123456789abcdef",
+    };
+    const ensure = sandbox.ensure;
+    sandbox.ensure = async () => {
+      throw refusal;
+    };
+    deps.model = createScriptedModel([write("goal", draft(), "Never reached.")]);
+    const a = await connect(TOKEN_A);
+    try {
+      const before = runnerEvents.length;
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Open a sandbox that the provider refuses",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("sandbox_unavailable");
+      expect(failure.message).toBe(
+        "The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
+      );
+      expect(JSON.stringify(failure)).not.toContain("[object Object]");
+      expect(JSON.stringify(failure)).not.toContain("sk-live-");
+      expect(rowsOf(jobId).job.result).not.toMatchObject({
+        message: expect.stringContaining("sk-live-"),
+      });
+      expect(
+        rowsOf(jobId).attempts.map((r) => ({ outcome: r.outcome, diagnosis: r.diagnosis })),
+      ).toEqual([
+        {
+          outcome: "abandoned",
+          diagnosis:
+            "The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
+        },
+      ]);
+      expect(runnerEvents.slice(before)).toContainEqual({
+        kind: "finished",
+        jobId,
+        agentId: AGENT_A,
+        status: "failed",
+        failure:
+          "sandbox_unavailable: The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
+      });
+    } finally {
+      sandbox.ensure = ensure;
       await a.close();
     }
   });
