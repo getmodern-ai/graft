@@ -102,6 +102,14 @@ describe("scheme plugins", () => {
     );
   });
 
+  it("none leaves the request exactly as it came: no header, no query change", () => {
+    const applied = apply("none", {}, {});
+    expect([...applied.headers.keys()]).toEqual([]);
+    expect(applied.url.href).toBe(target().url.href);
+    expect(SCHEMES.none.headerNames({})).toEqual([]);
+    expect(SCHEMES.none.scrubRedirect).toBeUndefined();
+  });
+
   it("names the credential field that is missing", () => {
     expect(() => apply("basic", { username: "u" })).toThrow(MissingCredentialFieldError);
     expect(() => apply("bearer", { token: "" })).toThrow(/token/);
@@ -117,6 +125,7 @@ describe("scheme plugins", () => {
       oauth_authorization_code: ["clientSecret"],
       unleashed_hmac: ["apiId", "apiKey"],
       snowflake_keypair_jwt: ["privateKey"],
+      none: [],
     });
     expect(SCHEME_OPTIONAL_CREDENTIAL_FIELDS).toEqual({
       snowflake_keypair_jwt: ["privateKeyPassphrase"],
@@ -239,6 +248,7 @@ describe("scheme plugins", () => {
       oauth_authorization_code: { accessToken: "tok" },
       unleashed_hmac: { apiId: "i", apiKey: "k" },
       snowflake_keypair_jwt: { token: "jwt", signature: "sig" },
+      none: {},
     };
 
     for (const scheme of AUTH_SCHEMES) {

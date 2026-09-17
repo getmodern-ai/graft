@@ -175,6 +175,17 @@ function cacheLifetimeMs(response: TokenResponse): number {
 
 export const SCHEMES: Record<AuthScheme, SchemePlugin> = {
   /**
+   * Signs nothing (GRA-66): the request leaves as the module made it, less the placeholder the
+   * proxy strips from every scheme's positions. Nothing to write to a URL, so nothing to scrub.
+   */
+  none: {
+    apply() {},
+    headerNames() {
+      return [];
+    },
+  },
+
+  /**
    * `X-Api-Key: <key>`, or `<Header>: <prefix> <key>` when the vendor wants a word in front —
    * `Token`, `SSWS`, `Api-Key`. The prefix and the key are joined by one space; a vendor whose
    * format is anything else is a `bearer` connection or a new scheme, not a prefix.

@@ -8,6 +8,7 @@ import type { Principal } from "../tenancy";
 import type { ConnectionDeps } from "./connection.deps";
 import {
   type HostSetRefusal,
+  takesCredential,
   validateCredentialFields,
   validateDisplayName,
   validateHostSet,
@@ -121,7 +122,8 @@ export function isConnectionUsable(
   const provider = providers.find((candidate) => candidate.name === connection.provider);
   if (!provider) return false;
   if (provider.connect.kind !== "form") return true;
-  if (connection.credentialSetAt === null) return false;
+  // A `none` connection holds no credential and is usable from registration (GRA-66).
+  if (connection.credentialSetAt === null && takesCredential(connection.scheme)) return false;
   return connection.oauth === null || connection.oauth.status === "connected";
 }
 
@@ -292,6 +294,10 @@ export async function registerConnectionWithCredential(
   const { credential, ...registration } = input;
   validateRegistration(registration, deps);
   refuse(validateCredentialFields(registration.scheme, credential));
+  // A `none` connection has nothing to encrypt: the row alone is the connected connection (GRA-66).
+  if (!takesCredential(registration.scheme)) {
+    return registerConnection(ctx, principal, registration, deps);
+  }
   return ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
     const registered = await registerConnection(scoped, principal, registration, deps);
@@ -609,6 +615,12 @@ export async function setConnectionCredential(
   );
   // A relay provider's connection has no credential here to enter or re-enter (ADR 0019).
   formProviderNamed(deps, row.provider);
+  if (!takesCredential(row.scheme)) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `A ${row.scheme} connection sends no credential; there is nothing to enter`,
+    );
+  }
   refuse(validateCredentialFields(row.scheme, fields));
   const ciphertext = await deps.vault.encrypt(fields as Record<string, string>, {
     personId: principal.personId,

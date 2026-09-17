@@ -217,7 +217,8 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         </CardTitle>
         <CardDescription>{description}</CardDescription>
         <CardAction className="flex gap-2">
-          {keyring ? (
+          {/* A `none` connection has no credential to enter or re-enter (GRA-66); revoked, Reconnect still stands. */}
+          {keyring && (connection.scheme !== "none" || status === "revoked") ? (
             <Button
               variant={usable ? "outline" : "default"}
               size="sm"

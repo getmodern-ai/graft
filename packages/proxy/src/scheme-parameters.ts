@@ -45,6 +45,7 @@ export const SCHEME_PARAMETERS: Record<AuthScheme, SchemeParameterRule> = {
   },
   unleashed_hmac: { required: [], optional: [] },
   snowflake_keypair_jwt: { required: ["account", "user"], optional: [] },
+  none: { required: [], optional: [] },
 };
 
 /** Every parameter a registered connection of the scheme must carry — the agent's and the person's. */

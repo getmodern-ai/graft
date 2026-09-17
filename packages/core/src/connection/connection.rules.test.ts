@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  takesCredential,
   validateCredentialFields,
   validateHostSet,
   validateIssuedCredentialFields,
@@ -170,6 +171,18 @@ describe("validateCredentialFields", () => {
         privateKeyPassphrase: "p",
       }),
     ).toBeNull();
+  });
+
+  it("none takes an empty credential and nothing else, and is the one signing scheme that takes no credential", () => {
+    expect(validateCredentialFields("none", {})).toBeNull();
+    expect(validateCredentialFields("none", { apiKey: "made-up" })).toBe(
+      "The none scheme sends no credential and takes no fields — not apiKey",
+    );
+    expect(takesCredential("none")).toBe(false);
+    expect(takesCredential("gateway")).toBe(false);
+    for (const scheme of ["api_key_header", "bearer", "basic", "snowflake_keypair_jwt"] as const) {
+      expect(takesCredential(scheme), scheme).toBe(true);
+    }
   });
 
   it("refuses an empty or non-string value without saying what a key looks like", () => {

@@ -42,6 +42,7 @@ export const SCHEME_LABELS: Record<AuthScheme, string> = {
   oauth_authorization_code: "OAuth consent (a client you register)",
   unleashed_hmac: "Unleashed HMAC (API id and key)",
   snowflake_keypair_jwt: "Snowflake key-pair JWT",
+  none: "No credential (public API)",
 };
 
 type FieldPresentation = { label: string; hint?: string; multiline?: boolean };

@@ -107,9 +107,13 @@ One module per question the proxy answers, so a change to one is made once:
 
 ## Scheme plugins
 
-Seven schemes: `api_key_header`, `api_key_query`, `bearer`, `basic`, `oauth2_client_credentials`,
-`unleashed_hmac` and `snowflake_keypair_jwt`. Authorization-code OAuth with a person-registered
-client is GRA-30's.
+Eight schemes: `api_key_header`, `api_key_query`, `bearer`, `basic`, `oauth2_client_credentials`,
+`unleashed_hmac`, `snowflake_keypair_jwt` and `none`. Authorization-code OAuth with a person-registered
+client is GRA-30's. `none` signs nothing (GRA-66): a public API is called as the module made the
+request, with no credential to enter and none stored, and everything else the proxy does — the host
+set, the public-address rule, the dry run's interception, the redirect handed back — applies
+unchanged. It exists because a placeholder credential is not neutral: Open-Meteo answers any request
+carrying an `apikey` with a 303 to its customer host, whatever the value.
 
 Two derive their wire credential. `oauth2_client_credentials` holds a client id and secret and buys
 an access token from `schemeConfig.tokenUrl` (client authenticated per `schemeConfig.clientAuth`,

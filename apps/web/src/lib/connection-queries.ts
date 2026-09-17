@@ -89,9 +89,12 @@ export function toolsOfConnection(tools: readonly Tool[], connection: Connection
   return tools.filter((tool) => tool.vendor === connection.vendor);
 }
 
-/** A connection with no credential — never entered, or revoked — has tools that cannot run yet. */
+/**
+ * A connection with no credential — never entered, or revoked — has tools that cannot run yet. A
+ * `none` connection never has one and is connected from registration (GRA-66).
+ */
 export function isAwaitingCredential(connection: Connection): boolean {
-  return connection.credentialSetAt === null;
+  return connection.credentialSetAt === null && connection.scheme !== "none";
 }
 
 /** A keyring connection's scheme is one the form enters a credential for — never a relay scheme (ADR 0019). */

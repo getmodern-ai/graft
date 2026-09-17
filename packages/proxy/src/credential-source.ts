@@ -102,7 +102,9 @@ export function credentialSource(
     return refuse(409, "connection_not_ready", "The connection has no scheme or primary host");
   }
   const ciphertext = connection.credentialCiphertext;
-  if (!ciphertext) {
+  // `none` stores no credential and its plugin reads none (GRA-66); every other scheme's row is not
+  // ready until the person has entered one.
+  if (!ciphertext && connection.authScheme !== "none") {
     return refuse(409, "connection_not_ready", "The connection has no credential yet");
   }
   return {
@@ -112,11 +114,13 @@ export function credentialSource(
     primaryHost: connection.primaryHost,
     hosts: hostSetOf(connection),
     schemeConfig: connection.schemeConfig ?? {},
-    obtain: () =>
-      deps.decryptCredential(ciphertext, {
-        personId: connection.personId,
-        connectionId: connection.id,
-      }),
+    obtain: ciphertext
+      ? () =>
+          deps.decryptCredential(ciphertext, {
+            personId: connection.personId,
+            connectionId: connection.id,
+          })
+      : async () => ({}),
     unavailable: (error, requestBytes) =>
       refuse(500, "credential_unreadable", "The stored credential could not be decrypted", {
         requestBytes,
