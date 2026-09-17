@@ -721,6 +721,58 @@ describe("a job that fails and tries again", () => {
     }
   }, 30_000);
 
+  it("a version that passes after a later one was activated leaves the pointer there, and the job still succeeds naming the current version", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ name: "list-raced" }), "Drafted list-raced around GET /items."),
+    ]);
+    // Another job's pass lands between this job's dry run and its activation: as the report is
+    // recorded on v1, v2 appears on the tool and becomes current.
+    const record = deps.tool.recordToolVersionDryRun;
+    let racedVersionId: string | null = null;
+    deps.tool.recordToolVersionDryRun = async (db, personId, versionId, outcome) => {
+      const stamped = await record(db, personId, versionId, outcome);
+      const tool = store.tools.get(stamped?.toolId ?? "");
+      if (tool?.name === "list-raced" && racedVersionId === null) {
+        const v2 = await deps.tool.insertToolVersion(db, {
+          id: "list_raced_v2",
+          toolId: tool.id,
+          versionNumber: 2,
+          path: stamped?.path ?? "",
+          sourceHash: "raced",
+          checkOutput: { refusals: [], advice: [] },
+        });
+        await deps.tool.setCurrentToolVersion(db, personId, tool.id, v2.id);
+        racedVersionId = v2.id;
+      }
+      return stamped;
+    };
+    const a = await connect(TOKEN_A);
+    const raced = authoredToolName("demo", "list-raced");
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List, racing another job",
+      });
+      expect(status.status).toBe("succeeded");
+      expect(status.result).toMatchObject({ tool: raced, version: 2 });
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => row.outcome)).toEqual(["passed"]);
+      const v1 = store.versions.get(attempts[0]?.versionId ?? "");
+      expect(v1).toMatchObject({ versionNumber: 1, dryRunOutcome: { passed: true } });
+      const tool = store.tools.get(v1?.toolId ?? "");
+      expect(tool?.currentVersionId).toBe(racedVersionId);
+      expect(store.isPromoted(AGENT_A, tool?.id ?? "")).toBe(true);
+      expect(await a.names()).toContain(raced);
+      expect(traces.filter((row) => row.kind === "publish").map((row) => row.text)).toContainEqual(
+        expect.stringContaining("v2 is already current"),
+      );
+      expect(status.progress.at(-1)).toContain("so demo__list-raced runs as v2");
+    } finally {
+      deps.tool.recordToolVersionDryRun = record;
+      await a.close();
+    }
+  }, 30_000);
+
   it("a later job over the same vendor and name publishes v2 and the pointer lands on it", async () => {
     deps.acquire = { maxAttempts: 1, tokenCeiling: 400_000 };
     deps.model = createScriptedModel([

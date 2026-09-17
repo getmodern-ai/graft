@@ -240,6 +240,13 @@ export async function updateToolDefinition(
  * without activating, dry-runs the version by id and calls this on the pass; `publishToolVersion`
  * below does it at publish for the by-hand path, where the agent decides. `NOT_FOUND` when the
  * version is not the tool's, or the tool not the person's — `setCurrentToolVersion` moves nothing.
+ *
+ * **The pointer only moves forward.** Two jobs over one tool can each publish a version and pass;
+ * were the older one to activate after the newer, the tool would run older code under the newer
+ * job's word that it works. So a candidate whose number is below the current version's is refused
+ * as `CONFLICT`, inside the transaction, with both numbers in the message and in `details`
+ * (`currentVersionNumber`, `versionNumber`); the same number — activating what is already current
+ * — passes, and so does any tool with no current version.
  */
 export async function activateToolVersion(
   ctx: ServiceContext,
@@ -251,6 +258,31 @@ export async function activateToolVersion(
 ): Promise<AuthoredToolRow> {
   return ctx.db.transaction(async (tx) => {
     const scoped = { db: tx };
+    const candidate = orNotFound(
+      await deps.findToolVersion(tx, principal.personId, versionId),
+      "Tool version not found",
+    );
+    if (candidate.toolId !== toolId) throw new ServiceError("NOT_FOUND", "Tool version not found");
+    const tool = orNotFound(
+      await deps.findAuthoredToolById(tx, principal.personId, toolId),
+      "Tool not found",
+    );
+    const current = tool.currentVersionId
+      ? await deps.findToolVersion(tx, principal.personId, tool.currentVersionId)
+      : null;
+    if (current && current.versionNumber > candidate.versionNumber) {
+      throw new ServiceError(
+        "CONFLICT",
+        `v${current.versionNumber} of ${tool.vendor}/${tool.name} is already current, so v${candidate.versionNumber} cannot become current: the pointer only moves forward`,
+        {
+          details: {
+            currentVersionId: current.id,
+            currentVersionNumber: current.versionNumber,
+            versionNumber: candidate.versionNumber,
+          },
+        },
+      );
+    }
     await updateToolDefinition(scoped, principal, toolId, definition, deps);
     return orNotFound(
       await moveToolPointer(scoped, principal, toolId, versionId, deps),

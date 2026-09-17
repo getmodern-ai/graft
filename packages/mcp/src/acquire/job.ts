@@ -895,20 +895,40 @@ class AcquireLoop {
     }
 
     // The pass is what moves the pointer: the definition becomes this draft's and the tool runs as
-    // this version, in one transaction, before the attempt closes and the tool is promoted.
-    await activateToolVersion(
-      this.ctx,
-      this.principal,
-      outcome.tool.id,
-      version.id,
-      {
-        description: draft.description,
-        inputSchema: draft.inputSchema,
-        annotations: outcome.annotations,
-        defaultConnectionId: connectionId,
-      },
-      this.deps.tool,
-    );
+    // this version, in one transaction, before the attempt closes and the tool is promoted. The
+    // pointer only moves forward (`activateToolVersion`): when another job over the same tool has
+    // activated a later version meanwhile, this one passed but is not current — the tool works, as
+    // the newer version, so the attempt still closes `passed`, the tool is still promoted, and the
+    // result names the version that is current.
+    let currentVersion = version.versionNumber;
+    try {
+      await activateToolVersion(
+        this.ctx,
+        this.principal,
+        outcome.tool.id,
+        version.id,
+        {
+          description: draft.description,
+          inputSchema: draft.inputSchema,
+          annotations: outcome.annotations,
+          defaultConnectionId: connectionId,
+        },
+        this.deps.tool,
+      );
+    } catch (error) {
+      if (!(error instanceof ServiceError) || error.code !== "CONFLICT") throw error;
+      const later = error.details?.currentVersionNumber;
+      if (typeof later !== "number") throw error;
+      currentVersion = later;
+      await this.trace(
+        "publish",
+        `${wire} v${version.versionNumber} passed its dry run but v${later} is already current — a later job activated it — so the pointer stays there.`,
+        {
+          attempt: attempt.number,
+          data: { versionId: version.id, version: version.versionNumber, currentVersion: later },
+        },
+      );
+    }
     await this.closeOpen("passed", verdict, { versionId: version.id });
     const promoted = await promotePublished(
       this.ctx,
@@ -917,14 +937,18 @@ class AcquireLoop {
       this.deps,
       this.deps.notifier,
     );
+    const runsAs =
+      currentVersion === version.versionNumber
+        ? `${wire} now runs as v${version.versionNumber}`
+        : `v${version.versionNumber} is not current — a later job made v${currentVersion} current first — so ${wire} runs as v${currentVersion}`;
     await this.progress(
-      `Attempt ${attempt.number}: the dry run passed. ${wire} now runs as v${version.versionNumber} and is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
+      `Attempt ${attempt.number}: the dry run passed. ${runsAs} and is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
     );
     return {
       success: {
         tool: wire,
         toolId: outcome.tool.id,
-        version: version.versionNumber,
+        version: currentVersion,
         annotations: {
           readOnlyHint: outcome.annotations.readOnly,
           destructiveHint: outcome.annotations.destructive,
