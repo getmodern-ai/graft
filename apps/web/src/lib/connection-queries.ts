@@ -3,7 +3,7 @@ import { takesCredential } from "@graft/core/connection/connection.rules";
 import { GATEWAY_PROVIDER } from "@graft/core/connection/gateway-provider";
 import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
 import type { AuthScheme } from "@graft/proxy/types";
-import type { ConnectionCallOutput } from "@graft/server/api";
+import type { ConnectionCallOutput, ConnectionSubmitBody } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
 import type { Tool } from "./agent-queries";
@@ -182,13 +182,11 @@ export function setConnectionCredential(connectionId: string, credential: Record
 }
 
 /**
- * The submit for an agent's `connection` ask: the proposal as edited, and the secret. For an OAuth
- * consent the ask comes back still open — the callback answers it once the tokens are stored.
+ * The submit for an agent's `connection` ask: the proposal as edited, the secret, and whether the
+ * asking agent may build against the connection (GRA-75). For an OAuth consent the ask comes back
+ * still open — the callback answers it once the tokens are stored.
  */
-export function submitConnectionProposal(
-  actionId: string,
-  input: ConnectionRegistration & { credential: Record<string, string> },
-) {
+export function submitConnectionProposal(actionId: string, input: ConnectionSubmitBody) {
   return api<StoredCredential & { pendingAction: PendingAction }>(
     `/pending-actions/${encodeURIComponent(actionId)}/connection`,
     { method: "POST", body: input },

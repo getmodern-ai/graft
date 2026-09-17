@@ -1,4 +1,5 @@
 import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
+import type { ConnectionSubmitBody } from "@graft/server/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
@@ -9,13 +10,13 @@ import { ConsentStatus, OAuthClientNotice } from "@/components/connection/oauth-
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
 import { OpenInNewIcon } from "@/components/icons";
 import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
+import { BuildApprovalItem } from "@/components/pending/build-approval-item";
 import { Badge } from "@/components/ui/badge";
 import { FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError } from "@/lib/api";
 import {
   type ConnectionDraft,
-  type ConnectionRegistration,
   type DraftErrors,
   draftFromProposal,
   hostsOf,
@@ -44,6 +45,11 @@ import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
  * deployment makes is the keyring's and draws exactly this form; an ask an older deployment recorded
  * carries no provider and reads as the keyring's. A provider that connects with a link gets its own
  * card beside this one (GRA-59); this card shows the name so a person can see which flow they are in.
+ *
+ * The form's last control is the build approval, on by default (GRA-75; ADR 0008, amendment of
+ * 2026-09-18): Connect posts it with the proposal, and the submit records `acquire`'s approval for
+ * the asking agent in the transaction that makes the connection, so the agent's first `acquire`
+ * needs no second link. Unticked, the agent asks as it always did.
  */
 export function ConnectionAskCard({
   ask,
@@ -56,6 +62,8 @@ export function ConnectionAskCard({
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<ConnectionDraft>(() => draftFromProposal(payload));
   const [errors, setErrors] = useState<DraftErrors>({});
+  const [approveBuild, setApproveBuild] = useState(true);
+  const agentName = action.agent?.name ?? "the agent";
   const decline = useAnswerAsk(action, onAnswered);
   const consent = useOAuthConsent({
     onConnected: () => {
@@ -67,9 +75,8 @@ export function ConnectionAskCard({
   });
 
   const connect = useMutation({
-    mutationFn: (value: ConnectionRegistration & { credential: Record<string, string> }) =>
-      submitConnectionProposal(action.id, value),
-    onSuccess: ({ connection, authorizeUrl }) => {
+    mutationFn: (value: ConnectionSubmitBody) => submitConnectionProposal(action.id, value),
+    onSuccess: ({ connection, authorizeUrl }, submitted) => {
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
@@ -82,7 +89,7 @@ export function ConnectionAskCard({
         return;
       }
       toast.success(`${connection.displayName} is connected`, {
-        description: `In ${action.agent?.name ?? "the agent"}'s scope; its waiting call answers connected. Other agents get it when you add it to theirs.`,
+        description: `In ${agentName}'s scope${submitted.approveBuild ? ", allowed to build tools against it" : ""}; its waiting call answers connected. Other agents get it when you add it to theirs.`,
       });
       onAnswered?.();
     },
@@ -106,7 +113,7 @@ export function ConnectionAskCard({
       return;
     }
     setErrors({});
-    connect.mutate(verdict.value);
+    connect.mutate({ ...verdict.value, approveBuild });
   };
 
   const open = isOpen(action);
@@ -209,6 +216,13 @@ export function ConnectionAskCard({
               />
             </FieldGroup>
           </FieldSet>
+          <BuildApprovalItem
+            id={`ask-${action.id}-approve-build`}
+            agentName={agentName}
+            checked={approveBuild}
+            onCheckedChange={setApproveBuild}
+            disabled={busy}
+          />
           <ConsentStatus state={consent.state} onCancel={consent.cancel} />
         </>
       ) : (

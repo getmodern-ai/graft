@@ -26,9 +26,11 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
 - **Consent never moves inside the loop.** Secrets are entered in the console, never through a
   tool argument or a chat. Approvals are the person's. If a change would let Graft's own model
   enter a credential or answer an approval, stop and read ADR 0004 and ADR 0006.
-- **The approval grain is ADR 0008 as amended on 2026-09-15.** Reads never ask; any other tool,
-  destructive included, asks once per agent and the answer holds; asking on every call is the
-  person's opt-in per tool (`askEveryCall`), both ways. Read the amendment before changing
+- **The approval grain is ADR 0008 as amended on 2026-09-15 and 2026-09-18.** Reads never ask; any
+  other tool, destructive included, asks once per agent and the answer holds; asking on every call
+  is the person's opt-in per tool (`askEveryCall`), both ways. The connection confirmation may
+  record `acquire`'s build approval for the asking agent (`approveBuild`, on by default): the person
+  answers on the same page, and the grain does not move. Read the amendments before changing
   `packages/core/src/approval/approval.decision.ts` or the ask in `packages/mcp/src/approval.ts`.
 - **The proxy is the only route to a vendor.** A sandbox with any other egress, or a module that
   holds a credential, violates ADR 0010 and ADR 0013 whatever the reason.

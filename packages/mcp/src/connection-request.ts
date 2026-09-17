@@ -139,6 +139,16 @@ export type ConnectionAnswer = { connectionId: string };
 export const PROPOSAL_PROVENANCE_NOTE =
   "This proposal was written by the agent's model from the documentation it read. Check the hosts and the documentation link before entering a secret: the credential will be sent to every host listed, and to nothing else.";
 
+/**
+ * What every awaiting answer says about the build approval (GRA-75; ADR 0008, amendment of
+ * 2026-09-18): the confirmation page offers it, on by default, for the asking agent and the
+ * connection it is about to make — so the agent does not promise the person a second link that
+ * `acquire` will not send. The tool's description says the same (`tools/meta.ts`), as does the
+ * Hermes skill; `session.test.ts` pins the two.
+ */
+export const BUILD_APPROVAL_ON_THE_PAGE =
+  "The same page offers to allow you to build tools against the connection, on by default; left on, acquire against it starts without a second link, so do not tell them to expect one.";
+
 /** The same provenance for a link provider's ask, where nothing is entered and the calls are relayed (GRA-59). */
 export const LINK_PROVENANCE_NOTE =
   "This proposal was written by the agent's model from the documentation it read. Check the hosts and the documentation link before connecting: calls for this connection will be relayed to every host listed, and to nothing else.";
@@ -459,6 +469,7 @@ export async function requestConnection(
       link
         ? `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) through ${provider.name} — one click: they sign in at the vendor on ${provider.name}'s page, and the vendor's token stays there; nothing passes through you, and nothing is typed in the console. ` +
           `Relay this link so they can press Connect: ${url} It expires at ${expiresAt}. ` +
+          `${BUILD_APPROVAL_ON_THE_PAGE} ` +
           "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
         : oauth
           ? // The agent is the guide (ADR 0005): which console, what to name the client, which URI.
@@ -468,10 +479,12 @@ export async function requestConnection(
               ? `and paste exactly this redirect URI into it: ${redirectUri} `
               : "and paste the redirect URI the form shows into it. ") +
             `Then relay this link so they can enter the client id and secret and complete the consent in a popup: ${url} It expires at ${expiresAt}. ` +
+            `${BUILD_APPROVAL_ON_THE_PAGE} ` +
             "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected. " +
             "A Google Cloud project in Testing mode expires refresh tokens after seven days, so a Google connection reconnects weekly until the app is published."
           : `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
             `Relay this link so they can check the hosts and enter it: ${url} It expires at ${expiresAt}. ` +
+            `${BUILD_APPROVAL_ON_THE_PAGE} ` +
             "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
   });
 }

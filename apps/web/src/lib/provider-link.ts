@@ -4,6 +4,7 @@ import {
   LINK_STATE_TTL_MS,
   type LinkCallbackMessage,
 } from "@graft/core/connection/link.rules";
+import type { LinkStartBody } from "@graft/server/api";
 
 import { api } from "./api";
 
@@ -23,11 +24,15 @@ import { api } from "./api";
  * a status word and two ids, and what Graft stores of the account is its id at the provider.
  */
 
-/** The server mints the provider's link for the ask (`POST /api/pending-actions/:id/link`). */
-export function startProviderLink(actionId: string) {
+/**
+ * The server mints the provider's link for the ask (`POST /api/pending-actions/:id/link`). The
+ * body is the card's one choice — whether the asking agent may build against the connection the
+ * return will make (GRA-75) — which the server signs into the link's state.
+ */
+export function startProviderLink(actionId: string, input: LinkStartBody) {
   return api<{ url: string; expiresAt: string; provider: string }>(
     `/pending-actions/${encodeURIComponent(actionId)}/link`,
-    { method: "POST" },
+    { method: "POST", body: input },
   );
 }
 
