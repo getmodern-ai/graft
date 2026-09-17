@@ -289,7 +289,7 @@ on a `202`. Your module runs on against that preview, and the runner reports wha
 
 Read it in this order:
 
-- **`passed`** is decided on what was verified: every read answered below `400`, every write
+- **`passed`** is decided on what was verified: every read answered with a `2xx`, every write
   request reached the proxy well-formed, and the module did not fail before its first write. It is
   not a claim that the tool works end to end.
 - **`writesPreviewed`** is the part to check by hand. Put each preview beside the vendor's docs —
@@ -303,7 +303,10 @@ Read it in this order:
   connection, or a refusal from the proxy (a host the connection does not declare, an expired
   token). Fix the module.
 - **`reads`** with a status of `400` or more failed the dry run — the credential, the path or the
-  query is wrong, and the docs say which.
+  query is wrong, and the docs say which. A `3xx` failed it too: the proxy hands a vendor redirect
+  back and `ctx.fetch` does not follow it, so the vendor did not answer the read where you asked.
+  Its `Location` says where it points; a host the connection declares is yours to call through
+  `ctx.proxyBase(host)`, and one it does not is a connection question, not a code one.
 
 An SDK's calls cross the proxy with the same token, so writes through an SDK are stopped and
 previewed all the same — but they do not pass through `ctx.fetch`, so they are absent from `reads`

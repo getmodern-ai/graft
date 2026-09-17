@@ -62,6 +62,19 @@ const FIXTURES: Record<string, string> = {
     'import { double } from "./helper.mjs";\nexport default async (input) => double(input.n);',
   "throws.mjs":
     'export default async () => { throw new Error("kaboom: the line items are missing"); };',
+  // undici's shape for a connection that never opened: a bare TypeError over an errno in `cause`.
+  "throwsWithCause.mjs": [
+    "export default async () => {",
+    '  const errno = Object.assign(new Error("getaddrinfo ENOTFOUND customer-api.example"), { code: "ENOTFOUND" });',
+    '  throw new TypeError("fetch failed", { cause: errno });',
+    "};",
+  ].join("\n"),
+  "redirected.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const res = await ctx.fetch("/redirected");',
+    '  return { status: res.status, location: res.headers.get("location") };',
+    "};",
+  ].join("\n"),
   "hangs.mjs": "export default () => new Promise(() => {});",
   "notAFunction.mjs": "export default 42;",
   "leaks.mjs": [
@@ -227,6 +240,14 @@ beforeAll(async () => {
       const vendorPath = (req.url ?? "/").replace(/^\/c\/[^/]+(\/h\/[^/]+)?/, "") || "/";
       const [path, query] = vendorPath.split("?");
       const isRead = method === "GET" || method === "HEAD";
+      // The real proxy hands a vendor's 3xx back unfollowed, `Location` intact (redirects.ts).
+      if (path === "/redirected") {
+        if (token === `Bearer ${DRY_TOKEN}`) res.setHeader(DRY_RUN_HEADER, "forwarded");
+        res.statusCode = 303;
+        res.setHeader("location", "https://elsewhere.example/moved");
+        res.end();
+        return;
+      }
       // The real proxy's dry-run answers: a read forwarded and marked; a write stopped with a
       // preview — the header *names* only, never values — on a distinct 2xx.
       if (token === `Bearer ${DRY_TOKEN}` || token === `Bearer ${DRY_REFUSING_TOKEN}`) {
@@ -412,6 +433,19 @@ describe("failures, each with its own exit code", () => {
     expect(run.stderr).toContain("kaboom: the line items are missing");
   });
 
+  it("prints each cause after the stack, so a fetch that never connected names its host", async () => {
+    const run = await runRunner({ module: fixture("throwsWithCause.mjs") });
+
+    expect(run.code).toBe(1);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toContain("TypeError: fetch failed");
+    expect(run.stderr).toContain(
+      "caused by: Error [ENOTFOUND]: getaddrinfo ENOTFOUND customer-api.example",
+    );
+    // The chain follows the stack, so the tail `fail` keeps ends in the cause.
+    expect(run.stderr.indexOf("caused by:")).toBeGreaterThan(run.stderr.indexOf("fetch failed"));
+  });
+
   it("exits 1 when the default export is not a function", async () => {
     const run = await runRunner({ module: fixture("notAFunction.mjs") });
 
@@ -504,6 +538,20 @@ describe("ctx.fetch", () => {
     expect(request?.headers.authorization).toBe("Bearer tok_secret_123");
     expect(request?.headers["content-type"]).toBe("application/json");
     expect(request?.body).toBe('{"orderId":7}');
+  });
+
+  /** The proxy returned the redirect on purpose; the sandbox can reach nothing but the proxy. */
+  it("does not follow a redirect: the proxy's 303 reaches the module as a status, and no second request is made", async () => {
+    const before = received.length;
+    const run = await runRunner({ module: fixture("redirected.mjs"), env: bound() });
+
+    expect(run.code).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual({
+      status: 303,
+      location: "https://elsewhere.example/moved",
+    });
+    expect(received.length).toBe(before + 1);
+    expect(received[before]?.url).toBe("/c/conn_1/redirected");
   });
 
   /** The token must never travel to a host the module chose. */
@@ -772,6 +820,18 @@ describe("GRAFT_DRY_RUN", () => {
     expect(result.reads).toEqual([{ method: "GET", path: "/missing", status: 404 }]);
     expect(result.verified).toEqual({ reads: false, writeRequests: true });
     expect(result.moduleResult).toEqual({ status: 404 });
+  });
+
+  it("records a redirected read with its status rather than a thrown run", async () => {
+    const run = await runRunner({ module: fixture("redirected.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(false);
+    expect(result.reads).toEqual([{ method: "GET", path: "/redirected", status: 303 }]);
+    expect(result.moduleResult).toEqual({
+      status: 303,
+      location: "https://elsewhere.example/moved",
+    });
   });
 
   /** A write that never became a preview — refused by `ctx.fetch` or by the proxy — is a write request that was not well-formed. */
