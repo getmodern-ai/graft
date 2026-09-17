@@ -71,7 +71,11 @@ sandbox image is built alongside; sandboxes are created from it on an internal n
 other member is the proxy (ADR 0013).
 
 **3. Sign in and create an agent.** Open `http://localhost:3000`, sign in as the admin, then
-*Agents → New agent*. The token is shown once; put it where your harness reads environment
+*Agents → New agent*. The door is one screen: an address it has never seen is registered on the
+same submit that signs everyone else in. To offer *Continue with Google* or *Continue with GitHub*
+beside it, register an OAuth client with the vendor — redirect URI `<your origin>/api/auth/callback/google`
+or `…/github` — and set its `GRAFT_GOOGLE_CLIENT_ID`/`_SECRET` or `GRAFT_GITHUB_CLIENT_ID`/`_SECRET`
+pair in `.env` (each pair all-or-nothing; ADR 0020 has the linking rule). Then The token is shown once; put it where your harness reads environment
 variables — for Hermes, `~/.hermes/.env`:
 
 ```bash

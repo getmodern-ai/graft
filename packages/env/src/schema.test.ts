@@ -38,6 +38,7 @@ import {
   sandboxBackend,
   serverEnvIssues,
   serverSchema,
+  signInProvidersFrom,
   sweepIntervalSeconds,
   toolboxRoot,
   toolboxVolume,
@@ -892,6 +893,72 @@ describe("the Pipedream provider's group (GRA-59)", () => {
       fullSchema.safeParse({ ...MINIMAL, ...PIPEDREAM, GRAFT_PIPEDREAM_CLIENT_ID: "PLACEHOLDER" })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("sign in with Google or GitHub (GRA-81)", () => {
+  const GOOGLE = {
+    GRAFT_GOOGLE_CLIENT_ID: "g-id.apps.googleusercontent.com",
+    GRAFT_GOOGLE_CLIENT_SECRET: "g-secret",
+  };
+  const GITHUB = { GRAFT_GITHUB_CLIENT_ID: "Iv1.gh", GRAFT_GITHUB_CLIENT_SECRET: "gh-secret" };
+
+  it("is off by default, and each provider is its own all-or-nothing group", () => {
+    expect(serverEnvIssues(SECRET)).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, ...GOOGLE })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, ...GITHUB })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, ...GOOGLE, ...GITHUB })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_GOOGLE_CLIENT_ID: "g-id" })).toEqual([
+      expect.stringMatching(
+        /Google sign-in is partially configured.*Missing: GRAFT_GOOGLE_CLIENT_SECRET$/,
+      ),
+    ]);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_GITHUB_CLIENT_SECRET: "gh-secret" })).toEqual([
+      expect.stringMatching(
+        /GitHub sign-in is partially configured.*Missing: GRAFT_GITHUB_CLIENT_ID$/,
+      ),
+    ]);
+  });
+
+  it("keeps one provider's half-configuration from implicating the other", () => {
+    const issues = serverEnvIssues({ ...SECRET, ...GOOGLE, GRAFT_GITHUB_CLIENT_ID: "Iv1.gh" });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("GitHub sign-in is partially configured");
+  });
+
+  it("parses each group whole, and refuses a secret still holding the secret store's placeholder", () => {
+    expect(fullSchema.parse({ ...MINIMAL, ...GOOGLE, ...GITHUB })).toMatchObject({
+      ...GOOGLE,
+      ...GITHUB,
+    });
+    const placeholder = fullSchema.safeParse({
+      ...MINIMAL,
+      ...GOOGLE,
+      GRAFT_GOOGLE_CLIENT_SECRET: "PLACEHOLDER — populate in the AWS console",
+    });
+    expect(placeholder.success).toBe(false);
+    expect(placeholder.error?.issues.map((issue) => issue.message)).toEqual([
+      expect.stringMatching(
+        /GRAFT_GOOGLE_CLIENT_SECRET still holds the secret store's placeholder/,
+      ),
+    ]);
+  });
+
+  it("hands createAuth a key per complete group and no key for an absent one", () => {
+    expect(signInProvidersFrom({})).toEqual({});
+    expect(Object.keys(signInProvidersFrom({}))).toEqual([]);
+    expect(signInProvidersFrom({ ...GOOGLE })).toEqual({
+      google: {
+        clientId: GOOGLE.GRAFT_GOOGLE_CLIENT_ID,
+        clientSecret: GOOGLE.GRAFT_GOOGLE_CLIENT_SECRET,
+      },
+    });
+    expect(Object.keys(signInProvidersFrom({ ...GOOGLE, ...GITHUB }))).toEqual([
+      "google",
+      "github",
+    ]);
+    // A half-set group `serverEnvIssues` has already refused; this never invents a provider from it.
+    expect(signInProvidersFrom({ GRAFT_GITHUB_CLIENT_ID: "Iv1.gh" })).toEqual({});
   });
 });
 

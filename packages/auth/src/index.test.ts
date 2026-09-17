@@ -10,14 +10,16 @@ import { createAuth } from "./index";
  * connects on the first query and nothing here queries. Sign-up, sign-in and the session resolving
  * to a person run against a real Postgres in `apps/server/src/database.integration.test.ts`; what is
  * pinned here is the shape of the account: email and password only, no verification gate for the
- * alpha, no social provider, no organization plugin (ADR 0007), and the cross-origin cookie.
+ * alpha, a social provider only when a client is handed in (GRA-81), no organization plugin
+ * (ADR 0007), and the cross-origin cookie.
  */
-const auth = createAuth({
+const base = {
   db: drizzle("postgresql://unused@localhost:5432/unused") as unknown as Database,
   secret: "test-secret-that-is-long-enough-32-chars",
   baseURL: "http://localhost:3000",
   trustedOrigins: ["http://localhost:3001"],
-});
+};
+const auth = createAuth(base);
 
 // Widened from the literal options `createAuth` passed, so an option it deliberately does not set
 // can be asserted absent rather than being a type error to mention.
@@ -29,9 +31,37 @@ describe("createAuth", () => {
     expect(auth.options.emailAndPassword?.requireEmailVerification).toBe(false);
   });
 
-  it("registers no social provider and no plugin — a person is the account (ADR 0007)", () => {
+  it("registers no social provider by default and no plugin — a person is the account (ADR 0007)", () => {
     expect(Object.keys(options.socialProviders ?? {})).toEqual([]);
     expect(options.plugins ?? []).toEqual([]);
+  });
+
+  /**
+   * A provider key present is a provider advertised, so the shape is judged by its keys: the
+   * configured one alone, in the order the console draws them (GRA-81).
+   */
+  it("registers exactly the providers it is handed clients for", () => {
+    const google = { clientId: "g-id", clientSecret: "g-secret" };
+    const github = { clientId: "gh-id", clientSecret: "gh-secret" };
+    const withGoogle: BetterAuthOptions = createAuth({
+      ...base,
+      socialProviders: { google },
+    }).options;
+    expect(Object.keys(withGoogle.socialProviders ?? {})).toEqual(["google"]);
+    expect(withGoogle.socialProviders?.google).toEqual(google);
+    const withBoth: BetterAuthOptions = createAuth({
+      ...base,
+      socialProviders: { google, github },
+    }).options;
+    expect(Object.keys(withBoth.socialProviders ?? {})).toEqual(["google", "github"]);
+  });
+
+  it("links a social sign-in to an existing account only when both addresses are verified (ADR 0020)", () => {
+    expect(options.account?.accountLinking).toEqual({
+      enabled: true,
+      requireLocalEmailVerified: true,
+    });
+    expect(options.account?.accountLinking?.trustedProviders).toBeUndefined();
   });
 
   it("carries the console's origins as trusted, and the server's origin as its base", () => {

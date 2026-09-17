@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createAuth } from "@graft/auth";
+import { createAuth, SOCIAL_PROVIDER_NAMES } from "@graft/auth";
 import {
   createConnectionDeps,
   createModelKeyDeps,
@@ -20,6 +20,7 @@ import { createDb } from "@graft/db";
 import { applyMigrations, MIGRATIONS_DIR } from "@graft/db/migrate";
 import { checkMigrationChain, readMigrationChain } from "@graft/db/migration-chain";
 import { countPersons } from "@graft/db/repo/person";
+import { signInProvidersFrom } from "@graft/env/schema";
 import { env } from "@graft/env/server";
 import { createAcquireRunner, createMcpDeps, startSweep } from "@graft/mcp";
 import {
@@ -122,11 +123,19 @@ if (env.GRAFT_MIGRATE_ON_START) {
   }
 }
 
+// The providers a person may sign in with beside email and password (GRA-81, ADR 0020): a key per
+// complete `GRAFT_GOOGLE_*` / `GRAFT_GITHUB_*` group, and the door lists exactly these.
+const signInProviders = signInProvidersFrom(env);
+const signInMethods = {
+  social: SOCIAL_PROVIDER_NAMES.filter((name) => signInProviders[name] !== undefined),
+};
+
 const auth = createAuth({
   db,
   secret: env.GRAFT_AUTH_SECRET,
   baseURL: env.GRAFT_AUTH_URL,
   trustedOrigins: env.GRAFT_CORS_ORIGIN,
+  socialProviders: signInProviders,
 });
 
 // The one admin a fresh self-hosted database opens with (`boot.ts`): through Better Auth's own
@@ -305,6 +314,7 @@ const app = createServer({
       modelKey: modelKeyDeps,
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
+    signInMethods,
     handoff,
     // The consent's two ends (`oauth.ts`): the redirect URI on this server's origin, and the one
     // decrypt outside the proxy binding — the client secret, for the code exchange.
@@ -349,6 +359,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} (OAuth issuer ${env.GRAFT_AUTH_URL}) ` +
       `(${backings.form} backings — sandbox ${sandbox ? "configured" : "unconfigured"}, ` +
       `keyring ${backings.keyring.id}, providers ${providers.map((provider) => provider.name).join(", ")}, ` +
+      `sign-in ${["email", ...signInMethods.social].join(", ")}, ` +
       `toolbox ${backings.toolboxRoot ?? "held by the cloud backings"}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database, ` +
