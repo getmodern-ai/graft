@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { keyringProvider } from "@graft/core";
 import { LOCAL_KEYRING_ID } from "@graft/vault";
 import { describe, expect, it } from "vitest";
 
@@ -37,6 +38,7 @@ describe("the open form", () => {
     expect(backings.form).toBe("open");
     expect(backings.sandbox).toBeNull();
     expect(backings.keyring.id).toBe(LOCAL_KEYRING_ID);
+    expect(backings.providers).toEqual([keyringProvider]);
     expect(backings.toolboxRoot).toBe(toolboxRoot);
     await expect(backings.mirror.mirrorVersion("person1", "tools/v/t/v1")).resolves.toBeUndefined();
   });
@@ -97,6 +99,9 @@ describe("the cloud form", () => {
 
     expect(backings.form).toBe("cloud");
     expect(backings.keyring.id).toBe("fake-cloud");
+    // The hosted provider first, the keyring appended last (ADR 0019).
+    expect(backings.providers.map((provider) => provider.name)).toEqual(["fake-broker", "keyring"]);
+    expect(backings.providers[1]).toBe(keyringProvider);
     expect(backings.toolboxRoot).toBe(toolboxRoot);
     expect(await backings.sandbox?.list()).toEqual([]);
     await backings.mirror.mirrorVersion("person1", ".drafts/job1");
@@ -122,6 +127,17 @@ describe("the cloud form", () => {
     await backings.store.writeTree("own-person", ".drafts/job1", [{ path: "a.txt", content: "a" }]);
     expect(await backings.store.exists("own-person", ".drafts/job1/a.txt")).toBe(true);
     expect(existsSync(join(toolboxRoot, "own-person"))).toBe(false);
+  });
+
+  it("appends the keyring when a factory answers no providers", async () => {
+    const backings = await selectBackings(cloud, { cloudModule: fixture("own-store") });
+    expect(backings.providers).toEqual([keyringProvider]);
+  });
+
+  it("refuses a factory whose provider calls itself the keyring", async () => {
+    await expect(
+      selectBackings(cloud, { cloudModule: fixture("shadowing-provider") }),
+    ).rejects.toThrow(/connection providers: two connection providers are named keyring/);
   });
 
   it("refuses a factory whose store is not a whole store", async () => {
@@ -174,6 +190,33 @@ describe("assertCloudBackings", () => {
       assertCloudBackings({ ...complete, keyring: { ...complete.keyring, id: undefined } }, "m"),
     ).toThrow(/keyring with no id/);
     expect(() => assertCloudBackings(null, "m")).toThrow(/no sandbox backing/);
+  });
+
+  it("accepts providers beside the seams and names what a malformed one lacks", () => {
+    const provider = {
+      name: "broker",
+      connect: { kind: "link" },
+      covers() {},
+      resolve() {},
+      revoke() {},
+    };
+    expect(() => assertCloudBackings({ ...complete, providers: [provider] }, "m")).not.toThrow();
+    expect(() => assertCloudBackings({ ...complete, providers: [] }, "m")).not.toThrow();
+    expect(() => assertCloudBackings({ ...complete, providers: "no" }, "m")).toThrow(
+      /providers that are not a list/,
+    );
+    expect(() =>
+      assertCloudBackings({ ...complete, providers: [{ ...provider, name: "" }] }, "m"),
+    ).toThrow(/provider 0 with no name/);
+    expect(() =>
+      assertCloudBackings(
+        { ...complete, providers: [{ ...provider, connect: { kind: "magic" } }] },
+        "m",
+      ),
+    ).toThrow(/provider broker with no connect kind/);
+    expect(() =>
+      assertCloudBackings({ ...complete, providers: [{ ...provider, revoke: 1 }] }, "m"),
+    ).toThrow(/provider broker without revoke\(\)/);
   });
 
   it("accepts a store beside the seams, whole or absent, and names the first verb a partial one lacks", () => {

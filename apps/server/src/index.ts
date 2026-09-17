@@ -87,11 +87,12 @@ const keys =
       })
     : null;
 
-// The three seams' backings and the toolbox store, chosen once from `GRAFT_BACKINGS` and
+// The four seams' backings and the toolbox store, chosen once from `GRAFT_BACKINGS` and
 // `GRAFT_SANDBOX_BACKEND` (`backings.ts`, ADR 0002). The keyring goes under the vault here; the
-// sandbox, the store and the mirror are the publish's and the MCP server's below.
+// sandbox, the store and the mirror are the publish's and the MCP server's below; the connection
+// providers (ADR 0019) go to the connection service and to the proxy's connection read.
 const backings = await selectBackings(env, { raw: process.env });
-const { sandbox, store } = backings;
+const { sandbox, store, providers } = backings;
 const vault = createCredentialVault(backings.keyring);
 
 // One pool for the process.
@@ -143,7 +144,7 @@ await bootstrapAdmin(
   },
 );
 
-let connections = createDatabaseConnections(db);
+let connections = createDatabaseConnections(db, providers);
 let seededCount = 0;
 if (env.GRAFT_DEV_SEED) {
   const seeded = createInMemoryConnections();
@@ -154,8 +155,9 @@ if (env.GRAFT_DEV_SEED) {
 }
 
 // The vault's encrypt half is all the connection service may hold (GRA-1: decrypted in exactly
-// one component, and that component is the proxy binding in `app.ts`).
-const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
+// one component, and that component is the proxy binding in `app.ts`). The providers ride beside
+// it: what a registration names, what a proposal is routed through (ADR 0019).
+const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt }, providers);
 
 /**
  * A person's own model key takes the same encrypt-only half on its request path (`@graft/core`'s
@@ -343,7 +345,8 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
     `graft server listening on http://localhost:${info.port} — proxy at ${PROXY_MOUNT_PATH}, ` +
       `auth and the JSON API at ${API_MOUNT_PATH}, MCP at ${MCP_MOUNT_PATH} (OAuth issuer ${env.GRAFT_AUTH_URL}) ` +
       `(${backings.form} backings — sandbox ${sandbox ? "configured" : "unconfigured"}, ` +
-      `keyring ${backings.keyring.id}, toolbox ${backings.toolboxRoot ?? "held by the cloud backings"}), ` +
+      `keyring ${backings.keyring.id}, providers ${providers.map((provider) => provider.name).join(", ")}, ` +
+      `toolbox ${backings.toolboxRoot ?? "held by the cloud backings"}), ` +
       `key pair ${keys ? "configured" : "absent (proxy answers 503)"}, ` +
       `${seededCount} connection(s) seeded over the database, ` +
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +

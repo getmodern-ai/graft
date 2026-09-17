@@ -10,6 +10,8 @@ import {
   isConnectionUsable,
   isOAuthAuthorizationCode,
   listConnections,
+  providerFor,
+  providerNamed,
   type ServiceContext,
   ServiceError,
   validateDisplayName,
@@ -51,6 +53,14 @@ import { executeToolName } from "./tool-names";
  * refusal to the agent with the reason word `host_not_public` — the same word the connection
  * service answers at create and the form shows as the person types (GRA-28), and the same
  * predicate the proxy applies again at resolution (ADR 0010).
+ *
+ * **The proposal is routed to a provider** (ADR 0019): the first of the deployment's providers that
+ * covers the vendor at these hosts decides how the person connects it. The keyring covers every
+ * vendor and is always last, so with it alone every proposal takes the form below and the ask,
+ * the answer and the card are exactly what they were before providers existed. A provider that
+ * connects with a link or with no person step gets its flow with GRA-59 and GRA-58; until then a
+ * proposal it covers is refused by name rather than routed to a form that would store a credential
+ * the provider holds itself.
  */
 
 export const CONNECTION_ASK_KIND = "connection";
@@ -58,6 +68,8 @@ export const CREDENTIAL_ASK_KIND = "credential";
 
 /** What a `connection` ask carries: the proposal, normalised — everything the form pre-fills (ADR 0006). */
 export type ConnectionProposalPayload = {
+  /** The provider the proposal was routed to (ADR 0019) — `keyring` for every ask made before or without another. */
+  provider: string;
   vendor: string;
   displayName: string;
   scheme: ConnectionScheme;
@@ -232,7 +244,7 @@ export function readConnectionProposal(
 }
 
 export type ProposalVerdict =
-  | { ok: true; payload: ConnectionProposalPayload }
+  | { ok: true; payload: Omit<ConnectionProposalPayload, "provider"> }
   | { ok: false; reason: string; message: string; details: Record<string, unknown> };
 
 /**
@@ -336,7 +348,19 @@ export async function requestConnection(
 ): Promise<ConnectionRequestOutcome> {
   const verdict = normaliseProposal(input);
   if (!verdict.ok) return refuse(verdict.reason, verdict.message, verdict.details);
-  const { payload } = verdict;
+  const provider = providerFor(
+    deps.connection.providers,
+    verdict.payload.vendor,
+    verdict.payload.hosts,
+  );
+  if (provider.connect.kind !== "form") {
+    return refuse(
+      "provider_not_supported",
+      `${verdict.payload.displayName} (${verdict.payload.vendor}) is covered by the ${provider.name} provider, which connects it with ${provider.connect.kind === "link" ? "a link the person opens" : "no person step"} rather than a credential entered in the console — and request_connection has no flow for that yet. Tell the person which provider covers the vendor; do not propose it under another.`,
+      { provider: provider.name, connect: provider.connect.kind },
+    );
+  }
+  const payload: ConnectionProposalPayload = { provider: provider.name, ...verdict.payload };
 
   // An ask already made for this proposal comes first — answered or still open — so a call after
   // the person's submit takes the answer it was waiting for rather than finding the connection and
@@ -436,6 +460,15 @@ export async function requestCredential(
   );
   if (!connection) {
     return refuse("connection_not_found", `Connection ${connectionId} does not exist.`);
+  }
+  // A relay provider's connection has no credential in Graft to re-enter (ADR 0019).
+  const provider = providerNamed(deps.connection.providers, connection.provider);
+  if (provider && provider.connect.kind !== "form") {
+    return refuse(
+      "credential_not_applicable",
+      `${connection.displayName} (${connection.vendor}) is connected through the ${provider.name} provider, which holds its credential; there is nothing to re-enter in the console. Tell the person to reconnect it through ${provider.name}.`,
+      { provider: provider.name },
+    );
   }
   const reason = typeof input.reason === "string" ? input.reason.trim().slice(0, 500) : "";
   const payload: CredentialAskPayload = {

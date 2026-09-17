@@ -51,6 +51,14 @@ export function RevokeConnectionDialog({
           "build approval",
         )} and ${count(result.pendingActionsExpired, "open ask")} removed. Its tools stay and ask again after reconnection.`,
       });
+      // The revoke stands; what the provider held outside Graft did not let go (ADR 0019). Revoking
+      // again re-runs the release, which is why the card keeps offering Revoke on a revoked row.
+      if (!result.providerRelease.released) {
+        toast.warning(`${result.providerRelease.provider} did not release the connection`, {
+          description:
+            "Everything in Graft is revoked. The provider could not be reached to release what it holds; revoke again to retry.",
+        });
+      }
       onOpenChange(false);
     },
   });

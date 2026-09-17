@@ -4,6 +4,8 @@ import { join } from "node:path";
 import {
   addConnectionToAgentScope,
   answerPendingAction,
+  type ConnectionProvider,
+  keyringProvider,
   registerConnectionWithCredential,
   revokeConnection,
   setConnectionCredential,
@@ -399,6 +401,7 @@ describe("request_connection through a harness", () => {
         connectionId: null,
         answeredAt: null,
         payload: {
+          provider: "keyring",
           vendor: "acme",
           displayName: "Acme Orders",
           scheme: "api_key_header",
@@ -777,6 +780,100 @@ describe("request_connection with the OAuth shape", () => {
       expect(String(said.message)).not.toContain("developer console");
     } finally {
       await a.close();
+    }
+  });
+});
+
+/**
+ * The proposal is routed to a provider (ADR 0019). With the keyring alone every answer above is
+ * what it was before providers existed — those tests pin it. A provider that connects some other
+ * way, covering the vendor first, is refused by name until its ticket gives it a flow; nothing is
+ * asked of the person and nothing is recorded.
+ */
+describe("request_connection routes a proposal to the provider that covers it", () => {
+  const broker: ConnectionProvider = {
+    name: "broker",
+    connect: { kind: "link" },
+    covers: (vendor) => vendor === "acme",
+    resolve: () => ({
+      mode: "relay",
+      relay: {
+        plugin: {
+          kind: "relay",
+          scheme: "fake_relay",
+          rules: { prefix: null, passThrough: [], refuse: [], refusePrefixes: [] },
+          relay: () => undefined,
+          headerNames: () => [],
+        },
+        obtain: async () => ({}),
+      },
+    }),
+    revoke: async () => undefined,
+  };
+  const original = () => deps.connection;
+
+  afterEach(() => {
+    deps.connection = { ...deps.connection, providers: [keyringProvider] };
+  });
+
+  it("refuses a proposal a link provider covers, naming the provider, and records no ask", async () => {
+    const before = original();
+    deps.connection = { ...before, providers: [broker, keyringProvider] };
+    const a = await connect(TOKEN_B);
+    try {
+      const asks = actionsOf(AGENT_B, CONNECTION_ASK_KIND).length;
+      const said = await a.call("request_connection", PROPOSAL);
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({
+        reason: "provider_not_supported",
+        provider: "broker",
+        connect: "link",
+        message: expect.stringContaining("the broker provider"),
+      });
+      expect(actionsOf(AGENT_B, CONNECTION_ASK_KIND)).toHaveLength(asks);
+
+      // A vendor the broker does not cover falls to the keyring and gets the form, as ever.
+      const other = body(
+        await a.call("request_connection", {
+          ...PROPOSAL,
+          vendor: "gamma",
+          primaryHost: "https://api.gamma.example",
+          hosts: [],
+        }),
+      );
+      expect(other).toMatchObject({ error: "awaiting_connection" });
+      const action = store.pendingActions.get(other.pendingActionId as string);
+      expect(action?.payload).toMatchObject({ provider: "keyring", vendor: "gamma" });
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("request_credential refuses a connection a relay provider holds — there is nothing here to re-enter", async () => {
+    const before = original();
+    deps.connection = { ...before, providers: [broker, keyringProvider] };
+    const row = store.addConnection({
+      id: "conn_broker",
+      personId: PERSON,
+      vendor: "acme",
+      displayName: "Acme via broker",
+      primaryHost: "https://api.acme.example",
+    });
+    store.connections.set(row.id, { ...row, provider: "broker", providerRef: "acct_1" });
+    store.agentConnections.get(AGENT_B)?.add(row.id);
+    const a = await connect(TOKEN_B);
+    try {
+      const said = await a.call("request_credential", { connectionId: row.id });
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({
+        reason: "credential_not_applicable",
+        provider: "broker",
+      });
+      expect(actionsOf(AGENT_B, CREDENTIAL_ASK_KIND)).toHaveLength(0);
+    } finally {
+      await a.close();
+      store.connections.delete(row.id);
+      store.agentConnections.get(AGENT_B)?.delete(row.id);
     }
   });
 });

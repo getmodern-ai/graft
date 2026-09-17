@@ -29,6 +29,12 @@ import {
   type OAuthStatePayload,
   signOAuthState,
 } from "./oauth-consent";
+import {
+  type ConnectionProvider,
+  DEFAULT_PROVIDERS,
+  KEYRING_PROVIDER,
+  providerNamed,
+} from "./provider";
 
 /**
  * Connections (CONTEXT.md; ADR 0007, ADR 0010): register, enter or re-enter the credential, revoke,
@@ -47,6 +53,8 @@ import {
 /** The row as the wire sees it: never a ciphertext, never a token, never the PKCE verifier. */
 export type ConnectionOutput = {
   id: string;
+  /** Where the connection comes from (ADR 0019) — `keyring` for every row until another provider is enabled. */
+  provider: string;
   vendor: string;
   displayName: string;
   scheme: ConnectionScheme;
@@ -65,6 +73,7 @@ export type ConnectionOutput = {
 export function toConnectionOutput(row: ConnectionRow): ConnectionOutput {
   return {
     id: row.id,
+    provider: row.provider,
     vendor: row.vendor,
     displayName: row.displayName,
     scheme: row.scheme,
@@ -92,24 +101,53 @@ export function isConnectionUsable(connection: ConnectionOutput): boolean {
 }
 
 /**
- * The proxy's view of a row: the identity it compares against the token and the columns that decide
- * where and how the credential goes. Built field by field, so a column added to the table later does
- * not ride into the proxy by accident. A revoked connection has a null ciphertext and the proxy
- * answers `connection_not_ready` for it; nothing else about the row has to say "revoked".
+ * The proxy's view of a row: the identity it compares against the token, the host set it pins to,
+ * and — from the row's provider (ADR 0019) — how the call resolves: the columns to decrypt and
+ * inject from, or the relay to send it through. Built field by field, so a column added to the table
+ * later does not ride into the proxy by accident. A revoked connection has a null ciphertext and the
+ * proxy answers `connection_not_ready` for it; nothing else about the row has to say "revoked". A
+ * row whose provider the deployment has not enabled resolves to nothing, which the proxy answers the
+ * same way: a connection made under a provider that is now absent is not one this deployment can
+ * call through, and saying so is better than guessing at the keyring.
  */
-export function toProxyConnection(row: ConnectionRow): ProxyConnection {
-  return {
+export function toProxyConnection(
+  row: ConnectionRow,
+  providers: readonly ConnectionProvider[] = DEFAULT_PROVIDERS,
+): ProxyConnection {
+  const identity = {
     id: row.id,
     personId: row.personId,
-    authScheme: row.scheme,
     primaryHost: row.primaryHost,
     hosts: row.hosts,
-    schemeConfig: row.schemeConfig,
-    credentialCiphertext: row.credentialCiphertext,
+  };
+  const resolution = providerNamed(providers, row.provider)?.resolve(row) ?? null;
+  if (!resolution) {
+    return { ...identity, authScheme: null, schemeConfig: null, credentialCiphertext: null };
+  }
+  if (resolution.mode === "relay") {
+    return {
+      ...identity,
+      authScheme: null,
+      schemeConfig: null,
+      credentialCiphertext: null,
+      relay: resolution.relay,
+    };
+  }
+  return {
+    ...identity,
+    authScheme: resolution.scheme,
+    schemeConfig: resolution.schemeConfig,
+    credentialCiphertext: resolution.credentialCiphertext,
   };
 }
 
 export type RegisterConnectionInput = {
+  /**
+   * Where the connection comes from (ADR 0019); the keyring when absent. Must name a provider the
+   * deployment has enabled, and one that connects through the console's form — a provider that
+   * connects with a link or with no person step registers its rows through its own flow.
+   */
+  provider?: string;
   vendor: string;
   displayName: string;
   scheme: ConnectionScheme;
@@ -138,15 +176,40 @@ function refuseHostSet(verdict: HostSetRefusal): never {
   });
 }
 
+/**
+ * The provider a row names, as one this deployment has enabled and one whose connections the
+ * console's form makes (ADR 0019). A name nobody enabled is a 400 — a row under a provider the
+ * process cannot resolve would be one the proxy refuses on every call — and so is a provider that
+ * connects some other way: its rows are registered by its own flow, and a credential typed into the
+ * console for one would be a credential Graft holds for a connection whose provider holds its own.
+ */
+function formProviderNamed(deps: ConnectionDeps, name: string): ConnectionProvider {
+  const provider = providerNamed(deps.providers, name);
+  if (!provider) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `No connection provider named ${name} is enabled on this deployment`,
+    );
+  }
+  if (provider.connect.kind !== "form") {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `The ${provider.name} provider connects a vendor with ${provider.connect.kind === "link" ? "a link" : "no person step"}, not with a credential entered in the console`,
+    );
+  }
+  return provider;
+}
+
 /** The checks every registration passes, in the order a person would fix them; the normalised values out. */
-function validateRegistration(input: RegisterConnectionInput) {
+function validateRegistration(input: RegisterConnectionInput, deps: ConnectionDeps) {
+  const provider = formProviderNamed(deps, input.provider ?? KEYRING_PROVIDER);
   refuse(validateVendor(input.vendor));
   refuse(validateDisplayName(input.displayName));
   const schemeConfig = input.schemeConfig ?? {};
   refuse(validateSchemeConfig(input.scheme, schemeConfig));
   const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
   if (!hostSet.ok) refuseHostSet(hostSet);
-  return { schemeConfig, hostSet };
+  return { provider, schemeConfig, hostSet };
 }
 
 /**
@@ -161,11 +224,12 @@ export async function registerConnection(
   input: RegisterConnectionInput,
   deps: ConnectionDeps,
 ): Promise<ConnectionOutput> {
-  const { schemeConfig, hostSet } = validateRegistration(input);
+  const { provider, schemeConfig, hostSet } = validateRegistration(input, deps);
 
   const row = await deps.insertConnection(ctx.db, {
     id: deps.newId(),
     personId: principal.personId,
+    provider: provider.name,
     vendor: input.vendor,
     displayName: input.displayName.trim(),
     scheme: input.scheme,
@@ -195,7 +259,7 @@ export async function registerConnectionWithCredential(
   deps: ConnectionDeps,
 ): Promise<ConnectionOutput> {
   const { credential, ...registration } = input;
-  validateRegistration(registration);
+  validateRegistration(registration, deps);
   refuse(validateCredentialFields(registration.scheme, credential));
   return ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
@@ -245,6 +309,8 @@ export async function setConnectionCredential(
     await deps.findConnection(ctx.db, principal.personId, connectionId),
     "Connection not found",
   );
+  // A relay provider's connection has no credential here to enter or re-enter (ADR 0019).
+  formProviderNamed(deps, row.provider);
   refuse(validateCredentialFields(row.scheme, fields));
   const ciphertext = await deps.vault.encrypt(fields as Record<string, string>, {
     personId: principal.personId,
@@ -472,12 +538,26 @@ export async function markOAuthConsentRequired(
   return toConnectionOutput(updated);
 }
 
+/**
+ * Whether the row's provider released what it held for the connection outside Graft (ADR 0019).
+ * `released` for the keyring always — it holds nothing — and for a provider whose release answered.
+ * A release that threw is reported here and never as the revoke's failure: the row, the approvals
+ * and the asks were revoked in the transaction before the provider was asked, and a 500 would say
+ * otherwise. `failure` is the thrown error's class name, never its message — the provider's
+ * messages are its own and may carry anything (the rule `@graft/proxy`'s `failure.ts` states for a
+ * host-injected dependency). Revoking the connection again re-runs the release, which is the retry.
+ */
+export type ProviderRelease =
+  | { provider: string; released: true }
+  | { provider: string; released: false; failure: string };
+
 export type RevokeConnectionResult = {
   connection: ConnectionOutput;
   approvalsDeleted: number;
   buildApprovalsDeleted: number;
   /** Open asks about the connection closed with it — a per-call yes among them (GRA-28). */
   pendingActionsExpired: number;
+  providerRelease: ProviderRelease;
 };
 
 /**
@@ -490,6 +570,14 @@ export type RevokeConnectionResult = {
  * edge): a destructive tool's per-call yes lives on an answered, unconsumed action rather than in
  * the approval row, so deleting the rows alone left one call grantable after reconnection. A
  * credential re-entry that was still open is closed too — the reconnection is the answer to it.
+ *
+ * Then the row's provider releases what it holds for the connection outside Graft — a broker's
+ * account, a gateway's registration (ADR 0019) — after the transaction, since that is a call to
+ * another party and not a row. The revoke stands whatever it answers: a release that throws is
+ * reported on the result (`providerRelease`) rather than thrown, because everything local has
+ * already been revoked and a failure answer would send the caller to retry a revoke that happened.
+ * Revoking again re-runs the release, so the row's page is the retry path. A provider the
+ * deployment no longer enables has nothing to be asked; the keyring holds nothing and releases nothing.
  */
 export async function revokeConnection(
   ctx: ServiceContext,
@@ -497,7 +585,7 @@ export async function revokeConnection(
   connectionId: string,
   deps: ConnectionDeps,
 ): Promise<RevokeConnectionResult | null> {
-  return ctx.db.transaction(async (tx) => {
+  const revoked = await ctx.db.transaction(async (tx) => {
     const at = deps.now();
     const row = await deps.revokeConnection(tx, principal.personId, connectionId, at);
     if (!row) return null;
@@ -510,10 +598,32 @@ export async function revokeConnection(
       at,
     );
     return {
-      connection: toConnectionOutput(row),
-      approvalsDeleted: approvals.length,
-      buildApprovalsDeleted: builds.length,
-      pendingActionsExpired: actions.length,
+      row,
+      result: {
+        connection: toConnectionOutput(row),
+        approvalsDeleted: approvals.length,
+        buildApprovalsDeleted: builds.length,
+        pendingActionsExpired: actions.length,
+      },
     };
   });
+  if (!revoked) return null;
+  return { ...revoked.result, providerRelease: await releaseFromProvider(deps, revoked.row) };
+}
+
+/** The provider's release, as a report and never as a throw — the local revoke has committed. */
+async function releaseFromProvider(
+  deps: ConnectionDeps,
+  row: ConnectionRow,
+): Promise<ProviderRelease> {
+  const provider = providerNamed(deps.providers, row.provider);
+  if (!provider) return { provider: row.provider, released: true };
+  try {
+    await provider.revoke(row);
+    return { provider: provider.name, released: true };
+  } catch (error) {
+    const failure =
+      error instanceof Error ? error.name || "Error" : error === null ? "null" : typeof error;
+    return { provider: provider.name, released: false, failure };
+  }
 }
