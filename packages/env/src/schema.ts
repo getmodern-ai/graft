@@ -394,6 +394,40 @@ export const modelProviderOptionalKeys = [
 export const langfuseKeys = ["GRAFT_LANGFUSE_PUBLIC_KEY", "GRAFT_LANGFUSE_SECRET_KEY"] as const;
 
 /**
+ * The Pipedream connection provider (ADR 0019; GRA-59), all-or-nothing and off by default: with the
+ * four, a vendor Pipedream's Connect catalogue offers connects with one click and every call for it
+ * relays through Pipedream's proxy; without them the provider is not on the list and every vendor
+ * takes the keyring's form, exactly as before. The project id and the environment are identifiers
+ * and may ride as plain environment; the client id and secret are the project's OAuth client, which
+ * buys the access token every Connect call carries, and both are held to the placeholder rule. A
+ * partial group is a half-finished deploy — a project with no client can mint nothing — and would
+ * present as a provider that is enabled and fails on the first link. The hosted tier holds the
+ * values (graft-cloud's secrets and app stacks); a self-host may set its own project.
+ */
+export const pipedreamKeys = [
+  "GRAFT_PIPEDREAM_PROJECT_ID",
+  "GRAFT_PIPEDREAM_ENVIRONMENT",
+  "GRAFT_PIPEDREAM_CLIENT_ID",
+  "GRAFT_PIPEDREAM_CLIENT_SECRET",
+] as const;
+
+/** Pipedream's project ids start with `proj_` (its API reference); a swapped value fails here, not at Pipedream. */
+export const pipedreamProjectId = z
+  .string()
+  .regex(
+    /^proj_[A-Za-z0-9]+$/,
+    "GRAFT_PIPEDREAM_PROJECT_ID must be a Pipedream Connect project id — proj_ followed by letters and digits",
+  )
+  .optional();
+
+/** Which of the project's two account stores every call addresses (`x-pd-environment`). */
+export const pipedreamEnvironment = z
+  .enum(["development", "production"], {
+    error: "GRAFT_PIPEDREAM_ENVIRONMENT must be development or production",
+  })
+  .optional();
+
+/**
  * A secret as an environment value: non-empty, and not the placeholder a secrets store leaves in a
  * variable nobody has populated. A placeholder would pass every other check and fail at the first
  * call with the provider's own error, far from the boot log; refused here it is one sentence.
@@ -651,6 +685,13 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   );
   if (partialLangfuse) issues.push(partialLangfuse);
 
+  const partialPipedream = partialGroupIssue(
+    value,
+    "The Pipedream provider is partially configured — set GRAFT_PIPEDREAM_PROJECT_ID, GRAFT_PIPEDREAM_ENVIRONMENT, GRAFT_PIPEDREAM_CLIENT_ID and GRAFT_PIPEDREAM_CLIENT_SECRET together, or none.",
+    pipedreamKeys,
+  );
+  if (partialPipedream) issues.push(partialPipedream);
+
   // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
   // package brings the sandbox, and a `fake` set beside it would be two answers to one question.
   if (value.GRAFT_BACKINGS === "cloud" && value.GRAFT_SANDBOX_BACKEND === "fake") {
@@ -791,6 +832,12 @@ export const serverSchema = {
       error: "GRAFT_LANGFUSE_BASE_URL must be an absolute http(s) URL — the Langfuse region's host",
     })
     .optional(),
+
+  /** The Pipedream connection provider, all-or-nothing and off by default — see `pipedreamKeys`. */
+  GRAFT_PIPEDREAM_PROJECT_ID: pipedreamProjectId,
+  GRAFT_PIPEDREAM_ENVIRONMENT: pipedreamEnvironment,
+  GRAFT_PIPEDREAM_CLIENT_ID: secretValue("GRAFT_PIPEDREAM_CLIENT_ID"),
+  GRAFT_PIPEDREAM_CLIENT_SECRET: secretValue("GRAFT_PIPEDREAM_CLIENT_SECRET"),
 
   /** The admin opened on first start, all-or-nothing — see `adminKeys`. */
   GRAFT_ADMIN_EMAIL: adminEmail,

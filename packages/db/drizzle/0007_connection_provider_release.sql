@@ -1,0 +1,1 @@
+ALTER TABLE "connection" ADD COLUMN "provider_release_failed_at" timestamp;

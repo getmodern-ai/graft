@@ -11,7 +11,7 @@ import {
   listWorkingSet,
   promoteTool,
 } from "@graft/core";
-import { connectionScheme } from "@graft/db/schema/connection";
+import { AUTH_SCHEMES } from "@graft/proxy/types";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { type AcquireStarted, acquireStatusOf } from "../acquire/shapes";
@@ -404,6 +404,7 @@ const requestConnectionTool: MetaTool = {
       "Every host must be a public https host: private, loopback, link-local and cloud-metadata addresses are refused here and again by the proxy. " +
       `Schemes: ${describeSchemes()}. ` +
       "For oauth_authorization_code (Gmail, Slack user tokens, Notion) propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
+      "On a deployment with a connection provider such as Pipedream, a vendor it covers (Gmail on Graft Cloud) needs no client and no secret: the awaiting answer names the provider, the person presses one button in the console and signs in at the vendor on the provider's page, and the vendor's token stays with the provider — say so instead of the client instructions. " +
       "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the url to relay: give them the link exactly as returned, say what it is for, wait, and call again with the same proposal once they say it is done; the same link comes back until they have, then connected. " +
       "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list; a connection to the same vendor and host already in your scope answers connected at once.",
     inputSchema: {
@@ -432,8 +433,9 @@ const requestConnectionTool: MetaTool = {
         },
         scheme: {
           type: "string",
-          enum: [...connectionScheme],
-          description: "The auth scheme, as the proxy names them.",
+          enum: [...AUTH_SCHEMES],
+          description:
+            "The auth scheme, as the proxy names them — the one the vendor documents. A vendor a provider such as Pipedream covers is connected by that provider instead; you still name the scheme the vendor documents.",
         },
         schemeConfig: {
           type: "object",

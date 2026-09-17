@@ -193,14 +193,40 @@ describe("assertCloudBackings", () => {
   });
 
   it("accepts providers beside the seams and names what a malformed one lacks", () => {
+    const link = {
+      kind: "link",
+      scheme: "pipedream_connect_proxy",
+      target() {},
+      start() {},
+      complete() {},
+    };
     const provider = {
       name: "broker",
-      connect: { kind: "link" },
+      connect: link,
       covers() {},
       resolve() {},
       revoke() {},
     };
     expect(() => assertCloudBackings({ ...complete, providers: [provider] }, "m")).not.toThrow();
+    expect(() =>
+      assertCloudBackings(
+        { ...complete, providers: [{ ...provider, connect: { kind: "none" } }] },
+        "m",
+      ),
+    ).not.toThrow();
+    // A link provider carries its flow (ADR 0019; GRA-59): the three functions and its relay scheme.
+    expect(() =>
+      assertCloudBackings(
+        { ...complete, providers: [{ ...provider, connect: { ...link, complete: undefined } }] },
+        "m",
+      ),
+    ).toThrow(/provider broker, which connects with a link, without connect\.complete\(\)/);
+    expect(() =>
+      assertCloudBackings(
+        { ...complete, providers: [{ ...provider, connect: { ...link, scheme: "" } }] },
+        "m",
+      ),
+    ).toThrow(/with no relay scheme/);
     expect(() => assertCloudBackings({ ...complete, providers: [] }, "m")).not.toThrow();
     expect(() => assertCloudBackings({ ...complete, providers: "no" }, "m")).toThrow(
       /providers that are not a list/,

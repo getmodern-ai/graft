@@ -1,7 +1,13 @@
 import { join } from "node:path";
 
-import { type ConnectionProvider, keyringProvider, providerListProblem } from "@graft/core";
+import {
+  type ConnectionProvider,
+  createPipedreamProvider,
+  keyringProvider,
+  providerListProblem,
+} from "@graft/core";
 import type { ServerEnv } from "@graft/env/server";
+import { createPipedreamClient, type PipedreamClient } from "@graft/pipedream";
 import { createFakeSandboxBackend } from "@graft/sandbox/fake";
 import type { SandboxBackend } from "@graft/sandbox/types";
 import { createDockerSandboxBackend } from "@graft/sandbox-docker";
@@ -29,6 +35,10 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  * that covers it. The keyring is always present and last: `open` enables it alone, and `cloud`
  * appends it after whatever the private package answers, so today's behaviour is every deployment's
  * floor and no hosted provider can shadow it (`providerListProblem` refuses a list that tries).
+ * One provider is open code switched on by configuration rather than by form (ADR 0019, "code is
+ * open while configuration may be hosted"): the Pipedream provider (`environmentProviders`) is on
+ * the list, ahead of the keyring, in either form whenever the `GRAFT_PIPEDREAM_*` group is set —
+ * the hosted tier sets it (graft-cloud's app stack), a self-host may — and absent otherwise.
  *
  * `open` is what this repository holds: the sandbox `GRAFT_SANDBOX_BACKEND` names — Docker when
  * its pair of variables is set, none when it is not, or the in-process fake for a laptop without a
@@ -126,6 +136,10 @@ export type BackingsEnv = Pick<
   | "GRAFT_PROXY_PUBLIC_URL"
   | "GRAFT_TOOLBOX_ROOT"
   | "GRAFT_TOOLBOX_VOLUME"
+  | "GRAFT_PIPEDREAM_PROJECT_ID"
+  | "GRAFT_PIPEDREAM_ENVIRONMENT"
+  | "GRAFT_PIPEDREAM_CLIENT_ID"
+  | "GRAFT_PIPEDREAM_CLIENT_SECRET"
 >;
 
 export type SelectBackingsDeps = {
@@ -133,6 +147,12 @@ export type SelectBackingsDeps = {
   raw?: Readonly<Record<string, string | undefined>>;
   /** The module imported under `cloud`. Default `CLOUD_BACKINGS_MODULE`; a test points it at a file. */
   cloudModule?: string;
+  /**
+   * The Pipedream Connect client the provider is built over, in place of the one
+   * `GRAFT_PIPEDREAM_*` would build — a fake in a test, one pointed at a fake Pipedream in the proof
+   * script. Read only when the group is set; without the group there is no provider to hand it to.
+   */
+  pipedreamClient?: PipedreamClient;
 };
 
 export async function selectBackings(
@@ -140,10 +160,39 @@ export async function selectBackings(
   deps: SelectBackingsDeps = {},
 ): Promise<Backings> {
   if (env.GRAFT_BACKINGS === "cloud") return loadCloudBackings(env, deps);
-  return openBackings(env);
+  return openBackings(env, deps);
 }
 
-function openBackings(env: BackingsEnv): Backings {
+/**
+ * The providers configuration switches on in either form (ADR 0019): the Pipedream provider when
+ * its all-or-nothing group is set — `@graft/env` has refused a partial one by now, so the four are
+ * read together. In routing order, ahead of the keyring; the gateway (GRA-58) joins this list.
+ */
+export function environmentProviders(
+  env: BackingsEnv,
+  deps: Pick<SelectBackingsDeps, "pipedreamClient"> = {},
+): ConnectionProvider[] {
+  const providers: ConnectionProvider[] = [];
+  if (
+    env.GRAFT_PIPEDREAM_PROJECT_ID &&
+    env.GRAFT_PIPEDREAM_ENVIRONMENT &&
+    env.GRAFT_PIPEDREAM_CLIENT_ID &&
+    env.GRAFT_PIPEDREAM_CLIENT_SECRET
+  ) {
+    const client =
+      deps.pipedreamClient ??
+      createPipedreamClient({
+        projectId: env.GRAFT_PIPEDREAM_PROJECT_ID,
+        environment: env.GRAFT_PIPEDREAM_ENVIRONMENT,
+        clientId: env.GRAFT_PIPEDREAM_CLIENT_ID,
+        clientSecret: env.GRAFT_PIPEDREAM_CLIENT_SECRET,
+      });
+    providers.push(createPipedreamProvider({ client }));
+  }
+  return providers;
+}
+
+function openBackings(env: BackingsEnv, deps: SelectBackingsDeps): Backings {
   if (env.GRAFT_KEYRING_SECRET === undefined) {
     // `@graft/env` refuses this combination at boot (`serverEnvIssues`); the check here is what
     // makes the narrowing true for a caller that assembled the environment some other way.
@@ -183,7 +232,7 @@ function openBackings(env: BackingsEnv): Backings {
     sandbox,
     keyring: createLocalKeyring(env.GRAFT_KEYRING_SECRET),
     mirror: createNoopToolboxMirror(),
-    providers: [keyringProvider],
+    providers: [...environmentProviders(env, deps), keyringProvider],
     store,
     toolboxRoot: store.root,
   };
@@ -219,8 +268,9 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
   const created: unknown = await factory(input);
   assertCloudBackings(created, specifier);
   const { store: own, providers: hosted, ...seams } = created;
-  // The keyring after the hosted providers, always: the floor every deployment has (ADR 0019).
-  const providers = [...(hosted ?? []), keyringProvider];
+  // The keyring after the hosted providers and the configured ones, always: the floor every
+  // deployment has (ADR 0019).
+  const providers = [...(hosted ?? []), ...environmentProviders(env, deps), keyringProvider];
   const problem = providerListProblem(providers);
   if (problem) {
     throw new Error(`${specifier}'s createCloudBackings returned connection providers: ${problem}`);
@@ -260,6 +310,8 @@ const STORE_MEMBERS = ["readTree", "writeTree", "read", "list", "exists", "remov
 /** A connection provider's functions (`ConnectionProvider` in `@graft/core`), and how it connects. */
 const PROVIDER_MEMBERS = ["covers", "resolve", "revoke"] as const;
 const PROVIDER_CONNECT_KINDS = new Set(["form", "link", "none"]);
+/** What a provider that connects with a link carries beyond the word (`ProviderLink` in `@graft/core`). */
+const PROVIDER_LINK_MEMBERS = ["target", "start", "complete"] as const;
 
 /**
  * Throw unless `value` carries the three seams — and, when it carries a store, the whole store,
@@ -325,6 +377,20 @@ export function assertCloudBackings(
         if (typeof p[member] !== "function") {
           throw new Error(
             `${specifier}'s createCloudBackings returned provider ${p.name} without ${member}()`,
+          );
+        }
+      }
+      if (connect.kind === "link") {
+        for (const member of PROVIDER_LINK_MEMBERS) {
+          if (typeof connect[member] !== "function") {
+            throw new Error(
+              `${specifier}'s createCloudBackings returned provider ${p.name}, which connects with a link, without connect.${member}()`,
+            );
+          }
+        }
+        if (typeof connect.scheme !== "string" || connect.scheme.length === 0) {
+          throw new Error(
+            `${specifier}'s createCloudBackings returned provider ${p.name}, which connects with a link, with no relay scheme`,
           );
         }
       }

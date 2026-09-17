@@ -23,6 +23,7 @@ import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { type ConnectionScheme, connectionScheme } from "@graft/db/schema/connection";
 import { SCHEME_CREDENTIAL_FIELDS } from "@graft/proxy/credential-fields";
 import { SCHEME_PARAMETERS } from "@graft/proxy/scheme-parameters";
+import { AUTH_SCHEMES, type AuthScheme, isAuthScheme } from "@graft/proxy/types";
 
 import { DEFAULT_POLL_MS } from "./approval";
 import type { McpDeps } from "./deps";
@@ -58,9 +59,14 @@ import { executeToolName } from "./tool-names";
  * covers the vendor at these hosts decides how the person connects it. The keyring covers every
  * vendor and is always last, so with it alone every proposal takes the form below and the ask,
  * the answer and the card are exactly what they were before providers existed. A provider that
- * connects with a link or with no person step gets its flow with GRA-59 and GRA-58; until then a
- * proposal it covers is refused by name rather than routed to a form that would store a credential
- * the provider holds itself.
+ * connects with a **link** (GRA-59; Pipedream) takes the same ask with a different card: the
+ * payload names the provider and what it calls the vendor, the person presses one button, the
+ * provider's page runs the vendor's sign-in, and the server's return route — not a submit — makes
+ * the connection and answers the ask once the provider has confirmed the account
+ * (`apps/server/src/provider-link.ts`). The agent proposes a scheme as it always did; for a link
+ * provider the row records the provider's relay scheme instead, and the proposed one is only what
+ * the keyring would have used. A provider with no person step gets its flow with GRA-58; until
+ * then a proposal it covers is refused by name.
  */
 
 export const CONNECTION_ASK_KIND = "connection";
@@ -70,9 +76,18 @@ export const CREDENTIAL_ASK_KIND = "credential";
 export type ConnectionProposalPayload = {
   /** The provider the proposal was routed to (ADR 0019) — `keyring` for every ask made before or without another. */
   provider: string;
+  /**
+   * How that provider connects — `form`, `link` or `none` — so the console draws the right card
+   * without asking the server about providers; absent on an ask recorded before GRA-59, which is
+   * the keyring's form.
+   */
+  providerConnect?: "form" | "link" | "none";
+  /** What a link provider calls the vendor on its side — Pipedream's app slug — for the card; null otherwise. */
+  providerTarget?: string | null;
   vendor: string;
   displayName: string;
-  scheme: ConnectionScheme;
+  /** The scheme the agent proposed — a signing scheme, since a relay scheme is a provider's (ADR 0019). */
+  scheme: AuthScheme;
   schemeConfig: Record<string, string>;
   /** Normalised: origin plus an optional path, no trailing slash. */
   primaryHost: string;
@@ -89,7 +104,8 @@ export type CredentialAskPayload = {
   connectionId: string;
   vendor: string;
   connectionName: string;
-  scheme: ConnectionScheme;
+  /** A signing scheme: a re-entry is the keyring's, and a relay provider's row is refused before this is built. */
+  scheme: AuthScheme;
   hosts: string[];
   /** What the vendor answered, in the agent's words; the card shows it as such. */
   reason: string | null;
@@ -106,6 +122,10 @@ export type ConnectionAnswer = { connectionId: string };
 
 export const PROPOSAL_PROVENANCE_NOTE =
   "This proposal was written by the agent's model from the documentation it read. Check the hosts and the documentation link before entering a secret: the credential will be sent to every host listed, and to nothing else.";
+
+/** The same provenance for a link provider's ask, where nothing is entered and the calls are relayed (GRA-59). */
+export const LINK_PROVENANCE_NOTE =
+  "This proposal was written by the agent's model from the documentation it read. Check the hosts and the documentation link before connecting: calls for this connection will be relayed to every host listed, and to nothing else.";
 
 /** What either tool answers once the person has entered the secret — and nothing about the secret. */
 export type Connected = {
@@ -130,6 +150,8 @@ export type AwaitingHandoff = {
    * to relay exactly. Absent for every other scheme.
    */
   redirectUri?: string;
+  /** For a proposal a link provider covers (ADR 0019): the provider's name, so the agent can say who runs the sign-in. */
+  provider?: string;
 };
 
 export type ConnectionRequestOutcome =
@@ -149,23 +171,22 @@ export type ConnectionProposalInput = {
 
 export type CredentialRequestInput = { connectionId: string; reason?: string };
 
-/** The scheme table in one sentence, for the tool's description — generated so it cannot drift. */
+/**
+ * The scheme table in one sentence, for the tool's description — generated so it cannot drift. The
+ * signing schemes alone: a relay scheme is a provider's and never one the agent proposes (ADR 0019).
+ */
 export function describeSchemes(): string {
-  return connectionScheme
-    .map((scheme) => {
-      const rule = SCHEME_PARAMETERS[scheme];
-      const parameters = [
-        ...rule.required,
-        ...rule.optional.map((parameter) => `optional ${parameter}`),
-      ];
-      // What the person supplies on the form: the scheme's secret fields, and the parameters only
-      // they can know — an OAuth client id (ADR 0005), which the proposal leaves out.
-      const entered = [...(rule.personEntered ?? []), ...SCHEME_CREDENTIAL_FIELDS[scheme]].join(
-        ", ",
-      );
-      return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${entered})`;
-    })
-    .join("; ");
+  return AUTH_SCHEMES.map((scheme) => {
+    const rule = SCHEME_PARAMETERS[scheme];
+    const parameters = [
+      ...rule.required,
+      ...rule.optional.map((parameter) => `optional ${parameter}`),
+    ];
+    // What the person supplies on the form: the scheme's secret fields, and the parameters only
+    // they can know — an OAuth client id (ADR 0005), which the proposal leaves out.
+    const entered = [...(rule.personEntered ?? []), ...SCHEME_CREDENTIAL_FIELDS[scheme]].join(", ");
+    return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${entered})`;
+  }).join("; ");
 }
 
 function refuse(
@@ -265,9 +286,9 @@ export function normaliseProposal(input: ConnectionProposalInput): ProposalVerdi
   const displayName = (input.displayName ?? vendor).trim();
   const nameProblem = validateDisplayName(displayName);
   if (nameProblem) return invalid(nameProblem, { field: "displayName" });
-  if (!isConnectionScheme(input.scheme)) {
+  if (!isConnectionScheme(input.scheme) || !isAuthScheme(input.scheme)) {
     return invalid(
-      `Unknown scheme ${JSON.stringify(input.scheme)} — one of ${connectionScheme.join(", ")}`,
+      `Unknown scheme ${JSON.stringify(input.scheme)} — one of ${AUTH_SCHEMES.join(", ")}`,
       {
         field: "scheme",
       },
@@ -353,14 +374,21 @@ export async function requestConnection(
     verdict.payload.vendor,
     verdict.payload.hosts,
   );
-  if (provider.connect.kind !== "form") {
+  if (provider.connect.kind === "none") {
     return refuse(
       "provider_not_supported",
-      `${verdict.payload.displayName} (${verdict.payload.vendor}) is covered by the ${provider.name} provider, which connects it with ${provider.connect.kind === "link" ? "a link the person opens" : "no person step"} rather than a credential entered in the console — and request_connection has no flow for that yet. Tell the person which provider covers the vendor; do not propose it under another.`,
+      `${verdict.payload.displayName} (${verdict.payload.vendor}) is covered by the ${provider.name} provider, which connects it with no person step rather than a credential entered in the console — and request_connection has no flow for that yet. Tell the person which provider covers the vendor; do not propose it under another.`,
       { provider: provider.name, connect: provider.connect.kind },
     );
   }
-  const payload: ConnectionProposalPayload = { provider: provider.name, ...verdict.payload };
+  const link = provider.connect.kind === "link" ? provider.connect : null;
+  const payload: ConnectionProposalPayload = {
+    provider: provider.name,
+    providerConnect: provider.connect.kind,
+    providerTarget: link?.target(verdict.payload.vendor, verdict.payload.hosts) ?? null,
+    ...verdict.payload,
+    ...(link ? { note: LINK_PROVENANCE_NOTE } : {}),
+  };
 
   // An ask already made for this proposal comes first — answered or still open — so a call after
   // the person's submit takes the answer it was waiting for rather than finding the connection and
@@ -402,7 +430,8 @@ export async function requestConnection(
       deps.pendingAction,
     ));
 
-  const oauth = isOAuthAuthorizationCode(payload.scheme);
+  // A link provider's ask is one click; the OAuth guidance is the keyring's form's alone (ADR 0005).
+  const oauth = !link && isOAuthAuthorizationCode(payload.scheme);
   const redirectUri = oauth ? deps.oauthRedirectUri : undefined;
   return waitForAnswer(ctx, scope, action, deps, {
     awaiting: "awaiting_connection",
@@ -414,20 +443,25 @@ export async function requestConnection(
       return connected(connection, "new");
     },
     ...(redirectUri ? { awaitingExtra: { redirectUri } } : {}),
+    ...(link ? { awaitingExtra: { provider: provider.name } } : {}),
     awaitingMessage: (url, expiresAt) =>
-      oauth
-        ? // The agent is the guide (ADR 0005): which console, what to name the client, which URI.
-          `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) with an OAuth client they register at the vendor — the client secret and the tokens never pass through you. ` +
-          "Guide them in three sentences: open the vendor's developer console and create an OAuth client of the web-application kind; name it after Graft so they recognise it later; " +
-          (redirectUri
-            ? `and paste exactly this redirect URI into it: ${redirectUri} `
-            : "and paste the redirect URI the form shows into it. ") +
-          `Then relay this link so they can enter the client id and secret and complete the consent in a popup: ${url} It expires at ${expiresAt}. ` +
-          "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected. " +
-          "A Google Cloud project in Testing mode expires refresh tokens after seven days, so a Google connection reconnects weekly until the app is published."
-        : `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
-          `Relay this link so they can check the hosts and enter it: ${url} It expires at ${expiresAt}. ` +
-          "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
+      link
+        ? `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) through ${provider.name} — one click: they sign in at the vendor on ${provider.name}'s page, and the vendor's token stays there; nothing passes through you, and nothing is typed in the console. ` +
+          `Relay this link so they can press Connect: ${url} It expires at ${expiresAt}. ` +
+          "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
+        : oauth
+          ? // The agent is the guide (ADR 0005): which console, what to name the client, which URI.
+            `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) with an OAuth client they register at the vendor — the client secret and the tokens never pass through you. ` +
+            "Guide them in three sentences: open the vendor's developer console and create an OAuth client of the web-application kind; name it after Graft so they recognise it later; " +
+            (redirectUri
+              ? `and paste exactly this redirect URI into it: ${redirectUri} `
+              : "and paste the redirect URI the form shows into it. ") +
+            `Then relay this link so they can enter the client id and secret and complete the consent in a popup: ${url} It expires at ${expiresAt}. ` +
+            "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected. " +
+            "A Google Cloud project in Testing mode expires refresh tokens after seven days, so a Google connection reconnects weekly until the app is published."
+          : `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
+            `Relay this link so they can check the hosts and enter it: ${url} It expires at ${expiresAt}. ` +
+            "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
   });
 }
 
@@ -468,6 +502,14 @@ export async function requestCredential(
       "credential_not_applicable",
       `${connection.displayName} (${connection.vendor}) is connected through the ${provider.name} provider, which holds its credential; there is nothing to re-enter in the console. Tell the person to reconnect it through ${provider.name}.`,
       { provider: provider.name },
+    );
+  }
+  // The provider check above is the rule; this is its type: a keyring row carries a signing scheme.
+  if (!isAuthScheme(connection.scheme)) {
+    return refuse(
+      "credential_not_applicable",
+      `${connection.displayName} (${connection.vendor}) relays through ${connection.scheme}; there is no credential in Graft to re-enter.`,
+      { provider: connection.provider },
     );
   }
   const reason = typeof input.reason === "string" ? input.reason.trim().slice(0, 500) : "";
@@ -544,8 +586,8 @@ async function waitForAnswer(
     declinedReason: string;
     onConnected: (connection: ConnectionOutput) => Connected;
     awaitingMessage: (url: string, expiresAt: string) => string;
-    /** What the awaiting answer carries beyond the link — the redirect URI of an OAuth proposal. */
-    awaitingExtra?: Pick<AwaitingHandoff, "redirectUri">;
+    /** What the awaiting answer carries beyond the link — the redirect URI of an OAuth proposal, or a link provider's name. */
+    awaitingExtra?: Pick<AwaitingHandoff, "redirectUri" | "provider">;
   },
 ): Promise<ConnectionRequestOutcome> {
   const url = handoffUrl(

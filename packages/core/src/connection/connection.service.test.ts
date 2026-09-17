@@ -13,6 +13,7 @@ import {
   markOAuthConsentRequired,
   registerConnection,
   registerConnectionWithCredential,
+  retryProviderRelease,
   revokeConnection,
   setConnectionCredential,
   startOAuthConsent,
@@ -52,6 +53,7 @@ const row: ConnectionRow = {
   oauthTokenUrl: null,
   oauthScopes: null,
   oauthRefreshState: null,
+  providerReleaseFailedAt: null,
   revokedAt: null,
   owner: "person",
   createdAt: NOW,
@@ -106,6 +108,20 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
       ...row,
       oauthRefreshState: state,
     })),
+    setConnectionProviderRef: vi.fn(async (_db, _p, id, providerRef) => ({
+      ...row,
+      id,
+      providerRef,
+      revokedAt: null,
+      providerReleaseFailedAt: null,
+    })),
+    recordProviderRelease: vi.fn(async (_db, _p, _id, outcome) => ({
+      ...row,
+      revokedAt: NOW,
+      ...(outcome.released
+        ? { providerRef: null, providerReleaseFailedAt: null }
+        : { providerReleaseFailedAt: outcome.at }),
+    })),
     revokeConnection: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
@@ -137,11 +153,18 @@ const fakeRelay: RelayPlugin = {
   headerNames: () => [],
 };
 
-function linkProvider(): ConnectionProvider & { revoked: string[] } {
+function linkProvider(): ConnectionProvider & { revoked: string[]; revokedRefs: string[] } {
   const revoked: string[] = [];
+  const revokedRefs: string[] = [];
   return {
     name: "broker",
-    connect: { kind: "link" },
+    connect: {
+      kind: "link",
+      scheme: "pipedream_connect_proxy",
+      target: (vendor) => (vendor === "gmail" ? "gmail" : null),
+      start: async () => ({ url: "https://broker.example/link", expiresAt: NOW }),
+      complete: async () => ({ ok: true, ref: "acct_1", label: null }),
+    },
     covers: (vendor) => vendor === "gmail",
     resolve: (r) => ({
       mode: "relay",
@@ -149,8 +172,10 @@ function linkProvider(): ConnectionProvider & { revoked: string[] } {
     }),
     revoke: async (r) => {
       revoked.push(r.id);
+      if (r.providerRef) revokedRefs.push(r.providerRef);
     },
     revoked,
+    revokedRefs,
   };
 }
 
@@ -220,21 +245,29 @@ describe("the provider a registration names (ADR 0019)", () => {
     expect(deps.setConnectionCredential).not.toHaveBeenCalled();
   });
 
-  it("asks the row's provider to release what it holds after a revoke, and the keyring holds nothing", async () => {
+  it("asks the row's provider to release what it holds after a revoke, by the reference the revoke left in place, then forgets the reference — and the keyring holds nothing", async () => {
     const broker = linkProvider();
+    const brokerRow = { ...row, provider: "broker", providerRef: "acct_1" };
     const deps = fakeDeps({
       providers: [broker, keyringProvider],
-      revokeConnection: vi.fn(async () => ({
-        ...row,
-        provider: "broker",
-        providerRef: "acct_1",
+      revokeConnection: vi.fn(async () => ({ ...brokerRow, revokedAt: NOW })),
+      recordProviderRelease: vi.fn(async (_db, _p, _id, outcome) => ({
+        ...brokerRow,
         revokedAt: NOW,
+        ...(outcome.released
+          ? { providerRef: null, providerReleaseFailedAt: null }
+          : { providerReleaseFailedAt: outcome.at }),
       })),
     });
     const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
     expect(result?.connection.provider).toBe("broker");
     expect(result?.providerRelease).toEqual({ provider: "broker", released: true });
     expect(broker.revoked).toEqual(["conn_1"]);
+    expect(broker.revokedRefs).toEqual(["acct_1"]);
+    expect(deps.recordProviderRelease).toHaveBeenCalledWith(ctx.db, "person_1", "conn_1", {
+      released: true,
+    });
+    expect(result?.connection.providerReleaseFailedAt).toBeNull();
 
     const keyringDeps = fakeDeps({ providers: [broker, keyringProvider] });
     const keyringResult = await revokeConnection(ctx, PRINCIPAL, "conn_1", keyringDeps);
@@ -258,7 +291,12 @@ describe("the provider a registration names (ADR 0019)", () => {
     };
     const deps = fakeDeps({
       providers: [broker, keyringProvider],
-      revokeConnection: vi.fn(async () => ({ ...row, provider: "broker", revokedAt: NOW })),
+      revokeConnection: vi.fn(async () => ({
+        ...row,
+        provider: "broker",
+        providerRef: "acct_1",
+        revokedAt: NOW,
+      })),
     });
     const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
     expect(result?.connection.revokedAt).toEqual(NOW);
@@ -269,6 +307,64 @@ describe("the provider a registration names (ADR 0019)", () => {
       failure: "BrokerDown",
     });
     expect(JSON.stringify(result)).not.toContain("sk_live_secret");
+    // The failure outlives the request: stamped on the row, the reference kept for the retry.
+    expect(deps.recordProviderRelease).toHaveBeenCalledWith(ctx.db, "person_1", "conn_1", {
+      released: false,
+      at: NOW,
+    });
+    expect(result?.connection.providerReleaseFailedAt).toEqual(NOW);
+  });
+
+  it("retries a failed release from the card: the same release, recorded the same way, and refused where nothing is outstanding", async () => {
+    const broker = linkProvider();
+    const failed = {
+      ...row,
+      provider: "broker",
+      providerRef: "acct_1",
+      revokedAt: NOW,
+      providerReleaseFailedAt: NOW,
+    };
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      findConnection: vi.fn(async () => failed),
+    });
+    const result = await retryProviderRelease(ctx, PRINCIPAL, "conn_1", deps);
+    expect(broker.revokedRefs).toEqual(["acct_1"]);
+    expect(result.providerRelease).toEqual({ provider: "broker", released: true });
+    expect(deps.recordProviderRelease).toHaveBeenCalledWith(ctx.db, "person_1", "conn_1", {
+      released: true,
+    });
+    expect(result.connection.providerReleaseFailedAt).toBeNull();
+
+    await expect(
+      retryProviderRelease(
+        ctx,
+        PRINCIPAL,
+        "conn_1",
+        fakeDeps({
+          providers: [broker, keyringProvider],
+          findConnection: vi.fn(async () => ({ ...failed, revokedAt: null })),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT", message: expect.stringContaining("not revoked") });
+    await expect(
+      retryProviderRelease(
+        ctx,
+        PRINCIPAL,
+        "conn_1",
+        fakeDeps({
+          providers: [broker, keyringProvider],
+          findConnection: vi.fn(async () => ({
+            ...failed,
+            providerReleaseFailedAt: null,
+            providerRef: null,
+          })),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("nothing outstanding"),
+    });
   });
 
   it("a row under a provider the deployment no longer enables revokes with nothing to release", async () => {
@@ -317,6 +413,22 @@ describe("toProxyConnection asks the row's provider how the call resolves (ADR 0
     });
     expect(proxy.relay?.plugin).toBe(fakeRelay);
     await expect(proxy.relay?.obtain()).resolves.toEqual({ accountId: "acct_1" });
+  });
+
+  it("a revoked row resolves to nothing whatever its provider — a relay row keeps its reference while the release is outstanding", () => {
+    const broker = linkProvider();
+    const proxy = toProxyConnection(
+      {
+        ...row,
+        provider: "broker",
+        providerRef: "acct_1",
+        revokedAt: NOW,
+        providerReleaseFailedAt: NOW,
+      },
+      [broker, keyringProvider],
+    );
+    expect(proxy).toMatchObject({ authScheme: null, credentialCiphertext: null });
+    expect(proxy).not.toHaveProperty("relay");
   });
 
   it("a row under a provider the deployment has not enabled resolves to nothing the proxy can use", () => {
@@ -933,5 +1045,10 @@ describe("the consent", () => {
         toConnectionOutput({ ...oauthRow, oauthRefreshState: { consentedAt: NOW.toISOString() } }),
       ),
     ).toBe(true);
+    // A relay provider's row holds no credential here and is connected by existing (ADR 0019).
+    const relayed = toConnectionOutput({ ...row, provider: "broker", providerRef: "acct_1" });
+    expect(relayed.credentialSetAt).toBeNull();
+    expect(isConnectionUsable(relayed)).toBe(true);
+    expect(isConnectionUsable({ ...relayed, revokedAt: NOW })).toBe(false);
   });
 });

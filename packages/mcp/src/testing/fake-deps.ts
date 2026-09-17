@@ -152,6 +152,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         oauthTokenUrl: null,
         oauthScopes: null,
         oauthRefreshState: null,
+        providerReleaseFailedAt: null,
         revokedAt: null,
         owner: "person",
         createdAt: at,
@@ -339,6 +340,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         oauthTokenUrl: input.oauthTokenUrl ?? null,
         oauthScopes: input.oauthScopes ?? null,
         oauthRefreshState: null,
+        providerReleaseFailedAt: null,
         revokedAt: null,
         owner: "person" as const,
         createdAt: at,
@@ -373,6 +375,24 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.connections.get(id);
       if (!row || row.personId !== personId) return null;
       const updated = { ...row, oauthRefreshState: state };
+      store.connections.set(id, updated);
+      return updated;
+    },
+    /** The repo's statement: the provider's reference written, `revoked_at` cleared (ADR 0019). */
+    setConnectionProviderRef: async (_db, personId, id, providerRef) => {
+      const row = store.connections.get(id);
+      if (!row || row.personId !== personId) return null;
+      const updated = { ...row, providerRef, revokedAt: null, providerReleaseFailedAt: null };
+      store.connections.set(id, updated);
+      return updated;
+    },
+    /** The repo's statement: released clears the reference, a failure stamps the moment (ADR 0019). */
+    recordProviderRelease: async (_db, personId, id, outcome) => {
+      const row = store.connections.get(id);
+      if (!row || row.personId !== personId) return null;
+      const updated = outcome.released
+        ? { ...row, providerRef: null, providerReleaseFailedAt: null }
+        : { ...row, providerReleaseFailedAt: outcome.at };
       store.connections.set(id, updated);
       return updated;
     },
