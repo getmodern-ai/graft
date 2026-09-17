@@ -26,6 +26,7 @@
     "@graft/auth": "workspace:*",
     "@graft/core": "workspace:*",
     "@graft/db": "workspace:*",
+    "@graft/email": "workspace:*",
     "@graft/env": "workspace:*",
     "@graft/mcp": "workspace:*",
     "@graft/model": "workspace:*",
