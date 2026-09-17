@@ -38,6 +38,7 @@ import {
   type ProofRead,
 } from "@graft/model";
 import { hostSetOf } from "@graft/proxy/credential-source";
+import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
 import type { PublishOutcome } from "@graft/publish";
 import type { SandboxHandle } from "@graft/sandbox";
@@ -97,6 +98,15 @@ import {
  * row with its files, its outcome, the version it published and the model's own line about it;
  * every step is a trace line; every dry-run report is on the version row the attempt names.
  *
+ * **A vendor the proxy got no response from ends the job at once** (GRA-79). The proxy marks a
+ * refusal it made because the vendor never answered — the fetch threw, the deadline passed, the
+ * name resolved privately — with `x-graft-refusal` and puts the host and the cause's code on the
+ * body (`@graft/proxy`'s `failure.ts`); the probe carries the mark off a proof read and the runner
+ * off a dry-run read, and the job ends `vendor_unreachable` naming the host, the reason and the
+ * code, the attempt closed `run_failed`, with no further model turn: no change to the module
+ * changes the network, and a model shown that 502 as a vendor's would spend the attempt budget on
+ * code. A vendor's own 5xx bears no mark and stays the model's to reason about.
+ *
  * The job holds the agent in flight for its whole length (ADR 0009: the sweep never demotes under a
  * run), and releases in `finally`. It stamps the job's heartbeat while it works so a runner in another
  * process — after a restart — can tell a job that is being worked from one whose process died
@@ -118,7 +128,11 @@ export const PROOF_BODY_CHARS = 4_000;
 /** How often the job stamps `heartbeat_at`; the runner's stale bound is a multiple of it. */
 export const DEFAULT_HEARTBEAT_MS = 15_000;
 
-/** The probe module every proof read runs through — one `GET` of the path it is handed, and the answer's shape. */
+/**
+ * The probe module every proof read runs through — one `GET` of the path it is handed, and the
+ * answer's shape. `reason` is the proxy's mark for a vendor it got no response from (GRA-79), read
+ * off the same header the runner reads in a dry run; null for any answer the vendor gave.
+ */
 export const PROBE_MODULE = [
   "export default async (input, ctx) => {",
   "  const res = await ctx.fetch(input.path);",
@@ -128,6 +142,7 @@ export const PROBE_MODULE = [
   "    ok: res.ok,",
   '    location: res.headers.get("location"),',
   '    contentType: res.headers.get("content-type"),',
+  `    reason: res.headers.get(${JSON.stringify(REFUSAL_HEADER)}),`,
   `    body: text.slice(0, ${PROOF_BODY_CHARS}),`,
   "  };",
   "};",
@@ -191,7 +206,7 @@ const OUTCOME_SENTENCES: Record<Exclude<AcquireAttemptOutcome, "running">, strin
   proof_failed: "A proof read failed and the draft was set aside unpublished.",
   publish_refused: "The publish refused the module.",
   dry_run_failed: "The dry run failed.",
-  run_failed: "The dry run did not run.",
+  run_failed: "The dry run did not run, or the proxy got no response from the vendor.",
   abandoned: "Set aside unpublished.",
 };
 
@@ -722,6 +737,19 @@ class AcquireLoop {
       });
       const read = describeProofRead(path, outcome, connection);
       reads.push(read);
+      const unreached = vendorUnreachedOf(read, refusalFieldsOf(read.body));
+      if (unreached) {
+        // The network's answer, not the vendor's (GRA-79): recorded, and the job ends here. The
+        // model is not asked — the header of this file says why.
+        const ended = describeVendorUnreached(unreached, `GET ${path}`);
+        await this.trace("vendor_error", ended.summary, {
+          attempt: attempt.number,
+          data: { path, status: read.status, body: read.body, ...unreached },
+        });
+        this.lastDiagnostics = { proofReads: reads };
+        await this.closeOpen("run_failed", ended.summary);
+        throw this.end("vendor_unreachable", ended.message, { proofReads: reads });
+      }
       if (read.ok) {
         await this.trace("proof", `Proof read GET ${path}: ${read.status}.`, {
           attempt: attempt.number,
@@ -900,6 +928,24 @@ class AcquireLoop {
     });
     // The summary keeps the error's first line; the stack is in the trace and the report.
     const verdict = verdictOf(report.moduleError?.split("\n")[0]);
+    for (const read of summary.reads) {
+      // The runner recorded the proxy's mark on a read (GRA-79): the report is on the version row
+      // above, the attempt closes on it, and the job ends without asking the model.
+      const unreached = vendorUnreachedOf(read, read);
+      if (!unreached) continue;
+      const ended = describeVendorUnreached(unreached, `${read.method} ${read.path}`);
+      await this.trace("vendor_error", ended.summary, {
+        attempt: attempt.number,
+        data: { versionId: version.id, read },
+      });
+      this.lastDiagnostics = { dryRun: summary };
+      await this.closeOpen(
+        "run_failed",
+        `The dry run of ${wire} v${version.versionNumber} did not reach the vendor: ${ended.summary}`,
+        { versionId: version.id },
+      );
+      throw this.end("vendor_unreachable", ended.message, { dryRun: summary });
+    }
     if (
       report.moduleError &&
       (report.reads as { status?: number }[]).some((r) => (r.status ?? 0) >= 400)
@@ -1154,6 +1200,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body: null,
       error: `${refusal.reason ?? "refused"}: ${refusal.message ?? ""}`.trim(),
       redirectTo: null,
+      reason: null,
     };
   }
   const run = outcome as {
@@ -1172,6 +1219,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
         ? `${failure.error}${failure.stderrTail ? ` — ${failure.stderrTail}` : ""}`
         : "the run failed",
       redirectTo: null,
+      reason: null,
     };
   }
   const report = readDryRunReport(run.result);
@@ -1180,6 +1228,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     ok?: boolean;
     body?: string;
     location?: string | null;
+    reason?: string | null;
   } | null;
   if (report?.moduleError) {
     return {
@@ -1189,6 +1238,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body: null,
       error: report.moduleError,
       redirectTo: null,
+      reason: null,
     };
   }
   if (!probe || typeof probe.status !== "number") {
@@ -1199,9 +1249,27 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body: null,
       error: "The probe returned no answer.",
       redirectTo: null,
+      reason: null,
     };
   }
   const body = typeof probe.body === "string" ? probe.body : null;
+  // The proxy's mark (GRA-79): only a refusal made for want of a vendor response carries one.
+  const reason = isVendorUnreachedReason(probe.reason) ? probe.reason : null;
+  if (reason) {
+    const fields = refusalFieldsOf(body);
+    return {
+      path,
+      ok: false,
+      status: probe.status,
+      body,
+      error: describeVendorUnreached(
+        { reason, host: fields.host ?? "the vendor", code: fields.code },
+        `GET ${path}`,
+      ).summary,
+      redirectTo: null,
+      reason,
+    };
+  }
   if (isRedirect(probe.status)) {
     const redirect = describeRedirect(path, probe.location ?? null, connection);
     return {
@@ -1211,6 +1279,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body,
       error: redirect.error,
       redirectTo: redirect.host,
+      reason: null,
     };
   }
   return {
@@ -1220,6 +1289,58 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     body,
     error: null,
     redirectTo: null,
+    reason: null,
+  };
+}
+
+/**
+ * A read the proxy refused because no response came from the vendor (GRA-79), as the job names it:
+ * the reason off the proxy's mark, the host and the cause's code off the proxy's body. Null for
+ * any read the vendor answered, whatever the status — the mark, not the status, is the test.
+ */
+type VendorUnreached = { reason: string; host: string; code: string | null };
+
+function vendorUnreachedOf(
+  read: { reason?: string | null },
+  fields: { host?: string | null; code?: string | null },
+): VendorUnreached | null {
+  if (!isVendorUnreachedReason(read.reason)) return null;
+  return { reason: read.reason, host: fields.host ?? "the vendor", code: fields.code ?? null };
+}
+
+/** `code` and `host` off the proxy's refusal body, when the probe's body is one; nulls otherwise. */
+function refusalFieldsOf(body: string | null): { host: string | null; code: string | null } {
+  let parsed: unknown = null;
+  try {
+    parsed = body === null ? null : JSON.parse(body);
+  } catch {
+    parsed = null;
+  }
+  const field = (name: "host" | "code") => {
+    const value =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as Record<string, unknown>)[name]
+        : undefined;
+    return typeof value === "string" ? value : null;
+  };
+  return { host: field("host"), code: field("code") };
+}
+
+/**
+ * How a job that could not reach the vendor ends, in two lengths: the `summary` closes the attempt
+ * and the trace, the `message` is the result's, and tells the agent what can be done — nothing to
+ * the module. The code is in brackets as the runner prints a cause's (`describeCause` in
+ * `runner.mjs`), so one failure reads the same from either side.
+ */
+function describeVendorUnreached(
+  unreached: VendorUnreached,
+  call: string,
+): { summary: string; message: string } {
+  const code = unreached.code ? ` [${unreached.code}]` : "";
+  const summary = `The proxy got no response from ${unreached.host} on ${call}: ${unreached.reason}${code}.`;
+  return {
+    summary,
+    message: `${summary} No change to the module can fix this; try again later, or check the connection's host.`,
   };
 }
 
