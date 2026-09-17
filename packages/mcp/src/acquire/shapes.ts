@@ -46,7 +46,9 @@ export function acquireNextStep(vendor: string, name: string): string {
 /**
  * Why a job ended without a tool — one word the agent and the console can branch on, and the
  * sentence that says it. `attempt_budget` and `token_ceiling` are the two bounds ADR 0004 names;
- * the rest are the loop finding it cannot go on.
+ * `vendor_unreachable` is the proxy getting no response from the vendor on a proof read or the dry
+ * run (GRA-79) — the network's, not the module's, so the job ends on it at once; the rest are the
+ * loop finding it cannot go on.
  */
 export const ACQUIRE_FAILURES = [
   "attempt_budget",
@@ -57,6 +59,7 @@ export const ACQUIRE_FAILURES = [
   "connection_unavailable",
   "build_approval_missing",
   "sandbox_unavailable",
+  "vendor_unreachable",
   "job_failed",
 ] as const;
 export type AcquireFailureKind = (typeof ACQUIRE_FAILURES)[number];

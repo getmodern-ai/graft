@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { causeChain, describeCauseChain, hasCauseNamed, MAX_CAUSE_DEPTH } from "./cause-chain";
+import {
+  causeChain,
+  describeCauseChain,
+  describeLink,
+  hasCauseNamed,
+  MAX_CAUSE_DEPTH,
+} from "./cause-chain";
 
 /**
  * The one walk down a `cause` chain the package has. `upstream.test.ts` holds the two
@@ -38,11 +44,56 @@ describe("causeChain", () => {
   });
 });
 
+describe("describeLink", () => {
+  it("renders name [code]: message, the brackets only for a string code", () => {
+    const system = Object.assign(new Error("getaddrinfo ENOTFOUND api.vendor.example"), {
+      code: "ENOTFOUND",
+    });
+    const numbered = Object.assign(new Error("refused"), { code: 403 });
+
+    expect(describeLink(system)).toBe(
+      "Error [ENOTFOUND]: getaddrinfo ENOTFOUND api.vendor.example",
+    );
+    expect(describeLink(numbered)).toBe("Error: refused");
+    expect(describeLink(new TypeError("fetch failed"))).toBe("TypeError: fetch failed");
+    expect(describeLink("just a string")).toBe("just a string");
+  });
+
+  it("reads the sentence out of a plain-object link rather than printing [object Object]", () => {
+    // A provider SDK's thrown body sitting in a cause — GRA-60's shape, one link down.
+    const wrapped = new Error("the drive call was refused", {
+      cause: { error: "forbidden", detail: "Drives feature is not enabled", code: 403 },
+    });
+
+    expect(describeCauseChain(wrapped)).toBe(
+      "Error: the drive call was refused <- forbidden (403)",
+    );
+    expect(describeCauseChain(wrapped)).not.toContain("[object Object]");
+    expect(describeLink({ message: "not found", status: "404" })).toBe("not found (404)");
+    expect(describeLink({ code: 500 })).toBe('{"code":500}');
+  });
+});
+
 describe("describeCauseChain", () => {
   it("renders name: message down the chain", () => {
     const failure = new Error("vendor GET /accounts failed", { cause: new Error("503") });
 
     expect(describeCauseChain(failure)).toBe("Error: vendor GET /accounts failed <- Error: 503");
+  });
+
+  it("names each cause's code where it has one — what fetch failed never says on its own", () => {
+    // undici's shape, verbatim: the TypeError carries nothing; the host and the code are two down.
+    const failure = new TypeError("fetch failed", {
+      cause: new Error("connect", {
+        cause: Object.assign(new Error("getaddrinfo ENOTFOUND api.vendor.example"), {
+          code: "ENOTFOUND",
+        }),
+      }),
+    });
+
+    expect(describeCauseChain(failure)).toBe(
+      "TypeError: fetch failed <- Error: connect <- Error [ENOTFOUND]: getaddrinfo ENOTFOUND api.vendor.example",
+    );
   });
 
   it("ends a chain the cap cut short in ..., and a chain that fits in nothing", () => {
@@ -53,8 +104,11 @@ describe("describeCauseChain", () => {
     expect(describeCauseChain(deepChain(2))).toBe("Error: link 1 <- Error: link 0");
   });
 
-  it("reads nothing but name and message", () => {
-    const leaky = Object.assign(new Error("vendor said no"), { body: "a body with a key in it" });
+  it("reads nothing but name, message and a string code", () => {
+    const leaky = Object.assign(new Error("vendor said no"), {
+      body: "a body with a key in it",
+      code: 403,
+    });
 
     expect(describeCauseChain(leaky)).toBe("Error: vendor said no");
   });

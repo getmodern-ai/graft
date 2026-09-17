@@ -130,8 +130,8 @@ a pushed database has no migration ledger and the migrator would refuse to creat
 so set `GRAFT_MIGRATE_ON_START=false` while the schema is moving. Then, if `GRAFT_ADMIN_EMAIL` and
 `GRAFT_ADMIN_PASSWORD` are set (all-or-nothing) and the database holds no person, the boot opens that
 account through Better Auth's own sign-up and prints one line saying so; a database with anyone in it
-is never touched, and the line says that instead. Unset, nothing happens — a laptop signs up at
-`/signup`.
+is never touched, and the line says that instead. Unset, nothing happens — a laptop registers at
+`/login`, the one door (ADR 0020).
 
 `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL`, `GRAFT_CONSOLE_URL` (where the
 console answers — the base of every handoff URL) and `GRAFT_HANDOFF_SECRET` (32+, signs those URLs)
@@ -510,8 +510,32 @@ proxy at resolution — and `packages/proxy/src/credential-fields.ts` and `schem
 two halves of the scheme table the form renders its secret and parameter inputs from. Each imports
 nothing but the others and a type; an import of `@graft/proxy`'s index or of a repo in one of them
 pulls `node:crypto` or drizzle into the bundle, and `vite build` is what fails. Add a scheme by adding
-to both tables and the plugin, never to the form. Accounts are opened at `/signup` — verification is off for the alpha, the reason is in
-`packages/auth/src/index.ts`.
+to both tables and the plugin, never to the form.
+
+**The console has one door** (ADR 0020, GRA-81): `/login` is Cando's sign-in card — the email,
+then the password beneath it in the same card, sign-in attempted first and registration on its
+failure (`apps/web/src/lib/email-auth-outcome.ts`, Cando's rule with its test), and a *Continue
+with Google* / *Continue with GitHub* button under *Or* for each provider the server names at
+`GET /api/sign-in-methods` (public). `/signup` redirects to `/login` carrying `redirect`. The
+providers are `GRAFT_GOOGLE_CLIENT_ID`/`_SECRET` and `GRAFT_GITHUB_CLIENT_ID`/`_SECRET`, each pair
+all-or-nothing and off by default (`packages/env/src/schema.ts`, `signInProvidersFrom`), handed to
+`createAuth` as `socialProviders`; the redirect URI is `GRAFT_AUTH_URL` plus
+`/api/auth/callback/<provider>`. A social sign-in links to an existing account only when both the
+provider and the account vouch for the address — with verification off for the alpha (the reason
+is in `packages/auth/src/index.ts`) a password account does not link yet, and the door says so
+(`socialSignInMessage` in `apps/web/src/lib/sign-in.ts`). The provider marks are flat `.svg` files
+under `apps/web/src/assets`, outside the colour guard on purpose, as Cando's are.
+
+**A forgotten password is reset by email** (ADR 0021, GRA-82): `@graft/email` is Cando's
+`@cando/email` less the invitation — a transport seam (`console` | `loops`, one `SendResult`
+shape), the Loops transport, and a registry naming the one template's transactional id and
+variables. `GRAFT_LOOPS_API_KEY` set means Loops; unset, the default in every form, means the console
+transport prints the envelope and the reset link to the server's log — on Graft Cloud, the
+`/ecs/graft-server` log group, which is how a hosted password is reset until a Loops account
+exists. `createAuth`'s `passwordReset` option binds the hook; the link is `GRAFT_CONSOLE_URL` plus
+`/reset-password?token=…`. The screens are `/forgot-password` (the same answer whether or not an
+account exists) and `/reset-password` (`apps/web/src/lib/reset-password.ts` decides the dead-link
+state and folds the outcomes, with its test); *Forgot password?* is on the door's password step.
 
 ### Running `acquire` locally
 

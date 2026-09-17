@@ -12,6 +12,7 @@ import {
   DRY_RUN_HEADER,
   DRY_RUN_INTERCEPTED,
   MODULE_ENTRIES,
+  REFUSAL_HEADER,
   RESULT_MARKER,
   RUNNER_SOURCE_PATH,
 } from "./runner-source";
@@ -174,6 +175,19 @@ const FIXTURES: Record<string, string> = {
     "  return { status: res.status };",
     "};",
   ].join("\n"),
+  // Two 502s: the proxy's own, marked, and the vendor's, not (GRA-79).
+  "dryReadUnreachable.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const res = await ctx.fetch("/unreachable");',
+    "  return { status: res.status, body: await res.json() };",
+    "};",
+  ].join("\n"),
+  "dryReadVendorDown.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const res = await ctx.fetch("/vendor-down");',
+    "  return { status: res.status };",
+    "};",
+  ].join("\n"),
   "dryWriteRefused.mjs": [
     "export default async (_input, ctx) => {",
     "  try {",
@@ -258,6 +272,28 @@ beforeAll(async () => {
             res.end(JSON.stringify({ error: "not_found" }));
             return;
           }
+          // The real proxy's refusal for a vendor it got no response from: marked, with the
+          // cause's code and the host on the body (`failure.ts`, GRA-79)...
+          if (path === "/unreachable") {
+            res.statusCode = 502;
+            res.setHeader(REFUSAL_HEADER, "upstream_unreachable");
+            res.end(
+              JSON.stringify({
+                error: "bad_gateway",
+                reason: "upstream_unreachable",
+                message: "The vendor could not be reached",
+                code: "ENOTFOUND",
+                host: "api.vendor.example",
+              }),
+            );
+            return;
+          }
+          // ...and a vendor's own 502, passed through with no mark.
+          if (path === "/vendor-down") {
+            res.statusCode = 502;
+            res.end(JSON.stringify({ error: "maintenance" }));
+            return;
+          }
           res.end(JSON.stringify({ path: req.url, items: ["a", "b"] }));
           return;
         }
@@ -316,7 +352,14 @@ const dry = (token = DRY_TOKEN) => ({ ...bound(), GRAFT_TOKEN: token, GRAFT_DRY_
 type DryRunReport = {
   dryRun: true;
   passed: boolean;
-  reads: { method: string; path: string; status: number }[];
+  reads: {
+    method: string;
+    path: string;
+    status: number;
+    reason?: string;
+    code?: string | null;
+    host?: string | null;
+  }[];
   writesPreviewed: { method: string; path: string; headerNames: string[]; body: string | null }[];
   writesRefused: { method: string; path: string; status: number | null; error: string | null }[];
   moduleResult?: unknown;
@@ -420,6 +463,7 @@ describe("a TypeScript module", () => {
     const source = await readFile(RUNNER, "utf8");
     expect(source).toContain(`const DRY_RUN_HEADER = ${JSON.stringify(DRY_RUN_HEADER)};`);
     expect(source).toContain(`const DRY_RUN_INTERCEPTED = ${JSON.stringify(DRY_RUN_INTERCEPTED)};`);
+    expect(source).toContain(`const REFUSAL_HEADER = ${JSON.stringify(REFUSAL_HEADER)};`);
     expect(source).toContain(`const RESULT_MARKER = ${JSON.stringify(RESULT_MARKER)};`);
   });
 });
@@ -820,6 +864,38 @@ describe("GRAFT_DRY_RUN", () => {
     expect(result.reads).toEqual([{ method: "GET", path: "/missing", status: 404 }]);
     expect(result.verified).toEqual({ reads: false, writeRequests: true });
     expect(result.moduleResult).toEqual({ status: 404 });
+  });
+
+  /** The proxy's mark tells a read the network refused from one the vendor answered (GRA-79). */
+  it("records the proxy's reason, code and host on a read it could not make, and hands the module the body whole", async () => {
+    const run = await runRunner({ module: fixture("dryReadUnreachable.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(false);
+    expect(result.reads).toEqual([
+      {
+        method: "GET",
+        path: "/unreachable",
+        status: 502,
+        reason: "upstream_unreachable",
+        code: "ENOTFOUND",
+        host: "api.vendor.example",
+      },
+    ]);
+    // The clone the record was read from left the module's own body intact.
+    expect(result.moduleResult).toEqual({
+      status: 502,
+      body: expect.objectContaining({ reason: "upstream_unreachable", code: "ENOTFOUND" }),
+    });
+  });
+
+  it("records a vendor's own 502 as a status alone, with no reason", async () => {
+    const run = await runRunner({ module: fixture("dryReadVendorDown.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(false);
+    expect(result.reads).toEqual([{ method: "GET", path: "/vendor-down", status: 502 }]);
+    expect(result.reads[0]).not.toHaveProperty("reason");
   });
 
   it("records a redirected read with its status rather than a thrown run", async () => {
