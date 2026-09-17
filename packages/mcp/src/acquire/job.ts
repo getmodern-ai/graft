@@ -62,6 +62,7 @@ import {
   type AcquireFailure,
   type AcquireFailureKind,
   type AcquireSuccess,
+  acquireNextStep,
   DEFAULT_ACQUIRE_CONFIG,
 } from "./shapes";
 
@@ -842,12 +843,16 @@ class AcquireLoop {
     return {
       success: {
         tool: wire,
+        vendor,
+        name: draft.name,
         toolId: outcome.tool.id,
         version: version.versionNumber,
+        inputSchema: outcome.tool.inputSchema,
         annotations: {
           readOnlyHint: outcome.annotations.readOnly,
           destructiveHint: outcome.annotations.destructive,
         },
+        next: acquireNextStep(vendor, draft.name),
       },
     };
   }

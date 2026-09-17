@@ -50,7 +50,9 @@ The answer is `{ status, progress, attempts, result? }`:
 - `succeeded`: `result.tool` is the new tool's name, `<vendor>__<name>`. It appears in your tool list
   when the list refreshes (Graft sends `tools/list_changed`; Hermes re-reads the list). Then call it
   for the person's actual request. Some clients snapshot the tool list per conversation; until it
-  appears, `run_tool { vendor, name, input }` calls it by name.
+  appears, `run_tool { vendor, name, input }` calls it by name. The acquire result and `find_tool`
+  carry the tool's `inputSchema` for `run_tool`, so `input` is read, never guessed; `result.next`
+  says the same in one sentence.
 - `failed`: say what `result.failure` and `result.message` say, in the person's words, and what you
   will try — a documentation URL as a hint, a different connection. Do not try to reach the vendor
   yourself; there is no route to a vendor except through a Graft tool, and the attempt would only
