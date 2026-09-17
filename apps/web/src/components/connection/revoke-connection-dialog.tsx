@@ -49,6 +49,7 @@ export function RevokeConnectionDialog({
 }) {
   const queryClient = useQueryClient();
   const releaseToastId = `provider-release:${connection.id}`;
+  const releaseMutationKey = ["provider-release", connection.id];
 
   /** The provider's release, reported: a warning with Retry when it failed, a dismissal when it held. */
   const reportRelease = (result: RevokeResult) => {
@@ -65,7 +66,10 @@ export function RevokeConnectionDialog({
         label: "Retry",
         onClick: (event) => {
           event.preventDefault();
-          if (retryRelease.isPending) return;
+          // Read live through the client, not through this closure: the toast outlives the render
+          // that made it, so `retryRelease.isPending` here would be the value at that render —
+          // always false — and a second click mid-flight would start a second release.
+          if (queryClient.isMutating({ mutationKey: releaseMutationKey }) > 0) return;
           retryRelease.mutate();
         },
       },
@@ -74,6 +78,7 @@ export function RevokeConnectionDialog({
 
   // The same revoke on the already-revoked row: everything local is a no-op, the release runs again.
   const retryRelease = useMutation({
+    mutationKey: releaseMutationKey,
     mutationFn: () => revokeConnection(connection.id),
     onSuccess: (result) => {
       reportRelease(result);
