@@ -478,6 +478,18 @@ describe("a job that passes first time", () => {
       });
       expect(status.progress.length).toBeGreaterThan(3);
       expect(status.progress.at(-1)).toContain("promoted into your working set");
+      // Every line names its phase (GRA-71): the job's opening, a step before the first attempt,
+      // or `Attempt N:`. A poller reading the same line twice knows which step is still running.
+      const labelled =
+        /^(Queued: |Authoring "|Asking the model |Reading the documentation: |Opening the sandbox|Attempt \d+: )/;
+      for (const line of status.progress) expect(line).toMatch(labelled);
+      expect(status.progress).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^Asking the model for a first draft/),
+          "Attempt 1: checking the module.",
+          expect.stringMatching(/^Attempt 1: publishing demo__list-items\.$/),
+        ]),
+      );
 
       await until(() => a.notifications.length >= 1);
       expect(a.notifications.length).toBeGreaterThanOrEqual(1);
@@ -641,9 +653,22 @@ describe("a job that fails and tries again", () => {
       expect(failure.lastDiagnostics).toMatchObject({
         dryRun: { passed: false, reads: [{ method: "GET", path: "/nope", status: 404 }] },
       });
+      // Each summary is how that attempt ended, the model's note beside it (GRA-70): before, the
+      // second draft's note stood in for the first attempt's ending.
+      const listNothing = authoredToolName("demo", "list-nothing");
       expect(failure.tried).toEqual([
-        { attempt: 1, outcome: "dry_run_failed", summary: "First guess: /nope." },
-        { attempt: 2, outcome: "dry_run_failed", summary: "Second guess: /nope again." },
+        {
+          attempt: 1,
+          outcome: "dry_run_failed",
+          summary: `The dry run of ${listNothing} v1 failed: 1 read(s), 0 write(s) previewed, 0 refused; module error: Error: GET 404: {"error":"not found"}.`,
+          note: "First guess: /nope.",
+        },
+        {
+          attempt: 2,
+          outcome: "dry_run_failed",
+          summary: `The dry run of ${listNothing} v2 failed: 1 read(s), 0 write(s) previewed, 0 refused; module error: Error: GET 404: {"error":"not found"}.`,
+          note: "Second guess: /nope again.",
+        },
       ]);
       expect(status.progress.at(-1)).toContain("Stopped");
       const { job, traces } = rowsOf(jobId);
@@ -765,6 +790,18 @@ describe("a job that fails and tries again", () => {
       const failure = status.result as AcquireFailure;
       expect(failure.failure).toBe("model_gave_up");
       expect(failure.message).toContain("customer.demo.example");
+      // The attempt's summary opens with the read that failed it, then the give-up; the note is
+      // the draft's own (GRA-70).
+      expect(failure.tried).toEqual([
+        {
+          attempt: 1,
+          outcome: "proof_failed",
+          summary:
+            "1 of 1 proof read(s) failed (GET /moved 303); the model gave up: The vendor answers at customer.demo.example, which the connection does not declare.",
+          note: "Reading /moved.",
+        },
+      ]);
+      expect(status.progress).toContain("Attempt 1: proof read 1 of 1: GET /moved.");
       // What the model was shown: the status, the host, and the remedy.
       const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
       const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
@@ -1102,6 +1139,14 @@ describe("the runner", () => {
       [2, "passed"],
     ]);
     expect(finished.result).toMatchObject({ tool: LIST_ITEMS });
+    // The abandoned attempt is in the trace with the loop's sentence and the dead process's note.
+    const abandoned = rowsOf(job.id).traces.find(
+      (row) => row.kind === "progress" && row.text.startsWith("Resumed"),
+    );
+    expect(abandoned).toBeDefined();
+    expect(attempts[0]).toMatchObject({
+      diagnosis: "The process running this attempt stopped; the job resumed from the goal.",
+    });
   }, 30_000);
 
   it("leaves a running job with a live heartbeat alone", async () => {
