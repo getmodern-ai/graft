@@ -728,18 +728,23 @@ describe("scheme plugins, observable on the forwarded request", () => {
     }
   });
 
-  /** The proxy's own errors and the network's keep their messages: an operator needs the code. */
+  /**
+   * The proxy's own errors and the network's keep their messages, and each cause's `code` is named
+   * (GRA-80): an operator needs the code, and undici's `fetch failed` never spells it.
+   */
   it("keeps the message of a failure that is the proxy's or the network's own", async () => {
     const h = harness();
     h.respond(() => {
       throw new TypeError("fetch failed", {
-        cause: new Error("connect ECONNREFUSED 93.184.216.34"),
+        cause: Object.assign(new Error("connect ECONNREFUSED 93.184.216.34"), {
+          code: "ECONNREFUSED",
+        }),
       });
     });
     await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
 
     expect(h.events[0]?.failure).toBe(
-      "TypeError: fetch failed <- Error: connect ECONNREFUSED 93.184.216.34",
+      "TypeError: fetch failed <- Error [ECONNREFUSED]: connect ECONNREFUSED 93.184.216.34",
     );
   });
 });

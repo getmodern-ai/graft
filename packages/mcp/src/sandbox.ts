@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { type ModuleSources, readModuleSources, singleFileModule } from "@graft/check";
 import type { AgentScope } from "@graft/core";
+import { causeChain, describeLink, TRUNCATED } from "@graft/proxy/cause-chain";
 import { RESULT_MARKER, RUNNER_DIR, RUNNER_PATH, SKILLS_DIR, skillFiles } from "@graft/runner";
 import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { DRAFTS_DIR, draftPath, sandboxPath, TOOLBOX_MOUNT_PATH } from "@graft/toolbox";
@@ -116,15 +117,31 @@ export async function withSandbox<T>(
 }
 
 /**
- * The message of whatever was thrown: an `Error`'s own, with its cause's beside it; for anything
- * else, the sentence inside the value before `String(value)`. A provider SDK throws the vendor
- * API's error body as a plain object (`@blaxel/core` on a refused create or drive call), and
- * `String` of that is `[object Object]` — which is all a job's result then carries of the refusal.
+ * The message of whatever was thrown, as one line — the form every job result and tool answer that
+ * quotes an error takes (GRA-80). An `Error` is its own message, `[code]` beside it when it carries
+ * a string `code`, then every cause down the chain in parentheses: `fetch failed (caused by Error:
+ * connect <- Error [ENOTFOUND]: getaddrinfo ENOTFOUND host)`. Each cause is `name [code]: message`,
+ * the form the runner's `describeCause` writes on stderr and the proxy's `describeCauseChain` puts
+ * on the wide event, joined by ` <- ` as the proxy joins them; the walk is the proxy's `causeChain`,
+ * so the cap (five links, then `...`) and the cycle guard are the same one. undici's `fetch failed`
+ * says nothing else about what failed — the host, and `ENOTFOUND`, are in the cause.
+ *
+ * For anything that is not an `Error`, the sentence inside the value before `String(value)`: a
+ * provider SDK throws the vendor API's error body as a plain object (`@blaxel/core` on a refused
+ * create or drive call), and `String` of that is `[object Object]` — which is all a job's result
+ * once carried of the refusal (GRA-60). A plain object sitting in a cause is read the same way.
  */
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) {
-    const cause = error.cause instanceof Error ? ` (${error.cause.message})` : "";
-    return `${error.message}${cause}`;
+    const { links, truncated } = causeChain(error);
+    const causes = links
+      .slice(1)
+      .map((link) => (link instanceof Error ? describeLink(link) : errorMessage(link)));
+    if (truncated) causes.push(TRUNCATED);
+    const code = (error as { code?: unknown }).code;
+    const own = typeof code === "string" ? ` [${code}]` : "";
+    const chain = causes.length > 0 ? ` (caused by ${causes.join(" <- ")})` : "";
+    return `${error.message}${own}${chain}`;
   }
   if (typeof error === "object" && error !== null) {
     const body = error as Record<string, unknown>;

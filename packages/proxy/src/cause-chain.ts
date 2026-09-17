@@ -5,9 +5,9 @@
  * a twin, because the proxy may import nothing from the host (`index.ts`) while the host may
  * import from here.
  *
- * Total over anything that can be thrown. It reads `name`, `message` and `cause` and nothing else —
- * no stack, no other properties — so an error that carried a vendor body, a request body or a
- * credential cannot put it on a log line through here.
+ * Total over anything that can be thrown. It reads `name`, `message`, a string `code` and `cause`
+ * and nothing else — no stack, no other properties — so an error that carried a vendor body, a
+ * request body or a credential cannot put it on a log line through here.
  */
 
 /**
@@ -18,7 +18,7 @@
 export const MAX_CAUSE_DEPTH = 5;
 
 /** What a truncated chain ends with, so the cap cannot make a partial record read as a complete one. */
-const TRUNCATED = "...";
+export const TRUNCATED = "...";
 
 export type CauseChain = {
   /** The error itself first, then each `cause` in turn. A non-`Error` link is always the last. */
@@ -51,15 +51,29 @@ export function causeChain(error: unknown): CauseChain {
 }
 
 /**
- * `name: message` down the chain, joined by ` <- `, ending in `...` when the cap cut it short — one
- * line of plain text, which is the form that survives a log drain: an `Error` placed in a
- * structured field serialises as `{}`. Empty for nothing at all.
+ * One link as text: `name [code]: message` for an `Error` — the `[code]` only when the link carries
+ * a string `code`, which is how Node spells a system error (`ENOTFOUND`, `ECONNREFUSED`) and what
+ * undici's `fetch failed` never says on its own — and `String(link)` for anything else. The runner's
+ * `describeCause` (`packages/runner/src/runner.mjs`) and `@graft/mcp`'s `errorMessage` render a
+ * cause in this same form, so one thrown value reads alike in the wide event, on a sandbox's stderr
+ * and in a job's result (GRA-80).
+ */
+export function describeLink(link: unknown): string {
+  if (!(link instanceof Error)) return String(link);
+  const code = (link as { code?: unknown }).code;
+  return typeof code === "string"
+    ? `${link.name} [${code}]: ${link.message}`
+    : `${link.name}: ${link.message}`;
+}
+
+/**
+ * `name [code]: message` down the chain, joined by ` <- `, ending in `...` when the cap cut it
+ * short — one line of plain text, which is the form that survives a log drain: an `Error` placed in
+ * a structured field serialises as `{}`. Empty for nothing at all.
  */
 export function describeCauseChain(error: unknown): string {
   const { links, truncated } = causeChain(error);
-  const text = links.map((link) =>
-    link instanceof Error ? `${link.name}: ${link.message}` : String(link),
-  );
+  const text = links.map(describeLink);
   if (truncated) text.push(TRUNCATED);
   return text.join(" <- ");
 }
