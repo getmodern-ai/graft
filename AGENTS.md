@@ -178,6 +178,21 @@ the install still succeeds and the server refuses to boot with a sentence saying
 imports it by a name held in a variable, so the type program never resolves it — which is what keeps
 the package absent rather than optional.
 
+**A connection comes from a provider, and the providers ride the same selector** (ADR 0019,
+GRA-57). `Backings.providers` is an ordered list — under `open` the keyring alone, under `cloud`
+whatever the private package answers with the keyring appended last, and the boot line names them
+(`providers keyring`). A provider (`packages/core/src/connection/provider.ts`) decides how a vendor
+gets connected (`form` over the proxy's schemes, `link`, or `none`), how a call resolves (`inject`
+the row's credential, or `relay` through an upstream that holds it), and what to release on revoke;
+`request_connection` routes a proposal to the first provider that covers it, and the proxy's
+connection read (`apps/server/src/connections.ts`) asks the row's provider how the call resolves.
+The relay engine is `packages/proxy/src/relay.ts`: a relay plugin rewrites the resolved vendor
+request into the upstream's under `RelayHeaderRules` as data, and `relay.test.ts` drives it through
+an in-process upstream. `RELAY_SCHEMES` and `RELAYS` are empty until the gateway (GRA-58) and
+Pipedream (GRA-59) plugins land; a row of a relay provider records its relay scheme in the `scheme`
+column, and the enum pin in `packages/core` covers both lists. Every row and every suite in this
+repository is a keyring connection, and with the keyring alone nothing observable changed.
+
 **In the image the package arrives built** (GRA-38). The bundled server runs where there is Node and
 `node_modules` and nothing else — no TypeScript, no workspace — so a linked package ships a `build`
 of its own: `tsdown`, the `@graft/*` seam packages it imports inlined as the server's bundle inlines

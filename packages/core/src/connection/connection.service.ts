@@ -29,7 +29,12 @@ import {
   type OAuthStatePayload,
   signOAuthState,
 } from "./oauth-consent";
-import { type ConnectionProvider, DEFAULT_PROVIDERS, providerNamed } from "./provider";
+import {
+  type ConnectionProvider,
+  DEFAULT_PROVIDERS,
+  KEYRING_PROVIDER,
+  providerNamed,
+} from "./provider";
 
 /**
  * Connections (CONTEXT.md; ADR 0007, ADR 0010): register, enter or re-enter the credential, revoke,
@@ -137,6 +142,12 @@ export function toProxyConnection(
 }
 
 export type RegisterConnectionInput = {
+  /**
+   * Where the connection comes from (ADR 0019); the keyring when absent. Must name a provider the
+   * deployment has enabled, and one that connects through the console's form — a provider that
+   * connects with a link or with no person step registers its rows through its own flow.
+   */
+  provider?: string;
   vendor: string;
   displayName: string;
   scheme: ConnectionScheme;
@@ -165,15 +176,40 @@ function refuseHostSet(verdict: HostSetRefusal): never {
   });
 }
 
+/**
+ * The provider a row names, as one this deployment has enabled and one whose connections the
+ * console's form makes (ADR 0019). A name nobody enabled is a 400 — a row under a provider the
+ * process cannot resolve would be one the proxy refuses on every call — and so is a provider that
+ * connects some other way: its rows are registered by its own flow, and a credential typed into the
+ * console for one would be a credential Graft holds for a connection whose provider holds its own.
+ */
+function formProviderNamed(deps: ConnectionDeps, name: string): ConnectionProvider {
+  const provider = providerNamed(deps.providers, name);
+  if (!provider) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `No connection provider named ${name} is enabled on this deployment`,
+    );
+  }
+  if (provider.connect.kind !== "form") {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `The ${provider.name} provider connects a vendor with ${provider.connect.kind === "link" ? "a link" : "no person step"}, not with a credential entered in the console`,
+    );
+  }
+  return provider;
+}
+
 /** The checks every registration passes, in the order a person would fix them; the normalised values out. */
-function validateRegistration(input: RegisterConnectionInput) {
+function validateRegistration(input: RegisterConnectionInput, deps: ConnectionDeps) {
+  const provider = formProviderNamed(deps, input.provider ?? KEYRING_PROVIDER);
   refuse(validateVendor(input.vendor));
   refuse(validateDisplayName(input.displayName));
   const schemeConfig = input.schemeConfig ?? {};
   refuse(validateSchemeConfig(input.scheme, schemeConfig));
   const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
   if (!hostSet.ok) refuseHostSet(hostSet);
-  return { schemeConfig, hostSet };
+  return { provider, schemeConfig, hostSet };
 }
 
 /**
@@ -188,11 +224,12 @@ export async function registerConnection(
   input: RegisterConnectionInput,
   deps: ConnectionDeps,
 ): Promise<ConnectionOutput> {
-  const { schemeConfig, hostSet } = validateRegistration(input);
+  const { provider, schemeConfig, hostSet } = validateRegistration(input, deps);
 
   const row = await deps.insertConnection(ctx.db, {
     id: deps.newId(),
     personId: principal.personId,
+    provider: provider.name,
     vendor: input.vendor,
     displayName: input.displayName.trim(),
     scheme: input.scheme,
@@ -222,7 +259,7 @@ export async function registerConnectionWithCredential(
   deps: ConnectionDeps,
 ): Promise<ConnectionOutput> {
   const { credential, ...registration } = input;
-  validateRegistration(registration);
+  validateRegistration(registration, deps);
   refuse(validateCredentialFields(registration.scheme, credential));
   return ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
@@ -272,6 +309,8 @@ export async function setConnectionCredential(
     await deps.findConnection(ctx.db, principal.personId, connectionId),
     "Connection not found",
   );
+  // A relay provider's connection has no credential here to enter or re-enter (ADR 0019).
+  formProviderNamed(deps, row.provider);
   refuse(validateCredentialFields(row.scheme, fields));
   const ciphertext = await deps.vault.encrypt(fields as Record<string, string>, {
     personId: principal.personId,
@@ -517,6 +556,11 @@ export type RevokeConnectionResult = {
  * edge): a destructive tool's per-call yes lives on an answered, unconsumed action rather than in
  * the approval row, so deleting the rows alone left one call grantable after reconnection. A
  * credential re-entry that was still open is closed too — the reconnection is the answer to it.
+ *
+ * Then the row's provider releases what it holds for the connection outside Graft — a broker's
+ * account, a gateway's registration (ADR 0019) — after the transaction, since that is a call to
+ * another party and not a row; the revoke stands whatever it answers, and a provider the deployment
+ * no longer enables has nothing to be asked. The keyring holds nothing and releases nothing.
  */
 export async function revokeConnection(
   ctx: ServiceContext,
@@ -524,7 +568,7 @@ export async function revokeConnection(
   connectionId: string,
   deps: ConnectionDeps,
 ): Promise<RevokeConnectionResult | null> {
-  return ctx.db.transaction(async (tx) => {
+  const revoked = await ctx.db.transaction(async (tx) => {
     const at = deps.now();
     const row = await deps.revokeConnection(tx, principal.personId, connectionId, at);
     if (!row) return null;
@@ -537,10 +581,16 @@ export async function revokeConnection(
       at,
     );
     return {
-      connection: toConnectionOutput(row),
-      approvalsDeleted: approvals.length,
-      buildApprovalsDeleted: builds.length,
-      pendingActionsExpired: actions.length,
+      row,
+      result: {
+        connection: toConnectionOutput(row),
+        approvalsDeleted: approvals.length,
+        buildApprovalsDeleted: builds.length,
+        pendingActionsExpired: actions.length,
+      },
     };
   });
+  if (!revoked) return null;
+  await providerNamed(deps.providers, revoked.row.provider)?.revoke(revoked.row);
+  return revoked.result;
 }

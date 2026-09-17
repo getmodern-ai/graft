@@ -193,6 +193,8 @@ const scopeBody = z.object({ connectionIds: z.array(z.string()) });
 const credentialFields = z.record(z.string(), z.unknown());
 
 const registrationBody = z.object({
+  /** Where the connection comes from (ADR 0019); the keyring when absent, and the service holds it to the enabled list. */
+  provider: z.string().optional(),
   vendor: z.string(),
   displayName: z.string(),
   scheme: z.enum(connectionScheme),

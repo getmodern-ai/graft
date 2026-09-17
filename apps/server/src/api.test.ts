@@ -642,10 +642,17 @@ describe("connections", () => {
     expect(created.status).toBe(201);
     expect(await created.json()).toMatchObject({
       connection: {
+        // The keyring, named on the wire, when the body names no provider (ADR 0019).
+        provider: "keyring",
         primaryHost: "https://api.demo.example",
         hosts: ["api.demo.example"],
         credentialSetAt: null,
       },
+    });
+    const unknown = await app.request("/api/connections", json({ ...base, provider: "broker" }));
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toMatchObject({
+      message: "No connection provider named broker is enabled on this deployment",
     });
 
     const refused = await app.request(

@@ -21,7 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { Tool } from "@/lib/agent-queries";
-import { type Connection, connectionStatus } from "@/lib/connection-queries";
+import { type Connection, connectionStatus, isKeyringConnection } from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
 import { AWAITING_RECONNECTION_CHIP, connectionStatusChips } from "@/lib/status-chips";
 
@@ -36,6 +36,10 @@ import { AWAITING_RECONNECTION_CHIP, connectionStatusChips } from "@/lib/status-
  * has to consent again. Both are one button — Connect, Reconnect — that starts the consent in a
  * popup with the client secret already in place; the secret is asked for again only after a revoke.
  *
+ * A connection from another provider (ADR 0019) wears the provider's name and says its credential
+ * is held there; the credential buttons are the keyring's alone, since there is nothing here to
+ * enter. With the keyring alone, nothing on this card changed for providers.
+ *
  * A card rather than a table row, because each connection carries a status, a host list, a tool
  * list, two actions and a table of its own — more than a row can hold. The anatomy is Cando's
  * card: title and chips, description, the actions in `CardAction`, and the facts in the body. The
@@ -49,6 +53,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
   const [reentering, setReentering] = useState(false);
   const status = connectionStatus(connection);
   const usable = status === "connected";
+  const keyring = isKeyringConnection(connection);
   const consent = useOAuthConsent({
     onConnected: () => toast.success(`${connection.displayName} is connected`),
   });
@@ -87,7 +92,12 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         ; consent again to keep the tools working.
       </>
     ),
-    connected: connection.oauth ? (
+    connected: !keyring ? (
+      <>
+        Connected through {connection.provider}. The credential is held there, never here; every
+        call relays through it.
+      </>
+    ) : connection.oauth ? (
       <>
         Consented <Time iso={connection.oauth.consentedAt ?? connection.credentialSetAt ?? ""} />
         {connection.oauth.refreshedAt ? (
@@ -132,6 +142,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         <CardTitle className="flex flex-wrap items-center gap-2">
           {connection.displayName}
           <Badge variant="outline">{connection.vendor}</Badge>
+          {keyring ? null : <Badge variant="outline">via {connection.provider}</Badge>}
           <Badge variant="outline">{connection.scheme}</Badge>
           {connectionStatusChips(connection, status).map((chip) => (
             <StatusChip key={chip.label} chip={chip} />
@@ -139,14 +150,16 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         </CardTitle>
         <CardDescription>{description}</CardDescription>
         <CardAction className="flex gap-2">
-          <Button
-            variant={usable ? "outline" : "default"}
-            size="sm"
-            disabled={consenting}
-            onClick={primary.onClick}
-          >
-            {consenting ? "Waiting for the consent…" : primary.label}
-          </Button>
+          {keyring ? (
+            <Button
+              variant={usable ? "outline" : "default"}
+              size="sm"
+              disabled={consenting}
+              onClick={primary.onClick}
+            >
+              {consenting ? "Waiting for the consent…" : primary.label}
+            </Button>
+          ) : null}
           {status === "revoked" ? null : (
             <Button variant="outline" size="sm" onClick={() => setRevoking(true)}>
               Revoke
@@ -219,12 +232,14 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       </CardContent>
 
       <RevokeConnectionDialog connection={connection} open={revoking} onOpenChange={setRevoking} />
-      <ReenterCredentialDialog
-        key={`${connection.id}:${connection.credentialSetAt ?? "none"}`}
-        connection={connection}
-        open={reentering}
-        onOpenChange={setReentering}
-      />
+      {keyring ? (
+        <ReenterCredentialDialog
+          key={`${connection.id}:${connection.credentialSetAt ?? "none"}`}
+          connection={connection}
+          open={reentering}
+          onOpenChange={setReentering}
+        />
+      ) : null}
     </Card>
   );
 }

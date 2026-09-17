@@ -1,4 +1,5 @@
 import type { ConnectionOutput, RevokeConnectionResult } from "@graft/core";
+import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
 import type { ConnectionCallOutput } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
@@ -73,6 +74,16 @@ export function isAwaitingCredential(connection: Connection): boolean {
 }
 
 /**
+ * Whether the connection's credential is Graft's to hold — entered in the console, re-entered
+ * there, revoked into nothing (ADR 0019). A connection from any other provider holds no credential
+ * here: what the card shows is where it is connected through, and the credential buttons are not
+ * offered. `@graft/core/connection/provider` is browser-safe for exactly this read.
+ */
+export function isKeyringConnection(connection: Pick<Connection, "provider">): boolean {
+  return connection.provider === KEYRING_PROVIDER;
+}
+
+/**
  * Where a connection stands, as the card's badge and button read it (ADR 0005 for the two consent
  * states): revoked; no credential entered; an OAuth consent not yet completed, or refused since;
  * or connected.
@@ -86,6 +97,10 @@ export type ConnectionStatus =
 
 export function connectionStatus(connection: Connection): ConnectionStatus {
   if (connection.revokedAt) return "revoked";
+  // A connection another provider holds is connected by existing: its credential is at the
+  // provider, so a null `credentialSetAt` says nothing about it (ADR 0019). A provider with a state
+  // of its own between the two — a link not yet followed — adds it with its card (GRA-59).
+  if (!isKeyringConnection(connection)) return "connected";
   if (connection.credentialSetAt === null) return "awaiting_credential";
   if (connection.oauth && connection.oauth.status !== "connected") return connection.oauth.status;
   return "connected";
