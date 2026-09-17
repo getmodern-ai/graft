@@ -1,3 +1,4 @@
+import type { SocialProviderName } from "@graft/auth";
 import {
   type AgentDeps,
   type ApprovalDeps,
@@ -123,6 +124,13 @@ export type AuthHandle = {
   getSession: (headers: Headers) => Promise<SessionLike>;
 };
 
+/**
+ * How a person may sign in at this deployment (GRA-81): email and password always, and the
+ * providers the server was handed clients for, in the order the console draws them. Public, so the
+ * door can paint the right buttons before anyone has a session.
+ */
+export type SignInMethods = { social: readonly SocialProviderName[] };
+
 export type ApiDeps = {
   db: DbOrTx;
   agent: AgentDeps;
@@ -144,6 +152,8 @@ export type ApiOptions = {
   deps: ApiDeps;
   /** The console's origins (`GRAFT_CORS_ORIGIN`); empty means no CORS header is ever written. */
   corsOrigins: readonly string[];
+  /** The sign-in providers `auth` registered (`@graft/auth`'s `socialProviders`); none when absent. */
+  signInMethods?: SignInMethods;
   /** What signs and roots a handoff URL (`@graft/mcp`'s `handoff.ts`) — the console's URL and the secret. */
   handoff: Pick<HandoffConfig, "consoleUrl" | "secret">;
   /**
@@ -401,8 +411,15 @@ export function createApi(options: ApiOptions): Hono {
    */
   api.get("/health", (c) => c.json({ ok: true }));
 
-  /** Better Auth's own routes: sign-up, sign-in, sign-out, session. */
+  /** Better Auth's own routes: sign-up, sign-in, sign-out, session, and each provider's callback. */
   api.on(["POST", "GET"], "/auth/*", (c) => options.auth.handler(c.req.raw));
+
+  /**
+   * Which providers the door may offer, without a session: the names alone, never a client id,
+   * so a self-host with no client configured shows the email form and nothing that cannot work.
+   */
+  const signInMethods: SignInMethods = { social: options.signInMethods?.social ?? [] };
+  api.get("/sign-in-methods", (c) => c.json(signInMethods));
 
   const {
     approval: approvalDeps,

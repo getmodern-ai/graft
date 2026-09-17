@@ -438,6 +438,33 @@ describe("the session door", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  /** The door paints a button per name here, so a self-host with no client shows the email form alone. */
+  it("names the sign-in providers without a session — none unless the server was handed clients", async () => {
+    const { app } = harness(null);
+    const res = await app.request("/api/sign-in-methods");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ social: [] });
+    const withGoogle = createServer({
+      keys: null,
+      vault: { decrypt: async () => ({}) },
+      connections: { get: async () => null },
+      followRedirects: false,
+      api: {
+        auth: {
+          handler: async () => new Response("auth", { status: 200 }),
+          getSession: async () => null,
+        },
+        deps: { db: fakeDb as unknown as DbOrTx, ...harness(null).deps },
+        corsOrigins: [],
+        signInMethods: { social: ["google"] },
+        handoff: HANDOFF,
+      },
+    });
+    expect(await (await withGoogle.request("/api/sign-in-methods")).json()).toEqual({
+      social: ["google"],
+    });
+  });
+
   it("hands Better Auth's routes to its handler", async () => {
     const { app } = harness(null);
     const res = await app.request("/api/auth/get-session");
