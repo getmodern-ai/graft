@@ -115,8 +115,33 @@ export async function withSandbox<T>(
   }
 }
 
+/**
+ * The message of whatever was thrown: an `Error`'s own, with its cause's beside it; for anything
+ * else, the sentence inside the value before `String(value)`. A provider SDK throws the vendor
+ * API's error body as a plain object (`@blaxel/core` on a refused create or drive call), and
+ * `String` of that is `[object Object]` — which is all a job's result then carries of the refusal.
+ */
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) {
+    const cause = error.cause instanceof Error ? ` (${error.cause.message})` : "";
+    return `${error.message}${cause}`;
+  }
+  if (typeof error === "object" && error !== null) {
+    const body = error as Record<string, unknown>;
+    const text = [body.message, body.error, body.detail].find(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    const code = [body.code, body.status].find(
+      (value) => typeof value === "number" || (typeof value === "string" && value.length > 0),
+    );
+    if (text !== undefined) return code === undefined ? text : `${text} (${code})`;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
 }
 
 /**

@@ -152,6 +152,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         oauthTokenUrl: null,
         oauthScopes: null,
         oauthRefreshState: null,
+        providerReleaseFailedAt: null,
         revokedAt: null,
         owner: "person",
         createdAt: at,
@@ -322,8 +323,26 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     now: store.now,
   };
 
+  /** The database's own refusal (`connection_provider_ref_idx`): one row per account at a provider. */
+  const refuseDuplicateRef = (
+    provider: string,
+    providerRef: string | null | undefined,
+    id: string,
+  ) => {
+    if (!providerRef) return;
+    for (const other of store.connections.values()) {
+      if (other.id !== id && other.provider === provider && other.providerRef === providerRef) {
+        throw Object.assign(
+          new Error('duplicate key value violates unique constraint "connection_provider_ref_idx"'),
+          { code: "23505" },
+        );
+      }
+    }
+  };
+
   const connection: ConnectionDeps = {
     insertConnection: async (_db, input) => {
+      refuseDuplicateRef(input.provider ?? "keyring", input.providerRef, input.id);
       const at = store.now();
       const row = {
         ...input,
@@ -339,6 +358,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         oauthTokenUrl: input.oauthTokenUrl ?? null,
         oauthScopes: input.oauthScopes ?? null,
         oauthRefreshState: null,
+        providerReleaseFailedAt: null,
         revokedAt: null,
         owner: "person" as const,
         createdAt: at,
@@ -373,6 +393,29 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.connections.get(id);
       if (!row || row.personId !== personId) return null;
       const updated = { ...row, oauthRefreshState: state };
+      store.connections.set(id, updated);
+      return updated;
+    },
+    /** The repo's statement: the provider's reference written, `revoked_at` cleared (ADR 0019). */
+    setConnectionProviderRef: async (_db, personId, id, providerRef) => {
+      const row = store.connections.get(id);
+      if (!row || row.personId !== personId) return null;
+      refuseDuplicateRef(row.provider, providerRef, id);
+      const updated = { ...row, providerRef, revokedAt: null, providerReleaseFailedAt: null };
+      store.connections.set(id, updated);
+      return updated;
+    },
+    /**
+     * The repo's statement: released clears the reference, a failure stamps the moment, and either
+     * only on a row still revoked with the reference that was released (ADR 0019).
+     */
+    recordProviderRelease: async (_db, personId, id, outcome) => {
+      const row = store.connections.get(id);
+      if (!row || row.personId !== personId) return null;
+      if (row.revokedAt === null || row.providerRef !== outcome.ref) return null;
+      const updated = outcome.released
+        ? { ...row, providerRef: null, providerReleaseFailedAt: null }
+        : { ...row, providerReleaseFailedAt: outcome.at };
       store.connections.set(id, updated);
       return updated;
     },

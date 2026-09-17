@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { keyringProvider } from "@graft/core";
+import { createFakePipedreamClient } from "@graft/pipedream/fake";
 import { LOCAL_KEYRING_ID } from "@graft/vault";
 import { describe, expect, it } from "vitest";
 
 import {
   assertCloudBackings,
   type BackingsEnv,
+  environmentProviders,
   gatewayProviderFrom,
   selectBackings,
 } from "./backings";
@@ -139,6 +141,46 @@ describe("the gateway provider from the environment (ADR 0019, GRA-58)", () => {
   });
 });
 
+describe("the providers the environment configures, together (ADR 0019)", () => {
+  const gateway: Partial<BackingsEnv> = {
+    GRAFT_GATEWAY_HOSTS: ["api.unleashedsoftware.com"],
+    GRAFT_GATEWAY_UPSTREAM_URL: "https://gateway.corp.example/graft",
+    GRAFT_GATEWAY_HEADER_NAME: "X-Deployment-Token",
+    GRAFT_GATEWAY_HEADER_VALUE: "deployment-identity-secret-value",
+  };
+  const pipedream: Partial<BackingsEnv> = {
+    GRAFT_PIPEDREAM_PROJECT_ID: "proj_test",
+    GRAFT_PIPEDREAM_ENVIRONMENT: "development",
+    GRAFT_PIPEDREAM_CLIENT_ID: "pd_client",
+    GRAFT_PIPEDREAM_CLIENT_SECRET: "pd_secret",
+  };
+
+  it("puts the gateway ahead of Pipedream and both ahead of the keyring, in either form", async () => {
+    const pipedreamClient = createFakePipedreamClient();
+    const names = (providers: readonly { name: string }[]) => providers.map((p) => p.name);
+    expect(names(environmentProviders(base))).toEqual([]);
+    expect(names(environmentProviders({ ...base, ...pipedream }, { pipedreamClient }))).toEqual([
+      "pipedream",
+    ]);
+    const open = await selectBackings({ ...base, ...gateway, ...pipedream }, { pipedreamClient });
+    expect(names(open.providers)).toEqual(["gateway", "pipedream", "keyring"]);
+    expect(open.providers[2]).toBe(keyringProvider);
+    // Under `cloud` the hosted providers sit between the two: the gateway ahead of any broker the
+    // private package answers with (GRA-58), the configured Pipedream provider after them (GRA-59).
+    const cloud = await selectBackings(
+      {
+        ...base,
+        ...gateway,
+        ...pipedream,
+        GRAFT_BACKINGS: "cloud",
+        GRAFT_KEYRING_SECRET: undefined,
+      },
+      { cloudModule: fixture("fake"), pipedreamClient },
+    );
+    expect(names(cloud.providers)).toEqual(["gateway", "fake-broker", "pipedream", "keyring"]);
+  });
+});
+
 describe("the cloud form", () => {
   const cloud: BackingsEnv = { ...base, GRAFT_BACKINGS: "cloud", GRAFT_KEYRING_SECRET: undefined };
 
@@ -244,14 +286,40 @@ describe("assertCloudBackings", () => {
   });
 
   it("accepts providers beside the seams and names what a malformed one lacks", () => {
+    const link = {
+      kind: "link",
+      scheme: "pipedream_connect_proxy",
+      target() {},
+      start() {},
+      complete() {},
+    };
     const provider = {
       name: "broker",
-      connect: { kind: "link" },
+      connect: link,
       covers() {},
       resolve() {},
       revoke() {},
     };
     expect(() => assertCloudBackings({ ...complete, providers: [provider] }, "m")).not.toThrow();
+    expect(() =>
+      assertCloudBackings(
+        { ...complete, providers: [{ ...provider, connect: { kind: "none" } }] },
+        "m",
+      ),
+    ).not.toThrow();
+    // A link provider carries its flow (ADR 0019; GRA-59): the three functions and its relay scheme.
+    expect(() =>
+      assertCloudBackings(
+        { ...complete, providers: [{ ...provider, connect: { ...link, complete: undefined } }] },
+        "m",
+      ),
+    ).toThrow(/provider broker, which connects with a link, without connect\.complete\(\)/);
+    expect(() =>
+      assertCloudBackings(
+        { ...complete, providers: [{ ...provider, connect: { ...link, scheme: "" } }] },
+        "m",
+      ),
+    ).toThrow(/with no relay scheme/);
     expect(() => assertCloudBackings({ ...complete, providers: [] }, "m")).not.toThrow();
     expect(() => assertCloudBackings({ ...complete, providers: "no" }, "m")).toThrow(
       /providers that are not a list/,

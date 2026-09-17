@@ -388,6 +388,7 @@ describe("a gateway connection through the server", () => {
     personId: PERSON,
     provider: "gateway",
     providerRef: null,
+    providerReleaseFailedAt: null,
     vendor: "demo",
     displayName: "Demo through the gateway",
     scheme: "gateway",

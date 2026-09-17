@@ -40,11 +40,13 @@ export type AuthScheme = (typeof AUTH_SCHEMES)[number];
  * only the fields that address the upstream. Kept apart from `AUTH_SCHEMES` on purpose: those are
  * the schemes a person may choose on the console's form, and a relay is never one of them — a
  * connection's *provider* decides that it relays (`ProxyConnection.relay`), and nothing a person
- * types can. `gateway` is a company's API gateway fronting the vendor (`gateway-relay.ts`, GRA-58);
- * the engine (`relay.ts`, `app.ts`) and its own tests still stand on a plugin defined in the test,
- * so a scheme is added here by adding its plugin to `RELAYS` and nothing in the ladder changes.
+ * types can. `gateway` (GRA-58) and `pipedream_connect_proxy` (GRA-59) are the first two: a
+ * company's API gateway fronting the vendor (`gateway-relay.ts`) and Pipedream's Connect proxy
+ * (`pipedream-relay.ts`). The engine (`relay.ts`, `app.ts`) and its own tests still stand on a
+ * plugin defined in the test, so a scheme is added here by adding its plugin to `RELAYS` and
+ * nothing in the ladder changes.
  */
-export const RELAY_SCHEMES = ["gateway"] as const;
+export const RELAY_SCHEMES = ["gateway", "pipedream_connect_proxy"] as const;
 export type RelayScheme = (typeof RELAY_SCHEMES)[number];
 
 /** Every scheme name a connection row may carry: what it signs with, or what it relays through. */

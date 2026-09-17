@@ -255,7 +255,8 @@ const acquireRunner = createAcquireRunner(mcp, {
         `acquire: job ${event.jobId} for agent ${event.agentId} ${event.resumed ? "resumed" : "started"}`,
       );
     } else if (event.kind === "finished") {
-      console.log(`acquire: job ${event.jobId} for agent ${event.agentId} ${event.status}`);
+      const cause = event.failure ? ` (${event.failure})` : "";
+      console.log(`acquire: job ${event.jobId} for agent ${event.agentId} ${event.status}${cause}`);
     } else {
       console.error(
         `acquire: job ${event.jobId} for agent ${event.agentId} failed: ${event.error}`,
@@ -309,6 +310,8 @@ const app = createServer({
     // decrypt outside the proxy binding — the client secret, for the code exchange.
     oauth: { authUrl: env.GRAFT_AUTH_URL, decrypt: vault.decrypt },
     mcpOAuth,
+    // A link provider's return route answers on this origin too (`provider-link.ts`, ADR 0019).
+    authUrl: env.GRAFT_AUTH_URL,
   },
   mcpOAuth,
   // The console's build, served from the same origin as the API (`console.ts`); absent, the API is

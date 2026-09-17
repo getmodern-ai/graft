@@ -97,7 +97,9 @@ export {
 } from "./connection/connection.rules";
 export {
   type ConnectionOutput,
+  type ConnectThroughProviderInput,
   completeOAuthConsent,
+  connectThroughProvider,
   getConnection,
   isConnectionUsable,
   listConnections,
@@ -111,6 +113,7 @@ export {
   registerConnection,
   registerConnectionWithCredential,
   registerProviderConnection,
+  retryProviderRelease,
   revokeConnection,
   type StartedOAuthConsent,
   type StartOAuthConsentInput,
@@ -128,6 +131,30 @@ export {
   gatewayCovers,
   gatewayCoversHost,
 } from "./connection/gateway-provider";
+export {
+  LINK_CALLBACK_MESSAGE_TYPE,
+  LINK_CALLBACK_PATH,
+  LINK_CALLBACK_STATUSES,
+  LINK_CHANNEL,
+  LINK_CONSOLE_CALLBACK_PATH,
+  LINK_OUTCOME_PARAM,
+  LINK_STATE_PARAM,
+  type LinkCallbackMessage,
+  type LinkCallbackOutcome,
+  type LinkCallbackStatus,
+  linkCallbackMessage,
+  linkCallbackRedirect,
+  linkCallbackUri,
+  readLinkCallbackSearch,
+} from "./connection/link.rules";
+
+export {
+  LINK_STATE_TTL_MS,
+  type LinkStatePayload,
+  type LinkStateVerdict,
+  signLinkState,
+  verifyLinkState,
+} from "./connection/link-state";
 export {
   GOOGLE_TESTING_MODE_NOTICE,
   hasGoogleHost,
@@ -163,22 +190,39 @@ export {
   verifyOAuthState,
 } from "./connection/oauth-consent";
 export {
+  createPipedreamProvider,
+  newestUnclaimedAccount,
+  PIPEDREAM_APPS,
+  PIPEDREAM_PROVIDER,
+  type PipedreamApp,
+  type PipedreamProviderDeps,
+  pipedreamAppFor,
+} from "./connection/pipedream-provider";
+export {
   type ConnectionProvider,
   DEFAULT_PROVIDERS,
   describeProviders,
   KEYRING_PROVIDER,
   keyringProvider,
   type ProviderConnect,
+  type ProviderConnectDescription,
   type ProviderConnectionRow,
   type ProviderDescription,
+  type ProviderLink,
+  type ProviderLinkComplete,
+  type ProviderLinkOutcome,
+  type ProviderLinkStart,
+  type ProviderLinkStarted,
   type ProviderResolution,
   providerFor,
+  providerLinkOf,
   providerListProblem,
   providerNamed,
 } from "./connection/provider";
 export type { ServiceContext } from "./context";
 export {
   HTTP_STATUS_BY_CODE,
+  isUniqueViolation,
   orNotFound,
   ServiceError,
   type ServiceErrorCode,

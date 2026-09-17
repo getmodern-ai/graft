@@ -105,10 +105,13 @@ private knowledge:
   addressed, and `credential_incomplete` (409) when the relay's fields lack what the plugin needs,
   the same word an incomplete signing scheme earns. The event carries `relay` — the scheme the call
   left through — beside the vendor `host` and `path` it always named.
-- **`request_connection` refuses a proposal a link provider covers**, by name, until GRA-59 gives
-  it its flow: routing such a proposal to the keyring's form would store in Graft a credential the
-  provider holds itself. With the keyring alone, every answer and every card is what it was before
-  this record; the suites pin it.
+- **`request_connection` refused a proposal a link or no-step provider covered**, by name, until
+  GRA-58 and GRA-59 gave each its flow (the bullets below): routing such a proposal to the
+  keyring's form would have stored in Graft a credential the provider holds itself. Both flows have
+  landed; with the keyring alone, every answer and every card is what it was before this record,
+  and the suites pin it. With both providers configured the gateway is routed to first, since an
+  operator's explicit host list is the more deliberate claim over a host than a broker's app table
+  (`environmentProviders` in `apps/server/src/backings.ts`).
 - **The gateway provider asks nobody, and an agent can never undo a person's decision** (GRA-58,
   2026-09-17). A proposal every host of which the configured gateway covers makes the row and puts
   it in the asking agent's scope in one transaction, and answers `connected` with no ask: the
@@ -147,3 +150,24 @@ private knowledge:
   asking the resolver — which is why the suites address the fake gateway by a name, and why a
   literal upstream needs no exemption. A DNS answer for the gateway's own name is the operator's
   DNS to trust; a compromise there is a compromise of the gateway itself.
+- **The Pipedream provider stores one fact and never the other** (2026-09-17, GRA-59). What Graft
+  keeps of a connection made through Pipedream Connect is the Pipedream account id on
+  `provider_ref`, the relay scheme `pipedream_connect_proxy` in `scheme`, and the vendor and host
+  set the proposal named; the row's `credential_ciphertext` is null for its whole life. What Graft
+  never holds is the vendor's token: Pipedream's proxy injects it per call, the Connect client
+  never asks for account credentials (`include_credentials` is set on no call), and what the relay
+  assembles per call is Graft's own Connect access token and the ids that name the account —
+  held for the call and cached only as the client's token cache. The person is keyed at Pipedream
+  by `graft-person-<personId>`, so a shared project cannot mix accounts across products or
+  persons. Pipedream's API does offer account deletion (`DELETE /v1/connect/{project}/accounts/{id}`),
+  and revoke calls it. **A failed release is a fact on the row, not a toast**: the revoke keeps
+  `provider_ref` until the provider has let go — the reference is what the retry releases by — and
+  stamps `provider_release_failed_at` when it has not, which the connection card shows with a
+  Retry that runs the same release; a success clears both. The record is written only against a
+  row still revoked with that same reference, because the release runs outside the revoke's
+  transaction. A revoked row is reconnected in place by a later link only once its reference is
+  cleared — while a release is outstanding, in flight or failed, a new row is made beside it, since
+  writing over the reference would orphan the account at Pipedream. **One row per account at a
+  provider** (`connection_provider_ref_idx`, partial on a non-null reference): a link's return that
+  lands twice at once discovers the account before it writes, so the database refuses the second
+  claim and that landing reads the ask the first answered.

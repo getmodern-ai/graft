@@ -10,7 +10,7 @@ import {
   SCHEME_PARAMETERS,
   type SchemeParameterRule,
 } from "@graft/proxy/scheme-parameters";
-import { isAuthScheme } from "@graft/proxy/types";
+import { type AuthScheme, isAuthScheme } from "@graft/proxy/types";
 
 import { isKebabCase } from "../kebab-case";
 
@@ -146,13 +146,15 @@ export type SchemeRule = SchemeParameterRule;
 const HEADER_NAME = /^[A-Za-z0-9-]+$/;
 
 /**
- * A relay scheme (ADR 0019) has no parameters and no credential a person enters: a connection's
- * *provider* writes it, and the form, the proposal and the credential entry are the signing
- * schemes' alone. The three validators below answer this sentence for one, so a body naming
- * `gateway` is a 400 with a reason rather than a read of a table that has no such row.
+ * A relay scheme is never one a person chooses or a form takes (ADR 0019): a connection's provider
+ * decides that it relays, and the three tables below are keyed by the signing schemes alone. So a
+ * scheme from the column is narrowed here first, and a relay's name answers the sentence a person
+ * would need rather than an indexing error.
  */
-function relaySchemeProblem(scheme: string): string {
-  return `The ${scheme} scheme is a relay a connection provider chooses; a connection is registered with one of the signing schemes`;
+function signingScheme(scheme: ConnectionScheme): AuthScheme | string {
+  return isAuthScheme(scheme)
+    ? scheme
+    : `The ${scheme} scheme is a relay's — its provider connects the vendor, and it cannot be chosen or configured here`;
 }
 
 /**
@@ -167,7 +169,7 @@ export function validateSchemeConfig(
   config: Record<string, unknown>,
   options: { proposal?: boolean } = {},
 ): string | null {
-  if (!isAuthScheme(scheme)) return relaySchemeProblem(scheme);
+  if (!isAuthScheme(scheme)) return signingScheme(scheme);
   const rule = SCHEME_PARAMETERS[scheme];
   const required = options.proposal ? rule.required : requiredParametersOf(rule);
   const known = [...requiredParametersOf(rule), ...rule.optional];
@@ -230,7 +232,7 @@ export function validateCredentialFields(
   scheme: ConnectionScheme,
   fields: Record<string, unknown>,
 ): string | null {
-  if (!isAuthScheme(scheme)) return relaySchemeProblem(scheme);
+  if (!isAuthScheme(scheme)) return signingScheme(scheme);
   const required = SCHEME_CREDENTIAL_FIELDS[scheme];
   const optional = SCHEME_OPTIONAL_CREDENTIAL_FIELDS[scheme] ?? [];
   const given = Object.keys(fields);
@@ -260,7 +262,7 @@ export function validateIssuedCredentialFields(
   scheme: ConnectionScheme,
   fields: Record<string, unknown>,
 ): string | null {
-  if (!isAuthScheme(scheme)) return relaySchemeProblem(scheme);
+  if (!isAuthScheme(scheme)) return signingScheme(scheme);
   const entered = [
     ...SCHEME_CREDENTIAL_FIELDS[scheme],
     ...(SCHEME_OPTIONAL_CREDENTIAL_FIELDS[scheme] ?? []),

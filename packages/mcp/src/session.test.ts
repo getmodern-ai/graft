@@ -226,6 +226,7 @@ describe("the authoring set and the execute tool", () => {
       hosts: ["api.demo.example"],
       credentialSetAt: null,
       oauth: null,
+      providerReleaseFailedAt: null,
       revokedAt: null,
       createdAt: new Date(0),
       updatedAt: new Date(0),

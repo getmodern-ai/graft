@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@graft/db": "workspace:*",
+    "@graft/pipedream": "workspace:*",
     "@graft/proxy": "workspace:*",
     "@graft/vault": "workspace:*"
   },

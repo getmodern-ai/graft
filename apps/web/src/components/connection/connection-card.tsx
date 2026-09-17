@@ -6,10 +6,11 @@ import { ConsentStatus } from "@/components/connection/oauth-client-notice";
 import { ReenterCredentialDialog } from "@/components/connection/reenter-credential-dialog";
 import { RevokeConnectionDialog } from "@/components/connection/revoke-connection-dialog";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
-import { KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
+import { KeyboardArrowDownIcon, KeyboardArrowUpIcon, WarningIcon } from "@/components/icons";
 import { StatusChip } from "@/components/status-chip";
 import { Time } from "@/components/time";
 import { ToolAnnotations } from "@/components/tool-annotations";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +30,7 @@ import {
   isKeyringConnection,
   providerLabel,
   reconnectConnection,
+  retryProviderRelease,
   toolKeys,
 } from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
@@ -49,7 +51,10 @@ import { AWAITING_RECONNECTION_CHIP, connectionStatusChips } from "@/lib/status-
  * is held there; the credential buttons are the keyring's alone, since there is nothing here to
  * enter. A connection through the person's API gateway (GRA-58) was made with no person step, and
  * its one button beyond Revoke is Reconnect on a revoked row — nothing to enter, the stamp cleared,
- * the approvals still gone. With the keyring alone, nothing on this card changed for providers.
+ * the approvals still gone. A connection through a link provider (GRA-59) comes back through the
+ * provider's own link; when its release failed on a revoke, the card says the account is still at
+ * the provider and offers Retry release. With the keyring alone, nothing on this card changed for
+ * providers.
  *
  * A card rather than a table row, because each connection carries a status, a host list, a tool
  * list, two actions and a table of its own — more than a row can hold. The anatomy is Cando's
@@ -87,6 +92,26 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       });
     },
   });
+  /**
+   * The provider's release failed on the revoke and the account is still at the provider
+   * (ADR 0019); the row says so until a retry succeeds, and this is that retry.
+   */
+  const release = useMutation({
+    mutationFn: () => retryProviderRelease(connection.id),
+    onSuccess: ({ providerRelease }) => {
+      queryClient.invalidateQueries({ queryKey: connectionKeys.all });
+      if (providerRelease.released) {
+        toast.success(`${providerRelease.provider} released ${connection.displayName}`, {
+          description:
+            "The account is gone at the provider; nothing about it is held anywhere now.",
+        });
+      } else {
+        toast.warning(`${providerRelease.provider} still did not release the connection`, {
+          description: "The provider could not be reached; the card keeps offering Retry.",
+        });
+      }
+    },
+  });
 
   const description = {
     revoked: gateway ? (
@@ -94,6 +119,12 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         Revoked <Time iso={connection.revokedAt ?? ""} />. Every approval is cleared with it and no
         call relays through your API gateway until you reconnect it; nothing was stored here to
         clear.
+      </>
+    ) : !keyring ? (
+      <>
+        Revoked <Time iso={connection.revokedAt ?? ""} />. The account at {connection.provider} is
+        forgotten and every approval with it; when an agent asks to connect {connection.vendor}{" "}
+        again, one click through {connection.provider} reconnects it.
       </>
     ) : (
       <>
@@ -130,8 +161,8 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       </>
     ) : !keyring ? (
       <>
-        Connected through {connection.provider}. The credential is held there, never here; every
-        call relays through it.
+        Connected through {connection.provider}. The account's token is held there, never here;
+        Graft stores only the account's id, and every call relays through {connection.provider}.
       </>
     ) : connection.oauth ? (
       <>
@@ -210,6 +241,30 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       </CardHeader>
       <CardContent className="flex flex-col gap-4 text-sm">
         <ConsentStatus state={consent.state} onCancel={consent.cancel} />
+        {connection.providerReleaseFailedAt ? (
+          <Alert variant="destructive">
+            <WarningIcon />
+            <AlertTitle>{connection.provider} still holds this account</AlertTitle>
+            <AlertDescription>
+              <p>
+                Everything in Graft is revoked, but {connection.provider} could not be asked to
+                release the account when you revoked (
+                <Time iso={connection.providerReleaseFailedAt} />
+                ). Until it does, the account is still connected there.
+              </p>
+              <p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={release.isPending}
+                  onClick={() => release.mutate()}
+                >
+                  {release.isPending ? "Retrying…" : "Retry release"}
+                </Button>
+              </p>
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]">
           <dt className="text-muted-foreground">Hosts</dt>
           <dd className="flex flex-wrap gap-1.5">

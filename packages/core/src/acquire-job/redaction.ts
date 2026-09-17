@@ -184,7 +184,8 @@ export function secretFieldNamesFor(
   scheme: ConnectionScheme,
   schemeConfig: Record<string, unknown> | null | undefined,
 ): string[] {
-  // A relay scheme's credential is the upstream's, never in a trace (ADR 0019): no field names.
+  // A relay scheme's connection holds no credential fields a module could echo (ADR 0019): what
+  // addresses the upstream is the proxy's, assembled per call and never a module's to see.
   const names = isAuthScheme(scheme)
     ? [...SCHEME_CREDENTIAL_FIELDS[scheme], ...(SCHEME_OPTIONAL_CREDENTIAL_FIELDS[scheme] ?? [])]
     : [];

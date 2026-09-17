@@ -71,6 +71,17 @@ export function reconnectConnection(connectionId: string) {
 }
 
 /**
+ * Ask the provider again to release what it still holds for a revoked connection (ADR 0019): the
+ * card's Retry while `providerReleaseFailedAt` says the account is still at the provider.
+ */
+export function retryProviderRelease(connectionId: string) {
+  return api<{ connection: Connection; providerRelease: RevokeResult["providerRelease"] }>(
+    `/connections/${encodeURIComponent(connectionId)}/release`,
+    { method: "POST" },
+  );
+}
+
+/**
  * The tools a connection stands behind: bound by vendor, never by row (ADR 0007), which is what
  * lets a revoked connection's tools stay and re-ask after reconnection.
  */

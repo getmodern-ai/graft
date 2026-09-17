@@ -3,7 +3,7 @@ import type { ConnectionScheme } from "@graft/db/schema/connection";
 import type { ProxyConnection } from "@graft/proxy";
 
 import type { ServiceContext } from "../context";
-import { orNotFound, ServiceError } from "../errors";
+import { isUniqueViolation, orNotFound, ServiceError } from "../errors";
 import type { Principal } from "../tenancy";
 import type { ConnectionDeps } from "./connection.deps";
 import {
@@ -34,6 +34,7 @@ import {
   DEFAULT_PROVIDERS,
   KEYRING_PROVIDER,
   type ProviderDescription,
+  providerLinkOf,
   providerNamed,
 } from "./provider";
 
@@ -66,6 +67,12 @@ export type ConnectionOutput = {
   credentialSetAt: Date | null;
   /** Where the consent stands, for an authorization-code connection; null for every other scheme. */
   oauth: OAuthPublicState | null;
+  /**
+   * When the provider last failed to release what it held for this row on a revoke (ADR 0019) —
+   * the account is still at the provider, and the console offers the retry. Null when nothing is
+   * outstanding: the keyring's rows always, a relay provider's once its release answered.
+   */
+  providerReleaseFailedAt: Date | null;
   revokedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -85,6 +92,7 @@ export function toConnectionOutput(row: ConnectionRow): ConnectionOutput {
     oauth: isOAuthAuthorizationCode(row.scheme)
       ? oauthPublicState(readOAuthState(row.oauthRefreshState))
       : null,
+    providerReleaseFailedAt: row.providerReleaseFailedAt,
     revokedAt: row.revokedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -94,12 +102,16 @@ export function toConnectionOutput(row: ConnectionRow): ConnectionOutput {
 /**
  * Whether a vendor call through this connection can succeed today: not revoked, its provider
  * enabled on this deployment, and — for a provider whose credential is entered here — a credential
- * set and, for an authorization-code connection, the consent completed and not since refused. A
- * provider with no person step (ADR 0019) has nothing to enter, so its row is usable by existing;
- * one the deployment no longer enables resolves to nothing the proxy can call through
- * (`toProxyConnection`), and is not usable for the same reason. What `request_connection` reads
- * before saying "already connected". `providers` takes the descriptions the console holds as
- * readily as the providers themselves; the default is the keyring alone.
+ * set and, for an authorization-code connection, the consent completed and not since refused.
+ * What `request_connection` reads before saying "already connected", and the console's "connected".
+ *
+ * A connection from another provider holds no credential here (ADR 0019): it exists only once its
+ * provider made it — with no person step (the gateway, GRA-58), or once the provider confirmed what
+ * the person connected (`connectThroughProvider`, GRA-59) — so it is connected by existing and
+ * revoked into nothing. One the deployment no longer enables resolves to nothing the proxy can call
+ * through (`toProxyConnection`), and is not usable for the same reason. `providers` takes the
+ * descriptions the console holds as readily as the providers themselves; the default is the
+ * keyring alone.
  */
 export function isConnectionUsable(
   connection: ConnectionOutput,
@@ -108,7 +120,7 @@ export function isConnectionUsable(
   if (connection.revokedAt !== null) return false;
   const provider = providers.find((candidate) => candidate.name === connection.provider);
   if (!provider) return false;
-  if (provider.connect.kind === "none") return true;
+  if (provider.connect.kind !== "form") return true;
   if (connection.credentialSetAt === null) return false;
   return connection.oauth === null || connection.oauth.status === "connected";
 }
@@ -118,12 +130,14 @@ export function isConnectionUsable(
  * and — from the row's provider (ADR 0019) — how the call resolves: the columns to decrypt and
  * inject from, or the relay to send it through. Built field by field, so a column added to the table
  * later does not ride into the proxy by accident. A revoked connection resolves to nothing and the
- * proxy answers `connection_not_ready` for it — asked here rather than left to the null ciphertext
- * a revoke leaves, because a relay provider's row never had one (ADR 0019): the revoke is the
- * person's, and a capability token minted from a scope that still names the row must not relay
- * through it. A row whose provider the deployment has not enabled resolves to nothing, which the
- * proxy answers the same way: a connection made under a provider that is now absent is not one this
- * deployment can call through, and saying so is better than guessing at the keyring.
+ * proxy answers `connection_not_ready` for it, whatever its provider — asked here rather than left
+ * to the null ciphertext a revoke leaves, because a relay provider's row never had one (ADR 0019):
+ * the revoke is the person's, and a capability token minted from a scope that still names the row
+ * must not relay through it; and such a row may still carry its reference while the provider's
+ * release is outstanding (`releaseFromProvider`), which is exactly when a call must not go through.
+ * A row whose provider the deployment has not enabled resolves to nothing, which the proxy answers
+ * the same way: a connection made under a provider that is now absent is not one this deployment can
+ * call through, and saying so is better than guessing at the keyring.
  */
 export function toProxyConnection(
   row: ConnectionRow,
@@ -135,8 +149,9 @@ export function toProxyConnection(
     primaryHost: row.primaryHost,
     hosts: row.hosts,
   };
-  const resolution =
-    row.revokedAt === null ? (providerNamed(providers, row.provider)?.resolve(row) ?? null) : null;
+  const resolution = row.revokedAt
+    ? null
+    : (providerNamed(providers, row.provider)?.resolve(row) ?? null);
   if (!resolution) {
     return { ...identity, authScheme: null, schemeConfig: null, credentialCiphertext: null };
   }
@@ -432,6 +447,123 @@ export async function reconnectConnection(
     "Connection not found",
   );
   return toConnectionOutput(updated);
+}
+
+export type ConnectThroughProviderInput = {
+  /** A provider that connects with a link (ADR 0019) — enabled on this deployment. */
+  provider: ConnectionProvider;
+  vendor: string;
+  displayName: string;
+  primaryHost: string;
+  hosts?: readonly string[];
+  /** The provider's reference for what the person connected — a broker's account id — as `complete` answered it. */
+  ref: string;
+};
+
+/**
+ * A connection through a provider that connects with a link, made once the provider has confirmed
+ * what the person connected (ADR 0019; GRA-59): the row carries the provider's name, the relay
+ * scheme its calls leave through, the vendor and the host set, and the provider's reference on
+ * `provider_ref` — and no credential, because there is none here. The rules are the form's
+ * (`registerConnection`), plus one: the provider must cover the vendor at these hosts, since the
+ * relay injects the account's token into whatever vendor URL it is handed.
+ *
+ * A revoked row of the same provider at the same vendor, primary host and host set is
+ * **reconnected in place** rather than shadowed by a second row — the reconnection a credential
+ * re-entry is for a keyring row (ADR 0007) — so the connection id stays what every agent's scope
+ * names. Only once the provider has released it: a revoked row still carrying its reference has a
+ * release outstanding — in flight, or failed and awaiting the retry — and writing a new reference
+ * over it would orphan the account at the provider. Any other row makes a new one; a person may
+ * well hold two accounts at one vendor. A reference already on another row is the database's
+ * refusal (`connection_provider_ref_idx`), answered `CONFLICT`: two landings claimed one account,
+ * and the caller re-reads what the first did.
+ */
+export async function connectThroughProvider(
+  ctx: ServiceContext,
+  principal: Principal,
+  input: ConnectThroughProviderInput,
+  deps: ConnectionDeps,
+): Promise<ConnectionOutput> {
+  const provider = input.provider;
+  if (!providerNamed(deps.providers, provider.name)) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `No connection provider named ${provider.name} is enabled on this deployment`,
+    );
+  }
+  const link = providerLinkOf(provider);
+  if (!link) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `The ${provider.name} provider does not connect a vendor with a link`,
+    );
+  }
+  refuse(validateVendor(input.vendor));
+  refuse(validateDisplayName(input.displayName));
+  const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
+  if (!hostSet.ok) refuseHostSet(hostSet);
+  if (!provider.covers(input.vendor, hostSet.hosts)) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `The ${provider.name} provider does not cover ${input.vendor} at ${hostSet.hosts.join(", ")}`,
+    );
+  }
+  if (input.ref.trim().length === 0) {
+    throw new ServiceError("BAD_REQUEST", `The ${provider.name} provider named no account`);
+  }
+
+  // A released row and no other: `provider_ref` is null once the provider let go
+  // (`recordProviderRelease`), and still set while the release is outstanding.
+  const hostsKey = [...hostSet.hosts].sort().join(" ");
+  const released = (await deps.listConnections(ctx.db, principal.personId)).find(
+    (row) =>
+      row.revokedAt !== null &&
+      row.providerRef === null &&
+      row.provider === provider.name &&
+      row.vendor === input.vendor &&
+      row.primaryHost === hostSet.primaryHost &&
+      [...row.hosts].sort().join(" ") === hostsKey,
+  );
+  const claimed = () =>
+    new ServiceError(
+      "CONFLICT",
+      `${input.displayName.trim()} at ${provider.name} is already connected — another landing of this link claimed the account first`,
+    );
+  if (released) {
+    let reconnected: ConnectionRow | null;
+    try {
+      reconnected = await deps.setConnectionProviderRef(
+        ctx.db,
+        principal.personId,
+        released.id,
+        input.ref,
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) throw claimed();
+      throw error;
+    }
+    return toConnectionOutput(orNotFound(reconnected, "Connection not found"));
+  }
+
+  let row: ConnectionRow;
+  try {
+    row = await deps.insertConnection(ctx.db, {
+      id: deps.newId(),
+      personId: principal.personId,
+      provider: provider.name,
+      providerRef: input.ref,
+      vendor: input.vendor,
+      displayName: input.displayName.trim(),
+      scheme: link.scheme,
+      schemeConfig: {},
+      primaryHost: hostSet.primaryHost,
+      hosts: hostSet.hosts,
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) throw claimed();
+    throw error;
+  }
+  return toConnectionOutput(row);
 }
 
 export async function listConnections(
@@ -766,7 +898,6 @@ export async function revokeConnection(
     return {
       row,
       result: {
-        connection: toConnectionOutput(row),
         approvalsDeleted: approvals.length,
         buildApprovalsDeleted: builds.length,
         pendingActionsExpired: actions.length,
@@ -774,22 +905,83 @@ export async function revokeConnection(
     };
   });
   if (!revoked) return null;
-  return { ...revoked.result, providerRelease: await releaseFromProvider(deps, revoked.row) };
+  const { row, providerRelease } = await releaseFromProvider(ctx, principal, deps, revoked.row);
+  return { ...revoked.result, connection: toConnectionOutput(row), providerRelease };
 }
 
-/** The provider's release, as a report and never as a throw — the local revoke has committed. */
+/**
+ * Ask the provider again to release what it still holds for a revoked connection (ADR 0019;
+ * GRA-59) — the console's Retry on a card whose `providerReleaseFailedAt` is set. The same release
+ * the revoke ran, recorded the same way; a row with nothing outstanding — released already, or
+ * never revoked — is refused rather than asked, because a release of a live connection's account
+ * would be a revoke by another name.
+ */
+export async function retryProviderRelease(
+  ctx: ServiceContext,
+  principal: Principal,
+  connectionId: string,
+  deps: ConnectionDeps,
+): Promise<{ connection: ConnectionOutput; providerRelease: ProviderRelease }> {
+  const row = orNotFound(
+    await deps.findConnection(ctx.db, principal.personId, connectionId),
+    "Connection not found",
+  );
+  if (row.revokedAt === null) {
+    throw new ServiceError(
+      "CONFLICT",
+      `${row.displayName} is not revoked; revoke it to release it`,
+    );
+  }
+  if (row.providerReleaseFailedAt === null || row.providerRef === null) {
+    throw new ServiceError(
+      "CONFLICT",
+      `${row.displayName} has nothing outstanding at its provider to release`,
+    );
+  }
+  const released = await releaseFromProvider(ctx, principal, deps, row);
+  return {
+    connection: toConnectionOutput(released.row),
+    providerRelease: released.providerRelease,
+  };
+}
+
+/**
+ * The provider's release, as a report and never as a throw — the local revoke has committed — and
+ * as a record on the row (`recordProviderRelease`): released, the reference goes; failed, the
+ * moment is stamped and the reference kept for the retry. The row handed to the provider is the
+ * row as it stands, reference included, which is why the revoke's statement leaves it in place.
+ * The record is written against that same reference on a row still revoked, so a link that
+ * reconnected the row while the provider was being asked keeps its new reference; a row that moved
+ * on is read back as it now is. A row with no reference — the keyring's — has nothing to record.
+ */
 async function releaseFromProvider(
+  ctx: ServiceContext,
+  principal: Principal,
   deps: ConnectionDeps,
   row: ConnectionRow,
-): Promise<ProviderRelease> {
+): Promise<{ row: ConnectionRow; providerRelease: ProviderRelease }> {
   const provider = providerNamed(deps.providers, row.provider);
-  if (!provider) return { provider: row.provider, released: true };
-  try {
-    await provider.revoke(row);
-    return { provider: provider.name, released: true };
-  } catch (error) {
-    const failure =
-      error instanceof Error ? error.name || "Error" : error === null ? "null" : typeof error;
-    return { provider: provider.name, released: false, failure };
+  let providerRelease: ProviderRelease;
+  if (!provider) {
+    providerRelease = { provider: row.provider, released: true };
+  } else {
+    try {
+      await provider.revoke(row);
+      providerRelease = { provider: provider.name, released: true };
+    } catch (error) {
+      const failure =
+        error instanceof Error ? error.name || "Error" : error === null ? "null" : typeof error;
+      providerRelease = { provider: provider.name, released: false, failure };
+    }
   }
+  const ref = row.providerRef;
+  if (ref === null) return { row, providerRelease };
+  const recorded = await deps.recordProviderRelease(
+    ctx.db,
+    principal.personId,
+    row.id,
+    providerRelease.released ? { released: true, ref } : { released: false, ref, at: deps.now() },
+  );
+  const current = recorded ?? (await deps.findConnection(ctx.db, principal.personId, row.id));
+  return { row: current ?? row, providerRelease };
 }

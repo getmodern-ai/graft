@@ -32,6 +32,8 @@ import {
   packageMinAgeDays,
   packageMinWeeklyDownloads,
   pendingActionTtlHours,
+  pipedreamEnvironment,
+  pipedreamProjectId,
   port,
   sandboxBackend,
   serverEnvIssues,
@@ -834,6 +836,62 @@ describe("the gateway provider (ADR 0019, GRA-58)", () => {
     const partial = fullSchema.safeParse({ ...MINIMAL, GRAFT_GATEWAY_HOSTS: "api.vendor.example" });
     expect(partial.success).toBe(false);
     expect(JSON.stringify(partial.error?.issues)).toContain("partially configured");
+  });
+});
+
+describe("the Pipedream provider's group (GRA-59)", () => {
+  const PIPEDREAM = {
+    GRAFT_PIPEDREAM_PROJECT_ID: "proj_abc123",
+    GRAFT_PIPEDREAM_ENVIRONMENT: "development",
+    GRAFT_PIPEDREAM_CLIENT_ID: "pd_client",
+    GRAFT_PIPEDREAM_CLIENT_SECRET: "pd_secret",
+  };
+
+  it("is off by default and the four together, naming what is missing", () => {
+    expect(serverEnvIssues(SECRET)).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, ...PIPEDREAM })).toEqual([]);
+    const { GRAFT_PIPEDREAM_CLIENT_SECRET: _secret, ...withoutSecret } = PIPEDREAM;
+    expect(serverEnvIssues({ ...SECRET, ...withoutSecret })).toEqual([
+      expect.stringMatching(
+        /Pipedream provider is partially configured.*Missing: GRAFT_PIPEDREAM_CLIENT_SECRET$/,
+      ),
+    ]);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_PIPEDREAM_PROJECT_ID: "proj_abc123" })).toEqual([
+      expect.stringMatching(
+        /Missing: GRAFT_PIPEDREAM_ENVIRONMENT, GRAFT_PIPEDREAM_CLIENT_ID, GRAFT_PIPEDREAM_CLIENT_SECRET$/,
+      ),
+    ]);
+  });
+
+  it("takes a proj_ id and one of the two environments, naming the variable otherwise", () => {
+    expect(pipedreamProjectId.parse("proj_Abc123")).toBe("proj_Abc123");
+    expect(pipedreamProjectId.parse(undefined)).toBeUndefined();
+    const swapped = pipedreamProjectId.safeParse("pd_client");
+    expect(swapped.success).toBe(false);
+    expect(swapped.error?.issues[0]?.message).toContain("GRAFT_PIPEDREAM_PROJECT_ID");
+    expect(pipedreamEnvironment.parse("production")).toBe("production");
+    const bad = pipedreamEnvironment.safeParse("staging");
+    expect(bad.success).toBe(false);
+    expect(bad.error?.issues[0]?.message).toContain("GRAFT_PIPEDREAM_ENVIRONMENT");
+  });
+
+  it("parses the group whole, and refuses a client secret or id still holding the secret store's placeholder", () => {
+    expect(fullSchema.parse({ ...MINIMAL, ...PIPEDREAM })).toMatchObject(PIPEDREAM);
+    const placeholder = fullSchema.safeParse({
+      ...MINIMAL,
+      ...PIPEDREAM,
+      GRAFT_PIPEDREAM_CLIENT_SECRET: "PLACEHOLDER — populate in the AWS console",
+    });
+    expect(placeholder.success).toBe(false);
+    expect(placeholder.error?.issues.map((issue) => issue.message)).toEqual([
+      expect.stringMatching(
+        /GRAFT_PIPEDREAM_CLIENT_SECRET still holds the secret store's placeholder/,
+      ),
+    ]);
+    expect(
+      fullSchema.safeParse({ ...MINIMAL, ...PIPEDREAM, GRAFT_PIPEDREAM_CLIENT_ID: "PLACEHOLDER" })
+        .success,
+    ).toBe(false);
   });
 });
 

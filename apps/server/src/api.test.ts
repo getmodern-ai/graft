@@ -72,6 +72,7 @@ const connectionRow: ConnectionRow = {
   oauthTokenUrl: null,
   oauthScopes: null,
   oauthRefreshState: null,
+  providerReleaseFailedAt: null,
   revokedAt: null,
   owner: "person",
   createdAt: NOW,
@@ -183,6 +184,18 @@ function connectionDeps(): ConnectionDeps {
     setConnectionOAuthState: vi.fn(async (_db, _p, _id, state) => ({
       ...connectionRow,
       oauthRefreshState: state,
+    })),
+    setConnectionProviderRef: vi.fn(async (_db, _p, _id, providerRef) => ({
+      ...connectionRow,
+      providerRef,
+      revokedAt: null,
+    })),
+    recordProviderRelease: vi.fn(async (_db, _p, _id, outcome) => ({
+      ...connectionRow,
+      revokedAt: NOW,
+      ...(outcome.released
+        ? { providerRef: null, providerReleaseFailedAt: null }
+        : { providerReleaseFailedAt: outcome.at }),
     })),
     revokeConnection: vi.fn(async () => ({ ...connectionRow, revokedAt: NOW })),
     reconnectConnection: vi.fn(async () => ({ ...connectionRow, revokedAt: null })),

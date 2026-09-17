@@ -5,6 +5,7 @@ import {
   addConnectionToAgentScope,
   answerPendingAction,
   type ConnectionProvider,
+  connectThroughProvider,
   createGatewayProvider,
   keyringProvider,
   registerConnectionWithCredential,
@@ -789,50 +790,129 @@ describe("request_connection with the OAuth shape", () => {
 });
 
 /**
- * The proposal is routed to a provider (ADR 0019). With the keyring alone every answer above is
- * what it was before providers existed — those tests pin it. A provider that connects some other
- * way, covering the vendor first, is refused by name until its ticket gives it a flow; nothing is
- * asked of the person and nothing is recorded.
+ * A proposal is routed to the first provider that covers it (ADR 0019). A provider that connects
+ * with a **link** (GRA-59) takes the same ask with the link's payload and no form: the person
+ * presses one button, the provider's page runs the sign-in, and the server's return route makes
+ * the connection and answers the ask — played here by the same core calls
+ * (`apps/server/src/provider-link.ts` is the HTTP half). A provider with no person step (GRA-58) is
+ * still refused by name until its ticket gives it a flow.
  */
 describe("request_connection routes a proposal to the provider that covers it", () => {
+  const fakeRelay = {
+    kind: "relay" as const,
+    scheme: "pipedream_connect_proxy",
+    rules: { prefix: null, passThrough: [], refuse: [], refusePrefixes: [] },
+    relay: () => undefined,
+    headerNames: () => [],
+  };
+  const started: string[] = [];
   const broker: ConnectionProvider = {
     name: "broker",
-    connect: { kind: "link" },
-    covers: (vendor) => vendor === "acme",
-    resolve: () => ({
-      mode: "relay",
-      relay: {
-        plugin: {
-          kind: "relay",
-          scheme: "fake_relay",
-          rules: { prefix: null, passThrough: [], refuse: [], refusePrefixes: [] },
-          relay: () => undefined,
-          headerNames: () => [],
-        },
-        obtain: async () => ({}),
+    connect: {
+      kind: "link",
+      scheme: "pipedream_connect_proxy",
+      target: (vendor) => (vendor === "acme" ? "acme_app" : null),
+      start: async (input) => {
+        started.push(input.returnTo.success);
+        return {
+          url: "https://broker.example/link?token=ctok_1",
+          expiresAt: new Date(Date.now() + 60_000),
+        };
       },
+      complete: async () => ({ ok: true, ref: "acct_1", label: "ops@acme.example" }),
+    },
+    covers: (vendor) => vendor === "acme",
+    resolve: (row) => ({
+      mode: "relay",
+      relay: { plugin: fakeRelay, obtain: async () => ({ accountId: row.providerRef ?? "" }) },
     }),
     revoke: async () => undefined,
   };
-  const original = () => deps.connection;
 
   afterEach(() => {
     deps.connection = { ...deps.connection, providers: [keyringProvider] };
+    started.length = 0;
   });
 
-  it("refuses a proposal a link provider covers, naming the provider, and records no ask", async () => {
-    const before = original();
-    deps.connection = { ...before, providers: [broker, keyringProvider] };
+  /** What the server's return route does once the provider confirmed the account (`provider-link.ts`). */
+  async function completeLink(actionId: string) {
+    const action = store.pendingActions.get(actionId);
+    if (!action) throw new Error(`no action ${actionId}`);
+    const payload = action.payload as unknown as ConnectionProposalPayload;
+    const connection = await connectThroughProvider(
+      ctx(),
+      principal,
+      {
+        provider: broker,
+        vendor: payload.vendor,
+        displayName: payload.displayName,
+        primaryHost: payload.primaryHost,
+        hosts: payload.hosts,
+        ref: "acct_1",
+      },
+      deps.connection,
+    );
+    await addConnectionToAgentScope(ctx(), principal, action.agentId, connection.id, deps.agent);
+    await answerPendingAction(
+      ctx(),
+      principal,
+      actionId,
+      { connectionId: connection.id },
+      deps.pendingAction,
+    );
+    return connection;
+  }
+
+  it("a proposal a link provider covers is an ask with the link's payload and the provider named in the answer — no form, no redirect URI — and the return connects it for this agent", async () => {
+    deps.connection = { ...deps.connection, providers: [broker, keyringProvider] };
     const a = await connect(TOKEN_B);
     try {
-      const asks = actionsOf(AGENT_B, CONNECTION_ASK_KIND).length;
-      const said = await a.call("request_connection", PROPOSAL);
-      expect(said.isError).toBe(true);
-      expect(body(said)).toMatchObject({
-        reason: "provider_not_supported",
+      const first = await a.call("request_connection", PROPOSAL);
+      const { answer, action } = awaiting(first, "awaiting_connection");
+      expect(answer.provider).toBe("broker");
+      expect(answer.redirectUri).toBeUndefined();
+      expect(answer.message).toContain("through broker");
+      expect(answer.message).toContain("one click");
+      expect(answer.message).not.toContain("client");
+      expect(action.payload).toMatchObject({
         provider: "broker",
-        connect: "link",
-        message: expect.stringContaining("the broker provider"),
+        providerConnect: "link",
+        providerTarget: "acme_app",
+        note: expect.stringContaining("relayed to every host listed"),
+        vendor: "acme",
+        displayName: "Acme Orders",
+        primaryHost: "https://api.acme.example/v2",
+        hosts: ["api.acme.example", "files.acme.example"],
+      });
+      // The same proposal is the same ask; nothing is minted here — the console's button mints.
+      const again = awaiting(await a.call("request_connection", PROPOSAL), "awaiting_connection");
+      expect(again.action.id).toBe(action.id);
+      expect(started).toEqual([]);
+
+      const connection = await completeLink(action.id);
+      expect(connection).toMatchObject({
+        provider: "broker",
+        vendor: "acme",
+        scheme: "pipedream_connect_proxy",
+        credentialSetAt: null,
+        revokedAt: null,
+      });
+      expect(store.connections.get(connection.id)?.providerRef).toBe("acct_1");
+      expect(store.connections.get(connection.id)?.credentialCiphertext).toBeNull();
+
+      const done = await a.call("request_connection", PROPOSAL);
+      expect(done.isError).toBeFalsy();
+      expect(body(done)).toMatchObject({
+        status: "connected",
+        connectionId: connection.id,
+        executeTool: executeToolName(connection.id),
+      });
+      expect(await a.toolNames()).toContain(executeToolName(connection.id));
+      // Connected by existing: a later call finds it usable and asks nobody.
+      const asks = actionsOf(AGENT_B, CONNECTION_ASK_KIND).length;
+      expect(body(await a.call("request_connection", PROPOSAL))).toMatchObject({
+        status: "connected",
+        connectionId: connection.id,
       });
       expect(actionsOf(AGENT_B, CONNECTION_ASK_KIND)).toHaveLength(asks);
 
@@ -846,16 +926,41 @@ describe("request_connection routes a proposal to the provider that covers it", 
         }),
       );
       expect(other).toMatchObject({ error: "awaiting_connection" });
-      const action = store.pendingActions.get(other.pendingActionId as string);
-      expect(action?.payload).toMatchObject({ provider: "keyring", vendor: "gamma" });
+      const formAsk = store.pendingActions.get(other.pendingActionId as string);
+      expect(formAsk?.payload).toMatchObject({
+        provider: "keyring",
+        providerConnect: "form",
+        providerTarget: null,
+        vendor: "gamma",
+      });
+    } finally {
+      await a.close();
+      for (const [id, row] of store.connections) {
+        if (row.provider === "broker") {
+          store.connections.delete(id);
+          store.agentConnections.get(AGENT_B)?.delete(id);
+        }
+      }
+    }
+  });
+
+  it("refuses a proposal naming a relay scheme — a provider's, never the agent's to propose", async () => {
+    const a = await connect(TOKEN_B);
+    try {
+      const said = await a.call("request_connection", {
+        ...PROPOSAL,
+        scheme: "pipedream_connect_proxy",
+      });
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({ reason: "input_invalid", field: "scheme" });
+      expect(describeSchemes()).not.toContain("pipedream_connect_proxy");
     } finally {
       await a.close();
     }
   });
 
   it("request_credential refuses a connection a relay provider holds — there is nothing here to re-enter", async () => {
-    const before = original();
-    deps.connection = { ...before, providers: [broker, keyringProvider] };
+    deps.connection = { ...deps.connection, providers: [broker, keyringProvider] };
     const row = store.addConnection({
       id: "conn_broker",
       personId: PERSON,

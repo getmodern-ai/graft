@@ -12,6 +12,7 @@ import {
   listAcquireAttempts,
   type Principal,
   recordAcquireJobTokens,
+  redactValue,
   type ServiceContext,
   ServiceError,
   secretFieldNamesFor,
@@ -947,17 +948,26 @@ class AcquireLoop {
     );
   }
 
+  /**
+   * The result is redacted here because it is the one text of the job's that no repo redacts on
+   * the way in: `completeAcquireJob` stores it as given, and the runner's finished event and the
+   * server's log line carry its message. A provider's error body can echo a credential
+   * (`errorMessage` keeps its sentence, GRA-60), so the same rule the traces get applies.
+   */
   private failure(
     kind: AcquireFailureKind,
     message: string,
     lastDiagnostics: unknown,
   ): AcquireFailure {
-    return {
-      failure: kind,
-      message,
-      lastDiagnostics: lastDiagnostics ?? this.lastDiagnostics ?? null,
-      tried: [...this.tried],
-    };
+    return redactValue<AcquireFailure>(
+      {
+        failure: kind,
+        message,
+        lastDiagnostics: lastDiagnostics ?? this.lastDiagnostics ?? null,
+        tried: [...this.tried],
+      },
+      this.redaction,
+    ).value;
   }
 
   private end(kind: AcquireFailureKind, message: string, lastDiagnostics: unknown): JobEnded {
