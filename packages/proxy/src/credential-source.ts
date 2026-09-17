@@ -1,23 +1,30 @@
-import { deriveRefusal, type Refused, refuse } from "./failure";
+import { deriveRefusal, fromHost, type Refused, refuse } from "./failure";
+import { relayHeaders, relayRulesOf } from "./relay";
 import { CredentialRefreshError, type SchemePlugin } from "./schemes";
 import type {
   AuthScheme,
   CredentialFields,
   ProxyConnection,
   ProxyDeps,
+  RelayHeaderRules,
+  RelayPlugin,
   SchemeConfig,
   SchemeRuntime,
 } from "./types";
 
 /**
  * Where a call's credential comes from, kept out of the ladder so `app.ts` reads the same whatever
- * the scheme. A connection carries its scheme, its host set and its envelope-encrypted credential
- * on the row, and the host's vault decrypts — Graft holds every credential itself, so there is one
- * source and no broker (ADR 0001; Cando's second branch was deleted on the way in, ADR 0011). Then,
+ * the scheme. Two sources, one shape (ADR 0019). **Inject**: the connection carries its scheme, its
+ * host set and its envelope-encrypted credential on the row, and the host's vault decrypts — the
+ * keyring, every row until another provider is enabled. **Relay**: the connection's provider holds
+ * the credential at an upstream proxy, and what the ladder obtains is the fields that address that
+ * upstream; the request is rewritten to go there instead of to the vendor (`relay.ts`). Cando's
+ * broker branch was deleted on the way in (ADR 0011) and this is what came back in its place —
+ * narrower, because it relays and never fetches a raw credential. Then, for an injected credential,
  * **stored** against **derived**: what the row holds is what goes on the wire, unless the scheme
  * derives something from it first — the access token an OAuth2 exchange buys, the JWT the Snowflake
  * scheme signs — cached per connection in `SchemeRuntime.cache` and made again on a vendor 401
- * (`schemes.ts`).
+ * (`schemes.ts`). A relay derives nothing: the upstream owns the vendor's token and its refresh.
  */
 
 /**
@@ -26,6 +33,7 @@ import type {
  */
 export type CredentialSource = {
   kind: "source";
+  mode: "inject";
   authScheme: AuthScheme;
   primaryHost: string;
   /** The declared hostnames, lower-case, the primary's among them — see `hostSetOf`. */
@@ -35,10 +43,54 @@ export type CredentialSource = {
   unavailable: (error: unknown, requestBytes: number) => Refused;
 };
 
+/**
+ * The relay's counterpart: the plugin and the rules one call runs under, the vendor host set — the
+ * relay still declares where the request is *for*, and the ladder judges that host, not the
+ * upstream's — and `obtain` for the fields that address the upstream, held to the host boundary
+ * (`fromHost`) since the function is the host's.
+ */
+export type RelaySource = {
+  kind: "source";
+  mode: "relay";
+  plugin: RelayPlugin;
+  rules: RelayHeaderRules;
+  primaryHost: string;
+  hosts: ReadonlySet<string>;
+  obtain: () => Promise<CredentialFields>;
+  unavailable: (error: unknown, requestBytes: number) => Refused;
+};
+
+export type CallSource = CredentialSource | RelaySource;
+
 export function credentialSource(
   connection: ProxyConnection,
   deps: Pick<ProxyDeps, "decryptCredential">,
-): CredentialSource | Refused {
+): CallSource | Refused {
+  const relay = connection.relay;
+  if (relay) {
+    if (!connection.primaryHost) {
+      return refuse(409, "connection_not_ready", "The connection has no primary host");
+    }
+    return {
+      kind: "source",
+      mode: "relay",
+      plugin: relay.plugin,
+      rules: relayRulesOf(relay.plugin, relay.rules),
+      primaryHost: connection.primaryHost,
+      hosts: hostSetOf(connection),
+      obtain: () => fromHost("relay.obtain", relay.obtain),
+      unavailable: (error, requestBytes) =>
+        refuse(
+          502,
+          "relay_unavailable",
+          "The upstream proxy the connection relays through could not be addressed",
+          {
+            requestBytes,
+            failure: error,
+          },
+        ),
+    };
+  }
   if (!connection.authScheme || !connection.primaryHost) {
     return refuse(409, "connection_not_ready", "The connection has no scheme or primary host");
   }
@@ -48,6 +100,7 @@ export function credentialSource(
   }
   return {
     kind: "source",
+    mode: "inject",
     authScheme: connection.authScheme,
     primaryHost: connection.primaryHost,
     hosts: hostSetOf(connection),
@@ -62,6 +115,24 @@ export function credentialSource(
         requestBytes,
         failure: error,
       }),
+  };
+}
+
+/**
+ * A relay as the vendor leg sees it — the `SchemePlugin` shape `forward` already runs, so the loop
+ * over hops, the 401 retry, the redirect policy and the echo redaction are one code path for both
+ * modes. `apply` is the relay: the caller's headers under the rules, then the plugin's own rewrite
+ * of URL and authentication. No `derive` — the upstream owns the vendor token and its refresh, so a
+ * vendor 401 passes through as the vendor's answer — and no `scrubRedirect`, because the relay puts
+ * nothing on the *vendor's* URL for a `Location` to carry back.
+ */
+export function relaySchemePlugin(source: RelaySource): SchemePlugin {
+  return {
+    apply(target, fields) {
+      relayHeaders(target.headers, source.rules);
+      source.plugin.relay(target, fields, source.rules);
+    },
+    headerNames: () => source.plugin.headerNames(),
   };
 }
 

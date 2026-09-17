@@ -262,6 +262,8 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       connectionDeps,
     );
     expect(registered.credentialSetAt).toBeNull();
+    // Migration 0006's default, read back through the row (ADR 0019).
+    expect(registered.provider).toBe("keyring");
 
     const withCredential = await setConnectionCredential(
       ctx,

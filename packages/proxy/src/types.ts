@@ -10,7 +10,10 @@
  * Copied from Cando's proxy package and re-read on the way in (ADR 0011). Three things changed: a
  * connection belongs to a person and declares a set of hosts, not to an agent with one base URL
  * (ADR 0007, ADR 0010); the token names the connections in reach rather than one app; and the
- * brokered-credential seam is gone, because Graft holds every credential itself (ADR 0001).
+ * brokered-credential seam was dropped, because Graft holds every credential itself (ADR 0001) —
+ * and then came back in a narrower shape as the **relay** (ADR 0019, GRA-57): a connection whose
+ * provider holds the credential elsewhere is not decrypted here but relayed to the upstream proxy
+ * that holds it, with everything above the credential rung unchanged.
  */
 
 /**
@@ -29,6 +32,31 @@ export const AUTH_SCHEMES = [
   "snowflake_keypair_jwt",
 ] as const;
 export type AuthScheme = (typeof AUTH_SCHEMES)[number];
+
+/**
+ * The schemes that **relay** rather than sign (ADR 0019; ported from Cando's CAN-563). A relay
+ * scheme sends the vendor request through an upstream proxy that injects the credential it holds —
+ * a company's API gateway, a broker's Connect proxy — so this proxy never sees that credential,
+ * only the fields that address the upstream. Kept apart from `AUTH_SCHEMES` on purpose: those are
+ * the schemes a person may choose on the console's form, and a relay is never one of them — a
+ * connection's *provider* decides that it relays (`ProxyConnection.relay`), and nothing a person
+ * types can. Empty until the two relay providers land: GRA-58 adds the gateway's scheme, GRA-59
+ * Pipedream's; the engine (`relay.ts`, `app.ts`) and its tests stand on a plugin defined in the
+ * test, which is what lets those two start against a finished mechanism.
+ */
+export const RELAY_SCHEMES = [] as const;
+export type RelayScheme = (typeof RELAY_SCHEMES)[number];
+
+/** Every scheme name a connection row may carry: what it signs with, or what it relays through. */
+export type ProxyScheme = AuthScheme | RelayScheme;
+
+export function isAuthScheme(value: string): value is AuthScheme {
+  return (AUTH_SCHEMES as readonly string[]).includes(value);
+}
+
+export function isRelayScheme(value: string): value is RelayScheme {
+  return (RELAY_SCHEMES as readonly string[]).includes(value);
+}
 
 /** A decrypted credential: named string fields, as the scheme plugin reads them. */
 export type CredentialFields = Readonly<Record<string, string>>;
@@ -65,6 +93,95 @@ export type ProxyConnection = {
   hosts: readonly string[];
   schemeConfig: SchemeConfig | null;
   credentialCiphertext: Uint8Array | null;
+  /**
+   * How a call through this connection reaches the vendor (ADR 0019). Absent or null — every
+   * keyring connection — the row's credential is decrypted and the scheme plugin signs, exactly as
+   * before this field existed. Set, the connection's provider holds the credential at an upstream
+   * proxy, and the ladder relays: the resolved vendor request is rewritten into a request to that
+   * upstream, which injects the credential and answers with the vendor's response. The host builds
+   * this from the provider's answer (`@graft/core`'s `toProxyConnection`); the row's scheme, config
+   * and ciphertext are null beside it, since the proxy has nothing of its own to sign with.
+   */
+  relay?: ProxyRelay | null;
+};
+
+/**
+ * The outgoing request as a scheme plugin sees it: the URL and the headers, nothing else. A signing
+ * plugin sets a header or a query parameter on it; a relay plugin replaces the URL and rewrites the
+ * headers wholesale (`relay.ts`).
+ */
+export type SchemeTarget = { url: URL; headers: Headers };
+
+/**
+ * What an upstream proxy does with a caller's headers — the rules of the relay, as data, so a
+ * plugin says *which* upstream it addresses and this table says *how* the caller's headers travel
+ * (ADR 0019, "what Cando's relay taught"). Pipedream forwards a header to the vendor only under an
+ * `x-pd-proxy-` prefix and refuses a documented list outright, `user-agent` among them; a gateway
+ * that fronts the vendor itself forwards everything under its own name. Names are compared
+ * lower-case, as `Headers` reports them.
+ */
+export type RelayHeaderRules = {
+  /**
+   * Every caller header is renamed under this prefix on the way to the upstream — including one
+   * that already carries it, so a caller sending `x-pd-proxy-authorization` cannot re-introduce a
+   * header the outgoing policy stripped (the upstream strips exactly one prefix). Null forwards the
+   * caller's headers under their own names.
+   */
+  prefix: string | null;
+  /** Forwarded under their own name even when a prefix is set: the framing pair, `content-type` and `accept`. */
+  passThrough: readonly string[];
+  /** Dropped, not prefixed: the upstream would refuse the request for them, and the vendor loses nothing it needed. */
+  refuse: readonly string[];
+  /** Dropped by family — `sec-*`, `proxy-*`. */
+  refusePrefixes: readonly string[];
+};
+
+/**
+ * A relay scheme's plugin: code we wrote that rewrites the resolved vendor request into the request
+ * the upstream proxy takes — the vendor URL carried in the upstream's own way (a path segment, a
+ * query parameter, a header), the caller's headers under the upstream's rules, and the upstream's
+ * own authentication from `fields`. What it does not do is decide anything the ladder already
+ * decided: the vendor host was judged, the dry run has intercepted a write, the capability token has
+ * admitted the call and been swept off the wire, all before `relay` runs. The shape GRA-58's gateway
+ * and GRA-59's Pipedream plugins implement (`RELAYS` in `relay.ts`).
+ */
+export type RelayPlugin = {
+  kind: "relay";
+  /** The name the row's `scheme` column carries and the wide event records — a `RELAY_SCHEMES` entry. */
+  scheme: string;
+  /** The upstream's rules for the caller's headers; a connection may override a rule (`ProxyRelay.rules`). */
+  rules: RelayHeaderRules;
+  /**
+   * Rewrite `target` in place: `target.url` becomes the upstream's URL for this vendor request,
+   * `target.headers` the caller's headers under `rules` (`relayHeaders` does that half) plus the
+   * upstream's authentication from `fields`. Throws a scheme configuration error for a field it
+   * cannot run without, as a signing plugin does (`scheme-errors.ts`).
+   */
+  relay: (target: SchemeTarget, fields: CredentialFields, rules: RelayHeaderRules) => void;
+  /**
+   * The names of the headers `relay` sets of its own — lower-cased — which is all a dry run needs
+   * of it: a write intercepted under the claim previews the request that would have left for the
+   * upstream without assembling the relay's fields (`dry-run.ts`).
+   */
+  headerNames: () => readonly string[];
+};
+
+/**
+ * A relayed connection, as the host resolves it per call (`ProxyConnection.relay`): the plugin, the
+ * fields that address the upstream — an upstream token, the ids naming the account there —
+ * assembled when the call is about to leave and never persisted by the proxy, and any rule the
+ * connection's provider overrides on the plugin's defaults.
+ */
+export type ProxyRelay = {
+  plugin: RelayPlugin;
+  /**
+   * The relay's fields. Late and possibly expensive — a broker token to mint — so it sits on the
+   * same rung as a decrypt: after the caller's body is accepted and after a dry run has intercepted
+   * a write. Throws when the upstream cannot be addressed; the proxy answers one 502
+   * `relay_unavailable` and never retries.
+   */
+  obtain: () => Promise<CredentialFields>;
+  rules?: Partial<RelayHeaderRules>;
 };
 
 /**
@@ -221,6 +338,8 @@ export type ProxyOutcome =
    */
   | "consent_required"
   | "credential_unreadable"
+  /** A relayed connection's fields could not be assembled — the upstream proxy cannot be addressed (ADR 0019). */
+  | "relay_unavailable"
   | "credential_incomplete"
   | "token_exchange_failed"
   | "bad_target"
@@ -282,6 +401,13 @@ export type ProxyEvent = {
    */
   oauth: "refreshed" | "refresh_failed" | null;
   /**
+   * The relay scheme the call left through (ADR 0019) — the upstream proxy that injected the
+   * credential — or null for a call the proxy signed itself, or refused before the decision. `host`
+   * and `path` stay the vendor's either way: the audit trail names where the request was *for*, and
+   * this field says what carried it.
+   */
+  relay: string | null;
+  /**
    * The vendor reflected a credential value — into a header or a text-like body — and the proxy
    * redacted it before answering (`echo.ts`; ADR 0010, amended). The audit trail's record that a
    * vendor echoes what it is sent, which is worth knowing about a vendor; false on every call that
@@ -289,8 +415,8 @@ export type ProxyEvent = {
    */
   credentialEchoed: boolean;
   /**
-   * The error behind an `upstream_unreachable`, `credential_unreadable`, `token_exchange_failed`
-   * or `proxy_error` outcome, flattened to one line; null otherwise. `name: message` down the
+   * The error behind an `upstream_unreachable`, `credential_unreadable`, `relay_unavailable`,
+   * `token_exchange_failed` or `proxy_error` outcome, flattened to one line; null otherwise. `name: message` down the
    * cause chain for the proxy's own errors and the network's; for what a host-injected dependency
    * threw — the vault, the connection store — the dependency and the class names only, because
    * those messages are the host's to compose and might carry anything (`failure.ts`). Never a

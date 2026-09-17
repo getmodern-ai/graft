@@ -5,11 +5,13 @@ import { user } from "./auth";
 import { bytea, owned } from "./columns";
 
 /**
- * How the proxy presents the credential to the vendor — the scheme plugins of `@graft/proxy`
+ * How the proxy presents the request to the vendor — the scheme plugins of `@graft/proxy`
  * (ADR 0010). Stored as the plugin's name, never as signing code: the agent proposes a scheme and
- * its parameters, and the proxy owns what each scheme *does*. This list and the proxy's
- * `AUTH_SCHEMES` are asserted equal in `packages/core`, which depends on both; a scheme added to
- * one without the other fails a test rather than a vendor call.
+ * its parameters, and the proxy owns what each scheme *does*. A relay scheme (ADR 0019) belongs
+ * here too, once one exists: a connection whose provider relays records the relay it goes through
+ * as its scheme, so the column says how the request leaves for every row. This list and the proxy's
+ * `[...AUTH_SCHEMES, ...RELAY_SCHEMES]` are asserted equal in `packages/core`, which depends on
+ * both; a scheme added to one without the other fails a test rather than a vendor call.
  */
 export const connectionScheme = [
   "api_key_header",
@@ -40,6 +42,25 @@ export const connection = pgTable(
     personId: text("person_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    /**
+     * Where the connection comes from (ADR 0019): the **provider** that decides how the person
+     * connects the vendor and what happens to a vendor request at call time. `keyring` — the
+     * default, and every row until another provider is enabled — is a credential the person
+     * entered in the console, held in `credential_ciphertext` and injected by the proxy. A relay
+     * provider's row carries its name here and holds no credential of its own: the proxy relays
+     * the call to the upstream that does. Which providers are enabled is the deployment's
+     * (`apps/server/src/backings.ts`); the column carries the name so a row outlives the process
+     * that made it.
+     */
+    provider: text("provider").notNull().default("keyring"),
+    /**
+     * The provider's own identifier for what this row is connected to — an account id at a broker,
+     * a route name at a gateway — opaque to everything but the provider, and never a secret. Null
+     * for a keyring connection, which is identified by its own ciphertext. One text column rather
+     * than one per provider (ADR 0019): every relay provider named so far holds one identifier per
+     * connection, and a provider that comes to need more adds a column named for itself then.
+     */
+    providerRef: text("provider_ref"),
     /**
      * The vendor slug — `gmail`, `unleashed`, `cartoncloud` — the key an authored tool binds to
      * (ADR 0007: a tool is bound to a vendor, not a connection row, so it survives a revoke and

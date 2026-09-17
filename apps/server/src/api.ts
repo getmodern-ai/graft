@@ -14,6 +14,7 @@ import {
   getPersonModelKey,
   grantBuildApproval,
   isOAuthAuthorizationCode,
+  KEYRING_PROVIDER,
   type LedgerDeps,
   listAgents,
   listApprovals,
@@ -63,6 +64,7 @@ import {
   verifyHandoff,
 } from "@graft/mcp";
 import { executeToolName } from "@graft/mcp/tool-names";
+import { useLogger } from "evlog/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -193,6 +195,8 @@ const scopeBody = z.object({ connectionIds: z.array(z.string()) });
 const credentialFields = z.record(z.string(), z.unknown());
 
 const registrationBody = z.object({
+  /** Where the connection comes from (ADR 0019); the keyring when absent, and the service holds it to the enabled list. */
+  provider: z.string().optional(),
   vendor: z.string(),
   displayName: z.string(),
   scheme: z.enum(connectionScheme),
@@ -759,12 +763,20 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ connection });
   });
 
+  /**
+   * Revoke (ADR 0007), and say whether the row's provider let go of what it held outside Graft
+   * (ADR 0019). The local revoke has committed by the time the provider is asked, so a release that
+   * failed rides the answer and the wide event — with the connection id, so an operator can find the
+   * row to release by hand — and never the status: revoking again is the retry.
+   */
   api.post("/connections/:id/revoke", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
+    const connectionId = c.req.param("id");
     const result = orNotFound(
-      await revokeConnection(ctx, principal, c.req.param("id"), connectionDeps),
+      await revokeConnection(ctx, principal, connectionId, connectionDeps),
       "Connection not found",
     );
+    useLogger().set({ providerRelease: { connectionId, ...result.providerRelease } });
     return c.json(result);
   });
 
@@ -939,10 +951,21 @@ export function createApi(options: ApiOptions): Hono {
     const result = await ctx.db.transaction(async (tx) => {
       const scoped: ServiceContext = { db: tx };
       const action = await openActionOfKind(scoped, principal, id, CONNECTION_ASK_KIND);
+      // The row belongs to the provider the ask was routed to (ADR 0019; `request_connection`
+      // recorded it on the payload, and an ask made before providers existed is the keyring's).
+      // The person edits the proposal, not its routing: a body naming another provider is refused.
+      const routed =
+        typeof action.payload.provider === "string" ? action.payload.provider : KEYRING_PROVIDER;
+      if (body.provider !== undefined && body.provider !== routed) {
+        throw new ServiceError(
+          "BAD_REQUEST",
+          `This ask was routed to the ${routed} provider; a connection answering it cannot name another`,
+        );
+      }
       const connection = await registerConnectionWithCredential(
         scoped,
         principal,
-        body,
+        { ...body, provider: routed },
         connectionDeps,
       );
       await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, agentDeps);

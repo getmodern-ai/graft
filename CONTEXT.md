@@ -38,8 +38,26 @@ _Avoid_: app, connector (the products' word for the same thing), integration
 
 **Connection**:
 One vendor account a person has given Graft: its auth scheme, its credential, and the set of hosts
-it may reach. Credentials are write-only after entry.
-_Avoid_: integration, app, account, provider
+it may reach, and the provider it comes from. Credentials are write-only after entry.
+_Avoid_: integration, app, account, provider (as a word for the vendor — a connection *has* a
+provider, below)
+
+**Connection provider**:
+Where a connection comes from: the seam that decides how the person connects the vendor — a secret
+form, a one-click link, or no person step — and what happens to a vendor request at call time —
+inject a credential Graft holds, or relay to an upstream that holds it. The keyring provider is
+every deployment's floor and covers every vendor; a deployment may enable others before it, in
+order. ADR 0019.
+_Avoid_: broker (that is a company, not the seam), backend, integration, source
+
+**Relay**:
+What the proxy does for a connection whose provider holds the credential elsewhere: the resolved
+vendor request is rewritten into a request to the provider's upstream proxy, which injects the
+credential and answers with the vendor's response. The vendor host is still the one the proxy
+judged, the dry run still stops writes here, and the event still names the vendor path. A relay
+scheme is one of the proxy's schemes and never one a person may choose.
+_Avoid_: forward (what the proxy does with every call), proxy (the relay goes *through* one),
+broker
 
 **Scope**:
 The connections an agent may use. The capability token minted for an exec names them, so an

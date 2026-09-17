@@ -1,3 +1,4 @@
+import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
@@ -38,6 +39,11 @@ import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
  * client and answers an authorize URL, the popup runs the vendor's consent, and the callback — not
  * the submit — answers the ask once the tokens are stored, so the card settles when the agent can
  * actually call the vendor.
+ *
+ * The ask names the provider the proposal was routed to (ADR 0019). Every ask a keyring-only
+ * deployment makes is the keyring's and draws exactly this form; an ask an older deployment recorded
+ * carries no provider and reads as the keyring's. A provider that connects with a link gets its own
+ * card beside this one (GRA-59); this card shows the name so a person can see which flow they are in.
  */
 export function ConnectionAskCard({
   ask,
@@ -106,6 +112,7 @@ export function ConnectionAskCard({
   const open = isOpen(action);
   const hosts = hostsOf(draft) ?? payload.hosts;
   const oauth = isOAuthDraft(draft);
+  const provider: string = payload.provider ?? KEYRING_PROVIDER;
   // Once the client is saved and the popup is open, the form's job is done; the callback settles it.
   const consenting = consent.state.phase !== "idle" && consent.state.phase !== "done";
   const busy = connect.isPending || decline.isPending || consenting;
@@ -118,6 +125,7 @@ export function ConnectionAskCard({
           <span className="text-muted-foreground">connect</span>
           <span>{payload.displayName}</span>
           <Badge variant="outline">{payload.vendor}</Badge>
+          {provider === KEYRING_PROVIDER ? null : <Badge variant="outline">via {provider}</Badge>}
           {oauth ? <Badge variant="outline">OAuth consent</Badge> : null}
         </>
       }

@@ -1,5 +1,7 @@
 import {
   type ConnectionDeps,
+  type ConnectionProvider,
+  DEFAULT_PROVIDERS,
   markOAuthConsentRequired,
   storeRefreshedCredential,
   toProxyConnection,
@@ -28,13 +30,18 @@ import { z } from "zod";
  * vendor call carries no session, and the capability token's `person` claim is what the proxy
  * compares the row's owner against — that comparison is the whole authorisation (ADR 0010), and it
  * happens in the proxy package. `toProxyConnection` builds the shape field by field, so a column
- * added to the table later does not ride into the proxy by accident.
+ * added to the table later does not ride into the proxy by accident, and asks the row's provider
+ * how the call resolves — inject from the row, or relay (ADR 0019) — which is why the deployment's
+ * providers are bound here.
  */
-export function createDatabaseConnections(db: DbOrTx): ProxyDeps["connections"] {
+export function createDatabaseConnections(
+  db: DbOrTx,
+  providers: readonly ConnectionProvider[] = DEFAULT_PROVIDERS,
+): ProxyDeps["connections"] {
   return {
     get: async (connectionId) => {
       const row = await findConnectionByIdUnscoped(db, connectionId);
-      return row ? toProxyConnection(row) : null;
+      return row ? toProxyConnection(row, providers) : null;
     },
   };
 }

@@ -14,6 +14,8 @@ import {
 import { expirePendingActionsForConnection } from "@graft/db/repo/pending-action";
 import type { EncryptOnlyVault } from "@graft/vault";
 
+import { type ConnectionProvider, DEFAULT_PROVIDERS } from "./provider";
+
 /**
  * The connection module's test seam. The one file here that imports repo functions, and the one
  * place the vault enters the module — as its **encrypt half only**. The type is what keeps it so: a
@@ -35,16 +37,26 @@ export type ConnectionDeps = {
   deleteBuildApprovalsForConnection: typeof deleteBuildApprovalsForConnection;
   expirePendingActionsForConnection: typeof expirePendingActionsForConnection;
   vault: EncryptOnlyVault;
+  /**
+   * The deployment's connection providers, in routing order, the keyring last (ADR 0019;
+   * `apps/server/src/backings.ts` selects them). What a registration's `provider` is checked
+   * against, what a proposal is routed through, and whose `revoke` a revoke calls.
+   */
+  providers: readonly ConnectionProvider[];
   newId: () => string;
   now: () => Date;
 };
 
 /**
- * The real deps, given the vault. A factory rather than a constant because the vault is built from
- * the keyring secret, which only `apps/server` reads (`@graft/env`); the server calls this once
- * and hands the result to every connection call.
+ * The real deps, given the vault and the providers the backings selected. A factory rather than a
+ * constant because the vault is built from the keyring secret, which only `apps/server` reads
+ * (`@graft/env`); the server calls this once and hands the result to every connection call. The
+ * providers default to the keyring alone, which is every deployment's floor.
  */
-export function createConnectionDeps(vault: EncryptOnlyVault): ConnectionDeps {
+export function createConnectionDeps(
+  vault: EncryptOnlyVault,
+  providers: readonly ConnectionProvider[] = DEFAULT_PROVIDERS,
+): ConnectionDeps {
   return {
     insertConnection,
     findConnection,
@@ -57,6 +69,7 @@ export function createConnectionDeps(vault: EncryptOnlyVault): ConnectionDeps {
     deleteBuildApprovalsForConnection,
     expirePendingActionsForConnection,
     vault,
+    providers,
     newId: () => crypto.randomUUID(),
     now: () => new Date(),
   };

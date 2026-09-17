@@ -1,6 +1,6 @@
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import { connectionScheme } from "@graft/db/schema/connection";
-import { AUTH_SCHEMES } from "@graft/proxy";
+import { AUTH_SCHEMES, RELAY_SCHEMES, type RelayPlugin } from "@graft/proxy";
 import type { EncryptOnlyVault } from "@graft/vault";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -21,6 +21,7 @@ import {
   toProxyConnection,
 } from "./connection.service";
 import { OAUTH_STATE_TTL_MS, pkceChallenge, verifyOAuthState } from "./oauth-consent";
+import { type ConnectionProvider, DEFAULT_PROVIDERS, keyringProvider } from "./provider";
 
 /**
  * The connection service with fakes and no database. The vault is a fake too — what is asserted is
@@ -35,6 +36,8 @@ const CIPHERTEXT = Buffer.from("ciphertext-bytes");
 const row: ConnectionRow = {
   id: "conn_1",
   personId: "person_1",
+  provider: "keyring",
+  providerRef: null,
   vendor: "unleashed",
   displayName: "Acme Unleashed",
   scheme: "api_key_header",
@@ -108,6 +111,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
     expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
     vault: fakeVault(),
+    providers: DEFAULT_PROVIDERS,
     newId: () => "conn_new",
     now: () => NOW,
     ...overrides,
@@ -115,9 +119,219 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
 }
 
 describe("the scheme enum", () => {
-  /** `@graft/proxy/types` promised this assertion the day GRA-6 added the table. */
-  it("is the proxy's AUTH_SCHEMES, so a scheme added to one without the other fails here", () => {
-    expect([...connectionScheme]).toEqual([...AUTH_SCHEMES]);
+  /**
+   * `@graft/proxy/types` promised this assertion the day GRA-6 added the table; ADR 0019 widened it
+   * to the relay schemes, which a relay provider's row records as how its request leaves.
+   */
+  it("is the proxy's AUTH_SCHEMES and RELAY_SCHEMES, so a scheme added to one without the other fails here", () => {
+    expect([...connectionScheme]).toEqual([...AUTH_SCHEMES, ...RELAY_SCHEMES]);
+  });
+});
+
+/** A relay provider as GRA-58 and GRA-59 will shape one, for the branches the keyring never takes. */
+const fakeRelay: RelayPlugin = {
+  kind: "relay",
+  scheme: "fake_relay",
+  rules: { prefix: null, passThrough: [], refuse: [], refusePrefixes: [] },
+  relay: () => undefined,
+  headerNames: () => [],
+};
+
+function linkProvider(): ConnectionProvider & { revoked: string[] } {
+  const revoked: string[] = [];
+  return {
+    name: "broker",
+    connect: { kind: "link" },
+    covers: (vendor) => vendor === "gmail",
+    resolve: (r) => ({
+      mode: "relay",
+      relay: { plugin: fakeRelay, obtain: async () => ({ accountId: r.providerRef ?? "" }) },
+    }),
+    revoke: async (r) => {
+      revoked.push(r.id);
+    },
+    revoked,
+  };
+}
+
+describe("the provider a registration names (ADR 0019)", () => {
+  const input = {
+    vendor: "unleashed",
+    displayName: "Acme",
+    scheme: "api_key_header" as const,
+    schemeConfig: { headerName: "api-auth-id" },
+    primaryHost: "https://api.unleashedsoftware.com",
+  };
+
+  it("writes the keyring when none is named, and the named one when it is enabled and connects through the form", async () => {
+    const deps = fakeDeps();
+    await registerConnection(ctx, PRINCIPAL, input, deps);
+    expect(deps.insertConnection).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ provider: "keyring" }),
+    );
+    await registerConnection(ctx, PRINCIPAL, { ...input, provider: "keyring" }, deps);
+    expect(deps.insertConnection).toHaveBeenLastCalledWith(
+      ctx.db,
+      expect.objectContaining({ provider: "keyring" }),
+    );
+  });
+
+  it("refuses a provider the deployment has not enabled, before anything is written", async () => {
+    const deps = fakeDeps();
+    await expect(
+      registerConnection(ctx, PRINCIPAL, { ...input, provider: "broker" }, deps),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: "No connection provider named broker is enabled on this deployment",
+    });
+    expect(deps.insertConnection).not.toHaveBeenCalled();
+  });
+
+  it("refuses to register a form connection under a provider that connects with a link", async () => {
+    const deps = fakeDeps({ providers: [linkProvider(), keyringProvider] });
+    await expect(
+      registerConnection(ctx, PRINCIPAL, { ...input, provider: "broker" }, deps),
+    ).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+      message: expect.stringContaining("connects a vendor with a link"),
+    });
+    await expect(
+      registerConnectionWithCredential(
+        ctx,
+        PRINCIPAL,
+        { ...input, provider: "broker", credential: { apiKey: "k" } },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(deps.insertConnection).not.toHaveBeenCalled();
+    expect(deps.vault.encrypt).not.toHaveBeenCalled();
+  });
+
+  it("refuses to enter a credential on a relay provider's connection — it holds nothing here", async () => {
+    const deps = fakeDeps({
+      providers: [linkProvider(), keyringProvider],
+      findConnection: vi.fn(async () => ({ ...row, provider: "broker", providerRef: "acct_1" })),
+    });
+    await expect(
+      setConnectionCredential(ctx, PRINCIPAL, "conn_1", { apiKey: "k" }, deps),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(deps.vault.encrypt).not.toHaveBeenCalled();
+    expect(deps.setConnectionCredential).not.toHaveBeenCalled();
+  });
+
+  it("asks the row's provider to release what it holds after a revoke, and the keyring holds nothing", async () => {
+    const broker = linkProvider();
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      revokeConnection: vi.fn(async () => ({
+        ...row,
+        provider: "broker",
+        providerRef: "acct_1",
+        revokedAt: NOW,
+      })),
+    });
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+    expect(result?.connection.provider).toBe("broker");
+    expect(result?.providerRelease).toEqual({ provider: "broker", released: true });
+    expect(broker.revoked).toEqual(["conn_1"]);
+
+    const keyringDeps = fakeDeps({ providers: [broker, keyringProvider] });
+    const keyringResult = await revokeConnection(ctx, PRINCIPAL, "conn_1", keyringDeps);
+    expect(keyringResult?.providerRelease).toEqual({ provider: "keyring", released: true });
+    expect(broker.revoked).toEqual(["conn_1"]);
+  });
+
+  /** The local revoke committed before the provider was asked; its failure is a report, not a throw. */
+  it("reports a provider release that failed on the result, by class name, and never fails the revoke", async () => {
+    class BrokerDown extends Error {
+      constructor() {
+        super("account 42 at broker.example: connection refused, token sk_live_secret");
+        this.name = "BrokerDown";
+      }
+    }
+    const broker: ConnectionProvider = {
+      ...linkProvider(),
+      revoke: async () => {
+        throw new BrokerDown();
+      },
+    };
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      revokeConnection: vi.fn(async () => ({ ...row, provider: "broker", revokedAt: NOW })),
+    });
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+    expect(result?.connection.revokedAt).toEqual(NOW);
+    expect(result?.approvalsDeleted).toBe(2);
+    expect(result?.providerRelease).toEqual({
+      provider: "broker",
+      released: false,
+      failure: "BrokerDown",
+    });
+    expect(JSON.stringify(result)).not.toContain("sk_live_secret");
+  });
+
+  it("a row under a provider the deployment no longer enables revokes with nothing to release", async () => {
+    const deps = fakeDeps({
+      revokeConnection: vi.fn(async () => ({ ...row, provider: "gone", revokedAt: NOW })),
+    });
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+    expect(result?.providerRelease).toEqual({ provider: "gone", released: true });
+  });
+
+  it("the public shape carries the provider's name", () => {
+    expect(toConnectionOutput(row).provider).toBe("keyring");
+    expect(toConnectionOutput({ ...row, provider: "broker" }).provider).toBe("broker");
+    expect(toConnectionOutput(row)).not.toHaveProperty("providerRef");
+  });
+});
+
+describe("toProxyConnection asks the row's provider how the call resolves (ADR 0019)", () => {
+  it("a keyring row is the row's own columns, exactly as before providers existed", () => {
+    const proxy = toProxyConnection({ ...row, credentialCiphertext: CIPHERTEXT });
+    expect(proxy).toEqual({
+      id: "conn_1",
+      personId: "person_1",
+      authScheme: "api_key_header",
+      primaryHost: "https://api.unleashedsoftware.com",
+      hosts: ["api.unleashedsoftware.com"],
+      schemeConfig: { headerName: "api-auth-id" },
+      credentialCiphertext: CIPHERTEXT,
+    });
+    expect(proxy).not.toHaveProperty("relay");
+  });
+
+  it("a relay provider's row carries the relay and none of the row's signing columns", async () => {
+    const broker = linkProvider();
+    const proxy = toProxyConnection(
+      { ...row, provider: "broker", providerRef: "acct_1", credentialCiphertext: CIPHERTEXT },
+      [broker, keyringProvider],
+    );
+    expect(proxy).toMatchObject({
+      id: "conn_1",
+      personId: "person_1",
+      authScheme: null,
+      schemeConfig: null,
+      credentialCiphertext: null,
+      primaryHost: "https://api.unleashedsoftware.com",
+    });
+    expect(proxy.relay?.plugin).toBe(fakeRelay);
+    await expect(proxy.relay?.obtain()).resolves.toEqual({ accountId: "acct_1" });
+  });
+
+  it("a row under a provider the deployment has not enabled resolves to nothing the proxy can use", () => {
+    const proxy = toProxyConnection({
+      ...row,
+      provider: "broker",
+      credentialCiphertext: CIPHERTEXT,
+    });
+    expect(proxy).toMatchObject({
+      authScheme: null,
+      schemeConfig: null,
+      credentialCiphertext: null,
+      primaryHost: "https://api.unleashedsoftware.com",
+    });
+    expect(proxy).not.toHaveProperty("relay");
   });
 });
 
@@ -141,6 +355,7 @@ describe("registerConnection", () => {
     expect(deps.insertConnection).toHaveBeenCalledWith(fakeDb, {
       id: "conn_new",
       personId: "person_1",
+      provider: "keyring",
       vendor: "unleashed",
       displayName: "Acme Unleashed",
       scheme: "api_key_header",
