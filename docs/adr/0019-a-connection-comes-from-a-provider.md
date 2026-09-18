@@ -171,3 +171,20 @@ private knowledge:
   provider** (`connection_provider_ref_idx`, partial on a non-null reference): a link's return that
   lands twice at once discovers the account before it writes, so the database refuses the second
   claim and that landing reads the ask the first answered.
+- **Sign-in endpoints are not hosts, and are set aside before coverage** (Aleks, 2026-09-18;
+  GRA-89). A connection's host set is where tool calls go, and no tool call reaches a sign-in
+  endpoint under any provider: the console runs an OAuth exchange itself, a relay never touches the
+  endpoints, and the proxy pins every call to the row's hosts. During GRA-35 Hermes proposed Gmail
+  with `accounts.google.com` and `oauth2.googleapis.com` under `hosts` beside the API host, and the
+  Pipedream provider's `covers`, which rightly demands every host be one of the vendor's own,
+  declined it, so the person got the client-registration form instead of the one-click link. The
+  rule, applied in `request_connection`'s normalisation so routing, the open-ask match, the card and
+  the row all see one host set (`setAsideSignInHosts` in `packages/core/src/connection/
+  connection.rules.ts`): the hosts of the proposal's own `authorizeUrl` and `tokenUrl`, and the
+  scheme's well-known sign-in hosts (Google's two, for `oauth_authorization_code`), are dropped from
+  `hosts` rather than merely ignored for coverage, and the answer names them. The primary host is
+  never set aside and its hostname is never a sign-in host, since some vendors serve the token
+  endpoint on the API's own host (Notion, Slack, HubSpot, Dropbox); a primary on a well-known sign-in
+  host, or one that is the authorize or token endpoint URL itself, is refused as an invalid proposal
+  with the reason. `covers` itself is unchanged: every remaining host must still be in the entry,
+  because the relay injects the account's token into whatever vendor URL it is handed.
