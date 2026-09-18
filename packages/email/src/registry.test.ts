@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { passwordResetVariables, templates } from "./registry";
+import { passwordResetVariables, TEMPLATE_NAMES, templates } from "./registry";
 
 /**
- * The registry is the contract with the Loops dashboard: a template edited out from under the
- * code must fail here, at the seam that owns the variables, not render a blank in an inbox.
+ * The registry is the contract every transport is held to: a variable renamed in a hosted
+ * template fails against this schema at the seam, not as a blank in an inbox.
  */
 describe("password reset template", () => {
   const VALID = {
@@ -35,12 +35,9 @@ describe("password reset template", () => {
     expect(subject).not.toContain("tok_123");
   });
 
-  it("names the published template by Loops' id, never a placeholder", () => {
-    expect(templates.passwordReset.transactionalId).toMatch(/^c[a-z0-9]{24}$/);
-    expect(templates.passwordReset.transactionalId).not.toContain("not-published");
-  });
-
-  it("names the one template Graft sends — the invitation stayed in Cando (ADR 0007)", () => {
+  it("names the one template Graft sends — the invitation stayed in Cando (ADR 0007) — and nothing about how it is sent", () => {
     expect(Object.keys(templates)).toEqual(["passwordReset"]);
+    expect(TEMPLATE_NAMES).toEqual(["passwordReset"]);
+    expect(Object.keys(templates.passwordReset)).toEqual(["dataVariables", "subject"]);
   });
 });

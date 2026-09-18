@@ -526,16 +526,19 @@ is in `packages/auth/src/index.ts`) a password account does not link yet, and th
 (`socialSignInMessage` in `apps/web/src/lib/sign-in.ts`). The provider marks are flat `.svg` files
 under `apps/web/src/assets`, outside the colour guard on purpose, as Cando's are.
 
-**A forgotten password is reset by email** (ADR 0021, GRA-82): `@graft/email` is Cando's
-`@cando/email` less the invitation — a transport seam (`console` | `loops`, one `SendResult`
-shape), the Loops transport, and a registry naming the one template's transactional id and
-variables. `GRAFT_LOOPS_API_KEY` set means Loops; unset, the default in every form, means the console
-transport prints the envelope and the reset link to the server's log — on Graft Cloud, the
-`/ecs/graft-server` log group, which is how a hosted password is reset until a Loops account
-exists. `createAuth`'s `passwordReset` option binds the hook; the link is `GRAFT_CONSOLE_URL` plus
-`/reset-password?token=…`. The screens are `/forgot-password` (the same answer whether or not an
-account exists) and `/reset-password` (`apps/web/src/lib/reset-password.ts` decides the dead-link
-state and folds the outcomes, with its test); *Forgot password?* is on the door's password step.
+**A forgotten password is reset by email, and mail is a seam** (ADR 0021; GRA-82, GRA-90):
+`@graft/email` is Cando's `@cando/email` less the invitation and less the vendor — a transport
+seam (`EmailTransport`, one `SendResult` shape), a registry naming the one template's variables
+and subject, and the façade. The open form's backing is the console transport, which prints the
+envelope and the reset link into the server's log — on a laptop and in the self-hosted image, so
+`docker compose logs graft` is where a self-hoster's reset link is. The hosted form's transport
+is a vendor's and lives in the private package, which answers `mail` beside the other seams
+(`Backings.mail` in `apps/server/src/backings.ts`); no vendor, template id or mail variable
+appears in this repository. `createAuth`'s `passwordReset` option binds the hook; the link is
+`GRAFT_CONSOLE_URL` plus `/reset-password?token=…`. The screens are `/forgot-password` (the same
+answer whether or not an account exists) and `/reset-password` (`apps/web/src/lib/reset-password.ts`
+decides the dead-link state and folds the outcomes, with its test); *Forgot password?* is on the
+door's password step.
 
 ### Running `acquire` locally
 

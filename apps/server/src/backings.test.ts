@@ -48,6 +48,8 @@ describe("the open form", () => {
     expect(backings.providers).toEqual([keyringProvider]);
     expect(backings.toolboxRoot).toBe(toolboxRoot);
     await expect(backings.mirror.mirrorVersion("person1", "tools/v/t/v1")).resolves.toBeUndefined();
+    // The open form's mail is the console transport: the link goes into the server's log (ADR 0021).
+    expect(backings.mail.name).toBe("console");
   });
 
   it("builds the Docker sandbox backing when the pair is set", async () => {
@@ -195,6 +197,8 @@ describe("the cloud form", () => {
     // The hosted provider first, the keyring appended last (ADR 0019).
     expect(backings.providers.map((provider) => provider.name)).toEqual(["fake-broker", "keyring"]);
     expect(backings.providers[1]).toBe(keyringProvider);
+    // The hosted mail transport is taken as it is (ADR 0021).
+    expect(backings.mail.name).toBe("fake-mail");
     expect(backings.toolboxRoot).toBe(toolboxRoot);
     expect(await backings.sandbox?.list()).toEqual([]);
     await backings.mirror.mirrorVersion("person1", ".drafts/job1");
@@ -222,9 +226,10 @@ describe("the cloud form", () => {
     expect(existsSync(join(toolboxRoot, "own-person"))).toBe(false);
   });
 
-  it("appends the keyring when a factory answers no providers", async () => {
+  it("appends the keyring when a factory answers no providers, and keeps the console transport when it answers no mail", async () => {
     const backings = await selectBackings(cloud, { cloudModule: fixture("own-store") });
     expect(backings.providers).toEqual([keyringProvider]);
+    expect(backings.mail.name).toBe("console");
   });
 
   it("refuses a factory whose provider calls itself the keyring", async () => {

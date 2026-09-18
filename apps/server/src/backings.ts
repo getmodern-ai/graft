@@ -7,6 +7,7 @@ import {
   keyringProvider,
   providerListProblem,
 } from "@graft/core";
+import { consoleTransport, type EmailTransport } from "@graft/email";
 import type { ServerEnv } from "@graft/env/server";
 import { createPipedreamClient, type PipedreamClient } from "@graft/pipedream";
 import { createUpstreamFetch } from "@graft/proxy";
@@ -22,8 +23,8 @@ import {
 import { createLocalKeyring, type Keyring } from "@graft/vault";
 
 /**
- * Which backing stands behind each of the four seams — sandbox, keyring, toolbox mirror, and the
- * connection providers (ADR 0019) — chosen once at boot from `GRAFT_BACKINGS` (ADR 0002: one core,
+ * Which backing stands behind each of the five seams — sandbox, keyring, toolbox mirror, the
+ * connection providers (ADR 0019) and transactional mail (ADR 0021, GRA-90) — chosen once at boot from `GRAFT_BACKINGS` (ADR 0002: one core,
  * two backings per seam, the commercial half hidden by absence), and the toolbox store beside them,
  * because the store and the sandbox have to see one tree (`packages/toolbox/README.md`) and which
  * tree depends on the sandbox chosen. Under `open` that is the filesystem store, rooted where the
@@ -48,7 +49,12 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  * `open` is what this repository holds: the sandbox `GRAFT_SANDBOX_BACKEND` names — Docker when
  * its pair of variables is set, none when it is not, or the in-process fake for a laptop without a
  * daemon, whose toolbox then lives in the fake's own temporary directory — the local AES keyring,
- * and the mirror that records a call and copies nothing. `cloud` is the hosted form's, from a
+ * the mirror that records a call and copies nothing, and the console mail transport, which prints
+ * the one email the server sends into its own log (`@graft/email`). Mail is the seam where the
+ * vendor is most tempting to write into the core, and the reason it is not: the hosted form's
+ * transport and the ids of its templates are that vendor's and Graft Cloud's, and a self-host has
+ * neither — so they live in the private package, which answers `mail` beside the other seams, and
+ * a self-host reads its reset link out of `docker compose logs`. `cloud` is the hosted form's, from a
  * private package that is not in this repository's dependency graph: it is loaded by a dynamic
  * `import()` of a specifier held in a variable, so the type program never resolves it, and a
  * checkout without it typechecks, tests and boots as the self-hosted form. The private package
@@ -91,6 +97,12 @@ export type Backings = {
   /** The toolbox as the server holds it, where the sandbox backing sees the same tree. */
   store: ToolboxStore;
   /**
+   * How the server's one email leaves (ADR 0021): the console transport under `open`, and under
+   * `cloud` the private package's — or the console again when it answers no `mail`, so a hosted
+   * deploy without a mail key still boots and still logs the link. The boot line names it.
+   */
+  mail: EmailTransport;
+  /**
    * The directory the store writes on this machine — `<root>/<toolboxId>/<path>` — when it is the
    * filesystem store, and null when the cloud backings answered with a store of their own and the
    * toolbox is nowhere on this disk. For a boot line or a script telling a reader where to look;
@@ -104,7 +116,8 @@ export type Backings = {
  * holds the toolbox somewhere this machine's disk is not (GRA-39) — absent, the selector's
  * filesystem store at `GRAFT_TOOLBOX_ROOT` is what the publish writes; and the connection providers
  * the hosted tier enables beyond the keyring (ADR 0019), in routing order, the keyring not among
- * them — the selector appends it. Absent, the keyring alone.
+ * them — the selector appends it. Absent, the keyring alone. And the mail transport (ADR 0021),
+ * when the hosted tier has one configured; absent, the console's.
  */
 export type CloudBackings = {
   sandbox: SandboxBackend;
@@ -112,6 +125,8 @@ export type CloudBackings = {
   mirror: ToolboxMirror;
   store?: ToolboxStore;
   providers?: ConnectionProvider[];
+  /** The hosted form's mail transport (ADR 0021, GRA-90); absent, the selector keeps the console's. */
+  mail?: EmailTransport;
 };
 
 /**
@@ -292,6 +307,7 @@ function openBackings(env: BackingsEnv, deps: SelectBackingsDeps): Backings {
     providers: [...environmentProviders(env, deps), keyringProvider],
     store,
     toolboxRoot: store.root,
+    mail: consoleTransport,
   };
 }
 
@@ -324,7 +340,7 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
   };
   const created: unknown = await factory(input);
   assertCloudBackings(created, specifier);
-  const { store: own, providers: hosted, ...seams } = created;
+  const { store: own, providers: hosted, mail, ...seams } = created;
   // The environment's gateway first (GRA-58), the hosted providers, then the Pipedream provider the
   // environment switches on (GRA-59), and the keyring after all of them, always: the floor every
   // deployment has (ADR 0019). `environmentProviders` states the order between the two configured
@@ -347,6 +363,7 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
     providers,
     store: own ?? filesystem,
     toolboxRoot: own ? null : filesystem.root,
+    mail: mail ?? consoleTransport,
   };
 }
 
@@ -381,8 +398,8 @@ const PROVIDER_LINK_MEMBERS = ["target", "start", "complete"] as const;
 
 /**
  * Throw unless `value` carries the three seams — and, when it carries a store, the whole store,
- * and, when it carries providers, a list of whole providers — naming the first thing that is
- * missing.
+ * when it carries providers, a list of whole providers, and when it carries a mail transport, a
+ * named one that sends — naming the first thing that is missing.
  */
 export function assertCloudBackings(
   value: unknown,
@@ -416,6 +433,17 @@ export function assertCloudBackings(
       if (typeof (record.store as Record<string, unknown>)[member] !== "function") {
         throw new Error(`${specifier}'s createCloudBackings returned a store without ${member}()`);
       }
+    }
+  }
+  if (record.mail !== undefined) {
+    const mail = record.mail as Record<string, unknown> | null;
+    if (typeof mail !== "object" || mail === null || typeof mail.send !== "function") {
+      throw new Error(
+        `${specifier}'s createCloudBackings returned a mail transport without send()`,
+      );
+    }
+    if (typeof mail.name !== "string" || mail.name.length === 0) {
+      throw new Error(`${specifier}'s createCloudBackings returned a mail transport with no name`);
     }
   }
   if (record.providers !== undefined) {
