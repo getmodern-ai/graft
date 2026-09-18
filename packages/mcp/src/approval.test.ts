@@ -17,7 +17,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { NO_ELICITATION, requireBuildApproval } from "./approval";
+import { AUTOMATIC_ANSWER_MS, NO_ELICITATION, requireBuildApproval } from "./approval";
 import type { McpDeps } from "./deps";
 import { HANDOFF_TOKEN_PARAM, verifyHandoff } from "./handoff";
 import { createToolListChangedNotifier } from "./notifier";
@@ -44,11 +44,15 @@ const AGENT_B = "agent_b";
 const AGENT_C = "agent_c";
 const AGENT_D = "agent_d";
 const AGENT_E = "agent_e";
+const AGENT_F = "agent_f";
+const AGENT_G = "agent_g";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
 const TOKEN_D = "grft_approval_token_d_000000000000000000000000";
 const TOKEN_E = "grft_approval_token_e_000000000000000000000000";
+const TOKEN_F = "grft_approval_token_f_000000000000000000000000";
+const TOKEN_G = "grft_approval_token_g_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -82,6 +86,14 @@ let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
 
+/**
+ * The suite's clock: real time plus what a test adds. `deps.pendingAction.now()` is what the ask
+ * measures an elicitation's round trip on (GRA-43), so a handler that moves the offset before it
+ * answers is a slow answer without a sleep; `afterEach` puts it back. Real time underneath, not a
+ * frozen instant, because the expiry test below needs an action to expire while a call waits.
+ */
+const clock = { offsetMs: 0 };
+
 beforeAll(async () => {
   const keys = await generateTestKeys();
   vendor = await startFakeVendor({
@@ -102,7 +114,7 @@ beforeAll(async () => {
     await writeFile(join(dir, "index.ts"), MODULE);
   }
 
-  store = createFakeStore();
+  store = createFakeStore({ now: () => new Date(Date.now() + clock.offsetMs) });
   store.addConnection({
     id: CONN_DEMO,
     personId: PERSON,
@@ -116,6 +128,8 @@ beforeAll(async () => {
     [AGENT_C, TOKEN_C, "elicitation Hermes"],
     [AGENT_D, TOKEN_D, "Discord Hermes"],
     [AGENT_E, TOKEN_E, "headless Claude Code"],
+    [AGENT_F, TOKEN_F, "oneshot Hermes"],
+    [AGENT_G, TOKEN_G, "Hermes at a terminal"],
   ] as const) {
     store.addAgent({ id, personId: PERSON, token, name, connectionIds: [CONN_DEMO] });
   }
@@ -132,7 +146,7 @@ beforeAll(async () => {
       defaultConnectionId: CONN_DEMO,
       path: `tools/demo/${tool.name}/v1`,
     });
-    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D, AGENT_E]) {
+    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D, AGENT_E, AGENT_F, AGENT_G]) {
       store.promote(agent, tool.id);
     }
   }
@@ -164,9 +178,21 @@ afterAll(async () => {
 afterEach(() => {
   deps.handoff.waitMs = 0;
   deps.handoff.ttlMs = 60_000;
+  clock.offsetMs = 0;
 });
 
 type Elicitation = (request: ElicitRequest) => Promise<ElicitResult> | ElicitResult;
+
+/**
+ * A person at the card, reading it before pressing Deny: the clock moves by the threshold inside
+ * the client's handler, so the decline is the person's and holds. A handler that answers `decline`
+ * at once is a client answering for the person, and falls through to the handoff (the GRA-43 block
+ * at the end).
+ */
+const personDeclines: Elicitation = async () => {
+  clock.offsetMs += AUTOMATIC_ANSWER_MS;
+  return { action: "decline" };
+};
 
 /** The form an elicitation carried — this server sends form mode only (ADR 0006). */
 const formOf = (request: ElicitRequest | undefined): ElicitRequestFormParams =>
@@ -676,7 +702,7 @@ describe("through an elicitation — where the client advertised one", () => {
   }, 60_000);
 
   it("decline records the refusal and the tool returns approval_declined; the next call is tool_denied", async () => {
-    const c = await connect(TOKEN_C, async () => ({ action: "decline" }));
+    const c = await connect(TOKEN_C, personDeclines);
     try {
       const result = await c.call(UPDATE_ITEM, { limit: 1 });
       expect(result.isError).toBe(true);
@@ -732,7 +758,7 @@ describe("through an elicitation — where the client advertised one", () => {
   }, 60_000);
 
   it("the build ask's decline refuses and grants nothing, so the next call asks again", async () => {
-    const c = await connect(TOKEN_C, async () => ({ action: "decline" }));
+    const c = await connect(TOKEN_C, personDeclines);
     // An earlier test left C an open build action from `requireBuildApproval`; none may be added here.
     const actionsBefore = actionsOf(AGENT_C, "build").length;
     try {
@@ -996,6 +1022,175 @@ describe("through an elicitation the client cancels without showing it — Claud
       ).toHaveLength(1);
     } finally {
       await e.close();
+    }
+  }, 60_000);
+});
+
+/**
+ * Hermes 0.21.1 answers `decline` in two situations that are not a person's choice: when its own
+ * approval surface fails inside (a gateway without a `notify_cb`), and when it runs with no terminal
+ * (`hermes chat --oneshot`) and takes its default, Deny. On GRA-35's Docker leg Graft's build ask was
+ * declined twice within a second of being asked, `acquire` was refused with no link, and on a write
+ * tool the same reflex would have held a `deny` nobody chose (GRA-43). So a decline that comes back
+ * faster than a person could read the prompt is read as a dismissal and falls through to the
+ * handoff as a cancel does (ADR 0006, amendment of 2026-09-18); one at or past `AUTOMATIC_ANSWER_MS`
+ * is the person's and holds as before; an accept is taken at any speed. The round trip is measured
+ * on the suite's clock, which `personDeclines` moves, and rides the log line beside `automatic`.
+ */
+describe("through an elicitation the client declines on its own — Hermes with no terminal, or its approval surface failing", () => {
+  const declinesAtOnce: Elicitation = async () => ({ action: "decline" });
+
+  /** The one line per elicitation and the fields GRA-43 puts beside the outcome. */
+  type ElicitationEvent = { action: string; roundTripMs: number; automatic: boolean };
+  const eventsOf = (info: { mock: { calls: unknown[][] } }): ElicitationEvent[] =>
+    info.mock.calls
+      .filter(([line]) => typeof line === "string" && line.startsWith("mcp: elicitation "))
+      .map(([, event]) => event as ElicitationEvent);
+
+  it("on the build ask an instant decline yields the handoff link and a pending action, grants nothing, says the client answered on its own, and the call after the console's answer runs", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await connect(TOKEN_F, declinesAtOnce);
+    try {
+      const { answer: said, action } = awaiting(
+        await f.call(executeToolName(CONN_DEMO), { command: RUN_LIST_ITEMS }),
+      );
+      expect(f.elicitations).toHaveLength(1);
+      expect(action).toMatchObject({
+        agentId: AGENT_F,
+        kind: "build",
+        answeredAt: null,
+        payload: { connectionId: CONN_DEMO, vendor: "demo", connectionName: "Demo Orders" },
+      });
+      expect(store.buildApprovals.has(`${AGENT_F} ${CONN_DEMO}`)).toBe(false);
+      // The message names what happened, then carries the handoff as any client without forms reads it.
+      expect(said.message).toContain("Your client answered the approval prompt on its own");
+      expect(said.message).toContain("the person can answer in the console");
+      expect(said.message).toContain("Relay this link");
+      // The wide event: the outcome, the round trip, and that the rule fired.
+      expect(eventsOf(info)).toEqual([
+        { action: "decline", roundTripMs: expect.any(Number), automatic: true },
+      ]);
+      expect(eventsOf(info)[0]?.roundTripMs).toBeLessThan(AUTOMATIC_ANSWER_MS);
+      expect(info).toHaveBeenCalledWith(
+        expect.stringContaining("declined by the client on its own"),
+        expect.anything(),
+      );
+      expect(info).toHaveBeenCalledWith(
+        expect.stringContaining("falling back to a handoff"),
+        expect.anything(),
+      );
+
+      // The person answers from the console; the next call takes that answer before offering any
+      // form, and runs.
+      await answer(action.id, { allow: true });
+      const ran = body(await f.call(executeToolName(CONN_DEMO), { command: RUN_LIST_ITEMS }));
+      expect(ran.exitCode).toBe(0);
+      expect(f.elicitations).toHaveLength(1);
+      expect(store.buildApprovals.has(`${AGENT_F} ${CONN_DEMO}`)).toBe(true);
+      expect(store.pendingActions.get(action.id)?.consumedAt).toBeInstanceOf(Date);
+    } finally {
+      info.mockRestore();
+      await f.close();
+    }
+  }, 60_000);
+
+  it("on the build ask a decline past the threshold is the person's: refused, nothing granted, no pending action, and the event says the rule did not fire", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const g = await connect(TOKEN_G, personDeclines);
+    const actionsBefore = actionsOf(AGENT_G, "build").length;
+    try {
+      const declined = await g.call(executeToolName(CONN_DEMO), { command: "echo hi" });
+      expect(declined.isError).toBe(true);
+      expect(body(declined)).toMatchObject({ error: "refused", reason: "approval_declined" });
+      expect(body(declined).message).not.toContain("on its own");
+      expect(store.buildApprovals.has(`${AGENT_G} ${CONN_DEMO}`)).toBe(false);
+      expect(actionsOf(AGENT_G, "build")).toHaveLength(actionsBefore);
+      const [event] = eventsOf(info);
+      expect(event).toMatchObject({ action: "decline", automatic: false });
+      expect(event?.roundTripMs).toBeGreaterThanOrEqual(AUTOMATIC_ANSWER_MS);
+      expect(info).not.toHaveBeenCalledWith(
+        expect.stringContaining("falling back to a handoff"),
+        expect.anything(),
+      );
+    } finally {
+      info.mockRestore();
+      await g.close();
+    }
+  });
+
+  it("on a write tool's first ask an instant decline yields the handoff link and no deny row; the form is offered again per ask, and the console's yes runs the call", async () => {
+    const f = await connect(TOKEN_F, declinesAtOnce);
+    try {
+      const { answer: said, action } = awaiting(await f.call(CREATE_ITEM, { limit: 1 }));
+      expect(f.elicitations).toHaveLength(1);
+      expect(action).toMatchObject({
+        agentId: AGENT_F,
+        kind: "tool",
+        answeredAt: null,
+        payload: { toolId: "tool_create", askEveryCall: false },
+      });
+      expect(store.approvals.has(`${AGENT_F} tool_create`)).toBe(false);
+      expect(said.message).toContain("Your client answered the approval prompt on its own");
+
+      // Per ask, not per session: the next call offers the form again, the same instant decline
+      // reaches the same open action, and still nothing is recorded against the tool.
+      const again = awaiting(await f.call(CREATE_ITEM, { limit: 1 }));
+      expect(again.action.id).toBe(action.id);
+      expect(f.elicitations).toHaveLength(2);
+      expect(store.approvals.has(`${AGENT_F} tool_create`)).toBe(false);
+
+      await answer(action.id, { allow: true });
+      expect(body(await f.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(f.elicitations).toHaveLength(2);
+      expect(approvalOf(AGENT_F, "tool_create")).toMatchObject({
+        decision: "allow",
+        askEveryCall: false,
+      });
+    } finally {
+      await f.close();
+    }
+  }, 60_000);
+
+  it("on a write tool's first ask a decline past the threshold records deny, refuses approval_declined, and holds as tool_denied, as today", async () => {
+    const g = await connect(TOKEN_G, personDeclines);
+    try {
+      const result = await g.call(UPDATE_ITEM, { limit: 1 });
+      expect(result.isError).toBe(true);
+      expect(body(result)).toMatchObject({ error: "refused", reason: "approval_declined" });
+      expect(approvalOf(AGENT_G, "tool_update")).toMatchObject({ decision: "deny" });
+      expect(body(await g.call(UPDATE_ITEM, { limit: 1 }))).toMatchObject({
+        error: "refused",
+        reason: "tool_denied",
+      });
+      expect(g.elicitations).toHaveLength(1);
+      expect(actionsOf(AGENT_G, "tool")).toEqual([]);
+    } finally {
+      await g.close();
+    }
+  });
+
+  it("an instant accept is still the yes: the tool runs, the allow holds, and the event says the rule did not fire", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const f = await connect(TOKEN_F, async () => ({ action: "accept", content: {} }));
+    try {
+      expect(body(await f.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(f.elicitations).toHaveLength(1);
+      expect(approvalOf(AGENT_F, "tool_delete")).toMatchObject({
+        decision: "allow",
+        askEveryCall: false,
+      });
+      expect(
+        actionsOf(AGENT_F, "tool").filter((row) => row.payload.toolId === "tool_delete"),
+      ).toEqual([]);
+      const [event] = eventsOf(info);
+      expect(event).toMatchObject({ action: "accept", automatic: false });
+      expect(event?.roundTripMs).toBeLessThan(AUTOMATIC_ANSWER_MS);
+
+      expect(body(await f.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(f.elicitations).toHaveLength(1);
+    } finally {
+      info.mockRestore();
+      await f.close();
     }
   }, 60_000);
 });

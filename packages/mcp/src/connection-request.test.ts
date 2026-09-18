@@ -7,6 +7,7 @@ import {
   type ConnectionProvider,
   connectThroughProvider,
   createGatewayProvider,
+  createPipedreamProvider,
   grantBuildApproval,
   keyringProvider,
   registerConnectionWithCredential,
@@ -376,6 +377,46 @@ describe("the proposal's rules, before any record exists", () => {
         schemeConfig: { ...oauth.schemeConfig, authorizeUrl: "http://accounts.google.com/auth" },
       }),
     ).toMatchObject({ ok: false, reason: "input_invalid" });
+  });
+
+  /** GRA-89: sign-in endpoints are not hosts. The rule is `@graft/core`'s; here it is applied so every path sees one set. */
+  it("sets aside the sign-in hosts of an authorization-code proposal and names them, and refuses a primary that is one", () => {
+    const hermes = {
+      vendor: "gmail",
+      displayName: "Gmail",
+      primaryHost: "https://gmail.googleapis.com",
+      hosts: ["gmail.googleapis.com", "oauth2.googleapis.com", "accounts.google.com"],
+      scheme: "oauth_authorization_code",
+      schemeConfig: {
+        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenUrl: "https://oauth2.googleapis.com/token",
+        scopes: "https://www.googleapis.com/auth/gmail.readonly",
+      },
+    };
+    expect(normaliseProposal(hermes)).toMatchObject({
+      ok: true,
+      payload: { primaryHost: "https://gmail.googleapis.com", hosts: ["gmail.googleapis.com"] },
+      hostsSetAside: ["oauth2.googleapis.com", "accounts.google.com"],
+    });
+    expect(
+      normaliseProposal({ ...hermes, primaryHost: "https://oauth2.googleapis.com/token" }),
+    ).toMatchObject({
+      ok: false,
+      reason: "input_invalid",
+      message: expect.stringContaining("sign-in host, not an API host"),
+      details: { field: "primaryHost", host: "oauth2.googleapis.com" },
+    });
+    // A key-shaped proposal has nothing to set aside, and says so with an empty list.
+    expect(normaliseProposal(PROPOSAL)).toMatchObject({ ok: true, hostsSetAside: [] });
+    // A refusal about the proposal's shape names the thing to fix and nothing about hosts set
+    // aside: the sign-in rule runs last, on a proposal that proceeds (Greptile on #66).
+    const refused = normaliseProposal({ ...hermes, docsUrl: "not a url" });
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: "input_invalid",
+      details: { field: "docsUrl" },
+    });
+    expect(refused).not.toHaveProperty("hostsSetAside");
   });
 
   it("reads an answer that names a connection, and nothing else", () => {
@@ -1646,6 +1687,222 @@ describe("request_connection finds the connection the person already has (GRA-76
       });
     } finally {
       await a.close();
+    }
+  });
+});
+
+/**
+ * Sign-in endpoints are not hosts (ADR 0019, consequence of 2026-09-18; GRA-89). During GRA-35
+ * Hermes listed Google's sign-in hosts under `hosts` beside the API host, the Pipedream provider's
+ * `covers` declined the proposal, and the person got the client-registration form instead of the
+ * one-click link. The real Pipedream provider is on the list here, over a client the suite never
+ * reaches: the console's button mints the link, and the return is played by the same core call
+ * the server's route makes (`connectThroughProvider`), which checks the row's hosts against the
+ * provider's coverage, so a set-aside host that reached the payload would fail it.
+ */
+describe("sign-in endpoints are not hosts (GRA-89)", () => {
+  /** The proposal Hermes made, sign-in hosts and all. */
+  const HERMES_GMAIL = {
+    vendor: "gmail",
+    displayName: "Gmail",
+    primaryHost: "https://gmail.googleapis.com",
+    hosts: ["gmail.googleapis.com", "oauth2.googleapis.com", "accounts.google.com"],
+    scheme: "oauth_authorization_code",
+    schemeConfig: {
+      authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+      scopes: "https://www.googleapis.com/auth/gmail.readonly",
+    },
+  };
+  const SIGN_IN = ["oauth2.googleapis.com", "accounts.google.com"];
+
+  const unreached = () => Promise.reject(new Error("Pipedream is not reached in this suite"));
+  const pipedream = createPipedreamProvider({
+    client: {
+      createConnectToken: unreached,
+      listAccounts: unreached,
+      relayFields: unreached,
+      deleteAccount: unreached,
+      apiOrigin: "https://api.pipedream.test",
+      projectId: "proj_test",
+      environment: "development",
+    },
+  });
+
+  /**
+   * The OAuth-shape suite left agent A a keyring Gmail row; with it present a Gmail proposal is
+   * `connection_exists` (GRA-76), and this suite is about the host set a provider is shown.
+   */
+  const setAside = new Map<string, ConnectionRow>();
+  beforeEach(() => {
+    for (const [id, row] of store.connections) {
+      if (row.vendor === "gmail") {
+        setAside.set(id, row);
+        store.connections.delete(id);
+      }
+    }
+    deps.connection = { ...deps.connection, providers: [pipedream, keyringProvider] };
+  });
+
+  afterEach(() => {
+    for (const [id, row] of store.connections) {
+      if (row.vendor === "gmail") {
+        store.connections.delete(id);
+        store.agentConnections.get(AGENT_B)?.delete(id);
+      }
+    }
+    for (const [id, row] of setAside) store.connections.set(id, row);
+    setAside.clear();
+    for (const [id, pending] of store.pendingActions) {
+      if (pending.agentId === AGENT_B && pending.kind === CONNECTION_ASK_KIND) {
+        store.pendingActions.delete(id);
+      }
+    }
+    deps.connection = { ...deps.connection, providers: [keyringProvider] };
+  });
+
+  const gmailAsks = () =>
+    actionsOf(AGENT_B, CONNECTION_ASK_KIND).filter((row) => row.payload.vendor === "gmail");
+
+  it("the proposal Hermes made takes the Pipedream link: the sign-in hosts are set aside and named, and the row reaches gmail.googleapis.com alone", async () => {
+    const b = await connect(TOKEN_B);
+    try {
+      const first = await b.call("request_connection", HERMES_GMAIL);
+      const { answer, action } = awaiting(first, "awaiting_connection");
+      expect(answer.provider).toBe("pipedream");
+      expect(answer.redirectUri).toBeUndefined();
+      expect(answer.hostsSetAside).toEqual(SIGN_IN);
+      const message = String(answer.message);
+      expect(message).toContain("through pipedream");
+      expect(message).toContain(
+        "oauth2.googleapis.com, accounts.google.com are sign-in endpoints and were set aside, not recorded on the connection",
+      );
+      expect(message).toContain("here gmail.googleapis.com.");
+      expect(action.payload).toMatchObject({
+        provider: "pipedream",
+        providerConnect: "link",
+        providerTarget: "gmail",
+        scheme: "oauth_authorization_code",
+        primaryHost: "https://gmail.googleapis.com",
+        hosts: ["gmail.googleapis.com"],
+      });
+
+      // The return makes the row from the payload (`apps/server/src/provider-link.ts`): the row's
+      // hosts are the payload's, and the provider's coverage check on them passes.
+      const payload = action.payload as unknown as ConnectionProposalPayload;
+      const connection = await connectThroughProvider(
+        ctx(),
+        principal,
+        {
+          provider: pipedream,
+          vendor: payload.vendor,
+          displayName: payload.displayName,
+          primaryHost: payload.primaryHost,
+          hosts: payload.hosts,
+          ref: "apn_1",
+        },
+        deps.connection,
+      );
+      await addConnectionToAgentScope(ctx(), principal, AGENT_B, connection.id, deps.agent);
+      await answerPendingAction(
+        ctx(),
+        principal,
+        action.id,
+        { connectionId: connection.id },
+        deps.pendingAction,
+      );
+      expect(connection).toMatchObject({
+        provider: "pipedream",
+        scheme: "pipedream_connect_proxy",
+        hosts: ["gmail.googleapis.com"],
+      });
+      expect(connection.hosts).not.toContain("accounts.google.com");
+      expect(connection.hosts).not.toContain("oauth2.googleapis.com");
+
+      // The same proposal, sign-in hosts and all, takes the answer: connected, and still told.
+      const done = await b.call("request_connection", HERMES_GMAIL);
+      expect(done.isError).toBeFalsy();
+      expect(body(done)).toMatchObject({
+        status: "connected",
+        connectionId: connection.id,
+        provider: "pipedream",
+        hostsSetAside: SIGN_IN,
+        message: expect.stringContaining("were set aside"),
+      });
+    } finally {
+      await b.close();
+    }
+  });
+
+  it("a host outside the vendor's own is still the keyring's: Pipedream declines example.com and the form asks, the sign-in host set aside all the same", async () => {
+    const b = await connect(TOKEN_B);
+    try {
+      const said = await b.call("request_connection", {
+        ...HERMES_GMAIL,
+        hosts: ["gmail.googleapis.com", "accounts.google.com", "example.com"],
+      });
+      const { answer, action } = awaiting(said, "awaiting_connection");
+      expect(answer.provider).toBeUndefined();
+      expect(answer.redirectUri).toBe("http://graft.test/api/oauth/callback");
+      expect(answer.hostsSetAside).toEqual(["accounts.google.com"]);
+      expect(String(answer.message)).toContain(
+        "accounts.google.com is a sign-in endpoint and was set aside",
+      );
+      expect(action.payload).toMatchObject({
+        provider: "keyring",
+        providerConnect: "form",
+        providerTarget: null,
+        hosts: ["gmail.googleapis.com", "example.com"],
+      });
+    } finally {
+      await b.close();
+    }
+  });
+
+  it("a primary host that is a sign-in endpoint is an invalid proposal that says why, and records nothing", async () => {
+    const b = await connect(TOKEN_B);
+    try {
+      const said = await b.call("request_connection", {
+        ...HERMES_GMAIL,
+        primaryHost: "https://accounts.google.com/o/oauth2/v2/auth",
+      });
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({
+        error: "refused",
+        reason: "input_invalid",
+        field: "primaryHost",
+        host: "accounts.google.com",
+        message: expect.stringContaining("sign-in host, not an API host"),
+      });
+      expect(body(said)).not.toHaveProperty("hostsSetAside");
+      expect(gmailAsks()).toHaveLength(0);
+    } finally {
+      await b.close();
+    }
+  });
+
+  it("the same proposal with and without the sign-in hosts is one ask", async () => {
+    const b = await connect(TOKEN_B);
+    try {
+      const withThem = awaiting(
+        await b.call("request_connection", HERMES_GMAIL),
+        "awaiting_connection",
+      );
+      expect(withThem.answer.hostsSetAside).toEqual(SIGN_IN);
+      const without = awaiting(
+        await b.call("request_connection", { ...HERMES_GMAIL, hosts: ["gmail.googleapis.com"] }),
+        "awaiting_connection",
+      );
+      expect(without.action.id).toBe(withThem.action.id);
+      expect(without.answer).not.toHaveProperty("hostsSetAside");
+      expect(String(without.answer.message)).not.toContain("set aside");
+      // And with no `hosts` at all: the primary's own host is the whole set, the same ask again.
+      const { hosts: _listed, ...bare } = HERMES_GMAIL;
+      const none = awaiting(await b.call("request_connection", bare), "awaiting_connection");
+      expect(none.action.id).toBe(withThem.action.id);
+      expect(gmailAsks()).toHaveLength(1);
+    } finally {
+      await b.close();
     }
   });
 });

@@ -138,6 +138,97 @@ function notPublic(hostname: string): HostSetRefusal {
   };
 }
 
+/**
+ * Hosts that serve a vendor's sign-in and nothing a tool call reaches, by the scheme whose flow goes
+ * through them (GRA-89): Google's consent page and the token endpoint every Google API shares. A
+ * proposal's own `authorizeUrl` and `tokenUrl` hosts join these per proposal in
+ * `setAsideSignInHosts`; the table is for an agent that lists them under `hosts` as well.
+ */
+export const SIGN_IN_HOSTS: Readonly<Partial<Record<AuthScheme, readonly string[]>>> = {
+  oauth_authorization_code: ["accounts.google.com", "oauth2.googleapis.com"],
+};
+
+/** The scheme parameters that name a sign-in endpoint, when the scheme carries them. */
+const SIGN_IN_ENDPOINT_PARAMETERS = ["authorizeUrl", "tokenUrl"] as const;
+
+export type SignInHostsVerdict =
+  /** `hosts` with the sign-in hosts removed, and `setAside` naming what was removed, in the order proposed. */
+  | { ok: true; hosts: string[]; setAside: string[] }
+  /** The primary host itself is a sign-in endpoint: a sentence saying why, and the host. */
+  | { ok: false; problem: string; host: string };
+
+/**
+ * Sign-in endpoints are not hosts (ADR 0019, consequence of 2026-09-18; GRA-89). A connection's
+ * host set is where tool calls go; the console runs an OAuth sign-in itself, a relay never touches
+ * the endpoints, and the proxy pins every call to the row's hosts. So a sign-in host listed under
+ * `hosts` is set aside before the proposal reaches a provider, and never recorded on the row: the
+ * scheme's well-known ones (`SIGN_IN_HOSTS`) and the hosts of the proposal's own `authorizeUrl` and
+ * `tokenUrl`. Left in, they made the Pipedream provider decline Gmail, since its `covers` demands
+ * every host be one of the vendor's own, and the person got the client-registration form instead
+ * of the one-click link.
+ *
+ * The primary host is never set aside, and its hostname is never a sign-in host here: some vendors
+ * serve the token endpoint on the API's own host (Notion, Slack, HubSpot, Dropbox), and the primary
+ * is by definition where tool calls resolve. Two primaries are refused instead: one on a well-known
+ * sign-in host, and one that *is* the authorize or token endpoint URL, since tool paths would
+ * resolve against the endpoint. Takes `validateHostSet`'s output: the normalised primary and the
+ * lower-case host set, the primary's host among them.
+ */
+export function setAsideSignInHosts(
+  scheme: AuthScheme,
+  schemeConfig: Record<string, unknown>,
+  primaryHost: string,
+  hosts: readonly string[],
+): SignInHostsVerdict {
+  const primary = parseUrl(primaryHost);
+  if (!primary)
+    return { ok: false, host: primaryHost, problem: "The primary host is not a valid URL" };
+  const wellKnown = SIGN_IN_HOSTS[scheme] ?? [];
+  if (wellKnown.includes(primary.hostname)) {
+    return {
+      ok: false,
+      host: primary.hostname,
+      problem: `${primary.hostname} is a sign-in host, not an API host: tool calls never reach it; the sign-in runs in the console or on the provider's page. Make primaryHost the host the vendor's API answers on (for Gmail, gmail.googleapis.com) and keep authorizeUrl and tokenUrl in schemeConfig.`,
+    };
+  }
+  const endpoints: { name: string; url: URL }[] = [];
+  for (const name of SIGN_IN_ENDPOINT_PARAMETERS) {
+    const value = schemeConfig[name];
+    const url = typeof value === "string" ? parseUrl(value) : null;
+    if (url) endpoints.push({ name, url });
+  }
+  const same = endpoints.find(
+    ({ url }) => withoutTrailingSlash(url) === withoutTrailingSlash(primary),
+  );
+  if (same) {
+    return {
+      ok: false,
+      host: primary.hostname,
+      problem: `primaryHost is the ${same.name} endpoint itself: tool calls resolve their paths against primaryHost and never reach a sign-in endpoint. Make it the host the vendor's API answers on and keep ${same.name} in schemeConfig.`,
+    };
+  }
+  const signIn = new Set<string>([...wellKnown, ...endpoints.map(({ url }) => url.hostname)]);
+  signIn.delete(primary.hostname);
+  const kept: string[] = [];
+  const setAside: string[] = [];
+  for (const host of hosts) {
+    (signIn.has(host.replace(/:\d+$/, "")) ? setAside : kept).push(host);
+  }
+  return { ok: true, hosts: kept, setAside };
+}
+
+function parseUrl(text: string): URL | null {
+  try {
+    return new URL(text);
+  } catch {
+    return null;
+  }
+}
+
+function withoutTrailingSlash(url: URL): string {
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
 /** Re-exported so the service's callers and the form read one table (`@graft/proxy/scheme-parameters`). */
 export { SCHEME_PARAMETERS };
 export type SchemeRule = SchemeParameterRule;
