@@ -10,8 +10,9 @@
  * (`@better-auth/cli` 1.4.21, the last published under that name) did not emit. Better Auth 1.7.3
  * withdrew the column, keys an account by `(providerId, accountId)` again as 1.6 did, and validates
  * the schema at init, refusing a required column it never writes. Migration 0008 dropped both
- * (GRA-86). The CLI is the `auth` package now and tracks the library's version, so the generator
- * and the runtime agree and `packages/db/src/schema.test.ts` pins that nothing is added by hand.
+ * (GRA-86). The CLI is the `auth` package now, published in lockstep with the library, and the
+ * script runs the version of it that matches the installed `better-auth`, so the generator and the
+ * runtime cannot drift; `packages/db/src/schema.test.ts` pins that nothing is added by hand.
  */
 import { relations } from "drizzle-orm";
 import { boolean, index, pgTable, text, timestamp } from "drizzle-orm/pg-core";

@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "generate-schema": "pnpm dlx auth@1.7.5 generate --config ./better-auth.config.ts --output ../db/src/schema/auth.ts --yes",
+    "generate-schema": "pnpm dlx auth@$(node -p \"require('./node_modules/better-auth/package.json').version\") generate --config ./better-auth.config.ts --output ../db/src/schema/auth.ts --yes",
     "test": "vitest run",
     "test:watch": "vitest",
     "check-types": "tsc -p tsconfig.json"
