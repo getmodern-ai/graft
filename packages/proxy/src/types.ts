@@ -111,6 +111,26 @@ export type ProxyConnection = {
    * and ciphertext are null beside it, since the proxy has nothing of its own to sign with.
    */
   relay?: ProxyRelay | null;
+  /**
+   * When the person revoked the connection, or null. Set, every call is refused
+   * `connection_revoked` before the row's scheme, hosts or credential are read (GRA-68): the
+   * console's Reconnect is the one way back, and the columns a revoke leaves null, a keyring row's
+   * ciphertext or a relay row's reference, would otherwise have the refusal name the wrong repair.
+   * Optional like `relay`, so a connection that was never revoked (a seed, a test's literal) need
+   * not say so; `toProxyConnection` sets it for every row it builds, and resolves a revoked row to
+   * no scheme, no ciphertext and no relay besides, so a host that leaves it unset is still refused,
+   * only less precisely.
+   */
+  revokedAt?: Date | null;
+  /**
+   * The name of the provider that holds this connection's credential elsewhere and has nothing for
+   * it yet: a one-click link the person opened and did not finish (ADR 0019). Such a row has its
+   * scheme and its primary host and lacks only the provider's reference, so the refusal names what
+   * is missing and who holds it (`connection_not_ready`, GRA-68) rather than the columns it happens
+   * to find null. Opaque text for that sentence and nothing more; the proxy still knows nothing of
+   * what a provider is. Absent for every row whose provider resolved, and for every keyring row.
+   */
+  pendingProvider?: string | null;
 };
 
 /**
@@ -357,6 +377,14 @@ export type ProxyOutcome =
   /** The connection is the person's, but not among the ids the token names — outside the scope. */
   | "connection_not_in_token"
   | "connection_not_ready"
+  /**
+   * The person revoked the connection (GRA-68). Distinct from `connection_not_ready` so the agent's
+   * next sentence is "ask the person to reconnect it in the console", not a proposal of the hosts
+   * and scheme the row still has: a revoke leaves a keyring row with no credential and a relay row
+   * with no reference, and the columns it leaves null are not what is missing. Read after the
+   * person and scope checks, so another person's token learns nothing from it.
+   */
+  | "connection_revoked"
   /**
    * An authorization-code connection whose person has not completed the consent at the vendor —
    * a client secret is stored and no token is (ADR 0005). Distinct from `connection_not_ready` so

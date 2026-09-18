@@ -322,6 +322,37 @@ describe("the token must fit the connection", () => {
     expect(res.status).toBe(409);
     expect((await body(res)).reason).toBe("connection_not_ready");
   });
+
+  it("answers 409 connection_revoked for a revoked connection, names the repair, and the event carries the word (GRA-68)", async () => {
+    const h = harness(
+      {},
+      { ...CONNECTION, revokedAt: new Date("2026-09-18T09:00:00Z"), credentialCiphertext: null },
+    );
+    const res = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
+
+    expect(res.status).toBe(409);
+    expect(await body(res)).toMatchObject({
+      error: "conflict",
+      reason: "connection_revoked",
+      message: "The person revoked this connection; ask them to reconnect it in the console",
+    });
+    expect(h.forwarded).toHaveLength(0);
+    expect(h.events).toHaveLength(1);
+    expect(h.events[0]).toMatchObject({
+      outcome: "connection_revoked",
+      status: 409,
+      connectionId: "conn_1",
+      host: null,
+    });
+  });
+
+  it("another person's token is refused for a revoked row as person_mismatch, learning nothing of the revoke", async () => {
+    const h = harness({}, { ...CONNECTION, revokedAt: new Date("2026-09-18T09:00:00Z") });
+    const res = await h.app.request("/c/conn_1/orders", { headers: bearer(OTHER_PERSON) });
+
+    expect(res.status).toBe(403);
+    expect((await body(res)).reason).toBe("person_mismatch");
+  });
 });
 
 describe("inbound credentials are stripped", () => {
