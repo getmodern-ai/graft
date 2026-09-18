@@ -416,6 +416,11 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.connections.get(id);
       return row && row.personId === personId ? row : null;
     },
+    // No lock to take over a map; the same read, so the revoke's transition test reads the store.
+    findConnectionForUpdate: async (_db, personId, id) => {
+      const row = store.connections.get(id);
+      return row && row.personId === personId ? row : null;
+    },
     findConnectionByIdUnscoped: async (_db, id) => store.connections.get(id) ?? null,
     listConnections: async (_db, personId) =>
       [...store.connections.values()].filter((row) => row.personId === personId),

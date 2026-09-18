@@ -920,9 +920,11 @@ export async function revokeConnection(
 ): Promise<RevokeConnectionResult | null> {
   const revoked = await ctx.db.transaction(async (tx) => {
     const at = deps.now();
-    // Read before the write: whether this revoke is the transition. A revoke of a revoked row is
-    // the provider release's retry and changes no list, so the scoped agents are told once.
-    const before = await deps.findConnection(tx, principal.personId, connectionId);
+    // Read before the write, with the row locked: whether this revoke is the transition. A revoke
+    // of a revoked row is the provider release's retry and changes no list, so the scoped agents
+    // are told once; the lock is what makes "once" hold when two revokes overlap, since the second
+    // waits here for the first to commit and then reads the row as revoked.
+    const before = await deps.findConnectionForUpdate(tx, principal.personId, connectionId);
     const wasLive = before?.revokedAt === null;
     const row = await deps.revokeConnection(tx, principal.personId, connectionId, at);
     if (!row) return null;

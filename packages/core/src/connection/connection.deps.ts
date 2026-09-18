@@ -7,6 +7,7 @@ import {
   addConnectionHosts,
   findConnection,
   findConnectionByIdUnscoped,
+  findConnectionForUpdate,
   insertConnection,
   listConnections,
   reconnectConnection,
@@ -34,6 +35,8 @@ import { type ConnectionProvider, DEFAULT_PROVIDERS } from "./provider";
 export type ConnectionDeps = {
   insertConnection: typeof insertConnection;
   findConnection: typeof findConnection;
+  /** The row locked for the transaction: the revoke's pre-read, so two revokes cannot both see it live (GRA-69). */
+  findConnectionForUpdate: typeof findConnectionForUpdate;
   /** Unscoped, for the proxy's binding only — see the repo comment. */
   findConnectionByIdUnscoped: typeof findConnectionByIdUnscoped;
   listConnections: typeof listConnections;
@@ -85,6 +88,7 @@ export function createConnectionDeps(
   return {
     insertConnection,
     findConnection,
+    findConnectionForUpdate,
     findConnectionByIdUnscoped,
     listConnections,
     setConnectionCredential,

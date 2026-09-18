@@ -26,7 +26,12 @@ import {
   findApproval,
   updateAskEveryCall,
 } from "./approval";
-import { findConnection, findConnectionByIdUnscoped, revokeConnection } from "./connection";
+import {
+  findConnection,
+  findConnectionByIdUnscoped,
+  findConnectionForUpdate,
+  revokeConnection,
+} from "./connection";
 import {
   answerPendingAction,
   consumePendingAction,
@@ -250,6 +255,15 @@ describe("person-scoped statements take the person", () => {
     await findConnection(db, "person_1", "conn_1");
     const s = only();
     expect(s.sql).toContain('"connection"."person_id" = $');
+    expect(s.params).toEqual(["conn_1", "person_1", 1]);
+  });
+
+  /** The revoke's pre-read (GRA-69): the same predicate, and the row locked so a concurrent revoke waits. */
+  it("a connection read for update takes the person and locks the row", async () => {
+    await findConnectionForUpdate(db, "person_1", "conn_1");
+    const s = only();
+    expect(s.sql).toContain('"connection"."person_id" = $');
+    expect(s.sql).toMatch(/ for update$/);
     expect(s.params).toEqual(["conn_1", "person_1", 1]);
   });
 

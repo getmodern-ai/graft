@@ -99,6 +99,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
   return {
     insertConnection: vi.fn(async (_db, input) => ({ ...row, ...input }) as ConnectionRow),
     findConnection: vi.fn(async () => row),
+    findConnectionForUpdate: vi.fn(async () => row),
     findConnectionByIdUnscoped: vi.fn(async () => row),
     listConnections: vi.fn(async () => [row]),
     setConnectionCredential: vi.fn(async (_db, _p, _id, args) => ({
@@ -1038,24 +1039,29 @@ describe("revokeConnection", () => {
     expect(result?.affectedAgentIds).toEqual(["agent_1", "agent_2", "agent_3"]);
   });
 
-  /** A revoke of a revoked row is the release's retry: no list changes, so nobody is told (Greptile on #83). */
-  it("names no scoped agent on a second revoke of a revoked row, only the agents a demotion touched", async () => {
+  /**
+   * A revoke of a revoked row is the release's retry: no list changes, so nobody is told (Greptile
+   * on #83). The pre-read is the locking one, so two overlapping revokes cannot both see the row
+   * live: the second waits for the first's commit and reads what this test hands it.
+   */
+  it("names no scoped agent on a second revoke of a revoked row, only the agents a demotion touched, reading the row under lock", async () => {
     const deps = fakeDeps({
-      findConnection: vi.fn(async () => ({ ...row, revokedAt: NOW })),
+      findConnectionForUpdate: vi.fn(async () => ({ ...row, revokedAt: NOW })),
       deleteWorkingSetEntriesForConnection: vi.fn(async () => [
         { agentId: "agent_2", toolId: "tool_1", promotedAt: NOW, lastUsedAt: null } as never,
       ]),
       listAgentIdsForConnection: vi.fn(async () => ["agent_1"]),
     });
     const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
-    expect(deps.findConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    expect(deps.findConnectionForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    expect(deps.findConnection).not.toHaveBeenCalled();
     expect(deps.listAgentIdsForConnection).not.toHaveBeenCalled();
     expect(result?.affectedAgentIds).toEqual(["agent_2"]);
   });
 
   it("answers null and sweeps nothing for a connection that is not the person's", async () => {
     const deps = fakeDeps({
-      findConnection: vi.fn(async () => null),
+      findConnectionForUpdate: vi.fn(async () => null),
       revokeConnection: vi.fn(async () => null),
     });
     await expect(revokeConnection(ctx, PRINCIPAL, "conn_x", deps)).resolves.toBeNull();
