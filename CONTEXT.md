@@ -114,8 +114,9 @@ Bounded by a cap and an idle window per agent.
 _Avoid_: active tools, loaded tools, context, enabled tools
 
 **Promote** / **Demote**:
-Moving an authored tool into or out of an agent's working set, by the agent's own call or by the
-cap and idle rule. Both fire `tools/list_changed`. A demoted tool stays in the toolbox and is one
+Moving an authored tool into or out of an agent's working set, by the agent's own call, by the
+cap and idle rule, or, for a demotion, by the revoke of the connection the tool is bound to (ADR
+0009 as amended). Both fire `tools/list_changed`. A demoted tool stays in the toolbox and is one
 `find_tool` call from coming back.
 _Avoid_: enable/disable, load/unload, install/uninstall, delete
 
