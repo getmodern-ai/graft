@@ -974,7 +974,7 @@ export function createApi(options: ApiOptions): Hono {
         allow: body.allow,
         ...(body.askEveryCall === undefined ? {} : { askEveryCall: body.askEveryCall }),
       },
-      { approval: approvalDeps, pendingAction: pendingActionDeps },
+      { approval: approvalDeps, pendingAction: pendingActionDeps, connection: connectionDeps },
     );
     return c.json(result);
   });

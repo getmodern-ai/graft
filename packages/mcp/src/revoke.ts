@@ -1,4 +1,5 @@
 import {
+  type ConnectionOutput,
   type Principal,
   type RevokeConnectionResult,
   revokeConnection,
@@ -7,6 +8,28 @@ import {
 
 import type { McpDeps } from "./deps";
 import type { ToolListChangedNotifier } from "./notifier";
+import { type Refusal, refusal } from "./result";
+
+/**
+ * What a revoke means to this server, in two halves: the refusal every path that still reaches a
+ * revoked connection answers with, and the announcement to the sessions the revoke changed.
+ */
+
+/**
+ * The refusal for a call, or an answer, that reaches a connection the person revoked, worded as
+ * `request_connection`'s `connection_revoked` is (`connection-request.ts`) so every surface agrees
+ * (GRA-69). The list no longer offers such a connection (`tools.ts`), but `run_tool`, a client that
+ * snapshots its list, and an ask left open across the revoke (`approval.ts`) can still reach it,
+ * and the next step is never an approval on a revoked connection nor the proxy's 409: it is the
+ * person's reconnection, and this says so.
+ */
+export function revokedConnectionRefusal(connection: ConnectionOutput): Refusal {
+  return refusal(
+    "connection_revoked",
+    `${connection.displayName} (${connection.vendor}) was revoked by the person, so nothing can run against it. Ask them to reconnect it in the console (Connections, then Re-enter or Reconnect on the connection). A tool bound to it runs again once they have; promote brings a demoted one back into your list.`,
+    { connectionId: connection.id },
+  );
+}
 
 /**
  * A revoke, announced to the sessions it changes: the core's `revokeConnection`, then

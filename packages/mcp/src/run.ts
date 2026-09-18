@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 import {
   type AgentScope,
-  type ConnectionOutput,
   getAgentScope,
   getConnection,
   getToolByName,
@@ -23,6 +22,7 @@ import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
 import { detachedHoldMs, heldInFlight } from "./in-flight";
 import { type Refusal, refusal } from "./result";
+import { revokedConnectionRefusal } from "./revoke";
 import {
   commandEnvironment,
   type DetachedStart,
@@ -83,21 +83,6 @@ export function tokenTtlFor(timeoutSeconds: number): number {
 
 /** How one run is to go, as one value, so the token's life, the environment and the ledger agree. */
 export type RunMode = { detached: boolean; timeoutSeconds: number; dryRun: boolean };
-
-/**
- * The refusal for a call against a connection the person revoked, worded as `request_connection`'s
- * `connection_revoked` is (`connection-request.ts`) so the two surfaces agree (GRA-69). The list
- * no longer offers such a connection (`tools.ts`), but `run_tool` and a client that snapshots its
- * list can still name it, and the next step must not be an approval ask on a connection the person
- * just revoked, nor the proxy's 409: it is the person's reconnection, and this says so.
- */
-export function revokedConnectionRefusal(connection: ConnectionOutput): Refusal {
-  return refusal(
-    "connection_revoked",
-    `${connection.displayName} (${connection.vendor}) was revoked by the person, so nothing can run against it. Ask them to reconnect it in the console (Connections, then Re-enter or Reconnect on the connection). A tool bound to it runs again once they have; promote brings a demoted one back into your list.`,
-    { connectionId: connection.id },
-  );
-}
 
 /** The runner's failure, in Cando's shape: the sentence, the code, the tail of stderr. */
 export type RunFailure = { error: string; exitCode: number | null; stderrTail: string };

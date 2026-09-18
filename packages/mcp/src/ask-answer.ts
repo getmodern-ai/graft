@@ -6,6 +6,7 @@ import {
   type ConnectionDeps,
   type ConnectionOutput,
   consumePendingAction,
+  getConnection,
   getPendingActionForPerson,
   grantBuildApproval,
   KEYRING_PROVIDER,
@@ -77,7 +78,15 @@ export async function openAskOfKind(
   return refuseUnlessOpen(row, deps.now());
 }
 
-export type ApprovalAnswerDeps = { approval: ApprovalDeps; pendingAction: PendingActionDeps };
+export type ApprovalAnswerDeps = {
+  approval: ApprovalDeps;
+  pendingAction: PendingActionDeps;
+  /** The connection the ask is about, read again at the moment of recording (GRA-69; the header). */
+  connection: ConnectionDeps;
+};
+
+/** A revoke that beat the answer: the ask is closed and the caller is told, after the transaction. */
+type RevokedBeforeAnswer = { revoked: { connectionId: string; name: string | null } };
 
 export type ApprovalAnswerRecord = {
   pendingAction: PendingActionRow;
@@ -103,6 +112,14 @@ export type ApprovalAnswerRecord = {
  * and a build decline (no row records it). A call that is waiting sees the consumed action as
  * `CONFLICT` and reads the rule again (`approval.ts`), which is how it proceeds on a yes and
  * refuses on a no.
+ *
+ * **The connection is read again before anything is written.** A revoke deletes every approval for
+ * the connection and closes its open asks (ADR 0007), but an ask inserted after that sweep ran is
+ * still open, and an answer to it must not write an approval back that would stand once the
+ * connection is reconnected (GRA-69, found by review on #83). Such an ask is closed here exactly as
+ * the sweep closes one, in the same transaction as the answer, and the caller is then refused
+ * `CONFLICT` with `reason: "connection_revoked"`; the elicitation path makes the same check in
+ * `approval.ts` before it records.
  */
 export async function recordApprovalAnswer(
   ctx: ServiceContext,
@@ -111,9 +128,50 @@ export async function recordApprovalAnswer(
   answer: Record<string, unknown> & { allow: boolean; askEveryCall?: boolean },
   deps: ApprovalAnswerDeps,
 ): Promise<ApprovalAnswerRecord> {
-  return ctx.db.transaction(async (tx) => {
-    const scoped: ServiceContext = { db: tx };
-    const action = await answerPendingAction(scoped, principal, id, answer, deps.pendingAction);
+  const outcome = await ctx.db.transaction(
+    async (tx): Promise<ApprovalAnswerRecord | RevokedBeforeAnswer> => {
+      const scoped: ServiceContext = { db: tx };
+      const action = await answerPendingAction(scoped, principal, id, answer, deps.pendingAction);
+      if (typeof action.connectionId === "string") {
+        const connection = await getConnection(
+          scoped,
+          principal,
+          action.connectionId,
+          deps.connection,
+        );
+        if (!connection || connection.revokedAt !== null) {
+          await deps.connection.expirePendingActionsForConnection(
+            tx,
+            principal.personId,
+            action.connectionId,
+            deps.pendingAction.now(),
+          );
+          return {
+            revoked: { connectionId: action.connectionId, name: connection?.displayName ?? null },
+          };
+        }
+      }
+      return recordAnswer(scoped, principal, action, deps);
+    },
+  );
+  if ("revoked" in outcome) {
+    throw new ServiceError(
+      "CONFLICT",
+      `${outcome.revoked.name ?? "The connection"} was revoked while this ask was open, so the ask is closed and nothing was recorded. Reconnect it in the console and the agent asks again.`,
+      { details: { reason: "connection_revoked", connectionId: outcome.revoked.connectionId } },
+    );
+  }
+  return outcome;
+}
+
+/** The writes an answer makes once the connection is known to stand; the header says which. */
+async function recordAnswer(
+  scoped: ServiceContext,
+  principal: Principal,
+  action: PendingActionRow,
+  deps: ApprovalAnswerDeps,
+): Promise<ApprovalAnswerRecord> {
+  {
     const scope = { personId: principal.personId, agentId: action.agentId };
     const said = readApprovalAnswer(action.answer);
     /** Mark the answer spent; the agent may have taken it between the two statements, which is fine. */
@@ -150,7 +208,7 @@ export async function recordApprovalAnswer(
       return { pendingAction: action, buildApproval };
     }
     return { pendingAction: action };
-  });
+  }
 }
 
 /** What the person confirms: the proposal as edited (or as proposed), the credential, and GRA-75's build choice. */

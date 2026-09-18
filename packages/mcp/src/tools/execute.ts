@@ -11,7 +11,8 @@ import {
 import type { SessionContext } from "../context";
 import { heldInFlight } from "../in-flight";
 import { toolError, toolRefusal, toolResult } from "../result";
-import { revokedConnectionRefusal, runWithCapability } from "../run";
+import { revokedConnectionRefusal } from "../revoke";
+import { runWithCapability } from "../run";
 import { openAgentSandbox, runCommand, withSandbox } from "../sandbox";
 import { executeToolName } from "../tool-names";
 import { commandTimingProperties, detachedAdvice } from "./authoring";

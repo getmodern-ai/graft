@@ -153,9 +153,9 @@ afterAll(async () => {
   await vendor.close();
 });
 
-async function connect() {
+async function connect(token = TOKEN) {
   const notifier = createToolListChangedNotifier();
-  const session = await openAgentSession(mcp, TOKEN, notifier);
+  const session = await openAgentSession(mcp, token, notifier);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await session.server.connect(serverTransport);
   const client = new Client({ name: "harness", version: "0.0.0" });
@@ -392,4 +392,60 @@ describe("an ask over MCP, answered over HTTP", () => {
       await a.close();
     }
   }, 60_000);
+});
+
+describe("an answer after the connection was revoked (GRA-69)", () => {
+  /**
+   * The revoke's sweep closes the connection's open asks, but an ask inserted after the sweep ran is
+   * still open; answering it must not write an approval that would stand once the connection is
+   * reconnected (found by review on #83). The store is set revoked directly, which is exactly the
+   * state that race leaves: a revoked row and an ask the sweep never saw.
+   */
+  it("is refused 409 connection_revoked, the ask is closed as the sweep would have closed it, and nothing is recorded", async () => {
+    const TOKEN_R = "grft_approvals_server_test_token_r_00000000000000";
+    store.addAgent({
+      id: "agent_r",
+      personId: PERSON,
+      token: TOKEN_R,
+      name: "racing Hermes",
+      connectionIds: [CONN],
+    });
+    store.promote("agent_r", "tool_create");
+    const live = store.connections.get(CONN);
+    if (!live) throw new Error("fixture: the connection is missing");
+    const c = await connect(TOKEN_R);
+    try {
+      const said = body(await c.call("demo__create-item", {}));
+      expect(said).toMatchObject({ error: "awaiting_approval" });
+      const actionId = said.pendingActionId as string;
+
+      store.connections.set(CONN, { ...live, revokedAt: new Date() });
+      const res = await app.request(
+        `/api/pending-actions/${actionId}/answer`,
+        json({ allow: true }),
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        error: "CONFLICT",
+        details: { reason: "connection_revoked", connectionId: CONN },
+      });
+      expect(store.approvals.get("agent_r tool_create")).toBeUndefined();
+      const closed = store.pendingActions.get(actionId);
+      expect(closed?.consumedAt).not.toBeNull();
+      expect(closed?.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+
+      // While revoked, the call is refused before any ask; reconnected, it asks afresh: nothing stood.
+      expect(body(await c.call("demo__create-item", {}))).toMatchObject({
+        error: "refused",
+        reason: "connection_revoked",
+      });
+      store.connections.set(CONN, live);
+      expect(body(await c.call("demo__create-item", {}))).toMatchObject({
+        error: "awaiting_approval",
+      });
+    } finally {
+      store.connections.set(CONN, live);
+      await c.close();
+    }
+  }, 30_000);
 });
