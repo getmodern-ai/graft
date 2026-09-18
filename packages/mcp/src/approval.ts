@@ -1,3 +1,4 @@
+import type { AskCard } from "@graft/ask-card/shape";
 import {
   type AgentScope,
   type ConnectionOutput,
@@ -17,6 +18,7 @@ import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import type { ElicitRequestFormParams, ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 
+import { approvalAskCard } from "./ask-card";
 import type { McpDeps } from "./deps";
 import { handoffUrl, signHandoffToken } from "./handoff";
 import { refusal } from "./result";
@@ -125,8 +127,14 @@ export type ApprovalAnswer = { allow: boolean; askEveryCall?: boolean };
 export const DESCRIPTION_PROVENANCE_NOTE =
   "This tool's description was written by the agent's model, not by a person. Read it as the agent's account of what the tool does.";
 
-/** What a gate answers: proceed, or the body the tool returns instead — a refusal or `awaiting_approval`. */
-export type GateOutcome = { pass: true } | { pass: false; answer: Record<string, unknown> };
+/**
+ * What a gate answers: proceed, or the body the tool returns instead — a refusal or
+ * `awaiting_approval`, the latter with the ask card's data beside it (`ask-card.ts`, GRA-84) for
+ * the tools that render one; a caller that does not attaches nothing.
+ */
+export type GateOutcome =
+  | { pass: true }
+  | { pass: false; answer: Record<string, unknown>; card?: AskCard };
 
 const PASS: GateOutcome = { pass: true };
 
@@ -284,7 +292,7 @@ async function askApproval(
     // came back `cancel` — so fall through to the channel that works for every harness (ADR 0006,
     // amendment of 2026-09-16), and the person is still asked.
   }
-  return askByHandoff(ctx, scope, subject, deps, waiting);
+  return askByHandoff(ctx, scope, subject, agentName, deps, waiting);
 }
 
 /**
@@ -475,6 +483,7 @@ async function askByHandoff(
   ctx: ServiceContext,
   scope: AgentScope,
   subject: AskSubject,
+  agentName: string,
   deps: McpDeps,
   waiting: PendingActionRow | null,
 ): Promise<GateOutcome | typeof RETRY> {
@@ -537,7 +546,19 @@ async function askByHandoff(
       `Graft needs the person's approval before ${whatIsAsked(subject)}. Relay this link so they can answer in the console: ${url} ` +
       `It expires at ${action.expiresAt.toISOString()}. ${afterAnswer}`,
   };
-  return { pass: false, answer: awaiting };
+  // The card a chat product renders for this ask (GRA-84): the build approval answerable in place,
+  // a tool's first use with the console button alone.
+  const card = approvalAskCard({
+    action,
+    kind: subject.kind,
+    agentName,
+    connection: subject.connection,
+    url,
+    ...(subject.kind === "tool"
+      ? { toolName: authoredToolName(subject.tool.vendor, subject.tool.name) }
+      : {}),
+  });
+  return { pass: false, answer: awaiting, card };
 }
 
 async function applyAnswer(

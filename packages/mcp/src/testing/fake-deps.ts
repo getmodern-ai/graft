@@ -57,6 +57,8 @@ export type FakeStore = {
     token: string;
     name?: string;
     connectionIds?: readonly string[];
+    /** The MCP client whose consent minted the agent (ADR 0018) — what the ask card's tool gates on (GRA-84). */
+    connectedVia?: { clientId: string; clientName: string };
   }): AgentRow;
   addConnection(input: {
     id: string;
@@ -117,8 +119,8 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         name: input.name ?? input.id,
         tokenHash: hashAgentToken(input.token),
         tokenPrefix: input.token.slice(0, 8),
-        connectedViaClientId: null,
-        connectedViaClientName: null,
+        connectedViaClientId: input.connectedVia?.clientId ?? null,
+        connectedViaClientName: input.connectedVia?.clientName ?? null,
         workingSetCap: 20,
         idleWindowDays: 21,
         revokedAt: null,

@@ -16,6 +16,7 @@ import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { type AcquireStarted, acquireStatusOf } from "../acquire/shapes";
 import { requireBuildApproval } from "../approval";
+import { ASK_CARD_TOOL_META } from "../ask-card";
 import {
   clampTimeout,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -31,9 +32,10 @@ import {
   requestCredential,
 } from "../connection-request";
 import type { SessionContext } from "../context";
-import { isPlainObject, toolError, toolRefusal, toolResult } from "../result";
+import { isPlainObject, toolError, toolRefusal, toolResult, withCard } from "../result";
 import { runAuthoredTool } from "../run";
 import { authoredToolName } from "../tool-names";
+import { answerAsk } from "./answer-ask";
 
 /**
  * The fixed meta-tools every agent sees (CONTEXT.md, *Meta-tool*): the front door, `acquire` and
@@ -316,6 +318,8 @@ const acquire: MetaTool = {
       required: ["connectionId", "goal"],
       additionalProperties: false,
     },
+    // The ask card renders for this tool's results (GRA-84): a build approval in place, or the link.
+    _meta: ASK_CARD_TOOL_META,
   },
   /**
    * The door to the loop (ADR 0004). In order: the arguments; the connection in the agent's scope —
@@ -356,7 +360,7 @@ const acquire: MetaTool = {
       );
     }
     const gate = await requireBuildApproval(ctx, scope, connectionId, deps, channel);
-    if (!gate.pass) return toolError(gate.answer);
+    if (!gate.pass) return withCard(toolError(gate.answer), gate.card);
 
     const job = await createAcquireJob(
       ctx,
@@ -473,12 +477,16 @@ const requestConnectionTool: MetaTool = {
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
+    // The ask card renders for this tool's results (GRA-84): a keyless confirmation in place, or the link.
+    _meta: ASK_CARD_TOOL_META,
   },
   handle: async (args, { ctx, scope, deps, notifier }) => {
     const input = readConnectionProposal(args);
     if ("error" in input) return toolRefusal("input_invalid", input.error);
     const outcome = await requestConnection(ctx, scope, input, deps, notifier);
-    return outcome.isError ? toolError(outcome.answer) : toolResult(outcome.answer);
+    return outcome.isError
+      ? withCard(toolError(outcome.answer), outcome.card)
+      : toolResult(outcome.answer);
   },
 };
 
@@ -509,6 +517,8 @@ const requestCredentialTool: MetaTool = {
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
+    // The ask card renders for this tool's results too (GRA-84), with the console button alone.
+    _meta: ASK_CARD_TOOL_META,
   },
   handle: async (args, { ctx, scope, deps }) => {
     const connectionId = typeof args.connectionId === "string" ? args.connectionId : "";
@@ -522,11 +532,16 @@ const requestCredentialTool: MetaTool = {
       { connectionId, ...(reason === undefined ? {} : { reason }) },
       deps,
     );
-    return outcome.isError ? toolError(outcome.answer) : toolResult(outcome.answer);
+    return outcome.isError
+      ? withCard(toolError(outcome.answer), outcome.card)
+      : toolResult(outcome.answer);
   },
 };
 
-/** In the order the list carries them: the loop's tools first, the stubs beside them. */
+/**
+ * In the order the list carries them: the loop's tools first, the connection handoffs, and last
+ * the ask card's own tool, which a host hides from the model (`./answer-ask.ts`).
+ */
 export const META_TOOLS: readonly MetaTool[] = [
   acquire,
   acquireStatus,
@@ -536,4 +551,5 @@ export const META_TOOLS: readonly MetaTool[] = [
   runTool,
   requestConnectionTool,
   requestCredentialTool,
+  answerAsk,
 ];

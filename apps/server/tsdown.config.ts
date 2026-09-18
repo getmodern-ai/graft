@@ -7,7 +7,7 @@ import { defineConfig } from "tsdown";
  * nothing about what it loads. `typescript6` is the one that could not be bundled anyway: the check
  * reads TypeScript's lib files off the package on disk.
  *
- * Four things in the workspace resolve a file off `import.meta.url`, and each says a bundler has to
+ * Five things in the workspace resolve a file off `import.meta.url`, and each says a bundler has to
  * carry that file beside the bundle. Here they land where those constants expect them, relative to
  * `dist/`:
  *
@@ -15,6 +15,10 @@ import { defineConfig } from "tsdown";
  *   - `@graft/runner`'s `skills/`    → `apps/server/skills/`           (`../skills`)
  *   - `@graft/db`'s `drizzle/`       → `apps/server/drizzle/`          (`../drizzle/`)
  *   - `@graft/check`'s worker        → `dist/module-check.worker.mjs`  (the `.mjs` branch of `workerUrl`)
+ *   - `@graft/ask-card`'s page       → `dist/ask.html`                 (`../dist/ask.html`, GRA-84)
+ *
+ * The ask card's page is that package's own `vite build` (`packages/ask-card/dist/ask.html`);
+ * turbo runs it first (`build` depends on `^build`) and the Dockerfile runs it by name.
  *
  * The worker is a second entry rather than a chunk because Node loads it by file name into a fresh
  * thread; `keys` is the third, so a compose user can mint secrets from the image without pnpm.
@@ -38,6 +42,7 @@ export default defineConfig({
   // A directory lands *inside* `to` under its own name, so the two directories are copied to `.`.
   copy: [
     { from: "../../packages/runner/src/runner.mjs", to: "./dist" },
+    { from: "../../packages/ask-card/dist/ask.html", to: "./dist" },
     { from: "../../packages/runner/skills", to: "." },
     { from: "../../packages/db/drizzle", to: "." },
   ],

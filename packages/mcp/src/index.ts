@@ -57,6 +57,31 @@ export {
   type ToolAskPayload,
 } from "./approval";
 export {
+  type ApprovalAnswerDeps,
+  type ApprovalAnswerRecord,
+  ASK_ANSWERED_MESSAGE,
+  ASK_EXPIRED_MESSAGE,
+  type ConnectionConfirmation,
+  type ConnectionConfirmationDeps,
+  type ConnectionConfirmationRecord,
+  type ConsentStarter,
+  confirmConnectionAsk,
+  openAskOfKind,
+  recordApprovalAnswer,
+  refuseUnlessOpen,
+} from "./ask-answer";
+export {
+  APP_ONLY_TOOL_META,
+  ASK_CARD_MIME_TYPE,
+  ASK_CARD_RESOURCE,
+  ASK_CARD_RESOURCE_URI,
+  ASK_CARD_TOOL_META,
+  approvalAskCard,
+  connectionAskAnswerable,
+  connectionAskCard,
+  credentialAskCard,
+} from "./ask-card";
+export {
   clampTimeout,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   DEFAULT_DETACHED_TIMEOUT_SECONDS,
@@ -116,7 +141,7 @@ export {
   type ToolListChangedNotifier,
 } from "./notifier";
 export { promotePublished } from "./promote";
-export { type Refusal, refusal } from "./result";
+export { type Refusal, refusal, withCard } from "./result";
 export {
   type AuthoredRunAnswer,
   type AuthoredRunArgs,
@@ -163,4 +188,5 @@ export {
   TOOL_NAME_SEPARATOR,
 } from "./tool-names";
 export { authoredToolDefinition, META_TOOL_NAMES } from "./tools";
+export { ANSWER_ASK, CARD_NOT_AVAILABLE, readAnswerAskInput } from "./tools/answer-ask";
 export { type ReadWebPage, readWebPage, type WebPageResult } from "./web-page";

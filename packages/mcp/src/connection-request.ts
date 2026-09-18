@@ -1,3 +1,4 @@
+import type { AskCard } from "@graft/ask-card/shape";
 import {
   type AgentScope,
   addConnectionToAgentScope,
@@ -5,6 +6,7 @@ import {
   type ConnectionProvider,
   consumePendingAction,
   createPendingAction,
+  getAgent,
   getAgentScope,
   getConnection,
   getPendingAction,
@@ -31,6 +33,7 @@ import { SCHEME_PARAMETERS } from "@graft/proxy/scheme-parameters";
 import { AUTH_SCHEMES, type AuthScheme, isAuthScheme } from "@graft/proxy/types";
 
 import { DEFAULT_POLL_MS } from "./approval";
+import { connectionAskCard, credentialAskCard } from "./ask-card";
 import type { McpDeps } from "./deps";
 import { handoffUrl, signHandoffToken } from "./handoff";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -199,9 +202,13 @@ export type AwaitingHandoff = {
   provider?: string;
 };
 
+/**
+ * What either tool answers: `connected`, or the body it returns instead — a refusal, or an
+ * awaiting answer with the ask card's data beside it (`ask-card.ts`, GRA-84) for the host to render.
+ */
 export type ConnectionRequestOutcome =
   | { isError: false; answer: Connected }
-  | { isError: true; answer: Record<string, unknown> };
+  | { isError: true; answer: Record<string, unknown>; card?: AskCard };
 
 /** The proposal as the agent sends it, before normalisation. */
 export type ConnectionProposalInput = {
@@ -583,6 +590,7 @@ export async function requestConnection(
     awaiting: "awaiting_connection",
     what: `${payload.displayName} (${payload.vendor})`,
     declinedReason: "connection_declined",
+    card: (url, agentName) => connectionAskCard({ action, agentName, payload, url }),
     onConnected: (connection) => {
       // The connection's execute tool is now in this agent's list (ADR 0003).
       notifier?.changed(scope.agentId);
@@ -796,6 +804,7 @@ export async function requestCredential(
     awaiting: "awaiting_credential",
     what: `${connection.displayName} (${connection.vendor})`,
     declinedReason: "credential_declined",
+    card: (url, agentName) => credentialAskCard({ action, agentName, payload, url }),
     onConnected: (row) => connected(row, "credential"),
     awaitingMessage: (url, expiresAt) =>
       `Graft needs the person to re-enter the credential for ${connection.displayName} (${connection.vendor}) in the console — the secret never passes through you. ` +
@@ -849,6 +858,8 @@ async function waitForAnswer(
     awaitingMessage: (url: string, expiresAt: string) => string;
     /** What the awaiting answer carries beyond the link — the redirect URI of an OAuth proposal, or a link provider's name. */
     awaitingExtra?: Pick<AwaitingHandoff, "redirectUri" | "provider">;
+    /** The ask card's data for a host that renders one (GRA-84), given the link and the agent's name. */
+    card: (url: string, agentName: string) => AskCard;
   },
 ): Promise<ConnectionRequestOutcome> {
   const url = handoffUrl(
@@ -894,7 +905,9 @@ async function waitForAnswer(
     message: ask.awaitingMessage(url, expiresAt),
     ...ask.awaitingExtra,
   };
-  return { isError: true, answer: awaiting };
+  // The agent's name is read here, on the ask path alone: the card shows who is asking.
+  const agent = await getAgent(ctx, { personId: scope.personId }, scope.agentId, deps.agent);
+  return { isError: true, answer: awaiting, card: ask.card(url, agent?.name ?? scope.agentId) };
 }
 
 async function settle(

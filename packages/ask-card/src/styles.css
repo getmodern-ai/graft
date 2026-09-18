@@ -1,0 +1,410 @@
+/*
+ * The ask card's stylesheet (GRA-84). Drawn with Cando's design system (ADR 0017): the block
+ * between the `cando:tokens:start`/`end` sentinels is a copy of the console's
+ * (`apps/web/src/index.css`, itself a copy of Cando's managed block) — copied whole, never edited
+ * here, re-synced by copying the console's block again. Every colour outside the block is a
+ * `var(--…)` over it; `src/bundle.test.ts` fails the build on a colour literal anywhere else in
+ * the page, which is the console's `check-colours` rule applied to one file.
+ *
+ * Dark mode is the `.dark` class on `<html>`, as in the console; `src/main.ts` sets it from the
+ * host's `hostContext.theme`. The type stack is the system's: GT Standard is licensed for the
+ * console (GRA-49), and this page is not the console. A host that hands over `--font-sans` in its
+ * style variables is honoured first; the fallback is the platform's own face.
+ */
+/* cando:tokens:start. Managed by cando-import-variables. Edit source tokens, not this block.
+ *
+ * The complete Mode collection of Cando's design-system file — all 87 colour tokens, both modes,
+ * plus `--radius` — copied from `packages/ui/src/styles/globals.css` at Cando `origin/main`
+ * 78c94829 (2026-09-11). Names mirror the Figma variable path exactly, with `/` as `-`, so
+ * `--custom-bg-input-30` is `custom/bg-input-30` and nothing needs translating in either
+ * direction; that is also why `sidebar/sidebar` is `--sidebar-sidebar` and `chart/chart-1` is
+ * `--chart-chart-1`, with the shadcn names restored as `@theme` aliases further down.
+ *
+ * Two things to know before "fixing" a value here, both inherited from Cando and both deliberate
+ * there: the solid primary is #fd6a41 while every tinted `custom/*-primary-*` variant, `focus` and
+ * `ring-focus` sit on the previous #fd5a2a — the source's own state, imported faithfully; and the
+ * dark `--destructive` and `--destructive-foreground` depart from the Figma source, which mis-aims
+ * both aliases into unreadable contrast (Cando's CAN-130). The argument for each is in Cando's
+ * copy of this comment; ours records only that they are copied, not invented.
+ */
+:root {
+  --radius: 0.625rem;
+  --accent: oklch(0.963 0.0042 56.37);
+  --accent-foreground: oklch(0.25 0.0072 67.49);
+  --background: oklch(1 0 0);
+  --border: oklch(0.928 0.0068 53.44);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.157 0.0066 55.82);
+  --chart-chart-1: oklch(0.701 0.1885 36.31);
+  --chart-chart-2: oklch(0.672 0.1574 246.5);
+  --chart-chart-3: oklch(0.642 0.2122 302.97);
+  --chart-chart-4: oklch(0.745 0.1539 159.02);
+  --chart-chart-5: oklch(0.82 0.1433 72.83);
+  --custom-bg-destructive-10: oklch(0.531 0.1933 25.14 / 10%);
+  --custom-bg-destructive-20: oklch(0.531 0.1933 25.14 / 20%);
+  --custom-bg-input-100-80: oklch(0.928 0.0068 53.44);
+  --custom-bg-input-20-30: oklch(0.893 0.0094 52.09 / 20%);
+  --custom-bg-input-20-50: oklch(0.893 0.0094 52.09 / 20%);
+  --custom-bg-input-30: oklch(0.893 0.0094 52.09 / 30%);
+  --custom-bg-input-30-50: oklch(0.893 0.0094 52.09 / 30%);
+  --custom-bg-input-30-trans-light: oklch(1 0 0);
+  --custom-bg-input-50: oklch(0.893 0.0094 52.09 / 50%);
+  --custom-bg-input-50-trans-light: oklch(1 0 0);
+  --custom-bg-input-80: oklch(0.893 0.0094 52.09 / 80%);
+  --custom-bg-input-90: oklch(0.893 0.0094 52.09 / 90%);
+  --custom-bg-muted-50: oklch(0.977 0.0034 67.78 / 50%);
+  --custom-bg-primary-10: oklch(0.68 0.2071 36.25 / 10%);
+  --custom-bg-primary-5: oklch(0.68 0.2071 36.25 / 5%);
+  --custom-bg-primary-80: oklch(0.68 0.2071 36.25 / 80%);
+  --custom-bg-secondary-80: oklch(0.977 0.0034 67.78 / 80%);
+  --custom-border-50: oklch(0.928 0.0068 53.44 / 50%);
+  --custom-border-primary-30: oklch(0.68 0.2071 36.25 / 30%);
+  --custom-border-primary-checked: oklch(0.68 0.2071 36.25 / 30%);
+  --custom-border-subtle: oklch(0.157 0.0066 55.82 / 5%);
+  --custom-brand-amber: oklch(0.82 0.1433 72.83);
+  --custom-brand-blue: oklch(0.672 0.1574 246.5);
+  --custom-brand-green: oklch(0.745 0.1539 159.02);
+  --custom-brand-orange: oklch(0.701 0.1885 36.31);
+  --custom-brand-purple: oklch(0.642 0.2122 302.97);
+  --custom-brand-red: oklch(0.63 0.2294 25.06);
+  --custom-dark-input: oklch(1 0 0 / 0%);
+  --custom-destructive-70: oklch(0.531 0.1933 25.14 / 70%);
+  --custom-destructive-90: oklch(0.531 0.1933 25.14 / 90%);
+  --custom-destructive-border-40: oklch(0.531 0.1933 25.14 / 40%);
+  --custom-destructive-focus: oklch(0.531 0.1933 25.14 / 20%);
+  --custom-foreground-10: oklch(0.157 0.0066 55.82 / 10%);
+  --custom-foreground-5: oklch(0.157 0.0066 55.82 / 5%);
+  --custom-foreground-5-10: oklch(0.157 0.0066 55.82 / 5%);
+  --custom-foreground-70: oklch(0.157 0.0066 55.82 / 70%);
+  --custom-muted-foreground-10: oklch(0.524 0.0078 53.34 / 10%);
+  --custom-switch-off-thumb-bg: oklch(1 0 0);
+  --custom-switch-on-thumb-bg: oklch(1 0 0);
+  --destructive: oklch(0.531 0.1933 25.14);
+  --destructive-foreground: oklch(1 0 0);
+  --foreground: oklch(0.157 0.0066 55.82);
+  --info: oklch(0.471 0.1106 246.53);
+  --info-foreground: oklch(0.99 0.0051 247.88);
+  --info-ring: oklch(0.84 0.0764 246.41);
+  --input: oklch(0.802 0.0088 56.28);
+  --muted: oklch(0.977 0.0034 67.78);
+  --muted-foreground: oklch(0.524 0.0078 53.34);
+  --opacity-100: oklch(1 0 0 / 0%);
+  --opacity-30: oklch(1 0 0 / 70%);
+  --opacity-50: oklch(1 0 0 / 50%);
+  --opacity-80: oklch(1 0 0 / 20%);
+  --opacity-90: oklch(1 0 0 / 10%);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.157 0.0066 55.82);
+  --primary: oklch(0.701 0.1885 36.31);
+  --primary-foreground: oklch(0.157 0.0066 55.82);
+  --ring: oklch(0.68 0.2071 36.25);
+  --ring-focus: oklch(0.68 0.2071 36.25 / 50%);
+  --secondary: oklch(0.977 0.0034 67.78);
+  --secondary-foreground: oklch(0.25 0.0072 67.49);
+  --sidebar-accent: oklch(0.963 0.0042 56.37);
+  --sidebar-accent-foreground: oklch(0.25 0.0072 67.49);
+  --sidebar-border: oklch(0.928 0.0068 53.44);
+  --sidebar-foreground: oklch(0.157 0.0066 55.82);
+  --sidebar-primary: oklch(0.68 0.2071 36.25);
+  --sidebar-primary-foreground: oklch(0.157 0.0066 55.82);
+  --sidebar-ring: oklch(0.68 0.2071 36.25 / 64%);
+  --sidebar-sidebar: oklch(0.989 0.0017 67.8);
+  --success: oklch(0.448 0.1083 151.33);
+  --success-80: oklch(0.448 0.1083 151.33 / 80%);
+  --success-foreground: oklch(0.972 0.0368 159.02);
+  --success-ring: oklch(0.869 0.1798 158.99);
+  --warning: oklch(0.52 0.1047 73);
+  --warning-foreground: oklch(0.99 0.0068 67.75);
+  --warning-ring: oklch(0.898 0.0769 72.94);
+}
+
+.dark {
+  --accent: oklch(0.34 0.0066 48.52);
+  --accent-foreground: oklch(0.963 0.0042 56.37);
+  --background: oklch(0.157 0.0066 55.82);
+  --border: oklch(0.434 0.0072 59.51);
+  --card: oklch(0.203 0.0062 56.01);
+  --card-foreground: oklch(0.963 0.0042 56.37);
+  --chart-chart-1: oklch(0.701 0.1885 36.31);
+  --chart-chart-2: oklch(0.728 0.1345 246.08);
+  --chart-chart-3: oklch(0.703 0.1715 302.76);
+  --chart-chart-4: oklch(0.786 0.1619 159.19);
+  --chart-chart-5: oklch(0.846 0.1202 73.24);
+  --custom-bg-destructive-10: oklch(0.63 0.2294 25.06 / 10%);
+  --custom-bg-destructive-20: oklch(0.63 0.2294 25.06 / 20%);
+  --custom-bg-input-100-80: oklch(0.963 0.0042 56.37 / 12%);
+  --custom-bg-input-20-30: oklch(0.963 0.0042 56.37 / 5%);
+  --custom-bg-input-20-50: oklch(0.963 0.0042 56.37 / 9%);
+  --custom-bg-input-30: oklch(0.963 0.0042 56.37 / 5%);
+  --custom-bg-input-30-50: oklch(0.963 0.0042 56.37 / 9%);
+  --custom-bg-input-30-trans-light: oklch(0.963 0.0042 56.37 / 4%);
+  --custom-bg-input-50: oklch(0.963 0.0042 56.37 / 9%);
+  --custom-bg-input-50-trans-light: oklch(0.963 0.0042 56.37 / 9%);
+  --custom-bg-input-80: oklch(0.963 0.0042 56.37 / 13%);
+  --custom-bg-input-90: oklch(0.963 0.0042 56.37 / 15%);
+  --custom-bg-muted-50: oklch(0.295 0.0069 67.56 / 50%);
+  --custom-bg-primary-10: oklch(0.68 0.2071 36.25 / 10%);
+  --custom-bg-primary-5: oklch(0.68 0.2071 36.25 / 10%);
+  --custom-bg-primary-80: oklch(0.68 0.2071 36.25 / 80%);
+  --custom-bg-secondary-80: oklch(0.295 0.0069 67.56 / 80%);
+  --custom-border-50: oklch(0.295 0.0069 67.56 / 50%);
+  --custom-border-primary-30: oklch(0.68 0.2071 36.25 / 20%);
+  --custom-border-primary-checked: oklch(0.68 0.2071 36.25 / 20%);
+  --custom-border-subtle: oklch(0.963 0.0042 56.37 / 10%);
+  --custom-brand-amber: oklch(0.82 0.1433 72.83);
+  --custom-brand-blue: oklch(0.672 0.1574 246.5);
+  --custom-brand-green: oklch(0.745 0.1539 159.02);
+  --custom-brand-orange: oklch(0.701 0.1885 36.31);
+  --custom-brand-purple: oklch(0.642 0.2122 302.97);
+  --custom-brand-red: oklch(0.63 0.2294 25.06);
+  --custom-dark-input: oklch(0.963 0.0042 56.37 / 15%);
+  --custom-destructive-70: oklch(0.63 0.2294 25.06 / 70%);
+  --custom-destructive-90: oklch(0.63 0.2294 25.06 / 90%);
+  --custom-destructive-border-40: oklch(0.63 0.2294 25.06 / 40%);
+  --custom-destructive-focus: oklch(0.63 0.2294 25.06 / 40%);
+  --custom-foreground-10: oklch(0.963 0.0042 56.37 / 10%);
+  --custom-foreground-5: oklch(0.963 0.0042 56.37 / 5%);
+  --custom-foreground-5-10: oklch(0.963 0.0042 56.37 / 10%);
+  --custom-foreground-70: oklch(0.963 0.0042 56.37 / 70%);
+  --custom-muted-foreground-10: oklch(0.71 0.0091 56.26 / 10%);
+  --custom-switch-off-thumb-bg: oklch(0.963 0.0042 56.37);
+  --custom-switch-on-thumb-bg: oklch(1 0 0);
+  --destructive: oklch(0.63 0.2294 25.06);
+  --destructive-foreground: oklch(1 0 0);
+  --foreground: oklch(0.963 0.0042 56.37);
+  --info: oklch(0.783 0.1049 246.49);
+  --info-foreground: oklch(0.172 0.0403 245.18);
+  --info-ring: oklch(0.371 0.0869 246.57);
+  --input: oklch(0.524 0.0078 53.34);
+  --muted: oklch(0.295 0.0069 67.56);
+  --muted-foreground: oklch(0.71 0.0091 56.26);
+  --opacity-100: oklch(0 0 0 / 0%);
+  --opacity-30: oklch(0 0 0 / 70%);
+  --opacity-50: oklch(0 0 0 / 50%);
+  --opacity-80: oklch(0 0 0 / 20%);
+  --opacity-90: oklch(0 0 0 / 10%);
+  --popover: oklch(0.25 0.0072 67.49);
+  --popover-foreground: oklch(0.963 0.0042 56.37);
+  --primary: oklch(0.701 0.1885 36.31);
+  --primary-foreground: oklch(0.157 0.0066 55.82);
+  --ring: oklch(0.701 0.1885 36.31);
+  --ring-focus: oklch(0.701 0.1885 36.31 / 50%);
+  --secondary: oklch(0.295 0.0069 67.56);
+  --secondary-foreground: oklch(0.928 0.0068 53.44);
+  --sidebar-accent: oklch(0.295 0.0069 67.56);
+  --sidebar-accent-foreground: oklch(0.963 0.0042 56.37);
+  --sidebar-border: oklch(0.295 0.0069 67.56);
+  --sidebar-foreground: oklch(0.893 0.0094 52.09);
+  --sidebar-primary: oklch(0.68 0.2071 36.25);
+  --sidebar-primary-foreground: oklch(0.157 0.0066 55.82);
+  --sidebar-ring: oklch(0.701 0.1885 36.31 / 64%);
+  --sidebar-sidebar: oklch(0.203 0.0062 56.01);
+  --success: oklch(0.627 0.1699 149.21);
+  --success-80: oklch(0.627 0.1699 149.21 / 80%);
+  --success-foreground: oklch(0.247 0.0516 157.94);
+  --success-ring: oklch(0.445 0.0918 159.1);
+  --warning: oklch(0.846 0.1202 73.24);
+  --warning-foreground: oklch(0.32 0.0643 73.96);
+  --warning-ring: oklch(0.52 0.1047 73);
+}
+/* cando:tokens:end */
+
+/* The page. Transparent so the host's card frame shows through where it draws one; the host's
+ * theme decides the colour underneath, and the card's own surfaces are `--card` and `--muted`. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: none;
+}
+
+body {
+  color: var(--foreground);
+  font-family: var(
+    --font-sans,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif
+  );
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Cando's card anatomy: a bordered surface, a header, a body of rows, a footer of actions. */
+.ask {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 560px;
+}
+
+.ask-eyebrow {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+
+.ask-title {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.ask-description {
+  margin: 6px 0 0;
+  color: var(--muted-foreground);
+}
+
+/* The facts, as the console's `Item` rows: a label, a value, an inset divider between rows. */
+.ask-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0 16px;
+  margin: 0;
+  padding: 0 12px;
+  background: var(--muted);
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.ask-facts > div {
+  display: contents;
+}
+
+.ask-facts dt,
+.ask-facts dd {
+  margin: 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.ask-facts dt {
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.ask-facts dd {
+  overflow-wrap: anywhere;
+}
+
+/* The first row has no divider above it; after the two rules above, since it outranks them. */
+.ask-facts > div:first-child dt,
+.ask-facts > div:first-child dd {
+  border-top: 0;
+}
+
+.ask-mono {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 13px;
+}
+
+/* A labelled control with a sentence beside it — the console's `Item` with a checkbox. */
+.ask-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.ask-choice input {
+  margin: 3px 0 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+  flex: none;
+}
+
+.ask-choice span {
+  color: var(--foreground);
+}
+
+.ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Cando's Button: default is the primary fill, secondary the muted surface; 36px tall. */
+.ask-button {
+  appearance: none;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: calc(var(--radius) - 2px);
+  border: 0;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.ask-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.ask-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ask-button-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.ask-button-primary:not(:disabled):hover {
+  background: var(--custom-bg-primary-80);
+}
+
+.ask-button-secondary {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+  border: 1px solid var(--border);
+}
+
+.ask-button-secondary:not(:disabled):hover {
+  background: var(--accent);
+}
+
+/* The outcome, in the actions' place: one sentence, `role="status"` so it is announced. */
+.ask-outcome {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.ask-outcome[data-tone="refused"] {
+  background: var(--custom-bg-destructive-10);
+  color: var(--destructive);
+}
+
+/* The provenance sentence the console's card shows under a proposal (GRA-28). */
+.ask-note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}

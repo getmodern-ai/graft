@@ -1,3 +1,4 @@
+import { readAskCardHtml } from "@graft/ask-card";
 import { checkModule, type ModuleCheck } from "@graft/check";
 import {
   type AcquireJobDeps,
@@ -95,6 +96,12 @@ export type McpDeps = {
   toolbox?: ToolboxReader | null;
   /** Absent, `publish_tool` refuses `publish_unconfigured`. */
   publishTool?: PublishTool | null;
+  /**
+   * The ask card's page, the body of `resources/read` for `ui://graft/ask` (`ask-card.ts`,
+   * GRA-84) — `@graft/ask-card`'s built `dist/ask.html` by default, read once. A test hands in a
+   * string; a deployment never sets it.
+   */
+  askCardHtml?: () => Promise<string>;
   /** The `tools/list_changed` rate limit's window (`notifier.ts`); a test sets it low. */
   listChangedWindowMs?: number;
   now?: () => Date;
@@ -178,6 +185,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     readWebPage: (args) => readWebPage(args),
     toolbox: publish?.store ?? null,
     publishTool: publish ? (args) => publishToolVersion(publish, args) : null,
+    askCardHtml: () => readAskCardHtml(),
     notifier: createToolListChangedNotifier({ windowMs: input.listChangedWindowMs }),
     inFlight: createInFlightRegistry(),
     ...rest,
