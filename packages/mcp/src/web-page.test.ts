@@ -1,6 +1,13 @@
+import { fetch as undiciFetch } from "undici";
 import { describe, expect, it } from "vitest";
 
-import { checkUrl, htmlToText, readWebPage, type WebPageDeps } from "./web-page";
+import {
+  checkUrl,
+  defaultWebPageDeps,
+  htmlToText,
+  readWebPage,
+  type WebPageDeps,
+} from "./web-page";
 
 /**
  * The page reader's guards, without a network: the URL rule, the resolved-address rule, the
@@ -92,6 +99,14 @@ describe("readWebPage", () => {
       }),
     );
     expect(second).toMatchObject({ ok: true, offset: first.nextOffset });
+  });
+
+  it("fetches with undici's own fetch, the copy the pinned Agent belongs to (GRA-91)", () => {
+    // The global fetch is Node's bundled undici, a different copy: handed the package's `Agent` as
+    // its dispatcher it fails every read with "invalid onRequestStart method". The module's header
+    // has the argument; this pins the pairing so a tidy-up cannot put the global back.
+    expect(defaultWebPageDeps.fetch).toBe(undiciFetch);
+    expect(defaultWebPageDeps.fetch).not.toBe(globalThis.fetch);
   });
 });
 
