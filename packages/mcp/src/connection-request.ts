@@ -365,24 +365,6 @@ export function normaliseProposal(input: ConnectionProposalInput): ProposalVerdi
   // A proposal: the person-entered parameters — an OAuth client id — may be absent (ADR 0005).
   const configProblem = validateSchemeConfig(input.scheme, schemeConfig, { proposal: true });
   if (configProblem) return invalid(configProblem, { field: "schemeConfig" });
-  const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
-  if (!hostSet.ok) {
-    return {
-      ok: false,
-      reason: hostSet.reason === HOST_NOT_PUBLIC ? HOST_NOT_PUBLIC : "input_invalid",
-      message: hostSet.problem,
-      details: hostSet.host ? { host: hostSet.host } : {},
-    };
-  }
-  // Sign-in endpoints are not hosts (GRA-89): set aside here, so the provider, the open-ask match
-  // and the row all see the same set; a primary host that is one is the proposal's fault to fix.
-  const signIn = setAsideSignInHosts(
-    input.scheme,
-    schemeConfig,
-    hostSet.primaryHost,
-    hostSet.hosts,
-  );
-  if (!signIn.ok) return invalid(signIn.problem, { field: "primaryHost", host: signIn.host });
   let docsUrl: string | null = null;
   if (input.docsUrl !== undefined && input.docsUrl.trim().length > 0) {
     try {
@@ -393,6 +375,26 @@ export function normaliseProposal(input: ConnectionProposalInput): ProposalVerdi
       return invalid("docsUrl must be an http(s) URL — the page you read", { field: "docsUrl" });
     }
   }
+  // The host rules come last, and the sign-in rule last of all (GRA-89): its note names hosts set
+  // aside from a proposal that proceeds, so nothing refused for its shape carries one. Set aside
+  // here, so the provider, the open-ask match and the row all see the same set; a primary host
+  // that is a sign-in endpoint is the proposal's fault to fix.
+  const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
+  if (!hostSet.ok) {
+    return {
+      ok: false,
+      reason: hostSet.reason === HOST_NOT_PUBLIC ? HOST_NOT_PUBLIC : "input_invalid",
+      message: hostSet.problem,
+      details: hostSet.host ? { host: hostSet.host } : {},
+    };
+  }
+  const signIn = setAsideSignInHosts(
+    input.scheme,
+    schemeConfig,
+    hostSet.primaryHost,
+    hostSet.hosts,
+  );
+  if (!signIn.ok) return invalid(signIn.problem, { field: "primaryHost", host: signIn.host });
   return {
     ok: true,
     payload: {

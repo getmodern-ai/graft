@@ -408,6 +408,15 @@ describe("the proposal's rules, before any record exists", () => {
     });
     // A key-shaped proposal has nothing to set aside, and says so with an empty list.
     expect(normaliseProposal(PROPOSAL)).toMatchObject({ ok: true, hostsSetAside: [] });
+    // A refusal about the proposal's shape names the thing to fix and nothing about hosts set
+    // aside: the sign-in rule runs last, on a proposal that proceeds (Greptile on #66).
+    const refused = normaliseProposal({ ...hermes, docsUrl: "not a url" });
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: "input_invalid",
+      details: { field: "docsUrl" },
+    });
+    expect(refused).not.toHaveProperty("hostsSetAside");
   });
 
   it("reads an answer that names a connection, and nothing else", () => {
