@@ -5,12 +5,19 @@ import {
   createGatewayProvider,
   createPipedreamProvider,
   keyringProvider,
+  type ProviderConnect,
   providerListProblem,
 } from "@graft/core";
 import { consoleTransport, createSmtpTransport, type EmailTransport } from "@graft/email";
 import type { ServerEnv } from "@graft/env/server";
 import { createPipedreamClient, type PipedreamClient } from "@graft/pipedream";
-import { createUpstreamFetch } from "@graft/proxy";
+import {
+  AUTH_SCHEMES,
+  createUpstreamFetch,
+  isAuthScheme,
+  isRelayScheme,
+  RELAY_SCHEMES,
+} from "@graft/proxy";
 import { createFakeSandboxBackend } from "@graft/sandbox/fake";
 import type { SandboxBackend } from "@graft/sandbox/types";
 import { createDockerSandboxBackend } from "@graft/sandbox-docker";
@@ -412,14 +419,24 @@ const STORE_MEMBERS = ["readTree", "writeTree", "read", "list", "exists", "remov
 
 /** A connection provider's functions (`ConnectionProvider` in `@graft/core`), and how it connects. */
 const PROVIDER_MEMBERS = ["covers", "resolve", "revoke"] as const;
-const PROVIDER_CONNECT_KINDS = new Set(["form", "link", "none"]);
+/**
+ * How a refusal names each way a provider connects, keyed by `ProviderConnect`'s kinds so a kind
+ * added to the type has to be given a sentence here, and so a check for its shape, before this compiles.
+ */
+const PROVIDER_CONNECT_NAMES = {
+  form: "a form",
+  link: "a link",
+  none: "no person step",
+} satisfies Record<ProviderConnect["kind"], string>;
+const PROVIDER_CONNECT_KINDS = new Set<string>(Object.keys(PROVIDER_CONNECT_NAMES));
 /** What a provider that connects with a link carries beyond the word (`ProviderLink` in `@graft/core`). */
 const PROVIDER_LINK_MEMBERS = ["target", "start", "complete"] as const;
 
 /**
  * Throw unless `value` carries the three seams — and, when it carries a store, the whole store,
- * when it carries providers, a list of whole providers, and when it carries a mail transport, a
- * named one that sends — naming the first thing that is missing.
+ * when it carries providers, a list of whole providers each connecting in a shape `ProviderConnect`
+ * would accept, and when it carries a mail transport, a named one that sends — naming the first
+ * thing that is missing.
  */
 export function assertCloudBackings(
   value: unknown,
@@ -494,17 +511,50 @@ export function assertCloudBackings(
           );
         }
       }
-      if (connect.kind === "link") {
+      const kind = connect.kind as keyof typeof PROVIDER_CONNECT_NAMES;
+      const connects = `provider ${p.name}, which connects with ${PROVIDER_CONNECT_NAMES[kind]},`;
+      if (kind === "link") {
         for (const member of PROVIDER_LINK_MEMBERS) {
           if (typeof connect[member] !== "function") {
             throw new Error(
-              `${specifier}'s createCloudBackings returned provider ${p.name}, which connects with a link, without connect.${member}()`,
+              `${specifier}'s createCloudBackings returned ${connects} without connect.${member}()`,
             );
           }
         }
-        if (typeof connect.scheme !== "string" || connect.scheme.length === 0) {
+      }
+      if (kind === "link" || kind === "none") {
+        // Both relay kinds record their scheme on every row they make, and `ProviderConnect` requires
+        // one the proxy implements. The private package is hand-declared on its side of the seam, so
+        // the runtime check holds it to the same rule: a package built against the older
+        // `{ kind: "none" }` is refused here, at boot, rather than at its first relay (GRA-62).
+        const scheme = connect.scheme;
+        if (typeof scheme !== "string" || scheme.length === 0) {
           throw new Error(
-            `${specifier}'s createCloudBackings returned provider ${p.name}, which connects with a link, with no relay scheme`,
+            `${specifier}'s createCloudBackings returned ${connects} with no relay scheme`,
+          );
+        }
+        if (!isRelayScheme(scheme)) {
+          throw new Error(
+            `${specifier}'s createCloudBackings returned ${connects} with relay scheme ${scheme}, which is not one of ${RELAY_SCHEMES.join(", ")}`,
+          );
+        }
+      }
+      if (kind === "form") {
+        // A form is the console's scheme picker over these, so it needs at least one, and each one a
+        // scheme the proxy signs with: a relay scheme is never a person's choice (`RELAY_SCHEMES` in
+        // `@graft/proxy`).
+        const schemes = connect.schemes;
+        if (!Array.isArray(schemes) || schemes.length === 0) {
+          throw new Error(
+            `${specifier}'s createCloudBackings returned ${connects} with no schemes`,
+          );
+        }
+        const stranger = (schemes as unknown[]).findIndex(
+          (scheme) => typeof scheme !== "string" || !isAuthScheme(scheme),
+        );
+        if (stranger !== -1) {
+          throw new Error(
+            `${specifier}'s createCloudBackings returned ${connects} with scheme ${String(schemes[stranger])}, which is not one of ${AUTH_SCHEMES.join(", ")}`,
           );
         }
       }
