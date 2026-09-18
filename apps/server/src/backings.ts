@@ -540,9 +540,9 @@ export function assertCloudBackings(
         }
       }
       if (kind === "form") {
-        // A form is the console's scheme picker over these, so it needs at least one, and each one a
-        // scheme the proxy signs with: a relay scheme is never a person's choice (`RELAY_SCHEMES` in
-        // `@graft/proxy`).
+        // A form is the console's scheme picker over these, so it needs at least one, as the type's
+        // non-empty tuple says, and each one a scheme the proxy signs with: a relay scheme is never
+        // a person's choice (`RELAY_SCHEMES` in `@graft/proxy`).
         const schemes = connect.schemes;
         if (!Array.isArray(schemes) || schemes.length === 0) {
           throw new Error(
