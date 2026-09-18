@@ -84,6 +84,37 @@ export async function deleteWorkingSetEntry(
   return row ?? null;
 }
 
+/**
+ * A revoke's fourth sweep (ADR 0009 as amended 2026-09-18; GRA-69): every working-set entry, for
+ * every agent of the person at once (ADR 0007), whose tool is bound to the connection. A promoted
+ * tool that cannot run leaves the list; the tool itself stays in the toolbox. Person-scoped through
+ * the tool, as `repo/approval.ts`'s `deleteApprovalsForVendor` is, and answers what it deleted so
+ * the service can record each entry's change with its cause.
+ */
+export async function deleteWorkingSetEntriesForConnection(
+  db: DbOrTx,
+  personId: string,
+  connectionId: string,
+): Promise<WorkingSetRow[]> {
+  return db
+    .delete(workingSet)
+    .where(
+      inArray(
+        workingSet.toolId,
+        db
+          .select({ id: authoredTool.id })
+          .from(authoredTool)
+          .where(
+            and(
+              eq(authoredTool.personId, personId),
+              eq(authoredTool.defaultConnectionId, connectionId),
+            ),
+          ),
+      ),
+    )
+    .returning();
+}
+
 /** The contraction rule's clock (ADR 0009): every invocation moves `last_used_at`. */
 export async function touchWorkingSetUsed(
   db: DbOrTx,

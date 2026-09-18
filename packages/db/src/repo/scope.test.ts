@@ -15,6 +15,7 @@ import {
 } from "./acquire-job";
 import {
   listAgentConnectionIds,
+  listAgentIdsForConnection,
   listAllActiveAgents,
   replaceAgentConnections,
   revokeAgent,
@@ -38,7 +39,12 @@ import { countPersons, markPersonEmailVerified } from "./person";
 import { deletePersonModelKey, findPersonModelKey, upsertPersonModelKey } from "./person-model-key";
 import { findToolVersion, listToolVersions, setCurrentToolVersion } from "./tool";
 import { listUsage, listUsageForVendor } from "./usage";
-import { deleteWorkingSetEntry, listWorkingSet, touchWorkingSetUsed } from "./working-set";
+import {
+  deleteWorkingSetEntriesForConnection,
+  deleteWorkingSetEntry,
+  listWorkingSet,
+  touchWorkingSetUsed,
+} from "./working-set";
 
 /**
  * **The scope is in the SQL** — GRA-6's acceptance criterion, asserted on the statements
@@ -407,6 +413,29 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain(
       '"tool_id" in (select "id" from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."vendor" = $2))',
     );
+  });
+
+  /** A revoke's fourth sweep (GRA-69): every agent's entries, through the person's tools bound to the connection. */
+  it("the connection-wide working-set delete reaches only the person's tools bound to the connection", async () => {
+    await deleteWorkingSetEntriesForConnection(db, "person_1", "conn_1");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "working_set"/);
+    expect(s.sql).toContain(
+      '"tool_id" in (select "id" from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."default_connection_id" = $2))',
+    );
+    expect(s.params).toEqual(["person_1", "conn_1"]);
+  });
+
+  /** The agents a revoke announces to (GRA-69): those whose scope names the connection, under the person. */
+  it("the agents whose scope names a connection are read under the person", async () => {
+    await listAgentIdsForConnection(db, "person_1", "conn_1");
+    const s = only();
+    expect(s.sql).toMatch(/^select "agent_id" from "agent_connection" where/);
+    expect(s.sql).toContain('"agent_connection"."connection_id" = $1');
+    expect(s.sql).toContain(
+      '"agent_connection"."agent_id" in (select "id" from "agent" where "agent"."person_id" = $2)',
+    );
+    expect(s.params).toEqual(["conn_1", "person_1"]);
   });
 });
 

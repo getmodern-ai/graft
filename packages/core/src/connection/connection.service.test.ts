@@ -137,6 +137,9 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
     expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
+    deleteWorkingSetEntriesForConnection: vi.fn(async () => []),
+    insertWorkingSetChange: vi.fn(async (_db, input) => input as never),
+    listAgentIdsForConnection: vi.fn(async () => []),
     vault: fakeVault(),
     providers: DEFAULT_PROVIDERS,
     newId: () => "conn_new",
@@ -942,8 +945,56 @@ describe("revokeConnection", () => {
       approvalsDeleted: 2,
       buildApprovalsDeleted: 1,
       pendingActionsExpired: 3,
+      demoted: [],
+      affectedAgentIds: [],
     });
     expect(result?.connection.revokedAt).toEqual(NOW);
+    expect(deps.insertWorkingSetChange).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ADR 0009 as amended 2026-09-18 (GRA-69): a promoted tool bound to the connection leaves every
+   * agent's list because it cannot run, recorded with its own cause; the tool itself is not touched.
+   */
+  it("demotes every agent's promoted tools bound to the connection with cause revoke, inside the transaction, and names every agent whose list changed", async () => {
+    const entry = (agentId: string, toolId: string) =>
+      ({ agentId, toolId, promotedAt: NOW, lastUsedAt: null, promotedBy: "agent" }) as never;
+    const deps = fakeDeps({
+      deleteWorkingSetEntriesForConnection: vi.fn(async () => [
+        entry("agent_2", "tool_1"),
+        entry("agent_1", "tool_2"),
+      ]),
+      // Agent 3 holds the connection in its scope with nothing promoted: its execute tool goes.
+      listAgentIdsForConnection: vi.fn(async () => ["agent_1", "agent_3"]),
+    });
+    const transaction = vi.spyOn(fakeDb, "transaction");
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(deps.deleteWorkingSetEntriesForConnection).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "conn_1",
+    );
+    expect(deps.insertWorkingSetChange).toHaveBeenCalledTimes(2);
+    expect(deps.insertWorkingSetChange).toHaveBeenCalledWith(fakeDb, {
+      id: "conn_new",
+      agentId: "agent_2",
+      toolId: "tool_1",
+      change: "demote",
+      cause: "revoke",
+      createdAt: NOW,
+    });
+    expect(deps.insertWorkingSetChange).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ agentId: "agent_1", toolId: "tool_2", cause: "revoke" }),
+    );
+    expect(deps.listAgentIdsForConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    expect(result?.demoted).toEqual([
+      { agentId: "agent_2", toolId: "tool_1" },
+      { agentId: "agent_1", toolId: "tool_2" },
+    ]);
+    expect(result?.affectedAgentIds).toEqual(["agent_1", "agent_2", "agent_3"]);
   });
 
   it("answers null and sweeps nothing for a connection that is not the person's", async () => {
@@ -951,6 +1002,8 @@ describe("revokeConnection", () => {
     await expect(revokeConnection(ctx, PRINCIPAL, "conn_x", deps)).resolves.toBeNull();
     expect(deps.deleteApprovalsForVendor).not.toHaveBeenCalled();
     expect(deps.expirePendingActionsForConnection).not.toHaveBeenCalled();
+    expect(deps.deleteWorkingSetEntriesForConnection).not.toHaveBeenCalled();
+    expect(deps.listAgentIdsForConnection).not.toHaveBeenCalled();
   });
 });
 
