@@ -1,0 +1,32 @@
+{
+  "name": "@graft/ask-card",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./shape": {
+      "default": "./src/shape.ts"
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "check-types": "vite build && tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@graft/config": "workspace:*",
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@types/node": "catalog:",
+    "happy-dom": "^20.14.5",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-singlefile": "^2.3.3",
+    "vitest": "catalog:",
+    "zod": "catalog:"
+  }
+}

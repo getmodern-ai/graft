@@ -25,7 +25,11 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
   a claim with a date on it, so name the file or the ticket a reader can check in one step.
 - **Consent never moves inside the loop.** Secrets are entered in the console, never through a
   tool argument or a chat. Approvals are the person's. If a change would let Graft's own model
-  enter a credential or answer an approval, stop and read ADR 0004 and ADR 0006.
+  enter a credential or answer an approval, stop and read ADR 0004 and ADR 0006. The ask card a
+  chat product renders (ADR 0006 as amended 2026-09-18) answers exactly two asks — the build
+  approval and the keyless connection confirmation — only from an OAuth-connected agent's own
+  ask, through a tool the host hides from the model; read that amendment before touching
+  `packages/mcp/src/tools/answer-ask.ts` or widening what `answerable` admits.
 - **The approval grain is ADR 0008 as amended on 2026-09-15 and 2026-09-18.** Reads never ask; any
   other tool, destructive included, asks once per agent and the answer holds; asking on every call
   is the person's opt-in per tool (`askEveryCall`), both ways. The connection confirmation may
@@ -147,7 +151,9 @@ and default per provider — is required too; the fields and that rule are GRA-3
 tool call waits for a person to answer a handoff before returning
 `awaiting_approval` — or `awaiting_connection` / `awaiting_credential` for the two connection
 handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default
-24) how long that action stays answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the
+24) how long that action stays answerable (ADR 0006, ADR 0008). `GRAFT_CARD_HOSTS` (default
+`claude.ai,chatgpt.com`) names the chat products whose OAuth clients may answer the ask card, by the
+host of their registered redirect URIs (GRA-84; the paragraph on the card below). `packages/env/src/schema.ts` is the
 rules as code.
 
 **An OAuth consent (ADR 0005) adds no variable, two server routes and one console route.**
@@ -313,6 +319,30 @@ opening with when to call it (`tools/meta.ts`, `tools/authoring.ts`, `tools/exec
 `packages/mcp/src/session.test.ts` pins the shared sentences to `skills/hermes-graft/SKILL.md` and
 each description to its "when" sentence, so a rule changed in one place fails until the other says
 the same. Edit both, and re-run the live check the ticket records if the order of operations moves.
+
+**The ask card is an MCP App a chat product renders in place of the handoff link** (GRA-84; ADR 0006
+as amended 2026-09-18). `packages/ask-card` (`@graft/ask-card`) is one HTML page — plain TypeScript
+over `@modelcontextprotocol/ext-apps`'s `app-with-deps`, no React — that `vite build` with
+`vite-plugin-singlefile` inlines whole into `dist/ask.html`; hosts block external scripts and styles,
+so nothing may be linked. Its stylesheet carries a copy of the console's `cando:tokens` block and
+`src/bundle.test.ts` fails on a colour literal outside the `:root`/`.dark` rules (ADR 0017 over one
+file). The MCP server (`packages/mcp/src/ask-card.ts`, `session.ts`) declares `resources`, lists the
+one resource `ui://graft/ask` (`text/html;profile=mcp-app`, no `_meta.ui.csp`: the card fetches
+nothing) and serves the page from `@graft/ask-card`'s `ASK_CARD_HTML_PATH`, which resolves to
+`packages/ask-card/dist/ask.html` in a checkout and to `dist/ask.html` beside the server's bundle,
+where `apps/server/tsdown.config.ts` copies it and the Dockerfile's `build` stage builds it first.
+`acquire`, `request_connection` and `request_credential` carry `_meta.ui.resourceUri` unconditionally
+(Claude.ai declares no extension), and their awaiting results carry the card's data under
+`structuredContent.card` beside GRA-55's unchanged `url`, `message` and `reason` (`result.ts`'s
+`withCard`). The card answers by calling `answer_ask` (`tools/answer-ask.ts`), declared
+`_meta.ui.visibility: ["app"]` so the host hides it from the model; the tool refuses a static-token
+agent, an OAuth client whose hiding is not established (neither every registered redirect URI on a
+`GRAFT_CARD_HOSTS` host nor the MCP Apps extension declared in `initialize`), another agent's ask,
+a closed or expired ask, and every ask but the build approval and the
+keyless connection confirmation, and records the rest through `ask-answer.ts` — the same functions
+the console's `POST /pending-actions/:id/answer` and `/connection` call, with `via: "card"` on the
+answer. `packages/mcp/src/answer-ask.test.ts` is the suite; `pnpm --filter @graft/ask-card build`
+before `pnpm --filter @graft/mcp test` on a fresh checkout, or let `pnpm run test` order it.
 
 ### The self-hosted image
 

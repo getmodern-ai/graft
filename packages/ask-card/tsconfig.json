@@ -1,0 +1,13 @@
+{
+  "extends": "@graft/config/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Two programs in one tree: `src/index.ts` is Node's (it resolves the built page off
+    // `import.meta.url`) and everything the page runs is the browser's. `DOM` for the second,
+    // `node` for the first; `vite build` is what proves nothing of Node reaches the bundle.
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "vite.config.ts"],
+  "exclude": ["dist"]
+}

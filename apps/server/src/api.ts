@@ -2,10 +2,8 @@ import type { SocialProviderName } from "@graft/auth";
 import {
   type AgentDeps,
   type ApprovalDeps,
-  addConnectionToAgentScope,
   answerPendingAction,
   type ConnectionDeps,
-  consumePendingAction,
   createAgent,
   deletePersonModelKey,
   getAgent,
@@ -13,9 +11,7 @@ import {
   getConnection,
   getPendingActionForPerson,
   getPersonModelKey,
-  grantBuildApproval,
   isOAuthAuthorizationCode,
-  KEYRING_PROVIDER,
   type LedgerDeps,
   listAgents,
   listApprovals,
@@ -42,7 +38,6 @@ import {
   type ServiceErrorCode,
   type SessionLike,
   setAgentScope,
-  setApproval,
   setAskEveryCall,
   setConnectionCredential,
   setPersonModelKey,
@@ -58,10 +53,13 @@ import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
   CONNECTION_ASK_KIND,
   CREDENTIAL_ASK_KIND,
+  confirmConnectionAsk,
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
   handoffUrl,
-  readApprovalAnswer,
+  openAskOfKind,
+  recordApprovalAnswer,
+  refuseUnlessOpen,
   signHandoffToken,
   verifyHandoff,
 } from "@graft/mcp";
@@ -945,78 +943,26 @@ export function createApi(options: ApiOptions): Hono {
   api.post("/pending-actions/:id/answer", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, answerBody);
-    const id = c.req.param("id");
-    const result = await ctx.db.transaction(async (tx) => {
-      const scoped: ServiceContext = { db: tx };
-      const answer = {
+    // The record is `@graft/mcp`'s `recordApprovalAnswer` (GRA-84): the same writes the ask
+    // card's `answer_ask` makes, so the two doors cannot record two different things.
+    const result = await recordApprovalAnswer(
+      ctx,
+      principal,
+      c.req.param("id"),
+      {
         allow: body.allow,
         ...(body.askEveryCall === undefined ? {} : { askEveryCall: body.askEveryCall }),
-      };
-      const action = await answerPendingAction(scoped, principal, id, answer, pendingActionDeps);
-      const scope = { personId: principal.personId, agentId: action.agentId };
-      const said = readApprovalAnswer(action.answer);
-      /** Mark the answer spent; the agent may have taken it between the two statements, which is fine. */
-      const settle = async () => {
-        try {
-          await consumePendingAction(scoped, scope, action.id, pendingActionDeps);
-        } catch (error) {
-          if (!(error instanceof ServiceError && error.code === "CONFLICT")) throw error;
-        }
-      };
-      if (action.kind === "tool" && typeof action.payload.toolId === "string") {
-        const toolId = action.payload.toolId;
-        // The setting rides the yes in the same write. Not `setAskEveryCall`: that is the agent
-        // page's act and spends waiting answers, and this answer may have to wait for the agent.
-        const approval = await setApproval(
-          scoped,
-          scope,
-          toolId,
-          said.allow ? "allow" : "deny",
-          approvalDeps,
-          said.allow && said.askEveryCall !== undefined ? { askEveryCall: said.askEveryCall } : {},
-        );
-        if (!said.allow || !approval.askEveryCall) await settle();
-        return { pendingAction: action, approval };
-      }
-      if (
-        action.kind === "build" &&
-        said.allow &&
-        typeof action.payload.connectionId === "string"
-      ) {
-        const buildApproval = await grantBuildApproval(
-          scoped,
-          scope,
-          action.payload.connectionId,
-          approvalDeps,
-        );
-        await settle();
-        return { pendingAction: action, buildApproval };
-      }
-      return { pendingAction: action };
-    });
+      },
+      { approval: approvalDeps, pendingAction: pendingActionDeps },
+    );
     return c.json(result);
   });
 
   /**
    * The action a submit route is for: the person's, of the kind the route serves, unanswered and in
    * time — refused with the answer route's codes (409 answered or taken, 410 expired) before anything
-   * is written. The answer's own predicate refuses again inside the transaction, so two submits of
-   * one link make one connection and the second is told so.
+   * is written (`@graft/mcp`'s `openAskOfKind`; `refuseUnlessOpen` for a route that takes two kinds).
    */
-  /** Unanswered, untaken and in time — or the answer route's own refusal (409, 410). */
-  const refuseUnlessOpen = (row: PendingActionRow): PendingActionRow => {
-    if (row.answeredAt || row.consumedAt) {
-      throw new ServiceError("CONFLICT", "This action has already been answered");
-    }
-    if (row.expiresAt.getTime() <= pendingActionDeps.now().getTime()) {
-      throw new ServiceError(
-        "GONE",
-        "This action has expired — the agent will ask again if it still needs to",
-      );
-    }
-    return row;
-  };
-
   const openAction = async (
     scoped: ServiceContext,
     principal: Principal,
@@ -1027,23 +973,8 @@ export function createApi(options: ApiOptions): Hono {
         await getPendingActionForPerson(scoped, principal, id, pendingActionDeps),
         "Pending action not found",
       ),
+      pendingActionDeps.now(),
     );
-
-  const openActionOfKind = async (
-    scoped: ServiceContext,
-    principal: Principal,
-    id: string,
-    kind: string,
-  ): Promise<PendingActionRow> => {
-    const row = orNotFound(
-      await getPendingActionForPerson(scoped, principal, id, pendingActionDeps),
-      "Pending action not found",
-    );
-    if (row.kind !== kind) {
-      throw new ServiceError("BAD_REQUEST", `This action is a ${row.kind} ask, not a ${kind} one`);
-    }
-    return refuseUnlessOpen(row);
-  };
 
   /**
    * The person's submit for a `connection` ask (GRA-28; ADR 0006): the proposal as they edited it
@@ -1063,64 +994,22 @@ export function createApi(options: ApiOptions): Hono {
   api.post("/pending-actions/:id/connection", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, connectionSubmitBody);
-    const id = c.req.param("id");
-    const result = await ctx.db.transaction(async (tx) => {
-      const scoped: ServiceContext = { db: tx };
-      const action = await openActionOfKind(scoped, principal, id, CONNECTION_ASK_KIND);
-      // The row belongs to the provider the ask was routed to (ADR 0019; `request_connection`
-      // recorded it on the payload, and an ask made before providers existed is the keyring's).
-      // The person edits the proposal, not its routing: a body naming another provider is refused.
-      const routed =
-        typeof action.payload.provider === "string" ? action.payload.provider : KEYRING_PROVIDER;
-      if (body.provider !== undefined && body.provider !== routed) {
-        throw new ServiceError(
-          "BAD_REQUEST",
-          `This ask was routed to the ${routed} provider; a connection answering it cannot name another`,
-        );
-      }
-      const connection = await registerConnectionWithCredential(
-        scoped,
-        principal,
-        { ...body, provider: routed },
-        connectionDeps,
-      );
-      await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, agentDeps);
-      const buildApproval = body.approveBuild
-        ? await grantBuildApproval(
-            scoped,
-            { personId: principal.personId, agentId: action.agentId },
-            connection.id,
-            approvalDeps,
-          )
-        : undefined;
-      const granted = buildApproval ? { buildApproval } : {};
-      // An authorization-code connection is not connected until the consent completes: the ask
-      // stays open and the callback answers it (`oauth.ts`), so the agent's call says connected only
-      // when the vendor can be called (ADR 0005).
-      const consent = await consentFor(
-        scoped,
-        principal,
-        connection.id,
-        connection.scheme,
-        action.id,
-      );
-      if (consent) {
-        return {
-          connection: consent.connection,
-          pendingAction: action,
-          authorizeUrl: consent.authorizeUrl,
-          ...granted,
-        };
-      }
-      const pendingAction = await answerPendingAction(
-        scoped,
-        principal,
-        action.id,
-        { connectionId: connection.id },
-        pendingActionDeps,
-      );
-      return { connection, pendingAction, ...granted };
-    });
+    // The record is `@graft/mcp`'s `confirmConnectionAsk` (GRA-84), shared with the ask card's
+    // `answer_ask` for a keyless proposal; the consent hook is this server's alone (ADR 0005), since
+    // a scheme with a client secret is never the card's to answer.
+    const result = await confirmConnectionAsk(
+      ctx,
+      principal,
+      c.req.param("id"),
+      body,
+      {
+        connection: connectionDeps,
+        agent: agentDeps,
+        approval: approvalDeps,
+        pendingAction: pendingActionDeps,
+      },
+      { consent: consentFor },
+    );
     return c.json(result, 201);
   });
 
@@ -1155,7 +1044,13 @@ export function createApi(options: ApiOptions): Hono {
     const id = c.req.param("id");
     const result = await ctx.db.transaction(async (tx) => {
       const scoped: ServiceContext = { db: tx };
-      const action = await openActionOfKind(scoped, principal, id, CREDENTIAL_ASK_KIND);
+      const action = await openAskOfKind(
+        scoped,
+        principal,
+        id,
+        CREDENTIAL_ASK_KIND,
+        pendingActionDeps,
+      );
       const connectionId = action.payload.connectionId;
       if (typeof connectionId !== "string") {
         throw new ServiceError("BAD_REQUEST", "This credential ask names no connection");

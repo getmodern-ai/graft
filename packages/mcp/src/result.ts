@@ -1,3 +1,4 @@
+import type { AskCard } from "@graft/ask-card/shape";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 /**
@@ -61,6 +62,18 @@ export function notAvailableYet(what: string, ticket: string): CallToolResult {
     ticket,
     message: `${what} is not available yet on this deployment — it arrives with ${ticket}. Say so rather than retrying.`,
   });
+}
+
+/**
+ * The ask card's data beside an awaiting answer (GRA-84; `ask-card.ts`): in `structuredContent`
+ * alone, never in the text block. The text is what the model reads and what GRA-55 fixed — the
+ * `url`, the `message`, the `reason` — and the card is the host's to render, so it rides where a
+ * host looks and a model's transcript does not change by a character. Without a card the result
+ * is returned as it was.
+ */
+export function withCard(result: CallToolResult, card: AskCard | undefined): CallToolResult {
+  if (!card) return result;
+  return { ...result, structuredContent: { ...(result.structuredContent ?? {}), card } };
 }
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {

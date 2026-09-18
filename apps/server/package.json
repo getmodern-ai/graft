@@ -23,6 +23,7 @@
     "pipedream-proof-agent": "tsx src/scripts/pipedream-proof-agent.ts"
   },
   "dependencies": {
+    "@graft/ask-card": "workspace:*",
     "@graft/auth": "workspace:*",
     "@graft/core": "workspace:*",
     "@graft/db": "workspace:*",

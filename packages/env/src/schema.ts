@@ -578,6 +578,37 @@ export const pendingActionTtlHours = z.coerce
   .default(24);
 
 /**
+ * The hosts whose MCP clients are known to render the ask card and hide its app-only tool from
+ * the model (GRA-84; ADR 0006 as amended 2026-09-18): a comma-separated list of hostnames, each
+ * matched against an OAuth client's registered redirect URIs — equal, or a subdomain. Claude's
+ * callback is on `claude.ai`, ChatGPT's on `chatgpt.com`, and those two are the default; a
+ * self-hoster whose chat product answers on another host adds it here. A hostname and nothing
+ * more: a scheme or a path would never match a URI's hostname and would admit nobody silently.
+ * The consumer is `@graft/mcp`'s `answer_ask` (`tools/answer-ask.ts`), whose `DEFAULT_CARD_HOSTS`
+ * repeats this default for a deployment built without the environment.
+ */
+export const cardHosts = z
+  .string()
+  .optional()
+  .transform((raw, ctx) => {
+    if (raw === undefined) return ["claude.ai", "chatgpt.com"];
+    const hosts = raw
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry) => entry.length > 0);
+    for (const host of hosts) {
+      if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `GRAFT_CARD_HOSTS entry "${host}" must be a hostname — no scheme, port or path`,
+        });
+        return z.NEVER;
+      }
+    }
+    return [...new Set(hosts)];
+  });
+
+/**
  * The admin bootstrapped on first start (GRA-1, user story 28; GRA-33): the one account a fresh
  * self-hosted database opens with, so the person who ran `docker compose up` can sign in without a
  * sign-up form facing the network first. Both optional — a laptop signs up through the console — and
@@ -1030,6 +1061,9 @@ export const serverSchema = {
   /** The ask flow's two clocks, each with a correct default — see `approvalWaitSeconds`, `pendingActionTtlHours`. */
   GRAFT_APPROVAL_WAIT_SECONDS: approvalWaitSeconds,
   GRAFT_PENDING_ACTION_TTL_HOURS: pendingActionTtlHours,
+
+  /** The chat products whose clients may answer the ask card, by redirect host — see `cardHosts`. */
+  GRAFT_CARD_HOSTS: cardHosts,
 
   /** How often the working-set sweep runs — see `sweepIntervalSeconds`. */
   GRAFT_SWEEP_INTERVAL_SECONDS: sweepIntervalSeconds,

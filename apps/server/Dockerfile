@@ -38,8 +38,10 @@ COPY --from=manifests /manifests ./
 RUN --mount=type=cache,id=graft-pnpm-store,target=/pnpm-store \
     pnpm install --frozen-lockfile --store-dir /pnpm-store
 
-# The console's `vite build` and the server's `tsdown` bundle (`apps/server/tsdown.config.ts`, which
-# also lays the runner, the skills and the migration chain beside the bundle).
+# The console's `vite build`, the ask card's (`packages/ask-card`, GRA-84: one HTML file the MCP
+# server serves as a resource) and the server's `tsdown` bundle (`apps/server/tsdown.config.ts`,
+# which also lays the runner, the skills, the migration chain and that card beside the bundle). The
+# card is built before the server because the server's build copies its output.
 #
 # Then the linked backings package, when there is one: the server's bundle loads it by name at run
 # time (`apps/server/src/backings.ts`) from an image that has no TypeScript, so the package has to
@@ -61,6 +63,7 @@ RUN --mount=type=cache,id=graft-pnpm-store,target=/pnpm-store \
 FROM deps AS build
 COPY . .
 RUN pnpm --filter @graft/web build \
+ && pnpm --filter @graft/ask-card build \
  && pnpm --filter @graft/server build \
  && pnpm --filter @graft/cloud-backings build \
  && mkdir -p /linked \

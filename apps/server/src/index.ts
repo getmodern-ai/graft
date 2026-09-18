@@ -246,6 +246,8 @@ const mcp = createMcpDeps({
   proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
   publish,
   handoff,
+  // The chat products whose clients may answer the ask card (GRA-84; `GRAFT_CARD_HOSTS`).
+  cardHosts: env.GRAFT_CARD_HOSTS,
   // What the agent tells the person to paste into the OAuth client they register (ADR 0005) — the
   // same value `GET /api/oauth/redirect-uri` shows and `GET /api/oauth/callback` serves.
   oauthRedirectUri: oauthRedirectUri(env.GRAFT_AUTH_URL),
