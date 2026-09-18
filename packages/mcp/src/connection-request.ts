@@ -569,7 +569,7 @@ function namingHostsSetAside(
   const one = setAside.length === 1;
   const sentence =
     `${setAside.join(", ")} ${one ? "is a sign-in endpoint and was" : "are sign-in endpoints and were"} set aside, not recorded on the connection: ` +
-    "tool calls never reach a sign-in endpoint (the console runs the sign-in itself), and hosts is for the hosts they do reach, " +
+    "tool calls never reach a sign-in endpoint (the sign-in runs in the console or on the provider's page), and hosts is for the hosts they do reach, " +
     `here ${hosts.join(", ")}.`;
   const said = outcome.answer.message;
   const message = typeof said === "string" && said.length > 0 ? `${said} ${sentence}` : sentence;

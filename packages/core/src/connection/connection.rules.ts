@@ -188,7 +188,7 @@ export function setAsideSignInHosts(
     return {
       ok: false,
       host: primary.hostname,
-      problem: `${primary.hostname} is a sign-in host, not an API host: tool calls never reach it, the console runs the sign-in itself. Make primaryHost the host the vendor's API answers on (for Gmail, gmail.googleapis.com) and keep authorizeUrl and tokenUrl in schemeConfig.`,
+      problem: `${primary.hostname} is a sign-in host, not an API host: tool calls never reach it; the sign-in runs in the console or on the provider's page. Make primaryHost the host the vendor's API answers on (for Gmail, gmail.googleapis.com) and keep authorizeUrl and tokenUrl in schemeConfig.`,
     };
   }
   const endpoints: { name: string; url: URL }[] = [];
