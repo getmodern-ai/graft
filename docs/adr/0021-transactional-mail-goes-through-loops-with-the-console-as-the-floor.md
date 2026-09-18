@@ -42,9 +42,9 @@ need: `resetPassword` consumes the raw token.
   machinery — but it is secret-backed, so it takes the placeholder rule and, on the hosted tier,
   the full Secrets Manager path (an entry, a gate, the execution role's read grant).
 - Templates live in the Loops dashboard, not in git. `packages/email/src/registry.ts` is the one
-  place a template's transactional id and its variables are named; it ships a placeholder id until
-  a template is published in Graft's Loops account and its id recorded there. The failure mode of
-  forgetting is a logged 400 on the first send, not a boot failure.
+  place a template's transactional id and its variables are named. The reset template was published
+  in Graft's Loops workspace on 2026-09-18 (GRA-82) and its id recorded there; a template edited out
+  from under the code fails as a logged 400 on the first send, not a boot failure.
 - A send never fails the operation that asked for it. The transport answers `delivered: false` and
   logs; the reset hook catches and logs with the person's id, never the address, so
   `requestPasswordReset` answers identically for known and unknown addresses.

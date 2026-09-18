@@ -23,10 +23,9 @@ import { z } from "zod";
  */
 export type EmailTemplate<Variables extends z.ZodType> = {
   /**
-   * The Loops transactional id. A clearly-fake placeholder until the template is published in
-   * Graft's Loops account and its id recorded here — the console transport never sends it
-   * anywhere, and the Loops transport's send with it fails as a logged 400, the expected
-   * pre-rollout mode.
+   * The Loops transactional id, from the template's URL in Graft's Loops workspace
+   * (`app.loops.so/transactional/<id>`). The console transport never sends it anywhere; the Loops
+   * transport's send with a wrong or unpublished id fails as a logged 400.
    */
   transactionalId: string;
   dataVariables: Variables;
@@ -52,7 +51,10 @@ function defineTemplate<Variables extends z.ZodType>(
 
 export const templates = {
   passwordReset: defineTemplate({
-    transactionalId: "loops-id-not-published-yet-password-reset",
+    // "Reset your getgraft.ai password securely", published in the Graft workspace on 2026-09-18
+    // (GRA-82): its one data variable is `resetUrl`, the button's link, and nothing else — the
+    // greeting is "Hi," so no name a person typed reaches the template (ADR 0021).
+    transactionalId: "cmu63jbxw0m3t01b4aui3mci0",
     dataVariables: passwordResetVariables,
     // A fixed subject on purpose: the reset URL is the only variable, and a token has no
     // business in a subject line.

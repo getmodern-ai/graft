@@ -35,8 +35,9 @@ describe("password reset template", () => {
     expect(subject).not.toContain("tok_123");
   });
 
-  it("carries a transactional id that cannot be mistaken for a published one", () => {
-    expect(templates.passwordReset.transactionalId).toContain("not-published");
+  it("names the published template by Loops' id, never a placeholder", () => {
+    expect(templates.passwordReset.transactionalId).toMatch(/^c[a-z0-9]{24}$/);
+    expect(templates.passwordReset.transactionalId).not.toContain("not-published");
   });
 
   it("names the one template Graft sends — the invitation stayed in Cando (ADR 0007)", () => {
