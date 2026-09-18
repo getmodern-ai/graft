@@ -555,9 +555,11 @@ under `apps/web/src/assets`, outside the colour guard on purpose, as Cando's are
 **A forgotten password is reset by email, and mail is a seam** (ADR 0021; GRA-82, GRA-90):
 `@graft/email` is Cando's `@cando/email` less the invitation and less the vendor — a transport
 seam (`EmailTransport`, one `SendResult` shape), a registry naming the one template's variables
-and subject, and the façade. The open form's backing is the console transport, which prints the
-envelope and the reset link into the server's log — on a laptop and in the self-hosted image, so
-`docker compose logs graft` is where a self-hoster's reset link is. The hosted form's transport
+and subject, and the façade. The open form's backings are the SMTP transport (GRA-92) — on when the
+all-or-nothing pair `GRAFT_SMTP_URL`/`GRAFT_MAIL_FROM` is set, sending through the self-host's own
+relay and rendering each template itself from `RENDERERS` in `packages/email/src/smtp.ts` — and,
+unset, the console transport, which prints the envelope and the reset link into the server's log,
+so `docker compose logs graft` is where a fresh self-host's reset link is. The hosted form's transport
 is a vendor's and lives in the private package, which answers `mail` beside the other seams
 (`Backings.mail` in `apps/server/src/backings.ts`); no vendor, template id or mail variable
 appears in this repository. `createAuth`'s `passwordReset` option binds the hook; the link is

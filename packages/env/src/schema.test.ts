@@ -39,6 +39,7 @@ import {
   serverEnvIssues,
   serverSchema,
   signInProvidersFrom,
+  smtpUrl,
   sweepIntervalSeconds,
   toolboxRoot,
   toolboxVolume,
@@ -959,6 +960,39 @@ describe("sign in with Google or GitHub (GRA-81)", () => {
     ]);
     // A half-set group `serverEnvIssues` has already refused; this never invents a provider from it.
     expect(signInProvidersFrom({ GRAFT_GITHUB_CLIENT_ID: "Iv1.gh" })).toEqual({});
+  });
+});
+
+describe("the mail relay (GRA-92)", () => {
+  const SMTP = {
+    GRAFT_SMTP_URL: "smtps://user:pass@smtp.example.com:465",
+    GRAFT_MAIL_FROM: "Graft <no-reply@graft.example>",
+  };
+
+  it("is off by default and the pair together, naming what is missing", () => {
+    expect(serverEnvIssues(SECRET)).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, ...SMTP })).toEqual([]);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_SMTP_URL: SMTP.GRAFT_SMTP_URL })).toEqual([
+      expect.stringMatching(/mail relay is partially configured.*Missing: GRAFT_MAIL_FROM$/),
+    ]);
+    expect(serverEnvIssues({ ...SECRET, GRAFT_MAIL_FROM: "x@y.z" })).toEqual([
+      expect.stringMatching(/Missing: GRAFT_SMTP_URL$/),
+    ]);
+  });
+
+  it("takes an smtp or smtps URL and refuses anything else, the placeholder included", () => {
+    expect(smtpUrl.parse("smtp://relay.example:587")).toBe("smtp://relay.example:587");
+    expect(smtpUrl.parse(undefined)).toBeUndefined();
+    const http = smtpUrl.safeParse("https://smtp.example.com");
+    expect(http.success).toBe(false);
+    expect(http.error?.issues[0]?.message).toContain("GRAFT_SMTP_URL must be an smtp://");
+    const placeholder = fullSchema.safeParse({
+      ...MINIMAL,
+      ...SMTP,
+      GRAFT_SMTP_URL: "PLACEHOLDER — populate",
+    });
+    expect(placeholder.success).toBe(false);
+    expect(fullSchema.parse({ ...MINIMAL, ...SMTP })).toMatchObject(SMTP);
   });
 });
 

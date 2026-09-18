@@ -47,13 +47,20 @@ import { authoredToolName } from "./tool-names";
  * and ADR 0008 says the answer holds — so a decline is recorded as `deny` and every later call is
  * refused `tool_denied` until the console revokes it. A `cancel` is not an answer: nothing is
  * recorded, and the ask goes to the handoff exactly as if the client had advertised no elicitation
- * (ADR 0006, amendment of 2026-09-16). A client can advertise forms it never shows — Claude Code's
- * non-interactive mode cancels every one — and under the earlier rule, which asked again, such a
- * client never got the person a link (GRA-55). The fall-through is per ask, not per session: the
- * next ask offers the form again, unless the console has answered the earlier one meanwhile — a
- * waiting console answer is taken before any form is offered (`askApproval`). A build ask has no
- * deny row (the schema's reason: a declined `acquire` leaves nothing behind), so a build decline
- * simply refuses.
+ * (ADR 0006, amendment of 2026-09-16). A client can advertise forms it never shows, and what it
+ * answers then is its own: Claude Code's non-interactive mode cancels every one, and under the
+ * earlier rule, which asked again, such a client never got the person a link (GRA-55). Hermes 0.21.1
+ * declines instead, when its own approval surface fails inside (a gateway without a `notify_cb`) and
+ * when it runs with no terminal (`hermes chat --oneshot`) and takes its default, Deny; read as the
+ * person's no, that refused `acquire` with no link and would have held a `deny` nobody chose against
+ * a write tool (GRA-43). So **a decline that arrives faster than a person could read the prompt is
+ * read as a dismissal**: the round trip is measured on the clock this module is given, and one under
+ * `AUTOMATIC_ANSWER_MS` falls through to the handoff exactly as a `cancel` does, with the handoff
+ * saying the client answered on its own (ADR 0006, amendment of 2026-09-18). An accept is taken at
+ * any speed. The fall-through is per ask, not per session: the next ask offers the form again,
+ * unless the console has answered the earlier one meanwhile — a waiting console answer is taken
+ * before any form is offered (`askApproval`). A build ask has no deny row (the schema's reason: a
+ * declined `acquire` leaves nothing behind), so a build decline simply refuses.
  *
  * **A destructive tool asks once, like a write; asking every call is the person's opt-in** (ADR
  * 0008, amendment of 2026-09-15). The annotation changes what the ask says — the message names the
@@ -150,6 +157,14 @@ export type AwaitingApproval = {
 
 /** How often a waiting call looks for the answer when `HandoffConfig.pollMs` is unset. */
 export const DEFAULT_POLL_MS = 250;
+
+/**
+ * The elicitation round trip under which a `decline` is the client's and not the person's (ADR
+ * 0006, amendment of 2026-09-18): a person reads the prompt before answering, and both of Hermes's
+ * own declines on GRA-43 came back within a second of the ask. Measured on `deps.pendingAction.now()`,
+ * the clock every ask already reads, so a test moves it rather than sleeping.
+ */
+export const AUTOMATIC_ANSWER_MS = 1_500;
 
 type AskSubject =
   | {
@@ -287,12 +302,22 @@ async function askApproval(
   // place; the handoff reuses its row when the form carries no answer.
   if (elicit && !waiting?.answeredAt) {
     const outcome = await askByElicitation(ctx, scope, subject, agentName, deps, elicit);
-    if (outcome) return outcome;
-    // The client advertised elicitation and then carried no answer — the request failed, or the form
-    // came back `cancel` — so fall through to the channel that works for every harness (ADR 0006,
-    // amendment of 2026-09-16), and the person is still asked.
+    if (!("unanswered" in outcome)) return outcome;
+    // The client advertised elicitation and then carried no answer — the request failed, the form
+    // came back `cancel`, or a `decline` came back faster than a person could read it — so fall
+    // through to the channel that works for every harness (ADR 0006, amendments of 2026-09-16 and
+    // 2026-09-18), and the person is still asked.
+    return askByHandoff(
+      ctx,
+      scope,
+      subject,
+      agentName,
+      deps,
+      waiting,
+      outcome.unanswered === "automatic",
+    );
   }
-  return askByHandoff(ctx, scope, subject, agentName, deps, waiting);
+  return askByHandoff(ctx, scope, subject, agentName, deps, waiting, false);
 }
 
 /**
@@ -313,6 +338,13 @@ async function findWaitingAsk(
     deps.pendingAction.now(),
   );
   return rows.find((row) => targetOf(row) === targetId) ?? null;
+}
+
+/** How the form came back, in the log line's words; `automatic` is a decline the rule set aside. */
+function describeOutcome(action: ElicitResult["action"], automatic: boolean): string {
+  if (automatic) return "declined by the client on its own";
+  if (action === "cancel") return "cancelled by the client";
+  return action === "decline" ? "declined" : "accepted";
 }
 
 /** What the ask is about, in one clause, for the message and the card. */
@@ -401,8 +433,17 @@ function readElicitationAnswer(result: ElicitResult): ApprovalAnswer | null {
 }
 
 /**
- * The ask through the client's form. `null` when this channel carried no answer — the request
- * failed, or the form came back `cancel` — and the caller goes to the handoff instead.
+ * Why the form carried no answer, when it did not: the request `failed`, the person or the client
+ * `cancelled` it, or the client declined it on its own — `automatic`, the one the handoff says out
+ * loud. The caller goes to the handoff on all three.
+ */
+type Unanswered = { unanswered: "failed" | "cancelled" | "automatic" };
+
+/**
+ * The ask through the client's form, and the one log line per elicitation an operator reads: the
+ * outcome, the round trip in milliseconds and whether the client answered for the person, so a
+ * client that cannot render forms can be told from one that never had them, and either from a
+ * person who read the card. Measured on the clock the module is given, never `Date.now()`.
  */
 async function askByElicitation(
   ctx: ServiceContext,
@@ -411,7 +452,8 @@ async function askByElicitation(
   agentName: string,
   deps: McpDeps,
   elicit: ElicitForm,
-): Promise<GateOutcome | null> {
+): Promise<GateOutcome | Unanswered> {
+  const askedAt = deps.pendingAction.now().getTime();
   let result: ElicitResult;
   try {
     result = await elicit({
@@ -421,17 +463,25 @@ async function askByElicitation(
     });
   } catch (error) {
     console.warn("mcp: elicitation failed, falling back to a handoff", error);
-    return null;
+    return { unanswered: "failed" };
   }
-  const said = readElicitationAnswer(result);
+  const roundTripMs = deps.pendingAction.now().getTime() - askedAt;
+  // Only a decline is judged by its speed (the header, on GRA-43): a cancel already falls through,
+  // and an accept is taken however fast — the harm the rule guards against is a no nobody chose
+  // being held against the person.
+  const automatic = result.action === "decline" && roundTripMs < AUTOMATIC_ANSWER_MS;
+  const said = automatic ? null : readElicitationAnswer(result);
+  console.info(
+    `mcp: elicitation ${describeOutcome(result.action, automatic)} for ${whatIsAsked(subject)}${
+      said === null ? ", falling back to a handoff" : ""
+    }`,
+    { action: result.action, roundTripMs, automatic },
+  );
   if (said === null) {
-    // The form closed without an answer — by the person, or by a client that never showed it (Claude
-    // Code in `-p` mode, GRA-55). Nothing is recorded; the handoff gets the person a link either way.
-    // One line so an operator can tell a client that cannot render forms from one that never had them.
-    console.info(
-      `mcp: elicitation cancelled by the client for ${whatIsAsked(subject)}, falling back to a handoff`,
-    );
-    return null;
+    // The form closed without an answer — by the person, by a client that never showed it (Claude
+    // Code in `-p` mode, GRA-55), or by a client answering for the person (Hermes with no terminal,
+    // GRA-43). Nothing is recorded; the handoff gets the person a link either way.
+    return { unanswered: automatic ? "automatic" : "cancelled" };
   }
   if (said.allow) {
     await recordAllow(ctx, scope, subject, said.askEveryCall, deps);
@@ -478,7 +528,11 @@ function payloadFor(subject: AskSubject): ToolAskPayload | BuildAskPayload {
   };
 }
 
-/** The ask through the console: the waiting action or a new one, and a bounded wait for its answer. */
+/**
+ * The ask through the console: the waiting action or a new one, and a bounded wait for its answer.
+ * `automatic` is the elicitation branch saying the client declined for the person, so the message
+ * can say why the agent is being handed a link it might not expect (GRA-43).
+ */
 async function askByHandoff(
   ctx: ServiceContext,
   scope: AgentScope,
@@ -486,6 +540,7 @@ async function askByHandoff(
   agentName: string,
   deps: McpDeps,
   waiting: PendingActionRow | null,
+  automatic: boolean,
 ): Promise<GateOutcome | typeof RETRY> {
   const action =
     waiting ??
@@ -536,6 +591,11 @@ async function askByHandoff(
     subject.kind === "tool" && subject.askEveryCall
       ? "Call again once they have answered — the person has set this tool to ask every time, so their yes is for that one call and the call after it asks again."
       : "Call again once they have answered — the answer is kept, and the call then proceeds without asking.";
+  // A client that declined the prompt for the person is told so, or the agent reads a link where it
+  // saw its own client say no and may not relay it.
+  const byTheClient = automatic
+    ? "Your client answered the approval prompt on its own, faster than a person could read it, so Graft set that answer aside; the person can answer in the console instead. "
+    : "";
   const awaiting: AwaitingApproval = {
     error: "awaiting_approval",
     reason: "awaiting_approval",
@@ -543,7 +603,7 @@ async function askByHandoff(
     url,
     expiresAt: action.expiresAt.toISOString(),
     message:
-      `Graft needs the person's approval before ${whatIsAsked(subject)}. Relay this link so they can answer in the console: ${url} ` +
+      `Graft needs the person's approval before ${whatIsAsked(subject)}. ${byTheClient}Relay this link so they can answer in the console: ${url} ` +
       `It expires at ${action.expiresAt.toISOString()}. ${afterAnswer}`,
   };
   // The card a chat product renders for this ask (GRA-84): the build approval answerable in place,

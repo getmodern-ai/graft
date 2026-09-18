@@ -422,6 +422,7 @@ const requestConnectionTool: MetaTool = {
       "Propose its hosts, auth scheme, non-secret parameters and the documentation URL you read, and receive a handoff url. " +
       "The person opens it in the console, checks what you proposed, edits it if need be and enters the secret there; you never see the credential, this tool never takes one, and you never ask for one in chat. " +
       "Every host must be a public https host: private, loopback, link-local and cloud-metadata addresses are refused here and again by the proxy. " +
+      "List under hosts the hosts tool calls will reach, not the sign-in endpoints: the hosts of authorizeUrl and tokenUrl, and Google's accounts.google.com and oauth2.googleapis.com, are set aside and named in the answer, and a primaryHost that is one is refused. " +
       `Schemes: ${describeSchemes()}. ` +
       "For a public API that documents no credential (Open-Meteo, an open-data endpoint) propose scheme none: the person confirms the connection and enters nothing. Never propose a key scheme with a made-up value for such a vendor — some read the key's presence and answer differently, Open-Meteo with a redirect to its paid host. " +
       "For oauth_authorization_code (Gmail, Slack user tokens, Notion) propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
@@ -454,7 +455,7 @@ const requestConnectionTool: MetaTool = {
           type: "array",
           items: { type: "string" },
           description:
-            "Other hostnames the connection may reach (an SDK that spans several hosts); the primary's is included on its own.",
+            "Other hostnames the connection may reach (an SDK that spans several hosts); the primary's is included on its own. Never a sign-in endpoint: those belong in schemeConfig and are set aside here.",
         },
         scheme: {
           type: "string",

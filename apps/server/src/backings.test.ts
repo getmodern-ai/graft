@@ -97,6 +97,33 @@ describe("the open form", () => {
   });
 });
 
+describe("the mail relay from the environment (ADR 0021, GRA-92)", () => {
+  const SMTP = {
+    GRAFT_SMTP_URL: "smtps://user:pass@smtp.example.com:465",
+    GRAFT_MAIL_FROM: "Graft <no-reply@graft.example>",
+  };
+
+  it("is the console without the pair and the SMTP transport with it, in the open form", async () => {
+    expect((await selectBackings(base)).mail.name).toBe("console");
+    expect((await selectBackings({ ...base, ...SMTP })).mail.name).toBe("smtp");
+  });
+
+  it("yields to the hosted transport in the cloud form, and stands in when the package answers none", async () => {
+    const cloud: BackingsEnv = {
+      ...base,
+      ...SMTP,
+      GRAFT_BACKINGS: "cloud",
+      GRAFT_KEYRING_SECRET: undefined,
+    };
+    expect((await selectBackings(cloud, { cloudModule: fixture("fake") })).mail.name).toBe(
+      "fake-mail",
+    );
+    expect((await selectBackings(cloud, { cloudModule: fixture("own-store") })).mail.name).toBe(
+      "smtp",
+    );
+  });
+});
+
 describe("the gateway provider from the environment (ADR 0019, GRA-58)", () => {
   const gateway: Partial<BackingsEnv> = {
     GRAFT_GATEWAY_HOSTS: ["api.unleashedsoftware.com"],
