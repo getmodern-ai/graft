@@ -93,7 +93,10 @@ Hermes shows Graft's ask as its own approval card. Any of its allow buttons is a
 Graft — Allow Once, Allow Session and Always Allow all record the same allow, because Graft asks once
 by rule — and Deny records a no that holds. No button changes whether a tool asks every time; that
 switch is in the console, and the ask's text says so. If the card comes back for a tool the person
-already allowed, they set that tool to ask every time; say so if they ask.
+already allowed, they set that tool to ask every time; say so if they ask. If Hermes answers the card
+on its own, with no terminal to show it or because its own approval surface failed, the answer comes
+back faster than a person could read the prompt, and Graft reads such a Deny as a dismissal and
+answers with a console link instead: relay it like any handoff.
 
 ## What not to do
 
