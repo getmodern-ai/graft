@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   type AgentScope,
   getAgentScope,
+  getConnection,
   getToolByName,
   getToolVersion,
   recordDryRun,
@@ -21,6 +22,7 @@ import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
 import { detachedHoldMs, heldInFlight } from "./in-flight";
 import { type Refusal, refusal } from "./result";
+import { revokedConnectionRefusal } from "./revoke";
 import {
   commandEnvironment,
   type DetachedStart,
@@ -458,6 +460,13 @@ async function runHeld(
       `${wireName} runs against connection ${connectionId}, which is not in this agent's scope. The person can add it in the console.`,
       versioned,
     );
+  }
+  // After the scope check and before the gate: a revoked connection's approvals are gone with it,
+  // and asking the person for them again is not the next step (GRA-69).
+  const connection = await getConnection(ctx, principal, connectionId, deps.connection);
+  if (connection?.revokedAt) {
+    await record("refused", versioned);
+    return { answer: revokedConnectionRefusal(connection), isError: true };
   }
 
   const validator = compileInputSchema(tool.inputSchema);

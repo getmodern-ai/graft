@@ -701,6 +701,49 @@ describe("through an elicitation — where the client advertised one", () => {
     }
   }, 60_000);
 
+  /**
+   * A revoke while the form is open (GRA-69, found by review on #83): the revoke deletes every
+   * approval for the connection, and the yes arriving after it must not write one back that would
+   * stand once the connection is reconnected. The elicit below revokes the connection before it
+   * answers, as a person with the console in one window and the harness in another can.
+   */
+  it("an accept after the connection was revoked mid-form records nothing and refuses connection_revoked, for a tool ask and for the build ask", async () => {
+    const TOKEN_H = "grft_approval_token_h_000000000000000000000000";
+    store.addAgent({ id: "agent_h", personId: PERSON, token: TOKEN_H, connectionIds: [CONN_DEMO] });
+    store.promote("agent_h", "tool_create");
+    const live = store.connections.get(CONN_DEMO);
+    if (!live) throw new Error("fixture: the connection is missing");
+    const revokeThenAccept: Elicitation = async () => {
+      store.connections.set(CONN_DEMO, { ...live, revokedAt: new Date() });
+      return { action: "accept", content: { allow: true } };
+    };
+    const h = await connect(TOKEN_H, revokeThenAccept);
+    try {
+      const result = await h.call(CREATE_ITEM, { limit: 1 });
+      expect(result.isError).toBe(true);
+      expect(body(result)).toMatchObject({
+        error: "refused",
+        reason: "connection_revoked",
+        connectionId: CONN_DEMO,
+      });
+      expect(h.elicitations).toHaveLength(1);
+      expect(approvalOf("agent_h", "tool_create")).toBeUndefined();
+      expect(actionsOf("agent_h", "tool")).toEqual([]);
+
+      // The same across the build ask: the form is answered yes, the connection is gone, no row.
+      store.connections.set(CONN_DEMO, live);
+      const build = await h.call(executeToolName(CONN_DEMO), { command: RUN_LIST_ITEMS });
+      expect(build.isError).toBe(true);
+      expect(body(build)).toMatchObject({ error: "refused", reason: "connection_revoked" });
+      expect(h.elicitations).toHaveLength(2);
+      expect(store.buildApprovals.get(`agent_h ${CONN_DEMO}`)).toBeUndefined();
+      expect(actionsOf("agent_h", "build")).toEqual([]);
+    } finally {
+      store.connections.set(CONN_DEMO, live);
+      await h.close();
+    }
+  }, 60_000);
+
   it("decline records the refusal and the tool returns approval_declined; the next call is tool_denied", async () => {
     const c = await connect(TOKEN_C, personDeclines);
     try {

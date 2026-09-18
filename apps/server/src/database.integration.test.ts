@@ -17,6 +17,7 @@ import {
   getToolById,
   listConnections,
   listWorkingSet,
+  listWorkingSetChanges,
   modelKeyScope,
   promoteTool,
   registerConnection,
@@ -474,7 +475,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     ).toBeNull();
   });
 
-  it("revokes a connection: ciphertext and approvals gone, the authored tool still there", async () => {
+  it("revokes a connection: ciphertext and approvals gone, the authored tool still there and out of the working set, another connection's tool untouched", async () => {
     const personId = await signUp("revoker@example.com");
     const ctx: ServiceContext = { db };
     const principal = { personId };
@@ -492,7 +493,12 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       connectionDeps,
     );
     await setConnectionCredential(ctx, principal, connection.id, { apiKey: "k" }, connectionDeps);
-    const agent = await createAgent(ctx, principal, { name: "a" }, defaultAgentDeps);
+    const agent = await createAgent(
+      ctx,
+      principal,
+      { name: "a", connectionIds: [connection.id] },
+      defaultAgentDeps,
+    );
     const scope = { personId, agentId: agent.agent.id };
     const tool = await createTool(
       ctx,
@@ -508,11 +514,54 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       defaultToolDeps,
     );
     await setApproval(ctx, scope, tool.id, "allow", defaultApprovalDeps);
+    // A second connection and a tool bound to it, promoted beside the first: the sweep's predicate
+    // (`repo/working-set.ts`, pinned as SQL in `@graft/db`) has to leave it (GRA-69).
+    const other = await registerConnection(
+      ctx,
+      principal,
+      {
+        vendor: "beta",
+        displayName: "Beta",
+        scheme: "api_key_header",
+        schemeConfig: { headerName: "x-key" },
+        primaryHost: "https://api.beta.example",
+      },
+      connectionDeps,
+    );
+    const otherTool = await createTool(
+      ctx,
+      principal,
+      {
+        vendor: "beta",
+        name: "list-things",
+        description: "Lists things",
+        inputSchema: { type: "object" },
+        annotations: { readOnly: true, destructive: false },
+        defaultConnectionId: other.id,
+      },
+      defaultToolDeps,
+    );
+    await promoteTool(ctx, scope, tool.id, "agent", defaultWorkingSetDeps);
+    await promoteTool(ctx, scope, otherTool.id, "agent", defaultWorkingSetDeps);
 
     const result = await revokeConnection(ctx, principal, connection.id, connectionDeps);
-    expect(result).toMatchObject({ approvalsDeleted: 1, buildApprovalsDeleted: 0 });
+    expect(result).toMatchObject({
+      approvalsDeleted: 1,
+      buildApprovalsDeleted: 0,
+      demoted: [{ agentId: agent.agent.id, toolId: tool.id }],
+      affectedAgentIds: [agent.agent.id],
+    });
     expect(result?.connection.revokedAt).toBeInstanceOf(Date);
     expect(result?.connection.credentialSetAt).toBeNull();
+
+    // ADR 0009 as amended 2026-09-18: the connection's tool left the working set with cause
+    // `revoke`; the other connection's promotion is where it was.
+    expect((await listWorkingSet(ctx, scope, defaultWorkingSetDeps)).map((e) => e.toolId)).toEqual([
+      otherTool.id,
+    ]);
+    expect(await listWorkingSetChanges(ctx, scope, 1, defaultWorkingSetDeps)).toMatchObject([
+      { toolId: tool.id, change: "demote", cause: "revoke" },
+    ]);
 
     const proxyRow = await createDatabaseConnections(db).get(connection.id);
     expect(proxyRow?.credentialCiphertext).toBeNull();

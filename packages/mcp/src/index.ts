@@ -145,6 +145,7 @@ export {
 } from "./notifier";
 export { promotePublished } from "./promote";
 export { type Refusal, refusal, withCard } from "./result";
+export { revokeConnectionAndNotify } from "./revoke";
 export {
   type AuthoredRunAnswer,
   type AuthoredRunArgs,

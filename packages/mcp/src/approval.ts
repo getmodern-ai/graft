@@ -22,6 +22,7 @@ import { approvalAskCard } from "./ask-card";
 import type { McpDeps } from "./deps";
 import { handoffUrl, signHandoffToken } from "./handoff";
 import { refusal } from "./result";
+import { revokedConnectionRefusal } from "./revoke";
 import { authoredToolName } from "./tool-names";
 
 /**
@@ -185,6 +186,30 @@ function refuse(
   details: Record<string, unknown> = {},
 ): GateOutcome {
   return { pass: false, answer: refusal(reason, message, details) };
+}
+
+/**
+ * The refusal to record an answer whose connection was revoked while the ask was open, or null
+ * when it still stands. Read again at the moment of recording rather than trusted from the ask,
+ * because a form or a handoff can be open for minutes: a revoke deletes every approval for the
+ * connection (ADR 0007), and an answer arriving after it must not write one back that would stand
+ * once the connection is reconnected (GRA-69, found by review on #83). The console's answer route
+ * makes the same check before it records (`ask-answer.ts`).
+ */
+async function refuseIfRevoked(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  subject: AskSubject,
+  deps: McpDeps,
+): Promise<GateOutcome | null> {
+  const connection = await getConnection(
+    ctx,
+    { personId: scope.personId },
+    subject.connection.id,
+    deps.connection,
+  );
+  if (connection && connection.revokedAt === null) return null;
+  return { pass: false, answer: revokedConnectionRefusal(connection ?? subject.connection) };
 }
 
 /**
@@ -483,6 +508,8 @@ async function askByElicitation(
     // GRA-43). Nothing is recorded; the handoff gets the person a link either way.
     return { unanswered: automatic ? "automatic" : "cancelled" };
   }
+  const revoked = await refuseIfRevoked(ctx, scope, subject, deps);
+  if (revoked) return revoked;
   if (said.allow) {
     await recordAllow(ctx, scope, subject, said.askEveryCall, deps);
     return PASS;
@@ -628,6 +655,8 @@ async function applyAnswer(
   taken: PendingActionRow,
   deps: McpDeps,
 ): Promise<GateOutcome> {
+  const revoked = await refuseIfRevoked(ctx, scope, subject, deps);
+  if (revoked) return revoked;
   const answer = readApprovalAnswer(taken.answer);
   if (answer.allow) {
     await recordAllow(ctx, scope, subject, answer.askEveryCall, deps);

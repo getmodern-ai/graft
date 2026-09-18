@@ -1,3 +1,4 @@
+import { listAgentIdsForConnection } from "@graft/db/repo/agent";
 import {
   deleteApprovalsForVendor,
   deleteBuildApprovalsForConnection,
@@ -6,6 +7,7 @@ import {
   addConnectionHosts,
   findConnection,
   findConnectionByIdUnscoped,
+  findConnectionForUpdate,
   insertConnection,
   listConnections,
   reconnectConnection,
@@ -16,6 +18,10 @@ import {
   setConnectionProviderRef,
 } from "@graft/db/repo/connection";
 import { expirePendingActionsForConnection } from "@graft/db/repo/pending-action";
+import {
+  deleteWorkingSetEntriesForConnection,
+  insertWorkingSetChange,
+} from "@graft/db/repo/working-set";
 import type { EncryptOnlyVault } from "@graft/vault";
 
 import { type ConnectionProvider, DEFAULT_PROVIDERS } from "./provider";
@@ -29,6 +35,8 @@ import { type ConnectionProvider, DEFAULT_PROVIDERS } from "./provider";
 export type ConnectionDeps = {
   insertConnection: typeof insertConnection;
   findConnection: typeof findConnection;
+  /** The row locked for the transaction: the revoke's pre-read, so two revokes cannot both see it live (GRA-69). */
+  findConnectionForUpdate: typeof findConnectionForUpdate;
   /** Unscoped, for the proxy's binding only — see the repo comment. */
   findConnectionByIdUnscoped: typeof findConnectionByIdUnscoped;
   listConnections: typeof listConnections;
@@ -48,6 +56,14 @@ export type ConnectionDeps = {
   deleteApprovalsForVendor: typeof deleteApprovalsForVendor;
   deleteBuildApprovalsForConnection: typeof deleteBuildApprovalsForConnection;
   expirePendingActionsForConnection: typeof expirePendingActionsForConnection;
+  /**
+   * The fourth sweep (ADR 0009 as amended 2026-09-18; GRA-69): every agent's working-set entry for
+   * a tool bound to the connection, each recorded as a `revoke` demotion in the same transaction.
+   */
+  deleteWorkingSetEntriesForConnection: typeof deleteWorkingSetEntriesForConnection;
+  insertWorkingSetChange: typeof insertWorkingSetChange;
+  /** The agents whose list a revoke changes, for the caller to announce `tools/list_changed` to (GRA-69). */
+  listAgentIdsForConnection: typeof listAgentIdsForConnection;
   vault: EncryptOnlyVault;
   /**
    * The deployment's connection providers, in routing order, the keyring last (ADR 0019;
@@ -72,6 +88,7 @@ export function createConnectionDeps(
   return {
     insertConnection,
     findConnection,
+    findConnectionForUpdate,
     findConnectionByIdUnscoped,
     listConnections,
     setConnectionCredential,
@@ -84,6 +101,9 @@ export function createConnectionDeps(
     deleteApprovalsForVendor,
     deleteBuildApprovalsForConnection,
     expirePendingActionsForConnection,
+    deleteWorkingSetEntriesForConnection,
+    insertWorkingSetChange,
+    listAgentIdsForConnection,
     vault,
     providers,
     newId: () => crypto.randomUUID(),

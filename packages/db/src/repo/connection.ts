@@ -30,6 +30,28 @@ export async function findConnection(
 }
 
 /**
+ * The same read with the row locked for the transaction (`SELECT ... FOR UPDATE`): a write that
+ * needs to know the state it is moving the row *from* reads through this, so a concurrent writer
+ * waits for the commit and then sees the moved row rather than the same starting state. The
+ * revoke derives its live-to-revoked transition from it (GRA-69); a plain `findConnection` there
+ * let two overlapping revokes both read the row live and both announce one transition. Only
+ * meaningful inside a transaction; outside one the lock is released as the statement ends.
+ */
+export async function findConnectionForUpdate(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+): Promise<ConnectionRow | null> {
+  const [row] = await db
+    .select()
+    .from(connection)
+    .where(and(eq(connection.id, id), eq(connection.personId, personId)))
+    .limit(1)
+    .for("update");
+  return row ?? null;
+}
+
+/**
  * A connection by id and nothing else — **the proxy's read**, and the only unscoped one here. A
  * vendor call carries no session; the capability token's `person` claim is what the proxy compares
  * the row's `personId` against, and that comparison is the whole authorisation (ADR 0010). Do not

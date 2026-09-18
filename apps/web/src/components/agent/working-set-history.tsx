@@ -7,21 +7,9 @@ import { Time } from "@/components/time";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, DataTableRow } from "@/components/ui/data-table";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { type WorkingSetChange, workingSetChangesQuery } from "@/lib/agent-queries";
+import { workingSetChangesQuery } from "@/lib/agent-queries";
 import { WORKING_SET_CHANGE_CHIP } from "@/lib/status-chips";
-
-/**
- * Why the working set changed, in the person's words (ADR 0009: expansion has an author, and
- * contraction now has two — the agent, and the rule). The cause is the record's own word; this is
- * the sentence beside it.
- */
-const CAUSE: Record<WorkingSetChange["cause"], string> = {
-  agent: "The agent asked",
-  publish: "Published by the agent",
-  idle: "Unused past the idle window",
-  cap: "Over the working-set cap",
-  revoke: "Its connection was revoked",
-};
+import { WORKING_SET_CAUSE } from "@/lib/working-set-cause";
 
 const COLUMNS = 4;
 
@@ -91,12 +79,12 @@ export function WorkingSetHistory({ agentId }: { agentId: string }) {
                         </span>
                       )}
                       <span className="truncate text-muted-foreground text-xs md:hidden">
-                        {CAUSE[change.cause]}
+                        {WORKING_SET_CAUSE[change.cause]}
                       </span>
                     </span>
                   </TableCell>
                   <TableCell className="hidden text-muted-foreground md:table-cell">
-                    {CAUSE[change.cause]}
+                    {WORKING_SET_CAUSE[change.cause]}
                   </TableCell>
                 </DataTableRow>
               ))
