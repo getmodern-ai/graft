@@ -997,8 +997,26 @@ describe("revokeConnection", () => {
     expect(result?.affectedAgentIds).toEqual(["agent_1", "agent_2", "agent_3"]);
   });
 
+  /** A revoke of a revoked row is the release's retry: no list changes, so nobody is told (Greptile on #83). */
+  it("names no scoped agent on a second revoke of a revoked row, only the agents a demotion touched", async () => {
+    const deps = fakeDeps({
+      findConnection: vi.fn(async () => ({ ...row, revokedAt: NOW })),
+      deleteWorkingSetEntriesForConnection: vi.fn(async () => [
+        { agentId: "agent_2", toolId: "tool_1", promotedAt: NOW, lastUsedAt: null } as never,
+      ]),
+      listAgentIdsForConnection: vi.fn(async () => ["agent_1"]),
+    });
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+    expect(deps.findConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    expect(deps.listAgentIdsForConnection).not.toHaveBeenCalled();
+    expect(result?.affectedAgentIds).toEqual(["agent_2"]);
+  });
+
   it("answers null and sweeps nothing for a connection that is not the person's", async () => {
-    const deps = fakeDeps({ revokeConnection: vi.fn(async () => null) });
+    const deps = fakeDeps({
+      findConnection: vi.fn(async () => null),
+      revokeConnection: vi.fn(async () => null),
+    });
     await expect(revokeConnection(ctx, PRINCIPAL, "conn_x", deps)).resolves.toBeNull();
     expect(deps.deleteApprovalsForVendor).not.toHaveBeenCalled();
     expect(deps.expirePendingActionsForConnection).not.toHaveBeenCalled();

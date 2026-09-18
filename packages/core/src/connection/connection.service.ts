@@ -876,7 +876,8 @@ export type RevokeConnectionResult = {
   demoted: { agentId: string; toolId: string }[];
   /**
    * Every agent whose tool list this revoke changed, sorted: each whose scope names the connection,
-   * since its execute tool is no longer listed, and each a demotion touched. The core has no
+   * when this revoke is the one that revoked it (its execute tool leaves the list once, not on the
+   * re-revoke that retries a provider's release), and each a demotion touched. The core has no
    * notifier, so the caller announces `tools/list_changed` to these (`@graft/mcp`'s `revoke.ts`).
    */
   affectedAgentIds: string[];
@@ -918,6 +919,10 @@ export async function revokeConnection(
 ): Promise<RevokeConnectionResult | null> {
   const revoked = await ctx.db.transaction(async (tx) => {
     const at = deps.now();
+    // Read before the write: whether this revoke is the transition. A revoke of a revoked row is
+    // the provider release's retry and changes no list, so the scoped agents are told once.
+    const before = await deps.findConnection(tx, principal.personId, connectionId);
+    const wasLive = before?.revokedAt === null;
     const row = await deps.revokeConnection(tx, principal.personId, connectionId, at);
     if (!row) return null;
     const approvals = await deps.deleteApprovalsForVendor(tx, principal.personId, row.vendor);
@@ -939,7 +944,9 @@ export async function revokeConnection(
         createdAt: at,
       });
     }
-    const scoped = await deps.listAgentIdsForConnection(tx, principal.personId, row.id);
+    const scoped = wasLive
+      ? await deps.listAgentIdsForConnection(tx, principal.personId, row.id)
+      : [];
     const affectedAgentIds = [
       ...new Set([...scoped, ...entries.map((entry) => entry.agentId)]),
     ].sort();
