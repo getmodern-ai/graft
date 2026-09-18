@@ -6,7 +6,6 @@ const REQUEST: SendRequest = {
   to: "person@example.com",
   subject: "Reset your Graft password",
   template: "passwordReset",
-  transactionalId: "loops-id-not-published-yet-password-reset",
   dataVariables: {
     resetUrl: "https://app.getgraft.ai/reset-password?token=tok_123",
   },
@@ -27,7 +26,7 @@ describe("console transport", () => {
     expect(output).toContain("person@example.com");
     expect(output).toContain("Reset your Graft password");
     expect(output).toContain("resetUrl: https://app.getgraft.ai/reset-password?token=tok_123");
-    expect(output).toContain("GRAFT_LOOPS_API_KEY");
+    expect(output).toContain("template: passwordReset");
   });
 
   it("prints the action URL on a line of its own, so terminals render it clickable", async () => {
@@ -63,9 +62,12 @@ describe("console transport", () => {
     expect(result.transport).toBe(consoleTransport.name);
   });
 
-  it("pins the contract the Loops transport also satisfies", () => {
-    expect(sendResultSchema.shape.transport.options).toEqual(["console", "loops"]);
+  it("pins the contract the hosted transport also satisfies: a delivered flag and a named transport", () => {
+    expect(sendResultSchema.safeParse({ delivered: false, transport: "hosted" }).success).toBe(
+      true,
+    );
     expect(sendResultSchema.safeParse(undefined).success).toBe(false);
     expect(sendResultSchema.safeParse({ delivered: true }).success).toBe(false);
+    expect(sendResultSchema.safeParse({ delivered: true, transport: "" }).success).toBe(false);
   });
 });
