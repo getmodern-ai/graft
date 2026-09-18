@@ -962,23 +962,6 @@ describe("sign in with Google or GitHub (GRA-81)", () => {
   });
 });
 
-describe("GRAFT_LOOPS_API_KEY (GRA-82)", () => {
-  it("is optional, and refuses the secret store's placeholder", () => {
-    expect(fullSchema.parse(MINIMAL).GRAFT_LOOPS_API_KEY).toBeUndefined();
-    expect(fullSchema.parse({ ...MINIMAL, GRAFT_LOOPS_API_KEY: "lp_key" })).toMatchObject({
-      GRAFT_LOOPS_API_KEY: "lp_key",
-    });
-    const placeholder = fullSchema.safeParse({
-      ...MINIMAL,
-      GRAFT_LOOPS_API_KEY: "PLACEHOLDER — populate in the AWS console",
-    });
-    expect(placeholder.success).toBe(false);
-    expect(placeholder.error?.issues.map((issue) => issue.message)).toEqual([
-      expect.stringMatching(/GRAFT_LOOPS_API_KEY still holds the secret store's placeholder/),
-    ]);
-  });
-});
-
 describe("GRAFT_CONSOLE_DIR", () => {
   it("defaults to the console workspace's build beside the server, and takes any non-empty path", () => {
     expect(consoleDir.parse(undefined)).toBe("../web/dist");

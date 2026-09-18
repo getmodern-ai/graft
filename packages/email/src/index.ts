@@ -2,20 +2,27 @@ import { type PasswordResetVariables, templates } from "./registry";
 import { consoleTransport, type EmailTransport, type SendResult } from "./transport";
 
 /**
- * `@graft/email` — the single seam for transactional mail (GRA-82). Cando's `@cando/email`
- * (ADR 0011), less the member invitation Graft has no organisation for (ADR 0007) and the
- * display-name sanitizer that existed for it; the one email here carries nothing a person typed.
+ * `@graft/email` — the seam for transactional mail (ADR 0021; GRA-82, reshaped by GRA-90). Cando's
+ * `@cando/email` (ADR 0011), less the member invitation Graft has no organisation for (ADR 0007),
+ * the display-name sanitizer that existed for it, and — the reshaping — the vendor transport, which
+ * is the hosted form's and lives in the private package (ADR 0002); the one email here carries
+ * nothing a person typed.
  *
  * Transactional mail is email the product sends a person because something concerns them — not
  * a connection (no vendor, no agent acting) and not a handoff (nothing to approve). The package
  * exports one typed send function per email, built on the template registry and the transport
- * seam. Callers get the same `SendResult` shape whichever transport is live, and a send that
- * fails REJECTS rather than returning a broken shape — the caller decides whether that may fail
- * its own operation (for the reset hook: never).
+ * seam. Callers get the same `SendResult` shape whichever backing is live, and a send that fails
+ * REJECTS rather than returning a broken shape — the caller decides whether that may fail its own
+ * operation (for the reset hook: never).
  */
 
-export { createLoopsTransport, type FetchLike, transportFromEnv } from "./loops";
-export { type PasswordResetVariables, passwordResetVariables, templates } from "./registry";
+export {
+  type PasswordResetVariables,
+  passwordResetVariables,
+  TEMPLATE_NAMES,
+  type TemplateName,
+  templates,
+} from "./registry";
 export {
   consoleTransport,
   type EmailTransport,
@@ -70,7 +77,6 @@ export async function sendPasswordResetEmail(
     to: email.to,
     subject: template.subject(variables),
     template: "passwordReset",
-    transactionalId: template.transactionalId,
     dataVariables: variables,
     actionUrl: variables.resetUrl,
   });

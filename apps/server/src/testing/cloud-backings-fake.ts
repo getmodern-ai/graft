@@ -29,6 +29,8 @@ export function createCloudBackings(input: CloudBackingsInput): CloudBackings {
   const keyring = createLocalKeyring("fake-cloud-secret-that-is-long-enough-32");
   return {
     providers: [fakeCloudProvider],
+    // The hosted form's mail transport (ADR 0021): records nothing, answers the shared shape.
+    mail: { name: "fake-mail", send: async () => ({ delivered: true, transport: "fake-mail" }) },
     sandbox: createFakeSandboxBackend(),
     keyring: { ...keyring, id: "fake-cloud" },
     mirror: {

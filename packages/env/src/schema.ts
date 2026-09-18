@@ -1048,15 +1048,6 @@ export const serverSchema = {
   GRAFT_GITHUB_CLIENT_ID: z.string().min(1).optional(),
   GRAFT_GITHUB_CLIENT_SECRET: secretValue("GRAFT_GITHUB_CLIENT_SECRET"),
 
-  /**
-   * Transactional mail (ADR 0021; GRA-82): set, the password-reset email goes through Loops; unset,
-   * the console transport prints the envelope and the reset link to the server's log, which is the
-   * whole mail stack on a laptop and, until a Loops account exists, on the hosted form too. One key
-   * cannot be half-set, so there is no group — but it is secret-backed, and a value still holding
-   * the secret store's placeholder is refused at boot like every other.
-   */
-  GRAFT_LOOPS_API_KEY: secretValue("GRAFT_LOOPS_API_KEY"),
-
   /** The admin opened on first start, all-or-nothing — see `adminKeys`. */
   GRAFT_ADMIN_EMAIL: adminEmail,
   GRAFT_ADMIN_PASSWORD: adminPassword,
