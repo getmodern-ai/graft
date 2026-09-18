@@ -14,6 +14,7 @@ import {
 } from "@graft/core";
 import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
+import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { createMcpDeps } from "@graft/mcp";
 import { createFakeSandboxBackend } from "@graft/sandbox";
 import { createCredentialVault, createLocalKeyring } from "@graft/vault";
@@ -155,12 +156,18 @@ describe.skipIf(!adminUrl)("a chat product connects over MCP OAuth (ADR 0018)", 
     await applyMigrations(db);
 
     const auth = createAuth({ db, secret: AUTH_SECRET, baseURL: AUTH_URL });
+    // Registering opens no session until the address is verified (GRA-94): verify as the boot
+    // verifies its admin, then sign in for the cookie.
     const signedUp = await auth.api.signUpEmail({
       body: { email: "ada@example.com", password: "a-password-that-is-long-enough", name: "Ada" },
+    });
+    await markPersonEmailVerified(db, "ada@example.com");
+    const signedIn = await auth.api.signInEmail({
+      body: { email: "ada@example.com", password: "a-password-that-is-long-enough" },
       returnHeaders: true,
     });
-    cookie = signedUp.headers.get("set-cookie") ?? "";
-    personId = signedUp.response.user.id;
+    cookie = signedIn.headers.get("set-cookie") ?? "";
+    personId = signedUp.user.id;
 
     const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
     const handoff = {

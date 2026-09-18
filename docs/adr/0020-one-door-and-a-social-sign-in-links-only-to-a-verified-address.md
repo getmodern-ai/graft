@@ -27,6 +27,34 @@ the address's local part, as in Cando — which asks for the real one in onboard
 shows it. Graft has no such step, so the account menu shows the placeholder until a settings row
 exists; a provider sign-in carries the provider's name and needs none.
 
+**Amended 2026-09-18 (GRA-94): two doors, and registering opens no session until the address is
+verified.** The one door above is superseded, for Cando's own reason (its ADR 0017, CAN-295): a new
+person discovered sign-up by *failing a sign-in* — an unknown address, a password step for an account
+that did not exist, then an error-shaped hedge — and the pivotal moment read as a failure,
+pixel-identical to a typo'd password. With verification on it would have been worse still, since a
+wrong password on an existing account would have ended in "check your email". So `/login` signs in
+only — an unknown address fails exactly like a wrong password, Better Auth's deliberately ambiguous
+401 — and `/signup` registers, both drawn from the same card with the sign-up's labels, each with a
+cross-link carrying `redirect` so a handoff survives a change of door.
+
+`requireEmailVerification` is on (Cando's CAN-476). Registering answers a 200 that opened no session
+and a verification email; the click on its link is what verifies the address, opens the session
+(`autoSignInAfterVerification`) and returns the visitor to the sign-in door with their `redirect`,
+whose guard sends them on. A taken address answers exactly the same on the wire — Better Auth shapes
+both identically and hashes the password on both paths — and the inbox is where the two cases
+differ: a fresh address receives *Verify your email for Graft*, a taken one *You already have a
+Graft account* with a link to the sign-in door (`onExistingUserSignUp`). Sign-in of an unverified
+account answers `EMAIL_NOT_VERIFIED` and re-sends the link (`sendOnSignIn`); both doors show one
+"check your email" card with a resend. Links live 24 hours.
+
+Two consequences. The linking section below now fires: a password account is verified before it
+can sign in, so *Continue with Google* on a registered address attaches to it, as Cando's ADR 0007
+intended. And accounts that predate the flag are unverified too and meet the same path once, at
+their next sign-in — no backfill, because marking them verified would grant exactly the trust the
+gate withholds — with one exception: the admin the self-hosted image opens from its environment is
+marked verified by the boot itself (`markPersonEmailVerified`), since the operator typed that
+address and a first boot has nowhere to send a link.
+
 ## Which providers, and the console asks
 
 Google and GitHub, because those are the accounts the alpha's people — running Hermes, OpenClaw,
@@ -58,13 +86,12 @@ unset); the provider's own per-address verified flag — Google's `email_verifie
 `verified` on the address — decides the first condition, and the account's `emailVerified` the
 second.
 
-The consequence today: a password account does not link, whatever the provider says, because no
-password account is verified yet. The person is returned to the door with a sentence saying the
-address already has an account and to sign in the way it was opened
-(`socialSignInMessage` in `apps/web/src/lib/sign-in.ts`). The reverse direction works: an account
-opened through a provider has a verified address, and a second provider asserting the same verified
-address links to it. When verification arrives with a mail transport, password accounts become
-verified and Cando's outcome follows without a change here.
+The consequence as first shipped: a password account did not link, whatever the provider said,
+because no password account was verified yet; the person was returned to the door with a sentence
+saying the address already had an account (`socialSignInMessage` in `apps/web/src/lib/sign-in.ts`).
+Since the amendment above (GRA-94) every new password account is verified before it can sign in, so
+the rule below produces Cando's outcome for them; the sentence remains for an account that predates
+the flag and has not signed in since.
 
 ## Consequences
 

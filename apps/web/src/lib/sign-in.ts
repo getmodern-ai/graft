@@ -56,6 +56,30 @@ export function socialSignInUrls(
   };
 }
 
+/** The codes Better Auth's verify-email GET reports on a token it refused (its spellings, both cases). */
+const VERIFICATION_LINK_CODES = [
+  "TOKEN_EXPIRED",
+  "INVALID_TOKEN",
+  "token_expired",
+  "invalid_token",
+];
+
+/**
+ * Where the verification email's link returns the visitor: this door with the search that brought
+ * them (`redirect`, so a handoff URL survives the click) and the address (`email`, so a sign-in the
+ * link could not complete starts filled). Better Auth's GET verifies, opens the session and
+ * redirects here; the door's guard then sends a signed-in visitor where `redirect` says.
+ */
+export function verificationReturnURL(
+  origin: string,
+  input: { returnTo: string | undefined; email: string },
+): string {
+  const door = new URL("/login", origin);
+  if (input.returnTo) door.searchParams.set("redirect", input.returnTo);
+  door.searchParams.set("email", input.email);
+  return door.toString();
+}
+
 /**
  * The sentence for a provider round trip that came back with `?error=<code>` — Better Auth's
  * callback codes (`OAUTH_CALLBACK_ERROR_CODES` in its `api/routes/callback`) and the one the
@@ -64,6 +88,11 @@ export function socialSignInUrls(
  */
 export function socialSignInMessage(code: string | undefined): string | null {
   if (!code) return null;
+  if (VERIFICATION_LINK_CODES.includes(code)) {
+    // A dead verification link (GRA-94): Better Auth's `GET /verify-email` sends the browser back
+    // to the door's callbackURL with the code. Signing in re-sends a fresh one (`sendOnSignIn`).
+    return "That verification link has expired or was already used. Sign in with your password and we'll send a fresh one.";
+  }
   switch (code) {
     // ADR 0020: the address has an account whose own address is not verified, or the provider did
     // not vouch for it — the account is reached the way it was opened.

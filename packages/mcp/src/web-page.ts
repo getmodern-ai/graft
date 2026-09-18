@@ -2,7 +2,7 @@ import { lookup } from "node:dns/promises";
 import { isIP, isIPv4, type LookupFunction } from "node:net";
 
 import { isPublicAddress, isPublicHost } from "@graft/proxy/public-host";
-import { Agent, fetch as undiciFetch } from "undici";
+import { Agent } from "undici";
 
 /**
  * Reading a public web page for the agent, server-side — `read_web_page` (GRA-1, user story 41: the
@@ -59,13 +59,7 @@ export type ResolvedAddress = { address: string; family: 4 | 6 };
 /**
  * The network, behind a seam, so the reader's rules are testable without one: `resolve` answers a
  * hostname; `pinTo` produces the dispatcher `fetch` is given, bound to the vetted addresses and
- * closed when the read is done; `fetch` is undici's own, replaceable so a suite can answer a URL.
- *
- * undici's fetch and not the global one, for the reason `packages/proxy/src/upstream.ts` gives: the
- * `Agent` comes from the `undici` package and Node's global fetch is a different copy of the same
- * library, so a dispatcher from one is an opaque object to the other. Paired with the global, every
- * read failed with "fetch failed (invalid onRequestStart method)" — the page the production e2e of
- * 2026-09-18 could not fetch (GRA-91). `web-page.test.ts` pins the pairing.
+ * closed when the read is done; `fetch` is the global one, replaceable so a suite can answer a URL.
  */
 export type WebPageDeps = {
   resolve: (hostname: string) => Promise<ResolvedAddress[]>;
@@ -98,9 +92,7 @@ export const defaultWebPageDeps: WebPageDeps = {
     const agent = new Agent({ connect: { lookup: pinned } });
     return { dispatcher: agent, close: () => agent.close() };
   },
-  // undici's own fetch, unwrapped so the suite can pin it. The reader hands it a URL and a plain
-  // init, never a `Request` instance, which is what the two copies disagree on.
-  fetch: undiciFetch as unknown as typeof fetch,
+  fetch: (input, init) => fetch(input, init),
 };
 
 /**

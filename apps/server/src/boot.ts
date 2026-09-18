@@ -50,7 +50,11 @@ export type AdminCredentials = { email: string; password: string };
 export type AdminBootstrapDeps = {
   /** How many persons the database holds — `countPersons(db)`, unscoped by nature. */
   countPersons: () => Promise<number>;
-  /** Better Auth's own sign-up, so the row is the library's and not a hand-written insert. */
+  /**
+   * Better Auth's own sign-up, so the row is the library's and not a hand-written insert — and,
+   * since registering opens no session until the address is verified (GRA-94), the mark that makes
+   * this one verified: the operator typed the address, and a first boot has nowhere to send a link.
+   */
   signUp: (input: AdminCredentials & { name: string }) => Promise<void>;
   log: (line: string) => void;
 };

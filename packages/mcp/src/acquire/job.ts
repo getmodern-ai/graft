@@ -1165,16 +1165,14 @@ class AcquireLoop {
    * A progress line written as a step *starts*, labelled with its phase: `Attempt N: <text>` while
    * an attempt is open, the text alone capitalised before one. Every line in a job's progress
    * therefore says where in the loop it was written, and a poller that reads the same last line
-   * twice knows the step it names is still running (GRA-71). The full stop is added only when the
-   * text brings none of its own — a model's note usually does (GRA-91) — as `setAside` does.
+   * twice knows the step it names is still running (GRA-71).
    */
   private async step(text: string): Promise<void> {
     const open = this.open;
-    const stop = /[.!?]$/.test(text) ? "" : ".";
     await this.progress(
       open
-        ? `Attempt ${open.number}: ${text}${stop}`
-        : `${text.charAt(0).toUpperCase()}${text.slice(1)}${stop}`,
+        ? `Attempt ${open.number}: ${text}.`
+        : `${text.charAt(0).toUpperCase()}${text.slice(1)}.`,
     );
   }
 

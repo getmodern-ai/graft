@@ -21,7 +21,7 @@ import {
   type ConnectionDraft,
   type DraftErrors,
   emptyDraft,
-  secretLegend,
+  isOAuthDraft,
   validateConnectionDraft,
 } from "@/lib/connection-form";
 import { connectionKeys, createConnection } from "@/lib/connection-queries";
@@ -96,19 +96,9 @@ export function AddConnectionDialog({
     create.mutate(verdict.value);
   };
 
-  const secret = secretLegend(draft);
+  const oauth = isOAuthDraft(draft);
   const consenting = consent.state.phase === "running" || consent.state.phase === "blocked";
   const busy = create.isPending || consenting;
-  const credentialFields = (
-    <CredentialFields
-      scheme={draft.scheme}
-      value={draft.credential}
-      onChange={(credential) => setDraft({ ...draft, credential })}
-      errors={errors}
-      idPrefix="add-connection"
-      disabled={busy}
-    />
-  );
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
@@ -141,16 +131,19 @@ export function AddConnectionDialog({
           </FieldSet>
           <HostsNotice draft={draft} />
           <OAuthClientNotice draft={draft} />
-          {secret ? (
-            <FieldSet>
-              <FieldLegend variant="label">{secret}</FieldLegend>
-              <FieldGroup>{credentialFields}</FieldGroup>
-            </FieldSet>
-          ) : (
-            // A keyless scheme (GRA-66): the one sentence where the inputs would be, under no
-            // heading about a secret (GRA-91).
-            credentialFields
-          )}
+          <FieldSet>
+            <FieldLegend variant="label">{oauth ? "The client secret" : "The secret"}</FieldLegend>
+            <FieldGroup>
+              <CredentialFields
+                scheme={draft.scheme}
+                value={draft.credential}
+                onChange={(credential) => setDraft({ ...draft, credential })}
+                errors={errors}
+                idPrefix="add-connection"
+                disabled={busy}
+              />
+            </FieldGroup>
+          </FieldSet>
           <ConsentStatus state={consent.state} onCancel={consent.cancel} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>

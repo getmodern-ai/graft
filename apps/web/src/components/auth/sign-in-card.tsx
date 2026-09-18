@@ -1,6 +1,6 @@
 import type { SocialProviderName } from "@graft/auth";
 import { Link } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 
 import githubMark from "@/assets/github-mark.svg";
 import googleMark from "@/assets/google-mark.svg";
@@ -13,41 +13,60 @@ import { SOCIAL_PROVIDER_LABELS } from "@/lib/sign-in";
 import { cn } from "@/lib/utils";
 
 /**
- * Cando's sign-in card (its `apps/web/src/components/auth/sign-in-card.tsx`, CAN-64; GRA-81), less
- * one thing Graft does not have: the invitation's locked address, which needs an organisation
- * (ADR 0007). *Forgot password?* arrived with the mail transport (GRA-82). The provider buttons are drawn from the list the server answers
+ * Cando's sign-in card (its `apps/web/src/components/auth/sign-in-card.tsx`, CAN-64, CAN-295; GRA-81,
+ * GRA-94), less one thing Graft does not have: the invitation's locked address, which needs an
+ * organisation (ADR 0007). One card, two doors: `/login` and `/signup` draw it with different
+ * labels, autocomplete and footer, so they read as one screen. The provider buttons are drawn from the list the server answers
  * rather than fixed to Apple and Google — Graft's are Google and GitHub, and a self-host may have
  * neither (`lib/sign-in.ts`).
  *
  * The password step is the same card, not a second screen: the email field stays put and the
  * password field appears beneath it. Anything that navigated would throw away the typed email
- * and the card's position on the page, which is the whole point of asking in two beats.
+ * and the card's position on the page, which is the whole point of asking in two beats. The
+ * address itself is the route's state, because the route needs it after the card is gone — the
+ * "check your email" notice names it, and the verification link returns to it.
  */
 type SignInStep = "email" | "password";
 
 type SignInCardProps = {
   step: SignInStep;
-  onSubmitEmail: (email: string) => void;
+  /** The address, owned by the route: the sign-up door's verification return URL and the notice both name it. */
+  email: string;
+  onEmailChange: (email: string) => void;
+  onSubmitEmail: () => void;
   onSubmitPassword: (password: string) => void;
   /** The providers the server holds clients for, in the order to draw them; empty draws no rule. */
   providers: readonly SocialProviderName[];
   onProvider: (provider: SocialProviderName) => void;
   pending?: boolean;
   error?: string | null;
+  /** The submit's label; the sign-up door says "Create account" once a password is being invented. */
+  submitLabel?: string;
+  /** Off on the sign-up door: inventing a password, not recalling one. */
+  showForgotPassword?: boolean;
+  /** `new-password` on the sign-up door, so a manager offers to generate rather than fill. */
+  passwordAutoComplete?: "current-password" | "new-password";
+  /** The cross-link to the other door, under the buttons. */
+  footer?: ReactNode;
   className?: string;
 };
 
 function SignInCard({
   step,
+  email,
+  onEmailChange,
   onSubmitEmail,
   onSubmitPassword,
   providers,
   onProvider,
   pending = false,
   error = null,
+  submitLabel = "Continue with email",
+  showForgotPassword = true,
+  passwordAutoComplete = "current-password",
+  footer = null,
   className,
 }: SignInCardProps) {
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -57,7 +76,7 @@ function SignInCard({
     }
 
     if (step === "email") {
-      onSubmitEmail(email);
+      onSubmitEmail();
       return;
     }
 
@@ -80,7 +99,7 @@ function SignInCard({
               autoComplete="email"
               required
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => onEmailChange(event.target.value)}
               disabled={pending}
             />
           </Field>
@@ -95,21 +114,21 @@ function SignInCard({
                 <FieldLabel htmlFor="sign-in-password" className="leading-none">
                   Password
                 </FieldLabel>
-                <Link
-                  to="/forgot-password"
-                  search={{ email: email || undefined }}
-                  className="text-muted-foreground text-sm underline-offset-4 hover:underline"
-                >
-                  Forgot password?
-                </Link>
+                {showForgotPassword && (
+                  <Link
+                    to="/forgot-password"
+                    search={{ email: email || undefined }}
+                    className="text-muted-foreground text-sm underline-offset-4 hover:underline"
+                  >
+                    Forgot password?
+                  </Link>
+                )}
               </div>
               <Input
                 id="sign-in-password"
                 name="password"
                 type="password"
-                // `current-password` for the returning person; a new one's manager still offers to
-                // save what they typed, and the door registers them on the same submit.
-                autoComplete="current-password"
+                autoComplete={passwordAutoComplete}
                 required
                 minLength={8}
                 // The field appears mid-interaction, so the caret has to follow it.
@@ -125,7 +144,7 @@ function SignInCard({
         </FieldGroup>
 
         <Button type="submit" className="w-full" disabled={pending}>
-          Continue with email
+          {submitLabel}
         </Button>
 
         {providers.length > 0 && (
@@ -156,6 +175,8 @@ function SignInCard({
             </div>
           </>
         )}
+
+        {footer}
       </form>
     </AuthCard>
   );

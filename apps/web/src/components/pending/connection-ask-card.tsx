@@ -21,7 +21,6 @@ import {
   draftFromProposal,
   hostsOf,
   isOAuthDraft,
-  secretLegend,
   validateConnectionDraft,
 } from "@/lib/connection-form";
 import { connectionKeys, submitConnectionProposal } from "@/lib/connection-queries";
@@ -120,21 +119,10 @@ export function ConnectionAskCard({
   const open = isOpen(action);
   const hosts = hostsOf(draft) ?? payload.hosts;
   const oauth = isOAuthDraft(draft);
-  const secret = secretLegend(draft);
   const provider: string = payload.provider ?? KEYRING_PROVIDER;
   // Once the client is saved and the popup is open, the form's job is done; the callback settles it.
   const consenting = consent.state.phase !== "idle" && consent.state.phase !== "done";
   const busy = connect.isPending || decline.isPending || consenting;
-  const credentialFields = (
-    <CredentialFields
-      scheme={draft.scheme}
-      value={draft.credential}
-      onChange={(credential) => setDraft({ ...draft, credential })}
-      errors={errors}
-      idPrefix={`ask-${action.id}`}
-      disabled={busy}
-    />
-  );
 
   return (
     <AskCard
@@ -211,18 +199,23 @@ export function ConnectionAskCard({
           </FieldSet>
           <HostsNotice draft={draft} />
           <OAuthClientNotice draft={draft} />
-          {secret ? (
-            <FieldSet>
-              <FieldLegend variant="label">
-                {secret} — entered here, never through the agent
-              </FieldLegend>
-              <FieldGroup>{credentialFields}</FieldGroup>
-            </FieldSet>
-          ) : (
-            // A keyless scheme (GRA-66): the one sentence where the inputs would be, under no
-            // heading about a secret (GRA-91).
-            credentialFields
-          )}
+          <FieldSet>
+            <FieldLegend variant="label">
+              {oauth
+                ? "The client secret — entered here, never through the agent"
+                : "The secret — entered here, never through the agent"}
+            </FieldLegend>
+            <FieldGroup>
+              <CredentialFields
+                scheme={draft.scheme}
+                value={draft.credential}
+                onChange={(credential) => setDraft({ ...draft, credential })}
+                errors={errors}
+                idPrefix={`ask-${action.id}`}
+                disabled={busy}
+              />
+            </FieldGroup>
+          </FieldSet>
           <BuildApprovalItem
             id={`ask-${action.id}-approve-build`}
             agentName={agentName}

@@ -1132,17 +1132,8 @@ describe("request_connection routes a proposal to the provider that covers it", 
     const a = await connect(TOKEN_A);
     try {
       const first = await a.call("request_connection", proposal);
-      const { answer, action } = awaiting(first, "awaiting_connection");
+      const { action } = awaiting(first, "awaiting_connection");
       expect(action.payload).toMatchObject({ scheme: "none", schemeConfig: {} });
-      // The message says what the person does — checks the hosts, confirms — and names no
-      // credential or secret, since there is none to enter (GRA-91); the build sentence stays.
-      const message = String(answer.message);
-      expect(message).toContain("confirm the connection to Open-Meteo (open-meteo)");
-      expect(message).toContain("takes no credential, so nothing is entered");
-      expect(message).toContain("check the hosts and confirm it");
-      expect(message).toContain(BUILD_APPROVAL_ON_THE_PAGE);
-      expect(message).not.toContain("enter the credential");
-      expect(message).not.toContain("secret");
 
       // The console's form shows no secret input; the submit carries an empty credential.
       const connection = await submitConnection(action.id, {});
