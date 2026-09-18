@@ -90,3 +90,45 @@ GRA-42 bullet records as `cancel`, now yields a link rather than the card again 
 card lapse answers from the console, which is what "an approval can be answered later" above already
 promises. ADR 0008's "a dismissal records nothing" stays true; what changes is the channel the ask
 falls back to.
+
+## Amendment 2026-09-18: a decline faster than a person could read the prompt is a dismissal
+
+Decided by Aleks (GRA-43). **A client can also answer a form it never showed with `decline`.** Hermes
+0.21.1 does so in two situations that are not a person's choice: when its own approval surface fails
+inside (a gateway without a `notify_cb`), and when it runs non-interactively (`hermes chat --oneshot`
+with no terminal) and takes its default, `[D]eny`. Observed on GRA-35's Docker leg on 2026-09-18 at
+04:30 UTC: Graft's build ask was declined twice in a row within a second of being asked, `acquire`
+was refused `approval_declined` with no handoff link, and the agent had no way forward. On a write
+tool's first-use ask the same reflex would have recorded a standing `deny` nobody chose (ADR 0008: a
+decline holds).
+
+**The rule.** An elicitation answered `decline` faster than a person could read the prompt is read as
+a dismissal: nothing is recorded, and the ask goes to the handoff exactly as a `cancel` does under the
+amendment of 2026-09-16, with one sentence added to the handoff's answer saying the client answered
+the prompt on its own and the person can answer in the console. **The threshold is 1.5 seconds** on
+the round trip, from the ask leaving to the answer arriving, held as the exported constant
+`AUTOMATIC_ANSWER_MS` in `packages/mcp/src/approval.ts` and measured on the clock that module is
+already given (`deps.pendingAction.now()`), so a test moves the clock rather than sleeping. A
+`decline` at or past the threshold is the person's and keeps its meaning: a standing deny on a tool
+ask, a plain refusal on a build ask. An `accept` is taken at any speed. Each elicitation's outcome is
+logged with the round trip in milliseconds and an `automatic` flag, so the threshold can be read
+against what clients actually do.
+
+**Why a threshold and not a client check.** Nothing on the wire says whether a person saw the form:
+Hermes sends the same `decline` from its Deny button and from its default, and `initialize` names the
+client, not the mode it is running in. What does differ is time. A person reads a card that names an
+agent, a vendor and a tool before answering it; both of Hermes's own answers arrived within a second
+of the ask, most of that transport. One constant, exported, so a client found to answer for the
+person more slowly moves it in one place.
+
+**Accepted risk.** A person who presses Deny within 1.5 seconds of the card appearing is not refused:
+they receive a console link instead, and their no is still theirs to give there. The reverse error, a
+machine's no held against the person as a standing deny, is what this amendment exists to prevent,
+and of the two it is the costlier and the one observed. Accepts are deliberately outside the rule: a
+yes a client gives for the person is the harness's failure to guard its own surface, and reading
+fast accepts as dismissals would send every quick button press to the handoff, the outcome GRA-42
+removed.
+
+**Unchanged.** `cancel` falls through as the amendment of 2026-09-16 says; the fall-through is per
+ask; a waiting console answer is taken before any form is offered. ADR 0008's "a decline holds" is
+about the person's decline, and this amendment narrows how one is recognised, not what it does.
