@@ -45,7 +45,7 @@ const FAKE_CARD_HTML = '<!doctype html><html><body><div id="ask"></div></body></
 /** A session over the in-memory pair, as `server.test.ts` opens one; `initialize` reads nothing from the deps. */
 async function initialize() {
   const store = createFakeStore();
-  store.addAgent({ id: "agent_a", personId: "person_1", token: TOKEN });
+  store.addAgent({ scopeMode: "listed", id: "agent_a", personId: "person_1", token: TOKEN });
   const sandbox = createFakeSandboxBackend();
   sandboxes.push(sandbox);
   const deps: McpDeps = {

@@ -78,6 +78,7 @@ beforeEach(() => {
     primaryHost: "https://api.demo.example",
   });
   store.addAgent({
+    scopeMode: "listed",
     id: CLAUDE,
     personId: PERSON,
     token: TOKEN_CLAUDE,
@@ -86,6 +87,7 @@ beforeEach(() => {
     connectedVia: { clientId: "client_claude", clientName: "Claude" },
   });
   store.addAgent({
+    scopeMode: "listed",
     id: OTHER,
     personId: PERSON,
     token: TOKEN_OTHER,
@@ -94,6 +96,7 @@ beforeEach(() => {
     connectedVia: { clientId: "client_openai", clientName: "ChatGPT" },
   });
   store.addAgent({
+    scopeMode: "listed",
     id: HERMES,
     personId: PERSON,
     token: TOKEN_HERMES,
@@ -123,6 +126,7 @@ beforeEach(() => {
     redirectUris: ["https://claude.ai/api/mcp/auth_callback", "https://evil.example/cb"],
   });
   store.addAgent({
+    scopeMode: "listed",
     id: UNKNOWN,
     personId: PERSON,
     token: TOKEN_UNKNOWN,
@@ -131,6 +135,7 @@ beforeEach(() => {
     connectedVia: { clientId: "client_unknown", clientName: "Some Client" },
   });
   store.addAgent({
+    scopeMode: "listed",
     id: MIXED,
     personId: PERSON,
     token: TOKEN_MIXED,
@@ -704,6 +709,7 @@ describe("the card-host gate", () => {
       redirectUris: ["https://connectors.chat.self-host.example/oauth/cb"],
     });
     store.addAgent({
+      scopeMode: "listed",
       id: "agent_self",
       personId: PERSON,
       token,

@@ -85,8 +85,20 @@ beforeAll(async () => {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "index.ts"), MODULE);
 
-  store.addAgent({ id: AGENT_A, personId: PERSON, token: TOKEN_A, name: "laptop Hermes" });
-  store.addAgent({ id: AGENT_B, personId: PERSON, token: TOKEN_B, name: "server OpenClaw" });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_A,
+    personId: PERSON,
+    token: TOKEN_A,
+    name: "laptop Hermes",
+  });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_B,
+    personId: PERSON,
+    token: TOKEN_B,
+    name: "server OpenClaw",
+  });
 
   const fake = createFakeDeps(store);
   // The real vault's encrypt half on the service side, the same vault's decrypt behind the proxy.

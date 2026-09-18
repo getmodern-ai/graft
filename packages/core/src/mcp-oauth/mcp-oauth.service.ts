@@ -5,6 +5,7 @@ import type { McpAuthorizationCodeRow, McpClientRow } from "@graft/db/repo/mcp-o
 import { type McpClientAuthMethod, mcpClientAuthMethod } from "@graft/db/schema/mcp-oauth";
 
 import type { AgentDeps } from "../agent/agent.deps";
+import type { AgentScopeMode } from "../agent/agent.service";
 import {
   type AgentOutput,
   connectExistingAgentToClient,
@@ -497,7 +498,13 @@ export type ConsentDecision =
   | {
       decision: "allow";
       agent:
-        | { kind: "new"; name: string; connectionIds: readonly string[] }
+        | {
+            kind: "new";
+            name: string;
+            /** `all` when absent (ADR 0007 as amended 2026-09-19); `listed` takes `connectionIds`. */
+            scopeMode?: AgentScopeMode;
+            connectionIds?: readonly string[];
+          }
         | { kind: "existing"; agentId: string };
     };
 
@@ -564,7 +571,12 @@ export async function decideConsent(
               principal,
               {
                 name: decision.agent.name,
-                connectionIds: decision.agent.connectionIds,
+                ...(decision.agent.scopeMode === undefined
+                  ? {}
+                  : { scopeMode: decision.agent.scopeMode }),
+                ...(decision.agent.connectionIds === undefined
+                  ? {}
+                  : { connectionIds: decision.agent.connectionIds }),
                 connectedVia: via,
               },
               agentDeps,

@@ -131,7 +131,14 @@ beforeAll(async () => {
     [AGENT_F, TOKEN_F, "oneshot Hermes"],
     [AGENT_G, TOKEN_G, "Hermes at a terminal"],
   ] as const) {
-    store.addAgent({ id, personId: PERSON, token, name, connectionIds: [CONN_DEMO] });
+    store.addAgent({
+      scopeMode: "listed",
+      id,
+      personId: PERSON,
+      token,
+      name,
+      connectionIds: [CONN_DEMO],
+    });
   }
   for (const tool of TOOLS) {
     store.addTool({
@@ -709,7 +716,13 @@ describe("through an elicitation — where the client advertised one", () => {
    */
   it("an accept after the connection was revoked mid-form records nothing and refuses connection_revoked, for a tool ask and for the build ask", async () => {
     const TOKEN_H = "grft_approval_token_h_000000000000000000000000";
-    store.addAgent({ id: "agent_h", personId: PERSON, token: TOKEN_H, connectionIds: [CONN_DEMO] });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_h",
+      personId: PERSON,
+      token: TOKEN_H,
+      connectionIds: [CONN_DEMO],
+    });
     store.promote("agent_h", "tool_create");
     const live = store.connections.get(CONN_DEMO);
     if (!live) throw new Error("fixture: the connection is missing");

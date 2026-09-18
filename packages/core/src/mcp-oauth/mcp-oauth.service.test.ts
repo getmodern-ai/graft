@@ -85,6 +85,7 @@ function agentRow(id: string, overrides: Partial<AgentRow> = {}): AgentRow {
     tokenPrefix: null,
     connectedViaClientId: null,
     connectedViaClientName: null,
+    scopeMode: "listed",
     workingSetCap: 20,
     idleWindowDays: 21,
     revokedAt: null,
@@ -251,6 +252,7 @@ function harness(overrides: { clock?: Date } = {}) {
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
+    listScopeConnectionIds: vi.fn(async () => ["conn_1", "conn_2"]),
     findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
       ids.map((id) => ({ id, personId: "person_1", vendor: "demo" }) as ConnectionRow),
     ),
@@ -305,7 +307,7 @@ async function consented(
       agent:
         options.agent === "existing"
           ? { kind: "existing", agentId: "agent_1" }
-          : { kind: "new", name: "Claude", connectionIds: ["conn_1"] },
+          : { kind: "new", name: "Claude", scopeMode: "listed", connectionIds: ["conn_1"] },
     },
     h.deps,
     h.agentDeps,
@@ -609,6 +611,32 @@ describe("the consent (ADR 0018: it mints the agent)", () => {
     expect(outcome.agent?.connectedVia).toEqual({ clientId: client_id, clientName: "Claude" });
     expect(h.agentDeps.insertAgent).not.toHaveBeenCalled();
     expect([...h.store.codes.values()][0]?.agentId).toBe("agent_1");
+  });
+
+  /** ADR 0007 as amended 2026-09-19: a consent that names no mode mints an agent on every connection. */
+  it("mints the new agent on all connections when the consent names no mode, writing no list", async () => {
+    const h = harness();
+    const { client_id } = await registered(h);
+    const pkce = generatePkce();
+    const outcome = await decideConsent(
+      ctx,
+      PRINCIPAL,
+      {
+        client_id,
+        redirect_uri: REDIRECT,
+        response_type: "code",
+        code_challenge: pkce.challenge,
+        code_challenge_method: "S256",
+      },
+      { decision: "allow", agent: { kind: "new", name: "Claude" } },
+      h.deps,
+      h.agentDeps,
+      CONFIG,
+    );
+    expect(outcome.agent?.scopeMode).toBe("all");
+    expect(vi.mocked(h.agentDeps.insertAgent).mock.calls[0]?.[1]?.scopeMode).toBe("all");
+    expect(h.agentDeps.replaceAgentConnections).not.toHaveBeenCalled();
+    expect([...h.store.codes.values()][0]?.agentId).toBe(outcome.agent?.id);
   });
 
   it("sends a deny back as access_denied with the state, minting nothing", async () => {

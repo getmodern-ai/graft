@@ -7,6 +7,18 @@ import { connection } from "./connection";
 import { mcpClient } from "./mcp-oauth";
 
 /**
+ * How an agent's scope is read (CONTEXT.md, *Scope*; ADR 0007 as amended 2026-09-19). `all`: every
+ * connection of the person's, present and future — the default for a new agent, since a person who
+ * connected a vendor once expects it everywhere they run an agent. `listed`: the rows in
+ * `agent_connection` and no others — what every agent was before the amendment, and what a person
+ * chooses when they deliberately separate agents. The capability token names ids under both
+ * (`@graft/core`'s `getAgentScope` resolves the mode to a set before any mint), so the property the
+ * ADR states holds unchanged.
+ */
+export const agentScopeMode = ["all", "listed"] as const;
+export type AgentScopeMode = (typeof agentScopeMode)[number];
+
+/**
  * An **agent**: one harness connection to Graft, authenticating with its own token (CONTEXT.md).
  * It belongs to a person and holds a scope, a working-set cap and an idle window, and nothing
  * else of its own (ADR 0007) — connections and the toolbox are the person's, referenced from
@@ -42,6 +54,12 @@ export const agent = pgTable(
       onDelete: "set null",
     }),
     connectedViaClientName: text("connected_via_client_name"),
+    /**
+     * `all` or `listed` (above). The column's default is `all` for a row made from here on; migration
+     * 0009 wrote `listed` on every row that existed before it, so nobody's agent widened silently
+     * (GRA-105: "existing agents keep their lists").
+     */
+    scopeMode: text("scope_mode", { enum: agentScopeMode }).notNull().default("all"),
     /** ADR 0009's cap: how many tools may be promoted at once. */
     workingSetCap: integer("working_set_cap").notNull().default(20),
     /** ADR 0009's idle window: a tool unused this many days is demoted by the rule. */
@@ -60,9 +78,11 @@ export const agent = pgTable(
 );
 
 /**
- * The **scope**: the connections an agent may use (CONTEXT.md, ADR 0007). The capability token
- * minted for an exec names connections from this set and no others, so an authored tool running
- * for one agent cannot reach a connection that agent was never given.
+ * The **list** an agent on `scope_mode = 'listed'` may use (CONTEXT.md, *Scope*; ADR 0007). An
+ * agent on `all` has no rows here and needs none: its scope is every connection of the person's,
+ * resolved in the statement (`repo/agent.ts`, `listScopeConnectionIds`). Under either mode the
+ * capability token minted for an exec names connections from the resolved set and no others, so an
+ * authored tool running for one agent cannot reach a connection that agent was never given.
  */
 export const agentConnection = pgTable(
   "agent_connection",

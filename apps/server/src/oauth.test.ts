@@ -126,7 +126,13 @@ beforeAll(async () => {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "index.ts"), MODULE);
 
-  store.addAgent({ id: AGENT_A, personId: PERSON, token: TOKEN_A, name: "laptop Hermes" });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_A,
+    personId: PERSON,
+    token: TOKEN_A,
+    name: "laptop Hermes",
+  });
 
   const handoff = {
     consoleUrl: CONSOLE_URL,

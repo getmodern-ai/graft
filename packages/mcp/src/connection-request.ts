@@ -131,6 +131,15 @@ import { executeToolName } from "./tool-names";
  * revoked row and a live row in scope keep GRA-76's answers; a live row outside the scope whose
  * credential is missing keeps its refusal too, since allowing it would give the agent nothing to
  * call through.
+ *
+ * **An agent on `all` never reaches the scope ask, and every grant here is a no-op for it**
+ * (ADR 0007 as amended 2026-09-19; GRA-105). `getAgentScope` answers every connection of the
+ * person's for such an agent, so `existingConnectionFor` finds every usable row in scope and
+ * answers `connected`; the `scope` ask and the gateway's `connection_not_in_scope` are the
+ * narrowed agent's answers alone. The grant after a connect (`addConnectionToAgentScope`, here and
+ * in the console's submit, the link's return and the scope ask's yes) writes nothing for an agent
+ * on `all` — the row is the person's and therefore already that agent's — and this file does not
+ * read the mode to know it.
  */
 
 export const CONNECTION_ASK_KIND = "connection";

@@ -60,8 +60,10 @@ _Avoid_: forward (what the proxy does with every call), proxy (the relay goes *t
 broker
 
 **Scope**:
-The connections an agent may use. The capability token minted for an exec names them, so an
-authored tool running for one agent cannot reach a connection that agent was never given.
+The connections an agent may use: every connection of the person's unless the person limits the
+agent to a list (ADR 0007 as amended 2026-09-19). The capability token minted for an exec names
+them, so an authored tool running for one agent cannot reach a connection that agent was never
+given.
 _Avoid_: permissions, toolkit, policy, grant
 
 **Proxy**:

@@ -46,6 +46,7 @@ const agentRow: AgentRow = {
   tokenPrefix: "grft_abc",
   connectedViaClientId: null,
   connectedViaClientName: null,
+  scopeMode: "listed",
   workingSetCap: 20,
   idleWindowDays: 21,
   revokedAt: null,
@@ -179,6 +180,7 @@ function agentDeps(): AgentDeps {
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => ["conn_1"]),
+    listScopeConnectionIds: vi.fn(async () => ["conn_1"]),
     findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
       ids.map((id) => ({ ...connectionRow, id })),
     ),
@@ -557,11 +559,12 @@ describe("agents", () => {
     const { app } = harness({ user: { id: "person_1" } });
     const created = await app.request(
       "/api/agents",
-      json({ name: "laptop Hermes", connectionIds: ["conn_1"] }),
+      json({ name: "laptop Hermes", scopeMode: "listed", connectionIds: ["conn_1"] }),
     );
     expect(created.status).toBe(201);
     const body = (await created.json()) as { token: string; agent: Record<string, unknown> };
     expect(body.token.startsWith("grft_")).toBe(true);
+    expect(body.agent.scopeMode).toBe("listed");
     expect(body.agent).not.toHaveProperty("tokenHash");
     expect(JSON.stringify(body.agent)).not.toContain(body.token);
 
@@ -570,6 +573,31 @@ describe("agents", () => {
     expect(text).not.toContain(body.token);
     expect(text).not.toContain("tokenHash");
     expect(text).toContain('"tokenPrefix":"grft_abc"');
+  });
+
+  /** ADR 0007 as amended 2026-09-19: a body naming no mode makes an agent on every connection. */
+  it("creates an agent on all connections when the body names no mode, writing no list and answering the resolved scope", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const created = await app.request("/api/agents", json({ name: "Claude" }));
+    expect(created.status).toBe(201);
+    const body = (await created.json()) as {
+      agent: Record<string, unknown>;
+      connectionIds: string[];
+    };
+    expect(body.agent.scopeMode).toBe("all");
+    expect(body.connectionIds).toEqual(["conn_1"]);
+    expect(vi.mocked(deps.agent.insertAgent).mock.calls[0]?.[1]?.scopeMode).toBe("all");
+    expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+
+    // A list beside `all` is refused, and a mode outside the enum is the schema's 400.
+    const both = await app.request(
+      "/api/agents",
+      json({ name: "Claude", scopeMode: "all", connectionIds: ["conn_1"] }),
+    );
+    expect(both.status).toBe(400);
+    expect(await both.json()).toMatchObject({ error: "BAD_REQUEST" });
+    const unknown = await app.request("/api/agents", json({ name: "Claude", scopeMode: "some" }));
+    expect(unknown.status).toBe(400);
   });
 
   it("maps a service refusal to its status and code", async () => {
@@ -593,8 +621,13 @@ describe("agents", () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
     const found = await app.request("/api/agents/agent_1");
     expect(await found.json()).toMatchObject({
-      agent: { id: "agent_1" },
+      agent: { id: "agent_1", scopeMode: "listed" },
       connectionIds: ["conn_1"],
+    });
+    // The ids are the scope as it resolves for the agent's mode, in one statement (ADR 0007 as amended 2026-09-19).
+    expect(deps.agent.listScopeConnectionIds).toHaveBeenCalledWith(fakeDb, {
+      personId: "person_1",
+      agentId: "agent_1",
     });
 
     vi.mocked(deps.agent.findAgent).mockResolvedValueOnce(null);
@@ -603,18 +636,48 @@ describe("agents", () => {
     expect(await missing.json()).toMatchObject({ error: "NOT_FOUND", message: "Agent not found" });
   });
 
-  it("replaces the scope and revokes", async () => {
+  it("sets the scope to a list, to all connections, and refuses the old shape; and revokes", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
     const scoped = await app.request(
       "/api/agents/agent_1/scope",
-      json({ connectionIds: ["conn_1", "conn_2"] }, "PUT"),
+      json({ mode: "listed", connectionIds: ["conn_1", "conn_2"] }, "PUT"),
     );
     expect(scoped.status).toBe(200);
+    expect(await scoped.json()).toMatchObject({
+      agent: { scopeMode: "listed" },
+      connectionIds: ["conn_1", "conn_2"],
+    });
+    expect(deps.agent.updateAgent).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1", {
+      scopeMode: "listed",
+    });
     expect(deps.agent.replaceAgentConnections).toHaveBeenCalledWith(
       fakeDb,
       { personId: "person_1", agentId: "agent_1" },
       ["conn_1", "conn_2"],
     );
+
+    // To all: the mode written, the list cleared, the resolved scope answered.
+    const widened = await app.request("/api/agents/agent_1/scope", json({ mode: "all" }, "PUT"));
+    expect(widened.status).toBe(200);
+    expect(await widened.json()).toMatchObject({
+      agent: { scopeMode: "all" },
+      connectionIds: ["conn_1"],
+    });
+    expect(deps.agent.updateAgent).toHaveBeenLastCalledWith(fakeDb, "person_1", "agent_1", {
+      scopeMode: "all",
+    });
+    expect(deps.agent.replaceAgentConnections).toHaveBeenLastCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      [],
+    );
+
+    // The shape before GRA-105 — a bare list — is the schema's 400, not a silent `listed`.
+    const bare = await app.request(
+      "/api/agents/agent_1/scope",
+      json({ connectionIds: ["conn_1"] }, "PUT"),
+    );
+    expect(bare.status).toBe(400);
 
     const revoked = await app.request("/api/agents/agent_1/revoke", { method: "POST" });
     expect(await revoked.json()).toMatchObject({ agent: { revokedAt: NOW.toISOString() } });

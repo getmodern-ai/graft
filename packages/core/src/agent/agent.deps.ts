@@ -6,6 +6,7 @@ import {
   listAgentConnectionIds,
   listAgents,
   listAllActiveAgents,
+  listScopeConnectionIds,
   replaceAgentConnections,
   revokeAgent,
   setAgentConnectedVia,
@@ -35,7 +36,10 @@ export type AgentDeps = {
   replaceAgentConnections: typeof replaceAgentConnections;
   /** The one-connection grant, idempotent on the scope's key — never a read and a rewrite of the list. */
   addAgentConnection: typeof addAgentConnection;
+  /** The list under `listed` — what a scope write edits; the scope as read is `listScopeConnectionIds`. */
   listAgentConnectionIds: typeof listAgentConnectionIds;
+  /** The scope resolved for either mode in one statement (ADR 0007 as amended 2026-09-19) — what `getAgentScope` answers. */
+  listScopeConnectionIds: typeof listScopeConnectionIds;
   /** Setting a scope reads the person's connections to refuse an id that is not theirs. */
   findConnectionsByIds: typeof findConnectionsByIds;
   /** The sweep's roster — the one read here with no person in it (ADR 0009; `listActiveAgentScopes`). */
@@ -59,6 +63,7 @@ export const defaultAgentDeps: AgentDeps = {
   replaceAgentConnections,
   addAgentConnection,
   listAgentConnectionIds,
+  listScopeConnectionIds,
   findConnectionsByIds,
   listAllActiveAgents,
   newId: () => crypto.randomUUID(),

@@ -101,8 +101,20 @@ beforeAll(async () => {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "index.ts"), MODULE);
 
-  store.addAgent({ id: AGENT_A, personId: PERSON, token: TOKEN_A, name: "laptop Hermes" });
-  store.addAgent({ id: AGENT_B, personId: PERSON, token: TOKEN_B, name: "server OpenClaw" });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_A,
+    personId: PERSON,
+    token: TOKEN_A,
+    name: "laptop Hermes",
+  });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_B,
+    personId: PERSON,
+    token: TOKEN_B,
+    name: "server OpenClaw",
+  });
 
   const fake = createFakeDeps(store);
   const connection = { ...fake.connection, providers };
@@ -485,8 +497,20 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
 
   /** GRA-75: the card's build choice rides the signed state and is recorded with the connection the return makes. */
   it("a link started with approveBuild records the asking agent's build approval with the connection it makes; one started bare records none", async () => {
-    store.addAgent({ id: "agent_d", personId: PERSON, token: `${TOKEN_B}d`, name: "fourth" });
-    store.addAgent({ id: "agent_e", personId: PERSON, token: `${TOKEN_B}e`, name: "fifth" });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_d",
+      personId: PERSON,
+      token: `${TOKEN_B}d`,
+      name: "fourth",
+    });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_e",
+      personId: PERSON,
+      token: `${TOKEN_B}e`,
+      name: "fifth",
+    });
     const ticked = await connect(`${TOKEN_B}d`);
     const bare = await connect(`${TOKEN_B}e`);
     // Since GRA-76 a live Gmail row of the person's outside the asking agent's scope is a
@@ -544,7 +568,13 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     // which since GRA-104 is the scope ask — a relay provider's row counts as the connection the
     // person already has (GRA-76), and this is Aleks's Claude.ai case of 2026-09-19 — so the row is
     // set aside for the landing this test is about.
-    store.addAgent({ id: "agent_c", personId: PERSON, token: `${TOKEN_B}c`, name: "third" });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_c",
+      personId: PERSON,
+      token: `${TOKEN_B}c`,
+      name: "third",
+    });
     const a = await connect(`${TOKEN_B}c`);
     const setAside = [...store.connections.values()].filter((row) => row.vendor === "gmail");
     try {

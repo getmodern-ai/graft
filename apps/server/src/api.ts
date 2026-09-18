@@ -47,6 +47,7 @@ import {
 import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
+import { agentScopeMode } from "@graft/db/schema/agent";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
@@ -239,12 +240,23 @@ const agentBody = z.object({
   name: z.string(),
   workingSetCap: z.number().int().optional(),
   idleWindowDays: z.number().int().optional(),
+  /** `all` when absent (ADR 0007 as amended 2026-09-19); `listed` takes `connectionIds`. */
+  scopeMode: z.enum(agentScopeMode).optional(),
   connectionIds: z.array(z.string()).optional(),
 });
 
-const agentPatch = agentBody.omit({ connectionIds: true }).partial();
+const agentPatch = agentBody.omit({ connectionIds: true, scopeMode: true }).partial();
 
-const scopeBody = z.object({ connectionIds: z.array(z.string()) });
+/**
+ * `PUT /agents/:id/scope`: every connection, or a list — `SetAgentScopeInput` in `@graft/core`
+ * says what a `listed` write with no list does. The console imports `ScopeBody` rather than
+ * writing the shape again.
+ */
+const scopeBody = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }),
+  z.object({ mode: z.literal("listed"), connectionIds: z.array(z.string()).optional() }),
+]);
+export type ScopeBody = z.input<typeof scopeBody>;
 
 /** The scheme's secret fields as the console posts them; the service holds them to the scheme's table. */
 const credentialFields = z.record(z.string(), z.unknown());
@@ -742,9 +754,7 @@ export function createApi(options: ApiOptions): Hono {
   api.put("/agents/:id/scope", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, scopeBody);
-    return c.json(
-      await setAgentScope(ctx, principal, c.req.param("id"), body.connectionIds, agentDeps),
-    );
+    return c.json(await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps));
   });
 
   /** The person's toolbox, demoted tools included — what a connection's tools are read from (ADR 0007). */

@@ -207,6 +207,7 @@ export async function openWorld(options: WorldOptions): Promise<World> {
     primaryHost: GITHUB_PRIMARY_HOST,
   });
   store.addAgent({
+    scopeMode: "listed",
     id: AGENT,
     personId: PERSON,
     token: TOKEN,

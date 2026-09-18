@@ -95,7 +95,7 @@ const scopeOf = (agentId: string) => ({ personId: PERSON, agentId });
 function addAgent(name: string) {
   const id = `agent_${name}_${++counter}`;
   const token = `grft_${id}_${"0".repeat(32)}`;
-  store.addAgent({ id, personId: PERSON, token, name });
+  store.addAgent({ scopeMode: "listed", id, personId: PERSON, token, name });
   return { id, token, scope: scopeOf(id) };
 }
 

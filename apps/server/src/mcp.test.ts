@@ -28,8 +28,8 @@ afterAll(async () => {
 
 function harness() {
   const store = createFakeStore();
-  store.addAgent({ id: "agent_a", personId: "person_1", token: TOKEN_A });
-  store.addAgent({ id: "agent_b", personId: "person_1", token: TOKEN_B });
+  store.addAgent({ scopeMode: "listed", id: "agent_a", personId: "person_1", token: TOKEN_A });
+  store.addAgent({ scopeMode: "listed", id: "agent_b", personId: "person_1", token: TOKEN_B });
   const sandbox = createFakeSandboxBackend();
   sandboxes.push(sandbox);
   const mcp: McpDeps = {
