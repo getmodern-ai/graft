@@ -41,9 +41,11 @@ export const KEYRING_PROVIDER = "keyring";
 export type ProviderConnect =
   /**
    * The person enters a secret in the console: the scheme picker over `schemes`, the scheme's
-   * parameters and its secret fields, from the two tables in `@graft/proxy` — today's form.
+   * parameters and its secret fields, from the two tables in `@graft/proxy` — today's form. At
+   * least one scheme, because a form is that picker and a picker over nothing connects nothing;
+   * `assertCloudBackings` holds a hosted provider to the same (GRA-62).
    */
-  | { kind: "form"; schemes: readonly AuthScheme[] }
+  | { kind: "form"; schemes: readonly [AuthScheme, ...AuthScheme[]] }
   /**
    * The person opens a link the provider mints and consents there; nothing is typed in the console
    * (GRA-59). The three functions are the link's flow as the server runs it (`apps/server`'s
@@ -132,7 +134,14 @@ export type ProviderResolution =
       schemeConfig: SchemeConfig;
       credentialCiphertext: Uint8Array | null;
     }
-  | { mode: "relay"; relay: ProxyRelay };
+  | { mode: "relay"; relay: ProxyRelay }
+  /**
+   * The provider holds nothing for this row yet: a link the person opened and did not finish, so
+   * there is neither a credential to inject nor an upstream to relay to. The proxy says so, naming
+   * the provider (`connection_not_ready`, GRA-68), where a null `inject` scheme would have it name
+   * the columns the row happens to lack.
+   */
+  | { mode: "pending" };
 
 /**
  * The columns a provider reads off a row. The ciphertext is among them because the keyring provider

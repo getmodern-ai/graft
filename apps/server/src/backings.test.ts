@@ -317,14 +317,15 @@ describe("assertCloudBackings", () => {
     expect(() => assertCloudBackings(null, "m")).toThrow(/no sandbox backing/);
   });
 
+  const link = {
+    kind: "link",
+    scheme: "pipedream_connect_proxy",
+    target() {},
+    start() {},
+    complete() {},
+  };
+
   it("accepts providers beside the seams and names what a malformed one lacks", () => {
-    const link = {
-      kind: "link",
-      scheme: "pipedream_connect_proxy",
-      target() {},
-      start() {},
-      complete() {},
-    };
     const provider = {
       name: "broker",
       connect: link,
@@ -335,7 +336,7 @@ describe("assertCloudBackings", () => {
     expect(() => assertCloudBackings({ ...complete, providers: [provider] }, "m")).not.toThrow();
     expect(() =>
       assertCloudBackings(
-        { ...complete, providers: [{ ...provider, connect: { kind: "none" } }] },
+        { ...complete, providers: [{ ...provider, connect: { kind: "none", scheme: "gateway" } }] },
         "m",
       ),
     ).not.toThrow();
@@ -368,6 +369,36 @@ describe("assertCloudBackings", () => {
     expect(() =>
       assertCloudBackings({ ...complete, providers: [{ ...provider, revoke: 1 }] }, "m"),
     ).toThrow(/provider broker without revoke\(\)/);
+  });
+
+  it("holds each provider's connect shape to what the type accepts: a relay scheme for none and link, the proxy's signing schemes for a form (GRA-62)", () => {
+    const provider = { name: "gw", covers() {}, resolve() {}, revoke() {} };
+    const withConnect = (connect: unknown) => () =>
+      assertCloudBackings({ ...complete, providers: [{ ...provider, connect }] }, "m");
+    // No person step (GRA-58): the relay scheme every row records, one the proxy implements. A
+    // package built against the older `{ kind: "none" }` is refused at the seam, naming the provider.
+    expect(withConnect({ kind: "none", scheme: "gateway" })).not.toThrow();
+    expect(withConnect({ kind: "none", scheme: "pipedream_connect_proxy" })).not.toThrow();
+    expect(withConnect({ kind: "none" })).toThrow(
+      /provider gw, which connects with no person step, with no relay scheme/,
+    );
+    expect(withConnect({ kind: "none", scheme: "magic" })).toThrow(
+      /provider gw, which connects with no person step, with relay scheme magic, which is not one of gateway, pipedream_connect_proxy/,
+    );
+    // A link's scheme is held to the same list, not only to being a string: a signing scheme's name
+    // is not a relay scheme (`RELAY_SCHEMES` and `AUTH_SCHEMES` are kept apart in `@graft/proxy`).
+    expect(withConnect({ ...link, scheme: "bearer" })).toThrow(
+      /provider gw, which connects with a link, with relay scheme bearer, which is not one of gateway, pipedream_connect_proxy/,
+    );
+    // A form is the scheme picker over the proxy's signing schemes: at least one, and no stranger.
+    expect(withConnect({ kind: "form", schemes: ["bearer", "none"] })).not.toThrow();
+    expect(withConnect({ kind: "form", schemes: [] })).toThrow(
+      /provider gw, which connects with a form, with no schemes/,
+    );
+    expect(withConnect({ kind: "form" })).toThrow(/which connects with a form, with no schemes/);
+    expect(withConnect({ kind: "form", schemes: ["bearer", "gateway"] })).toThrow(
+      /provider gw, which connects with a form, with scheme gateway, which is not one of api_key_header, api_key_query/,
+    );
   });
 
   it("accepts a store beside the seams, whole or absent, and names the first verb a partial one lacks", () => {

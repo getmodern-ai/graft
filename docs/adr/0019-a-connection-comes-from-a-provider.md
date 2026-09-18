@@ -188,3 +188,14 @@ private knowledge:
   host, or one that is the authorize or token endpoint URL itself, is refused as an invalid proposal
   with the reason. `covers` itself is unchanged: every remaining host must still be in the entry,
   because the relay injects the account's token into whatever vendor URL it is handed.
+- **A revoked connection is refused as `connection_revoked`, and a row whose link never finished
+  names its provider** (GRA-68, 2026-09-18). The proxy is handed the row's `revokedAt`
+  (`ProxyConnection`) and refuses on it before it reads the scheme, the hosts or the credential:
+  read off those columns, a revoked relay row answered `connection_not_ready` with "no scheme or
+  primary host" for a row that has both, and a revoked keyring row "no credential yet", each sending
+  the agent to repair the wrong thing when the one repair is the console's Reconnect, which the
+  message now says. A link provider's row that is not revoked and holds no reference resolves
+  `pending`, and the proxy's `connection_not_ready` names the provider that holds nothing for it
+  yet. The proxy still knows nothing of what a provider is: the name is opaque text for that
+  sentence, and a row handed to the proxy without the stamp is refused as before, through the
+  nothing `toProxyConnection` resolves a revoked row to.

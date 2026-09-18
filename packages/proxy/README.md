@@ -177,14 +177,18 @@ never fabricates a vendor response.
 ## Refusals
 
 Every refusal is `{ error, reason, message }` with `reason` one of the `ProxyOutcome` words the
-wide event carries: `token_missing`, `token_expired`, `token_invalid`, `person_mismatch`,
-`connection_not_in_token`, `connection_unknown`, `connection_not_ready`, `credential_incomplete`,
-`credential_unreadable`, `token_exchange_failed`, `bad_target`, `host_not_in_set`,
-`host_not_public`, `request_too_large`, `request_timeout`, `response_too_large`,
-`upstream_timeout`, `upstream_unreachable`, `proxy_unconfigured`, `proxy_error`. A vendor's own
+wide event carries: `token_missing`, `token_expired`, `token_invalid`, `bad_connection_id`,
+`person_mismatch`, `connection_not_in_token`, `connection_unknown`, `connection_not_ready`,
+`connection_revoked`, `consent_required`, `credential_incomplete`, `credential_unreadable`,
+`relay_unavailable`, `token_exchange_failed`, `bad_target`, `host_not_in_set`, `host_not_public`,
+`request_too_large`, `request_timeout`, `response_too_large`, `upstream_timeout`,
+`upstream_unreachable`, `proxy_unconfigured`, `proxy_error`. A vendor's own
 error is not a refusal — it comes back as the vendor sent it. Two outcomes are not refusals either:
 `forwarded` and `redirect_returned` are the vendor's answer passed through, and
-`dry_run_intercepted` is the preview above.
+`dry_run_intercepted` is the preview above. `connection_revoked` (409) is the person's revoke, read
+off the connection before its scheme, hosts or credential, so the message names the one repair,
+Reconnect in the console; `connection_not_ready` for a relay row whose link never finished names the
+provider that holds nothing for it yet (GRA-68).
 
 ## The wide event
 

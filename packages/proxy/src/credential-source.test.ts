@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createDerivedCredentialCache } from "./cache";
 import { credentialSource, hostSetOf, wireCredential } from "./credential-source";
 import { DerivedCredentialError, SCHEMES, type SchemePlugin } from "./schemes";
-import type { CredentialFields, ProxyConnection, SchemeRuntime } from "./types";
+import type { CredentialFields, ProxyConnection, RelayPlugin, SchemeRuntime } from "./types";
 
 /**
  * Where the credential comes from, on its own. `app.test.ts` proves each refusal and each source
@@ -13,6 +13,16 @@ import type { CredentialFields, ProxyConnection, SchemeRuntime } from "./types";
  */
 
 const CIPHERTEXT = new Uint8Array([1, 2, 3]);
+const NOW = new Date("2026-09-18T09:00:00Z");
+
+/** A relay as a host would hand one on: enough shape for `credentialSource` to see a relay row. */
+const fakeRelay: RelayPlugin = {
+  kind: "relay",
+  scheme: "test_relay",
+  rules: { prefix: null, passThrough: [], refuse: [], refusePrefixes: [] },
+  relay() {},
+  headerNames: () => [],
+};
 
 function connection(overrides: Partial<ProxyConnection> = {}): ProxyConnection {
   return {
@@ -51,6 +61,75 @@ describe("credentialSource", () => {
     });
     expect(
       credentialSource(connection({ credentialCiphertext: null }), { decryptCredential }),
+    ).toMatchObject({
+      status: 409,
+      reason: "connection_not_ready",
+      message: "The connection has no credential yet",
+    });
+  });
+
+  it("refuses a revoked row as revoked, whatever else it carries, before its scheme, hosts or credential are read (GRA-68)", () => {
+    const revoked = {
+      kind: "refused",
+      status: 409,
+      reason: "connection_revoked",
+      message: "The person revoked this connection; ask them to reconnect it in the console",
+    };
+    // A keyring row: the revoke cleared its ciphertext, and "no credential yet" is the wrong repair.
+    expect(
+      credentialSource(connection({ revokedAt: NOW, credentialCiphertext: null }), {
+        decryptCredential,
+      }),
+    ).toMatchObject(revoked);
+    // A relay row as the host hands it on: no scheme, no ciphertext and the relay withheld
+    // (`toProxyConnection`), where "no scheme or primary host" named columns the row still has.
+    expect(
+      credentialSource(
+        connection({
+          revokedAt: NOW,
+          authScheme: null,
+          schemeConfig: null,
+          credentialCiphertext: null,
+        }),
+        { decryptCredential },
+      ),
+    ).toMatchObject(revoked);
+    // And a relay handed on beside the stamp: the revoke still wins.
+    expect(
+      credentialSource(
+        connection({
+          revokedAt: NOW,
+          authScheme: null,
+          credentialCiphertext: null,
+          relay: { plugin: fakeRelay, obtain: async () => ({}) },
+        }),
+        { decryptCredential },
+      ),
+    ).toMatchObject(revoked);
+    // Null is not revoked, exactly as absent.
+    expect(credentialSource(connection({ revokedAt: null }), { decryptCredential })).toMatchObject({
+      kind: "source",
+      mode: "inject",
+    });
+  });
+
+  it("names the provider that holds nothing yet for a row whose link never completed, and keeps 'no credential yet' for an unrevoked keyring row (GRA-68)", () => {
+    expect(
+      credentialSource(
+        connection({ authScheme: null, credentialCiphertext: null, pendingProvider: "pipedream" }),
+        { decryptCredential },
+      ),
+    ).toMatchObject({
+      kind: "refused",
+      status: 409,
+      reason: "connection_not_ready",
+      message:
+        "The pipedream provider holds no account for this connection yet; the person has not finished connecting it",
+    });
+    expect(
+      credentialSource(connection({ credentialCiphertext: null, revokedAt: null }), {
+        decryptCredential,
+      }),
     ).toMatchObject({
       status: 409,
       reason: "connection_not_ready",

@@ -418,7 +418,9 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     // The connection stays in the agent's scope awaiting reconnection (ADR 0007), but its execute
     // tool leaves the list (GRA-69), and a client that still names it from a snapshot is refused
     // as connection_revoked before the build approval or the proxy is reached: nothing relays,
-    // whatever Pipedream still holds.
+    // whatever Pipedream still holds, and no build approval is needed to see the refusal. The
+    // proxy answers the same word for a token minted before the revoke (GRA-68); that half is
+    // `app.test.ts`, where the binding carries the row's stamp through to the proxy directly.
     const eventsBefore = vendor.events.length;
     const a = await connect(TOKEN_A);
     try {

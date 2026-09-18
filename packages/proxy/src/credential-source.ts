@@ -71,6 +71,18 @@ export function credentialSource(
   connection: ProxyConnection,
   deps: Pick<ProxyDeps, "decryptCredential">,
 ): CallSource | Refused {
+  // The person's revoke, before anything else of the row (GRA-68): a revoked row keeps its scheme
+  // and its hosts and lacks a credential or a reference, and a refusal read off those columns would
+  // send the agent to repair the wrong thing. The host resolves such a row to no scheme, no
+  // ciphertext and no relay as well (`toProxyConnection`), so a connection that does not say it is
+  // revoked is still refused below, only less precisely.
+  if (connection.revokedAt) {
+    return refuse(
+      409,
+      "connection_revoked",
+      "The person revoked this connection; ask them to reconnect it in the console",
+    );
+  }
   const relay = connection.relay;
   if (relay) {
     if (!connection.primaryHost) {
@@ -97,6 +109,16 @@ export function credentialSource(
           },
         ),
     };
+  }
+  // A provider that holds the credential elsewhere and nothing for this row yet: the link the person
+  // opened never completed. Named, because the row has its scheme and its primary host and the check
+  // below would say otherwise (GRA-68).
+  if (connection.pendingProvider) {
+    return refuse(
+      409,
+      "connection_not_ready",
+      `The ${connection.pendingProvider} provider holds no account for this connection yet; the person has not finished connecting it`,
+    );
   }
   if (!connection.authScheme || !connection.primaryHost) {
     return refuse(409, "connection_not_ready", "The connection has no scheme or primary host");

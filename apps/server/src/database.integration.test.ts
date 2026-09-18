@@ -33,7 +33,7 @@ import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
 import { addConnectionHosts } from "@graft/db/repo/connection";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
-import type { UpstreamRequest } from "@graft/proxy";
+import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
 import {
   CAPABILITY_TOKEN_ALG,
   type CapabilityTokenKeys,
@@ -565,6 +565,42 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
 
     const proxyRow = await createDatabaseConnections(db).get(connection.id);
     expect(proxyRow?.credentialCiphertext).toBeNull();
+    // The database binding carries the stamp (GRA-68), so a capability token minted from a scope
+    // that still names the row is refused as revoked, not as a row missing a scheme or a credential.
+    expect(proxyRow?.revokedAt).toBeInstanceOf(Date);
+    const events: ProxyEvent[] = [];
+    const app = createServer({
+      keys,
+      vault,
+      connections: createDatabaseConnections(db),
+      followRedirects: false,
+      upstreamFetch: async () => {
+        throw new Error("a revoked connection reaches no vendor");
+      },
+      log: (event) => events.push(event),
+    });
+    const token = await mintCapabilityToken(
+      {
+        personId,
+        agentId: agent.agent.id,
+        connectionIds: [connection.id],
+        tool: "execute",
+        ttlSeconds: 60,
+      },
+      keys,
+    );
+    const refused = await app.request(`/api/proxy/c/${connection.id}/items`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      reason: "connection_revoked",
+      message: "The person revoked this connection; ask them to reconnect it in the console",
+    });
+    expect(events.at(-1)).toMatchObject({
+      outcome: "connection_revoked",
+      connectionId: connection.id,
+    });
     expect(await getToolById(ctx, principal, tool.id, defaultToolDeps)).toMatchObject({
       name: "create-order",
     });

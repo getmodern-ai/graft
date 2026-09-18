@@ -631,10 +631,12 @@ describe("toProxyConnection asks the row's provider how the call resolves (ADR 0
       authScheme: "api_key_header",
       primaryHost: "https://api.unleashedsoftware.com",
       hosts: ["api.unleashedsoftware.com"],
+      revokedAt: null,
       schemeConfig: { headerName: "api-auth-id" },
       credentialCiphertext: CIPHERTEXT,
     });
     expect(proxy).not.toHaveProperty("relay");
+    expect(proxy).not.toHaveProperty("pendingProvider");
   });
 
   it("a relay provider's row carries the relay and none of the row's signing columns", async () => {
@@ -667,8 +669,47 @@ describe("toProxyConnection asks the row's provider how the call resolves (ADR 0
       },
       [broker, keyringProvider],
     );
-    expect(proxy).toMatchObject({ authScheme: null, credentialCiphertext: null });
+    expect(proxy).toMatchObject({ authScheme: null, credentialCiphertext: null, revokedAt: NOW });
     expect(proxy).not.toHaveProperty("relay");
+    expect(proxy).not.toHaveProperty("pendingProvider");
+  });
+
+  it("a link provider's row that holds no reference yet resolves pending, and the proxy is told which provider holds nothing (GRA-68)", () => {
+    const broker: ConnectionProvider = {
+      ...linkProvider(),
+      resolve: (r) =>
+        r.providerRef
+          ? { mode: "relay", relay: { plugin: fakeRelay, obtain: async () => ({}) } }
+          : { mode: "pending" },
+    };
+    const pending = toProxyConnection({ ...row, provider: "broker", providerRef: null }, [
+      broker,
+      keyringProvider,
+    ]);
+    expect(pending).toMatchObject({
+      authScheme: null,
+      schemeConfig: null,
+      credentialCiphertext: null,
+      revokedAt: null,
+      pendingProvider: "broker",
+      primaryHost: "https://api.unleashedsoftware.com",
+    });
+    expect(pending).not.toHaveProperty("relay");
+    // With the reference, the relay and no pending word.
+    const linked = toProxyConnection({ ...row, provider: "broker", providerRef: "acct_1" }, [
+      broker,
+      keyringProvider,
+    ]);
+    expect(linked.relay?.plugin).toBe(fakeRelay);
+    expect(linked).not.toHaveProperty("pendingProvider");
+    // Revoked and without a reference: the revoke is read first, and the row is not pending.
+    const revoked = toProxyConnection(
+      { ...row, provider: "broker", providerRef: null, revokedAt: NOW },
+      [broker, keyringProvider],
+    );
+    expect(revoked).toMatchObject({ revokedAt: NOW });
+    expect(revoked).not.toHaveProperty("pendingProvider");
+    expect(revoked).not.toHaveProperty("relay");
   });
 
   it("a row under a provider the deployment has not enabled resolves to nothing the proxy can use", () => {
@@ -1071,6 +1112,7 @@ describe("the two shapes of a row", () => {
       authScheme: "api_key_header",
       primaryHost: "https://api.unleashedsoftware.com",
       hosts: ["api.unleashedsoftware.com"],
+      revokedAt: null,
       schemeConfig: { headerName: "api-auth-id" },
       credentialCiphertext: CIPHERTEXT,
     });
@@ -1483,14 +1525,16 @@ describe("a provider with no person step (ADR 0019, GRA-58)", () => {
       authScheme: null,
       schemeConfig: null,
       credentialCiphertext: null,
+      revokedAt: null,
     });
     const revoked = toProxyConnection({ ...gatewayRow, revokedAt: NOW }, providers);
     expect(revoked.relay).toBeUndefined();
-    expect(revoked).toMatchObject({ authScheme: null, credentialCiphertext: null });
-    // A revoked keyring row resolves the same way, as it always did through its null ciphertext.
+    // The stamp rides with it, so the proxy refuses `connection_revoked`, not `connection_not_ready` (GRA-68).
+    expect(revoked).toMatchObject({ authScheme: null, credentialCiphertext: null, revokedAt: NOW });
+    // A revoked keyring row resolves the same way: its null ciphertext, and the stamp beside it.
     expect(
       toProxyConnection({ ...row, revokedAt: NOW, credentialCiphertext: null }, providers),
-    ).toMatchObject({ authScheme: null, credentialCiphertext: null });
+    ).toMatchObject({ authScheme: null, credentialCiphertext: null, revokedAt: NOW });
   });
 
   it("widens a gateway row's host set to a later proposal's, within the gateway's coverage, and never a keyring row's", async () => {

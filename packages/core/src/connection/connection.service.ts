@@ -131,15 +131,19 @@ export function isConnectionUsable(
  * The proxy's view of a row: the identity it compares against the token, the host set it pins to,
  * and — from the row's provider (ADR 0019) — how the call resolves: the columns to decrypt and
  * inject from, or the relay to send it through. Built field by field, so a column added to the table
- * later does not ride into the proxy by accident. A revoked connection resolves to nothing and the
- * proxy answers `connection_not_ready` for it, whatever its provider — asked here rather than left
- * to the null ciphertext a revoke leaves, because a relay provider's row never had one (ADR 0019):
- * the revoke is the person's, and a capability token minted from a scope that still names the row
- * must not relay through it; and such a row may still carry its reference while the provider's
- * release is outstanding (`releaseFromProvider`), which is exactly when a call must not go through.
- * A row whose provider the deployment has not enabled resolves to nothing, which the proxy answers
- * the same way: a connection made under a provider that is now absent is not one this deployment can
- * call through, and saying so is better than guessing at the keyring.
+ * later does not ride into the proxy by accident. A revoked connection resolves to nothing and
+ * carries its `revokedAt`, so the proxy refuses it `connection_revoked` whatever its provider
+ * (GRA-68), naming the state and the console's Reconnect rather than the columns the revoke left
+ * null. Asked here rather than left to the null ciphertext a revoke leaves, because a relay
+ * provider's row never had one (ADR 0019): the revoke is the person's, and a capability token
+ * minted from a scope that still names the row must not relay through it; and such a row may still
+ * carry its reference while the provider's release is outstanding (`releaseFromProvider`), which
+ * is exactly when a call must not go through. A row whose provider holds nothing for it yet, a
+ * link never finished, carries that provider's name as `pendingProvider`, and the proxy's
+ * `connection_not_ready` says who holds nothing. A row whose provider the deployment has not
+ * enabled resolves to nothing, which the proxy answers `connection_not_ready`: a connection made
+ * under a provider that is now absent is not one this deployment can call through, and saying so
+ * is better than guessing at the keyring.
  */
 export function toProxyConnection(
   row: ConnectionRow,
@@ -150,22 +154,19 @@ export function toProxyConnection(
     personId: row.personId,
     primaryHost: row.primaryHost,
     hosts: row.hosts,
+    revokedAt: row.revokedAt,
   };
-  const resolution = row.revokedAt
-    ? null
-    : (providerNamed(providers, row.provider)?.resolve(row) ?? null);
-  if (!resolution) {
-    return { ...identity, authScheme: null, schemeConfig: null, credentialCiphertext: null };
-  }
-  if (resolution.mode === "relay") {
-    return {
-      ...identity,
-      authScheme: null,
-      schemeConfig: null,
-      credentialCiphertext: null,
-      relay: resolution.relay,
-    };
-  }
+  const nothing: ProxyConnection = {
+    ...identity,
+    authScheme: null,
+    schemeConfig: null,
+    credentialCiphertext: null,
+  };
+  if (row.revokedAt) return nothing;
+  const resolution = providerNamed(providers, row.provider)?.resolve(row) ?? null;
+  if (!resolution) return nothing;
+  if (resolution.mode === "pending") return { ...nothing, pendingProvider: row.provider };
+  if (resolution.mode === "relay") return { ...nothing, relay: resolution.relay };
   return {
     ...identity,
     authScheme: resolution.scheme,
