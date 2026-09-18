@@ -708,36 +708,6 @@ describe("the self-hosted form", () => {
   });
 });
 
-describe("Langfuse", () => {
-  it("is the key pair or nothing, with the region's URL its own setting", () => {
-    expect(serverEnvIssues({ ...SECRET, GRAFT_LANGFUSE_PUBLIC_KEY: "pk-lf-1" })).toEqual([
-      expect.stringMatching(/Langfuse is partially configured.*Missing: GRAFT_LANGFUSE_SECRET_KEY/),
-    ]);
-    expect(
-      serverEnvIssues({
-        ...SECRET,
-        GRAFT_LANGFUSE_PUBLIC_KEY: "pk-lf-1",
-        GRAFT_LANGFUSE_SECRET_KEY: "sk-lf-1",
-      }),
-    ).toEqual([]);
-    expect(
-      fullSchema.parse({
-        ...MINIMAL,
-        GRAFT_LANGFUSE_PUBLIC_KEY: "pk-lf-1",
-        GRAFT_LANGFUSE_SECRET_KEY: "sk-lf-1",
-        GRAFT_LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
-      }),
-    ).toMatchObject({ GRAFT_LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com" });
-    expect(
-      fullSchema.safeParse({
-        ...MINIMAL,
-        GRAFT_LANGFUSE_PUBLIC_KEY: "pk-lf-1",
-        GRAFT_LANGFUSE_SECRET_KEY: "PLACEHOLDER",
-      }).success,
-    ).toBe(false);
-  });
-});
-
 describe("the gateway provider (ADR 0019, GRA-58)", () => {
   const GATEWAY = {
     GRAFT_GATEWAY_HOSTS: "api.unleashedsoftware.com, *.googleapis.com",

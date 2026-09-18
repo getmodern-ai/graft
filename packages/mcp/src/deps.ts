@@ -157,6 +157,32 @@ export type McpDeps = {
    * for a runner — which is what a process that starts none, the sweep script say, wants.
    */
   acquireRunner?: { kick(): void };
+  /**
+   * Fired once per tool call from the one dispatch point (`tools.ts`'s `callToolFor`), after the
+   * answer is known and before it is returned — the hook the server binds its wide event and its
+   * analytics to (GRA-100). What it carries is what a chart cuts by, and nothing a person typed:
+   * the tool's wire name and kind, the agent and the person, the outcome, the refusal's reason when
+   * there is one, the latency. Absent, a call is exactly what it was.
+   */
+  onToolCall?: (event: ToolCallEvent) => void;
+};
+
+/**
+ * One tool call as the hook sees it. `kind` is which of the three lists the name came from
+ * (ADR 0003): a fixed meta-tool, a connection's execute tool, or an authored tool in the working
+ * set — an unknown name is reported as `authored`, since that is the list it would have been in.
+ * `outcome` is MCP's `isError` read back: `refused` when the answer is Graft's own refusal shape
+ * (`result.ts`), `error` for a run's failure or an internal one, `ok` otherwise.
+ */
+export type ToolCallEvent = {
+  tool: string;
+  kind: "meta" | "execute" | "authored";
+  agentId: string;
+  personId: string;
+  outcome: "ok" | "refused" | "error";
+  /** The refusal's `reason` — `connection_not_in_scope`, `awaiting_approval`, … — when `outcome` is `refused`. */
+  reason?: string;
+  latencyMs: number;
 };
 
 export type CreateMcpDepsInput = Pick<

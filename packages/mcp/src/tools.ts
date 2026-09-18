@@ -16,6 +16,7 @@ import {
 
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "./bounds";
 import type { SessionContext } from "./context";
+import type { ToolCallEvent } from "./deps";
 import { toolError, toolRefusal, toolResult } from "./result";
 import { runAuthoredTool } from "./run";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
@@ -80,6 +81,18 @@ export async function callToolFor(
   name: string,
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
+  const startedAt = Date.now();
+  const result = await answer(session, name, args);
+  // The hook sees every answer, an unknown tool's `McpError` excepted — that one never reached a tool.
+  session.deps.onToolCall?.(toolCallEvent(session, name, result, Date.now() - startedAt));
+  return result;
+}
+
+async function answer(
+  session: SessionContext,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<CallToolResult> {
   try {
     return await dispatch(session, name, args);
   } catch (error) {
@@ -93,6 +106,31 @@ export async function callToolFor(
       message: `Something went wrong running ${name}. Try again, and say so if it repeats.`,
     });
   }
+}
+
+/** The call as `McpDeps.onToolCall` is told it (`deps.ts`): the answer's `isError` and refusal shape read back. */
+export function toolCallEvent(
+  session: Pick<SessionContext, "scope">,
+  name: string,
+  result: CallToolResult,
+  latencyMs: number,
+): ToolCallEvent {
+  const kind = FIXED_BY_NAME.has(name)
+    ? "meta"
+    : parseExecuteToolName(name)
+      ? "execute"
+      : "authored";
+  const body = result.structuredContent;
+  const refused = result.isError === true && body?.error === "refused";
+  return {
+    tool: name,
+    kind,
+    agentId: session.scope.agentId,
+    personId: session.scope.personId,
+    outcome: result.isError === true ? (refused ? "refused" : "error") : "ok",
+    ...(refused && typeof body?.reason === "string" ? { reason: body.reason } : {}),
+    latencyMs,
+  };
 }
 
 async function dispatch(

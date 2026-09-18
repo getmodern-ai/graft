@@ -38,6 +38,11 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
   `packages/core/src/approval/approval.decision.ts` or the ask in `packages/mcp/src/approval.ts`.
 - **The proxy is the only route to a vendor.** A sandbox with any other egress, or a module that
   holds a credential, violates ADR 0010 and ADR 0013 whatever the reason.
+- **No vendor in the open repository** (ADR 0002 as amended 2026-09-19): no vendor's client
+  library, configuration variable or id. Define the seam here, with the open form's backing or a
+  no-op, and put the vendor's backing in graft-cloud's private package. Before adding a package or
+  a `GRAFT_*` variable, ask whether it is a vendor's; if it is, it goes there. The Pipedream
+  provider is the one exception left, and GRA-103 moves it.
 
 ## Lineage
 
@@ -626,11 +631,23 @@ and nobody else's (`apps/server/src/model.test.ts` proves the isolation through 
 Routing applies whenever a fixed model exists, and always under `cloud`; under `open` with no fixed
 model `acquire` refuses at the door rather than accepting a job that fails for want of a key.
 
-**Langfuse** traces every model call when `GRAFT_LANGFUSE_PUBLIC_KEY` and `GRAFT_LANGFUSE_SECRET_KEY`
-are set (all-or-nothing; `GRAFT_LANGFUSE_BASE_URL` names the region), per call and never registered
-globally — `@graft/model/langfuse` carries Cando's argument for that. The job is the session, the
-person the user, and every span carries the job id, the attempt and the role (`authoring` | `triage`).
-Absent the pair, the call is exactly what it would be otherwise.
+**Observability is three seams with no backing in the open form** (GRA-100; ADR 0002 as amended
+2026-09-19; `@graft/observability`): the **log drain** (`LogDrain`) — where a wide event goes after
+stdout; the open form's stay on stdout, the hosted form's drain is handed to `initLogger({ drain })`
+on the logger rather than the Hono middleware, so the acquire runner's and the sweep's own `log`
+lines drain beside the requests' — **analytics** (`Analytics`, `NO_ANALYTICS`, the event vocabulary
+in `events.ts`: `noun_verbed`, counts and kinds, never content) and **model telemetry**
+(`@graft/model`'s `ModelTelemetry` and `NO_TELEMETRY`, the backing as `ModelTelemetryBacking`).
+`Backings` carries the three and the boot line names each: `logs stdout, analytics off, model
+telemetry off` on every self-host. Every `POST /mcp` event carries the tool call under `mcp` — the
+tool, its kind, the agent, the person, the outcome, the refusal's reason, the latency — from
+`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point; the runner's
+and the sweep's lines ride under `acquire` and `sweep`. Product events are captured server-side at
+two chokepoints and nowhere in the console: the API's mutation routes
+(`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
+does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
+`acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
+form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
 
 ```bash
 cat >> apps/server/.env <<'ENV'

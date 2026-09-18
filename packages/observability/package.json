@@ -1,5 +1,5 @@
 {
-  "name": "@graft/model",
+  "name": "@graft/observability",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,19 +14,15 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:live": "GRAFT_MODEL_LIVE=1 vitest run src/provider.live.test.ts",
     "check-types": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "catalog:",
-    "@ai-sdk/openai": "catalog:",
-    "ai": "catalog:",
-    "zod": "catalog:"
+    "@graft/model": "workspace:*",
+    "evlog": "^2.27.1"
   },
   "devDependencies": {
     "@graft/config": "workspace:*",
     "@types/node": "catalog:",
-    "dotenv": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

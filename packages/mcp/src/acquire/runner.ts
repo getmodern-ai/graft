@@ -37,17 +37,25 @@ export type AcquireRunnerOptions = {
   onError?: (error: unknown) => void;
 };
 
+/**
+ * Every event names the agent and its person: the process line reads by agent, and the server's
+ * analytics file the job's end on the person's profile (GRA-100), so both ride from the claim.
+ */
 export type AcquireRunnerEvent =
-  | { kind: "claimed"; jobId: string; agentId: string; resumed: boolean }
+  | { kind: "claimed"; jobId: string; agentId: string; personId: string; resumed: boolean }
   | {
       kind: "finished";
       jobId: string;
       agentId: string;
+      personId: string;
       status: AcquireJobRow["status"] | "gone";
       /** A failed job's `failure: message`, so the process log names the cause beside the status. */
       failure?: string;
+      /** How many drafts the job made and what it spent — `acquire_attempt` rows and the token ceiling's counter. */
+      attempts?: number;
+      tokenSpend?: number;
     }
-  | { kind: "failed"; jobId: string; agentId: string; error: string };
+  | { kind: "failed"; jobId: string; agentId: string; personId: string; error: string };
 
 export type AcquireRunner = {
   /** Poll now — coalesced: a kick during a tick schedules one more tick, never a parallel one. */
@@ -88,6 +96,7 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
       kind: "claimed",
       jobId: job.id,
       agentId: job.agentId,
+      personId: claimed.personId,
       resumed: job.attempts > 0 || job.tokenSpend > 0,
     });
     const work = runAcquireJob(deps, claimed, { heartbeatMs, now: options.now })
@@ -97,8 +106,10 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
             kind: "finished",
             jobId: job.id,
             agentId: job.agentId,
+            personId: claimed.personId,
             status: row?.status ?? "gone",
             ...(row?.status === "failed" ? { failure: describeFailure(row.result) } : {}),
+            ...(row ? { attempts: row.attempts, tokenSpend: row.tokenSpend } : {}),
           });
         },
         (error: unknown) => {
@@ -106,6 +117,7 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
             kind: "failed",
             jobId: job.id,
             agentId: job.agentId,
+            personId: claimed.personId,
             error: errorMessage(error),
           });
         },

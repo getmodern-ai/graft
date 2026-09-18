@@ -4,12 +4,13 @@ import type { ModelSituationKind } from "./types";
 
 /**
  * The observability seam the provider-backed adapter calls through, so the adapter knows nothing
- * of Langfuse and a test can stand a recorder in its place. Two halves, because the AI SDK (v7)
+ * of any tracing vendor and a test can stand a recorder in its place. Two halves, because the AI SDK (v7)
  * traces in two ways: `integrations` are the callback objects a call names in
  * `telemetry.integrations`, notified as the call starts, steps and ends; `traced` wraps the call
  * so the trace-level attributes — session, user, tags, metadata — travel down by async context to
- * every span the SDK starts inside it. `./langfuse.ts` is the one real binding; `NO_TELEMETRY` is
- * what an unconfigured deployment and every unit test run with, and under it a call is exactly
+ * every span the SDK starts inside it. The one real binding is the hosted form's, in the private
+ * package behind `Backings.modelTelemetry` (ADR 0002 as amended 2026-09-19); `NO_TELEMETRY` is the
+ * open form's whole backing and what every unit test runs with, and under it a call is exactly
  * what it would be without this file.
  */
 

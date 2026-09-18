@@ -65,12 +65,14 @@ import {
   verifyHandoff,
 } from "@graft/mcp";
 import { executeToolName } from "@graft/mcp/tool-names";
+import { type Analytics, NO_ANALYTICS } from "@graft/observability";
 import { AUTH_SCHEMES } from "@graft/proxy";
 import { useLogger } from "evlog/hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
+import { routeEvent } from "./analytics-routes";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 import { createProviderLinkRoutes, startProviderLink } from "./provider-link";
@@ -153,6 +155,13 @@ export type ApiOptions = {
   corsOrigins: readonly string[];
   /** The sign-in providers `auth` registered (`@graft/auth`'s `socialProviders`); none when absent. */
   signInMethods?: SignInMethods;
+  /**
+   * The analytics seam's backing (`@graft/observability`; GRA-100) — `Backings.analytics`, the
+   * no-op in the open form. The console's actions are counted here, at the API's mutation routes
+   * (`analytics-routes.ts`), rather than in the browser: the console carries no analytics library
+   * (ADR 0002 as amended 2026-09-19).
+   */
+  analytics?: Analytics;
   /** What signs and roots a handoff URL (`@graft/mcp`'s `handoff.ts`) — the console's URL and the secret. */
   handoff: Pick<HandoffConfig, "consoleUrl" | "secret">;
   /**
@@ -422,6 +431,25 @@ export function createApi(options: ApiOptions): Hono {
   if (options.corsOrigins.length > 0) {
     api.use("*", cors({ origin: [...options.corsOrigins], credentials: true }));
   }
+
+  /**
+   * The console's product events, one chokepoint (GRA-100): after a tracked mutation has answered
+   * 2xx, `analytics-routes.ts` names the event and the person it happened to is the session's. The
+   * session is resolved again here — one more read on a handful of rare mutations — rather than
+   * threaded out of every handler, so no route knows analytics exists; a session that cannot be
+   * resolved counts nothing, since without a person there is no profile to file it on.
+   */
+  const analytics = options.analytics ?? NO_ANALYTICS;
+  api.use("*", async (c, next) => {
+    await next();
+    if (analytics === NO_ANALYTICS || c.res.status >= 300) return;
+    const event = routeEvent(c.req.method, c.req.path);
+    if (!event) return;
+    const session = await options.auth.getSession(c.req.raw.headers).catch(() => null);
+    const personId = session?.user.id;
+    if (personId)
+      analytics.capture({ distinctId: personId, event, properties: { via: "console" } });
+  });
 
   api.onError((error, c) => {
     if (error instanceof ServiceError) {

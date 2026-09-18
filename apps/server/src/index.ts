@@ -32,7 +32,8 @@ import type { SandboxProcessResult } from "@graft/sandbox";
 import { importCapabilityTokenKeys } from "@graft/token";
 import { createCredentialVault } from "@graft/vault";
 import { serve } from "@hono/node-server";
-import { initLogger } from "evlog";
+import { initLogger, log } from "evlog";
+import { useLogger } from "evlog/hono";
 
 import { API_MOUNT_PATH, createServer, MCP_MOUNT_PATH, PROXY_MOUNT_PATH } from "./app";
 import { selectBackings } from "./backings";
@@ -46,6 +47,7 @@ import {
   seedConnections,
 } from "./connections";
 import { createModel } from "./model";
+import { describeObservability, flushObservability } from "./observability";
 
 /**
  * The server's boot: validated environment in, one listening process out. Everything it decides
@@ -73,7 +75,24 @@ import { createModel } from "./model";
  * `.env` and the seed are gitignored, and the seed is refused under `NODE_ENV=production`.
  */
 
-initLogger({ env: { service: "graft-server", environment: env.NODE_ENV } });
+// The seams' backings, chosen once from `GRAFT_BACKINGS` and `GRAFT_SANDBOX_BACKEND`
+// (`backings.ts`, ADR 0002). Selected before the logger starts, because the log drain — one of the
+// three observability seams (GRA-100), none of which has a backing in the open form — is what the
+// logger is handed. The keyring goes under the vault below; the sandbox, the store and the mirror
+// are the publish's and the MCP server's; the connection providers (ADR 0019) go to the connection
+// service and to the proxy's connection read.
+const backings = await selectBackings(env, { raw: process.env });
+const { sandbox, store, providers } = backings;
+
+/**
+ * One wide event per request and per job event, on stdout always and, when the hosted form
+ * answered a log drain, shipped through it too — on the logger rather than the Hono middleware, so
+ * the acquire runner's and the sweep's own lines drain beside the requests' (`observability.ts`).
+ */
+initLogger({
+  env: { service: "graft-server", environment: env.NODE_ENV },
+  ...(backings.logDrain ? { drain: backings.logDrain.drain } : {}),
+});
 
 /**
  * The key pair is imported here, at boot, so a mis-pasted PEM fails the process with a sentence
@@ -88,12 +107,6 @@ const keys =
       })
     : null;
 
-// The four seams' backings and the toolbox store, chosen once from `GRAFT_BACKINGS` and
-// `GRAFT_SANDBOX_BACKEND` (`backings.ts`, ADR 0002). The keyring goes under the vault here; the
-// sandbox, the store and the mirror are the publish's and the MCP server's below; the connection
-// providers (ADR 0019) go to the connection service and to the proxy's connection read.
-const backings = await selectBackings(env, { raw: process.env });
-const { sandbox, store, providers } = backings;
 const vault = createCredentialVault(backings.keyring);
 
 // One pool for the process.
@@ -184,14 +197,16 @@ const modelKeyDeps = createModelKeyDeps({ encrypt: vault.encrypt });
 
 /**
  * Which model answers `acquire` (ADR 0004, ADR 0014; `model.ts`): the deployment's fixed model from
- * `GRAFT_MODEL_BACKEND`, a person's own key routed in front of it, Langfuse on when its pair is set.
- * `@graft/env` has already refused a self-hosted production boot without a provider and a key.
+ * `GRAFT_MODEL_BACKEND`, a person's own key routed in front of it, every adapter built over the
+ * model telemetry backing the selector answered — none in the open form. `@graft/env` has already
+ * refused a self-hosted production boot without a provider and a key.
  */
 const modelSetup = await createModel({
   env,
   db,
   decrypt: vault.decrypt,
   modelKey: modelKeyDeps,
+  telemetry: backings.modelTelemetry,
   onRoute: (route) => {
     if (route.source === "person") {
       console.log(
@@ -258,6 +273,26 @@ const mcp = createMcpDeps({
     maxAttempts: env.GRAFT_ACQUIRE_MAX_ATTEMPTS,
     tokenCeiling: env.GRAFT_ACQUIRE_TOKEN_CEILING,
   },
+  /**
+   * Every tool call, once (GRA-100): onto this request's wide event under `mcp`, so the line for a
+   * `POST /mcp` says which tool, for which agent, with what outcome — and onto the person's
+   * analytics profile as `tool_called`. Both carry the same fields and neither carries the input.
+   */
+  onToolCall: (event) => {
+    useLogger().set({ mcp: event });
+    backings.analytics.capture({
+      distinctId: event.personId,
+      event: "tool_called",
+      properties: {
+        tool: event.tool,
+        kind: event.kind,
+        agent_id: event.agentId,
+        outcome: event.outcome,
+        reason: event.reason ?? null,
+        latency_ms: event.latencyMs,
+      },
+    });
+  },
 });
 
 /**
@@ -267,21 +302,45 @@ const mcp = createMcpDeps({
  */
 const acquireRunner = createAcquireRunner(mcp, {
   concurrency: env.GRAFT_ACQUIRE_CONCURRENCY,
+  /**
+   * One wide event per job event through evlog's `log`, so the runner's lines drain with the
+   * requests' (GRA-100) — `acquire` is the field a dashboard cuts by. A job's end is also the
+   * product event: `acquire_completed` when a tool was promoted, `acquire_failed` otherwise, on the
+   * person's profile with the cause and the counters and never the goal.
+   */
   onEvent: (event) => {
     if (event.kind === "claimed") {
-      console.log(
-        `acquire: job ${event.jobId} for agent ${event.agentId} ${event.resumed ? "resumed" : "started"}`,
-      );
-    } else if (event.kind === "finished") {
-      const cause = event.failure ? ` (${event.failure})` : "";
-      console.log(`acquire: job ${event.jobId} for agent ${event.agentId} ${event.status}${cause}`);
-    } else {
-      console.error(
-        `acquire: job ${event.jobId} for agent ${event.agentId} failed: ${event.error}`,
-      );
+      log.info({ acquire: { ...event, message: `job ${event.resumed ? "resumed" : "started"}` } });
+      return;
     }
+    if (event.kind === "failed") {
+      log.error({ acquire: { ...event, message: `job failed: ${event.error}` } });
+      backings.analytics.capture({
+        distinctId: event.personId,
+        event: "acquire_failed",
+        properties: { job_id: event.jobId, agent_id: event.agentId, status: "crashed" },
+      });
+      return;
+    }
+    const cause = event.failure ? ` (${event.failure})` : "";
+    log[event.status === "failed" ? "warn" : "info"]({
+      acquire: { ...event, message: `job ${event.status}${cause}` },
+    });
+    backings.analytics.capture({
+      distinctId: event.personId,
+      event: event.status === "succeeded" ? "acquire_completed" : "acquire_failed",
+      properties: {
+        job_id: event.jobId,
+        agent_id: event.agentId,
+        status: event.status,
+        failure: event.failure?.split(":")[0] ?? null,
+        attempts: event.attempts ?? null,
+        token_spend: event.tokenSpend ?? null,
+      },
+    });
   },
-  onError: (error) => console.error("acquire runner tick failed", error),
+  onError: (error) =>
+    log.error({ acquire: { message: "runner tick failed", error: String(error) } }),
 });
 mcp.acquireRunner = acquireRunner;
 
@@ -324,6 +383,8 @@ const app = createServer({
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
     signInMethods,
+    // The console's actions counted at the API's mutation routes (GRA-100; `analytics-routes.ts`).
+    analytics: backings.analytics,
     handoff,
     // The consent's two ends (`oauth.ts`): the redirect URI on this server's origin, and the one
     // decrypt outside the proxy binding — the client secret, for the code exchange.
@@ -355,11 +416,17 @@ const sweep = startSweep(mcp, {
       report.failed.length > 0
         ? `, ${report.failed.length} failed: ${report.failed.map((f) => `${f.agentId} (${f.error})`).join("; ")}`
         : "";
-    console.log(
-      `working-set sweep: ${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${failed}`,
-    );
+    log.info({
+      sweep: {
+        agents: report.agents,
+        demoted: report.demoted.length,
+        skipped: report.skipped.length,
+        failed: report.failed.length,
+        message: `${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${failed}`,
+      },
+    });
   },
-  onError: (error) => console.error("working-set sweep failed", error),
+  onError: (error) => log.error({ sweep: { message: "sweep failed", error: String(error) } }),
 });
 
 acquireRunner.start();
@@ -376,6 +443,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `${seededCount} connection(s) seeded over the database, ` +
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
       modelSetup.summary +
+      `, ${describeObservability(backings)}` +
       `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );
@@ -387,8 +455,10 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     acquireRunner.stop();
     mcp.notifier?.close();
     mcp.inFlight?.close();
-    // The last job's spans are still buffered; a stop that skipped this would lose them.
-    Promise.allSettled([modelSetup.langfuse?.flush()])
+    // The last job's spans, the last batch of wide events and the last captures are still buffered
+    // in whatever backings the hosted form answered; a stop that skipped this would lose them.
+    // Bounded, because ECS gives thirty seconds before `SIGKILL`.
+    flushObservability(backings, 5_000)
       .then(() => db.close())
       .finally(() => process.exit(0));
   });

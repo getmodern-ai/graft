@@ -21,7 +21,7 @@ import {
   type ProviderModelDeps,
   parseScript,
 } from "@graft/model";
-import type { LangfuseConfig, LangfuseHandle } from "@graft/model/langfuse";
+import type { ModelTelemetryBacking } from "@graft/observability";
 import type { CredentialVault } from "@graft/vault";
 
 /**
@@ -29,9 +29,10 @@ import type { CredentialVault } from "@graft/vault";
  * (ADR 0004; ADR 0014): the deployment's **fixed** model — the provider-backed adapter under
  * `GRAFT_MODEL_BACKEND=provider`, the scripted one under `scripted`, none otherwise — with the
  * per-person router in front of it, so a person who has brought their own key (`person_model_key`)
- * has their jobs answered by their provider and nobody else's. Langfuse is started here when its pair
- * is set and handed to every adapter as the one telemetry binding, per call and never registered
- * globally (`@graft/model/langfuse` says why).
+ * has their jobs answered by their provider and nobody else's. The model telemetry backing the
+ * selector answered (`backings.ts`; ADR 0002 as amended 2026-09-19 — none in the open form, the
+ * private package's under `cloud`) is handed to every adapter as the one telemetry binding, per
+ * call and never registered globally (`@graft/model`'s `telemetry.ts` says why).
  *
  * **This is the second place in the server a stored secret becomes plaintext**, after the proxy's
  * binding in `app.ts`: a person's own key is decrypted here, under the person's model-key scope, to
@@ -56,9 +57,6 @@ export type ModelEnv = Pick<
   | "GRAFT_MODEL_AUTHORING"
   | "GRAFT_MODEL_TRIAGE"
   | "GRAFT_MODEL_BASE_URL"
-  | "GRAFT_LANGFUSE_PUBLIC_KEY"
-  | "GRAFT_LANGFUSE_SECRET_KEY"
-  | "GRAFT_LANGFUSE_BASE_URL"
 >;
 
 export type ModelSetup = {
@@ -66,7 +64,6 @@ export type ModelSetup = {
   model: ModelAdapter | null;
   /** The deployment's own model, before routing; null when none is configured. */
   fixed: ModelAdapter | null;
-  langfuse: LangfuseHandle | null;
   /** One clause for the boot line. */
   summary: string;
 };
@@ -78,9 +75,10 @@ export type CreateModelInput = {
   decrypt: CredentialVault["decrypt"];
   modelKey: Pick<ModelKeyDeps, "findPersonModelKey">;
   onRoute?: (route: ModelRoute) => void;
-  /** Test seams: stand-ins for the provider adapter and the Langfuse binding, and the script reader. */
+  /** The telemetry backing every adapter is built with — `Backings.modelTelemetry`; null runs them under `NO_TELEMETRY`. */
+  telemetry?: ModelTelemetryBacking | null;
+  /** Test seams: a stand-in for the provider adapter, and the script reader. */
   providerFactory?: (config: ProviderModelConfig, deps: ProviderModelDeps) => ModelAdapter;
-  langfuseFactory?: (config: LangfuseConfig) => LangfuseHandle;
   readScript?: (path: string) => Promise<string>;
 };
 
@@ -117,18 +115,7 @@ export async function createModel(input: CreateModelInput): Promise<ModelSetup> 
   const { env } = input;
   const providerFactory = input.providerFactory ?? createProviderModel;
 
-  let langfuse: LangfuseHandle | null = null;
-  if (env.GRAFT_LANGFUSE_PUBLIC_KEY && env.GRAFT_LANGFUSE_SECRET_KEY) {
-    const langfuseFactory =
-      input.langfuseFactory ?? (await import("@graft/model/langfuse")).createLangfuseTelemetry;
-    langfuse = langfuseFactory({
-      publicKey: env.GRAFT_LANGFUSE_PUBLIC_KEY,
-      secretKey: env.GRAFT_LANGFUSE_SECRET_KEY,
-      baseUrl: env.GRAFT_LANGFUSE_BASE_URL ?? null,
-      environment: env.NODE_ENV,
-    });
-  }
-  const telemetry = langfuse?.telemetry ?? NO_TELEMETRY;
+  const telemetry = input.telemetry?.telemetry ?? NO_TELEMETRY;
 
   let fixed: ModelAdapter | null = null;
   let fixedSummary = "none";
@@ -172,9 +159,6 @@ export async function createModel(input: CreateModelInput): Promise<ModelSetup> 
       })
     : null;
 
-  const summary =
-    `model ${fixedSummary}` +
-    (routing ? ", a person's own key routes their jobs" : "") +
-    (langfuse ? ", Langfuse on" : "");
-  return { model, fixed, langfuse, summary };
+  const summary = `model ${fixedSummary}${routing ? ", a person's own key routes their jobs" : ""}`;
+  return { model, fixed, summary };
 }

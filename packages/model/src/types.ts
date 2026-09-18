@@ -35,7 +35,7 @@ export type ModelJobContext = {
   /**
    * Whose job this is — the person the requesting agent belongs to (ADR 0007). The routed adapter
    * (`./routed.ts`) picks the person's own provider key over the deployment's fixed model by it
-   * (ADR 0014), and every provider call carries it as a trace attribute (`./langfuse.ts`). An id
+   * (ADR 0014), and every provider call carries it as a trace attribute (`./telemetry.ts`). An id
    * for routing and for the trace, never an authenticated principal: nothing downstream of the
    * model may treat it as a right.
    */

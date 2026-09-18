@@ -31,6 +31,7 @@
     "@graft/env": "workspace:*",
     "@graft/mcp": "workspace:*",
     "@graft/model": "workspace:*",
+    "@graft/observability": "workspace:*",
     "@graft/pipedream": "workspace:*",
     "@graft/proxy": "workspace:*",
     "@graft/publish": "workspace:*",

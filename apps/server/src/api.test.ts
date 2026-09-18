@@ -19,6 +19,7 @@ import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import type { VendorUsageRow } from "@graft/db/repo/usage";
 import type { WorkingSetChangeRow, WorkingSetEntry } from "@graft/db/repo/working-set";
 import { signHandoffToken } from "@graft/mcp";
+import type { Analytics, Capture } from "@graft/observability";
 import { initLogger } from "evlog";
 import { describe, expect, it, vi } from "vitest";
 
@@ -382,7 +383,10 @@ function pendingActionDeps(): PendingActionDeps {
   };
 }
 
-function harness(session: { user: { id: string } } | null) {
+function harness(
+  session: { user: { id: string } } | null,
+  extra: Partial<Parameters<typeof createServer>[0]["api"]> = {},
+) {
   const deps = {
     agent: agentDeps(),
     connection: connectionDeps(),
@@ -409,6 +413,7 @@ function harness(session: { user: { id: string } } | null) {
       corsOrigins: ["http://localhost:3001"],
       handoff: HANDOFF,
       notifier,
+      ...extra,
     },
   });
   return { app, deps, notifier };
@@ -418,6 +423,42 @@ const json = (body: unknown, method = "POST") => ({
   method,
   headers: { "content-type": "application/json" },
   body: JSON.stringify(body),
+});
+
+describe("the analytics chokepoint (GRA-100)", () => {
+  const recorder = () => {
+    const captured: Capture[] = [];
+    const analytics: Analytics = {
+      name: "recorder",
+      capture: (input) => {
+        captured.push(input);
+      },
+      shutdown: async () => undefined,
+    };
+    return { captured, analytics };
+  };
+
+  it("counts a tracked mutation that succeeded, on the session's person, and nothing else", async () => {
+    const { captured, analytics } = recorder();
+    const { app } = harness({ user: { id: "person_1" } }, { analytics });
+    const created = await app.request("/api/agents", json({ name: "hermes" }));
+    expect(created.status).toBe(201);
+    await app.request("/api/agents");
+    const refused = await app.request("/api/agents", json({}));
+    expect(refused.status).toBe(400);
+    expect(captured).toEqual([
+      { distinctId: "person_1", event: "agent_created", properties: { via: "console" } },
+    ]);
+  });
+
+  it("counts nothing without a session, and nothing at all under the open form's no-op", async () => {
+    const { captured, analytics } = recorder();
+    const { app } = harness(null, { analytics });
+    expect((await app.request("/api/agents", json({ name: "hermes" }))).status).toBe(401);
+    expect(captured).toEqual([]);
+    const { app: open } = harness({ user: { id: "person_1" } });
+    expect((await open.request("/api/agents", json({ name: "hermes" }))).status).toBe(201);
+  });
 });
 
 describe("the session door", () => {

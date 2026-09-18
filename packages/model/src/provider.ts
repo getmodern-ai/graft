@@ -107,7 +107,7 @@ export type ProviderModelSettings = {
 export type ResolvedModels = { authoring: LanguageModel; triage: LanguageModel };
 
 export type ProviderModelDeps = {
-  /** The observability binding (`./langfuse.ts`); `NO_TELEMETRY` when the deployment has none. */
+  /** The observability binding (`./telemetry.ts`); `NO_TELEMETRY` when the deployment has none. */
   telemetry?: ModelTelemetry | null;
   /** A test's stand-ins for the provider's two models; the settings still name them in the trace. */
   models?: ResolvedModels;

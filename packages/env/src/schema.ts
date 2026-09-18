@@ -385,15 +385,6 @@ export const modelProviderOptionalKeys = [
 ] as const;
 
 /**
- * Langfuse (`@graft/model/langfuse`), all-or-nothing: with the pair, every model call `acquire`
- * makes is traced under the job, the person and the attempt; without it nothing is traced and the
- * call is exactly what it would be otherwise. `GRAFT_LANGFUSE_BASE_URL` sits outside the group
- * because it has a correct default — the SDK's, the EU cloud — and a region is not a half-finished
- * deploy. The shape and the reasons are Cando's (ADR 0011).
- */
-export const langfuseKeys = ["GRAFT_LANGFUSE_PUBLIC_KEY", "GRAFT_LANGFUSE_SECRET_KEY"] as const;
-
-/**
  * The Pipedream connection provider (ADR 0019; GRA-59), all-or-nothing and off by default: with the
  * four, a vendor Pipedream's Connect catalogue offers connects with one click and every call for it
  * relays through Pipedream's proxy; without them the provider is not on the list and every vendor
@@ -892,13 +883,6 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
     );
   }
 
-  const partialLangfuse = partialGroupIssue(
-    value,
-    "Langfuse is partially configured — set GRAFT_LANGFUSE_PUBLIC_KEY and GRAFT_LANGFUSE_SECRET_KEY together, or neither.",
-    langfuseKeys,
-  );
-  if (partialLangfuse) issues.push(partialLangfuse);
-
   /**
    * The gateway provider is the four settings or nothing (`gatewayKeys`); the prefix rides beside
    * them and is refused alone, as a provider setting nothing would read. In production the upstream
@@ -1087,16 +1071,6 @@ export const serverSchema = {
       protocol: /^https?$/,
       error:
         "GRAFT_MODEL_BASE_URL must be an absolute http(s) URL — the provider's endpoint, or an OpenAI-compatible gateway's",
-    })
-    .optional(),
-
-  /** Langfuse, all-or-nothing, and its region — see `langfuseKeys`. */
-  GRAFT_LANGFUSE_PUBLIC_KEY: secretValue("GRAFT_LANGFUSE_PUBLIC_KEY"),
-  GRAFT_LANGFUSE_SECRET_KEY: secretValue("GRAFT_LANGFUSE_SECRET_KEY"),
-  GRAFT_LANGFUSE_BASE_URL: z
-    .url({
-      protocol: /^https?$/,
-      error: "GRAFT_LANGFUSE_BASE_URL must be an absolute http(s) URL — the Langfuse region's host",
     })
     .optional(),
 
