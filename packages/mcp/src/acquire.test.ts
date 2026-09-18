@@ -498,8 +498,12 @@ describe("a job that passes first time", () => {
       const labelled =
         /^(Queued: |Authoring "|Asking the model |Reading the documentation: |Opening the sandbox|Attempt \d+: )/;
       for (const line of status.progress) expect(line).toMatch(labelled);
+      // A step ends with one full stop whether the loop's words or the model's note bring it
+      // (GRA-91): the scripted `read_docs` note above ends with its own.
+      for (const line of status.progress) expect(line).not.toContain("..");
       expect(status.progress).toEqual(
         expect.arrayContaining([
+          "Reading the documentation: Reading the Items page of the Demo Orders documentation.",
           expect.stringMatching(/^Asking the model for a first draft/),
           "Attempt 1: checking the module.",
           expect.stringMatching(/^Attempt 1: publishing demo__list-items\.$/),
