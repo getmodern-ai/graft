@@ -17,6 +17,7 @@ import {
   registerProviderConnection,
   type ServiceContext,
   ServiceError,
+  setAsideSignInHosts,
   takesCredential,
   validateDisplayName,
   validateHostSet,
@@ -59,6 +60,15 @@ import { executeToolName } from "./tool-names";
  * refusal to the agent with the reason word `host_not_public` — the same word the connection
  * service answers at create and the form shows as the person types (GRA-28), and the same
  * predicate the proxy applies again at resolution (ADR 0010).
+ *
+ * **Sign-in endpoints are not hosts, and are set aside before a provider sees the proposal**
+ * (ADR 0019, consequence of 2026-09-18; GRA-89). `normaliseProposal` applies `@graft/core`'s
+ * `setAsideSignInHosts` to the validated set, so every path reads the same hosts: the routing to a
+ * provider, the open-ask match (`proposalKey` hashes the normalised hosts, so the same proposal
+ * with or without the sign-in hosts is one ask), the payload the card shows and the row the
+ * console or a link's return makes. The set-aside hosts are dropped from the row, not merely
+ * ignored for coverage, and the answer names them (`hostsSetAside`). A primary host that is a
+ * sign-in endpoint is `input_invalid` with the reason in the message.
  *
  * **The proposal is routed to a provider** (ADR 0019): the first of the deployment's providers that
  * covers the vendor at these hosts decides how the person connects it. The keyring covers every
@@ -179,6 +189,8 @@ export type Connected = {
   /** The connection's execute tool, `execute__<id>`, now in the agent's list. */
   executeTool: string;
   message: string;
+  /** Sign-in hosts the proposal listed that were set aside and are not on the row (GRA-89); absent when none were. */
+  hostsSetAside?: string[];
 };
 
 /** The result a call returns when the person has not entered the secret inside the wait. */
@@ -197,6 +209,8 @@ export type AwaitingHandoff = {
   redirectUri?: string;
   /** For a proposal a link provider covers (ADR 0019): the provider's name, so the agent can say who runs the sign-in. */
   provider?: string;
+  /** Sign-in hosts the proposal listed that were set aside and will not be on the row (GRA-89); absent when none were. */
+  hostsSetAside?: string[];
 };
 
 export type ConnectionRequestOutcome =
@@ -310,13 +324,20 @@ export function readConnectionProposal(
 }
 
 export type ProposalVerdict =
-  | { ok: true; payload: Omit<ConnectionProposalPayload, "provider"> }
+  | {
+      ok: true;
+      payload: Omit<ConnectionProposalPayload, "provider">;
+      /** The sign-in hosts set aside from the proposal's `hosts` (GRA-89), in the order proposed; empty when none. */
+      hostsSetAside: string[];
+    }
   | { ok: false; reason: string; message: string; details: Record<string, unknown> };
 
 /**
  * The proposal against the connection service's own rules — the same functions the service applies
  * at create and the form applies as the person types — normalised into the payload the card
  * pre-fills. A refusal names the first thing to fix and, for a host, the reason word and the host.
+ * The sign-in rule runs here too (the header's paragraph on GRA-89), so `payload.hosts` is what the
+ * row will hold under any provider.
  */
 export function normaliseProposal(input: ConnectionProposalInput): ProposalVerdict {
   const invalid = (message: string, details: Record<string, unknown> = {}): ProposalVerdict => ({
@@ -353,6 +374,15 @@ export function normaliseProposal(input: ConnectionProposalInput): ProposalVerdi
       details: hostSet.host ? { host: hostSet.host } : {},
     };
   }
+  // Sign-in endpoints are not hosts (GRA-89): set aside here, so the provider, the open-ask match
+  // and the row all see the same set; a primary host that is one is the proposal's fault to fix.
+  const signIn = setAsideSignInHosts(
+    input.scheme,
+    schemeConfig,
+    hostSet.primaryHost,
+    hostSet.hosts,
+  );
+  if (!signIn.ok) return invalid(signIn.problem, { field: "primaryHost", host: signIn.host });
   let docsUrl: string | null = null;
   if (input.docsUrl !== undefined && input.docsUrl.trim().length > 0) {
     try {
@@ -371,14 +401,20 @@ export function normaliseProposal(input: ConnectionProposalInput): ProposalVerdi
       scheme: input.scheme,
       schemeConfig: schemeConfig as Record<string, string>,
       primaryHost: hostSet.primaryHost,
-      hosts: hostSet.hosts,
+      hosts: signIn.hosts,
       docsUrl,
       note: PROPOSAL_PROVENANCE_NOTE,
     },
+    hostsSetAside: signIn.setAside,
   };
 }
 
-/** Two proposals are the same ask when everything the form would pre-fill is the same. */
+/**
+ * Two proposals are the same ask when everything the form would pre-fill is the same. The hosts are
+ * the normalised ones, after the sign-in hosts were set aside (GRA-89): an agent that re-sends the
+ * proposal with or without `accounts.google.com` in it is asking the same question, and takes the
+ * answer the person already gave rather than opening a second ask.
+ */
 function proposalKey(payload: Record<string, unknown>): string {
   const config = isPlainObject(payload.schemeConfig) ? payload.schemeConfig : {};
   return JSON.stringify([
@@ -515,20 +551,55 @@ export async function requestConnection(
 ): Promise<ConnectionRequestOutcome> {
   const verdict = normaliseProposal(input);
   if (!verdict.ok) return refuse(verdict.reason, verdict.message, verdict.details);
-  const provider = providerFor(
-    deps.connection.providers,
-    verdict.payload.vendor,
-    verdict.payload.hosts,
-  );
+  const outcome = await routeProposal(ctx, scope, verdict.payload, deps, notifier);
+  return namingHostsSetAside(outcome, verdict.hostsSetAside, verdict.payload.hosts);
+}
+
+/**
+ * Whatever the call answers, the agent is told which of the hosts it listed were set aside as
+ * sign-in endpoints (GRA-89) and which the connection reaches, so it does not read the shorter host
+ * set on the card, or in a later `connected`, as something lost. Nothing is added when none were.
+ */
+function namingHostsSetAside(
+  outcome: ConnectionRequestOutcome,
+  setAside: readonly string[],
+  hosts: readonly string[],
+): ConnectionRequestOutcome {
+  if (setAside.length === 0) return outcome;
+  const one = setAside.length === 1;
+  const sentence =
+    `${setAside.join(", ")} ${one ? "is a sign-in endpoint and was" : "are sign-in endpoints and were"} set aside, not recorded on the connection: ` +
+    "tool calls never reach a sign-in endpoint (the console runs the sign-in itself), and hosts is for the hosts they do reach, " +
+    `here ${hosts.join(", ")}.`;
+  const said = outcome.answer.message;
+  const message = typeof said === "string" && said.length > 0 ? `${said} ${sentence}` : sentence;
+  return outcome.isError
+    ? { isError: true, answer: { ...outcome.answer, message, hostsSetAside: [...setAside] } }
+    : { isError: false, answer: { ...outcome.answer, message, hostsSetAside: [...setAside] } };
+}
+
+/**
+ * A normalised proposal to the provider that covers it, and on to the ask or the connection. The
+ * host set is the normalised one, sign-in hosts already set aside, so a provider's `covers` judges
+ * only the hosts tool calls will reach.
+ */
+async function routeProposal(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  proposal: Omit<ConnectionProposalPayload, "provider">,
+  deps: McpDeps,
+  notifier?: ToolListChangedNotifier,
+): Promise<ConnectionRequestOutcome> {
+  const provider = providerFor(deps.connection.providers, proposal.vendor, proposal.hosts);
   if (provider.connect.kind === "none") {
-    return connectWithoutPersonStep(ctx, scope, provider, verdict.payload, deps, notifier);
+    return connectWithoutPersonStep(ctx, scope, provider, proposal, deps, notifier);
   }
   const link = provider.connect.kind === "link" ? provider.connect : null;
   const payload: ConnectionProposalPayload = {
     provider: provider.name,
     providerConnect: provider.connect.kind,
-    providerTarget: link?.target(verdict.payload.vendor, verdict.payload.hosts) ?? null,
-    ...verdict.payload,
+    providerTarget: link?.target(proposal.vendor, proposal.hosts) ?? null,
+    ...proposal,
     ...(link ? { note: LINK_PROVENANCE_NOTE } : {}),
   };
 
