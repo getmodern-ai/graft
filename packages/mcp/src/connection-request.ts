@@ -680,10 +680,17 @@ async function routeProposal(
             `${BUILD_APPROVAL_ON_THE_PAGE} ` +
             "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected. " +
             "A Google Cloud project in Testing mode expires refresh tokens after seven days, so a Google connection reconnects weekly until the app is published."
-          : `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
-            `Relay this link so they can check the hosts and enter it: ${url} It expires at ${expiresAt}. ` +
-            `${BUILD_APPROVAL_ON_THE_PAGE} ` +
-            "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
+          : takesCredential(payload.scheme)
+            ? `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
+              `Relay this link so they can check the hosts and enter it: ${url} It expires at ${expiresAt}. ` +
+              `${BUILD_APPROVAL_ON_THE_PAGE} ` +
+              "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
+            : // A keyless scheme (GRA-66) has nothing to enter: the ask is a confirmation of the
+              // hosts, and the message names no credential and no secret (GRA-91).
+              `Graft needs the person to confirm the connection to ${payload.displayName} (${payload.vendor}) in the console — the scheme takes no credential, so nothing is entered. ` +
+              `Relay this link so they can check the hosts and confirm it: ${url} It expires at ${expiresAt}. ` +
+              `${BUILD_APPROVAL_ON_THE_PAGE} ` +
+              "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
   });
 }
 
