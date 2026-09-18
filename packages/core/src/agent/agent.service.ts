@@ -342,7 +342,10 @@ export async function setAgentScope(
  * the connection an agent proposed (GRA-28): the connection is the person's, and only the agent that
  * asked is given it; every other agent of the person waits for the person to add it (ADR 0007). The
  * connection is checked to be the person's like any scope write; adding one already in the scope
- * changes nothing. Read and replace run in one transaction, as `setAgentScope`'s replace does.
+ * changes nothing. The write is one idempotent insert on the scope's key (`addAgentConnection`),
+ * never a read of the list and a rewrite of the whole: a grant that overlaps the agent page's
+ * picker or another grant loses neither (Greptile on #87). The list read back after it, in the
+ * same transaction, is what the caller answers with.
  */
 export async function addConnectionToAgentScope(
   ctx: ServiceContext,
@@ -358,11 +361,8 @@ export async function addConnectionToAgentScope(
   await assertOwnedConnections(ctx, principal, [connectionId], deps);
   const scope: AgentScope = { personId: principal.personId, agentId: row.id };
   const connectionIds = await ctx.db.transaction(async (tx) => {
-    const current = await deps.listAgentConnectionIds(tx, scope);
-    if (current.includes(connectionId)) return current;
-    const next = [...current, connectionId];
-    await deps.replaceAgentConnections(tx, scope, next);
-    return next;
+    await deps.addAgentConnection(tx, scope, connectionId);
+    return deps.listAgentConnectionIds(tx, scope);
   });
   return { agent: toAgentOutput(row), connectionIds };
 }

@@ -126,6 +126,24 @@ const buildAction: PendingActionRow = {
   payload: { connectionId: "conn_1", vendor: "demo", connectionName: "Demo", hosts: [] },
 };
 
+/** An agent's ask to use a connection of the person's it was not given (GRA-104): `conn_2`, beside the `conn_1` its scope holds. */
+const scopeAction: PendingActionRow = {
+  ...openAction,
+  id: "pa_3",
+  kind: "scope",
+  connectionId: "conn_2",
+  payload: {
+    connectionId: "conn_2",
+    vendor: "demo",
+    displayName: "Demo (other)",
+    provider: "keyring",
+    primaryHost: "https://api.demo.example",
+    hosts: ["api.demo.example"],
+    scheme: "api_key_header",
+    docsUrl: null,
+  },
+};
+
 const approvalRow: ApprovalRow = {
   agentId: "agent_1",
   toolId: "tool_1",
@@ -159,6 +177,7 @@ function agentDeps(): AgentDeps {
     revokeMcpTokensForAgent: vi.fn(async () => 0),
     setAgentConnectedVia: vi.fn(async () => agentRow),
     replaceAgentConnections: vi.fn(async () => {}),
+    addAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => ["conn_1"]),
     findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
       ids.map((id) => ({ ...connectionRow, id })),
@@ -1017,12 +1036,14 @@ describe("the connection handoff's submits (GRA-28)", () => {
       { apiKey: "sk_live_1" },
       { personId: "person_1", connectionId: "conn_new" },
     );
-    // The requesting agent's scope gains the connection and keeps what it had (ADR 0007).
-    expect(deps.agent.replaceAgentConnections).toHaveBeenCalledWith(
+    // The requesting agent's scope gains the connection and keeps what it had (ADR 0007): one
+    // idempotent insert of the pair, never a rewrite of the list (Greptile on #87).
+    expect(deps.agent.addAgentConnection).toHaveBeenCalledWith(
       fakeDb,
       { personId: "person_1", agentId: "agent_1" },
-      ["conn_1", "conn_new"],
+      "conn_new",
     );
+    expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
     expect(deps.pendingAction.answerPendingAction).toHaveBeenCalledWith(
       fakeDb,
       "person_1",
@@ -1037,7 +1058,7 @@ describe("the connection handoff's submits (GRA-28)", () => {
       deps.pendingAction.answerPendingAction,
       deps.connection.insertConnection,
       deps.connection.setConnectionCredential,
-      deps.agent.replaceAgentConnections,
+      deps.agent.addAgentConnection,
     ]) {
       expect(JSON.stringify(vi.mocked(fn).mock.calls)).not.toContain("sk_live_1");
     }
@@ -1445,10 +1466,161 @@ describe("pending actions", () => {
     expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * The scope ask (GRA-104): the generic answer route, with the same body plus `approveBuild`.
+   * A yes is the scope write the agent page's picker makes, then the build approval when asked for,
+   * in the answer's transaction; a no writes nothing; either way the answer is left for the agent's
+   * waiting call to take.
+   */
+  describe("a scope ask", () => {
+    const answersScope = (deps: ReturnType<typeof harness>["deps"]) => {
+      // The pre-read the lock order needs (the action, for the connection it names), then the answer.
+      vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValue(scopeAction);
+      vi.mocked(deps.pendingAction.answerPendingAction).mockImplementation(
+        async (_db, _p, _id, args) => ({ ...scopeAction, answer: args.answer, answeredAt: NOW }),
+      );
+    };
+
+    it("Allow with the build choice locks the connection first, then answers the ask, grows the scope by one idempotent insert and grants the build approval, in that order, and leaves the answer for the agent", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      answersScope(deps);
+      vi.mocked(deps.agent.listAgentConnectionIds).mockResolvedValueOnce(["conn_1", "conn_2"]);
+      const res = await app.request(
+        "/api/pending-actions/pa_3/answer",
+        json({ allow: true, approveBuild: true }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        pendingAction: { id: "pa_3", kind: "scope", answer: { allow: true, approveBuild: true } },
+        connectionIds: ["conn_1", "conn_2"],
+        // The fake's row (it answers `conn_1` whatever it is given); the insert below is the proof.
+        buildApproval: { agentId: "agent_1" },
+      });
+      expect(deps.pendingAction.answerPendingAction).toHaveBeenCalledWith(
+        fakeDb,
+        "person_1",
+        "pa_3",
+        { answer: { allow: true, approveBuild: true }, answeredAt: NOW },
+      );
+      // The connection is read with the row locked (FOR UPDATE) before anything is written, so a
+      // revoke — which locks the same row — serialises against this answer (Greptile on #87).
+      expect(deps.connection.findConnectionForUpdate).toHaveBeenCalledWith(
+        fakeDb,
+        "person_1",
+        "conn_2",
+      );
+      expect(deps.connection.findConnection).not.toHaveBeenCalled();
+      // The scope write is one idempotent insert of the pair, never a read and a rewrite of the list.
+      expect(deps.agent.addAgentConnection).toHaveBeenCalledWith(
+        fakeDb,
+        { personId: "person_1", agentId: "agent_1" },
+        "conn_2",
+      );
+      expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+      expect(deps.approval.insertBuildApproval).toHaveBeenCalledWith(fakeDb, {
+        agentId: "agent_1",
+        connectionId: "conn_2",
+        grantedAt: NOW,
+      });
+      // Lock, answer, scope, approval — the order the transaction takes them (as far as the fakes
+      // show): the connection lock before the action's update, which is the revoke's order too, so
+      // the two cannot deadlock (Greptile on #87).
+      const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
+        fn.mock.invocationCallOrder[0] ?? Number.NaN;
+      expect(order(vi.mocked(deps.connection.findConnectionForUpdate))).toBeLessThan(
+        order(vi.mocked(deps.pendingAction.answerPendingAction)),
+      );
+      expect(order(vi.mocked(deps.pendingAction.answerPendingAction))).toBeLessThan(
+        order(vi.mocked(deps.agent.addAgentConnection)),
+      );
+      expect(order(vi.mocked(deps.agent.addAgentConnection))).toBeLessThan(
+        order(vi.mocked(deps.approval.insertBuildApproval)),
+      );
+      // No tool approval is touched, and the answer is the agent's waiting call to take.
+      expect(deps.approval.upsertApproval).not.toHaveBeenCalled();
+      expect(deps.pendingAction.consumePendingAction).not.toHaveBeenCalled();
+    });
+
+    it("Allow with the choice off grows the scope and grants nothing else", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      answersScope(deps);
+      vi.mocked(deps.agent.listAgentConnectionIds).mockResolvedValueOnce(["conn_1", "conn_2"]);
+      const res = await app.request("/api/pending-actions/pa_3/answer", json({ allow: true }));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ connectionIds: ["conn_1", "conn_2"] });
+      expect(body).not.toHaveProperty("buildApproval");
+      expect(deps.agent.addAgentConnection).toHaveBeenCalledTimes(1);
+      expect(deps.approval.insertBuildApproval).not.toHaveBeenCalled();
+    });
+
+    it("Decline records the no and writes nothing else, and the agent's next call reads it", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      answersScope(deps);
+      const res = await app.request(
+        "/api/pending-actions/pa_3/answer",
+        json({ allow: false, approveBuild: true }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        pendingAction: { answer: { allow: false, approveBuild: true } },
+      });
+      expect(body).not.toHaveProperty("connectionIds");
+      expect(body).not.toHaveProperty("buildApproval");
+      expect(deps.agent.addAgentConnection).not.toHaveBeenCalled();
+      expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+      expect(deps.approval.insertBuildApproval).not.toHaveBeenCalled();
+      expect(deps.pendingAction.consumePendingAction).not.toHaveBeenCalled();
+    });
+
+    it("a revoke that beat the answer closes the ask and refuses 409 connection_revoked, growing no scope", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      answersScope(deps);
+      // The locked read is what sees the revoke: a revoke holds the same row lock, so this read
+      // waits for it to commit and then reads the row as revoked.
+      vi.mocked(deps.connection.findConnectionForUpdate).mockResolvedValueOnce({
+        ...connectionRow,
+        id: "conn_2",
+        revokedAt: NOW,
+      });
+      const res = await app.request(
+        "/api/pending-actions/pa_3/answer",
+        json({ allow: true, approveBuild: true }),
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "connection_revoked", connectionId: "conn_2" },
+      });
+      expect(deps.connection.expirePendingActionsForConnection).toHaveBeenCalledWith(
+        fakeDb,
+        "person_1",
+        "conn_2",
+        NOW,
+      );
+      // Seen before the action was touched: the revoke closed it, and no answer lands on it.
+      expect(deps.pendingAction.answerPendingAction).not.toHaveBeenCalled();
+      expect(deps.agent.addAgentConnection).not.toHaveBeenCalled();
+      expect(deps.approval.insertBuildApproval).not.toHaveBeenCalled();
+    });
+
+    it("refuses approveBuild that is not a boolean as 400", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      const res = await app.request(
+        "/api/pending-actions/pa_3/answer",
+        json({ allow: true, approveBuild: "yes" }),
+      );
+      expect(res.status).toBe(400);
+      expect(deps.pendingAction.answerPendingAction).not.toHaveBeenCalled();
+    });
+  });
+
   it("maps an answered or expired action to 409 and 410, and a bad body to 400", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
+    // The row is read twice on this path — once unlocked for the lock order, once for the refusal's
+    // reason — so the fake answers the same row to both.
     vi.mocked(deps.pendingAction.answerPendingAction).mockResolvedValueOnce(null);
-    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce({
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValue({
       ...openAction,
       answeredAt: NOW,
     });
@@ -1456,7 +1628,7 @@ describe("pending actions", () => {
     expect(answered.status).toBe(409);
 
     vi.mocked(deps.pendingAction.answerPendingAction).mockResolvedValueOnce(null);
-    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce({
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValue({
       ...openAction,
       expiresAt: new Date(NOW.getTime() - 1),
     });

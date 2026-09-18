@@ -13,6 +13,7 @@ import {
   HOST_NOT_PUBLIC,
   isConnectionUsable,
   isOAuthAuthorizationCode,
+  KEYRING_PROVIDER,
   listConnections,
   providerFor,
   providerNamed,
@@ -34,7 +35,7 @@ import { SCHEME_PARAMETERS } from "@graft/proxy/scheme-parameters";
 import { AUTH_SCHEMES, type AuthScheme, isAuthScheme } from "@graft/proxy/types";
 
 import { DEFAULT_POLL_MS } from "./approval";
-import { connectionAskCard, credentialAskCard } from "./ask-card";
+import { connectionAskCard, credentialAskCard, scopeAskCard } from "./ask-card";
 import type { McpDeps } from "./deps";
 import { handoffUrl, signHandoffToken } from "./handoff";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -105,18 +106,37 @@ import { executeToolName } from "./tool-names";
  * `existingConnectionFor` finds that row, and the call answers with it named and the step that
  * keeps it: `connected` when it is usable and in this agent's scope; otherwise the
  * `connection_exists` refusal saying whether the step is `request_credential` (a live row in scope
- * whose credential or consent is missing — the re-entry its card handles, consent included), the
- * console's Reconnect (a revoked row), or the console's scope picker (a row this agent was not
- * given). Hosts are matched as the proxy matches them at resolution (`hostSetOf`): the proposal's
+ * whose credential or consent is missing — the re-entry its card handles, consent included) or the
+ * console's Reconnect (a revoked row). Hosts are matched as the proxy matches them at resolution
+ * (`hostSetOf`): the proposal's
  * set within the row's, so a row reaching more than proposed counts and one reaching less does
  * not. One row takes a new ask on purpose: a revoked row of a **link** provider, because the
  * link's return reconnects it in place (GRA-59, `connectThroughProvider`) — the ask *is* its
  * reconnection. A gateway proposal never reaches this check (`connectWithoutPersonStep` has its
  * own two refusals, above).
+ *
+ * **A usable row the person holds but this agent was not given is an ask, not a refusal** (GRA-104;
+ * ADR 0006). Until 2026-09-19 that case was `connection_exists` with `inScope: false` and a
+ * navigation instruction — the one person step with no handoff URL, so a chat product's model
+ * relayed "add it under Scope" with no link, and the ask card had nothing to render. Now it is the
+ * third ask kind here, `scope`: a pending action stamped with the connection, a signed URL into
+ * the console, and the same wait and poll as the connection ask; the call answers
+ * `awaiting_scope` in GRA-55's shape. The page — and the ask card (GRA-84), since this is a yes or
+ * no on a connection the person already made — says "<agent> asks to use <connection>" with Allow
+ * and Decline and GRA-75's build choice, on by default. Allow is the same scope change the agent
+ * page's picker makes (`addConnectionToAgentScope`) and, ticked, the build approval, in one
+ * transaction (`ask-answer.ts`); the next call then answers `connected` with the execute tool
+ * named. One open `scope` ask per agent and connection: a re-proposal while it stands re-uses it,
+ * and a revoke closes it through the `connectionId` column like any other ask about the row. A
+ * revoked row and a live row in scope keep GRA-76's answers; a live row outside the scope whose
+ * credential is missing keeps its refusal too, since allowing it would give the agent nothing to
+ * call through.
  */
 
 export const CONNECTION_ASK_KIND = "connection";
 export const CREDENTIAL_ASK_KIND = "credential";
+/** The ask to let this agent use a connection the person already holds (GRA-104; the header's last paragraph). */
+export const SCOPE_ASK_KIND = "scope";
 
 /** What a `connection` ask carries: the proposal, normalised — everything the form pre-fills (ADR 0006). */
 export type ConnectionProposalPayload = {
@@ -160,6 +180,32 @@ export type CredentialAskPayload = {
 };
 
 /**
+ * What a `scope` ask carries: the connection the person already holds, as its card shows it, and
+ * the documentation the proposing model read (GRA-104). Nothing here is the agent's to edit — the
+ * row exists — so the person's answer is a yes or no and the build choice.
+ */
+export type ScopeAskPayload = {
+  connectionId: string;
+  vendor: string;
+  displayName: string;
+  /** Where the row comes from (ADR 0019), so the card can say "via pipedream". */
+  provider: string;
+  primaryHost: string;
+  hosts: string[];
+  /** The row's scheme, a relay scheme included — the card labels it, nothing enters it. */
+  scheme: string;
+  /** The documentation the agent's model read, so the person can check what it is about to use it for. */
+  docsUrl: string | null;
+};
+
+/**
+ * What the console records on a `scope` ask (GRA-104): the person's yes or no, and whether they
+ * left the build choice on. Recorded verbatim, as a tool ask's answer is — the connection is the
+ * payload's, not the answer's — and read by `readScopeAnswer`.
+ */
+export type ScopeAnswer = { allow: boolean; approveBuild?: boolean };
+
+/**
  * What the console records on either action once the secret is in the vault: the connection the
  * credential now belongs to. Anything else on the answer — a plain `{ allow: false }` from the
  * generic decline — reads as a decline. Never a field of the credential.
@@ -198,8 +244,8 @@ export type Connected = {
 
 /** The result a call returns when the person has not entered the secret inside the wait. */
 export type AwaitingHandoff = {
-  error: "awaiting_connection" | "awaiting_credential";
-  reason: "awaiting_connection" | "awaiting_credential";
+  error: "awaiting_connection" | "awaiting_credential" | "awaiting_scope";
+  reason: "awaiting_connection" | "awaiting_credential" | "awaiting_scope";
   pendingActionId: string;
   url: string;
   expiresAt: string;
@@ -212,6 +258,8 @@ export type AwaitingHandoff = {
   redirectUri?: string;
   /** For a proposal a link provider covers (ADR 0019): the provider's name, so the agent can say who runs the sign-in. */
   provider?: string;
+  /** For a `scope` ask (GRA-104): the connection the person is asked to let this agent use. */
+  connectionId?: string;
   /** Sign-in hosts the proposal listed that were set aside and will not be on the row (GRA-89); absent when none were. */
   hostsSetAside?: string[];
 };
@@ -270,6 +318,14 @@ export function readConnectionAnswer(
   return typeof answer?.connectionId === "string" && answer.connectionId.length > 0
     ? { connectionId: answer.connectionId }
     : null;
+}
+
+/** `pending_action.answer` on a `scope` ask as the console or the card wrote it; anything else is a decline. */
+export function readScopeAnswer(answer: Record<string, unknown> | null | undefined): ScopeAnswer {
+  return {
+    allow: answer?.allow === true,
+    ...(typeof answer?.approveBuild === "boolean" ? { approveBuild: answer.approveBuild } : {}),
+  };
 }
 
 /**
@@ -463,6 +519,8 @@ export const CONNECTION_EXISTS = "connection_exists";
 
 export type ExistingConnectionVerdict =
   | { kind: "connected"; connection: ConnectionOutput }
+  /** A usable row of the person's this agent was not given: the `scope` ask (GRA-104). */
+  | { kind: "scope"; connection: ConnectionOutput }
   | {
       kind: "refuse";
       reason: typeof CONNECTION_EXISTS;
@@ -480,7 +538,9 @@ const EXISTS_BECAUSE =
  * vendor — a live row beats a revoked one and this agent's beats another's, so the sentence names
  * the shortest step. A row whose provider this deployment no longer enables is not one the person
  * can act on here and is passed over; so is a revoked row of a link provider, because the link's
- * return reconnects it in place and the ask is its reconnection (GRA-59).
+ * return reconnects it in place and the ask is its reconnection (GRA-59). A live, usable row this
+ * agent was not given is the `scope` verdict — an ask, not a refusal (GRA-104) — and every other
+ * state is the refusal naming the step.
  */
 export function existingConnectionFor(
   connections: readonly ConnectionOutput[],
@@ -504,6 +564,11 @@ export function existingConnectionFor(
     (connection.revokedAt === null ? 0 : 2) + (inScope(connection) ? 0 : 1);
   const [row] = [...candidates].sort((a, b) => rank(a) - rank(b));
   if (!row) return null;
+  // The person's row, working, not this agent's: the one step that grants it is theirs to take on
+  // a page — so it is asked for, with a link (GRA-104), rather than described.
+  if (row.revokedAt === null && !inScope(row) && isConnectionUsable(row, providers)) {
+    return { kind: "scope", connection: row };
+  }
 
   const what = `${row.displayName} (${row.vendor}) is already a connection of the person's, reaching every host you proposed`;
   const revoked = row.revokedAt !== null;
@@ -525,12 +590,13 @@ export function existingConnectionFor(
       ? `${what}, and is in your scope, but its credential or consent is missing. Call ${reenter} so the person re-enters it in the console. ${EXISTS_BECAUSE}`
       : `${what}, and is in your scope, but is not usable yet. Ask the person to complete it in the console (Connections). ${EXISTS_BECAUSE}`;
   } else {
+    // Outside the scope and not usable: allowing it would give the agent nothing to call through,
+    // so both of the person's steps are named, the credential first (GRA-104 asks for a usable row).
     message =
-      `${what}, but it is not in this agent's scope. Ask the person to add it on this agent's page in the console, under Scope` +
-      (row.credentialSetAt === null && reenterable
-        ? ", and to enter its credential on the connection"
-        : "") +
-      `; a second account at the same vendor is added in the console, not proposed here. ${EXISTS_BECAUSE}`;
+      `${what}, but it is not usable yet and not in this agent's scope. Ask the person to complete it in the console (Connections${
+        row.credentialSetAt === null && reenterable ? ", entering its credential" : ""
+      }) and then to add it on this agent's page under Scope; ` +
+      `a second account at the same vendor is added in the console, not proposed here. ${EXISTS_BECAUSE}`;
   }
   return {
     kind: "refuse",
@@ -546,10 +612,11 @@ export function existingConnectionFor(
  * A connection to the same vendor reaching every proposed host, already in the agent's scope and
  * usable, is answered `connected` at once, with no ask — the agent that calls again after a
  * "connected" answer, or after a turn ended, should not have the person asked twice for one
- * account. One that exists but is not this agent's to call through — its credential missing,
- * revoked, or outside this agent's scope — is the `connection_exists` refusal naming it and the
- * step that keeps the row (GRA-76). A person who wants a second account at the same host adds it
- * in the console.
+ * account. One the person holds, usable, that this agent was not given is the `scope` ask
+ * (GRA-104): `awaiting_scope` with a link, `connected` once the person allows it. One that exists
+ * but is not anyone's to call through — its credential missing, or revoked — is the
+ * `connection_exists` refusal naming it and the step that keeps the row (GRA-76). A person who
+ * wants a second account at the same host adds it in the console.
  */
 export async function requestConnection(
   ctx: ServiceContext,
@@ -640,10 +707,40 @@ async function routeProposal(
       payload,
     );
     if (existing?.kind === "connected") {
+      // A scope ask the person has answered and this agent has not read yet is taken first, so the
+      // call that follows an Allow says so rather than "already connected, no ask was made".
+      const answered = await openScopeAskFor(ctx, scope, existing.connection.id, deps);
+      if (answered) return awaitScope(ctx, scope, answered, existing.connection, deps, notifier);
       return { isError: false, answer: connected(existing.connection, "already") };
     }
     if (existing?.kind === "refuse") {
       return refuse(existing.reason, existing.message, existing.details);
+    }
+    if (existing?.kind === "scope") {
+      const { connection } = existing;
+      // Find-or-make under a transaction-scoped advisory lock on (agent, kind, connection), so two
+      // identical calls racing here make one ask: the second waits on the lock, then finds the
+      // first's row. The table has no uniqueness over the payload; the lock stands in for one
+      // without a migration (Greptile on #87). The wait that follows runs outside the transaction.
+      const action = await ctx.db.transaction(async (tx) => {
+        const scoped: ServiceContext = { db: tx };
+        await deps.lockPendingActionKey(tx, scope, SCOPE_ASK_KIND, connection.id);
+        return (
+          (await openScopeAskFor(scoped, scope, connection.id, deps)) ??
+          createPendingAction(
+            scoped,
+            scope,
+            {
+              kind: SCOPE_ASK_KIND,
+              payload: scopeAskPayload(connection, proposal.docsUrl),
+              ttlMs: deps.handoff.ttlMs,
+              connectionId: connection.id,
+            },
+            deps.pendingAction,
+          )
+        );
+      });
+      return awaitScope(ctx, scope, action, connection, deps, notifier);
     }
   }
 
@@ -659,16 +756,21 @@ async function routeProposal(
   // A link provider's ask is one click; the OAuth guidance is the keyring's form's alone (ADR 0005).
   const oauth = !link && isOAuthAuthorizationCode(payload.scheme);
   const redirectUri = oauth ? deps.oauthRedirectUri : undefined;
+  const what = `${payload.displayName} (${payload.vendor})`;
   return waitForAnswer(ctx, scope, action, deps, {
     awaiting: "awaiting_connection",
-    what: `${payload.displayName} (${payload.vendor})`,
-    declinedReason: "connection_declined",
+    what,
     card: (url, agentName) => connectionAskCard({ action, agentName, payload, url }),
-    onConnected: (connection) => {
-      // The connection's execute tool is now in this agent's list (ADR 0003).
-      notifier?.changed(scope.agentId);
-      return connected(connection, "new");
-    },
+    settle: (taken) =>
+      settleByConnectionId(ctx, scope, taken, deps, {
+        what,
+        declinedReason: "connection_declined",
+        onConnected: (connection) => {
+          // The connection's execute tool is now in this agent's list (ADR 0003).
+          notifier?.changed(scope.agentId);
+          return connected(connection, "new");
+        },
+      }),
     ...(redirectUri ? { awaitingExtra: { redirectUri } } : {}),
     ...(link ? { awaitingExtra: { provider: provider.name } } : {}),
     awaitingMessage: (url, expiresAt) =>
@@ -699,6 +801,96 @@ async function routeProposal(
               `Relay this link so they can check the hosts and confirm it: ${url} It expires at ${expiresAt}. ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
+  });
+}
+
+/** The `scope` ask's payload off the row it is about (GRA-104): the card's facts, and the documentation proposed. */
+function scopeAskPayload(connection: ConnectionOutput, docsUrl: string | null): ScopeAskPayload {
+  return {
+    connectionId: connection.id,
+    vendor: connection.vendor,
+    displayName: connection.displayName,
+    provider: connection.provider,
+    primaryHost: connection.primaryHost,
+    hosts: connection.hosts,
+    scheme: connection.scheme,
+    docsUrl,
+  };
+}
+
+/**
+ * This agent's open `scope` ask about a connection — unanswered, or answered and not yet taken —
+ * or null. One per agent and connection (GRA-104): a re-proposal re-uses it, and a call after the
+ * person's answer takes that answer rather than asking again.
+ */
+async function openScopeAskFor(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  connectionId: string,
+  deps: McpDeps,
+): Promise<PendingActionRow | null> {
+  const rows = await deps.listPendingActionsByKind(
+    ctx.db,
+    scope,
+    SCOPE_ASK_KIND,
+    deps.pendingAction.now(),
+  );
+  return rows.find((row) => row.payload.connectionId === connectionId) ?? null;
+}
+
+/**
+ * The `scope` ask's wait (GRA-104): the connection ask's, with the answer read as a yes or no on
+ * the row named in the payload. A yes is `connected` — the console's answer has already grown the
+ * scope (`ask-answer.ts`), so the row is read back and checked to be this agent's now; a person
+ * who allowed it and then took it out of the scope before the agent called again is refused
+ * `connection_not_in_scope`, never read as having said yes to what stands. A no is
+ * `scope_declined`, and the next call asks afresh.
+ */
+async function awaitScope(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  action: PendingActionRow,
+  connection: ConnectionOutput,
+  deps: McpDeps,
+  notifier?: ToolListChangedNotifier,
+): Promise<ConnectionRequestOutcome> {
+  const what = `${connection.displayName} (${connection.vendor})`;
+  const payload = action.payload as unknown as ScopeAskPayload;
+  const via = connection.provider === KEYRING_PROVIDER ? "" : `, via ${connection.provider}`;
+  return waitForAnswer(ctx, scope, action, deps, {
+    awaiting: "awaiting_scope",
+    what,
+    card: (url, agentName) => scopeAskCard({ action, agentName, payload, url }),
+    awaitingExtra: { connectionId: connection.id, provider: connection.provider },
+    awaitingMessage: (url, expiresAt) =>
+      `The person already has a connection to ${what}${via}, made for another of their agents; Graft needs them to allow you to use it — no new connection, nothing entered. ` +
+      `Relay this link so they can allow it in the console: ${url} It expires at ${expiresAt}. ` +
+      `${BUILD_APPROVAL_ON_THE_PAGE} ` +
+      "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
+    settle: async (taken) => {
+      const said = readScopeAnswer(taken.answer);
+      if (!said.allow) {
+        return refuse(
+          "scope_declined",
+          `The person declined to let you use ${what} in the console. Ask them before proposing it again.`,
+          { pendingActionId: taken.id, connectionId: connection.id },
+        );
+      }
+      const [row, scopeIds] = await Promise.all([
+        getConnection(ctx, { personId: scope.personId }, connection.id, deps.connection),
+        getAgentScope(ctx, scope, deps.agent),
+      ]);
+      if (!row || !scopeIds.includes(row.id)) {
+        return refuse(
+          "connection_not_in_scope",
+          `The person allowed you to use ${what}, but it is not in your scope now — they took it out again, or revoked it. Ask them; the scope picker on this agent's page in the console adds it back.`,
+          { pendingActionId: taken.id, connectionId: connection.id },
+        );
+      }
+      // The connection's execute tool is now in this agent's list (ADR 0003).
+      notifier?.changed(scope.agentId);
+      return { isError: false, answer: connected(row, "scope") };
+    },
   });
 }
 
@@ -880,12 +1072,17 @@ export async function requestCredential(
       deps.pendingAction,
     ));
 
+  const what = `${connection.displayName} (${connection.vendor})`;
   return waitForAnswer(ctx, scope, action, deps, {
     awaiting: "awaiting_credential",
-    what: `${connection.displayName} (${connection.vendor})`,
-    declinedReason: "credential_declined",
+    what,
     card: (url, agentName) => credentialAskCard({ action, agentName, payload, url }),
-    onConnected: (row) => connected(row, "credential"),
+    settle: (taken) =>
+      settleByConnectionId(ctx, scope, taken, deps, {
+        what,
+        declinedReason: "credential_declined",
+        onConnected: (row) => connected(row, "credential"),
+      }),
     awaitingMessage: (url, expiresAt) =>
       `Graft needs the person to re-enter the credential for ${connection.displayName} (${connection.vendor}) in the console — the secret never passes through you. ` +
       `Relay this link: ${url} It expires at ${expiresAt}. ` +
@@ -895,7 +1092,7 @@ export async function requestCredential(
 
 function connected(
   connection: ConnectionOutput,
-  how: "new" | "already" | "credential" | "provider" | "widened",
+  how: "new" | "already" | "credential" | "provider" | "widened" | "scope",
 ): Connected {
   const executeTool = executeToolName(connection.id);
   const what = `${connection.displayName} (${connection.vendor})`;
@@ -906,9 +1103,11 @@ function connected(
         ? `${what} is already connected and in your scope as ${executeTool}; no new ask was made.`
         : how === "widened"
           ? `${what} is already connected and in your scope as ${executeTool}; its host set now also reaches the hosts you proposed (${connection.hosts.join(", ")}). No new ask was made.`
-          : how === "provider"
-            ? `Connected with no person step. ${what} is reachable through the API gateway this deployment is configured with (the ${connection.provider} provider), which holds the credential and receives every call; nothing was entered by anyone, and the scheme you proposed is not used. It is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`
-            : `Connected. ${what} is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`;
+          : how === "scope"
+            ? `Allowed. ${what} is now in your scope; its execute tool is ${executeTool}. It is the connection the person already had, so nothing was entered and no new connection was made. Your tool list changed; re-fetch it.`
+            : how === "provider"
+              ? `Connected with no person step. ${what} is reachable through the API gateway this deployment is configured with (the ${connection.provider} provider), which holds the credential and receives every call; nothing was entered by anyone, and the scheme you proposed is not used. It is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`
+              : `Connected. ${what} is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`;
   return {
     status: "connected",
     connectionId: connection.id,
@@ -919,11 +1118,13 @@ function connected(
 }
 
 /**
- * The wait, shared by both asks: poll for the answer up to the handoff's wait, then return the
- * awaiting result the agent relays. An answer that names a connection is `connected`; one that
- * does not — the generic decline — is a refusal that says so; an expired ask is a refusal too,
- * and the next call asks afresh. `CONFLICT` means a sibling call of this agent took the answer,
- * and the row is read back so both calls answer alike rather than one asking the person again.
+ * The wait, shared by the three asks: poll for the answer up to the handoff's wait, then return the
+ * awaiting result the agent relays. A taken answer is the ask's own to read (`settle`): for the
+ * connection and credential asks one that names a connection is `connected` and one that does
+ * not — the generic decline — is a refusal that says so (`settleByConnectionId`); the scope ask
+ * reads a yes or no (`awaitScope`). An expired ask is a refusal too, and the next call asks
+ * afresh. `CONFLICT` means a sibling call of this agent took the answer, and the row is read back
+ * so both calls answer alike rather than one asking the person again.
  */
 async function waitForAnswer(
   ctx: ServiceContext,
@@ -933,11 +1134,11 @@ async function waitForAnswer(
   ask: {
     awaiting: AwaitingHandoff["error"];
     what: string;
-    declinedReason: string;
-    onConnected: (connection: ConnectionOutput) => Connected;
+    /** What the taken answer means for this ask — `connected`, or the refusal that says what the person said. */
+    settle: (taken: PendingActionRow) => Promise<ConnectionRequestOutcome>;
     awaitingMessage: (url: string, expiresAt: string) => string;
-    /** What the awaiting answer carries beyond the link — the redirect URI of an OAuth proposal, or a link provider's name. */
-    awaitingExtra?: Pick<AwaitingHandoff, "redirectUri" | "provider">;
+    /** What the awaiting answer carries beyond the link — an OAuth proposal's redirect URI, a provider's name, the scope ask's connection. */
+    awaitingExtra?: Pick<AwaitingHandoff, "redirectUri" | "provider" | "connectionId">;
     /** The ask card's data for a host that renders one (GRA-84), given the link and the agent's name. */
     card: (url: string, agentName: string) => AskCard;
   },
@@ -958,7 +1159,7 @@ async function waitForAnswer(
       if (error instanceof ServiceError && error.code === "GONE") {
         return refuse(
           "handoff_expired",
-          `The ask to connect ${ask.what} expired before the person answered. Calling again asks afresh.`,
+          `The ask ${ask.awaiting === "awaiting_scope" ? "to use" : "to connect"} ${ask.what} expired before the person answered. Calling again asks afresh.`,
           { pendingActionId: action.id },
         );
       }
@@ -969,7 +1170,7 @@ async function waitForAnswer(
         throw error;
       }
     }
-    if (taken) return settle(ctx, scope, taken, deps, ask);
+    if (taken) return ask.settle(taken);
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     await new Promise((resolve) => setTimeout(resolve, Math.min(poll, remaining)));
@@ -990,7 +1191,8 @@ async function waitForAnswer(
   return { isError: true, answer: awaiting, card: ask.card(url, agent?.name ?? scope.agentId) };
 }
 
-async function settle(
+/** The connection and credential asks' answer: the row the console named, or the generic decline. */
+async function settleByConnectionId(
   ctx: ServiceContext,
   scope: AgentScope,
   taken: PendingActionRow,

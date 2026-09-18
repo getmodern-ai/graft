@@ -36,6 +36,10 @@ their wiki, a report from their accounting app — and no tool in your list does
    may read the key's presence and answer differently.
    A vendor that needs an OAuth consent rather than a key — Gmail, Slack user tokens, Notion — has
    its own note, `connecting-with-oauth.md` beside this file.
+   If the person already has the connection but it was made for another of their agents,
+   `request_connection` answers `awaiting_scope` with a link instead: the person allows you to use
+   the existing connection in the console (no new connection, nothing entered), and the call then
+   answers connected. Relay it like any handoff; do not send them to find the Scope page.
    If the vendor *is* connected and a call comes back 401 or 403, or the person says a key was
    rotated, call `request_credential { connectionId }`: a rotated or expired credential is
    `request_credential` against the existing connection, never a new connection — a new connection
@@ -67,7 +71,7 @@ The answer is `{ status, progress, attempts, result? }`:
 ## Relaying a handoff
 
 Any Graft answer with `url` and an `awaiting_…` word — `awaiting_approval`, `awaiting_connection`,
-`awaiting_credential` — is a **handoff**: the next step is the person's, in the console. Send them
+`awaiting_credential`, `awaiting_scope` — is a **handoff**: the next step is the person's, in the console. Send them
 the link exactly as returned, with one line saying what it is for, then wait. When they say it is
 done, call the same tool again with the same arguments; Graft finds the answer and continues.
 

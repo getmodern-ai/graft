@@ -4,7 +4,11 @@ import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { ConnectionScheme } from "@graft/db/schema/connection";
 import type { Resource, Tool } from "@modelcontextprotocol/sdk/types.js";
 
-import type { ConnectionProposalPayload, CredentialAskPayload } from "./connection-request";
+import type {
+  ConnectionProposalPayload,
+  CredentialAskPayload,
+  ScopeAskPayload,
+} from "./connection-request";
 
 /**
  * The **ask card** (GRA-84; ADR 0006 as amended 2026-09-18): the MCP App a chat product renders
@@ -20,9 +24,10 @@ import type { ConnectionProposalPayload, CredentialAskPayload } from "./connecti
  * documentation link, the expiry, the handoff URL — never a secret, since none is on the row
  * either — and `answerable`, the server's word on whether the card may answer in place.
  *
- * `answerable` is the amendment's scope as one boolean: true for the build approval and for a
+ * `answerable` is the amendment's scope as one boolean: true for the build approval, for a
  * connection proposal whose scheme takes no credential and whose provider connects through the
- * form; false for everything else — a scheme with a secret, a link provider's ask, a credential
+ * form, and for the scope ask — a yes or no on a connection the person already made (GRA-104);
+ * false for everything else — a scheme with a secret, a link provider's ask, a credential
  * re-entry, a tool's first use — where the card shows the console button and nothing it could
  * click. `tools/answer-ask.ts` applies the same predicate again before recording anything: the
  * card is the person's, but its word is not trusted over the row's.
@@ -45,7 +50,7 @@ export const ASK_CARD_RESOURCE: Resource = {
   name: "graft-ask",
   title: "Graft ask card",
   description:
-    "The card Graft shows for an ask a tool answers with: a build approval or a connection confirmation the person answers in place, or the link to answer it in the console.",
+    "The card Graft shows for an ask a tool answers with: a build approval, a connection confirmation or a scope ask the person answers in place, or the link to answer it in the console.",
   mimeType: ASK_CARD_MIME_TYPE,
 };
 
@@ -168,6 +173,36 @@ export function connectionAskCard(args: {
     answerable: connectionAskAnswerable(payload),
     provider: payload.provider,
     providerConnect,
+  };
+}
+
+/**
+ * The card for a `scope` ask (GRA-104): the connection the person already holds, as the console's
+ * card shows it, answerable — the answer is a yes or no on a row the person made, with GRA-75's
+ * build choice, and nothing is entered.
+ */
+export function scopeAskCard(args: {
+  action: PendingActionRow;
+  agentName: string;
+  payload: ScopeAskPayload;
+  url: string;
+}): AskCard {
+  const { action, payload } = args;
+  return {
+    pendingActionId: action.id,
+    kind: "scope",
+    agentName: args.agentName,
+    vendor: payload.vendor,
+    displayName: payload.displayName,
+    primaryHost: payload.primaryHost,
+    hosts: payload.hosts,
+    scheme: payload.scheme,
+    takesCredential: takesCredential(payload.scheme as ConnectionScheme),
+    docsUrl: payload.docsUrl,
+    expiresAt: action.expiresAt.toISOString(),
+    url: args.url,
+    answerable: true,
+    ...(payload.provider !== "keyring" ? { provider: payload.provider } : {}),
   };
 }
 

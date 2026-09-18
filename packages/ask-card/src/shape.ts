@@ -10,16 +10,17 @@
 /** The wire name of the tool the card calls with the person's click; `packages/mcp/src/tools/answer-ask.ts` answers it. */
 export const ANSWER_ASK_TOOL = "answer_ask";
 
-/** The pending-action kinds a card can be about (`pending_action.kind`); the two it can answer are `build` and `connection`. */
-export type AskCardKind = "build" | "connection" | "credential" | "tool";
+/** The pending-action kinds a card can be about (`pending_action.kind`); the three it can answer are `build`, `connection` and `scope`. */
+export type AskCardKind = "build" | "connection" | "credential" | "tool" | "scope";
 
 /**
  * What the card draws: the non-secret facts of one ask, as the console's handoff page shows them,
  * on the awaiting result's `structuredContent.card` beside GRA-55's `url`, `message` and `reason`.
  * `answerable` is the server's word on whether the card may answer in place — true for the build
- * approval and for a connection proposal whose scheme takes no credential; false for every ask
- * with a secret in it, a link provider's, a credential re-entry and a tool's first use, where the
- * card shows the one button that opens the handoff URL in the console.
+ * approval, for a connection proposal whose scheme takes no credential, and for the scope ask (a
+ * connection the person already holds, asked for by an agent that was not given it; GRA-104);
+ * false for every ask with a secret in it, a link provider's, a credential re-entry and a tool's
+ * first use, where the card shows the one button that opens the handoff URL in the console.
  */
 export type AskCard = {
   pendingActionId: string;
@@ -41,7 +42,7 @@ export type AskCard = {
   /** The handoff URL, exactly as the result's `url`: what the console button opens. */
   url: string;
   answerable: boolean;
-  /** For a connection ask a provider other than the keyring covers (ADR 0019): the provider's name. */
+  /** For a connection or scope ask a provider other than the keyring covers (ADR 0019): the provider's name. */
   provider?: string;
   /** How the provider connects, when the ask names one: a link provider's ask is a button, never a form. */
   providerConnect?: "form" | "link";
@@ -50,12 +51,13 @@ export type AskCard = {
 };
 
 /**
- * What the card sends `answer_ask`. The build approval's yes or no; the keyless connection's
- * confirm, carrying the build choice GRA-75 put on the console's page (on by default there and
- * here); or the connection's decline. Nothing else is accepted, and no field is a secret.
+ * What the card sends `answer_ask`. The build approval's yes or no; the scope ask's yes or no,
+ * carrying the build choice GRA-75 put on the console's page (GRA-104); the keyless connection's
+ * confirm, carrying the same choice (on by default there and here); or the connection's decline.
+ * Nothing else is accepted, and no field is a secret.
  */
 export type AnswerAskAnswer =
-  | { allow: boolean }
+  | { allow: boolean; approveBuild?: boolean }
   | { connect: true; approveBuild: boolean }
   | { decline: true };
 
@@ -72,7 +74,7 @@ export type AnswerAskRefusalReason =
   | "expired"
   | "input_invalid";
 
-const KINDS: readonly AskCardKind[] = ["build", "connection", "credential", "tool"];
+const KINDS: readonly AskCardKind[] = ["build", "connection", "credential", "tool", "scope"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

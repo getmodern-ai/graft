@@ -347,11 +347,30 @@ where `apps/server/tsdown.config.ts` copies it and the Dockerfile's `build` stag
 `_meta.ui.visibility: ["app"]` so the host hides it from the model; the tool refuses a static-token
 agent, an OAuth client whose hiding is not established (neither every registered redirect URI on a
 `GRAFT_CARD_HOSTS` host nor the MCP Apps extension declared in `initialize`), another agent's ask,
-a closed or expired ask, and every ask but the build approval and the
-keyless connection confirmation, and records the rest through `ask-answer.ts` — the same functions
+a closed or expired ask, and every ask but the build approval, the keyless connection confirmation
+and the scope ask, and records the rest through `ask-answer.ts` — the same functions
 the console's `POST /pending-actions/:id/answer` and `/connection` call, with `via: "card"` on the
 answer. `packages/mcp/src/answer-ask.test.ts` is the suite; `pnpm --filter @graft/ask-card build`
 before `pnpm --filter @graft/mcp test` on a fresh checkout, or let `pnpm run test` order it.
+
+**A connection the person holds but this agent was not given is the `scope` ask** (GRA-104; ADR
+0006 as amended 2026-09-19). `request_connection`'s match against the person's rows
+(`existingConnectionFor` in `packages/mcp/src/connection-request.ts`, GRA-76) answers `connected`
+for a usable row in scope and `connection_exists` for a revoked row or one whose credential is
+missing; a live, usable row made for another agent is a pending action of kind `scope` — payload
+`connectionId`, `vendor`, `displayName`, `provider`, `primaryHost`, `hosts`, `scheme`, `docsUrl`;
+the `connection_id` column set, so a revoke closes it — and the call waits and polls as the
+connection ask does, answering `awaiting_scope` with `url`, `message`, `pendingActionId`,
+`expiresAt`, `connectionId` and `provider`. One open ask per agent and connection. The console's
+card is `apps/web/src/components/pending/scope-ask-card.tsx` — Allow, Decline and GRA-75's build
+choice, pre-ticked — and posts the generic `POST /api/pending-actions/:id/answer` with
+`{ allow, approveBuild? }` (`AnswerBody`, exported from `apps/server/src/api.ts` for the console);
+`recordApprovalAnswer` in `ask-answer.ts` grows the scope (`addConnectionToAgentScope`) and grants
+the build approval in the answer's transaction, and leaves the answer for the agent's next call,
+which answers `connected` naming the execute tool, or `scope_declined`. The ask card renders
+`card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow, approveBuild? }` for it under
+the same gate. `SERVER_INSTRUCTIONS` names `scope` in its handoff list (1798 of the 1800 budget),
+and `session.test.ts` pins the word across the description and the Hermes skill.
 
 ### The self-hosted image
 

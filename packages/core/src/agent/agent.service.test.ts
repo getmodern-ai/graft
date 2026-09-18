@@ -63,6 +63,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
       connectedViaClientName: via.clientName,
     })),
     replaceAgentConnections: vi.fn(async () => {}),
+    addAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
     findConnectionsByIds: vi.fn(async (_db, _p, ids) => ids.map(connectionRow)),
     listAllActiveAgents: vi.fn(async () => [row]),
@@ -337,23 +338,40 @@ describe("setAgentScope", () => {
 });
 
 describe("addConnectionToAgentScope", () => {
+  /** The scope table as the primary key makes it: a set per agent, so a second insert of a pair is a no-op. */
+  const scopeTable = (initial: readonly string[]) => {
+    const rows = new Set(initial);
+    return fakeDeps({
+      addAgentConnection: vi.fn(async (_db, _scope, connectionId: string) => {
+        rows.add(connectionId);
+      }),
+      listAgentConnectionIds: vi.fn(async () => [...rows].sort()),
+    });
+  };
+
   /** GRA-28: the agent that asked is given the connection it asked for, and keeps what it had. */
-  it("adds the connection to what is already there, under the scope pair, once it is confirmed the person's", async () => {
-    const deps = fakeDeps({ listAgentConnectionIds: vi.fn(async () => ["conn_1"]) });
+  it("adds the connection beside what is already there with one idempotent insert under the scope pair, once it is confirmed the person's — never a read and a rewrite of the list", async () => {
+    const deps = scopeTable(["conn_1"]);
     const result = await addConnectionToAgentScope(ctx, PRINCIPAL, "agent_1", "conn_2", deps);
     expect(result.connectionIds).toEqual(["conn_1", "conn_2"]);
     expect(deps.findConnectionsByIds).toHaveBeenCalledWith(fakeDb, "person_1", ["conn_2"]);
-    expect(deps.replaceAgentConnections).toHaveBeenCalledWith(
+    expect(deps.addAgentConnection).toHaveBeenCalledWith(
       fakeDb,
       { personId: "person_1", agentId: "agent_1" },
-      ["conn_1", "conn_2"],
+      "conn_2",
     );
+    // The whole-list write is the agent page's (`setAgentScope`); a grant never makes it, so a
+    // concurrent edit of the scope is not overwritten with a stale list (Greptile on #87).
+    expect(deps.replaceAgentConnections).not.toHaveBeenCalled();
   });
 
-  it("changes nothing when the connection is already in the scope", async () => {
-    const deps = fakeDeps({ listAgentConnectionIds: vi.fn(async () => ["conn_1", "conn_2"]) });
+  it("adding a connection already in the scope leaves one row and changes nothing", async () => {
+    const deps = scopeTable(["conn_1", "conn_2"]);
     const result = await addConnectionToAgentScope(ctx, PRINCIPAL, "agent_1", "conn_2", deps);
     expect(result.connectionIds).toEqual(["conn_1", "conn_2"]);
+    expect(deps.addAgentConnection).toHaveBeenCalledTimes(1);
+    const again = await addConnectionToAgentScope(ctx, PRINCIPAL, "agent_1", "conn_2", deps);
+    expect(again.connectionIds).toEqual(["conn_1", "conn_2"]);
     expect(deps.replaceAgentConnections).not.toHaveBeenCalled();
   });
 
@@ -362,12 +380,12 @@ describe("addConnectionToAgentScope", () => {
     await expect(
       addConnectionToAgentScope(ctx, PRINCIPAL, "missing", "conn_1", noAgent),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
-    expect(noAgent.replaceAgentConnections).not.toHaveBeenCalled();
+    expect(noAgent.addAgentConnection).not.toHaveBeenCalled();
 
     const foreign = fakeDeps({ findConnectionsByIds: vi.fn(async () => []) });
     await expect(
       addConnectionToAgentScope(ctx, PRINCIPAL, "agent_1", "conn_x", foreign),
     ).rejects.toMatchObject({ code: "NOT_FOUND", details: { connectionIds: ["conn_x"] } });
-    expect(foreign.replaceAgentConnections).not.toHaveBeenCalled();
+    expect(foreign.addAgentConnection).not.toHaveBeenCalled();
   });
 });

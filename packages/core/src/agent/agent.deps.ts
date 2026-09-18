@@ -1,4 +1,5 @@
 import {
+  addAgentConnection,
   findAgent,
   findAgentByTokenHash,
   insertAgent,
@@ -32,6 +33,8 @@ export type AgentDeps = {
   /** The consent naming an existing agent records which client it was connected from (ADR 0018). */
   setAgentConnectedVia: typeof setAgentConnectedVia;
   replaceAgentConnections: typeof replaceAgentConnections;
+  /** The one-connection grant, idempotent on the scope's key — never a read and a rewrite of the list. */
+  addAgentConnection: typeof addAgentConnection;
   listAgentConnectionIds: typeof listAgentConnectionIds;
   /** Setting a scope reads the person's connections to refuse an id that is not theirs. */
   findConnectionsByIds: typeof findConnectionsByIds;
@@ -54,6 +57,7 @@ export const defaultAgentDeps: AgentDeps = {
   revokeMcpTokensForAgent,
   setAgentConnectedVia,
   replaceAgentConnections,
+  addAgentConnection,
   listAgentConnectionIds,
   findConnectionsByIds,
   listAllActiveAgents,

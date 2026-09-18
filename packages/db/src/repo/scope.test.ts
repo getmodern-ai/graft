@@ -14,6 +14,7 @@ import {
   updateAcquireAttempt,
 } from "./acquire-job";
 import {
+  addAgentConnection,
   listAgentConnectionIds,
   listAgentIdsForConnection,
   listAllActiveAgents,
@@ -38,6 +39,7 @@ import {
   expirePendingActionsForConnection,
   findPendingAction,
   listPendingActionsByKind,
+  lockPendingActionKey,
   settleAnsweredToolActions,
 } from "./pending-action";
 import { countPersons, markPersonEmailVerified } from "./person";
@@ -234,6 +236,23 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(statements[0]?.sql).toMatch(SCOPED_AGENT);
     expect(statements[1]?.sql).toMatch(/^insert into "agent_connection"/);
     expect(statements[1]?.params).toEqual(["agent_1", "conn_1", "agent_1", "conn_2"]);
+  });
+
+  /** The one-connection grant (GRA-104, Greptile on #87): one insert, idempotent on the primary key, no read and no delete. */
+  it("adding one connection to the scope is a single insert that does nothing on conflict", async () => {
+    await addAgentConnection(db, SCOPE, "conn_2");
+    const s = only();
+    expect(s.sql).toMatch(/^insert into "agent_connection"/);
+    expect(s.sql).toMatch(/ on conflict do nothing$/);
+    expect(s.params).toEqual(["agent_1", "conn_2"]);
+  });
+
+  /** The find-or-make of a scope ask is serialised on a transaction-scoped advisory lock keyed by the pair and the connection. */
+  it("locking a pending-action key takes a transaction-scoped advisory lock on the hash of agent, kind and key", async () => {
+    await lockPendingActionKey(db, SCOPE, "scope", "conn_2");
+    const s = only();
+    expect(s.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
+    expect(s.params).toEqual(["agent_1:scope:conn_2"]);
   });
 });
 

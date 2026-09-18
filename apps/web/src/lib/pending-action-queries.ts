@@ -2,8 +2,9 @@ import type { BuildAskPayload, ToolAskPayload } from "@graft/mcp/approval";
 import type {
   ConnectionProposalPayload,
   CredentialAskPayload,
+  ScopeAskPayload,
 } from "@graft/mcp/connection-request";
-import type { PendingActionCard } from "@graft/server/api";
+import type { AnswerBody, PendingActionCard } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
@@ -13,9 +14,10 @@ import { api, type Jsonified } from "./api";
  * (`apps/server/src/api.ts`, "Pending actions and approvals"). The card is the server's shape,
  * jsonified; its `payload` is the ask's own — `@graft/mcp`'s `ToolAskPayload` for a tool call,
  * `BuildAskPayload` for an `acquire`, `ConnectionProposalPayload` and `CredentialAskPayload` for
- * GRA-28's two connection handoffs — and `readAsk` is the one place that narrows it, so a screen
- * never reads `payload.x` on faith. A later kind adds a branch here and a card file beside the
- * others; `pending-action-card.tsx` dispatches on the kind.
+ * GRA-28's two connection handoffs, `ScopeAskPayload` for GRA-104's ask to use a connection the
+ * person already holds — and `readAsk` is the one place that narrows it, so a screen never reads
+ * `payload.x` on faith. A later kind adds a branch here and a card file beside the others;
+ * `pending-action-card.tsx` dispatches on the kind.
  */
 
 export type PendingAction = Jsonified<PendingActionCard>;
@@ -31,6 +33,8 @@ export type Ask =
       payload: Jsonified<ConnectionProposalPayload> & { provider: string };
     }
   | { kind: "credential"; action: PendingAction; payload: Jsonified<CredentialAskPayload> }
+  /** An agent's ask to use a connection the person holds that it was not given (GRA-104). */
+  | { kind: "scope"; action: PendingAction; payload: Jsonified<ScopeAskPayload> }
   | { kind: "other"; action: PendingAction };
 
 /** The handoff token's query parameter, as `@graft/mcp`'s `handoff.ts` names it in every `url`. */
@@ -70,14 +74,24 @@ export function readAsk(action: PendingAction): Ask {
   ) {
     return { kind: "credential", action, payload: payload as Jsonified<CredentialAskPayload> };
   }
+  if (
+    action.kind === "scope" &&
+    typeof payload.connectionId === "string" &&
+    typeof payload.vendor === "string" &&
+    typeof payload.displayName === "string" &&
+    Array.isArray(payload.hosts)
+  ) {
+    return { kind: "scope", action, payload: payload as Jsonified<ScopeAskPayload> };
+  }
   return { kind: "other", action };
 }
 
 /**
- * The person's answer: `allow`, and for a tool ask whether it should ask every call from now on
- * (`@graft/mcp`'s `ApprovalAnswer`; absent leaves the setting as it stands).
+ * The person's answer: `allow`; for a tool ask whether it should ask every call from now on
+ * (absent leaves the setting as it stands); for a scope ask whether the agent may also build
+ * against the connection (GRA-104). The server's `answerBody`, imported rather than written twice.
  */
-export type PendingAnswer = { allow: boolean; askEveryCall?: boolean };
+export type PendingAnswer = AnswerBody;
 
 export const pendingKeys = {
   all: ["pending-actions"] as const,

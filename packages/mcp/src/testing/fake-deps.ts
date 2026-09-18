@@ -16,7 +16,11 @@ import type { AgentRow } from "@graft/db/repo/agent";
 import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import type { findMcpClient, McpClientRow } from "@graft/db/repo/mcp-oauth";
-import type { listPendingActionsByKind, PendingActionRow } from "@graft/db/repo/pending-action";
+import type {
+  listPendingActionsByKind,
+  lockPendingActionKey,
+  PendingActionRow,
+} from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 import type { UsageLedgerRow } from "@graft/db/repo/usage";
 import type { WorkingSetChangeRow, WorkingSetRow } from "@graft/db/repo/working-set";
@@ -267,6 +271,7 @@ export type FakeDeps = {
   approval: ApprovalDeps;
   pendingAction: PendingActionDeps;
   listPendingActionsByKind: typeof listPendingActionsByKind;
+  lockPendingActionKey: typeof lockPendingActionKey;
   findMcpClient: typeof findMcpClient;
   acquireJob: AcquireJobDeps;
 };
@@ -355,6 +360,13 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     replaceAgentConnections: async (_db, scope, connectionIds) => {
       if (!ownsAgent(scope)) return;
       store.agentConnections.set(scope.agentId, new Set(connectionIds));
+    },
+    // The primary key's idempotence, as a set: a second add of the pair changes nothing.
+    addAgentConnection: async (_db, scope, connectionId) => {
+      if (!ownsAgent(scope)) return;
+      const current = store.agentConnections.get(scope.agentId) ?? new Set<string>();
+      current.add(connectionId);
+      store.agentConnections.set(scope.agentId, current);
     },
     listAgentConnectionIds: async (_db, scope) =>
       ownsAgent(scope) ? [...(store.agentConnections.get(scope.agentId) ?? [])].sort() : [],
@@ -1125,6 +1137,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     approval,
     pendingAction,
     listPendingActionsByKind,
+    // Nothing to serialise over a map: one process, one store, no concurrent transactions.
+    lockPendingActionKey: async () => {},
     findMcpClient: async (_db, clientId) => store.mcpClients.get(clientId) ?? null,
     acquireJob,
   };

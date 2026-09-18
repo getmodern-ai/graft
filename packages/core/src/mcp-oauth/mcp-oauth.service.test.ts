@@ -249,6 +249,7 @@ function harness(overrides: { clock?: Date } = {}) {
       return updated;
     }),
     replaceAgentConnections: vi.fn(async () => {}),
+    addAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
     findConnectionsByIds: vi.fn(async (_db, _p, ids: readonly string[]) =>
       ids.map((id) => ({ id, personId: "person_1", vendor: "demo" }) as ConnectionRow),

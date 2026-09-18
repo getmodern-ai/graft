@@ -19,7 +19,7 @@ import {
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import { findMcpClient } from "@graft/db/repo/mcp-oauth";
-import { listPendingActionsByKind } from "@graft/db/repo/pending-action";
+import { listPendingActionsByKind, lockPendingActionKey } from "@graft/db/repo/pending-action";
 import type { ModelAdapter } from "@graft/model";
 import {
   type PublishArgs,
@@ -119,6 +119,12 @@ export type McpDeps = {
   pendingAction: PendingActionDeps;
   /** The one read the ask flow needs that the pending-action seam does not carry — `approval.ts` says why. */
   listPendingActionsByKind: typeof listPendingActionsByKind;
+  /**
+   * The advisory lock that serialises "find the open ask or make one" for a key, inside the
+   * transaction that does both (`connection-request.ts`'s scope ask, GRA-104). The fake is a
+   * no-op: an in-memory store has no concurrent transactions to serialise.
+   */
+  lockPendingActionKey: typeof lockPendingActionKey;
   /** The handoff's configuration — the console's URL, the signing secret, the wait and the TTL (`handoff.ts`). */
   handoff: HandoffConfig;
   /**
@@ -214,6 +220,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     pendingAction: defaultPendingActionDeps,
     acquireJob: defaultAcquireJobDeps,
     listPendingActionsByKind,
+    lockPendingActionKey,
     findMcpClient,
     checkModule,
     runnerFiles,

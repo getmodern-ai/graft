@@ -82,6 +82,7 @@ export {
   credentialAskCard,
   DEFAULT_CARD_HOSTS,
   redirectsOnCardHosts,
+  scopeAskCard,
   UI_EXTENSION_ID,
 } from "./ask-card";
 export {
@@ -108,8 +109,12 @@ export {
   type ProposalVerdict,
   readConnectionAnswer,
   readConnectionProposal,
+  readScopeAnswer,
   requestConnection,
   requestCredential,
+  SCOPE_ASK_KIND,
+  type ScopeAnswer,
+  type ScopeAskPayload,
 } from "./connection-request";
 export type { SessionContext } from "./context";
 export {

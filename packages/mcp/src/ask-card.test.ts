@@ -10,6 +10,7 @@ import {
   connectionAskAnswerable,
   connectionAskCard,
   credentialAskCard,
+  scopeAskCard,
 } from "./ask-card";
 import type { ConnectionProposalPayload } from "./connection-request";
 import { createMcpDeps } from "./deps";
@@ -133,6 +134,46 @@ describe("what the card may answer", () => {
         payload: proposal({ providerConnect: "link", provider: "pipedream" }),
       }),
     ).toMatchObject({ providerConnect: "link", provider: "pipedream", answerable: false });
+  });
+
+  it("marks a scope ask answerable, with the row's facts and the provider when it is not the keyring (GRA-104)", () => {
+    const url = "http://console.graft.test/pending/pa_1?t=x";
+    const payload = {
+      connectionId: "conn_gmail",
+      vendor: "gmail",
+      displayName: "Gmail",
+      provider: "pipedream",
+      primaryHost: "https://gmail.googleapis.com",
+      hosts: ["gmail.googleapis.com"],
+      scheme: "pipedream_connect_proxy",
+      docsUrl: "https://developers.google.com/gmail/api",
+    };
+    expect(
+      scopeAskCard({ action: { ...action, kind: "scope" }, agentName: "Claude", url, payload }),
+    ).toEqual({
+      pendingActionId: "pa_1",
+      kind: "scope",
+      agentName: "Claude",
+      vendor: "gmail",
+      displayName: "Gmail",
+      primaryHost: "https://gmail.googleapis.com",
+      hosts: ["gmail.googleapis.com"],
+      scheme: "pipedream_connect_proxy",
+      takesCredential: false,
+      docsUrl: "https://developers.google.com/gmail/api",
+      expiresAt: action.expiresAt.toISOString(),
+      url,
+      answerable: true,
+      provider: "pipedream",
+    });
+    expect(
+      scopeAskCard({
+        action: { ...action, kind: "scope" },
+        agentName: "Claude",
+        url,
+        payload: { ...payload, provider: "keyring", scheme: "api_key_header", docsUrl: null },
+      }),
+    ).not.toHaveProperty("provider");
   });
 });
 

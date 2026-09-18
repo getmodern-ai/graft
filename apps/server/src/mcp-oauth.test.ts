@@ -165,6 +165,7 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
     revokeMcpTokensForAgent: vi.fn(async () => 0),
     setAgentConnectedVia: vi.fn(async () => null),
     replaceAgentConnections: vi.fn(async () => {}),
+    addAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
     findConnectionsByIds: vi.fn(async () => []),
     listAllActiveAgents: vi.fn(async () => []),

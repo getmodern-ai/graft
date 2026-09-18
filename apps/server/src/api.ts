@@ -89,9 +89,10 @@ import { createProviderLinkRoutes, startProviderLink } from "./provider-link";
  *
  * **Pending actions and approvals** (GRA-23; ADR 0006, ADR 0008) are the routes the console's
  * approval pages call: the open actions across the person's agents, one action by its signed
- * handoff link, the answer — which also writes the approval the ask was for, so the agent's next
- * call proceeds whether or not it is still waiting — and the standing approvals per agent, to set a
- * tool to ask every call or back, or to withdraw an answer.
+ * handoff link, the answer — which also writes the record the ask was for, the approval or, for a
+ * `scope` ask (GRA-104), the scope grant, so the agent's next call proceeds whether or not it is
+ * still waiting — and the standing approvals per agent, to set a tool to ask every call or back,
+ * or to withdraw an answer.
  *
  * **The connection handoff's submits** (GRA-28; ADR 0006) are two more routes on a pending action,
  * apart from the generic answer because their bodies carry a secret and their work is one
@@ -194,8 +195,8 @@ export type ApiOptions = {
 
 /**
  * A pending action as the console shows it (ADR 0006): the requesting agent named, the payload the
- * ask wrote (`@graft/mcp`'s `ToolAskPayload`, `BuildAskPayload`, `ConnectionProposalPayload` or
- * `CredentialAskPayload`), its clocks, and the signed link.
+ * ask wrote (`@graft/mcp`'s `ToolAskPayload`, `BuildAskPayload`, `ConnectionProposalPayload`,
+ * `CredentialAskPayload` or `ScopeAskPayload`), its clocks, and the signed link.
  */
 export type PendingActionCard = {
   id: string;
@@ -211,8 +212,21 @@ export type PendingActionCard = {
   url: string;
 };
 
-const answerBody = z.object({ allow: z.boolean(), askEveryCall: z.boolean().optional() });
+/**
+ * The person's answer to a `tool`, `build` or `scope` ask: `allow`; for a tool ask, whether it
+ * should ask every call from now on (ADR 0008 as amended 2026-09-15); for a scope ask, whether the
+ * agent may also build against the connection (GRA-75's choice, GRA-104's card). Absent fields
+ * leave the setting where it stands and grant nothing.
+ */
+const answerBody = z.object({
+  allow: z.boolean(),
+  askEveryCall: z.boolean().optional(),
+  approveBuild: z.boolean().optional(),
+});
 const askEveryCallBody = z.object({ on: z.boolean() });
+
+/** The answer's wire shape, as the console posts it — the console imports this rather than writing it again. */
+export type AnswerBody = z.input<typeof answerBody>;
 
 /** How a handoff verdict lands on the wire: the reason word rides in `details`. */
 const HANDOFF_REFUSAL_CODE: Record<"tampered" | "expired" | "consumed", ServiceErrorCode> = {
@@ -978,16 +992,20 @@ export function createApi(options: ApiOptions): Hono {
    * row (`allow` or `deny` — a no holds too, ADR 0008), and `askEveryCall` with an allow sets the
    * tool's per-call opt-in on or off, absent leaving it as it stands (ADR 0008, amendment of
    * 2026-09-15); for a `build` ask an `allow` grants the build approval and a decline writes nothing,
-   * so the next `acquire` asks again.
+   * so the next `acquire` asks again; for a `scope` ask (GRA-104) an `allow` adds the connection
+   * the person already holds to the asking agent's scope — the write `PUT /agents/:id/scope`
+   * makes, one connection at a time — and, with `approveBuild`, grants the build approval for it
+   * (GRA-75), in the answer's transaction, while a decline writes nothing.
    *
    * **An answer the standing row now carries in full is consumed here.** Otherwise it would outlive
    * the row: a yes left answered-but-unconsumed would still be found and honoured by a call made
-   * after the approval was withdrawn, which is exactly what withdrawing is meant to prevent. The two
+   * after the approval was withdrawn, which is exactly what withdrawing is meant to prevent. The
    * answers the agent's next call must read for itself stay unconsumed — a yes on a tool set to ask
-   * every call (the row says allow and the rule still says ask, so this call's yes is the action's)
-   * and a build decline (no row records it). A call that is waiting sees the consumed action as
-   * `CONFLICT` and reads the rule again (`@graft/mcp`'s `approval.ts`), which is how it proceeds on
-   * a yes and refuses on a no.
+   * every call (the row says allow and the rule still says ask, so this call's yes is the action's),
+   * a build decline (no row records it), and a scope ask's answer either way (the waiting
+   * `request_connection` reads it to answer connected or declined). A call that is waiting sees a
+   * consumed action as `CONFLICT` and reads the rule again (`@graft/mcp`'s `approval.ts`), which is
+   * how it proceeds on a yes and refuses on a no.
    */
   api.post("/pending-actions/:id/answer", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -1001,8 +1019,14 @@ export function createApi(options: ApiOptions): Hono {
       {
         allow: body.allow,
         ...(body.askEveryCall === undefined ? {} : { askEveryCall: body.askEveryCall }),
+        ...(body.approveBuild === undefined ? {} : { approveBuild: body.approveBuild }),
       },
-      { approval: approvalDeps, pendingAction: pendingActionDeps, connection: connectionDeps },
+      {
+        approval: approvalDeps,
+        pendingAction: pendingActionDeps,
+        connection: connectionDeps,
+        agent: agentDeps,
+      },
     );
     return c.json(result);
   });

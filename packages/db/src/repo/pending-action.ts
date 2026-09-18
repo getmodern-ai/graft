@@ -19,6 +19,26 @@ function personAgentIds(db: DbOrTx, personId: string) {
   return db.select({ id: agent.id }).from(agent).where(eq(agent.personId, personId));
 }
 
+/**
+ * Serialise "find the open ask for this key, or make one" across concurrent calls of one agent: a
+ * transaction-scoped advisory lock on the hash of `agent:kind:key`, released with the transaction,
+ * so two identical `request_connection` calls that both find no open ask cannot both insert one
+ * (Greptile on #87, GRA-104). Only meaningful inside a transaction that also runs the lookup and the
+ * insert; the table has no uniqueness constraint over the payload, and this stands in for one
+ * without a migration. `hashtext` folds the key to an `int4`; a collision between two keys costs a
+ * needless wait, never a wrong answer.
+ */
+export async function lockPendingActionKey(
+  db: DbOrTx,
+  scope: AgentScope,
+  kind: string,
+  key: string,
+): Promise<void> {
+  await db.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${`${scope.agentId}:${kind}:${key}`}))`,
+  );
+}
+
 export async function insertPendingAction(
   db: DbOrTx,
   input: NewPendingActionRow,
