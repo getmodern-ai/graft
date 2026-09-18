@@ -39,7 +39,7 @@ describe("describeObservability", () => {
 });
 
 describe("flushObservability", () => {
-  it("flushes every backing and settles a rejection rather than throwing", async () => {
+  it("flushes every backing, shuts the telemetry down after its flush, and settles a rejection rather than throwing", async () => {
     const calls: string[] = [];
     await flushObservability(
       {
@@ -62,14 +62,17 @@ describe("flushObservability", () => {
           name: "t",
           telemetry: { integrations: [], traced: (_t, fn) => fn() },
           flush: async () => {
-            calls.push("telemetry");
+            calls.push("telemetry flush");
           },
-          shutdown: async () => undefined,
+          shutdown: async () => {
+            calls.push("telemetry shutdown");
+          },
         },
       },
       1_000,
     );
-    expect(calls.sort()).toEqual(["analytics", "drain", "telemetry"]);
+    expect(calls.indexOf("telemetry flush")).toBeLessThan(calls.indexOf("telemetry shutdown"));
+    expect(calls.sort()).toEqual(["analytics", "drain", "telemetry flush", "telemetry shutdown"]);
   });
 
   it("does not hold the stop past its bound when a backing never settles", async () => {

@@ -27,18 +27,21 @@ export function describeObservability(backings: ObservabilityBackings): string {
 }
 
 /**
- * Deliver what the three have buffered, bounded: a stop is ECS's `SIGTERM` with thirty seconds
- * before `SIGKILL`, and an ingest endpoint that is down should cost a few of those, not all of
- * them. Rejections are settled, never thrown — a flush is best effort.
+ * Deliver what the three have buffered and close them, bounded: a stop is ECS's `SIGTERM` with
+ * thirty seconds before `SIGKILL`, and an ingest endpoint that is down should cost a few of those,
+ * not all of them. The telemetry backing is flushed and then shut down — a span processor's
+ * exporter holds a connection the flush alone does not close. Rejections are settled, never thrown
+ * — a flush is best effort.
  */
 export function flushObservability(
   backings: ObservabilityBackings,
   withinMs: number,
 ): Promise<void> {
+  const telemetry = backings.modelTelemetry;
   const work = Promise.allSettled([
     backings.logDrain?.flush(),
     backings.analytics.shutdown(),
-    backings.modelTelemetry?.flush(),
+    telemetry ? telemetry.flush().finally(() => telemetry.shutdown()) : undefined,
   ]).then(() => undefined);
   const deadline = new Promise<void>((resolve) => {
     setTimeout(resolve, withinMs).unref();
