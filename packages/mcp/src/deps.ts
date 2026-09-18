@@ -1,3 +1,4 @@
+import { readAskCardHtml } from "@graft/ask-card";
 import { checkModule, type ModuleCheck } from "@graft/check";
 import {
   type AcquireJobDeps,
@@ -17,6 +18,7 @@ import {
   type WorkingSetDeps,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import { findMcpClient } from "@graft/db/repo/mcp-oauth";
 import { listPendingActionsByKind } from "@graft/db/repo/pending-action";
 import type { ModelAdapter } from "@graft/model";
 import {
@@ -95,6 +97,20 @@ export type McpDeps = {
   toolbox?: ToolboxReader | null;
   /** Absent, `publish_tool` refuses `publish_unconfigured`. */
   publishTool?: PublishTool | null;
+  /**
+   * The ask card's page, the body of `resources/read` for `ui://graft/ask` (`ask-card.ts`,
+   * GRA-84) — `@graft/ask-card`'s built `dist/ask.html` by default, read once. A test hands in a
+   * string; a deployment never sets it.
+   */
+  askCardHtml?: () => Promise<string>;
+  /**
+   * The chat products whose OAuth clients may answer the ask card, by the host their redirect
+   * URIs are on — `GRAFT_CARD_HOSTS` (`tools/answer-ask.ts`; ADR 0006 as amended 2026-09-18).
+   * `DEFAULT_CARD_HOSTS` when absent.
+   */
+  cardHosts?: readonly string[];
+  /** The read of an OAuth client's registration the same gate makes — `@graft/db/repo/mcp-oauth`'s, as `listPendingActionsByKind` is. */
+  findMcpClient: typeof findMcpClient;
   /** The `tools/list_changed` rate limit's window (`notifier.ts`); a test sets it low. */
   listChangedWindowMs?: number;
   now?: () => Date;
@@ -172,12 +188,14 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     pendingAction: defaultPendingActionDeps,
     acquireJob: defaultAcquireJobDeps,
     listPendingActionsByKind,
+    findMcpClient,
     checkModule,
     runnerFiles,
     skills: loadSkills,
     readWebPage: (args) => readWebPage(args),
     toolbox: publish?.store ?? null,
     publishTool: publish ? (args) => publishToolVersion(publish, args) : null,
+    askCardHtml: () => readAskCardHtml(),
     notifier: createToolListChangedNotifier({ windowMs: input.listChangedWindowMs }),
     inFlight: createInFlightRegistry(),
     ...rest,

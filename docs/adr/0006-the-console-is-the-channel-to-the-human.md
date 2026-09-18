@@ -132,3 +132,62 @@ removed.
 **Unchanged.** `cancel` falls through as the amendment of 2026-09-16 says; the fall-through is per
 ask; a waiting console answer is taken before any form is offered. ADR 0008's "a decline holds" is
 about the person's decline, and this amendment narrows how one is recognised, not what it does.
+
+## Amendment 2026-09-18: a chat product's card is a channel of elicitation's standing
+
+Decided by Aleks (GRA-84, after GRA-83's spike and the cross-host research on the ticket). Claude.ai
+and ChatGPT render an MCP App — a page the server names on a tool and serves as a resource — inline
+where the tool's result lands, and on Claude.ai they do so without declaring the extension in
+`initialize`. Graft's build approval is a yes or no with context, which is the shape a card shows
+best, and the connection confirmation for a public API is a set of non-secret facts and a button.
+Until now both reached a person in a chat product only as a handoff link relayed by the model.
+
+**The rule.** The **ask card** (`ui://graft/ask`, `packages/ask-card`) is a channel to the person of
+the same standing as elicitation: layered on top of the handoff, per ask, never remembered, and only
+where the host renders it. Its answer arrives as the person's click, relayed by the host as a
+`tools/call` of `answer_ask` that the host hides from the model (`_meta.ui.visibility: ["app"]`).
+Graft admits that call only from an **agent a chat product holds over OAuth** (ADR 0018:
+`connected_via_client_id` set) **whose client's hiding of app-only tools is established** — every
+redirect URI the client registered is on a card host (`GRAFT_CARD_HOSTS`, by default `claude.ai`
+and `chatgpt.com`, the two products' callbacks), or the session's client declared the MCP Apps
+extension in `initialize`, which binds it to the specification's host rules; ADR 0018 registers
+any client dynamically, so the OAuth grant alone would admit a naive client that lists the tool to
+its model — only for **that agent's own ask**, only while it is **open and in time**, and only for
+**two asks**: the build approval, and the connection confirmation for a
+proposal whose scheme takes no credential and whose provider connects through the form. The record
+is the console's record — the same `build_approval` row, the same connection row in the same
+agent's scope, the same answer on the action, through the same functions
+(`packages/mcp/src/ask-answer.ts`) — with `via: "card"` on the answer to say which door it came
+through. The tool's result is GRA-55's shape unchanged: `awaiting_*`, the URL and the message stay
+in the text the model reads, and the card's data rides beside them in `structuredContent` alone, so
+a host that renders nothing shows exactly what it showed before.
+
+**The handoff URL is the floor.** Every ask still returns it, the card shows it as *Open in the
+console* wherever it may not answer, and a card that never mounts (Claude.ai's open rendering
+defect, anthropics/claude-ai-mcp#61) costs the person nothing they had.
+
+**What keeps the session.** A write's first-use approval, a credential re-entry, a link provider's
+ask and every scheme with a secret are not the card's to answer: the card shows the proposal and the
+one console button. Secrets are entered in the console, never through a tool argument or a chat
+(ADR 0004), and this amendment moves none of that; a person's identity is not available inside the
+card — only the agent's session is (GRA-83) — so a write's ask, which the person may set to ask
+every time, keeps the page where that setting lives.
+
+**Why a hidden tool and not a route.** The ticket weighed a token-bound post to Graft's origin, with
+the handoff token as the whole authority, against an app-only tool. The tool was chosen because it
+adds no route, no CORS surface and no second use of the handoff token, and because the card's call
+then reaches Graft under the agent's OAuth session and the same door every call takes
+(`requireAgent`). Its cost is the residual risk recorded here: nothing on the wire proves a
+`tools/call` came from the card rather than the model — no host documents a marker, and a result's
+`_meta` is model-visible on Claude — so the guard is the host's hiding plus Graft's own gate: the
+OAuth requirement keeps Hermes's and OpenClaw's models, which see every tool their server lists,
+from ever answering their own asks, and the card-host or extension signal keeps an unknown OAuth
+client's model out too, since a client can register itself but cannot register a redirect on
+`claude.ai` or forge the other side of its own `initialize`. The live check on both hosts has to
+confirm that neither lists `answer_ask` to its model; a host that does is a host the card is
+withdrawn from, by taking it off the list.
+
+**Unchanged.** ADR 0004 and ADR 0008. Elicitation keeps its place before the handoff for the clients
+that show a form. `acquire` still asks once per agent per connection; the connection confirmation
+still offers the build approval on by default (ADR 0008 as amended 2026-09-18, GRA-75), on the card as
+on the page. Hermes renders no apps, and its skill is untouched.

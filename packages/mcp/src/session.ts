@@ -1,8 +1,22 @@
+import { readAskCardHtml } from "@graft/ask-card";
 import { type AgentScope, requireAgent, type ServiceContext } from "@graft/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ErrorCode,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  McpError,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 
 import type { ElicitForm } from "./approval";
+import {
+  ASK_CARD_MIME_TYPE,
+  ASK_CARD_RESOURCE,
+  ASK_CARD_RESOURCE_URI,
+  UI_EXTENSION_ID,
+} from "./ask-card";
 import type { SessionContext } from "./context";
 import type { McpDeps } from "./deps";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -73,6 +87,17 @@ function elicitFormOf(server: Server): ElicitForm | null {
   return (params) => server.elicitInput({ ...params, mode: "form" });
 }
 
+/**
+ * Whether the client's `initialize` declared the MCP Apps extension (`extensions` is the SDK's
+ * open record of extension ids). ChatGPT declares it; Claude.ai web renders apps without
+ * declaring it, which is why the card's tool pointers are unconditional and why this is one
+ * signal of two rather than the gate (`tools/answer-ask.ts`).
+ */
+function uiExtensionDeclared(server: Server): boolean {
+  const extensions = server.getClientCapabilities()?.extensions;
+  return extensions !== undefined && UI_EXTENSION_ID in extensions;
+}
+
 /** A session for an agent already resolved — the HTTP layer resolves once and reuses across requests. */
 export function createAgentSession(
   deps: McpDeps,
@@ -80,7 +105,8 @@ export function createAgentSession(
   notifier: ToolListChangedNotifier,
 ): AgentSession {
   const server = new Server(SERVER_INFO, {
-    capabilities: { tools: { listChanged: true } },
+    // `resources` for the one ask card page a host fetches by `ui://` URI (GRA-84; `ask-card.ts`).
+    capabilities: { tools: { listChanged: true }, resources: {} },
     instructions: SERVER_INSTRUCTIONS,
   });
   const session: SessionContext = {
@@ -91,6 +117,7 @@ export function createAgentSession(
     notifier,
     drafts: draftsDir(scope.agentId),
     channel: { elicit: () => elicitFormOf(server) },
+    uiExtensionDeclared: () => uiExtensionDeclared(server),
   };
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: await listToolsFor(session),
@@ -98,6 +125,24 @@ export function createAgentSession(
   server.setRequestHandler(CallToolRequestSchema, (request) =>
     callToolFor(session, request.params.name, argumentsOf(request.params.arguments)),
   );
+
+  /**
+   * The ask card (GRA-84): one resource, listed for every agent and read as the built page. The
+   * same bytes for every deployment and every agent — nothing about the person or the ask is in
+   * the page; the card learns both from the tool result the host hands it — so no scope is read
+   * here. A URI this server never listed is `InvalidParams`, the SDK's own word for it.
+   */
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [ASK_CARD_RESOURCE],
+  }));
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    if (uri !== ASK_CARD_RESOURCE_URI) {
+      throw new McpError(ErrorCode.InvalidParams, `Unknown resource: ${uri}`);
+    }
+    const text = await (deps.askCardHtml ?? readAskCardHtml)();
+    return { contents: [{ uri, mimeType: ASK_CARD_MIME_TYPE, text }] };
+  });
 
   const detach = notifier.attach(scope.agentId, () => server.sendToolListChanged());
   server.onclose = detach;

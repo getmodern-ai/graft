@@ -17,6 +17,7 @@
     "check-types": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@graft/ask-card": "workspace:*",
     "@graft/check": "workspace:*",
     "@graft/core": "workspace:*",
     "@graft/db": "workspace:*",

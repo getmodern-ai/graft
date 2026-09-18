@@ -12,6 +12,7 @@ import {
   backingsForm,
   capabilityTokenPrivateKey,
   capabilityTokenPublicKey,
+  cardHosts,
   consoleDir,
   consoleUrl,
   corsOrigins,
@@ -195,6 +196,24 @@ describe("GRAFT_CORS_ORIGIN", () => {
   });
 });
 
+describe("GRAFT_CARD_HOSTS", () => {
+  it("is Claude and ChatGPT when unset, and a trimmed, lower-cased, de-duplicated list when set", () => {
+    expect(cardHosts.parse(undefined)).toEqual(["claude.ai", "chatgpt.com"]);
+    expect(cardHosts.parse(" claude.ai, Chat.Self-Host.example ,claude.ai")).toEqual([
+      "claude.ai",
+      "chat.self-host.example",
+    ]);
+  });
+
+  it("refuses an entry that is not a bare hostname, naming it", () => {
+    for (const bad of ["https://claude.ai", "claude.ai/api", "claude.ai:443", "localhost"]) {
+      const result = cardHosts.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_CARD_HOSTS");
+    }
+  });
+});
+
 describe("GRAFT_DEV_SEED", () => {
   it("is refused under NODE_ENV=production and accepted otherwise", () => {
     expect(
@@ -349,6 +368,7 @@ describe("finalServerSchema", () => {
       GRAFT_HANDOFF_SECRET: minimal.GRAFT_HANDOFF_SECRET,
       GRAFT_APPROVAL_WAIT_SECONDS: 25,
       GRAFT_PENDING_ACTION_TTL_HOURS: 24,
+      GRAFT_CARD_HOSTS: ["claude.ai", "chatgpt.com"],
       GRAFT_SWEEP_INTERVAL_SECONDS: 300,
       GRAFT_MIGRATE_ON_START: true,
       GRAFT_ACQUIRE_MAX_ATTEMPTS: 4,

@@ -33,6 +33,12 @@
         "GRAFT_COMPOSE_PROXY_URL"
       ]
     },
+    // The ask card's suite reads its own built page (`packages/ask-card/src/bundle.test.ts`), so
+    // the package's `test` waits for its `build`; every other package's suite reads source alone.
+    "@graft/ask-card#test": {
+      "dependsOn": ["build", "^test"],
+      "outputs": []
+    },
     "dev": {
       "cache": false,
       "persistent": true

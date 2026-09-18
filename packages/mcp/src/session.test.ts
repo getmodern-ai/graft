@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, describe, expect, it } from "vitest";
 
+import { ASK_CARD_MIME_TYPE, ASK_CARD_RESOURCE_URI } from "./ask-card";
 import { BUILD_APPROVAL_ON_THE_PAGE } from "./connection-request";
 import type { McpDeps } from "./deps";
 import { createToolListChangedNotifier } from "./notifier";
@@ -38,6 +39,9 @@ afterAll(async () => {
   await Promise.all(sandboxes.map((sandbox) => sandbox.close()));
 });
 
+/** What the fake deps serve as the ask card's page; the real page is `@graft/ask-card`'s build, read by `ask-card.test.ts` here and held to its rules by `packages/ask-card/src/bundle.test.ts`. */
+const FAKE_CARD_HTML = '<!doctype html><html><body><div id="ask"></div></body></html>';
+
 /** A session over the in-memory pair, as `server.test.ts` opens one; `initialize` reads nothing from the deps. */
 async function initialize() {
   const store = createFakeStore();
@@ -58,6 +62,7 @@ async function initialize() {
     runnerFiles: async () => [],
     skills: async () => [],
     readWebPage: async ({ url }) => ({ ok: false, url, error: "no network in this suite" }),
+    askCardHtml: async () => FAKE_CARD_HTML,
     handoff: {
       consoleUrl: "http://console.graft.test",
       secret: "graft-session-test-handoff-secret-long-enough-32",
@@ -104,6 +109,80 @@ describe("the initialize result", () => {
     } finally {
       await harness.close();
     }
+  });
+});
+
+/**
+ * The ask card (GRA-84; ADR 0006 as amended 2026-09-18) as a host sees it over the handshake: the
+ * `resources` capability, one resource listed and readable as the page, the render pointer on
+ * exactly the three tools that can ask, the card's own tool hidden by visibility — and the
+ * instructions untouched, since the card is the host's affair and the budget is spent.
+ */
+describe("the ask card over the session", () => {
+  it("declares resources, lists ui://graft/ask with the app MIME type, and reads it as the page", async () => {
+    const harness = await initialize();
+    try {
+      expect(harness.client.getServerCapabilities()?.resources).toEqual({});
+      const { resources } = await harness.client.listResources();
+      expect(resources).toEqual([
+        expect.objectContaining({ uri: ASK_CARD_RESOURCE_URI, mimeType: ASK_CARD_MIME_TYPE }),
+      ]);
+      // No CSP and no domain on the resource: the card fetches nothing (the file's header says why).
+      expect(resources[0]).not.toHaveProperty("_meta");
+      const read = await harness.client.readResource({ uri: ASK_CARD_RESOURCE_URI });
+      expect(read.contents).toEqual([
+        { uri: ASK_CARD_RESOURCE_URI, mimeType: ASK_CARD_MIME_TYPE, text: FAKE_CARD_HTML },
+      ]);
+      await expect(harness.client.readResource({ uri: "ui://graft/other" })).rejects.toThrow(
+        /Unknown resource/,
+      );
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("points acquire, request_connection and request_credential at the card, and nothing else", async () => {
+    const harness = await initialize();
+    try {
+      const { tools } = await harness.client.listTools();
+      const rendering = tools
+        .filter((tool) => (tool._meta?.ui as { resourceUri?: string } | undefined)?.resourceUri)
+        .map((tool) => tool.name)
+        .sort();
+      expect(rendering).toEqual(["acquire", "request_connection", "request_credential"]);
+      for (const name of rendering) {
+        expect(tools.find((tool) => tool.name === name)?._meta).toEqual({
+          ui: { resourceUri: ASK_CARD_RESOURCE_URI },
+        });
+      }
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("lists answer_ask as app-only — the host hides it; this server cannot — with a description that tells a model off", async () => {
+    const harness = await initialize();
+    try {
+      const { tools } = await harness.client.listTools();
+      const answerAsk = tools.find((tool) => tool.name === "answer_ask");
+      expect(answerAsk?._meta).toEqual({ ui: { visibility: ["app"] } });
+      expect(answerAsk?.description?.startsWith("Called by Graft's ask card, never by you:")).toBe(
+        true,
+      );
+      // No other tool is app-only.
+      expect(
+        tools.filter(
+          (tool) => (tool._meta?.ui as { visibility?: string[] } | undefined)?.visibility,
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("leaves the instructions untouched: no card, no answer_ask, the budget as it was", () => {
+    expect(SERVER_INSTRUCTIONS).not.toContain("answer_ask");
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/\bcard\b/);
   });
 });
 
@@ -172,6 +251,8 @@ const WHEN: Record<string, string> = {
     "Call request_connection when the vendor a task needs has no connection in your scope",
   request_credential:
     "Call request_credential when a tool's call comes back with the vendor's 401 or 403",
+  // The ask card's tool (GRA-84): the host hides it from the model; the "when" is a "never".
+  answer_ask: "Called by Graft's ask card, never by you",
 };
 
 /** The tools that can answer a handoff, and so must say what to do with one. */
