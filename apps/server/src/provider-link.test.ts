@@ -416,9 +416,9 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     expect(pipedream.accounts).toHaveLength(1);
 
     // The connection stays in the agent's scope awaiting reconnection (ADR 0007), and a relayed
-    // call for it is refused by the proxy as not connected: the row resolves to no relay and no
-    // scheme, whatever Pipedream still holds. The revoke swept the build approval too, so it is
-    // granted again here to reach the proxy at all.
+    // call for it is refused by the proxy as revoked (GRA-68): the row resolves to no relay and no
+    // scheme, whatever Pipedream still holds, and carries the stamp the refusal is read from. The
+    // revoke swept the build approval too, so it is granted again here to reach the proxy at all.
     store.grantBuild(AGENT_A, connectionId);
     const a = await connect(TOKEN_A);
     try {
@@ -427,7 +427,7 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
       expect(refused.exitCode).not.toBe(0);
       expect(JSON.stringify(refused)).toContain("409");
       expect(vendor.requests).toHaveLength(0);
-      expect(vendor.events.at(-1)).toMatchObject({ outcome: "connection_not_ready", connectionId });
+      expect(vendor.events.at(-1)).toMatchObject({ outcome: "connection_revoked", connectionId });
     } finally {
       await a.close();
     }

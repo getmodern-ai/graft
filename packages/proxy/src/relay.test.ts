@@ -610,6 +610,17 @@ describe("the ladder relays a connection whose provider holds the credential els
     expect(h.obtained()).toBe(0);
   });
 
+  it("a revoked relay row is refused as revoked, and the relay's fields are never assembled (GRA-68)", async () => {
+    const h = harness(relayConnection({ revokedAt: new Date("2026-09-18T09:00:00Z") }));
+    const res = await h.app.request("/c/conn_r/orders", { headers: bearer(GOOD) });
+
+    expect(res.status).toBe(409);
+    expect(await reason(res)).toBe("connection_revoked");
+    expect(h.obtained()).toBe(0);
+    expect(h.sent).toHaveLength(0);
+    expect(h.events[0]).toMatchObject({ outcome: "connection_revoked", relay: null });
+  });
+
   it("a connection with no relay takes the inject path exactly as before", async () => {
     const h = harness({
       id: "conn_r",

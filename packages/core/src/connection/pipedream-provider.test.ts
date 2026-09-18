@@ -180,11 +180,12 @@ describe("resolve and revoke", () => {
     expect(resolution.relay.rules).toBeUndefined();
   });
 
-  it("a row with no account, or a revoked one still awaiting Pipedream's release, resolves to nothing the proxy can use", () => {
+  it("a row with no account resolves pending, so the proxy names Pipedream as holding nothing yet; a revoked one still awaiting Pipedream's release resolves to nothing the proxy can use (GRA-68)", () => {
     const { provider } = setup();
+    expect(provider.resolve({ ...row, providerRef: null })).toEqual({ mode: "pending" });
     const notReady = { mode: "inject", scheme: null, schemeConfig: {}, credentialCiphertext: null };
-    expect(provider.resolve({ ...row, providerRef: null })).toEqual(notReady);
     expect(provider.resolve({ ...row, revokedAt: NOW })).toEqual(notReady);
+    expect(provider.resolve({ ...row, providerRef: null, revokedAt: NOW })).toEqual(notReady);
   });
 
   it("revoke deletes the account at Pipedream by the row's reference, and does nothing for a row that has none", async () => {
