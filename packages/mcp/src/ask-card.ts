@@ -63,6 +63,45 @@ export const APP_ONLY_TOOL_META: NonNullable<Tool["_meta"]> = {
   ui: { visibility: ["app"] },
 };
 
+/**
+ * The extension's id in a client's `initialize` capabilities. A client that declares it has
+ * implemented the MCP Apps specification, whose host requirements include leaving an `app`-only
+ * tool out of the model's list — the second of `answer_ask`'s two admission signals.
+ */
+export const UI_EXTENSION_ID = "io.modelcontextprotocol/ui";
+
+/**
+ * The chat products known to render the card and hide its tool, by the host their OAuth callback
+ * answers on — the first admission signal. Claude's is `claude.ai/api/mcp/auth_callback`,
+ * ChatGPT's `chatgpt.com/connector_platform_oauth_redirect` (the GRA-84 research). The
+ * deployment's list is `GRAFT_CARD_HOSTS` (`packages/env/src/schema.ts`, the same default), on
+ * `McpDeps.cardHosts`; this is the fallback for a `McpDeps` built without one.
+ */
+export const DEFAULT_CARD_HOSTS: readonly string[] = ["claude.ai", "chatgpt.com"];
+
+/**
+ * Whether every registered redirect URI of an OAuth client is on a card host — its hostname equal
+ * to, or a subdomain of, an entry. Every URI, because a client that could be sent back to one
+ * off-list host is not the product the list names; an empty list, or a URI that does not parse,
+ * admits nobody. Hostnames compare lower-case, as `GRAFT_CARD_HOSTS` is parsed.
+ */
+export function redirectsOnCardHosts(
+  redirectUris: readonly string[],
+  cardHosts: readonly string[],
+): boolean {
+  if (redirectUris.length === 0) return false;
+  const hosts = cardHosts.map((host) => host.toLowerCase());
+  return redirectUris.every((uri) => {
+    let hostname: string;
+    try {
+      hostname = new URL(uri).hostname.toLowerCase();
+    } catch {
+      return false;
+    }
+    return hosts.some((host) => hostname === host || hostname.endsWith(`.${host}`));
+  });
+}
+
 /** The card for a `build` or `tool` ask (`approval.ts`): the connection's facts, answerable only as a build approval. */
 export function approvalAskCard(args: {
   action: PendingActionRow;

@@ -11,7 +11,12 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import type { ElicitForm } from "./approval";
-import { ASK_CARD_MIME_TYPE, ASK_CARD_RESOURCE, ASK_CARD_RESOURCE_URI } from "./ask-card";
+import {
+  ASK_CARD_MIME_TYPE,
+  ASK_CARD_RESOURCE,
+  ASK_CARD_RESOURCE_URI,
+  UI_EXTENSION_ID,
+} from "./ask-card";
 import type { SessionContext } from "./context";
 import type { McpDeps } from "./deps";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -82,6 +87,17 @@ function elicitFormOf(server: Server): ElicitForm | null {
   return (params) => server.elicitInput({ ...params, mode: "form" });
 }
 
+/**
+ * Whether the client's `initialize` declared the MCP Apps extension (`extensions` is the SDK's
+ * open record of extension ids). ChatGPT declares it; Claude.ai web renders apps without
+ * declaring it, which is why the card's tool pointers are unconditional and why this is one
+ * signal of two rather than the gate (`tools/answer-ask.ts`).
+ */
+function uiExtensionDeclared(server: Server): boolean {
+  const extensions = server.getClientCapabilities()?.extensions;
+  return extensions !== undefined && UI_EXTENSION_ID in extensions;
+}
+
 /** A session for an agent already resolved — the HTTP layer resolves once and reuses across requests. */
 export function createAgentSession(
   deps: McpDeps,
@@ -101,6 +117,7 @@ export function createAgentSession(
     notifier,
     drafts: draftsDir(scope.agentId),
     channel: { elicit: () => elicitFormOf(server) },
+    uiExtensionDeclared: () => uiExtensionDeclared(server),
   };
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: await listToolsFor(session),

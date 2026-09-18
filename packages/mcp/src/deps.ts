@@ -18,6 +18,7 @@ import {
   type WorkingSetDeps,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import { findMcpClient } from "@graft/db/repo/mcp-oauth";
 import { listPendingActionsByKind } from "@graft/db/repo/pending-action";
 import type { ModelAdapter } from "@graft/model";
 import {
@@ -102,6 +103,14 @@ export type McpDeps = {
    * string; a deployment never sets it.
    */
   askCardHtml?: () => Promise<string>;
+  /**
+   * The chat products whose OAuth clients may answer the ask card, by the host their redirect
+   * URIs are on — `GRAFT_CARD_HOSTS` (`tools/answer-ask.ts`; ADR 0006 as amended 2026-09-18).
+   * `DEFAULT_CARD_HOSTS` when absent.
+   */
+  cardHosts?: readonly string[];
+  /** The read of an OAuth client's registration the same gate makes — `@graft/db/repo/mcp-oauth`'s, as `listPendingActionsByKind` is. */
+  findMcpClient: typeof findMcpClient;
   /** The `tools/list_changed` rate limit's window (`notifier.ts`); a test sets it low. */
   listChangedWindowMs?: number;
   now?: () => Date;
@@ -179,6 +188,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     pendingAction: defaultPendingActionDeps,
     acquireJob: defaultAcquireJobDeps,
     listPendingActionsByKind,
+    findMcpClient,
     checkModule,
     runnerFiles,
     skills: loadSkills,

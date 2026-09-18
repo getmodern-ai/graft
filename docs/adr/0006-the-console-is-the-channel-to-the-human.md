@@ -147,8 +147,13 @@ the same standing as elicitation: layered on top of the handoff, per ask, never 
 where the host renders it. Its answer arrives as the person's click, relayed by the host as a
 `tools/call` of `answer_ask` that the host hides from the model (`_meta.ui.visibility: ["app"]`).
 Graft admits that call only from an **agent a chat product holds over OAuth** (ADR 0018:
-`connected_via_client_id` set), only for **that agent's own ask**, only while it is **open and in
-time**, and only for **two asks**: the build approval, and the connection confirmation for a
+`connected_via_client_id` set) **whose client's hiding of app-only tools is established** — every
+redirect URI the client registered is on a card host (`GRAFT_CARD_HOSTS`, by default `claude.ai`
+and `chatgpt.com`, the two products' callbacks), or the session's client declared the MCP Apps
+extension in `initialize`, which binds it to the specification's host rules; ADR 0018 registers
+any client dynamically, so the OAuth grant alone would admit a naive client that lists the tool to
+its model — only for **that agent's own ask**, only while it is **open and in time**, and only for
+**two asks**: the build approval, and the connection confirmation for a
 proposal whose scheme takes no credential and whose provider connects through the form. The record
 is the console's record — the same `build_approval` row, the same connection row in the same
 agent's scope, the same answer on the action, through the same functions
@@ -174,10 +179,13 @@ adds no route, no CORS surface and no second use of the handoff token, and becau
 then reaches Graft under the agent's OAuth session and the same door every call takes
 (`requireAgent`). Its cost is the residual risk recorded here: nothing on the wire proves a
 `tools/call` came from the card rather than the model — no host documents a marker, and a result's
-`_meta` is model-visible on Claude — so the guard is the host's hiding plus Graft's own gate, and the
-OAuth-only gate is what keeps Hermes's and OpenClaw's models, which see every tool their server
-lists, from ever answering their own asks. The live check on both hosts has to confirm that neither
-lists `answer_ask` to its model; a host that does is a host the card is withdrawn from.
+`_meta` is model-visible on Claude — so the guard is the host's hiding plus Graft's own gate: the
+OAuth requirement keeps Hermes's and OpenClaw's models, which see every tool their server lists,
+from ever answering their own asks, and the card-host or extension signal keeps an unknown OAuth
+client's model out too, since a client can register itself but cannot register a redirect on
+`claude.ai` or forge the other side of its own `initialize`. The live check on both hosts has to
+confirm that neither lists `answer_ask` to its model; a host that does is a host the card is
+withdrawn from, by taking it off the list.
 
 **Unchanged.** ADR 0004 and ADR 0008. Elicitation keeps its place before the handoff for the clients
 that show a form. `acquire` still asks once per agent per connection; the connection confirmation

@@ -151,7 +151,9 @@ and default per provider — is required too; the fields and that rule are GRA-3
 tool call waits for a person to answer a handoff before returning
 `awaiting_approval` — or `awaiting_connection` / `awaiting_credential` for the two connection
 handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default
-24) how long that action stays answerable (ADR 0006, ADR 0008). `packages/env/src/schema.ts` is the
+24) how long that action stays answerable (ADR 0006, ADR 0008). `GRAFT_CARD_HOSTS` (default
+`claude.ai,chatgpt.com`) names the chat products whose OAuth clients may answer the ask card, by the
+host of their registered redirect URIs (GRA-84; the paragraph on the card below). `packages/env/src/schema.ts` is the
 rules as code.
 
 **An OAuth consent (ADR 0005) adds no variable, two server routes and one console route.**
@@ -334,7 +336,9 @@ where `apps/server/tsdown.config.ts` copies it and the Dockerfile's `build` stag
 `structuredContent.card` beside GRA-55's unchanged `url`, `message` and `reason` (`result.ts`'s
 `withCard`). The card answers by calling `answer_ask` (`tools/answer-ask.ts`), declared
 `_meta.ui.visibility: ["app"]` so the host hides it from the model; the tool refuses a static-token
-agent, another agent's ask, a closed or expired ask, and every ask but the build approval and the
+agent, an OAuth client whose hiding is not established (neither every registered redirect URI on a
+`GRAFT_CARD_HOSTS` host nor the MCP Apps extension declared in `initialize`), another agent's ask,
+a closed or expired ask, and every ask but the build approval and the
 keyless connection confirmation, and records the rest through `ask-answer.ts` — the same functions
 the console's `POST /pending-actions/:id/answer` and `/connection` call, with `via: "card"` on the
 answer. `packages/mcp/src/answer-ask.test.ts` is the suite; `pnpm --filter @graft/ask-card build`

@@ -80,6 +80,9 @@ export {
   connectionAskAnswerable,
   connectionAskCard,
   credentialAskCard,
+  DEFAULT_CARD_HOSTS,
+  redirectsOnCardHosts,
+  UI_EXTENSION_ID,
 } from "./ask-card";
 export {
   clampTimeout,

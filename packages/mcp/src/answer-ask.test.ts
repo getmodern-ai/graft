@@ -6,6 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ASK_ANSWERED_MESSAGE, ASK_EXPIRED_MESSAGE } from "./ask-answer";
+import { redirectsOnCardHosts } from "./ask-card";
 import type { McpDeps } from "./deps";
 import { createToolListChangedNotifier } from "./notifier";
 import { openAgentSession } from "./session";
@@ -21,9 +22,12 @@ import { ANSWER_ASK, CARD_NOT_AVAILABLE } from "./tools/answer-ask";
  * back, and what the waiting tool then does — `acquire` proceeds on a yes recorded through the
  * card exactly as on one recorded in the console, `request_connection` answers connected.
  *
- * Three agents of one person: `claude`, minted by an MCP client's consent (ADR 0018) and so the
- * one the card answers for; `other`, another such agent, whose asks are its own; and `hermes`,
- * a static-token agent whose harness renders no card and whose call can only be its model's.
+ * Five agents of one person: `claude`, minted by an MCP client's consent (ADR 0018) from a client
+ * registered on `claude.ai`, and so the one the card answers for; `other`, ChatGPT's, whose asks
+ * are its own; `hermes`, a static-token agent whose harness renders no card and whose call can
+ * only be its model's; and two OAuth agents whose clients are not known to hide the tool — one
+ * registered on an unknown host, one with a second redirect off the list — which the gate refuses
+ * unless their session declared the MCP Apps extension.
  */
 
 const PERSON = "person_1";
@@ -33,6 +37,12 @@ const HERMES = "agent_hermes";
 const TOKEN_CLAUDE = "grft_answer_ask_claude_000000000000000000000000";
 const TOKEN_OTHER = "grft_answer_ask_other_0000000000000000000000000";
 const TOKEN_HERMES = "grft_answer_ask_hermes_000000000000000000000000";
+const UNKNOWN = "agent_unknown";
+const MIXED = "agent_mixed";
+const TOKEN_UNKNOWN = "grft_answer_ask_unknown_00000000000000000000000";
+const TOKEN_MIXED = "grft_answer_ask_mixed_000000000000000000000000000";
+/** The extension a client that implements MCP Apps declares in `initialize` — ChatGPT does, Claude.ai web does not. */
+const UI_EXTENSION = { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } };
 const CONN = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 
@@ -54,9 +64,12 @@ const SECRET = {
 
 let store: FakeStore;
 let deps: McpDeps;
+/** The suite's clock: every row's stamp and every expiry check read it, so a test moves time by setting it. */
+let clock: Date;
 
 beforeEach(() => {
-  store = createFakeStore();
+  clock = new Date("2026-09-18T10:00:00Z");
+  store = createFakeStore({ now: () => clock });
   store.addConnection({
     id: CONN,
     personId: PERSON,
@@ -86,6 +99,44 @@ beforeEach(() => {
     token: TOKEN_HERMES,
     name: "laptop Hermes",
     connectionIds: [CONN],
+  });
+  // The two products' registrations, by the callbacks they register (the GRA-84 research), and two
+  // clients whose hiding of app-only tools nothing establishes.
+  store.addMcpClient({
+    id: "client_claude",
+    name: "Claude",
+    redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+  });
+  store.addMcpClient({
+    id: "client_openai",
+    name: "ChatGPT",
+    redirectUris: ["https://chatgpt.com/connector_platform_oauth_redirect"],
+  });
+  store.addMcpClient({
+    id: "client_unknown",
+    name: "Some Client",
+    redirectUris: ["https://evil.example/cb"],
+  });
+  store.addMcpClient({
+    id: "client_mixed",
+    name: "Mixed Client",
+    redirectUris: ["https://claude.ai/api/mcp/auth_callback", "https://evil.example/cb"],
+  });
+  store.addAgent({
+    id: UNKNOWN,
+    personId: PERSON,
+    token: TOKEN_UNKNOWN,
+    name: "Some Client",
+    connectionIds: [CONN],
+    connectedVia: { clientId: "client_unknown", clientName: "Some Client" },
+  });
+  store.addAgent({
+    id: MIXED,
+    personId: PERSON,
+    token: TOKEN_MIXED,
+    name: "Mixed Client",
+    connectionIds: [CONN],
+    connectedVia: { clientId: "client_mixed", clientName: "Mixed Client" },
   });
   deps = {
     ...createFakeDeps(store),
@@ -118,12 +169,15 @@ afterEach(async () => {
   await Promise.all(sessions.splice(0).map((close) => close()));
 });
 
-async function connect(token: string) {
+async function connect(token: string, options: { declaresExtension?: boolean } = {}) {
   const notifier = createToolListChangedNotifier({ windowMs: 50 });
   const session = await openAgentSession(deps, token, notifier);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await session.server.connect(serverTransport);
-  const client = new Client({ name: "chat-product", version: "0.0.0" });
+  const client = new Client(
+    { name: "chat-product", version: "0.0.0" },
+    options.declaresExtension ? { capabilities: { extensions: UI_EXTENSION } } : {},
+  );
   await client.connect(clientTransport);
   sessions.push(async () => {
     await client.close();
@@ -298,9 +352,12 @@ describe("answer_ask on a build ask", () => {
     const twice = await answer(claude, card.pendingActionId, { allow: false });
     expect(twice.body).toMatchObject({ reason: "answered", message: ASK_ANSWERED_MESSAGE });
 
-    deps.handoff.ttlMs = 1;
+    // The ask is made at the clock's time and expires `ttlMs` later; moving the clock past that
+    // is the expiry, with no real time involved — a 1 ms TTL and a sleep raced the call's own poll
+    // on a slow runner (CI run 35314739132), which then answered `handoff_expired` with no card.
     const short = cardOf(await claude.call("request_connection", KEYLESS));
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(new Date(short.expiresAt).getTime()).toBe(clock.getTime() + deps.handoff.ttlMs);
+    clock = new Date(clock.getTime() + deps.handoff.ttlMs + 1);
     const late = await answer(claude, short.pendingActionId, { connect: true, approveBuild: true });
     expect(late.body).toMatchObject({ reason: "expired", message: ASK_EXPIRED_MESSAGE });
   });
@@ -313,8 +370,8 @@ describe("answer_ask on a build ask", () => {
       kind: "tool",
       payload: { toolId: "tool_1", toolName: "demo__create-order", connectionId: CONN },
       connectionId: CONN,
-      expiresAt: new Date(Date.now() + 60_000),
-      createdAt: new Date(),
+      expiresAt: new Date(clock.getTime() + 60_000),
+      createdAt: clock,
     });
     const { body } = await answer(claude, row.id, { allow: true });
     expect(body).toMatchObject({
@@ -433,5 +490,94 @@ describe("answer_ask on a connection ask", () => {
     const { body } = await answer(claude, card.pendingActionId, { allow: true });
     expect(body).toMatchObject({ reason: "input_invalid" });
     expect(store.connections.size).toBe(1);
+  });
+});
+
+/**
+ * Guard 1's second half (Greptile on #71): the OAuth grant alone admits any dynamically registered
+ * client, so the card's tool answers only for a client whose hiding of app-only tools is
+ * established — every registered redirect on a card host, or the extension declared in
+ * `initialize`. The signals are the registration and the handshake, neither of which the model
+ * can write to.
+ */
+describe("the card-host gate", () => {
+  const ask = async (agent: Awaited<ReturnType<typeof connect>>) =>
+    cardOf(await agent.call("acquire", { connectionId: CONN, goal: "list orders" }));
+
+  it("admits a client registered on claude.ai, and one on chatgpt.com", async () => {
+    for (const token of [TOKEN_CLAUDE, TOKEN_OTHER]) {
+      const agent = await connect(token);
+      const card = await ask(agent);
+      const { body } = await answer(agent, card.pendingActionId, { allow: true });
+      expect(body, token).toMatchObject({ answered: true });
+    }
+  });
+
+  it("refuses a client registered on an unknown host, and one with a second redirect off the list", async () => {
+    for (const token of [TOKEN_UNKNOWN, TOKEN_MIXED]) {
+      const agent = await connect(token);
+      const card = await ask(agent);
+      const { body } = await answer(agent, card.pendingActionId, { allow: true });
+      expect(body, token).toMatchObject({
+        error: "refused",
+        reason: CARD_NOT_AVAILABLE,
+        message: expect.stringContaining("console"),
+      });
+      expect(store.pendingActions.get(card.pendingActionId)?.answeredAt).toBeNull();
+      expect(store.buildApprovals.size).toBe(0);
+    }
+  });
+
+  it("admits an off-list client whose session declared the MCP Apps extension", async () => {
+    const agent = await connect(TOKEN_UNKNOWN, { declaresExtension: true });
+    const card = await ask(agent);
+    const { body } = await answer(agent, card.pendingActionId, { allow: true });
+    expect(body).toMatchObject({ answered: true });
+    expect(store.buildApprovals.get(`${UNKNOWN} ${CONN}`)).toBeDefined();
+  });
+
+  it("still refuses a static-token agent, even one whose session declared the extension", async () => {
+    const hermes = await connect(TOKEN_HERMES, { declaresExtension: true });
+    const card = await ask(hermes);
+    const { body } = await answer(hermes, card.pendingActionId, { allow: true });
+    expect(body).toMatchObject({ reason: CARD_NOT_AVAILABLE });
+  });
+
+  it("admits a self-hoster's host through GRAFT_CARD_HOSTS, and a subdomain of a listed host", async () => {
+    const token = "grft_answer_ask_self_0000000000000000000000000000";
+    store.addMcpClient({
+      id: "client_self",
+      name: "Own Chat",
+      redirectUris: ["https://connectors.chat.self-host.example/oauth/cb"],
+    });
+    store.addAgent({
+      id: "agent_self",
+      personId: PERSON,
+      token,
+      name: "Own Chat",
+      connectionIds: [CONN],
+      connectedVia: { clientId: "client_self", clientName: "Own Chat" },
+    });
+    const before = await connect(token);
+    const card = await ask(before);
+    expect((await answer(before, card.pendingActionId, { allow: true })).body).toMatchObject({
+      reason: CARD_NOT_AVAILABLE,
+    });
+
+    deps.cardHosts = ["claude.ai", "chatgpt.com", "chat.self-host.example"];
+    const after = await connect(token);
+    expect((await answer(after, card.pendingActionId, { allow: true })).body).toMatchObject({
+      answered: true,
+    });
+  });
+
+  it("reads every redirect: a list with none, or one that does not parse, admits nobody", () => {
+    expect(redirectsOnCardHosts([], ["claude.ai"])).toBe(false);
+    expect(redirectsOnCardHosts(["not a url"], ["claude.ai"])).toBe(false);
+    expect(redirectsOnCardHosts(["https://claude.ai/cb"], [])).toBe(false);
+    expect(
+      redirectsOnCardHosts(["https://CLAUDE.AI/cb", "https://app.claude.ai/x"], ["claude.ai"]),
+    ).toBe(true);
+    expect(redirectsOnCardHosts(["https://notclaude.ai/cb"], ["claude.ai"])).toBe(false);
   });
 });

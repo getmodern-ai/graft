@@ -15,7 +15,12 @@ import {
   confirmConnectionAsk,
   recordApprovalAnswer,
 } from "../ask-answer";
-import { APP_ONLY_TOOL_META, connectionAskAnswerable } from "../ask-card";
+import {
+  APP_ONLY_TOOL_META,
+  connectionAskAnswerable,
+  DEFAULT_CARD_HOSTS,
+  redirectsOnCardHosts,
+} from "../ask-card";
 import { CONNECTION_ASK_KIND, type ConnectionProposalPayload } from "../connection-request";
 import type { SessionContext } from "../context";
 import { isPlainObject, toolRefusal, toolResult } from "../result";
@@ -32,9 +37,17 @@ import type { MetaTool } from "./meta";
  *
  * The guards, in order, each a refusal the card shows as a sentence:
  *
- *   1. **The agent is one a chat product holds over OAuth** (`connected_via_client_id` set,
- *      ADR 0018). A static-token agent's harness — Hermes, OpenClaw — renders no app, so a call
- *      from one can only be its model's: refused `card_not_available`, the console is the place.
+ *   1. **The agent's client is one whose hiding of app-only tools is established.** The agent
+ *      must be one a chat product holds over OAuth (`connected_via_client_id` set, ADR 0018) — a
+ *      static-token agent's harness, Hermes or OpenClaw, renders no app, so a call from one can
+ *      only be its model's — and that alone is not enough: ADR 0018 registers any client
+ *      dynamically, and a naive one that lists app-only tools would let its model answer its own
+ *      ask (Greptile on #71). So one of two signals the model cannot touch must hold: **the
+ *      client's registered redirect URIs are all on a card host** (`GRAFT_CARD_HOSTS`, default
+ *      `claude.ai` and `chatgpt.com` — the callbacks the two products register; `McpDeps.cardHosts`),
+ *      or **the session's client declared the MCP Apps extension** in `initialize`, whose host
+ *      requirements include hiding `visibility: ["app"]` tools (`SessionContext.uiExtensionDeclared`).
+ *      Neither: `card_not_available`, the console is the place.
  *   2. **The ask is this agent's** (the agent-scoped read answers nothing for another's), **open**
  *      (unanswered, untaken — `answered`) **and in time** (`expired`), in the console's words.
  *   3. **The ask is one the card may answer**: a `build` ask, or a `connection` ask the keyring's
@@ -274,6 +287,20 @@ export const answerAsk: MetaTool = {
         CARD_NOT_AVAILABLE,
         `The ask card answers only for an agent connected from a chat product; this agent holds a static token and its harness renders no card. ${CONSOLE_IS_THE_PLACE}`,
       );
+    }
+    //    And only a client whose hiding of app-only tools is established — the header's two
+    //    signals. The redirect read is skipped when the session already declared the extension.
+    if (!session.uiExtensionDeclared()) {
+      const client = await deps.findMcpClient(ctx.db, agent.connectedVia.clientId);
+      if (
+        !client ||
+        !redirectsOnCardHosts(client.redirectUris, deps.cardHosts ?? DEFAULT_CARD_HOSTS)
+      ) {
+        return refuse(
+          CARD_NOT_AVAILABLE,
+          `The ask card answers only for a chat product known to hide this tool from its model: ${agent.connectedVia.clientName} neither declared the MCP Apps extension nor is registered on a card host (GRAFT_CARD_HOSTS). ${CONSOLE_IS_THE_PLACE}`,
+        );
+      }
     }
 
     // 2. This agent's own ask, open and in time — the console's words for the two closed states.

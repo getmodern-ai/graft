@@ -19,4 +19,11 @@ export type SessionContext = {
   notifier: ToolListChangedNotifier;
   drafts: string;
   channel: AskChannel;
+  /**
+   * Whether the session's client declared the MCP Apps extension in `initialize` — a client that
+   * has, hides `app`-only tools from its model by specification, which is one of the two signals
+   * `answer_ask` admits a call on (`tools/answer-ask.ts`, GRA-84). A thunk for the reason
+   * `channel` is one: the capabilities arrive after the session is built.
+   */
+  uiExtensionDeclared: () => boolean;
 };

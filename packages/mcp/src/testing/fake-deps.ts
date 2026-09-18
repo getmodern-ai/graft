@@ -15,6 +15,7 @@ import type { AcquireAttemptRow, AcquireJobRow, AcquireTraceRow } from "@graft/d
 import type { AgentRow } from "@graft/db/repo/agent";
 import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { ConnectionRow } from "@graft/db/repo/connection";
+import type { findMcpClient, McpClientRow } from "@graft/db/repo/mcp-oauth";
 import type { listPendingActionsByKind, PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 import type { UsageLedgerRow } from "@graft/db/repo/usage";
@@ -45,6 +46,8 @@ export type FakeStore = {
   /** `<agentId> <connectionId>` -> row */
   buildApprovals: Map<string, BuildApprovalRow>;
   pendingActions: Map<string, PendingActionRow>;
+  /** The OAuth clients a consent may have minted an agent from (ADR 0018) — what the ask card's gate reads (GRA-84). */
+  mcpClients: Map<string, McpClientRow>;
   acquireJobs: Map<string, AcquireJobRow>;
   acquireAttempts: Map<string, AcquireAttemptRow>;
   acquireTraces: AcquireTraceRow[];
@@ -87,6 +90,8 @@ export type FakeStore = {
   isPromoted(agentId: string, toolId: string): boolean;
   /** The person's standing yes to code running against a connection for this agent (ADR 0008). */
   grantBuild(agentId: string, connectionId: string): void;
+  /** A registered OAuth client, by its id and the redirect URIs it registered; the rest is the registration's defaults. */
+  addMcpClient(input: { id: string; name?: string; redirectUris: readonly string[] }): McpClientRow;
 };
 
 const key = (agentId: string, toolId: string) => `${agentId} ${toolId}`;
@@ -106,6 +111,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     approvals: new Map(),
     buildApprovals: new Map(),
     pendingActions: new Map(),
+    mcpClients: new Map(),
     acquireJobs: new Map(),
     acquireAttempts: new Map(),
     acquireTraces: [],
@@ -225,6 +231,28 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         createdAt: at,
       });
     },
+    addMcpClient(input) {
+      const at = now();
+      const row: McpClientRow = {
+        id: input.id,
+        secretHash: null,
+        name: input.name ?? input.id,
+        redirectUris: [...input.redirectUris],
+        tokenEndpointAuthMethod: "none",
+        grantTypes: ["authorization_code", "refresh_token"],
+        responseTypes: ["code"],
+        scope: null,
+        clientUri: null,
+        logoUri: null,
+        softwareId: null,
+        softwareVersion: null,
+        owner: "person",
+        createdAt: at,
+        updatedAt: at,
+      };
+      store.mcpClients.set(row.id, row);
+      return row;
+    },
   };
   return store;
 }
@@ -239,6 +267,7 @@ export type FakeDeps = {
   approval: ApprovalDeps;
   pendingAction: PendingActionDeps;
   listPendingActionsByKind: typeof listPendingActionsByKind;
+  findMcpClient: typeof findMcpClient;
   acquireJob: AcquireJobDeps;
 };
 
@@ -1068,6 +1097,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     approval,
     pendingAction,
     listPendingActionsByKind,
+    findMcpClient: async (_db, clientId) => store.mcpClients.get(clientId) ?? null,
     acquireJob,
   };
 }
