@@ -29,14 +29,22 @@ transport that renders through a vendor's hosted templates maps the name to an i
 that renders itself has the subject and the variables. The registry is what every caller is held to,
 so a variable renamed under a hosted template fails at the seam, not as a blank in an inbox.
 
-## The open form's backing is the console transport
+## The open form's backings: an SMTP relay, and the console as the floor
+
+**Amended 2026-09-18 (GRA-92): the open form has a working backing, not only a floor.** With
+`GRAFT_SMTP_URL` and `GRAFT_MAIL_FROM` set — an all-or-nothing pair — the SMTP transport in
+`@graft/email` sends through the relay the URL names, rendering each template itself from a map
+every registry name must appear in (`RENDERERS`), with the hosted template's copy and colours. SMTP
+is the one backing that ties a self-host to no vendor: a mailbox provider's relay, SES's SMTP
+endpoint, a company mail server all take the same URL. It is open code switched on by configuration
+(ADR 0019's phrase for the Pipedream and gateway providers), in either form: under `cloud` the
+private package's transport wins when it answers one, and the relay stands in when it does not.
 
 Unset, in every form, the console transport prints the envelope, the variables and the action URL
 on a line of its own — a reset is read out of `docker compose logs graft`. That is the whole mail
-stack on a laptop and in the self-hosted image, and it is deliberately not nothing: a self-hoster
-who has just installed Graft has no mail provider on day one, and the link in the log is a
-legitimate way to reset a password for an operator who can read the log. An SMTP backing for the
-open form is the natural next step and its own ticket; until it exists, the console is the floor.
+stack on a laptop and in a fresh self-hosted image, and it is deliberately not nothing: a
+self-hoster who has just installed Graft has no relay configured on day one, and the link in the log
+is a legitimate way to reset a password for an operator who can read the log. It stays the floor.
 
 ## The hosted form's backing is a vendor's, in the private package
 

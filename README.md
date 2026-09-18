@@ -76,8 +76,9 @@ same submit that signs everyone else in. To offer *Continue with Google* or *Con
 beside it, register an OAuth client with the vendor — redirect URI `<your origin>/api/auth/callback/google`
 or `…/github` — and set its `GRAFT_GOOGLE_CLIENT_ID`/`_SECRET` or `GRAFT_GITHUB_CLIENT_ID`/`_SECRET`
 pair in `.env` (each pair all-or-nothing; ADR 0020 has the linking rule). A forgotten password is
-reset from *Forgot password?*: the self-hosted form prints the reset link in `docker compose logs
-graft` (ADR 0021 — the console transport is the open form's mail stack). Then The token is shown once; put it where your harness reads environment
+reset from *Forgot password?*: set `GRAFT_SMTP_URL` (`smtps://user:pass@relay:465`) and
+`GRAFT_MAIL_FROM` in `.env` and the email leaves through your relay; unset, the link is printed in
+`docker compose logs graft` instead (ADR 0021). Then The token is shown once; put it where your harness reads environment
 variables — for Hermes, `~/.hermes/.env`:
 
 ```bash
