@@ -1,12 +1,9 @@
-import type { AnalyticsConfig } from "@graft/server/api";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import ReactDOM from "react-dom/client";
 
 import { Loader } from "./components/loader";
 import { RouteNotFound } from "./components/route-not-found";
-import { initAnalytics } from "./lib/analytics";
-import { api } from "./lib/api";
 import { createQueryClient } from "./lib/query-client";
 import { routeTree } from "./routeTree.gen";
 
@@ -47,15 +44,6 @@ declare module "@tanstack/react-router" {
     router: typeof router;
   }
 }
-
-/**
- * Whether this deployment captures product analytics, and with what (GRA-100): the server's own
- * setting, read once, off the render path — a console whose server set no key loads nothing, and
- * one that cannot reach the server for this loads nothing either.
- */
-void api<AnalyticsConfig>("/analytics")
-  .then(initAnalytics)
-  .catch(() => undefined);
 
 const rootElement = document.getElementById("app");
 

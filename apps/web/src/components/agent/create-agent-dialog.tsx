@@ -51,8 +51,6 @@ export function CreateAgentDialog({
   const [created, setCreated] = useState<CreatedAgent | null>(null);
 
   const create = useMutation({
-    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
-    mutationKey: ["agent", "create"],
     mutationFn: createAgent,
     onSuccess: (answer) => {
       setCreated(answer);

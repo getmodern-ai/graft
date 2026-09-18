@@ -38,6 +38,11 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
   `packages/core/src/approval/approval.decision.ts` or the ask in `packages/mcp/src/approval.ts`.
 - **The proxy is the only route to a vendor.** A sandbox with any other egress, or a module that
   holds a credential, violates ADR 0010 and ADR 0013 whatever the reason.
+- **No vendor in the open repository** (ADR 0002 as amended 2026-09-19): no vendor's client
+  library, configuration variable or id. Define the seam here, with the open form's backing or a
+  no-op, and put the vendor's backing in graft-cloud's private package. Before adding a package or
+  a `GRAFT_*` variable, ask whether it is a vendor's; if it is, it goes there. The Pipedream
+  provider is the one exception left, and GRA-103 moves it.
 
 ## Lineage
 
@@ -622,33 +627,23 @@ and nobody else's (`apps/server/src/model.test.ts` proves the isolation through 
 Routing applies whenever a fixed model exists, and always under `cloud`; under `open` with no fixed
 model `acquire` refuses at the door rather than accepting a job that fails for want of a key.
 
-**Langfuse** traces every model call when `GRAFT_LANGFUSE_PUBLIC_KEY` and `GRAFT_LANGFUSE_SECRET_KEY`
-are set (all-or-nothing; `GRAFT_LANGFUSE_BASE_URL` names the region), per call and never registered
-globally — `@graft/model/langfuse` carries Cando's argument for that. The job is the session, the
-person the user, and every span carries the job id, the attempt and the role (`authoring` | `triage`).
-Absent the pair, the call is exactly what it would be otherwise.
-
-**Axiom and PostHog are the other two observability tools, each off until its variables arrive**
-(GRA-100; `apps/server/src/observability.ts`, in the shape of Cando's CAN-460). **Axiom** is where a
-wide event goes after stdout: with `GRAFT_AXIOM_API_KEY` and `GRAFT_AXIOM_DATASET` (all-or-nothing;
-`GRAFT_AXIOM_URL` only for an organisation outside the default region) evlog's Axiom adapter runs
-behind evlog's batching pipeline and is handed to `initLogger({ drain })` — on the logger, not on the
-Hono middleware, so the acquire runner's and the sweep's own `log` lines drain beside the requests'.
-Every `POST /mcp` event carries the tool call under `mcp` — the tool, its kind, the agent, the
-person, the outcome, the refusal's reason, the latency — from `McpDeps.onToolCall`, which `tools.ts`
-fires once per call from its one dispatch point. **PostHog** is product analytics through
-`@graft/analytics`: `events.ts` is the closed vocabulary (`noun_verbed`, snake case; counts and kinds,
-never content), browser-safe and imported by the console; `Analytics` is the seam with a no-op; the
-`posthog-node` backing is on when `GRAFT_POSTHOG_KEY` is set (`GRAFT_POSTHOG_HOST` names another
-region or a self-hosted instance). The server captures what happens over MCP — `tool_called` from the
-same hook, `acquire_completed` / `acquire_failed` from the runner — and `GET /api/analytics` (public)
-tells the console whether to load `posthog-js` and with what, since the key is public by design and
-one image serves both forms. The console (`apps/web/src/lib/analytics.ts`) loads the chunk lazily,
-identifies the person by id from the `_auth` guard, resets on sign-out, and counts a mutation as an
-event through one chokepoint — `MutationCache.onSuccess` mapping a declared `mutationKey` through
-`analytics-events.ts` — so a dialog never knows PostHog exists. Autocapture and session recording are
-off. Both flush, bounded, on `SIGTERM`. The boot line says `logs stdout` or `logs stdout and axiom
-(<dataset>)`, and `analytics off` or `analytics posthog`. The hosted form's values are graft-cloud's.
+**Observability is three seams with no backing in the open form** (GRA-100; ADR 0002 as amended
+2026-09-19; `@graft/observability`): the **log drain** (`LogDrain`) — where a wide event goes after
+stdout; the open form's stay on stdout, the hosted form's drain is handed to `initLogger({ drain })`
+on the logger rather than the Hono middleware, so the acquire runner's and the sweep's own `log`
+lines drain beside the requests' — **analytics** (`Analytics`, `NO_ANALYTICS`, the event vocabulary
+in `events.ts`: `noun_verbed`, counts and kinds, never content) and **model telemetry**
+(`@graft/model`'s `ModelTelemetry` and `NO_TELEMETRY`, the backing as `ModelTelemetryBacking`).
+`Backings` carries the three and the boot line names each: `logs stdout, analytics off, model
+telemetry off` on every self-host. Every `POST /mcp` event carries the tool call under `mcp` — the
+tool, its kind, the agent, the person, the outcome, the refusal's reason, the latency — from
+`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point; the runner's
+and the sweep's lines ride under `acquire` and `sweep`. Product events are captured server-side at
+two chokepoints and nowhere in the console: the API's mutation routes
+(`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
+does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
+`acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
+form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
 
 ```bash
 cat >> apps/server/.env <<'ENV'

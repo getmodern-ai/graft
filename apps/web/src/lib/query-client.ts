@@ -1,7 +1,6 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { trackMutationSuccess } from "./analytics";
 import { ApiError } from "./api";
 import { createQueryErrorRetry } from "./query-error-retry";
 
@@ -18,10 +17,6 @@ import { createQueryErrorRetry } from "./query-error-retry";
  * the service's rule (`@graft/core` refuses with a sentence a person can act on). A failed *query*
  * toasts the same sentence with a Retry that refetches it (`query-error-retry.ts`, GRA-47), and the
  * route's error boundary still frames a read that failed before the screen could draw.
- *
- * A successful mutation is also the one place every product event of the console's is seen
- * (GRA-100): `analytics-events.ts` maps a declared `mutationKey` to an event, so a dialog never
- * knows PostHog exists.
  *
  * A factory rather than a constant: `main.tsx` builds the one instance with `onRecover` bound to
  * the router it creates next (`query-error-retry.ts` says what the hook is for), and the colocated
@@ -44,9 +39,6 @@ export function createQueryClient(options: { onRecover?: () => void } = {}) {
     mutationCache: new MutationCache({
       onError: (error) => {
         toast.error(error instanceof ApiError ? error.message : "Could not reach the server");
-      },
-      onSuccess: (_data, _variables, _onMutateResult, mutation) => {
-        trackMutationSuccess(mutation.options.mutationKey);
       },
     }),
   });

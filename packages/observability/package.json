@@ -1,5 +1,5 @@
 {
-  "name": "@graft/analytics",
+  "name": "@graft/observability",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,7 +17,8 @@
     "check-types": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "posthog-node": "catalog:"
+    "@graft/model": "workspace:*",
+    "evlog": "^2.27.1"
   },
   "devDependencies": {
     "@graft/config": "workspace:*",

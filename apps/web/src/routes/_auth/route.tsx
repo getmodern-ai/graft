@@ -1,7 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
 import { RouteError } from "@/components/route-error";
-import { identifyAnalytics } from "@/lib/analytics";
 import { sessionQuery } from "@/lib/session-queries";
 
 /**
@@ -24,8 +23,5 @@ export const Route = createFileRoute("/_auth")({
     if (!session) {
       throw redirect({ to: "/login", search: { redirect: location.href } });
     }
-    // The person as PostHog should know them, by id (GRA-100): a no-op unless analytics is on, and
-    // a no-op in posthog-js when the id is the one it already holds.
-    identifyAnalytics(session.user.id);
   },
 });

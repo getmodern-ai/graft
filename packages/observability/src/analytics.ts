@@ -1,12 +1,12 @@
 import type { AnalyticsEvent, AnalyticsProperties } from "./events";
 
 /**
- * The seam the server captures through (GRA-100), so a call site knows nothing of PostHog and a
- * test stands a recorder in its place. One real backing, `./posthog.ts`, switched on by
- * `GRAFT_POSTHOG_KEY`; `NO_ANALYTICS` is what an unconfigured deployment and every unit test run
- * with, and under it a capture is nothing at all. Mail, the model's telemetry and this are the same
- * shape (ADR 0002): a plain interface, a backing chosen at boot, a no-op that is exactly the absence
- * of the feature.
+ * The analytics seam (GRA-100; ADR 0002 as amended 2026-09-19): what the server captures product
+ * events through, knowing nothing of any vendor. The open form has **no backing** — `NO_ANALYTICS`,
+ * under which a capture is nothing at all, is what a self-host and every unit test run with — and
+ * the hosted form's backing lives in the private package, answered as `Backings.analytics` beside
+ * the sandbox, the keyring, the mirror and mail. The seam is the same shape as those: a plain
+ * interface, a name for the boot line, a no-op that is exactly the absence of the feature.
  */
 
 export type Capture = {
@@ -17,7 +17,7 @@ export type Capture = {
 };
 
 export type Analytics = {
-  /** The name the boot line carries — `posthog`, or `off`. */
+  /** The name the boot line carries — the backing's, or `off`. */
   name: string;
   /** Fire and forget: a capture never throws and never blocks the call that made it. */
   capture(input: Capture): void;

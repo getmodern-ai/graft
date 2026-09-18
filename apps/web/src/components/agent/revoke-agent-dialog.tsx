@@ -38,8 +38,6 @@ export function RevokeAgentDialog({
   const client = agent.connectedVia?.clientName ?? null;
   const verb = agent.tokenPrefix === null ? "Revoke agent" : "Revoke token";
   const revoke = useMutation({
-    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
-    mutationKey: ["agent", "revoke"],
     mutationFn: () => revokeAgent(agent.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: agentKeys.all });

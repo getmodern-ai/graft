@@ -230,8 +230,6 @@ function ModelKeyForm({
   const [error, setError] = useState<{ field?: string; message: string } | null>(null);
 
   const save = useMutation({
-    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
-    mutationKey: ["model-key", "set"],
     mutationFn: setModelKey,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: modelKeyKeys.current });
@@ -418,8 +416,6 @@ function ModelKeyForm({
 function RemoveKeyButton() {
   const queryClient = useQueryClient();
   const remove = useMutation({
-    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
-    mutationKey: ["model-key", "remove"],
     mutationFn: removeModelKey,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: modelKeyKeys.current });

@@ -10,7 +10,7 @@ import {
   type ProviderModelConfig,
   type ProviderModelDeps,
 } from "@graft/model";
-import type { LangfuseConfig, LangfuseHandle } from "@graft/model/langfuse";
+import type { ModelTelemetryBacking } from "@graft/observability";
 import { describe, expect, it, vi } from "vitest";
 
 import { createModel, type ModelEnv } from "./model";
@@ -37,9 +37,6 @@ const base: ModelEnv = {
   GRAFT_MODEL_AUTHORING: undefined,
   GRAFT_MODEL_TRIAGE: undefined,
   GRAFT_MODEL_BASE_URL: undefined,
-  GRAFT_LANGFUSE_PUBLIC_KEY: undefined,
-  GRAFT_LANGFUSE_SECRET_KEY: undefined,
-  GRAFT_LANGFUSE_BASE_URL: undefined,
 };
 
 const FIXED: ModelEnv = {
@@ -257,52 +254,33 @@ describe("createModel", () => {
     expect(summary).toContain("via https://gateway.example/v1");
   });
 
-  it("starts Langfuse from its pair and hands the same telemetry to the fixed model and to every person's", async () => {
+  it("hands the telemetry backing the selector answered to the fixed model and to every person's", async () => {
     const telemetry = { ...NO_TELEMETRY };
-    const handle: LangfuseHandle = {
+    const backing: ModelTelemetryBacking = {
+      name: "traced",
       telemetry,
       flush: async () => {},
       shutdown: async () => {},
     };
-    const configs: LangfuseConfig[] = [];
     const { factory, built } = recordingFactory();
     const rows = new Map([["person_a", keyRow("person_a", "anthropic")]]);
-    const { model, langfuse, summary } = await createModel({
-      env: {
-        ...FIXED,
-        GRAFT_LANGFUSE_PUBLIC_KEY: "pk-lf",
-        GRAFT_LANGFUSE_SECRET_KEY: "sk-lf",
-        GRAFT_LANGFUSE_BASE_URL: "https://us.cloud.langfuse.com",
-      },
+    const { model } = await createModel({
+      env: FIXED,
       db,
       decrypt: async () => ({ [MODEL_KEY_FIELD]: "key-of-person_a" }),
       modelKey: { findPersonModelKey: async (_db, personId) => rows.get(personId) ?? null },
       providerFactory: factory,
-      langfuseFactory: (config) => {
-        configs.push(config);
-        return handle;
-      },
+      telemetry: backing,
     });
-    expect(langfuse).toBe(handle);
-    expect(configs).toEqual([
-      {
-        publicKey: "pk-lf",
-        secretKey: "sk-lf",
-        baseUrl: "https://us.cloud.langfuse.com",
-        environment: "test",
-      },
-    ]);
     expect(built[0]?.deps.telemetry).toBe(telemetry);
     if (!model) throw new Error("a fixed model means a model");
     await model.open(job("job_a", "person_a")).turn({ kind: "goal" });
     expect(built[1]?.deps.telemetry).toBe(telemetry);
-    expect(summary).toContain("Langfuse on");
   });
 
-  it("leaves Langfuse off, and the calls untouched, when the pair is absent", async () => {
+  it("runs every adapter under NO_TELEMETRY when the selector answered no backing — the open form", async () => {
     const { setup, built } = harness(FIXED, []);
-    const { langfuse } = await setup;
-    expect(langfuse).toBeNull();
+    await setup;
     expect(built[0]?.deps.telemetry).toBe(NO_TELEMETRY);
   });
 });

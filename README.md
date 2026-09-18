@@ -79,12 +79,10 @@ or `…/github` — and set its `GRAFT_GOOGLE_CLIENT_ID`/`_SECRET` or `GRAFT_GIT
 pair in `.env` (each pair all-or-nothing; ADR 0020 has the linking rule). A forgotten password is
 reset from *Forgot password?*: set `GRAFT_SMTP_URL` (`smtps://user:pass@relay:465`) and
 `GRAFT_MAIL_FROM` in `.env` and the email leaves through your relay; unset, the link is printed in
-`docker compose logs graft` instead (ADR 0021). Graft sends nothing anywhere about how it is used
-unless you say so: `GRAFT_AXIOM_API_KEY` and `GRAFT_AXIOM_DATASET` drain every request's wide event
-into your own Axiom dataset, `GRAFT_LANGFUSE_PUBLIC_KEY` and `_SECRET_KEY` trace the model calls
-into your own Langfuse project, and `GRAFT_POSTHOG_KEY` counts what people do in the console and
-over MCP in your own PostHog project — each off by default, each usable with a self-hosted
-instance of the tool (GRA-100). Then The token is shown once; put it where your harness reads environment
+`docker compose logs graft` instead (ADR 0021). The self-hosted form sends nothing anywhere about
+how it is used: there is no analytics library, no log shipping and no model tracing in it, only the
+seams the hosted form fills from its own package (ADR 0002 as amended 2026-09-19); your wide events
+are in `docker compose logs graft`, one per request. Then The token is shown once; put it where your harness reads environment
 variables — for Hermes, `~/.hermes/.env`:
 
 ```bash

@@ -47,7 +47,7 @@ import {
   seedConnections,
 } from "./connections";
 import { createModel } from "./model";
-import { startObservability } from "./observability";
+import { describeObservability, flushObservability } from "./observability";
 
 /**
  * The server's boot: validated environment in, one listening process out. Everything it decides
@@ -75,16 +75,23 @@ import { startObservability } from "./observability";
  * `.env` and the seed are gitignored, and the seed is refused under `NODE_ENV=production`.
  */
 
-/**
- * Where a wide event goes and what the product counts (GRA-100; `observability.ts`): the Axiom
- * drain when its pair is set, the PostHog client when its key is, neither otherwise. Started before
- * the logger because the drain is what the logger is handed; flushed, bounded, on the way out.
- */
-const observability = startObservability({ env });
+// The seams' backings, chosen once from `GRAFT_BACKINGS` and `GRAFT_SANDBOX_BACKEND`
+// (`backings.ts`, ADR 0002). Selected before the logger starts, because the log drain — one of the
+// three observability seams (GRA-100), none of which has a backing in the open form — is what the
+// logger is handed. The keyring goes under the vault below; the sandbox, the store and the mirror
+// are the publish's and the MCP server's; the connection providers (ADR 0019) go to the connection
+// service and to the proxy's connection read.
+const backings = await selectBackings(env, { raw: process.env });
+const { sandbox, store, providers } = backings;
 
+/**
+ * One wide event per request and per job event, on stdout always and, when the hosted form
+ * answered a log drain, shipped through it too — on the logger rather than the Hono middleware, so
+ * the acquire runner's and the sweep's own lines drain beside the requests' (`observability.ts`).
+ */
 initLogger({
   env: { service: "graft-server", environment: env.NODE_ENV },
-  ...(observability.drain ? { drain: observability.drain } : {}),
+  ...(backings.logDrain ? { drain: backings.logDrain.drain } : {}),
 });
 
 /**
@@ -100,12 +107,6 @@ const keys =
       })
     : null;
 
-// The four seams' backings and the toolbox store, chosen once from `GRAFT_BACKINGS` and
-// `GRAFT_SANDBOX_BACKEND` (`backings.ts`, ADR 0002). The keyring goes under the vault here; the
-// sandbox, the store and the mirror are the publish's and the MCP server's below; the connection
-// providers (ADR 0019) go to the connection service and to the proxy's connection read.
-const backings = await selectBackings(env, { raw: process.env });
-const { sandbox, store, providers } = backings;
 const vault = createCredentialVault(backings.keyring);
 
 // One pool for the process.
@@ -196,14 +197,16 @@ const modelKeyDeps = createModelKeyDeps({ encrypt: vault.encrypt });
 
 /**
  * Which model answers `acquire` (ADR 0004, ADR 0014; `model.ts`): the deployment's fixed model from
- * `GRAFT_MODEL_BACKEND`, a person's own key routed in front of it, Langfuse on when its pair is set.
- * `@graft/env` has already refused a self-hosted production boot without a provider and a key.
+ * `GRAFT_MODEL_BACKEND`, a person's own key routed in front of it, every adapter built over the
+ * model telemetry backing the selector answered — none in the open form. `@graft/env` has already
+ * refused a self-hosted production boot without a provider and a key.
  */
 const modelSetup = await createModel({
   env,
   db,
   decrypt: vault.decrypt,
   modelKey: modelKeyDeps,
+  telemetry: backings.modelTelemetry,
   onRoute: (route) => {
     if (route.source === "person") {
       console.log(
@@ -277,7 +280,7 @@ const mcp = createMcpDeps({
    */
   onToolCall: (event) => {
     useLogger().set({ mcp: event });
-    observability.analytics.capture({
+    backings.analytics.capture({
       distinctId: event.personId,
       event: "tool_called",
       properties: {
@@ -312,7 +315,7 @@ const acquireRunner = createAcquireRunner(mcp, {
     }
     if (event.kind === "failed") {
       log.error({ acquire: { ...event, message: `job failed: ${event.error}` } });
-      observability.analytics.capture({
+      backings.analytics.capture({
         distinctId: event.personId,
         event: "acquire_failed",
         properties: { job_id: event.jobId, agent_id: event.agentId, status: "crashed" },
@@ -323,7 +326,7 @@ const acquireRunner = createAcquireRunner(mcp, {
     log[event.status === "failed" ? "warn" : "info"]({
       acquire: { ...event, message: `job ${event.status}${cause}` },
     });
-    observability.analytics.capture({
+    backings.analytics.capture({
       distinctId: event.personId,
       event: event.status === "succeeded" ? "acquire_completed" : "acquire_failed",
       properties: {
@@ -380,8 +383,8 @@ const app = createServer({
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
     signInMethods,
-    // Whether the console loads PostHog, and with what (GRA-100): the server's own setting, shared.
-    analytics: observability.consoleAnalytics,
+    // The console's actions counted at the API's mutation routes (GRA-100; `analytics-routes.ts`).
+    analytics: backings.analytics,
     handoff,
     // The consent's two ends (`oauth.ts`): the redirect URI on this server's origin, and the one
     // decrypt outside the proxy binding — the client secret, for the code exchange.
@@ -438,7 +441,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `${seededCount} connection(s) seeded over the database, ` +
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
       modelSetup.summary +
-      `, ${observability.summary}` +
+      `, ${describeObservability(backings)}` +
       `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );
@@ -450,10 +453,10 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     acquireRunner.stop();
     mcp.notifier?.close();
     mcp.inFlight?.close();
-    // The last job's spans, the last batch of wide events and the last captures are still buffered;
-    // a stop that skipped this would lose them. Bounded, because ECS gives thirty seconds before
-    // `SIGKILL` and an ingest endpoint that is down should cost a few of those, not all of them.
-    Promise.allSettled([modelSetup.langfuse?.flush(), observability.flush(5_000)])
+    // The last job's spans, the last batch of wide events and the last captures are still buffered
+    // in whatever backings the hosted form answered; a stop that skipped this would lose them.
+    // Bounded, because ECS gives thirty seconds before `SIGKILL`.
+    flushObservability(backings, 5_000)
       .then(() => db.close())
       .finally(() => process.exit(0));
   });

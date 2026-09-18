@@ -38,8 +38,6 @@ export function ScopeEditor({
   const dirty = !sameSet(draft, saved);
 
   const save = useMutation({
-    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
-    mutationKey: ["agent", "scope"],
     mutationFn: () => setAgentScope(agent.id, [...draft]),
     onSuccess: async () => {
       await queryClient.invalidateQueries({

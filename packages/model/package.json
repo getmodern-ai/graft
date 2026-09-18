@@ -20,11 +20,6 @@
   "dependencies": {
     "@ai-sdk/anthropic": "catalog:",
     "@ai-sdk/openai": "catalog:",
-    "@langfuse/otel": "catalog:",
-    "@langfuse/tracing": "catalog:",
-    "@langfuse/vercel-ai-sdk": "catalog:",
-    "@opentelemetry/api": "catalog:",
-    "@opentelemetry/sdk-trace-node": "catalog:",
     "ai": "catalog:",
     "zod": "catalog:"
   },

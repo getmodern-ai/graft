@@ -19,6 +19,7 @@ import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import type { VendorUsageRow } from "@graft/db/repo/usage";
 import type { WorkingSetChangeRow, WorkingSetEntry } from "@graft/db/repo/working-set";
 import { signHandoffToken } from "@graft/mcp";
+import type { Analytics, Capture } from "@graft/observability";
 import { initLogger } from "evlog";
 import { describe, expect, it, vi } from "vitest";
 
@@ -378,7 +379,10 @@ function pendingActionDeps(): PendingActionDeps {
   };
 }
 
-function harness(session: { user: { id: string } } | null) {
+function harness(
+  session: { user: { id: string } } | null,
+  extra: Partial<Parameters<typeof createServer>[0]["api"]> = {},
+) {
   const deps = {
     agent: agentDeps(),
     connection: connectionDeps(),
@@ -402,6 +406,7 @@ function harness(session: { user: { id: string } } | null) {
       deps: { db: fakeDb as unknown as DbOrTx, ...deps },
       corsOrigins: ["http://localhost:3001"],
       handoff: HANDOFF,
+      ...extra,
     },
   });
   return { app, deps };
@@ -411,6 +416,42 @@ const json = (body: unknown, method = "POST") => ({
   method,
   headers: { "content-type": "application/json" },
   body: JSON.stringify(body),
+});
+
+describe("the analytics chokepoint (GRA-100)", () => {
+  const recorder = () => {
+    const captured: Capture[] = [];
+    const analytics: Analytics = {
+      name: "recorder",
+      capture: (input) => {
+        captured.push(input);
+      },
+      shutdown: async () => undefined,
+    };
+    return { captured, analytics };
+  };
+
+  it("counts a tracked mutation that succeeded, on the session's person, and nothing else", async () => {
+    const { captured, analytics } = recorder();
+    const { app } = harness({ user: { id: "person_1" } }, { analytics });
+    const created = await app.request("/api/agents", json({ name: "hermes" }));
+    expect(created.status).toBe(201);
+    await app.request("/api/agents");
+    const refused = await app.request("/api/agents", json({}));
+    expect(refused.status).toBe(400);
+    expect(captured).toEqual([
+      { distinctId: "person_1", event: "agent_created", properties: { via: "console" } },
+    ]);
+  });
+
+  it("counts nothing without a session, and nothing at all under the open form's no-op", async () => {
+    const { captured, analytics } = recorder();
+    const { app } = harness(null, { analytics });
+    expect((await app.request("/api/agents", json({ name: "hermes" }))).status).toBe(401);
+    expect(captured).toEqual([]);
+    const { app: open } = harness({ user: { id: "person_1" } });
+    expect((await open.request("/api/agents", json({ name: "hermes" }))).status).toBe(201);
+  });
 });
 
 describe("the session door", () => {
@@ -462,33 +503,6 @@ describe("the session door", () => {
     });
     expect(await (await withGoogle.request("/api/sign-in-methods")).json()).toEqual({
       social: ["google"],
-    });
-  });
-
-  /** The console loads PostHog only when told to, and the telling needs no session (GRA-100). */
-  it("says whether the console captures analytics without a session — off unless the server was handed a key", async () => {
-    const { app } = harness(null);
-    const res = await app.request("/api/analytics");
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ posthog: null });
-    const withPostHog = createServer({
-      keys: null,
-      vault: { decrypt: async () => ({}) },
-      connections: { get: async () => null },
-      followRedirects: false,
-      api: {
-        auth: {
-          handler: async () => new Response("auth", { status: 200 }),
-          getSession: async () => null,
-        },
-        deps: { db: fakeDb as unknown as DbOrTx, ...harness(null).deps },
-        corsOrigins: [],
-        analytics: { posthog: { key: "phc_test", host: "https://us.i.posthog.com" } },
-        handoff: HANDOFF,
-      },
-    });
-    expect(await (await withPostHog.request("/api/analytics")).json()).toEqual({
-      posthog: { key: "phc_test", host: "https://us.i.posthog.com" },
     });
   });
 

@@ -53,8 +53,6 @@ export function AddConnectionDialog({
   });
 
   const create = useMutation({
-    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
-    mutationKey: ["connection", "create"],
     mutationFn: createConnection,
     onSuccess: ({ connection, authorizeUrl }) => {
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });

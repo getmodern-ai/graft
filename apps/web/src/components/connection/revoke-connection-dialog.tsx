@@ -43,8 +43,6 @@ export function RevokeConnectionDialog({
   // A relay provider's row holds no credential here to clear (ADR 0019); the copy says what is.
   const keyring = isKeyringConnection(connection);
   const revoke = useMutation({
-    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
-    mutationKey: ["connection", "revoke"],
     mutationFn: () => revokeConnection(connection.id),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: connectionKeys.all });

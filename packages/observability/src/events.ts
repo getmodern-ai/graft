@@ -1,7 +1,6 @@
 /**
- * The product events PostHog receives, named once — GRA-100, in Cando's shape (its
- * `analytics-events.ts`, ADR 0011). Browser-safe on purpose: the console imports this module and
- * nothing else of the package, so a node-only import here is what breaks its `vite build`.
+ * The product events the analytics seam receives, named once — GRA-100, in Cando's shape (its
+ * `analytics-events.ts`, ADR 0011).
  *
  * `noun_verbed`, past tense, snake case: `agent_created`, not `createAgent` or `Agent Created`. The
  * union is the whole vocabulary, so a typo at a call site is a type error rather than a new event
@@ -9,13 +8,16 @@
  * host, a tool's input and a credential stay in the product (ADR 0006's posture on secrets holds
  * for analytics as it does for chats).
  *
- * Two sources write it. The console captures what a person does there — the events with a
- * `mutationKey` in `apps/web/src/lib/analytics-events.ts`. The server captures what happens over
- * MCP and never in a browser: every tool call, every `acquire` job's end. Both name the same person
- * (`distinctId` is the person's id, never the email), so one profile carries both halves.
+ * Every event is captured **server-side**, from two chokepoints: the console's actions at the JSON
+ * API's mutation routes (`apps/server/src/analytics-routes.ts`), and what happens over MCP and
+ * never in a browser — every tool call, every `acquire` job's end — from the MCP hook and the
+ * runner. The console itself carries no analytics library (ADR 0002 as amended 2026-09-19): the
+ * open form ships nothing that phones anywhere, and the hosted form's backing is the private
+ * package's. Both chokepoints name the same person (`distinctId` is the person's id, never the
+ * email), so one profile carries the whole story.
  */
 export type AnalyticsEvent =
-  // The console
+  // The console, at the API's mutation routes
   | "agent_created"
   | "agent_revoked"
   | "mcp_client_consented"
@@ -27,7 +29,7 @@ export type AnalyticsEvent =
   | "scope_changed"
   | "model_key_set"
   | "model_key_removed"
-  // The server, over MCP
+  // Over MCP
   | "tool_called"
   | "acquire_completed"
   | "acquire_failed";

@@ -43,18 +43,11 @@ catalog:
   # The provider-backed model adapter (`@graft/model/provider`, ADR 0004, ADR 0014) speaks to a
   # provider through the AI SDK, at the major Cando runs (ADR 0011): `ai` for `generateText` with a
   # structured `Output`, one provider package each for Anthropic and for OpenAI — the latter also
-  # covers an OpenAI-compatible gateway behind a base URL. Langfuse's AI SDK integration and the
-  # OpenTelemetry provider it exports through ride beside them (`@graft/model/langfuse`); the
-  # three `@langfuse/*` packages move together, so all three are pinned here rather than in the
-  # package, where a second consumer could drift.
+  # covers an OpenAI-compatible gateway behind a base URL. No tracing vendor rides beside them: the
+  # model telemetry seam's backing is the hosted form's (ADR 0002 as amended 2026-09-19).
   ai: ^7.0.94
   "@ai-sdk/anthropic": ^4.0.50
   "@ai-sdk/openai": ^4.0.62
-  "@langfuse/otel": ^5.11.0
-  "@langfuse/tracing": ^5.11.0
-  "@langfuse/vercel-ai-sdk": ^5.11.0
-  "@opentelemetry/api": ^1.9.1
-  "@opentelemetry/sdk-trace-node": ^2.11.0
   # The console (`apps/web`, GRA-26): React on Vite, TanStack Router and Query, Tailwind 4 and the
   # shadcn primitives generated into the app over Base UI — the versions Cando's web app runs
   # (ADR 0011), one line each. `better-auth` above is also the console's client (`better-auth/react`),
@@ -87,11 +80,6 @@ catalog:
   next-themes: ^0.4.6
   shadcn: ^4.19.0
   "@material-symbols/svg-400": ^0.47.0
-  # Product analytics (GRA-100): PostHog's two clients, the browser's for the console and Node's for
-  # the server's captures (`@graft/analytics`). One vocabulary, two writers, so both are pinned here
-  # rather than one in each workspace, where the event shape they agree on could drift.
-  posthog-js: ^1.434.0
-  posthog-node: ^5.52.4
 
 # Overrides live here and not under `pnpm` in the root `package.json`: pnpm 11 no longer reads that
 # field and pnpm 10 reads both, so this is the one placement both honour (AGENTS.md, "Conventions",

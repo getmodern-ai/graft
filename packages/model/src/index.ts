@@ -3,8 +3,9 @@
  * (`./scripted`) and the provider-backed one (`./provider`, GRA-31) with the per-person router in
  * front of both (`./routed`, ADR 0014). The conformance suite every backing runs is
  * `@graft/model/conformance` and is deliberately not re-exported here: it imports the test runner,
- * and the server imports this index. Langfuse is `@graft/model/langfuse`, for the same reason
- * in the other direction — a consumer that wants the adapter need not load OpenTelemetry.
+ * and the server imports this index. The telemetry seam (`./telemetry`) is exported; its one
+ * real binding is the hosted form's, in the private package (ADR 0002 as amended 2026-09-19), so
+ * a consumer that wants the adapter loads no tracing vendor.
  */
 export {
   draftProblems,

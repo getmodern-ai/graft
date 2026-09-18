@@ -75,8 +75,6 @@ export function ConsentCard({
   ];
 
   const decide = useMutation({
-    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
-    mutationKey: ["mcp-oauth", "consent"],
     mutationFn: decideConsent,
     onSuccess: (outcome) => {
       // The client's redirect URI, with the code or the error: the browser goes back to the product.

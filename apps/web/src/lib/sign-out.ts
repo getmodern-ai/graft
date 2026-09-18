@@ -1,6 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
 
-import { resetAnalytics } from "./analytics";
 import { authClient } from "./auth-client";
 import { sessionKeys } from "./session-queries";
 
@@ -19,8 +18,7 @@ import { sessionKeys } from "./session-queries";
  * The two failure shapes are Better Auth's: a refusal arrives in the envelope's `error`, a dead
  * network rejects the call outright. Both leave the cache alone — the session did not end, so
  * the cache is still true. Cando's `apps/web/src/lib/sign-out.ts` (its CAN-191), without the
- * query-scope reset the console has no equivalent of; the analytics reset (GRA-100) forgets the
- * person in PostHog for the same reason the cache is cleared.
+ * query-scope and analytics resets the console has no equivalent of.
  */
 export type SignOutResult =
   | { ok: true }
@@ -39,6 +37,5 @@ export async function signOutAndForget(queryClient: QueryClient): Promise<SignOu
 
   queryClient.removeQueries({ queryKey: sessionKeys.current });
   queryClient.clear();
-  resetAnalytics();
   return { ok: true };
 }

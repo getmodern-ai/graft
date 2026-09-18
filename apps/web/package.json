@@ -16,7 +16,6 @@
   },
   "dependencies": {
     "@base-ui/react": "catalog:",
-    "@graft/analytics": "workspace:*",
     "@graft/core": "workspace:*",
     "@graft/proxy": "workspace:*",
     "@tanstack/react-query": "catalog:",
@@ -25,7 +24,6 @@
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
     "next-themes": "catalog:",
-    "posthog-js": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "sonner": "catalog:",

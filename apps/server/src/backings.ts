@@ -9,6 +9,12 @@ import {
 } from "@graft/core";
 import { consoleTransport, createSmtpTransport, type EmailTransport } from "@graft/email";
 import type { ServerEnv } from "@graft/env/server";
+import {
+  type Analytics,
+  type LogDrain,
+  type ModelTelemetryBacking,
+  NO_ANALYTICS,
+} from "@graft/observability";
 import { createPipedreamClient, type PipedreamClient } from "@graft/pipedream";
 import { createUpstreamFetch } from "@graft/proxy";
 import { createFakeSandboxBackend } from "@graft/sandbox/fake";
@@ -111,6 +117,15 @@ export type Backings = {
    * nothing reads the toolbox through it.
    */
   toolboxRoot: string | null;
+  /**
+   * The three observability seams (GRA-100; ADR 0002 as amended 2026-09-19), each with **no backing
+   * in the open form**: wide events stay on stdout, nothing is counted, model calls are untraced —
+   * a self-host phones nowhere. Under `cloud` the private package answers whichever of the three
+   * its environment configures; the boot line names each.
+   */
+  logDrain: LogDrain | null;
+  analytics: Analytics;
+  modelTelemetry: ModelTelemetryBacking | null;
 };
 
 /**
@@ -129,6 +144,10 @@ export type CloudBackings = {
   providers?: ConnectionProvider[];
   /** The hosted form's mail transport (ADR 0021, GRA-90); absent, the selector keeps the console's. */
   mail?: EmailTransport;
+  /** The hosted form's observability backings (GRA-100), each present only when configured there. */
+  logDrain?: LogDrain;
+  analytics?: Analytics;
+  modelTelemetry?: ModelTelemetryBacking;
 };
 
 /**
@@ -326,6 +345,9 @@ function openBackings(env: BackingsEnv, deps: SelectBackingsDeps): Backings {
     store,
     toolboxRoot: store.root,
     mail: environmentMail(env) ?? consoleTransport,
+    logDrain: null,
+    analytics: NO_ANALYTICS,
+    modelTelemetry: null,
   };
 }
 
@@ -358,7 +380,15 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
   };
   const created: unknown = await factory(input);
   assertCloudBackings(created, specifier);
-  const { store: own, providers: hosted, mail, ...seams } = created;
+  const {
+    store: own,
+    providers: hosted,
+    mail,
+    logDrain,
+    analytics,
+    modelTelemetry,
+    ...seams
+  } = created;
   // The environment's gateway first (GRA-58), the hosted providers, then the Pipedream provider the
   // environment switches on (GRA-59), and the keyring after all of them, always: the floor every
   // deployment has (ADR 0019). `environmentProviders` states the order between the two configured
@@ -384,6 +414,9 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
     // The hosted transport when the package has one, the relay the environment names otherwise,
     // the console as the floor — the hosted tier sets no relay today, but a form is not a rule.
     mail: mail ?? environmentMail(env) ?? consoleTransport,
+    logDrain: logDrain ?? null,
+    analytics: analytics ?? NO_ANALYTICS,
+    modelTelemetry: modelTelemetry ?? null,
   };
 }
 
@@ -418,8 +451,9 @@ const PROVIDER_LINK_MEMBERS = ["target", "start", "complete"] as const;
 
 /**
  * Throw unless `value` carries the three seams — and, when it carries a store, the whole store,
- * when it carries providers, a list of whole providers, and when it carries a mail transport, a
- * named one that sends — naming the first thing that is missing.
+ * when it carries providers, a list of whole providers, when it carries a mail transport, a named
+ * one that sends, and when it carries an observability backing, a named one with its functions —
+ * naming the first thing that is missing.
  */
 export function assertCloudBackings(
   value: unknown,
@@ -464,6 +498,39 @@ export function assertCloudBackings(
     }
     if (typeof mail.name !== "string" || mail.name.length === 0) {
       throw new Error(`${specifier}'s createCloudBackings returned a mail transport with no name`);
+    }
+  }
+  const named: Array<[key: string, what: string, members: readonly string[]]> = [
+    ["logDrain", "log drain", ["drain", "flush"]],
+    ["analytics", "analytics backing", ["capture", "shutdown"]],
+    ["modelTelemetry", "model telemetry backing", ["flush", "shutdown"]],
+  ];
+  for (const [key, what, members] of named) {
+    const backing = record[key];
+    if (backing === undefined) continue;
+    if (typeof backing !== "object" || backing === null) {
+      throw new Error(
+        `${specifier}'s createCloudBackings returned a ${what} that is not an object`,
+      );
+    }
+    const b = backing as Record<string, unknown>;
+    if (typeof b.name !== "string" || b.name.length === 0) {
+      throw new Error(`${specifier}'s createCloudBackings returned a ${what} with no name`);
+    }
+    for (const member of members) {
+      if (typeof b[member] !== "function") {
+        throw new Error(
+          `${specifier}'s createCloudBackings returned a ${what} without ${member}()`,
+        );
+      }
+    }
+    if (key === "modelTelemetry") {
+      const telemetry = b.telemetry as Record<string, unknown> | undefined;
+      if (typeof telemetry?.traced !== "function" || !Array.isArray(telemetry.integrations)) {
+        throw new Error(
+          `${specifier}'s createCloudBackings returned a model telemetry backing without telemetry.traced() and telemetry.integrations`,
+        );
+      }
     }
   }
   if (record.providers !== undefined) {
