@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 
 import { checkModule } from "@graft/check";
 import {
+  type AcquireJobDeps,
   answerPendingAction,
   consumePendingAction,
+  type PendingActionDeps,
   type ServiceContext,
   setApproval,
 } from "@graft/core";
@@ -94,6 +96,19 @@ export type TimedRequest = {
   body: string | null;
 };
 
+/**
+ * The order the loop wrote its rows in: a position per pending action and per trace, stamped as
+ * the row is inserted. Two rows written within one millisecond share a `createdAt` and nothing
+ * else, and the scripted loop writes the job's result and the tool's first-use ask that close
+ * together on a fast runner (GRA-63); the position orders them whatever the clock says.
+ */
+export type WorldRecord = {
+  /** How many rows are recorded. `runScenario` reads it as the job settles: the settle point. */
+  readonly length: number;
+  /** The position the row with this id was written at, from 1; null if this world never wrote it. */
+  positionOf(id: string): number | null;
+};
+
 export type Harness = {
   call(name: string, args?: Record<string, unknown>): Promise<CallToolResult>;
   names(): Promise<string[]>;
@@ -106,6 +121,8 @@ export type World = {
   store: FakeStore;
   vendor: FakeVendor;
   requests: TimedRequest[];
+  /** Every pending action and trace the loop wrote, by position; the scorers order asks by it. */
+  record: WorldRecord;
   sandbox: FakeSandboxBackend;
   runner: AcquireRunner;
   connect(): Promise<Harness>;
@@ -202,6 +219,32 @@ export async function openWorld(options: WorldOptions): Promise<World> {
   store.grantBuild(AGENT, CONN_GITHUB);
 
   const fake = createFakeDeps(store);
+
+  // Both row kinds a scorer orders reach the store through these two seams, so the stamp goes on
+  // here, once per row, in writing order; every other row keeps its `createdAt` alone.
+  const positions = new Map<string, number>();
+  let recorded = 0;
+  const record: WorldRecord = {
+    get length() {
+      return recorded;
+    },
+    positionOf: (id) => positions.get(id) ?? null,
+  };
+  const stamp = <Row extends { id: string }>(row: Row): Row => {
+    positions.set(row.id, ++recorded);
+    return row;
+  };
+  const pendingAction: PendingActionDeps = {
+    ...fake.pendingAction,
+    insertPendingAction: async (db, input) =>
+      stamp(await fake.pendingAction.insertPendingAction(db, input)),
+  };
+  const acquireJob: AcquireJobDeps = {
+    ...fake.acquireJob,
+    insertAcquireTrace: async (db, input) =>
+      stamp(await fake.acquireJob.insertAcquireTrace(db, input)),
+  };
+
   const toolboxRoot = join(sandbox.root, "toolboxes");
   const toolbox = createFilesystemToolboxStore({ root: toolboxRoot });
 
@@ -257,6 +300,8 @@ export async function openWorld(options: WorldOptions): Promise<World> {
 
   const deps: McpDeps = {
     ...fake,
+    pendingAction,
+    acquireJob,
     sandbox,
     keys,
     proxyPublicUrl: vendor.url,
@@ -317,6 +362,7 @@ export async function openWorld(options: WorldOptions): Promise<World> {
     store,
     vendor,
     requests,
+    record,
     sandbox,
     runner,
     async connect() {
