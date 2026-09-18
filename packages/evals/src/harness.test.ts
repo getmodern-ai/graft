@@ -29,6 +29,11 @@ describe("the evals harness under scripted answers", () => {
         );
         expect(run.status.status).toBe("succeeded");
         expect(run.status.attempts).toBe(1);
+        // The settle point the scorers order asks by (GRA-63): the job's result trace is at or
+        // before it and every ask the tool's use created is after it, whatever the clock said.
+        const result = run.traces.find((trace) => trace.kind === "result");
+        expect(result && world.record.positionOf(result.id)).toBeLessThanOrEqual(run.settled);
+        for (const ask of run.asks) expect(ask.position).toBeGreaterThan(run.settled);
       } finally {
         await world.close();
       }

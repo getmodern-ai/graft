@@ -1,5 +1,4 @@
 import type { AcquireAttemptRow, AcquireTraceRow } from "@graft/db/repo/acquire-job";
-import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { ToolVersionRow } from "@graft/db/repo/tool";
 import type { ProxyEvent } from "@graft/proxy";
 import { describe, expect, it } from "vitest";
@@ -10,6 +9,7 @@ import {
   firstWriteThroughPublishedTool,
   noVendorHostInCode,
   publishBeforeFirstWrite,
+  type RecordedAsk,
   readsBeforePublish,
   type ScenarioRun,
   sdkBoundToProxy,
@@ -24,6 +24,8 @@ import type { TimedRequest } from "./world";
 
 const T0 = 1_000_000;
 const at = (ms: number) => new Date(T0 + ms);
+/** The fixture job's settle point in the world's record: its four traces, positions 1 to 4. */
+const SETTLED = 4;
 
 function trace(kind: AcquireTraceRow["kind"], ms: number): AcquireTraceRow {
   return {
@@ -121,8 +123,10 @@ const version = (dryRunMs: number | null): ToolVersionRow => ({
   createdAt: at(300),
 });
 
-const ask = (ms: number, answeredMs: number | null): PendingActionRow =>
+/** A tool ask created at `ms` and recorded at `position`; inside the job when `position <= SETTLED`. */
+const ask = (ms: number, answeredMs: number | null, position: number): RecordedAsk =>
   ({
+    position,
     id: "pa_1",
     agentId: "agent_eval",
     kind: "tool",
@@ -135,7 +139,7 @@ const ask = (ms: number, answeredMs: number | null): PendingActionRow =>
     owner: "person",
     createdAt: at(ms),
     updatedAt: at(ms),
-  }) as PendingActionRow;
+  }) as RecordedAsk;
 
 function run(overrides: Partial<ScenarioRun>): ScenarioRun {
   return {
@@ -158,6 +162,7 @@ function run(overrides: Partial<ScenarioRun>): ScenarioRun {
     },
     job: null,
     attempts: [attempt([{ path: "index.ts", content: 'ctx.fetch("/orders")' }])],
+    settled: SETTLED,
     traces: [
       trace("proof", 200),
       trace("publish", 300),
@@ -235,10 +240,24 @@ describe("no_vendor_host_in_code", () => {
 
 describe("dry_run_before_any_ask", () => {
   it("is red when the version has no dry run, or an ask came before it or inside the job", () => {
-    expect(dryRunBeforeAnyAsk(run({ asks: [ask(900, 950)] })).pass).toBe(true);
+    expect(dryRunBeforeAnyAsk(run({ asks: [ask(900, 950, SETTLED + 1)] })).pass).toBe(true);
     expect(dryRunBeforeAnyAsk(run({ version: version(null) })).pass).toBe(false);
-    expect(dryRunBeforeAnyAsk(run({ asks: [ask(350, 360)] })).pass).toBe(false);
-    expect(dryRunBeforeAnyAsk(run({ asks: [ask(450, 460)] })).pass).toBe(false);
+    expect(dryRunBeforeAnyAsk(run({ asks: [ask(350, 360, 3)] })).pass).toBe(false);
+    expect(dryRunBeforeAnyAsk(run({ asks: [ask(450, 460, 4)] })).pass).toBe(false);
+  });
+
+  it("orders an ask against the settle point by position, not by the clock (GRA-63)", () => {
+    // Every ask here shares the result trace's millisecond (500); only the position differs.
+    // The tool's first-use ask, recorded after the job settled: never inside the job.
+    const after = dryRunBeforeAnyAsk(run({ asks: [ask(500, 950, SETTLED + 1)] }));
+    expect(after.pass).toBe(true);
+    expect(after.detail).toBe("dry run passed; 1 ask(s), 0 before it or inside the job");
+    // An ask the job created before its result: inside the job, however the clocks read.
+    const before = dryRunBeforeAnyAsk(run({ asks: [ask(500, 950, SETTLED - 1)] }));
+    expect(before.pass).toBe(false);
+    expect(before.detail).toBe("dry run passed; 1 ask(s), 1 before it or inside the job");
+    // An ask the job's own result step created, the last row before the settle point: still the job's.
+    expect(dryRunBeforeAnyAsk(run({ asks: [ask(500, 950, SETTLED)] })).pass).toBe(false);
   });
 });
 
@@ -250,7 +269,7 @@ describe("first_write_through_published_tool", () => {
       use: {
         input: {},
         first: {},
-        ask: ask(900, 950),
+        ask: ask(900, 950, SETTLED + 1),
         answeredAt: answeredAt === null ? null : T0 + answeredAt,
         second: {},
         final: {},
