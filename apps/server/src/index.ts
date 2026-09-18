@@ -331,6 +331,8 @@ const app = createServer({
     mcpOAuth,
     // A link provider's return route answers on this origin too (`provider-link.ts`, ADR 0019).
     authUrl: env.GRAFT_AUTH_URL,
+    // The console's revoke announces itself to the endpoint's live sessions (GRA-69).
+    notifier: mcp.notifier,
   },
   mcpOAuth,
   // The console's build, served from the same origin as the API (`console.ts`); absent, the API is
