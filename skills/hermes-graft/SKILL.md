@@ -36,6 +36,10 @@ their wiki, a report from their accounting app — and no tool in your list does
    may read the key's presence and answer differently.
    A vendor that needs an OAuth consent rather than a key — Gmail, Slack user tokens, Notion — has
    its own note, `connecting-with-oauth.md` beside this file.
+   If the vendor *is* connected and a call comes back 401 or 403, or the person says a key was
+   rotated, call `request_credential { connectionId }`: a rotated or expired credential is
+   `request_credential` against the existing connection, never a new connection — a new connection
+   is a new row with no scope and no approvals.
 3. **`acquire { connectionId, goal, hints? }`, only when nothing fits.** `goal` is what the tool
    must do, in a sentence or two, in the person's terms. `hints` is anything you already know — an
    endpoint, a documentation URL, a field name; a documentation URL is the single most useful hint.

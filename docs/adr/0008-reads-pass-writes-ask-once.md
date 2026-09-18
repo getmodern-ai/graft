@@ -105,3 +105,11 @@ loop (ADR 0004): the control is the person's, on the console's page, and no agen
 **Unchanged.** `acquire` still asks once per agent per connection when no approval stands; a
 person who unticks the control gets exactly the ask they got before. The first real use of a
 non-read tool still asks once. Revoking a connection still deletes its build approvals.
+
+## Amendment 2026-09-18: the build approval is the row's, and a rotation re-enters in place
+
+Decided by Aleks (GRA-76). `acquire`'s build approval stays keyed on the connection row, so a
+rotated or expired credential is a re-entry on that row — `request_credential` from the agent,
+Re-enter or Reconnect in the console — which keeps the row, its scope and its approvals, and never
+a new connection, which is a new row with none of them; `request_connection` refuses a proposal
+for a vendor and hosts the person already has and names the row instead.

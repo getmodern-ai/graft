@@ -484,7 +484,18 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     store.addAgent({ id: "agent_e", personId: PERSON, token: `${TOKEN_B}e`, name: "fifth" });
     const ticked = await connect(`${TOKEN_B}d`);
     const bare = await connect(`${TOKEN_B}e`);
+    // Since GRA-76 a live Gmail row of the person's outside the asking agent's scope is a
+    // connection_exists refusal, not a new ask (pinned in the two-landings test below), so each
+    // proposal here is made with the person's Gmail rows set aside; they are put back afterwards.
+    const setAside: FakeStore["connections"] = new Map();
+    const setGmailAside = () => {
+      for (const row of [...store.connections.values()].filter((r) => r.vendor === "gmail")) {
+        setAside.set(row.id, row);
+        store.connections.delete(row.id);
+      }
+    };
     try {
+      setGmailAside();
       const askD = body(await ticked.call("request_connection", PROPOSAL))
         .pendingActionId as string;
       const started = await app.request(`/api/pending-actions/${askD}/link`, {
@@ -502,7 +513,9 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
         [expect.objectContaining({ agentId: "agent_d", connectionId: connectionD })],
       );
 
-      // The bare POST an older console sends: the choice is off, and nothing is recorded.
+      // The bare POST an older console sends: the choice is off, and nothing is recorded. D's new
+      // row would cover E's proposal too, so it is set aside with the rest.
+      setGmailAside();
       const askE = body(await bare.call("request_connection", PROPOSAL)).pendingActionId as string;
       expect(
         (await app.request(`/api/pending-actions/${askE}/link`, { method: "POST" })).status,
@@ -517,14 +530,29 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     } finally {
       await ticked.close();
       await bare.close();
+      for (const row of setAside.values()) store.connections.set(row.id, row);
     }
   });
 
   it("two landings of one link at once make one connection — the database refuses the second claim and it reads the ask the first answered", async () => {
-    // A fresh agent, so the ask is new and the person's existing Gmail connection is not in scope.
+    // A fresh agent, so the ask is new. The person's existing Gmail connection is not in its scope,
+    // which since GRA-76 is a refusal naming the row and the scope step — a relay provider's row
+    // counts as the connection the person already has — so the row is set aside for the landing.
     store.addAgent({ id: "agent_c", personId: PERSON, token: `${TOKEN_B}c`, name: "third" });
     const a = await connect(`${TOKEN_B}c`);
+    const setAside = [...store.connections.values()].filter((row) => row.vendor === "gmail");
     try {
+      const refused = body(await a.call("request_connection", PROPOSAL));
+      expect(refused).toMatchObject({
+        error: "refused",
+        reason: "connection_exists",
+        connectionId: setAside[0]?.id,
+        provider: "pipedream",
+        inScope: false,
+        message: expect.stringContaining("under Scope"),
+      });
+      for (const row of setAside) store.connections.delete(row.id);
+
       const said = body(await a.call("request_connection", PROPOSAL));
       expect(said).toMatchObject({ error: "awaiting_connection", provider: "pipedream" });
       const askId = said.pendingActionId as string;
@@ -545,6 +573,7 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
       expect(new Set(refs).size).toBe(refs.length);
     } finally {
       await a.close();
+      for (const row of setAside) store.connections.set(row.id, row);
     }
   });
 
