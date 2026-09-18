@@ -718,19 +718,28 @@ async function routeProposal(
     }
     if (existing?.kind === "scope") {
       const { connection } = existing;
-      const action =
-        (await openScopeAskFor(ctx, scope, connection.id, deps)) ??
-        (await createPendingAction(
-          ctx,
-          scope,
-          {
-            kind: SCOPE_ASK_KIND,
-            payload: scopeAskPayload(connection, proposal.docsUrl),
-            ttlMs: deps.handoff.ttlMs,
-            connectionId: connection.id,
-          },
-          deps.pendingAction,
-        ));
+      // Find-or-make under a transaction-scoped advisory lock on (agent, kind, connection), so two
+      // identical calls racing here make one ask: the second waits on the lock, then finds the
+      // first's row. The table has no uniqueness over the payload; the lock stands in for one
+      // without a migration (Greptile on #87). The wait that follows runs outside the transaction.
+      const action = await ctx.db.transaction(async (tx) => {
+        const scoped: ServiceContext = { db: tx };
+        await deps.lockPendingActionKey(tx, scope, SCOPE_ASK_KIND, connection.id);
+        return (
+          (await openScopeAskFor(scoped, scope, connection.id, deps)) ??
+          createPendingAction(
+            scoped,
+            scope,
+            {
+              kind: SCOPE_ASK_KIND,
+              payload: scopeAskPayload(connection, proposal.docsUrl),
+              ttlMs: deps.handoff.ttlMs,
+              connectionId: connection.id,
+            },
+            deps.pendingAction,
+          )
+        );
+      });
       return awaitScope(ctx, scope, action, connection, deps, notifier);
     }
   }

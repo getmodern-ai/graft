@@ -1775,10 +1775,19 @@ describe("request_connection asks to use a connection the person holds but this 
 
   it("answers awaiting_scope with the link, a scope ask stamped with the row, and an answerable card; the same ask comes back until answered, and no scope moves", async () => {
     const row = theirs("conn_delta_a");
+    // The find-or-make is serialised on the advisory lock for (agent, kind, connection), taken
+    // before the lookup (Greptile on #87); the fake records the key it would lock.
+    const locks: string[] = [];
+    const lock = deps.lockPendingActionKey;
+    deps.lockPendingActionKey = async (db, scope, kind, key) => {
+      locks.push(`${scope.agentId}:${kind}:${key}`);
+      await lock(db, scope, kind, key);
+    };
     const b = await connect(TOKEN_B);
     try {
       const result = await b.call("request_connection", DELTA);
       const { answer, action } = awaiting(result, "awaiting_scope");
+      expect(locks).toEqual([`${AGENT_B}:${SCOPE_ASK_KIND}:${row.id}`]);
       expect(answer).toMatchObject({ connectionId: row.id, provider: "keyring" });
       expect(String(answer.message)).toContain("allow you to use it");
       expect(String(answer.message)).toContain("no new connection, nothing entered");
@@ -1826,7 +1835,11 @@ describe("request_connection asks to use a connection the person holds but this 
       expect(
         actionsOf(AGENT_B, CONNECTION_ASK_KIND).filter((r) => r.payload.vendor === "delta"),
       ).toHaveLength(0);
+      // Every find-or-make took the lock for the same key; the answered re-read (a read alone) none.
+      expect(locks).toHaveLength(3);
+      expect(new Set(locks).size).toBe(1);
     } finally {
+      deps.lockPendingActionKey = lock;
       await b.close();
     }
   });

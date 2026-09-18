@@ -6,7 +6,6 @@ import {
   type ConnectionDeps,
   type ConnectionOutput,
   consumePendingAction,
-  getConnection,
   getPendingActionForPerson,
   grantBuildApproval,
   KEYRING_PROVIDER,
@@ -126,13 +125,15 @@ export type ApprovalAnswerRecord = {
  * waiting sees a consumed action as `CONFLICT` and reads the rule again (`approval.ts`), which is
  * how it proceeds on a yes and refuses on a no.
  *
- * **The connection is read again before anything is written.** A revoke deletes every approval for
- * the connection and closes its open asks (ADR 0007), but an ask inserted after that sweep ran is
- * still open, and an answer to it must not write an approval back that would stand once the
- * connection is reconnected (GRA-69, found by review on #83). Such an ask is closed here exactly as
- * the sweep closes one, in the same transaction as the answer, and the caller is then refused
- * `CONFLICT` with `reason: "connection_revoked"`; the elicitation path makes the same check in
- * `approval.ts` before it records.
+ * **The connection is read again, locked, before anything is written.** A revoke deletes every
+ * approval for the connection and closes its open asks (ADR 0007), but an ask inserted after that
+ * sweep ran is still open, and an answer to it must not write an approval back that would stand
+ * once the connection is reconnected (GRA-69, found by review on #83). Such an ask is closed here
+ * exactly as the sweep closes one, in the same transaction as the answer, and the caller is then
+ * refused `CONFLICT` with `reason: "connection_revoked"`; the elicitation path makes the same check
+ * in `approval.ts` before it records. The read takes the row `FOR UPDATE`, the lock the revoke
+ * itself takes first (`revokeConnection`), so an answer and a revoke that overlap serialise on it
+ * rather than interleave (Greptile on #87).
  */
 export async function recordApprovalAnswer(
   ctx: ServiceContext,
@@ -150,11 +151,15 @@ export async function recordApprovalAnswer(
       const scoped: ServiceContext = { db: tx };
       const action = await answerPendingAction(scoped, principal, id, answer, deps.pendingAction);
       if (typeof action.connectionId === "string") {
-        const connection = await getConnection(
-          scoped,
-          principal,
+        // The row locked (FOR UPDATE), not merely read: a revoke locks the same row before it
+        // deletes the connection's approvals, so whichever of the two commits first, the other
+        // sees its work — this answer reads the row as revoked and closes the ask, or the revoke's
+        // delete runs after the approval this answer wrote (Greptile on #87). The plain read left a
+        // window in which an approval landed after the revoke's sweep and outlived it.
+        const connection = await deps.connection.findConnectionForUpdate(
+          tx,
+          principal.personId,
           action.connectionId,
-          deps.connection,
         );
         if (!connection || connection.revokedAt !== null) {
           await deps.connection.expirePendingActionsForConnection(

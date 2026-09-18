@@ -183,6 +183,25 @@ export async function listAgentIdsForConnection(
 }
 
 /**
+ * Add one connection to the scope, idempotently: `INSERT … ON CONFLICT DO NOTHING` on the table's
+ * `(agent_id, connection_id)` primary key, so two grants of the same connection leave one row and a
+ * grant beside another agent-page edit loses nothing — never a read of the list and a rewrite of the
+ * whole (Greptile on #87, GRA-104). One statement on `scope.agentId` alone, like the insert half of
+ * `replaceAgentConnections`: the service has verified the agent is the person's and the connection
+ * theirs before calling this.
+ */
+export async function addAgentConnection(
+  db: DbOrTx,
+  scope: AgentScope,
+  connectionId: string,
+): Promise<void> {
+  await db
+    .insert(agentConnection)
+    .values({ agentId: scope.agentId, connectionId })
+    .onConflictDoNothing();
+}
+
+/**
  * Replace the scope wholesale: delete what is there, insert what was given. Two statements, so the
  * caller runs it in a transaction; the delete is scoped by the pair, so a mis-scoped call clears
  * nothing and the insert that follows it lands only on an agent the caller has already verified is
