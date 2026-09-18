@@ -1,45 +1,38 @@
 /**
- * Which message to show when the one email door fails — Cando's rule, copied with its test (its
- * `apps/web/src/lib/email-auth-outcome.ts`, CAN-64; GRA-81).
+ * Which message to show when creating an account on `/signup` fails — Cando's `email-auth-outcome.ts`
+ * as it stands after its two doors (ADR 0020 as amended for GRA-94; Cando's CAN-459).
  *
- * There is no sign-up screen: an address the product has never seen has to be *registered* at
- * the same prompt that signs everyone else in. So the route tries to sign in, and registers
- * only if that fails.
+ * Sign-up is its own door again, so this no longer arbitrates between a sign-in failure and a
+ * registration failure. What is left is the one translation the sign-up door owes its visitor:
+ * `USER_ALREADY_EXISTS` means they are standing at the wrong door, and Better Auth's own "User
+ * already exists" names the problem without the exit. The message points at signing in; the card's
+ * footer link is the way there.
  *
- * It cannot ask which case it is first. Better Auth deliberately returns the same failure for
- * "no such account" and "wrong password" — telling them apart is account enumeration, and the
- * ambiguity is the point. That leaves the *registration* attempt as the only way to find out,
- * and its outcome is what decides the message:
- *
- * - registration rejected because the address is taken → the account exists, so the sign-in
- *   failure was a wrong password, and that is what to say;
- * - registration rejected for any other reason → the address is new and the reason is real
- *   (a password below the minimum length is the common one). Showing the sign-in error here
- *   would tell someone their brand-new password "did not match" an account they do not have.
+ * With verification on, Better Auth conceals a taken address — it answers a 200 that opened no
+ * session, and `attemptEmailSignUp` reads that as "check your email" — so this code should no longer
+ * arrive. It is kept for the one path that can still produce it: two registrations racing on one
+ * fresh address, where the loser meets the endpoint's own 422.
  */
-type AuthError = { code?: string; message?: string } | null | undefined;
+type AuthError = { code?: string; message?: string };
 
-const WRONG_PASSWORD = "That email and password did not match.";
 /**
- * Both spellings Better Auth has used for the taken address: Cando's version answers
- * `USER_ALREADY_EXISTS`, the 1.7 line this repository pins answers
- * `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` (measured against the local server, GRA-81). A code
- * matched too narrowly would fall through to the registration message — "Use another email", to
- * the person whose email it is.
+ * Both spellings, because Better Auth renamed the code: 1.7's sign-up route throws
+ * `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` (`BASE_ERROR_CODES` still carries the older
+ * `USER_ALREADY_EXISTS` for other paths). Matching only the older one is how a door shows the raw
+ * "Use another email" — measured against the local server under GRA-81.
  */
-const ALREADY_REGISTERED = ["USER_ALREADY_EXISTS", "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL"];
+const ALREADY_REGISTERED_CODES = ["USER_ALREADY_EXISTS", "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL"];
 
-function emailAuthMessage(signInError: AuthError, signUpError: AuthError): string | null {
-  // Registration succeeded, so whatever sign-in said is history.
-  if (!signUpError) {
-    return null;
+const ALREADY_REGISTERED_MESSAGE = "This email is already registered — sign in instead.";
+
+function signUpFailureMessage(error: AuthError): string {
+  if (error.code !== undefined && ALREADY_REGISTERED_CODES.includes(error.code)) {
+    return ALREADY_REGISTERED_MESSAGE;
   }
-
-  if (signUpError.code !== undefined && ALREADY_REGISTERED.includes(signUpError.code)) {
-    return signInError?.message ?? WRONG_PASSWORD;
-  }
-
-  return signUpError.message ?? WRONG_PASSWORD;
+  // A real refusal with a real reason — a password below the minimum length is the common one —
+  // so the server's sentence is the useful one. The fallback exists for a refusal that arrives
+  // with no message at all; it must not claim anything about the address being taken.
+  return error.message ?? "We couldn't create your account. Try again.";
 }
 
-export { emailAuthMessage, WRONG_PASSWORD };
+export { ALREADY_REGISTERED_MESSAGE, signUpFailureMessage };

@@ -87,3 +87,35 @@ describe("smtp transport — failure", () => {
     expect((await transport.send(REQUEST)).transport).toBe(transport.name);
   });
 });
+
+describe("smtp transport — the other two templates (GRA-94)", () => {
+  it("renders the verification email around Better Auth's link", () => {
+    const verifyUrl =
+      "http://localhost:3000/api/auth/verify-email?token=tok_1&callbackURL=%2Flogin";
+    const { text, html } = render({
+      to: "a@b.c",
+      subject: "Verify your email for Graft",
+      template: "emailVerification",
+      dataVariables: { verifyUrl },
+      actionUrl: verifyUrl,
+    });
+    expect(text).toContain("Verify your email");
+    expect(text.split("\n")).toContain(verifyUrl);
+    expect(html).toContain("Verify email");
+    expect(html).toContain("The link works for 24 hours.");
+  });
+
+  it("renders the account-exists email around the login link", () => {
+    const loginUrl = "https://app.getgraft.ai/login?email=a%40b.c";
+    const { text, html } = render({
+      to: "a@b.c",
+      subject: "You already have a Graft account",
+      template: "accountExists",
+      dataVariables: { loginUrl },
+      actionUrl: loginUrl,
+    });
+    expect(text).toContain("You already have an account");
+    expect(html).toContain("Sign in to Graft");
+    expect(html).toContain("nothing about your account has changed");
+  });
+});

@@ -135,7 +135,7 @@ so set `GRAFT_MIGRATE_ON_START=false` while the schema is moving. Then, if `GRAF
 `GRAFT_ADMIN_PASSWORD` are set (all-or-nothing) and the database holds no person, the boot opens that
 account through Better Auth's own sign-up and prints one line saying so; a database with anyone in it
 is never touched, and the line says that instead. Unset, nothing happens — a laptop registers at
-`/login`, the one door (ADR 0020).
+`/signup` and verifies the address from the link the console transport prints (ADR 0020, ADR 0021).
 
 `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL`, `GRAFT_CONSOLE_URL` (where the
 console answers — the base of every handoff URL) and `GRAFT_HANDOFF_SECRET` (32+, signs those URLs)
@@ -538,19 +538,24 @@ nothing but the others and a type; an import of `@graft/proxy`'s index or of a r
 pulls `node:crypto` or drizzle into the bundle, and `vite build` is what fails. Add a scheme by adding
 to both tables and the plugin, never to the form.
 
-**The console has one door** (ADR 0020, GRA-81): `/login` is Cando's sign-in card — the email,
-then the password beneath it in the same card, sign-in attempted first and registration on its
-failure (`apps/web/src/lib/email-auth-outcome.ts`, Cando's rule with its test), and a *Continue
-with Google* / *Continue with GitHub* button under *Or* for each provider the server names at
-`GET /api/sign-in-methods` (public). `/signup` redirects to `/login` carrying `redirect`. The
-providers are `GRAFT_GOOGLE_CLIENT_ID`/`_SECRET` and `GRAFT_GITHUB_CLIENT_ID`/`_SECRET`, each pair
-all-or-nothing and off by default (`packages/env/src/schema.ts`, `signInProvidersFrom`), handed to
-`createAuth` as `socialProviders`; the redirect URI is `GRAFT_AUTH_URL` plus
-`/api/auth/callback/<provider>`. A social sign-in links to an existing account only when both the
-provider and the account vouch for the address — with verification off for the alpha (the reason
-is in `packages/auth/src/index.ts`) a password account does not link yet, and the door says so
-(`socialSignInMessage` in `apps/web/src/lib/sign-in.ts`). The provider marks are flat `.svg` files
-under `apps/web/src/assets`, outside the colour guard on purpose, as Cando's are.
+**The console has two doors, and registering opens no session until the address is verified**
+(ADR 0020 as amended, GRA-81, GRA-94): `/login` signs in only and `/signup` registers, both Cando's
+sign-in card — the email, then the password beneath it in the same card, a *Continue with Google* /
+*Continue with GitHub* button under *Or* for each provider the server names at
+`GET /api/sign-in-methods` (public), and a cross-link to the other door carrying `redirect`. A
+sign-up answers "check your email" whether the address is new or taken; the inbox tells them apart
+(`@graft/email`'s `emailVerification` and `accountExists` templates), the emailed link verifies,
+signs in and returns to `/login`, and an unverified sign-in re-sends the link. The pure decisions
+are `apps/web/src/lib/auth-attempt.ts` (every auth call made total over a network failure, with
+tests) and `email-auth-outcome.ts`. The providers are `GRAFT_GOOGLE_CLIENT_ID`/`_SECRET` and
+`GRAFT_GITHUB_CLIENT_ID`/`_SECRET`, each pair all-or-nothing and off by default
+(`packages/env/src/schema.ts`, `signInProvidersFrom`), handed to `createAuth` as `socialProviders`;
+the redirect URI is `GRAFT_AUTH_URL` plus `/api/auth/callback/<provider>`. A social sign-in links
+to an existing account only when both the provider and the account vouch for the address — which,
+with verification on, every new password account does. The admin the self-hosted image opens from
+its environment is marked verified by the boot (`markPersonEmailVerified` in `@graft/db`, unscoped
+and pinned as such), since the operator typed that address. The provider marks are flat `.svg`
+files under `apps/web/src/assets`, outside the colour guard on purpose, as Cando's are.
 
 **A forgotten password is reset by email, and mail is a seam** (ADR 0021; GRA-82, GRA-90):
 `@graft/email` is Cando's `@cando/email` less the invitation and less the vendor — a transport

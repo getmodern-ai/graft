@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 
 import { createAuth } from "@graft/auth";
 import { createDb } from "@graft/db";
+import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { user } from "@graft/db/schema/auth";
 import { env } from "@graft/env/server";
 import {
@@ -105,6 +106,9 @@ try {
         body: { email: values.email, password: values.password, name: values.email },
       });
       personId = signedUp.user.id;
+      // Registering opens no session until the address is verified (GRA-94); this is the
+      // operator's own laptop account, so mark it as the boot marks its admin.
+      await markPersonEmailVerified(db, values.email);
       console.error(`signed up ${values.email} as person ${personId}`);
     } else {
       console.error(`no person has the email ${values.email}; pass --password to sign one up`);
