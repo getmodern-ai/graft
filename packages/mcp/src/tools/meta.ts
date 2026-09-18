@@ -58,13 +58,17 @@ export const ACQUIRE_STATUS = "acquire_status";
 export const REQUEST_CONNECTION = "request_connection";
 export const REQUEST_CREDENTIAL = "request_credential";
 
-/** A tool as `find_tool` answers it — enough for `promote`, and the annotations a harness gates on (ADR 0008). */
+/**
+ * A tool as `find_tool` answers it — enough for `promote`, the annotations a harness gates on (ADR
+ * 0008), and the input schema `run_tool` needs where the list never refreshes (GRA-78).
+ */
 export type FoundTool = {
   vendor: string;
   name: string;
   tool: string;
   description: string;
   promoted: boolean;
+  inputSchema: Record<string, unknown>;
   annotations: { readOnlyHint: boolean; destructiveHint: boolean };
 };
 
@@ -90,8 +94,8 @@ const findTool: MetaTool = {
     name: FIND_TOOL,
     description:
       "Call find_tool first, before acquire, whenever a task has no tool in your list. " +
-      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description. " +
-      "Each hit carries vendor and name (what promote, demote and run_tool take), whether it is in your working set, and its read-only and destructive hints. " +
+      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description; a tool no version of which has passed its dry run is not listed. " +
+      "Each hit carries vendor and name (what promote, demote and run_tool take), its inputSchema (what run_tool's input must match), whether it is in your working set, and its read-only and destructive hints. " +
       "A hit that is not promoted is one promote call from your list. When the answer is empty, call request_connection if the vendor has no connection in your scope (an execute__<connectionId> tool in your list names each one), otherwise acquire.",
     inputSchema: {
       type: "object",
@@ -117,7 +121,10 @@ const findTool: MetaTool = {
     // Case-insensitive substring over the three fields, in toolbox order. Ranking — by how recently
     // an agent used the tool, by how many agents hold it — belongs here and reads the ledger and the
     // working-set records (ADR 0009, ADR 0012); the alpha has too few tools per toolbox to need it.
+    // A tool with no current version is what an acquire job that never passed its dry run leaves
+    // (GRA-77): nothing runnable, so nothing to find — its versions and reports stay for the console.
     const hits: FoundTool[] = tools
+      .filter((tool) => tool.currentVersionId !== null)
       .filter((tool) =>
         [tool.vendor, tool.name, authoredToolName(tool.vendor, tool.name), tool.description].some(
           (field) => field.toLowerCase().includes(query),
@@ -129,6 +136,7 @@ const findTool: MetaTool = {
         tool: authoredToolName(tool.vendor, tool.name),
         description: tool.description,
         promoted: promoted.has(tool.id),
+        inputSchema: tool.inputSchema,
         annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
       }));
     return toolResult({
@@ -162,6 +170,14 @@ const promote: MetaTool = {
     const { ctx, principal, scope, deps, notifier } = session;
     const tool = await getToolByName(ctx, principal, key, deps.tool);
     if (!tool) return toolNotFound(key);
+    // The same refusal a run gives (`../run.ts`): a tool no version of which passed its dry run is
+    // not promotable, since the list entry would name nothing that runs (GRA-77).
+    if (!tool.currentVersionId) {
+      return toolRefusal(
+        "tool_has_no_version",
+        `${authoredToolName(tool.vendor, tool.name)} has no version that passed its dry run, so there is nothing to promote. acquire authors one.`,
+      );
+    }
     const change = await promoteTool(ctx, scope, tool.id, "agent", deps.workingSet);
     if (change.changed) notifier.changed(scope.agentId);
     return toolResult({
@@ -210,7 +226,7 @@ const runTool: MetaTool = {
     name: RUN_TOOL,
     description:
       "Call run_tool to run a toolbox tool by vendor and name when it is not in your visible list: the turn a tool was just published or promoted, or a client that snapshots the list per conversation. " +
-      "Exactly what calling the tool first-class does: the input is validated against the tool's schema, and the vendor's answer, or the tool's failure, comes back verbatim. " +
+      "Exactly what calling the tool first-class does: the input is validated against the tool's inputSchema, which the acquire result and find_tool's hits carry and an input_invalid refusal answers beside the problems, and the vendor's answer, or the tool's failure, comes back verbatim. " +
       "A tool that changes something may answer awaiting_approval with a url on its first call: give the person the link exactly as returned, wait, and call again with the same arguments once they have answered. " +
       "With dryRun: true reads reach the vendor and every other method stops at the proxy with a preview of the request; the answer is a dry-run report and nothing changes at the vendor. " +
       `For a call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds, pass detached: true and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}), then poll the returned processName with wait_for_process. A dry run is always waited for.`,
@@ -221,7 +237,7 @@ const runTool: MetaTool = {
         input: {
           type: "object",
           description:
-            "The tool's input, matching its published schema. Omit for a tool that takes nothing.",
+            "The tool's input, matching the inputSchema the acquire result or find_tool answered. Omit for a tool that takes nothing.",
         },
         dryRun: {
           type: "boolean",
@@ -282,7 +298,7 @@ const acquire: MetaTool = {
       "Call acquire when find_tool found nothing that covers the task and the vendor has a connection in your scope. " +
       "Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into your working set. " +
       "Answers a jobId at once, before anything is built: poll acquire_status with it and relay progress. " +
-      "The first acquire against a connection may answer awaiting_approval with a url: give the person the link exactly as returned, wait, and call acquire again with the same arguments once they have answered. " +
+      "The first acquire against a connection may answer awaiting_approval with a url, unless the person allowed building when they confirmed the connection: give the person the link exactly as returned, wait, and call acquire again with the same arguments once they have answered. " +
       "Do not start a second acquire for the same goal while one runs.",
     inputSchema: {
       type: "object",
@@ -407,6 +423,7 @@ const requestConnectionTool: MetaTool = {
       "For oauth_authorization_code (Gmail, Slack user tokens, Notion) propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
       "On a deployment with a connection provider such as Pipedream, a vendor it covers (Gmail on Graft Cloud) needs no client and no secret: the awaiting answer names the provider, the person presses one button in the console and signs in at the vendor on the provider's page, and the vendor's token stays with the provider — say so instead of the client instructions. " +
       "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the url to relay: give them the link exactly as returned, say what it is for, wait, and call again with the same proposal once they say it is done; the same link comes back until they have, then connected. " +
+      "The page also offers to allow you to build tools against the connection, on by default: left on, acquire against it starts without a second link, so do not tell the person to expect one. " +
       "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list. " +
       "A connection the person already has for the same vendor and hosts is never proposed twice: usable and in your scope, it answers connected at once; otherwise the call refuses with connection_exists naming it and the step that keeps it (request_credential, the console's Reconnect, or the person adding it to your scope). " +
       "A rotated or expired credential is request_credential against the existing connection, never a new connection: a new connection is a new row with no scope and no approvals. " +

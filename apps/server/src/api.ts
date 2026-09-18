@@ -1,3 +1,4 @@
+import type { SocialProviderName } from "@graft/auth";
 import {
   type AgentDeps,
   type ApprovalDeps,
@@ -123,6 +124,13 @@ export type AuthHandle = {
   getSession: (headers: Headers) => Promise<SessionLike>;
 };
 
+/**
+ * How a person may sign in at this deployment (GRA-81): email and password always, and the
+ * providers the server was handed clients for, in the order the console draws them. Public, so the
+ * door can paint the right buttons before anyone has a session.
+ */
+export type SignInMethods = { social: readonly SocialProviderName[] };
+
 export type ApiDeps = {
   db: DbOrTx;
   agent: AgentDeps;
@@ -144,6 +152,8 @@ export type ApiOptions = {
   deps: ApiDeps;
   /** The console's origins (`GRAFT_CORS_ORIGIN`); empty means no CORS header is ever written. */
   corsOrigins: readonly string[];
+  /** The sign-in providers `auth` registered (`@graft/auth`'s `socialProviders`); none when absent. */
+  signInMethods?: SignInMethods;
   /** What signs and roots a handoff URL (`@graft/mcp`'s `handoff.ts`) — the console's URL and the secret. */
   handoff: Pick<HandoffConfig, "consoleUrl" | "secret">;
   /**
@@ -229,9 +239,28 @@ const connectionBody = registrationBody.extend({
 
 const credentialBody = z.object({ fields: credentialFields });
 
-/** GRA-28's submit for a `connection` ask: the proposal as the person edited it, and the secret. */
-const connectionSubmitBody = registrationBody.extend({ credential: credentialFields });
+/**
+ * The one choice both connection cards add to the confirmation (GRA-75; ADR 0008, amendment of
+ * 2026-09-18): whether the asking agent may build against the connection. Absent reads as no, so a
+ * body written before the control existed asks nothing new of the person.
+ */
+const approveBuildField = {
+  approveBuild: z.boolean().default(false),
+};
+
+/** GRA-28's submit for a `connection` ask: the proposal as the person edited it, the secret, and the build choice. */
+const connectionSubmitBody = registrationBody.extend({
+  credential: credentialFields,
+  ...approveBuildField,
+});
+/** The console's button for a link ask (GRA-59): nothing to edit, so the body is the build choice alone — or empty. */
+const linkStartBody = z.object(approveBuildField);
 const credentialSubmitBody = z.object({ credential: credentialFields });
+
+/** The submit's wire shape, as the console posts it — the console imports this rather than writing it again. */
+export type ConnectionSubmitBody = z.input<typeof connectionSubmitBody>;
+/** The link button's wire shape, as the console posts it. */
+export type LinkStartBody = z.input<typeof linkStartBody>;
 
 const modelKeyBody = z.object({
   provider: z.string(),
@@ -347,10 +376,19 @@ const callsQuery = z.object({
     .default(CONNECTION_CALLS_DEFAULT_LIMIT),
 });
 
-async function parseBody<T extends z.ZodType>(request: Request, schema: T): Promise<z.infer<T>> {
+/**
+ * The body against the route's schema. A route that once took no body (`emptyIs`) reads an empty
+ * one as the value given, so an older console's bare `POST` still means what it meant.
+ */
+async function parseBody<T extends z.ZodType>(
+  request: Request,
+  schema: T,
+  options: { emptyIs?: unknown } = {},
+): Promise<z.infer<T>> {
   let json: unknown;
   try {
-    json = await request.json();
+    const text = await request.text();
+    json = text.trim().length === 0 && "emptyIs" in options ? options.emptyIs : JSON.parse(text);
   } catch {
     throw new ServiceError("BAD_REQUEST", "The body is not JSON");
   }
@@ -401,8 +439,15 @@ export function createApi(options: ApiOptions): Hono {
    */
   api.get("/health", (c) => c.json({ ok: true }));
 
-  /** Better Auth's own routes: sign-up, sign-in, sign-out, session. */
+  /** Better Auth's own routes: sign-up, sign-in, sign-out, session, and each provider's callback. */
   api.on(["POST", "GET"], "/auth/*", (c) => options.auth.handler(c.req.raw));
+
+  /**
+   * Which providers the door may offer, without a session: the names alone, never a client id,
+   * so a self-host with no client configured shows the email form and nothing that cannot work.
+   */
+  const signInMethods: SignInMethods = { social: options.signInMethods?.social ?? [] };
+  api.get("/sign-in-methods", (c) => c.json(signInMethods));
 
   const {
     approval: approvalDeps,
@@ -475,6 +520,7 @@ export function createApi(options: ApiOptions): Hono {
       connection: connectionDeps,
       agent: agentDeps,
       pendingAction: pendingActionDeps,
+      approval: approvalDeps,
       handoff,
       authUrl: options.authUrl,
     };
@@ -1007,6 +1053,12 @@ export function createApi(options: ApiOptions): Hono {
    * host or a mistyped field leaves no row, no scope change and no answer. The waiting
    * `request_connection` call takes the answer and says connected; a proposed host that is not
    * public is refused here as `host_not_public`, as it was to the agent and as the form said.
+   *
+   * With `approveBuild` the same transaction records the asking agent's build approval for the new
+   * connection (GRA-75; ADR 0008, amendment of 2026-09-18) — the yes `acquire`'s own ask would
+   * take, given one page earlier by the same person about the same agent and connection — so the
+   * next `acquire` finds it standing and asks nothing. In the transaction, so a refused connection
+   * leaves no approval and a recorded approval never lacks its connection.
    */
   api.post("/pending-actions/:id/connection", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -1033,6 +1085,15 @@ export function createApi(options: ApiOptions): Hono {
         connectionDeps,
       );
       await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, agentDeps);
+      const buildApproval = body.approveBuild
+        ? await grantBuildApproval(
+            scoped,
+            { personId: principal.personId, agentId: action.agentId },
+            connection.id,
+            approvalDeps,
+          )
+        : undefined;
+      const granted = buildApproval ? { buildApproval } : {};
       // An authorization-code connection is not connected until the consent completes: the ask
       // stays open and the callback answers it (`oauth.ts`), so the agent's call says connected only
       // when the vendor can be called (ADR 0005).
@@ -1048,6 +1109,7 @@ export function createApi(options: ApiOptions): Hono {
           connection: consent.connection,
           pendingAction: action,
           authorizeUrl: consent.authorizeUrl,
+          ...granted,
         };
       }
       const pendingAction = await answerPendingAction(
@@ -1057,7 +1119,7 @@ export function createApi(options: ApiOptions): Hono {
         { connectionId: connection.id },
         pendingActionDeps,
       );
-      return { connection, pendingAction };
+      return { connection, pendingAction, ...granted };
     });
     return c.json(result, 201);
   });
@@ -1067,12 +1129,17 @@ export function createApi(options: ApiOptions): Hono {
    * provider mints the link the console opens in a popup, for this person, with this server's
    * return route as where the provider sends the browser back. The ask stays open — the return
    * route answers it once the provider has confirmed the account (`provider-link.ts`) — so a popup
-   * closed half-way leaves the button where it was. No body: everything the link needs is on the
-   * ask, and nothing about it is the person's to edit.
+   * closed half-way leaves the button where it was. The body is the build choice alone
+   * (GRA-75) — everything else the link needs is on the ask, and nothing about it is the person's
+   * to edit; an empty body is the choice left off. The choice rides the signed state to the return
+   * route, which records it with the connection it makes (`provider-link.ts`).
    */
   api.post("/pending-actions/:id/link", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const started = await startProviderLink(ctx, principal, c.req.param("id"), linkOptions());
+    const body = await parseBody(c.req.raw, linkStartBody, { emptyIs: {} });
+    const started = await startProviderLink(ctx, principal, c.req.param("id"), linkOptions(), {
+      approveBuild: body.approveBuild,
+    });
     return c.json(started);
   });
 

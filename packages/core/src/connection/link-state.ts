@@ -14,6 +14,12 @@ import { LINK_STATE_TTL_MS } from "./link.rules";
  * confirms what the person connected (`connection.service.ts`, `connectThroughProvider`), so the
  * ask is what the state points at and what the return route answers. The nonce makes two links for
  * one ask two states; a return with a stale one is refused as expired rather than replayed.
+ *
+ * It also carries the one choice the link's card offers (GRA-75; ADR 0008, amendment of
+ * 2026-09-18): whether the asking agent may build against the connection once it exists. The
+ * person ticks it before the popup opens, and the connection it is about is made on return, so
+ * the choice rides the state to the return route, signed, rather than being posted again from a
+ * page that no longer has the person's session in hand.
  */
 
 export { LINK_STATE_TTL_MS };
@@ -26,6 +32,8 @@ export type LinkStatePayload = {
   /** Epoch milliseconds. */
   expiresAt: number;
   nonce: string;
+  /** Record the asking agent's build approval with the connection on return (GRA-75); absent reads as no. */
+  approveBuild?: boolean;
 };
 
 function mark(encodedPayload: string, secret: string): Buffer {
@@ -105,6 +113,7 @@ function isPayload(value: unknown): value is LinkStatePayload {
     p.provider.length > 0 &&
     typeof p.expiresAt === "number" &&
     Number.isFinite(p.expiresAt) &&
-    typeof p.nonce === "string"
+    typeof p.nonce === "string" &&
+    (p.approveBuild === undefined || typeof p.approveBuild === "boolean")
   );
 }

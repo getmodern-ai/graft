@@ -29,6 +29,8 @@ their wiki, a report from their accounting app — and no tool in your list does
    the connections in your scope. If the vendor has none, call
    `request_connection { vendor, primaryHost, scheme, displayName?, docsUrl? }` — it answers a
    handoff link (below); the person confirms the connection and enters the secret in the console.
+   That page also offers to allow you to build tools against the connection, on by default; left
+   on, `acquire` against it starts without a second link, so do not tell the person to expect one.
    A public API that takes no key — Open-Meteo, an open-data endpoint — is scheme `none`: the
    person confirms the connection and enters nothing; never invent a key for one, since a vendor
    may read the key's presence and answer differently.
@@ -54,7 +56,9 @@ The answer is `{ status, progress, attempts, result? }`:
 - `succeeded`: `result.tool` is the new tool's name, `<vendor>__<name>`. It appears in your tool list
   when the list refreshes (Graft sends `tools/list_changed`; Hermes re-reads the list). Then call it
   for the person's actual request. Some clients snapshot the tool list per conversation; until it
-  appears, `run_tool { vendor, name, input }` calls it by name.
+  appears, `run_tool { vendor, name, input }` calls it by name. The acquire result and `find_tool`
+  carry the tool's `inputSchema` for `run_tool`, so `input` is read, never guessed; `result.next`
+  says the same in one sentence.
 - `failed`: say what `result.failure` and `result.message` say, in the person's words, and what you
   will try — a documentation URL as a hint, a different connection. Do not try to reach the vendor
   yourself; there is no route to a vendor except through a Graft tool, and the attempt would only
@@ -75,7 +79,8 @@ or a token in chat, whatever the vendor calls it. The console is where secrets g
 Graft asks the person before code runs, and asks in two places:
 
 - **Before building** against a connection, once per agent per connection: *"May this agent build
-  against <connection>?"* Say what you are about to have built and against which account.
+  against <connection>?"* Say what you are about to have built and against which account. The
+  person may already have answered this when they confirmed the connection; then no ask comes.
 - **Before a tool's first use** that is not a read. A read-only tool never asks. Any other tool asks
   once, and the answer holds — a destructive tool too, and its ask says it is destructive. The person
   can set a tool to ask every time instead, in Graft's console, on the ask or on your agent's page.

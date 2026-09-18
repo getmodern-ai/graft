@@ -1,6 +1,7 @@
 import { type ModuleFile, readModuleSources } from "@graft/check";
 import {
   type AgentScope,
+  activateToolVersion,
   appendAcquireJobProgress,
   appendAcquireTrace,
   completeAcquireJob,
@@ -8,6 +9,7 @@ import {
   getAgentScope,
   getBuildApproval,
   getConnection,
+  getToolById,
   heartbeatAcquireJob,
   listAcquireAttempts,
   type Principal,
@@ -38,6 +40,7 @@ import {
   type ProofRead,
 } from "@graft/model";
 import { hostSetOf } from "@graft/proxy/credential-source";
+import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
 import type { PublishOutcome } from "@graft/publish";
 import type { SandboxHandle } from "@graft/sandbox";
@@ -62,6 +65,7 @@ import {
   type AcquireFailure,
   type AcquireFailureKind,
   type AcquireSuccess,
+  acquireNextStep,
   DEFAULT_ACQUIRE_CONFIG,
 } from "./shapes";
 
@@ -79,10 +83,15 @@ import {
  * **The model only answers.** The job owns every tool: it reads pages through the server-side page
  * reader, writes the draft onto the agent's sandbox under the job's own drafts path, runs the check,
  * makes each proof read through the connection's execute path with the dry-run claim on
- * (`runWithCapability`, claim `execute`), publishes through GRA-18's publish, and dry-runs through
- * the same path a first-class call takes. The model is never handed a credential, the capability
- * token, or a route to the vendor; what it sees of a vendor is the text the job hands back, with
- * credentials redacted before it is stored (`@graft/core`'s `redactText`).
+ * (`runWithCapability`, claim `execute`), publishes through GRA-18's publish **without activating**
+ * — the version row is written and the tool's pointer stays where it was, null on a first publish
+ * — dry-runs that version by id through the same path a first-class call takes, and on the pass
+ * activates it (`@graft/core`'s `activateToolVersion`: the definition and the pointer, one
+ * transaction) before promoting. So the pointer names only a version that passed its dry run
+ * (ADR 0012, L0 as amended 2026-09-17), and a job that never passes leaves every version with its
+ * report and a tool `find_tool` omits and `promote` refuses (GRA-77). The model is never handed a
+ * credential, the capability token, or a route to the vendor; what it sees of a vendor is the text
+ * the job hands back, with credentials redacted before it is stored (`@graft/core`'s `redactText`).
  *
  * **Consent never moves inside** (ADR 0004, ADR 0006, ADR 0008). The build approval was the
  * meta-tool's to require before the job existed, and is required to still stand when the job runs.
@@ -95,6 +104,15 @@ import {
  * `GRAFT_ACQUIRE_MAX_ATTEMPTS` defaults to four for that reason (`@graft/env`). Every attempt is a
  * row with its files, its outcome, the version it published and the model's own line about it;
  * every step is a trace line; every dry-run report is on the version row the attempt names.
+ *
+ * **A vendor the proxy got no response from ends the job at once** (GRA-79). The proxy marks a
+ * refusal it made because the vendor never answered — the fetch threw, the deadline passed, the
+ * name resolved privately — with `x-graft-refusal` and puts the host and the cause's code on the
+ * body (`@graft/proxy`'s `failure.ts`); the probe carries the mark off a proof read and the runner
+ * off a dry-run read, and the job ends `vendor_unreachable` naming the host, the reason and the
+ * code, the attempt closed `run_failed`, with no further model turn: no change to the module
+ * changes the network, and a model shown that 502 as a vendor's would spend the attempt budget on
+ * code. A vendor's own 5xx bears no mark and stays the model's to reason about.
  *
  * The job holds the agent in flight for its whole length (ADR 0009: the sweep never demotes under a
  * run), and releases in `finally`. It stamps the job's heartbeat while it works so a runner in another
@@ -117,7 +135,11 @@ export const PROOF_BODY_CHARS = 4_000;
 /** How often the job stamps `heartbeat_at`; the runner's stale bound is a multiple of it. */
 export const DEFAULT_HEARTBEAT_MS = 15_000;
 
-/** The probe module every proof read runs through — one `GET` of the path it is handed, and the answer's shape. */
+/**
+ * The probe module every proof read runs through — one `GET` of the path it is handed, and the
+ * answer's shape. `reason` is the proxy's mark for a vendor it got no response from (GRA-79), read
+ * off the same header the runner reads in a dry run; null for any answer the vendor gave.
+ */
 export const PROBE_MODULE = [
   "export default async (input, ctx) => {",
   "  const res = await ctx.fetch(input.path);",
@@ -127,6 +149,7 @@ export const PROBE_MODULE = [
   "    ok: res.ok,",
   '    location: res.headers.get("location"),',
   '    contentType: res.headers.get("content-type"),',
+  `    reason: res.headers.get(${JSON.stringify(REFUSAL_HEADER)}),`,
   `    body: text.slice(0, ${PROOF_BODY_CHARS}),`,
   "  };",
   "};",
@@ -163,6 +186,35 @@ type OpenAttempt = {
   usage: ModelUsage;
   /** Whether a proof read failed — what an attempt the model then rewrote is closed as. */
   proofFailed: boolean;
+  /** The failed reads in one line, once `proofFailed`: what a set-aside attempt's summary opens with. */
+  proofSummary: string | null;
+  /** Whether a `proceed` over a failed read has been refused once already (GRA-72). */
+  proceedRefused: boolean;
+};
+
+/**
+ * What each situation asks the model for, for the progress line written before the turn: a poller
+ * sees the job is waiting on the model and for what, rather than the same line for a minute
+ * (GRA-71).
+ */
+const ASKING: Record<ModelSituation["kind"], string> = {
+  goal: "for a first draft, or the documentation to read first",
+  docs: "what to make of the pages",
+  check_refused: "to fix what the check refused",
+  proof: "whether the proof reads answered as the documentation said",
+  publish_refused: "to fix what the publish refused",
+  dry_run_failed: "to diagnose the failed dry run",
+};
+
+/** A finished attempt row's ending in one line, for a job resumed by another process (GRA-70). */
+const OUTCOME_SENTENCES: Record<Exclude<AcquireAttemptOutcome, "running">, string> = {
+  passed: "The dry run passed.",
+  check_refused: "The check refused the module.",
+  proof_failed: "A proof read failed and the draft was set aside unpublished.",
+  publish_refused: "The publish refused the module.",
+  dry_run_failed: "The dry run failed.",
+  run_failed: "The dry run did not run, or the proxy got no response from the vendor.",
+  abandoned: "Set aside unpublished.",
 };
 
 /**
@@ -239,13 +291,19 @@ class AcquireLoop {
         this.deps.acquireJob,
       );
     } catch (error) {
-      const failure =
+      const ended =
         error instanceof JobEnded
           ? error.result
           : this.failure("job_failed", `The job failed: ${errorMessage(error)}`, {
               error: errorMessage(error),
             });
-      await this.closeOpen(this.openOutcome(), failure.message).catch(() => undefined);
+      await this.closeOpen(this.openOutcome(), this.setAside(ended.message)).catch(() => undefined);
+      // The attempt closed just now belongs in `tried` too; the result was built at the throw.
+      // Through the same redaction as `failure()`, since a summary can quote a vendor's answer.
+      const failure = redactValue<AcquireFailure>(
+        { ...ended, tried: [...this.tried] },
+        this.redaction,
+      ).value;
       await this.trace("result", `Failed (${failure.failure}): ${failure.message}`, {
         data: { ...failure },
       }).catch(() => undefined);
@@ -346,12 +404,15 @@ class AcquireLoop {
       const answer = await this.turn(conversation, situation);
       switch (answer.kind) {
         case "read_docs": {
-          await this.progress(answer.note);
+          await this.step(`reading the documentation: ${answer.note}`);
           situation = { kind: "docs", pages: await this.readDocs(answer.urls) };
           continue;
         }
         case "give_up": {
-          await this.closeOpen(this.openOutcome(), answer.reason);
+          await this.closeOpen(
+            this.openOutcome(),
+            this.setAside(`the model gave up: ${answer.reason}`),
+          );
           throw this.end("model_gave_up", `The model gave up: ${answer.reason}`, {
             reason: answer.reason,
             last: this.lastDiagnostics,
@@ -366,6 +427,38 @@ class AcquireLoop {
               null,
             );
           }
+          if (attempt.proofFailed) {
+            // The gate (GRA-72): a draft is published only when every proof read passed. The
+            // model's word does not outrank the vendor's answer. Refused once with the reads shown
+            // again — a turn, not an attempt — and a second `proceed` ends the job.
+            const failed = attempt.proofSummary ?? "a proof read failed";
+            if (attempt.proceedRefused) {
+              await this.closeOpen(
+                "proof_failed",
+                this.setAside("the model answered proceed a second time"),
+              );
+              throw this.end(
+                "model_failed",
+                `The model answered proceed twice after ${failed}; a draft is published only when every proof read passes.`,
+                this.lastDiagnostics,
+              );
+            }
+            attempt.proceedRefused = true;
+            await this.trace("model", `Refused proceed on attempt ${attempt.number}: ${failed}.`, {
+              attempt: attempt.number,
+              data: { note: answer.note },
+            });
+            await this.progress(
+              `Attempt ${attempt.number}: ${failed}, so the draft is not published; asking the model what to change.`,
+            );
+            situation = {
+              kind: "proof",
+              attempt: attempt.number,
+              reads: situation.reads,
+              refused: `Your \`proceed\` was refused: ${failed}, and a draft is published only when every proof read passes. Answer \`write_module\` with the module or the proof reads changed, \`read_docs\` for a page, or \`give_up\`.`,
+            };
+            continue;
+          }
           await this.trace(
             "model",
             `Proceeding to publish attempt ${attempt.number}: ${answer.note}`,
@@ -379,7 +472,11 @@ class AcquireLoop {
           continue;
         }
         case "write_module": {
-          if (this.open) await this.closeOpen(this.openOutcome(), answer.note);
+          // The note is the new draft's, so it is not what closed the previous attempt (GRA-70):
+          // that attempt ended because the model chose to draft again, after whatever it saw.
+          if (this.open) {
+            await this.closeOpen(this.openOutcome(), this.setAside("the model drafted again"));
+          }
           if (this.attemptsMade >= this.config.maxAttempts) {
             throw this.end(
               "attempt_budget",
@@ -389,6 +486,7 @@ class AcquireLoop {
           }
           const attempt = await this.openAttempt(answer.draft, answer.note);
           await this.progress(`Attempt ${attempt.number}: ${answer.note}`);
+          await this.step("checking the module");
           const checked = await this.check(attempt);
           if (checked) {
             situation = checked;
@@ -399,6 +497,7 @@ class AcquireLoop {
               kind: "proof",
               attempt: attempt.number,
               reads: await this.prove(attempt, connection),
+              refused: null,
             };
             continue;
           }
@@ -419,18 +518,20 @@ class AcquireLoop {
     this.turns += 1;
     const budget = turnBudgetFor(this.config.maxAttempts);
     if (this.turns > budget) {
-      await this.closeOpen(this.openOutcome(), "the turn budget ran out");
+      await this.closeOpen(this.openOutcome(), this.setAside("the turn budget ran out"));
       throw this.end(
         "turn_budget",
         `The model was asked ${budget} times without the loop ending; the last diagnostics are in lastDiagnostics.`,
         this.lastDiagnostics,
       );
     }
+    await this.step(`asking the model ${ASKING[situation.kind]}`);
     let reply: Awaited<ReturnType<ModelConversation["turn"]>>;
     try {
       reply = await conversation.turn(situation);
     } catch (error) {
-      await this.closeOpen(this.openOutcome(), `the model failed: ${errorMessage(error)}`);
+      const failed = `the model failed: ${errorMessage(error)}`;
+      await this.closeOpen(this.openOutcome(), this.setAside(failed));
       throw this.end(
         "model_failed",
         `The model failed to answer ${situation.kind}: ${errorMessage(error)}`,
@@ -473,7 +574,7 @@ class AcquireLoop {
       },
     });
     if (this.tokensSpent > this.config.tokenCeiling) {
-      await this.closeOpen(this.openOutcome(), "the token ceiling was reached");
+      await this.closeOpen(this.openOutcome(), this.setAside("the token ceiling was reached"));
       throw this.end(
         "token_ceiling",
         `The token ceiling of ${this.config.tokenCeiling} was reached after ${this.tokensSpent} tokens; the last diagnostics are in lastDiagnostics.`,
@@ -543,6 +644,8 @@ class AcquireLoop {
       draft,
       usage: { inputTokens: 0, outputTokens: 0 },
       proofFailed: false,
+      proofSummary: null,
+      proceedRefused: false,
     };
     this.open = attempt;
     await this.trace(
@@ -590,11 +693,14 @@ class AcquireLoop {
       `Check refused attempt ${attempt.number}: ${checked.refusals.map((r) => `${r.rule} at ${r.file}:${r.line}`).join("; ")}.`,
       { attempt: attempt.number, data: output },
     );
+    const rules = checked.refusals.map((r) => r.rule).join(", ");
     await this.progress(
-      `Attempt ${attempt.number}: the check refused the module (${checked.refusals.map((r) => r.rule).join(", ")}); asking the model to fix it.`,
+      `Attempt ${attempt.number}: the check refused the module (${rules}); asking the model to fix it.`,
     );
     this.lastDiagnostics = { check: output };
-    await this.closeOpen("check_refused", null, output);
+    await this.closeOpen("check_refused", `The check refused the module: ${rules}.`, {
+      checkOutput: output,
+    });
     return {
       kind: "check_refused",
       attempt: attempt.number,
@@ -616,7 +722,9 @@ class AcquireLoop {
     }
     const reads: ProofRead[] = [];
     const mode = { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true };
-    for (const path of attempt.draft.proofReads.slice(0, MAX_PROOF_READS)) {
+    const paths = attempt.draft.proofReads.slice(0, MAX_PROOF_READS);
+    for (const [index, path] of paths.entries()) {
+      await this.step(`proof read ${index + 1} of ${paths.length}: GET ${path}`);
       const outcome = await runWithCapability({
         deps: this.deps,
         scope: this.scope,
@@ -636,6 +744,19 @@ class AcquireLoop {
       });
       const read = describeProofRead(path, outcome, connection);
       reads.push(read);
+      const unreached = vendorUnreachedOf(read, refusalFieldsOf(read.body));
+      if (unreached) {
+        // The network's answer, not the vendor's (GRA-79): recorded, and the job ends here. The
+        // model is not asked — the header of this file says why.
+        const ended = describeVendorUnreached(unreached, `GET ${path}`);
+        await this.trace("vendor_error", ended.summary, {
+          attempt: attempt.number,
+          data: { path, status: read.status, body: read.body, ...unreached },
+        });
+        this.lastDiagnostics = { proofReads: reads };
+        await this.closeOpen("run_failed", ended.summary);
+        throw this.end("vendor_unreachable", ended.message, { proofReads: reads });
+      }
       if (read.ok) {
         await this.trace("proof", `Proof read GET ${path}: ${read.status}.`, {
           attempt: attempt.number,
@@ -660,9 +781,15 @@ class AcquireLoop {
       }
     }
     this.lastDiagnostics = { proofReads: reads };
+    const failed = reads.filter((r) => !r.ok);
+    if (attempt.proofFailed) {
+      attempt.proofSummary = `${failed.length} of ${reads.length} proof read(s) failed (${failed
+        .map((r) => `GET ${r.path} ${r.status ?? "no status"}`)
+        .join(", ")})`;
+    }
     await this.progress(
       attempt.proofFailed
-        ? `Attempt ${attempt.number}: ${reads.filter((r) => !r.ok).length} of ${reads.length} proof read(s) failed; asking the model what to change.`
+        ? `Attempt ${attempt.number}: ${failed.length} of ${reads.length} proof read(s) failed; asking the model what to change.`
         : `Attempt ${attempt.number}: ${reads.length} proof read(s) answered as the documentation said.`,
     );
     return reads;
@@ -683,6 +810,7 @@ class AcquireLoop {
     }
     const { draft } = attempt;
     const wire = authoredToolName(vendor, draft.name);
+    await this.step(`publishing ${wire}`);
     let outcome: PublishOutcome;
     try {
       outcome = await publish({
@@ -696,6 +824,9 @@ class AcquireLoop {
         inputSchema: draft.inputSchema,
         draftPath: attempt.row.draftPath,
         defaultConnectionId: connectionId,
+        // The version is written and nothing else moves: the pointer names only a version that
+        // passed its dry run (ADR 0012, L0 as amended 2026-09-17), so it moves below, on the pass.
+        activate: false,
       });
     } catch (error) {
       // A bad name or description is the publish's refusal before it reads anything; the model
@@ -724,16 +855,22 @@ class AcquireLoop {
         advice: outcome.advice,
         annotations: outcome.annotations,
       };
+      const refused = outcome.refusals.map((r) => `${r.rule}: ${r.message}`).join("; ");
       await this.trace(
         "publish",
-        `Publish refused attempt ${attempt.number} as ${wire}: ${outcome.refusals.map((r) => `${r.rule}: ${r.message}`).join("; ")}`,
-        { attempt: attempt.number, data: output },
+        `Publish refused attempt ${attempt.number} as ${wire}: ${refused}`,
+        {
+          attempt: attempt.number,
+          data: output,
+        },
       );
       await this.progress(
         `Attempt ${attempt.number}: the publish refused ${wire} (${outcome.refusals.map((r) => r.rule).join(", ")}); asking the model to fix it.`,
       );
       this.lastDiagnostics = { publish: output };
-      await this.closeOpen("publish_refused", null, output);
+      await this.closeOpen("publish_refused", `The publish refused ${wire}: ${refused}`, {
+        checkOutput: output,
+      });
       return {
         situation: {
           kind: "publish_refused",
@@ -766,6 +903,7 @@ class AcquireLoop {
     const dry = await runAuthoredTool(this.deps, this.scope, {
       vendor,
       name: draft.name,
+      versionId: version.id,
       input: draft.testInput,
       mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true },
       channel: NO_ELICITATION,
@@ -776,33 +914,49 @@ class AcquireLoop {
     if (!report) {
       const failure = dry.isError ? dry.answer : { error: "The run produced no dry-run report." };
       const line = typeof failure.error === "string" ? failure.error : JSON.stringify(failure);
-      await this.trace(
-        "dry_run",
-        `Dry run of ${wire} v${version.versionNumber} did not run: ${line}`,
-        {
-          attempt: attempt.number,
-          data: { versionId: version.id, failure },
-        },
-      );
+      const didNotRun = `The dry run of ${wire} v${version.versionNumber} did not run: ${line}`;
+      await this.trace("dry_run", didNotRun, {
+        attempt: attempt.number,
+        data: { versionId: version.id, failure },
+      });
       await this.progress(
         `Attempt ${attempt.number}: the dry run of ${wire} did not run (${line}); asking the model what to change.`,
       );
       this.lastDiagnostics = { dryRun: null, failure };
-      await this.closeOpen("run_failed", null, undefined, version.id);
+      await this.closeOpen("run_failed", didNotRun, { versionId: version.id });
       return {
         situation: { kind: "dry_run_failed", attempt: attempt.number, report: null, failure: line },
       };
     }
 
     const summary = summariseDryRun(report);
-    await this.trace(
-      "dry_run",
-      `Dry run of ${wire} v${version.versionNumber} ${report.passed ? "passed" : "failed"}: ${report.reads.length} read(s), ${report.writesPreviewed.length} write(s) previewed, ${report.writesRefused.length} refused${report.moduleError ? `; module error: ${report.moduleError}` : ""}.`,
-      {
+    const counts = `${report.reads.length} read(s), ${report.writesPreviewed.length} write(s) previewed, ${report.writesRefused.length} refused`;
+    const verdictOf = (moduleError: string | null | undefined) =>
+      `The dry run of ${wire} v${version.versionNumber} ${report.passed ? "passed" : "failed"}: ${counts}${moduleError ? `; module error: ${moduleError}` : ""}.`;
+    await this.trace("dry_run", verdictOf(report.moduleError), {
+      attempt: attempt.number,
+      data: { versionId: version.id, report: report as unknown as Record<string, unknown> },
+    });
+    // The summary keeps the error's first line; the stack is in the trace and the report.
+    const verdict = verdictOf(report.moduleError?.split("\n")[0]);
+    for (const read of summary.reads) {
+      // The runner recorded the proxy's mark on a read (GRA-79): the report is on the version row
+      // above, the attempt closes on it, and the job ends without asking the model.
+      const unreached = vendorUnreachedOf(read, read);
+      if (!unreached) continue;
+      const ended = describeVendorUnreached(unreached, `${read.method} ${read.path}`);
+      await this.trace("vendor_error", ended.summary, {
         attempt: attempt.number,
-        data: { versionId: version.id, report: report as unknown as Record<string, unknown> },
-      },
-    );
+        data: { versionId: version.id, read },
+      });
+      this.lastDiagnostics = { dryRun: summary };
+      await this.closeOpen(
+        "run_failed",
+        `The dry run of ${wire} v${version.versionNumber} did not reach the vendor: ${ended.summary}`,
+        { versionId: version.id },
+      );
+      throw this.end("vendor_unreachable", ended.message, { dryRun: summary });
+    }
     if (
       report.moduleError &&
       (report.reads as { status?: number }[]).some((r) => (r.status ?? 0) >= 400)
@@ -817,7 +971,7 @@ class AcquireLoop {
         `Attempt ${attempt.number}: the dry run of ${wire} v${version.versionNumber} failed; asking the model to diagnose and fix it.`,
       );
       this.lastDiagnostics = { dryRun: summary };
-      await this.closeOpen("dry_run_failed", null, undefined, version.id);
+      await this.closeOpen("dry_run_failed", verdict, { versionId: version.id });
       return {
         situation: {
           kind: "dry_run_failed",
@@ -828,7 +982,42 @@ class AcquireLoop {
       };
     }
 
-    await this.closeOpen("passed", null, undefined, version.id);
+    // The pass is what moves the pointer: the definition becomes this draft's and the tool runs as
+    // this version, in one transaction, before the attempt closes and the tool is promoted. The
+    // pointer only moves forward (`activateToolVersion`): when another job over the same tool has
+    // activated a later version meanwhile, this one passed but is not current — the tool works, as
+    // the newer version, so the attempt still closes `passed`, the tool is still promoted, and the
+    // result names the version that is current.
+    let currentVersion = version.versionNumber;
+    try {
+      await activateToolVersion(
+        this.ctx,
+        this.principal,
+        outcome.tool.id,
+        version.id,
+        {
+          description: draft.description,
+          inputSchema: draft.inputSchema,
+          annotations: outcome.annotations,
+          defaultConnectionId: connectionId,
+        },
+        this.deps.tool,
+      );
+    } catch (error) {
+      if (!(error instanceof ServiceError) || error.code !== "CONFLICT") throw error;
+      const later = error.details?.currentVersionNumber;
+      if (typeof later !== "number") throw error;
+      currentVersion = later;
+      await this.trace(
+        "publish",
+        `${wire} v${version.versionNumber} passed its dry run but v${later} is already current — a later job activated it — so the pointer stays there.`,
+        {
+          attempt: attempt.number,
+          data: { versionId: version.id, version: version.versionNumber, currentVersion: later },
+        },
+      );
+    }
+    await this.closeOpen("passed", verdict, { versionId: version.id });
     const promoted = await promotePublished(
       this.ctx,
       this.scope,
@@ -836,18 +1025,30 @@ class AcquireLoop {
       this.deps,
       this.deps.notifier,
     );
+    const runsAs =
+      currentVersion === version.versionNumber
+        ? `${wire} now runs as v${version.versionNumber}`
+        : `v${version.versionNumber} is not current — a later job made v${currentVersion} current first — so ${wire} runs as v${currentVersion}`;
     await this.progress(
-      `Attempt ${attempt.number}: the dry run passed. ${wire} v${version.versionNumber} is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
+      `Attempt ${attempt.number}: the dry run passed. ${runsAs} and is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
     );
+    // The tool as it now runs: the activated draft's definition, or — when a later job's version is
+    // current — that version's. `outcome.tool` is the row as the unactivated publish left it, so it
+    // is not read here (GRA-78's `inputSchema` is what `run_tool`'s input must match now).
+    const current = await getToolById(this.ctx, this.principal, outcome.tool.id, this.deps.tool);
     return {
       success: {
         tool: wire,
+        vendor,
+        name: draft.name,
         toolId: outcome.tool.id,
-        version: version.versionNumber,
+        version: currentVersion,
+        inputSchema: current?.inputSchema ?? draft.inputSchema,
         annotations: {
-          readOnlyHint: outcome.annotations.readOnly,
-          destructiveHint: outcome.annotations.destructive,
+          readOnlyHint: current?.readOnly ?? outcome.annotations.readOnly,
+          destructiveHint: current?.destructive ?? outcome.annotations.destructive,
         },
+        next: acquireNextStep(vendor, draft.name),
       },
     };
   }
@@ -860,12 +1061,25 @@ class AcquireLoop {
     return this.open?.proofFailed ? "proof_failed" : "abandoned";
   }
 
-  /** Close the open attempt, if any, and add it to what was tried. */
+  /**
+   * How an attempt the loop sets aside unpublished ended: the failed proof reads first, when there
+   * were any, then what happened next — the model drafted again or gave up, or a bound was hit.
+   */
+  private setAside(then: string): string {
+    const opening = this.open?.proofSummary ?? "Set aside unpublished";
+    return `${opening}; ${then}${/[.!?]$/.test(then) ? "" : "."}`;
+  }
+
+  /**
+   * Close the open attempt, if any, and add it to what was tried. `summary` is how the attempt
+   * ended in the loop's words and is what `tried` carries (GRA-70). The row's `diagnosis` is never
+   * rewritten here: it is the note the draft opened with, which is what a resumed job reads back as
+   * the attempt's `note`; how the attempt ended is in the summary, the trace and the job's result.
+   */
   private async closeOpen(
     outcome: Exclude<AcquireAttemptOutcome, "running">,
-    diagnosis: string | null,
-    checkOutput?: Record<string, unknown>,
-    versionId?: string,
+    summary: string,
+    extra: { checkOutput?: Record<string, unknown>; versionId?: string } = {},
   ): Promise<void> {
     const attempt = this.open;
     if (!attempt) return;
@@ -878,16 +1092,16 @@ class AcquireLoop {
         outcome,
         usage: attempt.usage,
         redaction: this.redaction,
-        ...(checkOutput === undefined ? {} : { checkOutput }),
-        ...(versionId === undefined ? {} : { versionId }),
-        ...(diagnosis === null ? {} : { diagnosis }),
+        ...(extra.checkOutput === undefined ? {} : { checkOutput: extra.checkOutput }),
+        ...(extra.versionId === undefined ? {} : { versionId: extra.versionId }),
       },
       this.deps.acquireJob,
     );
     this.tried.push({
       attempt: attempt.number,
       outcome,
-      summary: diagnosis ?? attempt.row.diagnosis ?? `${attempt.draft.name}: ${outcome}`,
+      summary,
+      note: attempt.row.diagnosis ?? null,
     });
   }
 
@@ -899,29 +1113,39 @@ class AcquireLoop {
       this.job.id,
       this.deps.acquireJob,
     );
+    const stopped = "The process running this attempt stopped; the job resumed from the goal.";
     for (const row of attempts) {
       if (row.outcome === "running") {
+        // The row keeps the dead process's note; the stop is the summary's to tell.
         await finishAcquireAttempt(
           this.ctx,
           this.scope,
           row.id,
-          {
-            outcome: "abandoned",
-            diagnosis: "The process running this attempt stopped; the job resumed from the goal.",
-          },
+          { outcome: "abandoned" },
           this.deps.acquireJob,
         );
+        this.tried.push({
+          attempt: row.attemptNumber,
+          outcome: "abandoned",
+          summary: stopped,
+          note: row.diagnosis ?? null,
+        });
+        continue;
       }
+      // The row holds its outcome and the model's note, not the loop's line; the sentence for the
+      // outcome stands in.
       this.tried.push({
         attempt: row.attemptNumber,
-        outcome: row.outcome === "running" ? "abandoned" : row.outcome,
-        summary: row.diagnosis ?? row.outcome,
+        outcome: row.outcome,
+        summary: OUTCOME_SENTENCES[row.outcome],
+        note: row.diagnosis ?? null,
       });
     }
   }
 
   private async sandbox(): Promise<SandboxHandle> {
     if (this.handle) return this.handle;
+    await this.step("opening the sandbox");
     try {
       this.handle = await openAgentSandbox(this.deps, this.scope);
     } catch (error) {
@@ -935,6 +1159,21 @@ class AcquireLoop {
   private async progress(line: string): Promise<void> {
     await appendAcquireJobProgress(this.ctx, this.scope, this.job.id, [line], this.deps.acquireJob);
     await this.trace("progress", line);
+  }
+
+  /**
+   * A progress line written as a step *starts*, labelled with its phase: `Attempt N: <text>` while
+   * an attempt is open, the text alone capitalised before one. Every line in a job's progress
+   * therefore says where in the loop it was written, and a poller that reads the same last line
+   * twice knows the step it names is still running (GRA-71).
+   */
+  private async step(text: string): Promise<void> {
+    const open = this.open;
+    await this.progress(
+      open
+        ? `Attempt ${open.number}: ${text}.`
+        : `${text.charAt(0).toUpperCase()}${text.slice(1)}.`,
+    );
   }
 
   private async trace(
@@ -1015,6 +1254,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body: null,
       error: `${refusal.reason ?? "refused"}: ${refusal.message ?? ""}`.trim(),
       redirectTo: null,
+      reason: null,
     };
   }
   const run = outcome as {
@@ -1033,6 +1273,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
         ? `${failure.error}${failure.stderrTail ? ` — ${failure.stderrTail}` : ""}`
         : "the run failed",
       redirectTo: null,
+      reason: null,
     };
   }
   const report = readDryRunReport(run.result);
@@ -1041,6 +1282,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     ok?: boolean;
     body?: string;
     location?: string | null;
+    reason?: string | null;
   } | null;
   if (report?.moduleError) {
     return {
@@ -1050,6 +1292,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body: null,
       error: report.moduleError,
       redirectTo: null,
+      reason: null,
     };
   }
   if (!probe || typeof probe.status !== "number") {
@@ -1060,9 +1303,27 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body: null,
       error: "The probe returned no answer.",
       redirectTo: null,
+      reason: null,
     };
   }
   const body = typeof probe.body === "string" ? probe.body : null;
+  // The proxy's mark (GRA-79): only a refusal made for want of a vendor response carries one.
+  const reason = isVendorUnreachedReason(probe.reason) ? probe.reason : null;
+  if (reason) {
+    const fields = refusalFieldsOf(body);
+    return {
+      path,
+      ok: false,
+      status: probe.status,
+      body,
+      error: describeVendorUnreached(
+        { reason, host: fields.host ?? "the vendor", code: fields.code },
+        `GET ${path}`,
+      ).summary,
+      redirectTo: null,
+      reason,
+    };
+  }
   if (isRedirect(probe.status)) {
     const redirect = describeRedirect(path, probe.location ?? null, connection);
     return {
@@ -1072,6 +1333,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       body,
       error: redirect.error,
       redirectTo: redirect.host,
+      reason: null,
     };
   }
   return {
@@ -1081,6 +1343,58 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     body,
     error: null,
     redirectTo: null,
+    reason: null,
+  };
+}
+
+/**
+ * A read the proxy refused because no response came from the vendor (GRA-79), as the job names it:
+ * the reason off the proxy's mark, the host and the cause's code off the proxy's body. Null for
+ * any read the vendor answered, whatever the status — the mark, not the status, is the test.
+ */
+type VendorUnreached = { reason: string; host: string; code: string | null };
+
+function vendorUnreachedOf(
+  read: { reason?: string | null },
+  fields: { host?: string | null; code?: string | null },
+): VendorUnreached | null {
+  if (!isVendorUnreachedReason(read.reason)) return null;
+  return { reason: read.reason, host: fields.host ?? "the vendor", code: fields.code ?? null };
+}
+
+/** `code` and `host` off the proxy's refusal body, when the probe's body is one; nulls otherwise. */
+function refusalFieldsOf(body: string | null): { host: string | null; code: string | null } {
+  let parsed: unknown = null;
+  try {
+    parsed = body === null ? null : JSON.parse(body);
+  } catch {
+    parsed = null;
+  }
+  const field = (name: "host" | "code") => {
+    const value =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as Record<string, unknown>)[name]
+        : undefined;
+    return typeof value === "string" ? value : null;
+  };
+  return { host: field("host"), code: field("code") };
+}
+
+/**
+ * How a job that could not reach the vendor ends, in two lengths: the `summary` closes the attempt
+ * and the trace, the `message` is the result's, and tells the agent what can be done — nothing to
+ * the module. The code is in brackets as the runner prints a cause's (`describeCause` in
+ * `runner.mjs`), so one failure reads the same from either side.
+ */
+function describeVendorUnreached(
+  unreached: VendorUnreached,
+  call: string,
+): { summary: string; message: string } {
+  const code = unreached.code ? ` [${unreached.code}]` : "";
+  const summary = `The proxy got no response from ${unreached.host} on ${call}: ${unreached.reason}${code}.`;
+  return {
+    summary,
+    message: `${summary} No change to the module can fix this; try again later, or check the connection's host.`,
   };
 }
 

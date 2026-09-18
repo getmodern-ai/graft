@@ -39,7 +39,8 @@ import { authoredToolName } from "./tool-names";
  * 0003: `run_tool` exists for the turn a tool was just published in, and runs exactly what the
  * first-class tool runs).
  *
- * In order: the tool and its current version, from the person's toolbox (ADR 0007); the tool's
+ * In order: the tool and its current version — or the version the caller names, for `acquire`'s
+ * dry run of one not yet activated — from the person's toolbox (ADR 0007); the tool's
  * default connection, which must be in the agent's scope — the scope is where the security property
  * lives, and a tool bound to a connection the agent was never given is refused here, before any
  * token exists; the input against the stored schema; then **mint, run, tally** in that order — the
@@ -345,6 +346,13 @@ export type AuthoredRunArgs = {
   mode: RunMode;
   /** How an ask reaches the person, when the rule says ask (`approval.ts`). */
   channel: AskChannel;
+  /**
+   * A version of the tool to run instead of the one the pointer names — `acquire`'s dry run of a
+   * version not yet activated (GRA-77), whose report `recordDryRun` then stamps on that version.
+   * Refused as `version_not_found` when it is not this tool's. Unset, the pointer decides, and a
+   * tool with none is refused as `tool_has_no_version`.
+   */
+  versionId?: string;
 };
 
 /** The vendor's answer verbatim, or — marked for the harness — a refusal or the runner's failure. */
@@ -397,9 +405,10 @@ async function runHeld(
     reason: string,
     message: string,
     ids?: { toolId?: string; versionId?: string },
+    details?: Record<string, unknown>,
   ): Promise<AuthoredRunAnswer> => {
     await record("refused", ids);
-    return { answer: refusal(reason, message), isError: true };
+    return { answer: refusal(reason, message, details), isError: true };
   };
 
   const tool = await getToolByName(
@@ -415,15 +424,22 @@ async function runHeld(
     );
   }
   const ids = { toolId: tool.id };
-  const version = tool.currentVersionId
-    ? await getToolVersion(ctx, principal, tool.currentVersionId, deps.tool)
-    : null;
+  const versionId = args.versionId ?? tool.currentVersionId;
+  const found = versionId ? await getToolVersion(ctx, principal, versionId, deps.tool) : null;
+  // A version read by id must be this tool's: the read is scoped to the person, not the tool.
+  const version = found && found.toolId === tool.id ? found : null;
   if (!version) {
-    return refuse(
-      "tool_has_no_version",
-      `${wireName} has no published version to run. Publish it first.`,
-      ids,
-    );
+    return args.versionId
+      ? refuse(
+          "version_not_found",
+          `${wireName} has no version ${args.versionId} in this toolbox.`,
+          ids,
+        )
+      : refuse(
+          "tool_has_no_version",
+          `${wireName} has no version that passed its dry run, so there is nothing to run. acquire authors one.`,
+          ids,
+        );
   }
   const versioned = { toolId: tool.id, versionId: version.id };
 
@@ -449,7 +465,11 @@ async function runHeld(
     return refuse("input_schema_invalid", validator.error, versioned);
   }
   const verdict = validator(args.input);
-  if (!verdict.ok) return refuse("input_invalid", verdict.message, versioned);
+  // The schema rides beside the problems so the second call is right (GRA-78): the caller may be
+  // `run_tool` on a client whose list never showed the tool and its schema.
+  if (!verdict.ok) {
+    return refuse("input_invalid", verdict.message, versioned, { inputSchema: tool.inputSchema });
+  }
 
   // The approval gate (ADR 0008): after the scope check, before the mint. A dry run passes it: reads
   // reach the vendor as they would for a read-only tool and every write stops at the proxy on the

@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@graft/db": "workspace:*",
+    "@graft/email": "workspace:*",
     "better-auth": "catalog:"
   },
   "devDependencies": {

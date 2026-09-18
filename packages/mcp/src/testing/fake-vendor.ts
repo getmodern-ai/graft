@@ -29,6 +29,10 @@ import { serve } from "@hono/node-server";
  * A suite that creates connections *during* the run — GRA-28's handoff, where the person's submit
  * makes the row — hands `resolve` a read of its own store and encrypts with the returned `vault`,
  * so the proxy decrypts what the connection service wrote with the same keyring.
+ *
+ * A `respond` that *throws* is the upstream fetch throwing — what the proxy sees when a vendor's
+ * name does not resolve or its port refuses — and the proxy classifies it as it would undici's
+ * (`refuseUpstreamFailure`), so a suite can make the vendor unreachable for one path (GRA-79).
  */
 
 const VAULT_SECRET = "graft-mcp-test-vault-secret-that-is-long-enough";
@@ -71,7 +75,7 @@ export type FakeVendor = {
 export async function startFakeVendor(args: {
   keys: CapabilityTokenKeys;
   connections: readonly FakeVendorConnection[];
-  /** What the vendor answers; the default is a small JSON body. */
+  /** What the vendor answers; the default is a small JSON body. A throw is the fetch failing (header). */
   respond?: (request: UpstreamRequest) => Response | Promise<Response>;
   /** A connection not among the seeds — read from a suite's store, for rows made during the run. */
   resolve?: (id: string) => Promise<ProxyConnection | null>;

@@ -170,6 +170,15 @@ beforeAll(async () => {
           headers: { location: "https://customer.demo.example/v2/moved" },
         });
       }
+      // A vendor the proxy cannot reach (GRA-79): the fetch throws as undici's does when a name
+      // does not resolve, and the real proxy turns it into its marked 502.
+      if (url.pathname === "/v2/unreachable") {
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(new Error("getaddrinfo ENOTFOUND api.demo.example"), {
+            code: "ENOTFOUND",
+          }),
+        });
+      }
       if (url.pathname === "/v2/secret-echo") {
         // The vendor quotes the key it refused — under a field name and in prose.
         return Response.json(
@@ -470,14 +479,32 @@ describe("a job that passes first time", () => {
       expect(status.status).toBe("succeeded");
       expect(status.attempts).toBe(1);
       const success = status.result as AcquireSuccess;
+      // Three names and the schema on purpose (GRA-78): a client that never refreshes its list
+      // calls the tool through run_tool from this answer alone.
       expect(success).toEqual({
         tool: LIST_ITEMS,
+        vendor: "demo",
+        name: "list-items",
         toolId: expect.any(String),
         version: 1,
+        inputSchema: LIST_ITEMS_SCHEMA,
         annotations: { readOnlyHint: true, destructiveHint: false },
+        next: 'demo__list-items is promoted into your working set; where your tool list has not refreshed, run_tool { vendor: "demo", name: "list-items", input } calls it, with input matching inputSchema.',
       });
       expect(status.progress.length).toBeGreaterThan(3);
       expect(status.progress.at(-1)).toContain("promoted into your working set");
+      // Every line names its phase (GRA-71): the job's opening, a step before the first attempt,
+      // or `Attempt N:`. A poller reading the same line twice knows which step is still running.
+      const labelled =
+        /^(Queued: |Authoring "|Asking the model |Reading the documentation: |Opening the sandbox|Attempt \d+: )/;
+      for (const line of status.progress) expect(line).toMatch(labelled);
+      expect(status.progress).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^Asking the model for a first draft/),
+          "Attempt 1: checking the module.",
+          expect.stringMatching(/^Attempt 1: publishing demo__list-items\.$/),
+        ]),
+      );
 
       await until(() => a.notifications.length >= 1);
       expect(a.notifications.length).toBeGreaterThanOrEqual(1);
@@ -564,10 +591,20 @@ describe("a job that fails and tries again", () => {
       ),
       write(
         "dry_run_failed",
-        draft({ name: "list-items-retry" }),
+        draft({
+          name: "list-items-retry",
+          description: "Lists items from Demo Orders, up to a limit — the documented path.",
+        }),
         "The dry run read GET /nope and the vendor answered 404; the documented path is /items.",
       ),
     ]);
+    // Every pointer move, so "moved only at the pass" is a fact about the moves and not the end state.
+    const moves: string[] = [];
+    const setCurrent = deps.tool.setCurrentToolVersion;
+    deps.tool.setCurrentToolVersion = async (db, personId, toolId, versionId) => {
+      moves.push(versionId);
+      return setCurrent(db, personId, toolId, versionId);
+    };
     const a = await connect(TOKEN_A);
     try {
       const { status, jobId } = await acquireAndFinish(a, {
@@ -598,15 +635,254 @@ describe("a job that fails and tries again", () => {
       const failedLine = traces.find((row) => row.kind === "dry_run" && row.attemptNumber === 1);
       expect(failedLine?.text).toContain("failed");
       expect(failedLine?.data).toMatchObject({ report: { passed: false } });
-      // Both attempts published a version of the one tool; the pointer is on the one that passed,
-      // and the tool was promoted only then.
+      // Both attempts published a version of the one tool; the pointer moved once, at the pass, onto
+      // the version that passed (GRA-77) — v1 was never current, and keeps its failed report — the
+      // definition is the passing draft's, and the tool was promoted only then.
       const toolId = failedVersion?.toolId ?? "";
       expect(store.versions.get(attempts[1]?.versionId ?? "")?.toolId).toBe(toolId);
-      expect(store.tools.get(toolId)?.currentVersionId).toBe(attempts[1]?.versionId);
+      expect(moves).toEqual([attempts[1]?.versionId]);
+      expect(store.tools.get(toolId)).toMatchObject({
+        currentVersionId: attempts[1]?.versionId,
+        description: "Lists items from Demo Orders, up to a limit — the documented path.",
+      });
+      expect(store.versions.get(attempts[0]?.versionId ?? "")?.dryRunOutcome).toMatchObject({
+        passed: false,
+      });
       expect(store.isPromoted(AGENT_A, toolId)).toBe(true);
       expect(
         store.changes.filter((c) => c.toolId === toolId && c.change === "promote"),
       ).toHaveLength(1);
+    } finally {
+      deps.tool.setCurrentToolVersion = setCurrent;
+      await a.close();
+    }
+  }, 30_000);
+
+  it("does not publish a draft whose proof read failed when the model answers proceed: the refusal is shown once, and the redraft publishes", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-proven", path: "/nope", proofReads: ["/nope"] }),
+        "Drafted around GET /nope.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing despite the 404." } },
+      write(
+        "proof",
+        draft({ name: "list-proven", proofReads: ["/items?limit=1"] }),
+        "The documented path is /items.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "Every read answered." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items, proven first",
+      });
+      expect(status.status).toBe("succeeded");
+      // v1, not v2: attempt 1 never published (GRA-72).
+      expect(status.result).toMatchObject({
+        tool: authoredToolName("demo", "list-proven"),
+        version: 1,
+      });
+      const proofs = (scripted.conversations[0]?.situations ?? []).filter(
+        (s) => s.kind === "proof",
+      );
+      expect(proofs.map((s) => (s.kind === "proof" ? [s.attempt, s.refused] : null))).toEqual([
+        [1, null],
+        [
+          1,
+          expect.stringContaining(
+            "Your `proceed` was refused: 1 of 1 proof read(s) failed (GET /nope 404), and a draft is published only when every proof read passes.",
+          ),
+        ],
+        [2, null],
+      ]);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([
+        [1, "proof_failed"],
+        [2, "passed"],
+      ]);
+      expect(
+        traces.filter((row) => row.kind === "publish").map((row) => row.attemptNumber),
+      ).toEqual([2]);
+      expect(status.progress).toContain(
+        "Attempt 1: 1 of 1 proof read(s) failed (GET /nope 404), so the draft is not published; asking the model what to change.",
+      );
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("ends model_failed when the model answers proceed a second time over a failed proof read", async () => {
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-stubborn", path: "/nope", proofReads: ["/nope"] }),
+        "Drafted around GET /nope.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing anyway." } },
+      { on: "proof", answer: { kind: "proceed", note: "Publishing anyway, again." } },
+    ]);
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items, stubbornly",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("model_failed");
+      expect(failure.message).toContain("proceed twice after 1 of 1 proof read(s) failed");
+      expect(failure.tried).toEqual([
+        {
+          attempt: 1,
+          outcome: "proof_failed",
+          summary:
+            "1 of 1 proof read(s) failed (GET /nope 404); the model answered proceed a second time.",
+          note: "Drafted around GET /nope.",
+        },
+      ]);
+      const { traces } = rowsOf(jobId);
+      expect(traces.some((row) => row.kind === "publish")).toBe(false);
+      expect(await a.names()).not.toContain(authoredToolName("demo", "list-stubborn"));
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /**
+   * The network's answer is not the vendor's (GRA-79): the job ends on the first proof read the
+   * proxy could not make, naming the host, the reason and the code, and the model is never shown
+   * the 502 as something to fix.
+   */
+  it("ends vendor_unreachable on a proof read the proxy got no response for, after one attempt and no second model turn", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-unreachable", path: "/unreachable", proofReads: ["/unreachable"] }),
+        "Reading /unreachable first.",
+      ),
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items of a vendor that is down",
+      });
+      expect(status.status).toBe("failed");
+      expect(status.attempts).toBe(1);
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("vendor_unreachable");
+      expect(failure.message).toBe(
+        "The proxy got no response from api.demo.example on GET /unreachable: upstream_unreachable [ENOTFOUND]. No change to the module can fix this; try again later, or check the connection's host.",
+      );
+      expect(failure.tried).toEqual([
+        {
+          attempt: 1,
+          outcome: "run_failed",
+          summary:
+            "The proxy got no response from api.demo.example on GET /unreachable: upstream_unreachable [ENOTFOUND].",
+          note: "Reading /unreachable first.",
+        },
+      ]);
+      expect(failure.lastDiagnostics).toMatchObject({
+        proofReads: [
+          {
+            path: "/unreachable",
+            ok: false,
+            status: 502,
+            reason: "upstream_unreachable",
+            error: expect.stringContaining("ENOTFOUND"),
+          },
+        ],
+      });
+      // The model saw the goal and nothing after it: no proof situation, no second draft.
+      expect(scripted.conversations[0]?.situations.map((s) => s.kind)).toEqual(["goal"]);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome, row.versionId])).toEqual([
+        [1, "run_failed", null],
+      ]);
+      expect(traces.some((row) => row.kind === "publish")).toBe(false);
+      const vendorError = traces.find((row) => row.kind === "vendor_error");
+      expect(vendorError?.data).toMatchObject({
+        path: "/unreachable",
+        status: 502,
+        reason: "upstream_unreachable",
+        code: "ENOTFOUND",
+        host: "api.demo.example",
+      });
+      expect(status.progress.at(-1)).toContain("Stopped: The proxy got no response from");
+      // The proxy's side of the same event: its 502, marked, and the sandbox never dialled anyone.
+      expect(vendor.events.at(-1)).toMatchObject({
+        outcome: "upstream_unreachable",
+        status: 502,
+        failure: expect.stringContaining("ENOTFOUND"),
+      });
+      expect(await a.names()).not.toContain(authoredToolName("demo", "list-unreachable"));
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("ends vendor_unreachable when the dry run's read gets no response, with the failed report on the version row", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-unreachable-dry", path: "/unreachable" }),
+        "Drafted around GET /unreachable.",
+      ),
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items of a vendor that is down, unproven",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("vendor_unreachable");
+      expect(failure.message).toContain("api.demo.example");
+      expect(failure.message).toContain("upstream_unreachable [ENOTFOUND]");
+      expect(failure.message).toContain("GET /unreachable");
+      expect(scripted.conversations[0]?.situations.map((s) => s.kind)).toEqual(["goal"]);
+
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({ attemptNumber: 1, outcome: "run_failed" });
+      expect(attempts[0]?.versionId).toEqual(expect.any(String));
+      expect(failure.tried[0]?.summary).toContain("api.demo.example");
+      expect(failure.tried[0]?.summary).toContain("[ENOTFOUND]");
+      // The version was published and dry-run; the report on its row carries the runner's record
+      // of the marked read, which is what the job read the ending from.
+      const version = store.versions.get(attempts[0]?.versionId ?? "");
+      expect(version?.dryRunOutcome).toMatchObject({
+        dryRun: true,
+        passed: false,
+        reads: [
+          {
+            method: "GET",
+            path: "/unreachable",
+            status: 502,
+            reason: "upstream_unreachable",
+            code: "ENOTFOUND",
+            host: "api.demo.example",
+          },
+        ],
+      });
+      expect(failure.lastDiagnostics).toMatchObject({
+        dryRun: { passed: false, reads: [{ reason: "upstream_unreachable" }] },
+      });
+      const vendorError = traces.find((row) => row.kind === "vendor_error");
+      expect(vendorError?.data).toMatchObject({
+        versionId: attempts[0]?.versionId,
+        read: { reason: "upstream_unreachable", code: "ENOTFOUND" },
+      });
+      // Published, never promoted: the tool is not in the agent's list.
+      expect(await a.names()).not.toContain(authoredToolName("demo", "list-unreachable-dry"));
     } finally {
       await a.close();
     }
@@ -641,22 +917,150 @@ describe("a job that fails and tries again", () => {
       expect(failure.lastDiagnostics).toMatchObject({
         dryRun: { passed: false, reads: [{ method: "GET", path: "/nope", status: 404 }] },
       });
+      // Each summary is how that attempt ended, the model's note beside it (GRA-70): before, the
+      // second draft's note stood in for the first attempt's ending.
+      const listNothing = authoredToolName("demo", "list-nothing");
       expect(failure.tried).toEqual([
-        { attempt: 1, outcome: "dry_run_failed", summary: "First guess: /nope." },
-        { attempt: 2, outcome: "dry_run_failed", summary: "Second guess: /nope again." },
+        {
+          attempt: 1,
+          outcome: "dry_run_failed",
+          summary: `The dry run of ${listNothing} v1 failed: 1 read(s), 0 write(s) previewed, 0 refused; module error: Error: GET 404: {"error":"not found"}.`,
+          note: "First guess: /nope.",
+        },
+        {
+          attempt: 2,
+          outcome: "dry_run_failed",
+          summary: `The dry run of ${listNothing} v2 failed: 1 read(s), 0 write(s) previewed, 0 refused; module error: Error: GET 404: {"error":"not found"}.`,
+          note: "Second guess: /nope again.",
+        },
       ]);
       expect(status.progress.at(-1)).toContain("Stopped");
-      const { job, traces } = rowsOf(jobId);
+      const { job, traces, attempts } = rowsOf(jobId);
       expect(job.status).toBe("failed");
       expect(traces.at(-1)).toMatchObject({
         kind: "result",
         text: expect.stringContaining("attempt_budget"),
       });
-      expect(await a.names()).not.toContain(authoredToolName("demo", "list-nothing"));
+      const nothing = authoredToolName("demo", "list-nothing");
+      expect(await a.names()).not.toContain(nothing);
+
+      // What a job that never passed leaves (GRA-77): both versions with their failed reports, the
+      // tool with no current version — findable by nobody, promotable by nobody, runnable by nobody.
+      const versions = attempts.map((row) => store.versions.get(row.versionId ?? ""));
+      expect(versions.map((v) => v?.versionNumber)).toEqual([1, 2]);
+      for (const version of versions) {
+        expect(version?.dryRunOutcome).toMatchObject({ passed: false });
+      }
+      const tool = store.tools.get(versions[0]?.toolId ?? "");
+      expect(tool).toMatchObject({ name: "list-nothing", currentVersionId: null });
+      const found = body(await a.call("find_tool", { query: "list-nothing" }));
+      expect(found.tools).toEqual([]);
+      const promoted = await a.call("promote", { vendor: "demo", name: "list-nothing" });
+      expect(promoted.isError).toBe(true);
+      expect(body(promoted)).toMatchObject({ error: "refused", reason: "tool_has_no_version" });
+      const ran = await a.call("run_tool", { vendor: "demo", name: "list-nothing", input: {} });
+      expect(body(ran)).toMatchObject({ error: "refused", reason: "tool_has_no_version" });
+      expect(store.isPromoted(AGENT_A, tool?.id ?? "")).toBe(false);
     } finally {
       await a.close();
     }
   }, 30_000);
+
+  it("a version that passes after a later one was activated leaves the pointer there, and the job still succeeds naming the current version", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ name: "list-raced" }), "Drafted list-raced around GET /items."),
+    ]);
+    // Another job's pass lands between this job's dry run and its activation: as the report is
+    // recorded on v1, v2 appears on the tool and becomes current.
+    const record = deps.tool.recordToolVersionDryRun;
+    let racedVersionId: string | null = null;
+    deps.tool.recordToolVersionDryRun = async (db, personId, versionId, outcome) => {
+      const stamped = await record(db, personId, versionId, outcome);
+      const tool = store.tools.get(stamped?.toolId ?? "");
+      if (tool?.name === "list-raced" && racedVersionId === null) {
+        const v2 = await deps.tool.insertToolVersion(db, {
+          id: "list_raced_v2",
+          toolId: tool.id,
+          versionNumber: 2,
+          path: stamped?.path ?? "",
+          sourceHash: "raced",
+          checkOutput: { refusals: [], advice: [] },
+        });
+        await deps.tool.setCurrentToolVersion(db, personId, tool.id, v2.id);
+        racedVersionId = v2.id;
+      }
+      return stamped;
+    };
+    const a = await connect(TOKEN_A);
+    const raced = authoredToolName("demo", "list-raced");
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List, racing another job",
+      });
+      expect(status.status).toBe("succeeded");
+      expect(status.result).toMatchObject({ tool: raced, version: 2 });
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => row.outcome)).toEqual(["passed"]);
+      const v1 = store.versions.get(attempts[0]?.versionId ?? "");
+      expect(v1).toMatchObject({ versionNumber: 1, dryRunOutcome: { passed: true } });
+      const tool = store.tools.get(v1?.toolId ?? "");
+      expect(tool?.currentVersionId).toBe(racedVersionId);
+      expect(store.isPromoted(AGENT_A, tool?.id ?? "")).toBe(true);
+      expect(await a.names()).toContain(raced);
+      expect(traces.filter((row) => row.kind === "publish").map((row) => row.text)).toContainEqual(
+        expect.stringContaining("v2 is already current"),
+      );
+      expect(status.progress.at(-1)).toContain("so demo__list-raced runs as v2");
+    } finally {
+      deps.tool.recordToolVersionDryRun = record;
+      await a.close();
+    }
+  }, 30_000);
+
+  it("a later job over the same vendor and name publishes v2 and the pointer lands on it", async () => {
+    deps.acquire = { maxAttempts: 1, tokenCeiling: 400_000 };
+    deps.model = createScriptedModel([
+      write("goal", draft({ name: "list-later", path: "/nope" }), "Guessed /nope."),
+    ]);
+    const a = await connect(TOKEN_A);
+    const later = authoredToolName("demo", "list-later");
+    try {
+      const first = await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List later" });
+      expect(first.status.status).toBe("failed");
+      const [v1] = rowsOf(first.jobId).attempts.map((row) =>
+        store.versions.get(row.versionId ?? ""),
+      );
+      expect(v1).toMatchObject({ versionNumber: 1, dryRunOutcome: { passed: false } });
+      const toolId = v1?.toolId ?? "";
+      expect(store.tools.get(toolId)?.currentVersionId).toBeNull();
+      expect(body(await a.call("find_tool", { query: "list-later" })).tools).toEqual([]);
+
+      deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000 };
+      deps.model = createScriptedModel([
+        write("goal", draft({ name: "list-later" }), "Read the documentation this time: /items."),
+      ]);
+      const second = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List later, again",
+      });
+      expect(second.status.status).toBe("succeeded");
+      expect(second.status.result).toMatchObject({ tool: later, toolId, version: 2 });
+      const [v2] = rowsOf(second.jobId).attempts.map((row) =>
+        store.versions.get(row.versionId ?? ""),
+      );
+      expect(v2).toMatchObject({ toolId, versionNumber: 2, dryRunOutcome: { passed: true } });
+      expect(store.tools.get(toolId)?.currentVersionId).toBe(v2?.id);
+      // v1 is still there with its report (ADR 0009), and the tool is now findable and in the list.
+      expect(store.versions.get(v1?.id ?? "")).toMatchObject({ dryRunOutcome: { passed: false } });
+      expect(body(await a.call("find_tool", { query: "list-later" })).tools).toMatchObject([
+        { tool: later, promoted: true },
+      ]);
+      expect(await a.names()).toContain(later);
+    } finally {
+      await a.close();
+    }
+  }, 60_000);
 
   it("ends on the token ceiling with a result naming it", async () => {
     deps.acquire = { maxAttempts: 4, tokenCeiling: 1_000 };
@@ -719,13 +1123,17 @@ describe("a job that fails and tries again", () => {
       expect(rowsOf(jobId).job.result).not.toMatchObject({
         message: expect.stringContaining("sk-live-"),
       });
+      // The row keeps the draft's note; the refusal is the attempt's summary (GRA-70).
       expect(
         rowsOf(jobId).attempts.map((r) => ({ outcome: r.outcome, diagnosis: r.diagnosis })),
-      ).toEqual([
+      ).toEqual([{ outcome: "abandoned", diagnosis: "Never reached." }]);
+      expect(failure.tried).toEqual([
         {
+          attempt: 1,
           outcome: "abandoned",
-          diagnosis:
-            "The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
+          summary:
+            "Set aside unpublished; The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403).",
+          note: "Never reached.",
         },
       ]);
       expect(runnerEvents.slice(before)).toContainEqual({
@@ -736,6 +1144,39 @@ describe("a job that fails and tries again", () => {
         failure:
           "sandbox_unavailable: The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
       });
+    } finally {
+      sandbox.ensure = ensure;
+      await a.close();
+    }
+  });
+
+  it("ends sandbox_unavailable naming every cause and its code when the backing throws an Error with a chain", async () => {
+    // The other thing a backing throws: an Error wrapping undici's `fetch failed`, which says
+    // nothing about what failed — the host and ENOTFOUND are two causes down (GRA-80). One hosted
+    // job reported `TypeError: fetch failed` and nothing else.
+    const ensure = sandbox.ensure;
+    sandbox.ensure = async () => {
+      throw new Error("the toolbox could not be mounted", {
+        cause: new TypeError("fetch failed", {
+          cause: Object.assign(new Error("getaddrinfo ENOTFOUND drives.blaxel.example"), {
+            code: "ENOTFOUND",
+          }),
+        }),
+      });
+    };
+    deps.model = createScriptedModel([write("goal", draft(), "Never reached.")]);
+    const a = await connect(TOKEN_A);
+    try {
+      const { status } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Open a sandbox whose drive host does not resolve",
+      });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("sandbox_unavailable");
+      expect(failure.message).toBe(
+        "The sandbox is unavailable: the toolbox could not be mounted (caused by TypeError: fetch failed <- Error [ENOTFOUND]: getaddrinfo ENOTFOUND drives.blaxel.example)",
+      );
     } finally {
       sandbox.ensure = ensure;
       await a.close();
@@ -765,6 +1206,18 @@ describe("a job that fails and tries again", () => {
       const failure = status.result as AcquireFailure;
       expect(failure.failure).toBe("model_gave_up");
       expect(failure.message).toContain("customer.demo.example");
+      // The attempt's summary opens with the read that failed it, then the give-up; the note is
+      // the draft's own (GRA-70).
+      expect(failure.tried).toEqual([
+        {
+          attempt: 1,
+          outcome: "proof_failed",
+          summary:
+            "1 of 1 proof read(s) failed (GET /moved 303); the model gave up: The vendor answers at customer.demo.example, which the connection does not declare.",
+          note: "Reading /moved.",
+        },
+      ]);
+      expect(status.progress).toContain("Attempt 1: proof read 1 of 1: GET /moved.");
       // What the model was shown: the status, the host, and the remedy.
       const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
       const read = proof?.kind === "proof" ? proof.reads[0] : undefined;
@@ -1102,6 +1555,9 @@ describe("the runner", () => {
       [2, "passed"],
     ]);
     expect(finished.result).toMatchObject({ tool: LIST_ITEMS });
+    // The abandoned row keeps the dead process's own note (GRA-70): the loop never rewrites a row's
+    // diagnosis, so a resumed job's `tried[].note` is always what opened the draft.
+    expect(attempts[0]).toMatchObject({ diagnosis: "A draft the dead process never finished." });
   }, 30_000);
 
   it("leaves a running job with a live heartbeat alone", async () => {

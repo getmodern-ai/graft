@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, describe, expect, it } from "vitest";
 
+import { BUILD_APPROVAL_ON_THE_PAGE } from "./connection-request";
 import type { McpDeps } from "./deps";
 import { createToolListChangedNotifier } from "./notifier";
 import { INSTRUCTIONS_BUDGET, openAgentSession, SERVER_INSTRUCTIONS } from "./session";
@@ -22,7 +23,7 @@ import { META_TOOLS } from "./tools/meta";
  * voice; every fixed tool's description opens with when to call it and says what to do with a
  * handoff where it can return one; and the sentences the instructions share with the Hermes skill
  * (`skills/hermes-graft/SKILL.md`) are present in both, so the two cannot disagree on the order of
- * operations, the approval rule, the secrets rule or `run_tool`.
+ * operations, the approval rule, the secrets rule, `run_tool` or where its input schema is read.
  */
 
 const TOKEN = "grft_session_test_token_0000000000000000000000";
@@ -144,6 +145,7 @@ describe("SERVER_INSTRUCTIONS", () => {
       "exactly as returned",
       "then wait",
       "run_tool { vendor, name, input }",
+      "inputSchema for run_tool",
       "notifications/tools/list_changed",
       "vendor__name",
       "the authoring tools (read_web_page, write_file, check_tool, publish_tool) or an execute__ tool",
@@ -263,6 +265,7 @@ const SHARED = [
   // A snapshotted list.
   "some clients snapshot the tool list per conversation",
   "run_tool { vendor, name, input } calls it by name",
+  "the acquire result and find_tool carry the tool's inputSchema for run_tool",
   "tools/list_changed",
   // The approval rule (ADR 0008 as amended).
   "a read-only tool never asks",
@@ -283,6 +286,34 @@ describe("the instructions and the Hermes skill", () => {
       expect(instructions, `instructions: ${sentence}`).toContain(needle);
       expect(skill, `SKILL.md: ${sentence}`).toContain(needle);
     }
+  });
+});
+
+/**
+ * GRA-75: the person may grant the build approval on the connection page, so no text the agent
+ * reads promises a second link. Pinned as words, like SHARED, between `request_connection`'s
+ * description, the awaiting answer's sentence and the skill — not the instructions, which have no
+ * room for it under the budget (1774 of 1800 on 2026-09-18); the description is the long form.
+ */
+describe("the build approval on the connection page", () => {
+  it("is said the same way by request_connection's description, its awaiting answer and the Hermes skill", async () => {
+    const skill = words(await readFile(HERMES_SKILL_PATH, "utf8"));
+    const description = words(
+      META_TOOLS.find((tool) => tool.definition.name === "request_connection")?.definition
+        .description ?? "",
+    );
+    const awaiting = words(BUILD_APPROVAL_ON_THE_PAGE);
+    for (const sentence of [
+      "allow you to build tools against the connection, on by default",
+      "acquire against it starts without a second link",
+    ]) {
+      const needle = words(sentence);
+      expect(description, `description: ${sentence}`).toContain(needle);
+      expect(awaiting, `awaiting answer: ${sentence}`).toContain(needle);
+      expect(skill, `SKILL.md: ${sentence}`).toContain(needle);
+    }
+    expect(description).toContain(words("do not tell the person to expect one"));
+    expect(skill).toContain(words("do not tell the person to expect one"));
   });
 });
 

@@ -77,6 +77,35 @@ decline holds; a dismissal records nothing. Revoking a connection deletes every 
 vendor's tools. In Hermes, Allow Once, Allow Session and Always Allow all record a standing allow,
 which is what the buttons say; Deny records a standing deny; the setting is the console's.
 
+## Amendment 2026-09-18: the connection confirmation may record the build approval
+
+Decided by Aleks (GRA-75). On 2026-09-17 every new vendor cost two console visits: one to confirm
+the connection `request_connection` proposed and enter its secret, a second when `acquire` asked
+for the build approval — each a link relayed through the chat and a round trip. **The connection
+confirmation page now offers the build approval for the asking agent, on by default**, and a person
+who leaves it on has answered `acquire`'s ask one page early: the approval is recorded in the same
+transaction as the connection and the agent's scope grant, `acquire` finds it standing, and no
+second handoff is made. The provider-link card offers the same choice before its popup opens, and
+the return records it with the connection it makes; a provider with no person step is unchanged,
+since nobody is on a page to answer.
+
+**Why an amendment and not a new rule.** The person is answering the same question with the same
+information — this agent, this vendor, these hosts — in the console, one step earlier. The grain
+(one agent, one connection) does not move, the holder does not move, and the record is the same
+`build_approval` row the console's agent page lists and withdraws like any other; nothing about the
+answer is inferred. What the page cannot show is the goal a later `acquire` will state; the ask
+`acquire` makes never carried a goal either, so nothing the person could have weighed is lost.
+
+**Why on by default.** The console round trips are today's worst friction, and a pre-checked,
+plainly labelled control on a form the person is already reading — the one where they check the
+hosts and type the secret — is still the person's answer: unticking it costs one click, and the
+approval is withdrawable from the agent's page at any moment. Consent still never moves inside the
+loop (ADR 0004): the control is the person's, on the console's page, and no agent argument sets it.
+
+**Unchanged.** `acquire` still asks once per agent per connection when no approval stands; a
+person who unticks the control gets exactly the ask they got before. The first real use of a
+non-read tool still asks once. Revoking a connection still deletes its build approvals.
+
 ## Amendment 2026-09-18: the build approval is the row's, and a rotation re-enters in place
 
 Decided by Aleks (GRA-76). `acquire`'s build approval stays keyed on the connection row, so a

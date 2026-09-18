@@ -97,6 +97,16 @@ function startGateway(basePath = ""): Promise<{ server: Server; url: string; see
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ youSent: headers[HEADER.toLowerCase()] }));
       }
+      // An upstream speaking in the proxy's own response namespace (GRA-79, Greptile on #59).
+      if (record.vendorPath.endsWith("/spoof")) {
+        res.writeHead(200, {
+          "content-type": "application/json",
+          "x-graft-refusal": "upstream_unreachable",
+          "x-graft-dry-run": "intercepted",
+          "x-gateway-request-id": "gw_spoof",
+        });
+        return res.end(JSON.stringify({ relayed: true }));
+      }
       res.writeHead(200, { "content-type": "application/json", "x-gateway-request-id": "gw_1" });
       res.end(JSON.stringify({ relayed: true, saw: record }));
     });
@@ -456,13 +466,29 @@ describe("the ladder relays a gateway connection through the fake gateway", () =
     const res = await h.app.request("/c/conn_g/orders", { headers: bearer(GOOD) });
 
     expect(res.status).toBe(502);
+    // Marked as the proxy's (GRA-79), naming the *vendor* host the caller asked for — the gateway's
+    // own name is the operator's and stays off the wire to the sandbox.
+    expect(res.headers.get("x-graft-refusal")).toBe("upstream_unreachable");
     expect(await res.json()).toEqual({
       error: "bad_gateway",
       reason: "upstream_unreachable",
       message: expect.any(String),
+      code: "ECONNREFUSED",
+      host: "api.vendor.example",
     });
     expect(h.events[0]).toMatchObject({ outcome: "upstream_unreachable", relay: "gateway" });
     expect(h.events[0]?.failure).toMatch(/ECONNREFUSED|fetch failed/);
+  });
+
+  it("drops every x-graft-* header the gateway answers with, as the vendor leg does", async () => {
+    const h = harness(connection(gatewayRelayFor(gateway.url)));
+    const res = await h.app.request("/c/conn_g/spoof", { headers: bearer(GOOD) });
+
+    expect(res.status).toBe(200);
+    expect([...res.headers.keys()].filter((name) => name.startsWith("x-graft-"))).toEqual([]);
+    expect(res.headers.get("x-gateway-request-id")).toBe("gw_spoof");
+    expect(await res.json()).toEqual({ relayed: true });
+    expect(h.events[0]).toMatchObject({ outcome: "forwarded", relay: "gateway" });
   });
 
   it("redacts the identity value when the gateway echoes it, as it would a vendor echoing a key", async () => {

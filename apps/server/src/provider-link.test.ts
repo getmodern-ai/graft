@@ -478,6 +478,62 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     }
   });
 
+  /** GRA-75: the card's build choice rides the signed state and is recorded with the connection the return makes. */
+  it("a link started with approveBuild records the asking agent's build approval with the connection it makes; one started bare records none", async () => {
+    store.addAgent({ id: "agent_d", personId: PERSON, token: `${TOKEN_B}d`, name: "fourth" });
+    store.addAgent({ id: "agent_e", personId: PERSON, token: `${TOKEN_B}e`, name: "fifth" });
+    const ticked = await connect(`${TOKEN_B}d`);
+    const bare = await connect(`${TOKEN_B}e`);
+    // Since GRA-76 a live Gmail row of the person's outside the asking agent's scope is a
+    // connection_exists refusal, not a new ask (pinned in the two-landings test below), so each
+    // proposal here is made with the person's Gmail rows set aside; they are put back afterwards.
+    const setAside: FakeStore["connections"] = new Map();
+    const setGmailAside = () => {
+      for (const row of [...store.connections.values()].filter((r) => r.vendor === "gmail")) {
+        setAside.set(row.id, row);
+        store.connections.delete(row.id);
+      }
+    };
+    try {
+      setGmailAside();
+      const askD = body(await ticked.call("request_connection", PROPOSAL))
+        .pendingActionId as string;
+      const started = await app.request(`/api/pending-actions/${askD}/link`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ approveBuild: true }),
+      });
+      expect(started.status).toBe(200);
+      const mintedD = pipedream.tokens.at(-1);
+      pipedream.connect({ externalUserId: EXTERNAL_USER, app: "gmail", name: "d@example.com" });
+      const outcomeD = consoleOutcome(await landing(mintedD?.success ?? ""));
+      expect(outcomeD).toMatchObject({ status: "connected", pendingActionId: askD });
+      const connectionD = outcomeD.connectionId as string;
+      expect([...store.buildApprovals.values()].filter((row) => row.agentId === "agent_d")).toEqual(
+        [expect.objectContaining({ agentId: "agent_d", connectionId: connectionD })],
+      );
+
+      // The bare POST an older console sends: the choice is off, and nothing is recorded. D's new
+      // row would cover E's proposal too, so it is set aside with the rest.
+      setGmailAside();
+      const askE = body(await bare.call("request_connection", PROPOSAL)).pendingActionId as string;
+      expect(
+        (await app.request(`/api/pending-actions/${askE}/link`, { method: "POST" })).status,
+      ).toBe(200);
+      const mintedE = pipedream.tokens.at(-1);
+      pipedream.connect({ externalUserId: EXTERNAL_USER, app: "gmail", name: "e@example.com" });
+      const outcomeE = consoleOutcome(await landing(mintedE?.success ?? ""));
+      expect(outcomeE).toMatchObject({ status: "connected", pendingActionId: askE });
+      expect([...store.buildApprovals.values()].some((row) => row.agentId === "agent_e")).toBe(
+        false,
+      );
+    } finally {
+      await ticked.close();
+      await bare.close();
+      for (const row of setAside.values()) store.connections.set(row.id, row);
+    }
+  });
+
   it("two landings of one link at once make one connection — the database refuses the second claim and it reads the ask the first answered", async () => {
     // A fresh agent, so the ask is new. The person's existing Gmail connection is not in its scope,
     // which since GRA-76 is a refusal naming the row and the scope step — a relay provider's row

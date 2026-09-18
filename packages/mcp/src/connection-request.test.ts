@@ -7,6 +7,7 @@ import {
   type ConnectionProvider,
   connectThroughProvider,
   createGatewayProvider,
+  grantBuildApproval,
   keyringProvider,
   registerConnectionWithCredential,
   revokeConnection,
@@ -14,6 +15,7 @@ import {
   toProxyConnection,
 } from "@graft/core";
 import type { ConnectionRow } from "@graft/db/repo/connection";
+import { createScriptedModel } from "@graft/model";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { sandboxPath } from "@graft/toolbox";
@@ -23,6 +25,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  BUILD_APPROVAL_ON_THE_PAGE,
   CONNECTION_ASK_KIND,
   CONNECTION_EXISTS,
   type ConnectionProposalPayload,
@@ -182,8 +185,15 @@ const until = async (predicate: () => boolean, ms = 5_000) => {
 const ctx = () => ({ db: deps.db });
 const principal = { personId: PERSON };
 
-/** What the console's submit route does for a `connection` ask: create, add to the agent's scope, record. */
-async function submitConnection(actionId: string, credential: Record<string, string>) {
+/**
+ * What the console's submit route does for a `connection` ask: create, add to the agent's scope,
+ * grant the build approval when the person left the control on (GRA-75), record.
+ */
+async function submitConnection(
+  actionId: string,
+  credential: Record<string, string>,
+  choices: { approveBuild?: boolean } = {},
+) {
   const action = store.pendingActions.get(actionId);
   if (!action) throw new Error(`no action ${actionId}`);
   const payload = action.payload as unknown as ConnectionProposalPayload;
@@ -202,6 +212,14 @@ async function submitConnection(actionId: string, credential: Record<string, str
     deps.connection,
   );
   await addConnectionToAgentScope(ctx(), principal, action.agentId, connection.id, deps.agent);
+  if (choices.approveBuild) {
+    await grantBuildApproval(
+      ctx(),
+      { personId: PERSON, agentId: action.agentId },
+      connection.id,
+      deps.approval,
+    );
+  }
   await answerPendingAction(
     ctx(),
     principal,
@@ -566,6 +584,85 @@ describe("request_connection through a harness", () => {
       const fresh = awaiting(await a.call("request_connection", proposal), "awaiting_connection");
       expect(fresh.action.id).not.toBe(spent);
     } finally {
+      await a.close();
+    }
+  });
+});
+
+/**
+ * GRA-75 (ADR 0008, amendment of 2026-09-18): the person may grant the build approval on the
+ * connection page, and the agent's first `acquire` then starts without a handoff; left off, the
+ * ask is exactly what it was. A scripted model with no steps stands in for a configured one — the
+ * door is what is under test, and no runner is attached, so the job stays queued.
+ */
+describe("the connection confirmation and the build approval (GRA-75)", () => {
+  it("the awaiting answer says the page offers the build approval, so the agent promises no second link", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const said = awaiting(
+        await a.call("request_connection", {
+          ...PROPOSAL,
+          vendor: "buildco",
+          displayName: "Buildco",
+          primaryHost: "https://api.buildco.example",
+        }),
+        "awaiting_connection",
+      );
+      expect(said.answer.message).toContain(BUILD_APPROVAL_ON_THE_PAGE);
+      expect(BUILD_APPROVAL_ON_THE_PAGE).toContain("without a second link");
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("propose, confirm with the approval on, and acquire answers a jobId at once; confirmed with it off, acquire still asks", async () => {
+    deps.model = createScriptedModel([]);
+    const a = await connect(TOKEN_A);
+    try {
+      const ticked = {
+        ...PROPOSAL,
+        vendor: "ticked",
+        displayName: "Ticked",
+        primaryHost: "https://api.ticked.example",
+        hosts: [],
+      };
+      const first = awaiting(await a.call("request_connection", ticked), "awaiting_connection");
+      const connection = await submitConnection(
+        first.action.id,
+        { apiKey: "k1" },
+        {
+          approveBuild: true,
+        },
+      );
+      expect(body(await a.call("request_connection", ticked))).toMatchObject({
+        status: "connected",
+        connectionId: connection.id,
+      });
+      const started = await a.call("acquire", { connectionId: connection.id, goal: "List things" });
+      expect(started.isError).toBeFalsy();
+      expect(body(started)).toMatchObject({ jobId: expect.any(String), status: "queued" });
+      expect(actionsOf(AGENT_A, "build")).toEqual([]);
+
+      const plain = {
+        ...ticked,
+        vendor: "plain",
+        displayName: "Plain",
+        primaryHost: "https://api.plain.example",
+      };
+      const second = awaiting(await a.call("request_connection", plain), "awaiting_connection");
+      const other = await submitConnection(second.action.id, { apiKey: "k2" });
+      expect(body(await a.call("request_connection", plain))).toMatchObject({
+        status: "connected",
+      });
+      const asked = await a.call("acquire", { connectionId: other.id, goal: "List things" });
+      expect(asked.isError).toBe(true);
+      expect(body(asked)).toMatchObject({
+        error: "awaiting_approval",
+        pendingActionId: expect.any(String),
+      });
+      expect(actionsOf(AGENT_A, "build")).toHaveLength(1);
+    } finally {
+      deps.model = null;
       await a.close();
     }
   });

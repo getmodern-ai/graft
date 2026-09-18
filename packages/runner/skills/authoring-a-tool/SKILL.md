@@ -39,7 +39,8 @@ the re-entry variant against the existing connection.
 3. **Check it** with `check_tool`, against the input schema you will publish, and fix what it names
    until nothing is refused.
 4. **Prove it with reads** through the connection's execute tool, `execute__<connection id>`, until
-   a read returns what the docs said it would.
+   a read returns what the docs said it would. A draft whose proof read failed is not published:
+   change the module or the read and prove again.
 5. **Publish with a test input** — `publish_tool` with `testInput`. It runs the same check and
    refuses on the same list, installs any package the module declares if the package policy allows
    it, then **dry-runs** the version it just wrote: reads reach the vendor for real, every write
@@ -137,6 +138,11 @@ The rules, and why each holds:
   every `GRAFT_*` variable before your module loads — so `process.env.GRAFT_TOKEN` inside a module
   is empty, and a request built from it answers `token_invalid`. `check_tool` and `publish_tool`
   refuse a module whose code names any `GRAFT_*` variable; `ctx` is the whole of what a module needs.
+- **The vendor sees the proxy, not the person.** Every request reaches the vendor from Graft's
+  proxy, never from the person's machine, so whatever the vendor infers from the connection — the
+  source address, its geolocation, a rate limit keyed on it, a "your IP" or "your location" answer —
+  is the proxy's and not the person's, and the tool's description and its output names say so or
+  leave it out. A tool that returns "the caller's IP" is returning Graft's.
 - **The bare minimum.** One call, the fields this tool needs, no pagination, no retries, no client
   for the rest of the API. A tool that does one thing is fast to build, easy to read in an approval,
   and simple enough to trust. Generality is a cost, not a feature.
