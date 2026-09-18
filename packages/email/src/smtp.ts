@@ -1,6 +1,6 @@
 import { createTransport } from "nodemailer";
 
-import { type PasswordResetVariables, templates } from "./registry";
+import { type TemplateName, type TemplateVariables, templates } from "./registry";
 import type { EmailTransport, SendRequest } from "./transport";
 
 /**
@@ -78,7 +78,7 @@ function frame(input: {
  * something to click.
  */
 export const RENDERERS: {
-  passwordReset: (variables: PasswordResetVariables) => RenderedEmail;
+  [Name in TemplateName]: (variables: TemplateVariables[Name]) => RenderedEmail;
 } = {
   passwordReset: ({ resetUrl }) => ({
     text: [
@@ -97,6 +97,40 @@ export const RENDERERS: {
       aside: "If you did not ask for this, you can ignore this email.",
     }),
   }),
+  emailVerification: ({ verifyUrl }) => ({
+    text: [
+      "Verify your email",
+      "",
+      "Confirm this address to finish creating your Graft account. The link works for 24 hours:",
+      "",
+      verifyUrl,
+      "",
+      "If you did not create a Graft account, you can ignore this email.",
+    ].join("\n"),
+    html: frame({
+      heading: "Verify your email",
+      body: "Confirm this address to finish creating your Graft account. The link works for 24 hours.",
+      button: { label: "Verify email", url: verifyUrl },
+      aside: "If you did not create a Graft account, you can ignore this email.",
+    }),
+  }),
+  accountExists: ({ loginUrl }) => ({
+    text: [
+      "You already have an account",
+      "",
+      "Someone, probably you, tried to create a Graft account with this address, but it already has one. Sign in to continue; if you have forgotten your password, you can reset it from the sign-in screen:",
+      "",
+      loginUrl,
+      "",
+      "If this was not you, nothing about your account has changed and no action is needed.",
+    ].join("\n"),
+    html: frame({
+      heading: "You already have an account",
+      body: "Someone, probably you, tried to create a Graft account with this address, but it already has one. Sign in to continue. If you have forgotten your password, you can reset it from the sign-in screen.",
+      button: { label: "Sign in to Graft", url: loginUrl },
+      aside: "If this was not you, nothing about your account has changed and no action is needed.",
+    }),
+  }),
 };
 
 /** The registry's template names and the renderers' keys are one set — held by the type, and by a test. */
@@ -107,8 +141,10 @@ export const RENDERERS_COVER_REGISTRY = Object.keys(templates).every((name) => n
  * the template's variable type is the one the façade already proved.
  */
 export function render(request: SendRequest): RenderedEmail {
-  const renderer = RENDERERS[request.template];
-  return renderer(request.dataVariables as PasswordResetVariables);
+  const renderer = RENDERERS[request.template] as (
+    variables: Record<string, string>,
+  ) => RenderedEmail;
+  return renderer(request.dataVariables);
 }
 
 /**

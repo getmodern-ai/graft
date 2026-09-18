@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildPasswordResetUrl, sendPasswordResetEmail } from "./index";
+import {
+  buildLoginUrl,
+  buildPasswordResetUrl,
+  sendAccountExistsEmail,
+  sendEmailVerificationEmail,
+  sendPasswordResetEmail,
+} from "./index";
 import type { EmailTransport, SendRequest } from "./transport";
 
 afterEach(() => {
@@ -83,5 +89,59 @@ describe("sendPasswordResetEmail", () => {
     const output = log.mock.calls.map((call) => call.join(" ")).join("\n");
     expect(output).toContain(EMAIL.resetUrl);
     expect(output).toContain(EMAIL.to);
+  });
+});
+
+describe("buildLoginUrl", () => {
+  it("joins the console origin and the address on the login door, encoded", () => {
+    expect(buildLoginUrl("http://localhost:3001/", "ada@example.com")).toBe(
+      "http://localhost:3001/login?email=ada%40example.com",
+    );
+    expect(buildLoginUrl("https://app.getgraft.ai", "a&redirect=x@example.com")).toBe(
+      "https://app.getgraft.ai/login?email=a%26redirect%3Dx%40example.com",
+    );
+    expect(() => buildLoginUrl("not-an-origin", "a@b.c")).toThrow();
+  });
+});
+
+describe("sendEmailVerificationEmail and sendAccountExistsEmail (GRA-94)", () => {
+  it("send Better Auth's verify URL whole, under the verification template", async () => {
+    const { sent, transport } = captureTransport();
+    const verifyUrl =
+      "http://localhost:3000/api/auth/verify-email?token=tok_1&callbackURL=%2Flogin";
+    const result = await sendEmailVerificationEmail(
+      { to: "ada@example.com", verifyUrl },
+      transport,
+    );
+    expect(result).toEqual({ delivered: true, transport: "console" });
+    expect(sent[0]).toMatchObject({
+      to: "ada@example.com",
+      template: "emailVerification",
+      subject: "Verify your email for Graft",
+      dataVariables: { verifyUrl },
+      actionUrl: verifyUrl,
+    });
+  });
+
+  it("send the login link under the account-exists template", async () => {
+    const { sent, transport } = captureTransport();
+    const loginUrl = "http://localhost:3001/login?email=ada%40example.com";
+    await sendAccountExistsEmail({ to: "ada@example.com", loginUrl }, transport);
+    expect(sent[0]).toMatchObject({
+      template: "accountExists",
+      subject: "You already have a Graft account",
+      dataVariables: { loginUrl },
+      actionUrl: loginUrl,
+    });
+  });
+
+  it("reject a link that is not a URL rather than emailing a broken one", async () => {
+    const { transport } = captureTransport();
+    await expect(
+      sendEmailVerificationEmail({ to: "a@b.c", verifyUrl: "nope" }, transport),
+    ).rejects.toThrow();
+    await expect(
+      sendAccountExistsEmail({ to: "a@b.c", loginUrl: "nope" }, transport),
+    ).rejects.toThrow();
   });
 });

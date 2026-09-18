@@ -1,6 +1,13 @@
 import type { Database } from "@graft/db";
 import * as schema from "@graft/db/schema/auth";
-import { buildPasswordResetUrl, type EmailTransport, sendPasswordResetEmail } from "@graft/email";
+import {
+  buildLoginUrl,
+  buildPasswordResetUrl,
+  type EmailTransport,
+  sendAccountExistsEmail,
+  sendEmailVerificationEmail,
+  sendPasswordResetEmail,
+} from "@graft/email";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 
@@ -12,7 +19,9 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
  * and password always; Google and GitHub when the deployment hands their OAuth clients in (GRA-81,
  * ADR 0020) — registered by conditional spread, because Better Auth advertises a provider the moment
  * its key exists, credentials or not, and the console draws a button per provider the server names;
- * a password reset by email through `@graft/email` when a transport is handed in (GRA-82, ADR 0021).
+ * and, when a transport is handed in, the account's three emails through `@graft/email` — the
+ * reset (GRA-82), the verification a registration waits on and the account-exists notice a taken
+ * address earns (GRA-94; ADR 0021).
  * The four tables the library owns are generated into `@graft/db`'s schema by
  * `pnpm --filter @graft/auth generate-schema` — regenerate rather than hand-edit them when this
  * configuration changes.
@@ -47,17 +56,22 @@ export type CreateAuthOptions = {
    */
   socialProviders?: Partial<Record<SocialProviderName, SocialProviderClient>>;
   /**
-   * How a forgotten password is reset (GRA-82; ADR 0021): the console's origin the reset link is
-   * built on (`GRAFT_CONSOLE_URL`, as every handoff URL is — ADR 0006) and the transport that
-   * carries it (`@graft/email`'s `transportFromEnv`). Optional so a test or a script that never
-   * resets a password builds no mail stack; absent, `requestPasswordReset` answers as it always
-   * does and Better Auth logs that nothing was configured to send.
+   * The mail the account sends (ADR 0021; GRA-82, GRA-94): the console's origin every emailed link
+   * to a console route is built on (`GRAFT_CONSOLE_URL`, as every handoff URL is — ADR 0006) and the
+   * transport that carries it (`Backings.mail`). Optional so a test or a script that sends nothing
+   * builds no mail stack; absent, the three hooks below are not registered and Better Auth logs that
+   * nothing was configured to send.
    */
-  passwordReset?: { consoleUrl: string; transport: EmailTransport };
+  mail?: { consoleUrl: string; transport: EmailTransport };
 };
 
 export function createAuth(options: CreateAuthOptions) {
   const { google, github } = options.socialProviders ?? {};
+  // Narrowed once so every hook below reads the same pair; the hooks are registered only when it is set.
+  const mail = options.mail ?? {
+    consoleUrl: "",
+    transport: { name: "none", send: async () => ({ delivered: false, transport: "none" }) },
+  };
   return betterAuth({
     database: drizzleAdapter(options.db, { provider: "pg", schema }),
     secret: options.secret,
@@ -66,37 +80,44 @@ export function createAuth(options: CreateAuthOptions) {
     emailAndPassword: {
       enabled: true,
       /**
-       * **Off for the alpha, on purpose, and to be revisited before public launch.** The alpha's
-       * persons are invited by hand and known to us, and the self-hosted image bootstraps its one
-       * admin from environment variables (GRA-1, user story 28) — a verification email there would
-       * be a mail transport to configure on day one of a laptop install, for an address the
-       * operator typed themselves. The transport exists now (`@graft/email`, GRA-82), so what is
-       * left is the decision: flip this and add `emailVerification.sendVerificationEmail` beside
-       * `sendResetPassword` below. Until then a sign-up opens a session at once — and, one
-       * consequence ADR 0020 spells out, a social sign-in cannot yet attach to a password account,
-       * whose address nobody has verified.
-       */
-      requireEmailVerification: false,
-      /**
-       * The reset email — a thin delegation to `@graft/email` (GRA-82; Cando's CAN-166). The link
-       * is built against the *console's* origin, not Better Auth's `data.url`: that URL points at
-       * the API's own GET callback, and the reset screen is a console route (`/reset-password`).
-       * `resetPassword` consumes the raw token, so skipping the callback loses nothing.
+       * Registering opens no session until the address is verified — GRA-94, amending ADR 0020.
        *
-       * A failed send must never surface to the requester: `requestPasswordReset` answers
-       * identically for known and unknown addresses, and an error here would break that
-       * anti-enumeration stance. Better Auth already catches a rejection from this hook and logs it
-       * bare — the catch below exists to log the failure *with context* instead.
+       * Two things ride on this one flag. First, ADR 0020's linking: Better Auth 1.7 refuses to
+       * attach a Google or GitHub identity to a local user whose own `emailVerified` is false
+       * (`accountLinking.requireLocalEmailVerified`, below), so without verification "Continue
+       * with Google" on a password address dead-ended. Second, the enumeration oracle: with this
+       * on, Better Auth itself answers a taken address exactly as a fresh one — a synthetic
+       * no-session body, the password hashed on both paths for timing — and the inbox is where
+       * the two cases differ (`onExistingUserSignUp`).
+       *
+       * Sign-in of an unverified account answers 403 `EMAIL_NOT_VERIFIED` and, with `sendOnSignIn`
+       * below, re-sends the link; the doors show "check your email" for it. Accounts that predate
+       * this flag are unverified too and meet the same path once — no backfill, on purpose: one
+       * click of an email is the cost, and marking every pre-existing row verified would grant
+       * exactly the trust the flag exists to withhold. The one exception is the admin the
+       * self-hosted image opens from its environment, which the boot marks verified itself
+       * (`markPersonEmailVerified`): the operator typed that address.
        */
-      ...(options.passwordReset
+      requireEmailVerification: true,
+      ...(options.mail
         ? {
+            /**
+             * The reset email — a thin delegation to `@graft/email` (GRA-82; Cando's CAN-166).
+             * The link is built against the *console's* origin, not Better Auth's `data.url`:
+             * that URL points at the API's own GET callback, and the reset screen is a console
+             * route (`/reset-password`). `resetPassword` consumes the raw token, so skipping the
+             * callback loses nothing.
+             *
+             * A failed send must never surface to the requester: `requestPasswordReset` answers
+             * identically for known and unknown addresses, and an error here would break that
+             * anti-enumeration stance. Better Auth already catches a rejection from this hook
+             * and logs it bare — the catch exists to log the failure *with context* instead.
+             */
             sendResetPassword: async (data: {
               user: { id: string; email: string };
               token: string;
             }) => {
-              const { consoleUrl, transport } = options.passwordReset as NonNullable<
-                CreateAuthOptions["passwordReset"]
-              >;
+              const { consoleUrl, transport } = mail;
               try {
                 await sendPasswordResetEmail(
                   { to: data.user.email, resetUrl: buildPasswordResetUrl(consoleUrl, data.token) },
@@ -110,9 +131,98 @@ export function createAuth(options: CreateAuthOptions) {
                 });
               }
             },
+            /**
+             * A sign-up naming an address already on file: the wire says "check your email" like
+             * any other, and this is the email — "you already have an account, sign in" — sent to
+             * the one person entitled to know (GRA-94). Better Auth awaits this hook before
+             * answering; a failure is logged with context and swallowed, so the answer stays
+             * identical either way.
+             */
+            onExistingUserSignUp: async (data: { user: { id: string; email: string } }) => {
+              const { consoleUrl, transport } = mail;
+              try {
+                const result = await sendAccountExistsEmail(
+                  { to: data.user.email, loginUrl: buildLoginUrl(consoleUrl, data.user.email) },
+                  transport,
+                );
+                if (!result.delivered) {
+                  console.error(
+                    "Account-exists email was not delivered — the requester was told nothing",
+                    {
+                      personId: data.user.id,
+                      transport: result.transport,
+                    },
+                  );
+                }
+              } catch (error) {
+                console.error("Account-exists email failed — the requester was told nothing", {
+                  personId: data.user.id,
+                  transport: transport.name,
+                  error,
+                });
+              }
+            },
           }
         : {}),
     },
+    ...(options.mail
+      ? {
+          emailVerification: {
+            /**
+             * The verification email — a thin delegation to `@graft/email` (GRA-94; Cando's
+             * CAN-476). Unlike the reset link, Better Auth's `url` is passed through whole: it
+             * points at the API's own `GET /verify-email`, and that GET is what marks the address
+             * verified, opens the session (`autoSignInAfterVerification`) and redirects to the
+             * `callbackURL` the door supplied — which Better Auth checks against `trustedOrigins`,
+             * so it can only be the console. The doors pass their own URL with the search that
+             * brought the person, so the `_auth` guard sends a now-verified visitor on; a dead
+             * link (`?error=TOKEN_EXPIRED`) is a sentence on the door.
+             *
+             * A failed send is logged with context and swallowed for the reset's reason: the
+             * sign-up answer must not change with whether mail left. Two failure shapes reach
+             * here — a transport *resolves* `delivered: false` on a refusal or a dead network
+             * rather than throwing, and a schema or URL fault throws — and both land in the log
+             * with the person's id, because the person on the other side is now looking at "check
+             * your email" with nothing coming. The card's resend is their recovery; this line is ours.
+             */
+            sendVerificationEmail: async (data: {
+              user: { id: string; email: string };
+              url: string;
+              token: string;
+            }) => {
+              const { transport } = mail;
+              try {
+                const result = await sendEmailVerificationEmail(
+                  { to: data.user.email, verifyUrl: data.url },
+                  transport,
+                );
+                if (!result.delivered) {
+                  console.error(
+                    "Verification email was not delivered — the requester was told nothing",
+                    {
+                      personId: data.user.id,
+                      transport: result.transport,
+                    },
+                  );
+                }
+              } catch (error) {
+                console.error("Verification email failed — the requester was told nothing", {
+                  personId: data.user.id,
+                  transport: transport.name,
+                  error,
+                });
+              }
+            },
+            // An unverified account trying to sign in gets a fresh link rather than a dead end.
+            sendOnSignIn: true,
+            // The click is the proof; asking for a password straight after it would be a second door.
+            autoSignInAfterVerification: true,
+            // 24 hours, not the one-hour default: someone who signs up on Friday evening must not
+            // come back to a dead link.
+            expiresIn: 60 * 60 * 24,
+          },
+        }
+      : {}),
     /**
      * A provider key present is a provider advertised — `/api/auth/sign-in/social` accepts it and
      * the console lists it — so an unconfigured one is absent, not `undefined`.
@@ -128,10 +238,11 @@ export function createAuth(options: CreateAuthOptions) {
          * account rather than being refused — when the provider says the address is verified
          * (Google's `email_verified`, GitHub's verified flag on the address) **and** the account's
          * own address is verified. Both are Better Auth's defaults, written down here because the
-         * second is what stands between a squatted sign-up and a takeover while verification is
-         * off above: an unverified password account never links, whatever the provider says.
-         * No provider is trusted blanket (`trustedProviders`), so the first condition is judged
-         * per address, not per vendor.
+         * second is what stands between a squatted sign-up and a takeover: an unverified password
+         * account never links, whatever the provider says. With `requireEmailVerification` above
+         * (GRA-94) every new password account is verified before it can sign in, so the linking
+         * ADR 0020 wanted now fires. No provider is trusted blanket (`trustedProviders`), so the
+         * first condition is judged per address, not per vendor.
          */
         enabled: true,
         requireLocalEmailVerified: true,

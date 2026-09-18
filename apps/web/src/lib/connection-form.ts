@@ -1,6 +1,5 @@
 import {
   HOST_NOT_PUBLIC,
-  takesCredential,
   validateCredentialFields,
   validateDisplayName,
   validateHostSet,
@@ -120,34 +119,6 @@ export function isScheme(value: string): value is AuthScheme {
 /** Whether the draft's scheme runs a consent after the secret is entered (ADR 0005). */
 export function isOAuthDraft(draft: Pick<ConnectionDraft, "scheme">): boolean {
   return isOAuthAuthorizationCode(draft.scheme);
-}
-
-/**
- * The hosts notice's title, as the form stands: what goes to the hosts named under it. A scheme that
- * takes a credential sends it there and nowhere else (ADR 0010); `none` sends nothing, so the
- * sentence is about the vendor being reached rather than a credential that does not exist (GRA-66,
- * GRA-91). Without a valid host set the sentence points at the inputs to fix instead.
- */
-export function hostsNoticeTitle(draft: ConnectionDraft): string {
-  const hosts = hostsOf(draft) !== null;
-  if (takesCredential(draft.scheme)) {
-    return hosts
-      ? "The credential will be sent to these hosts and to nothing else"
-      : "Fix the hosts above to see where the credential will be sent";
-  }
-  return hosts
-    ? "The vendor is reached at these hosts and nothing else"
-    : "Fix the hosts above to see where the vendor is reached";
-}
-
-/**
- * The legend over the secret inputs — the client secret for a consent, the secret otherwise — or
- * null for a scheme that takes none, where the inputs are one sentence and a heading about a secret
- * would name something that is not there (GRA-91). The ask card appends where it is entered.
- */
-export function secretLegend(draft: Pick<ConnectionDraft, "scheme">): string | null {
-  if (!takesCredential(draft.scheme)) return null;
-  return isOAuthDraft(draft) ? "The client secret" : "The secret";
 }
 
 /**

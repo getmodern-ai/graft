@@ -31,6 +31,7 @@ import {
 import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
 import { addConnectionHosts } from "@graft/db/repo/connection";
+import { markPersonEmailVerified } from "@graft/db/repo/person";
 import type { UpstreamRequest } from "@graft/proxy";
 import {
   CAPABILITY_TOKEN_ALG,
@@ -92,16 +93,23 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
   const vault = createCredentialVault(createLocalKeyring(SECRET));
   const connectionDeps = createConnectionDeps({ encrypt: vault.encrypt });
 
-  /** Sign a fresh person up through Better Auth and answer their id. */
+  /**
+   * Sign a fresh person up through Better Auth and answer their id. Registering opens no session
+   * until the address is verified (GRA-94), so the suite verifies the row the way the boot verifies
+   * its admin and then signs in for the cookie.
+   */
   async function signUp(email: string): Promise<string> {
     const auth = createAuth({ db, secret: AUTH_SECRET, baseURL: "http://localhost:3000" });
-    const { headers } = await auth.api.signUpEmail({
-      body: { email, password: "a-password-that-is-long-enough", name: email.split("@")[0] ?? "" },
+    const password = "a-password-that-is-long-enough";
+    await auth.api.signUpEmail({ body: { email, password, name: email.split("@")[0] ?? "" } });
+    await markPersonEmailVerified(db, email);
+    const { headers } = await auth.api.signInEmail({
+      body: { email, password },
       returnHeaders: true,
     });
     const cookie = headers.get("set-cookie") ?? "";
     const session = await auth.api.getSession({ headers: new Headers({ cookie }) });
-    if (!session) throw new Error("sign-up opened no session");
+    if (!session) throw new Error("sign-in opened no session");
     return session.user.id;
   }
 
@@ -186,7 +194,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     for (const row of rows.rows) expect(row.column_default).toBe("'person'::text");
   });
 
-  it("signs a person up and in through Better Auth, and the session resolves to them", async () => {
+  it("signs a person up and in through Better Auth, and the session resolves to them once the address is verified", async () => {
     const auth = createAuth({ db, secret: AUTH_SECRET, baseURL: "http://localhost:3000" });
     const email = "ada@example.com";
     const signedUp = await auth.api.signUpEmail({
@@ -194,6 +202,12 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       returnHeaders: true,
     });
     expect(signedUp.response.user.email).toBe(email);
+    // Registering opened no session (GRA-94): no cookie, and a sign-in is refused until the click.
+    expect(signedUp.headers.get("set-cookie") ?? "").not.toContain("better-auth.session_token");
+    await expect(
+      auth.api.signInEmail({ body: { email, password: "a-password-that-is-long-enough" } }),
+    ).rejects.toMatchObject({ body: { code: "EMAIL_NOT_VERIFIED" } });
+    expect(await markPersonEmailVerified(db, email)).toBe(true);
 
     const signedIn = await auth.api.signInEmail({
       body: { email, password: "a-password-that-is-long-enough" },

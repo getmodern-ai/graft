@@ -5,13 +5,11 @@ import {
   draftFromProposal,
   emptyDraft,
   googleNoticeFor,
-  hostsNoticeTitle,
   hostsOf,
   isOAuthDraft,
   parametersFor,
   parseHostList,
   SCHEMES,
-  secretLegend,
   validateConnectionDraft,
   validateCredentialDraft,
   withScheme,
@@ -143,29 +141,6 @@ describe("hosts and proposals", () => {
     expect(parseHostList(" a.example\n, b.example ,\n")).toEqual(["a.example", "b.example"]);
     expect(hostsOf(draft)).toEqual(["api.acme.example", "files.acme.example", "cdn.acme.example"]);
     expect(hostsOf({ ...draft, primaryHost: "nope" })).toBeNull();
-  });
-
-  it("titles the hosts notice and the secret legend after the scheme: no credential, no secret named (GRA-91)", () => {
-    expect(hostsNoticeTitle(draft)).toBe(
-      "The credential will be sent to these hosts and to nothing else",
-    );
-    expect(hostsNoticeTitle({ ...draft, primaryHost: "nope" })).toBe(
-      "Fix the hosts above to see where the credential will be sent",
-    );
-    expect(secretLegend(draft)).toBe("The secret");
-    expect(secretLegend(withScheme(draft, "oauth_authorization_code"))).toBe("The client secret");
-
-    const keyless = withScheme(draft, "none");
-    expect(hostsNoticeTitle(keyless)).toBe("The vendor is reached at these hosts and nothing else");
-    expect(hostsNoticeTitle({ ...keyless, primaryHost: "nope" })).toBe(
-      "Fix the hosts above to see where the vendor is reached",
-    );
-    expect(secretLegend(keyless)).toBeNull();
-    for (const scheme of SCHEMES) {
-      const title = hostsNoticeTitle(withScheme(draft, scheme));
-      if (scheme === "none") expect(title).not.toMatch(/credential|secret/);
-      else expect(title).toContain("credential");
-    }
   });
 
   it("pre-fills a draft from an agent's proposal, the primary's hostname taken out of the additional list", () => {

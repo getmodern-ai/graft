@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { socialSignInMessage, socialSignInUrls } from "./sign-in";
+import { socialSignInMessage, socialSignInUrls, verificationReturnURL } from "./sign-in";
 
 describe("socialSignInUrls", () => {
   it("lands a plain sign-in on the default path and brings a failure back to the door", () => {
@@ -35,5 +35,29 @@ describe("socialSignInMessage", () => {
     expect(socialSignInMessage("email_does_not_match")).toMatch(/different Graft account/);
     expect(socialSignInMessage("invalid_code")).toMatch(/Could not sign in with the provider/);
     expect(socialSignInMessage("unable_to_link_account")).not.toContain("unable_to_link_account");
+  });
+});
+
+describe("verificationReturnURL", () => {
+  it("returns to the sign-in door with the redirect and the address, so the click lands where the handoff pointed", () => {
+    expect(
+      verificationReturnURL("http://localhost:3001", {
+        returnTo: "/pending/pa_1?t=abc",
+        email: "ada@example.com",
+      }),
+    ).toBe(
+      "http://localhost:3001/login?redirect=%2Fpending%2Fpa_1%3Ft%3Dabc&email=ada%40example.com",
+    );
+    expect(
+      verificationReturnURL("https://app.getgraft.ai", { returnTo: undefined, email: "a@b.c" }),
+    ).toBe("https://app.getgraft.ai/login?email=a%40b.c");
+  });
+});
+
+describe("socialSignInMessage — the verification link's codes (GRA-94)", () => {
+  it("reads a dead verification link as one, in either of Better Auth's spellings", () => {
+    for (const code of ["TOKEN_EXPIRED", "INVALID_TOKEN", "token_expired", "invalid_token"]) {
+      expect(socialSignInMessage(code)).toMatch(/verification link has expired/);
+    }
   });
 });

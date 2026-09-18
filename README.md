@@ -71,8 +71,9 @@ sandbox image is built alongside; sandboxes are created from it on an internal n
 other member is the proxy (ADR 0013).
 
 **3. Sign in and create an agent.** Open `http://localhost:3000`, sign in as the admin, then
-*Agents → New agent*. The door is one screen: an address it has never seen is registered on the
-same submit that signs everyone else in. To offer *Continue with Google* or *Continue with GitHub*
+*Agents → New agent*. The admin needs no verification step — the boot marked the address you typed
+as verified; anyone else who registers at `/signup` receives a verification link, through your relay
+when one is configured (below) and otherwise printed in `docker compose logs graft`. To offer *Continue with Google* or *Continue with GitHub*
 beside it, register an OAuth client with the vendor — redirect URI `<your origin>/api/auth/callback/google`
 or `…/github` — and set its `GRAFT_GOOGLE_CLIENT_ID`/`_SECRET` or `GRAFT_GITHUB_CLIENT_ID`/`_SECRET`
 pair in `.env` (each pair all-or-nothing; ADR 0020 has the linking rule). A forgotten password is
