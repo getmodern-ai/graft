@@ -133,7 +133,11 @@ export type ApprovalAnswerRecord = {
  * refused `CONFLICT` with `reason: "connection_revoked"`; the elicitation path makes the same check
  * in `approval.ts` before it records. The read takes the row `FOR UPDATE`, the lock the revoke
  * itself takes first (`revokeConnection`), so an answer and a revoke that overlap serialise on it
- * rather than interleave (Greptile on #87).
+ * rather than interleave — and it is taken **before** the action is updated, in the revoke's own
+ * order (connection, then its actions), so the two cannot deadlock by each holding one row and
+ * waiting on the other's (Greptile on #87, twice). Every other path that writes a connection and
+ * an action — the credential re-entry, the OAuth callback, the provider link's return — already
+ * writes the connection first; `confirmConnectionAsk` inserts a connection no revoke can yet name.
  */
 export async function recordApprovalAnswer(
   ctx: ServiceContext,
@@ -149,30 +153,36 @@ export async function recordApprovalAnswer(
   const outcome = await ctx.db.transaction(
     async (tx): Promise<ApprovalAnswerRecord | RevokedBeforeAnswer> => {
       const scoped: ServiceContext = { db: tx };
-      const action = await answerPendingAction(scoped, principal, id, answer, deps.pendingAction);
-      if (typeof action.connectionId === "string") {
+      // Lock order: the connection first, then the action — the order `revokeConnection` takes
+      // (it locks the row, then closes its asks), so an answer and a revoke that overlap queue on
+      // the connection rather than each holding one row and waiting on the other's, which Postgres
+      // would break by aborting one (Greptile on #87). The action is read unlocked here for the
+      // connection it names; the update that locks it comes after the connection lock.
+      const found = await getPendingActionForPerson(scoped, principal, id, deps.pendingAction);
+      const connectionId = typeof found?.connectionId === "string" ? found.connectionId : null;
+      if (connectionId) {
         // The row locked (FOR UPDATE), not merely read: a revoke locks the same row before it
         // deletes the connection's approvals, so whichever of the two commits first, the other
         // sees its work — this answer reads the row as revoked and closes the ask, or the revoke's
-        // delete runs after the approval this answer wrote (Greptile on #87). The plain read left a
-        // window in which an approval landed after the revoke's sweep and outlived it.
+        // delete runs after the approval this answer wrote. The plain read left a window in which
+        // an approval landed after the revoke's sweep and outlived it.
         const connection = await deps.connection.findConnectionForUpdate(
           tx,
           principal.personId,
-          action.connectionId,
+          connectionId,
         );
         if (!connection || connection.revokedAt !== null) {
           await deps.connection.expirePendingActionsForConnection(
             tx,
             principal.personId,
-            action.connectionId,
+            connectionId,
             deps.pendingAction.now(),
           );
-          return {
-            revoked: { connectionId: action.connectionId, name: connection?.displayName ?? null },
-          };
+          return { revoked: { connectionId, name: connection?.displayName ?? null } };
         }
       }
+      // Unknown, answered or expired is the service's refusal here, as before the pre-read.
+      const action = await answerPendingAction(scoped, principal, id, answer, deps.pendingAction);
       return recordAnswer(scoped, principal, action, deps);
     },
   );

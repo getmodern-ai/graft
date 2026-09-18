@@ -1473,16 +1473,15 @@ describe("pending actions", () => {
    * waiting call to take.
    */
   describe("a scope ask", () => {
-    const answersScope = (deps: ReturnType<typeof harness>["deps"]) =>
-      vi
-        .mocked(deps.pendingAction.answerPendingAction)
-        .mockImplementation(async (_db, _p, _id, args) => ({
-          ...scopeAction,
-          answer: args.answer,
-          answeredAt: NOW,
-        }));
+    const answersScope = (deps: ReturnType<typeof harness>["deps"]) => {
+      // The pre-read the lock order needs (the action, for the connection it names), then the answer.
+      vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValue(scopeAction);
+      vi.mocked(deps.pendingAction.answerPendingAction).mockImplementation(
+        async (_db, _p, _id, args) => ({ ...scopeAction, answer: args.answer, answeredAt: NOW }),
+      );
+    };
 
-    it("Allow with the build choice locks the connection, grows the agent's scope by one idempotent insert, then grants the build approval, in that order, and leaves the answer for the agent", async () => {
+    it("Allow with the build choice locks the connection first, then answers the ask, grows the scope by one idempotent insert and grants the build approval, in that order, and leaves the answer for the agent", async () => {
       const { app, deps } = harness({ user: { id: "person_1" } });
       answersScope(deps);
       vi.mocked(deps.agent.listAgentConnectionIds).mockResolvedValueOnce(["conn_1", "conn_2"]);
@@ -1523,13 +1522,15 @@ describe("pending actions", () => {
         connectionId: "conn_2",
         grantedAt: NOW,
       });
-      // Answer, lock, scope, approval — the order the transaction writes them (as far as the fakes show).
+      // Lock, answer, scope, approval — the order the transaction takes them (as far as the fakes
+      // show): the connection lock before the action's update, which is the revoke's order too, so
+      // the two cannot deadlock (Greptile on #87).
       const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
         fn.mock.invocationCallOrder[0] ?? Number.NaN;
-      expect(order(vi.mocked(deps.pendingAction.answerPendingAction))).toBeLessThan(
-        order(vi.mocked(deps.connection.findConnectionForUpdate)),
-      );
       expect(order(vi.mocked(deps.connection.findConnectionForUpdate))).toBeLessThan(
+        order(vi.mocked(deps.pendingAction.answerPendingAction)),
+      );
+      expect(order(vi.mocked(deps.pendingAction.answerPendingAction))).toBeLessThan(
         order(vi.mocked(deps.agent.addAgentConnection)),
       );
       expect(order(vi.mocked(deps.agent.addAgentConnection))).toBeLessThan(
@@ -1597,6 +1598,8 @@ describe("pending actions", () => {
         "conn_2",
         NOW,
       );
+      // Seen before the action was touched: the revoke closed it, and no answer lands on it.
+      expect(deps.pendingAction.answerPendingAction).not.toHaveBeenCalled();
       expect(deps.agent.addAgentConnection).not.toHaveBeenCalled();
       expect(deps.approval.insertBuildApproval).not.toHaveBeenCalled();
     });
@@ -1614,8 +1617,10 @@ describe("pending actions", () => {
 
   it("maps an answered or expired action to 409 and 410, and a bad body to 400", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
+    // The row is read twice on this path — once unlocked for the lock order, once for the refusal's
+    // reason — so the fake answers the same row to both.
     vi.mocked(deps.pendingAction.answerPendingAction).mockResolvedValueOnce(null);
-    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce({
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValue({
       ...openAction,
       answeredAt: NOW,
     });
@@ -1623,7 +1628,7 @@ describe("pending actions", () => {
     expect(answered.status).toBe(409);
 
     vi.mocked(deps.pendingAction.answerPendingAction).mockResolvedValueOnce(null);
-    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce({
+    vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValue({
       ...openAction,
       expiresAt: new Date(NOW.getTime() - 1),
     });
