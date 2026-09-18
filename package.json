@@ -30,10 +30,10 @@
     "db:down": "docker compose down postgres"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.11",
+    "@biomejs/biome": "^2.5.13",
     "@graft/config": "workspace:*",
     "@types/node": "catalog:",
-    "turbo": "^2.10.12",
+    "turbo": "^2.10.13",
     "typescript": "catalog:"
   },
   "packageManager": "pnpm@10.6.1"

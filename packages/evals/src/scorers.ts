@@ -24,12 +24,24 @@ import type { TimedRequest } from "./world";
 
 export type Score = { name: string; pass: boolean; detail?: string };
 
+/**
+ * A tool-kind pending action as the world recorded it, with its position in the world's record
+ * (`World.record`): what orders it against the job's settle point when `createdAt` cannot (GRA-63).
+ */
+export type RecordedAsk = PendingActionRow & { position: number };
+
 /** One scenario's run, as the scorers read it. Every collection is the slice the scenario produced. */
 export type ScenarioRun = {
   scenario: Scenario;
   status: AcquireStatus;
   job: AcquireJobRow | null;
   attempts: AcquireAttemptRow[];
+  /**
+   * The job's settle point: how many rows the world's record held when `acquire_status` first
+   * answered a terminal status. Every row the job wrote is at or below it, every row the tool's use
+   * wrote above it, however close their timestamps (GRA-63).
+   */
+  settled: number;
   traces: AcquireTraceRow[];
   /** Requests that reached a vendor, in order, stamped when the vendor answered. */
   requests: TimedRequest[];
@@ -39,8 +51,8 @@ export type ScenarioRun = {
   version: ToolVersionRow | null;
   /** The tool's first use after the job: the answer, the ask if one came, and the answer after it. */
   use: ToolUse | null;
-  /** Every tool-kind pending action created for the tool, in order. */
-  asks: PendingActionRow[];
+  /** Every tool-kind pending action created for the tool, in the order the world recorded them. */
+  asks: RecordedAsk[];
   ledger: UsageLedgerRow[];
   ms: number;
   /** The attempts' split, and the job's total as charged against the ceiling. */
@@ -178,15 +190,17 @@ export function noVendorHostInCode(run: ScenarioRun, hostnames: readonly string[
 
 /**
  * A dry run before any ask: the published version carries a dry-run report that passed, and no
- * tool-kind ask was created before it — the person is asked at the tool's first use, never inside
- * the job (ADR 0008: a dry run passes the gate; the agent's first real call asks).
+ * tool-kind ask was created before it or inside the job — the person is asked at the tool's first
+ * use, never inside the job (ADR 0008: a dry run passes the gate; the agent's first real call asks).
+ * "Inside the job" is a position at or before the settle point, never a timestamp: the first-use
+ * ask follows the result trace by a millisecond or none, and `createdAt <= result` read a legitimate
+ * ask as the job's whenever the two shared one (GRA-63).
  */
 export function dryRunBeforeAnyAsk(run: ScenarioRun): Score {
   const dryRunAt = run.version?.dryRunAt?.getTime() ?? null;
   const outcome = run.version?.dryRunOutcome as { passed?: boolean } | null;
-  const result = firstTrace(run, "result");
   const early = run.asks.filter(
-    (ask) => dryRunAt === null || at(ask) < dryRunAt || (result !== null && at(ask) <= at(result)),
+    (ask) => dryRunAt === null || at(ask) < dryRunAt || ask.position <= run.settled,
   );
   return {
     name: "dry_run_before_any_ask",
