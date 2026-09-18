@@ -82,7 +82,7 @@ export function createPipedreamProvider(deps: PipedreamProviderDeps): Connection
   const apps = deps.apps ?? PIPEDREAM_APPS;
   const { client } = deps;
 
-  /** A row with no account is not connected; the proxy reads a null scheme as `connection_not_ready`. */
+  /** Nothing the proxy can use; it reads the null scheme as `connection_not_ready`. */
   const notReady: ProviderResolution = {
     mode: "inject",
     scheme: null,
@@ -134,7 +134,11 @@ export function createPipedreamProvider(deps: PipedreamProviderDeps): Connection
     resolve: (row: ProviderConnectionRow) => {
       // A revoked row may still carry its reference while Pipedream's release is outstanding
       // (`connection.service.ts`, `releaseFromProvider`); it is not one a call may go through.
-      if (!row.providerRef || row.revokedAt) return notReady;
+      // `toProxyConnection` reads the revoke first and never asks; this is the provider's own guard.
+      if (row.revokedAt) return notReady;
+      // No account yet: the link never completed. The proxy names this provider as the one that
+      // holds nothing for the row (GRA-68), where a null scheme would have it name the columns.
+      if (!row.providerRef) return { mode: "pending" };
       const externalUserId = externalUserIdFor(row.personId);
       const accountId = row.providerRef;
       return {

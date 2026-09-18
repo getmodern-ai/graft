@@ -132,7 +132,14 @@ export type ProviderResolution =
       schemeConfig: SchemeConfig;
       credentialCiphertext: Uint8Array | null;
     }
-  | { mode: "relay"; relay: ProxyRelay };
+  | { mode: "relay"; relay: ProxyRelay }
+  /**
+   * The provider holds nothing for this row yet: a link the person opened and did not finish, so
+   * there is neither a credential to inject nor an upstream to relay to. The proxy says so, naming
+   * the provider (`connection_not_ready`, GRA-68), where a null `inject` scheme would have it name
+   * the columns the row happens to lack.
+   */
+  | { mode: "pending" };
 
 /**
  * The columns a provider reads off a row. The ciphertext is among them because the keyring provider
