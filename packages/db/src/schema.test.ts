@@ -152,18 +152,15 @@ describe("delete behaviour", () => {
 });
 
 describe("the account table", () => {
-  /** Better Auth 1.7 keys an external account by (issuer, accountId); `schema/auth.ts` says why by hand. */
-  it("carries Better Auth 1.7's issuer column and the unique pair, which the CLI does not emit", () => {
+  /**
+   * Better Auth 1.7.3 keys an external account by (providerId, accountId), as 1.6 did, and its
+   * schema validation refuses a required column it never writes. The `issuer` column and the
+   * unique pair that 1.7.0 through 1.7.2 wanted were dropped by migration 0008 (GRA-86); this pins
+   * the file as the generator's output, with nothing added by hand.
+   */
+  it("is the generator's output: no issuer column, and the user index alone", () => {
     const config = getTableConfig(account);
-    const issuer = config.columns.find((column) => column.name === "issuer");
-    expect(issuer?.notNull).toBe(true);
-    const pair = config.indexes.find(
-      (index) => index.config.name === "account_issuer_accountId_uidx",
-    );
-    expect(pair?.config.unique).toBe(true);
-    expect(pair?.config.columns.map((column) => ("name" in column ? column.name : ""))).toEqual([
-      "issuer",
-      "account_id",
-    ]);
+    expect(config.columns.map((column) => column.name)).not.toContain("issuer");
+    expect(config.indexes.map((index) => index.config.name)).toEqual(["account_userId_idx"]);
   });
 });
