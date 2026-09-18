@@ -1,3 +1,4 @@
+import { takesCredential } from "@graft/core/connection/connection.rules";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -173,6 +174,13 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       <>
         Connected through {connection.provider}. The account's token is held there, never here;
         Graft stores only the account's id, and every call relays through {connection.provider}.
+      </>
+    ) : !takesCredential(connection.scheme) ? (
+      // A keyless scheme (GRA-66) has no credential to have set: the sentence says so instead of
+      // formatting the null the column holds, which is what took this route down (GRA-96).
+      <>
+        Connected. This scheme sends no credential: the vendor is public, and every call goes
+        through the proxy with nothing added.
       </>
     ) : connection.oauth ? (
       <>
