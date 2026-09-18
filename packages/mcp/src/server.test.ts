@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { ModuleCheck } from "@graft/check";
+import { setConnectionCredential } from "@graft/core";
 import {
   createFakeMetadataSource,
   createPublishDeps,
@@ -21,7 +22,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { NO_ELICITATION } from "./approval";
 import type { McpDeps } from "./deps";
-import { createToolListChangedNotifier } from "./notifier";
+import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
+import { revokeConnectionAndNotify } from "./revoke";
 import { runAuthoredTool } from "./run";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
@@ -226,9 +228,13 @@ afterAll(async () => {
   await vendor.close();
 });
 
-/** A harness: the SDK's client over the in-memory pair, counting `tools/list_changed`. */
-async function connect(token: string, windowMs = 300) {
-  const notifier = createToolListChangedNotifier({ windowMs });
+/**
+ * A harness: the SDK's client over the in-memory pair, counting `tools/list_changed`. Two harnesses
+ * handed one `shared` notifier stand for two agents of one process, which is how a change announced
+ * to one agent is shown not to reach the other.
+ */
+async function connect(token: string, windowMs = 300, shared?: ToolListChangedNotifier) {
+  const notifier = shared ?? createToolListChangedNotifier({ windowMs });
   const session = await openAgentSession(deps, token, notifier);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await session.server.connect(serverTransport);
@@ -240,6 +246,7 @@ async function connect(token: string, windowMs = 300) {
   await client.connect(clientTransport);
   return {
     client,
+    notifier,
     notifications,
     call: async (name: string, args: Record<string, unknown> = {}) =>
       (await client.callTool({ name, arguments: args })) as CallToolResult,
@@ -247,7 +254,7 @@ async function connect(token: string, windowMs = 300) {
     close: async () => {
       await client.close();
       await session.close();
-      notifier.close();
+      if (!shared) notifier.close();
     },
   };
 }
@@ -445,6 +452,129 @@ describe("promote and demote", () => {
       expect(await b.names()).not.toContain(LIST_ITEMS);
     } finally {
       await b.close();
+    }
+  }, 30_000);
+});
+
+describe("a revoked connection (GRA-69)", () => {
+  const CONN_REVOCABLE = "conn_revocable";
+  const TOOL_COUNT_THINGS = "tool_count_things";
+  const COUNT_THINGS = authoredToolName("revocable", "count-things");
+  const EXECUTE_REVOCABLE = executeToolName(CONN_REVOCABLE);
+  const principal = { personId: PERSON };
+
+  /**
+   * What a harness observes across the whole arc: the execute tool and the promoted tool bound to
+   * the connection leave agent A's list on the revoke, with the demotion recorded as `revoke`
+   * (ADR 0009 as amended 2026-09-18); A hears `tools/list_changed` and B, whose scope never named the
+   * connection, hears nothing and lists the same; a snapshot client naming either tool anyway is told
+   * `connection_revoked` rather than asked for an approval; the tool is still findable and promotable;
+   * and the credential re-entered brings the execute tool back with no further step.
+   */
+  it("leaves the agent's list with its promoted tools demoted by cause revoke, announces the change to that agent alone, refuses a call that names it anyway, and the execute tool returns on reconnection", async () => {
+    store.addConnection({
+      id: CONN_REVOCABLE,
+      personId: PERSON,
+      vendor: "revocable",
+      displayName: "Revocable",
+      primaryHost: "https://api.revocable.example",
+    });
+    store.agentConnections.get(AGENT_A)?.add(CONN_REVOCABLE);
+    store.addTool({
+      id: TOOL_COUNT_THINGS,
+      personId: PERSON,
+      vendor: "revocable",
+      name: "count-things",
+      description: "Counts things at Revocable.",
+      inputSchema: { type: "object" },
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: CONN_REVOCABLE,
+      path: "tools/revocable/count-things/v1",
+    });
+    store.promote(AGENT_A, TOOL_COUNT_THINGS);
+
+    const notifier = createToolListChangedNotifier({ windowMs: 300 });
+    const a = await connect(TOKEN_A, 300, notifier);
+    const b = await connect(TOKEN_B, 300, notifier);
+    try {
+      const before = await a.names();
+      expect(before).toEqual(
+        expect.arrayContaining([EXECUTE_REVOCABLE, COUNT_THINGS, executeToolName(CONN_DEMO)]),
+      );
+      const bBefore = await b.names();
+      expect(bBefore).not.toContain(EXECUTE_REVOCABLE);
+
+      const ctx = { db: deps.db };
+      const result = await revokeConnectionAndNotify(
+        ctx,
+        principal,
+        CONN_REVOCABLE,
+        deps,
+        notifier,
+      );
+      expect(result).toMatchObject({
+        demoted: [{ agentId: AGENT_A, toolId: TOOL_COUNT_THINGS }],
+        affectedAgentIds: [AGENT_A],
+      });
+
+      await until(() => a.notifications.length >= 1);
+      expect(a.notifications).toHaveLength(1);
+      expect(b.notifications).toHaveLength(0);
+
+      const after = await a.names();
+      expect(after).not.toContain(EXECUTE_REVOCABLE);
+      expect(after).not.toContain(COUNT_THINGS);
+      // Every other row is where it was: the other connection's execute tool and A's other promotion.
+      expect(after).toEqual(
+        before.filter((name) => ![EXECUTE_REVOCABLE, COUNT_THINGS].includes(name)),
+      );
+      expect(await b.names()).toEqual(bBefore);
+      expect(store.changes.filter((c) => c.toolId === TOOL_COUNT_THINGS)).toMatchObject([
+        { agentId: AGENT_A, change: "demote", cause: "revoke" },
+      ]);
+
+      // A client that snapshotted its list may still name either tool: the answer is the
+      // connection's state, in `request_connection`'s words, and no approval is asked for.
+      const exec = await a.call(EXECUTE_REVOCABLE, { command: "echo hi" });
+      expect(exec.isError).toBe(true);
+      expect(body(exec)).toMatchObject({
+        error: "refused",
+        reason: "connection_revoked",
+        connectionId: CONN_REVOCABLE,
+      });
+      const run = await a.call("run_tool", {
+        vendor: "revocable",
+        name: "count-things",
+        input: {},
+      });
+      expect(run.isError).toBe(true);
+      expect(body(run)).toMatchObject({ error: "refused", reason: "connection_revoked" });
+      expect(store.pendingActions.size).toBe(0);
+
+      // Nothing was deleted (ADR 0009): find_tool finds it, promote brings it back, list and all.
+      const found = body(await a.call("find_tool", { query: "revocable" }));
+      expect(found.tools).toMatchObject([{ tool: COUNT_THINGS, promoted: false }]);
+      const promoted = body(await a.call("promote", { vendor: "revocable", name: "count-things" }));
+      expect(promoted).toMatchObject({ promoted: true, changed: true });
+      const brought = await a.names();
+      expect(brought).toContain(COUNT_THINGS);
+      expect(brought).not.toContain(EXECUTE_REVOCABLE);
+
+      // Reconnection is the credential re-entered: the repo clears `revoked_at` (GRA-76), and the
+      // execute tool is back on the next list with no other state to move.
+      await setConnectionCredential(
+        ctx,
+        principal,
+        CONN_REVOCABLE,
+        { apiKey: "k" },
+        deps.connection,
+      );
+      expect(await a.names()).toContain(EXECUTE_REVOCABLE);
+    } finally {
+      await a.close();
+      await b.close();
+      notifier.close();
     }
   }, 30_000);
 });

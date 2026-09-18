@@ -1,4 +1,4 @@
-import { type ConnectionOutput, recordUsage } from "@graft/core";
+import { type ConnectionOutput, getConnection, recordUsage } from "@graft/core";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { requireBuildApproval } from "../approval";
@@ -11,7 +11,7 @@ import {
 import type { SessionContext } from "../context";
 import { heldInFlight } from "../in-flight";
 import { toolError, toolRefusal, toolResult } from "../result";
-import { runWithCapability } from "../run";
+import { revokedConnectionRefusal, runWithCapability } from "../run";
 import { openAgentSandbox, runCommand, withSandbox } from "../sandbox";
 import { executeToolName } from "../tool-names";
 import { commandTimingProperties, detachedAdvice } from "./authoring";
@@ -86,6 +86,11 @@ export async function callExecuteTool(
       `Connection ${connectionId} is not in this agent's scope. The person can add it in the console.`,
     );
   }
+  // The list no longer carries this tool for a revoked row (`../tools.ts`); a client that snapshots
+  // its list may still call it, and is told what happened rather than asked for a build approval on
+  // a connection the person just revoked (GRA-69).
+  const connection = await getConnection(ctx, session.principal, connectionId, deps.connection);
+  if (connection?.revokedAt) return toolError(revokedConnectionRefusal(connection));
   const parsed = readCommandInput(args);
   if ("error" in parsed) return toolRefusal("input_invalid", parsed.error);
   const dryRun = args.dryRun === true;
