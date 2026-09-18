@@ -45,7 +45,8 @@ import {
  * One connection: the vendor, the hosts the proxy pins its calls to, the scheme, when the credential
  * was set — and never the credential (CONTEXT.md: write-only after entry) — with the tools bound to
  * its vendor and its recent vendor calls. A revoked connection is still listed, awaiting
- * reconnection: its tools are, too, and Re-enter credential is the reconnection (ADR 0007; GRA-28).
+ * reconnection: its tools are, too, and Re-enter credential is the reconnection (ADR 0007; GRA-28)
+ * — or Reconnect, for a scheme that takes no credential (GRA-66, GRA-98).
  * A tool with no current version — every version an `acquire` job published failed its dry run
  * (GRA-77) — is listed with a chip saying so; it is in the toolbox and in no agent's list.
  *
@@ -136,6 +137,13 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         Revoked <Time iso={connection.revokedAt ?? ""} />. The account at {connection.provider} is
         forgotten and every approval with it; when an agent asks to connect {connection.vendor}{" "}
         again, one click through {connection.provider} reconnects it.
+      </>
+    ) : !takesCredential(connection.scheme) ? (
+      // A keyless scheme (GRA-66) had no credential to clear and has none to re-enter: Reconnect is
+      // the way back, as the button below says (GRA-98).
+      <>
+        Revoked <Time iso={connection.revokedAt ?? ""} />. Every approval with it is cleared;
+        Reconnect brings it back with the same hosts.
       </>
     ) : (
       <>
