@@ -83,6 +83,7 @@ first in the outcome.
 | [GRA-53](https://linear.app/get-modern/issue/GRA-53) | [#33](https://github.com/getmodern-ai/graft/pull/33) | 2026-09-15 | MCP clients connect over OAuth and the consent mints the agent |
 | [GRA-54](https://linear.app/get-modern/issue/GRA-54) | [#32](https://github.com/getmodern-ai/graft/pull/32) | 2026-09-15 | the handshake carries the playbook; instructions and descriptions stand in for the skill |
 | [GRA-55](https://linear.app/get-modern/issue/GRA-55) | [#34](https://github.com/getmodern-ai/graft/pull/34) | 2026-09-15 | an elicitation the client cancels falls back to the handoff link |
+| [GRA-62](https://linear.app/get-modern/issue/GRA-62) | [#84](https://github.com/getmodern-ai/graft/pull/84) | — | assertCloudBackings holds a hosted provider's connect shape to the type: a relay scheme on none and link, the proxy's signing schemes on a form |
 | [GRA-81](https://linear.app/get-modern/issue/GRA-81) | [#58](https://github.com/getmodern-ai/graft/pull/58) | 2026-09-17 | sign in with Google or GitHub, through Cando's one door; ADR 0020 |
 | [GRA-82](https://linear.app/get-modern/issue/GRA-82) | [#60](https://github.com/getmodern-ai/graft/pull/60) | 2026-09-18 | forgot password: Cando's email transport and the reset flow, Loops when a key is set; ADR 0021 |
 | [GRA-90](https://linear.app/get-modern/issue/GRA-90) | [#65](https://github.com/getmodern-ai/graft/pull/65) | 2026-09-18 | mail is a seam: the vendor transport and its template ids leave the open core; ADR 0021 rewritten |

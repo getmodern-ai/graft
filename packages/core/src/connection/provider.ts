@@ -41,9 +41,11 @@ export const KEYRING_PROVIDER = "keyring";
 export type ProviderConnect =
   /**
    * The person enters a secret in the console: the scheme picker over `schemes`, the scheme's
-   * parameters and its secret fields, from the two tables in `@graft/proxy` — today's form.
+   * parameters and its secret fields, from the two tables in `@graft/proxy` — today's form. At
+   * least one scheme, because a form is that picker and a picker over nothing connects nothing;
+   * `assertCloudBackings` holds a hosted provider to the same (GRA-62).
    */
-  | { kind: "form"; schemes: readonly AuthScheme[] }
+  | { kind: "form"; schemes: readonly [AuthScheme, ...AuthScheme[]] }
   /**
    * The person opens a link the provider mints and consents there; nothing is typed in the console
    * (GRA-59). The three functions are the link's flow as the server runs it (`apps/server`'s
