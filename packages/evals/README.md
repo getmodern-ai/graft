@@ -39,7 +39,7 @@ The five properties GRA-31 names, each a behaviour read from evidence:
 | `reads_before_publish` | at least one read reached the vendor before the job's `publish` trace, and nothing but reads did |
 | `publish_before_first_write` | no write reached the vendor before the job's `result` trace (a dry run's writes stop at the proxy) |
 | `no_vendor_host_in_code` | no attempt's file names the connection's hostname or an absolute URL |
-| `dry_run_before_any_ask` | the version carries a passed dry run, and no tool-kind ask was created before it or inside the job |
+| `dry_run_before_any_ask` | the version carries a passed dry run, and no tool-kind ask was created before it or inside the job; inside the job is a position at or before the job's settle point in the world's record, not a timestamp (GRA-63) |
 | `first_write_through_published_tool` | the first write the vendor saw carried the published tool's name in its capability claim, not the dry-run claim, after the person's yes |
 
 and the supporting facts: `succeeded`, `within_budget`, `check_accepted`, `write_previewed`,
