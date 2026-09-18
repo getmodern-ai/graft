@@ -70,6 +70,27 @@ export async function findAgent(
   return row ?? null;
 }
 
+/**
+ * `findAgent` with the row locked (`SELECT … FOR UPDATE`): what a scope write reads first, so two
+ * writes on one agent's scope serialise on the row — a narrowing that materialises the resolved
+ * scope and a grant that decides "no list row, the agent is on `all`" cannot interleave, and the
+ * list a narrowing writes is the scope as it stands when it commits (Greptile on #88). Only
+ * meaningful inside a transaction; outside one the lock is released as the statement ends.
+ */
+export async function findAgentForUpdate(
+  db: DbOrTx,
+  personId: string,
+  agentId: string,
+): Promise<AgentRow | null> {
+  const [row] = await db
+    .select()
+    .from(agent)
+    .where(and(eq(agent.id, agentId), eq(agent.personId, personId)))
+    .limit(1)
+    .for("update");
+  return row ?? null;
+}
+
 /** Every agent of a person, revoked ones included, oldest first. */
 export async function listAgents(db: DbOrTx, personId: string): Promise<AgentRow[]> {
   return db

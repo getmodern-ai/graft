@@ -42,7 +42,7 @@ import {
 } from "./connection-request";
 import type { McpDeps } from "./deps";
 import { HANDOFF_TOKEN_PARAM, verifyHandoff } from "./handoff";
-import { createToolListChangedNotifier } from "./notifier";
+import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
@@ -158,8 +158,13 @@ afterEach(() => {
   deps.handoff.ttlMs = 60_000;
 });
 
-async function connect(token: string) {
-  const notifier = createToolListChangedNotifier({ windowMs: 50 });
+/**
+ * A harness over the in-memory pair, counting `tools/list_changed`. Two harnesses handed one
+ * `shared` notifier stand for two agents of one process, which is how a change announced to one
+ * agent is shown to reach — or not reach — the other (as `server.test.ts`'s harness does).
+ */
+async function connect(token: string, shared?: ToolListChangedNotifier) {
+  const notifier = shared ?? createToolListChangedNotifier({ windowMs: 50 });
   const session = await openAgentSession(deps, token, notifier);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await session.server.connect(serverTransport);
@@ -182,7 +187,7 @@ async function connect(token: string) {
     close: async () => {
       await client.close();
       await session.close();
-      notifier.close();
+      if (!shared) notifier.close();
     },
   };
 }
@@ -1416,8 +1421,11 @@ describe("request_connection through the gateway provider (GRA-58)", () => {
     const TOKEN_OPEN_2 = "grft_connection_token_o2_0000000000000000000000000";
     store.addAgent({ scopeMode: "all", id: OPEN_1, personId: PERSON, token: TOKEN_OPEN_1 });
     store.addAgent({ scopeMode: "all", id: OPEN_2, personId: PERSON, token: TOKEN_OPEN_2 });
-    const one = await connect(TOKEN_OPEN_1);
-    const two = await connect(TOKEN_OPEN_2);
+    // One notifier for the process: what `one` connects, `two` must hear about (Greptile on #88).
+    const shared = createToolListChangedNotifier({ windowMs: 50 });
+    const one = await connect(TOKEN_OPEN_1, shared);
+    const two = await connect(TOKEN_OPEN_2, shared);
+    const listed = await connect(TOKEN_B, shared);
     try {
       const said = body(await one.call("request_connection", COVERED));
       expect(said).toMatchObject({ status: "connected", provider: "gateway" });
@@ -1426,16 +1434,24 @@ describe("request_connection through the gateway provider (GRA-58)", () => {
       expect(store.agentConnections.get(OPEN_1)?.size ?? 0).toBe(0);
       await until(() => one.listChanged() > 0);
       expect(await one.toolNames()).toContain(executeToolName(id));
+      // The row entered `two`'s scope the moment it existed, so its session is told and its list
+      // carries the execute tool without a call of its own; B, on a list without the row, hears
+      // nothing and lists nothing new.
+      await until(() => two.listChanged() > 0);
+      expect(await two.toolNames()).toContain(executeToolName(id));
+      expect(listed.listChanged()).toBe(0);
+      expect(await listed.toolNames()).not.toContain(executeToolName(id));
 
       // The other `all` agent: in scope already, connected with no refusal and no widening.
       const other = body(await two.call("request_connection", COVERED));
       expect(other).toMatchObject({ status: "connected", connectionId: id, provider: "gateway" });
       expect(other.message).toContain("already connected");
-      expect(await two.toolNames()).toContain(executeToolName(id));
       expect(rowsFor("unleashed")).toHaveLength(1);
     } finally {
       await one.close();
       await two.close();
+      await listed.close();
+      shared.close();
       store.agents.delete(OPEN_1);
       store.agents.delete(OPEN_2);
       store.agentConnections.delete(OPEN_1);
@@ -2143,6 +2159,43 @@ describe("an agent on all connections reaches the person's rows without an ask (
     } finally {
       await c.close();
       await b.close();
+    }
+  });
+
+  it("hears tools/list_changed when another agent's proposal is connected in the console, and lists the execute tool without a call of its own", async () => {
+    const EPSILON = {
+      vendor: "epsilon",
+      displayName: "Epsilon",
+      primaryHost: "https://api.epsilon.example",
+      scheme: "api_key_header",
+      schemeConfig: { headerName: "x-epsilon-key" },
+    };
+    const shared = createToolListChangedNotifier({ windowMs: 50 });
+    const b = await connect(TOKEN_B, shared);
+    const c = await connect(TOKEN_C, shared);
+    try {
+      const { action } = awaiting(
+        await b.call("request_connection", EPSILON),
+        "awaiting_connection",
+      );
+      const connection = await submitConnection(action.id, { apiKey: "eps_1" });
+      made.push(connection.id);
+      // B's next call takes the answer; the announcement that follows reaches every session
+      // whose scope holds the row — B's, on its list, and C's, on `all` (Greptile on #88).
+      const next = await b.call("request_connection", EPSILON);
+      expect(body(next)).toMatchObject({ status: "connected", connectionId: connection.id });
+      await until(() => b.listChanged() > 0 && c.listChanged() > 0);
+      expect(await c.toolNames()).toContain(executeToolName(connection.id));
+      expect(store.agentConnections.get(AGENT_C)?.size ?? 0).toBe(0);
+    } finally {
+      await b.close();
+      await c.close();
+      shared.close();
+      for (const [id, pending] of store.pendingActions) {
+        if (pending.agentId === AGENT_B && pending.payload.vendor === "epsilon") {
+          store.pendingActions.delete(id);
+        }
+      }
     }
   });
 

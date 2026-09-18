@@ -2,6 +2,7 @@ import {
   addAgentConnection,
   findAgent,
   findAgentByTokenHash,
+  findAgentForUpdate,
   insertAgent,
   listAgentConnectionIds,
   listAgents,
@@ -23,6 +24,8 @@ import { findAgentByMcpAccessTokenHash, revokeMcpTokensForAgent } from "@graft/d
 export type AgentDeps = {
   insertAgent: typeof insertAgent;
   findAgent: typeof findAgent;
+  /** The agent row locked for a scope write, so a narrowing and a grant serialise on it. */
+  findAgentForUpdate: typeof findAgentForUpdate;
   findAgentByTokenHash: typeof findAgentByTokenHash;
   /** The MCP door's second read (ADR 0018): an OAuth access token to its agent, revoked ones filtered in the statement. */
   findAgentByMcpAccessTokenHash: typeof findAgentByMcpAccessTokenHash;
@@ -53,6 +56,7 @@ export type AgentDeps = {
 export const defaultAgentDeps: AgentDeps = {
   insertAgent,
   findAgent,
+  findAgentForUpdate,
   findAgentByTokenHash,
   findAgentByMcpAccessTokenHash,
   listAgents,

@@ -30,6 +30,8 @@ import {
   CONNECTION_ASK_KIND,
   type ConnectionProposalPayload,
   type HandoffConfig,
+  notifyAgentsReachingConnection,
+  type ToolListChangedNotifier,
 } from "@graft/mcp";
 import { Hono } from "hono";
 
@@ -75,6 +77,12 @@ export type ProviderLinkRouteOptions = {
   handoff: Pick<HandoffConfig, "consoleUrl" | "secret">;
   /** `GRAFT_AUTH_URL` — the return URI is `linkCallbackUri(authUrl)`, on the server's own origin. */
   authUrl: string;
+  /**
+   * The process's `tools/list_changed` notifier: the row the return makes or reconnects enters the
+   * list of every agent whose scope reaches it (ADR 0007 as amended 2026-09-19), and those
+   * sessions are told after the transaction, as `api.ts`'s connection routes tell them.
+   */
+  notifier?: Pick<ToolListChangedNotifier, "changed">;
 };
 
 export type StartedProviderLink = {
@@ -394,6 +402,14 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
       );
     }
 
+    // Committed: every live session whose scope reaches the row hears that its list changed.
+    await notifyAgentsReachingConnection(
+      ctx,
+      principal,
+      connectionId,
+      { connection: options.connection },
+      options.notifier,
+    );
     return land({
       status: "connected",
       pendingActionId,

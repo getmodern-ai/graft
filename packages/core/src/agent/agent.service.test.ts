@@ -55,6 +55,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
   return {
     insertAgent: vi.fn(async (_db, input) => ({ ...row, ...input }) as AgentRow),
     findAgent: vi.fn(async () => row),
+    findAgentForUpdate: vi.fn(async () => row),
     findAgentByTokenHash: vi.fn(async () => row),
     findAgentByMcpAccessTokenHash: vi.fn(async () => null),
     listAgents: vi.fn(async () => [row]),
@@ -408,7 +409,7 @@ describe("setAgentScope", () => {
   });
 
   it("to listed with no list: materialises the scope as it stands, so narrowing starts from what the agent had", async () => {
-    const deps = fakeDeps({ findAgent: vi.fn(async () => openRow) });
+    const deps = fakeDeps({ findAgentForUpdate: vi.fn(async () => openRow) });
     const result = await setAgentScope(ctx, PRINCIPAL, "agent_1", { mode: "listed" }, deps);
     expect(result.connectionIds).toEqual(["conn_1", "conn_2", "conn_3"]);
     expect(result.agent.scopeMode).toBe("listed");
@@ -417,10 +418,26 @@ describe("setAgentScope", () => {
       { personId: "person_1", agentId: "agent_1" },
       ["conn_1", "conn_2", "conn_3"],
     );
+    // The row is locked first and the scope read after it, inside the transaction — so a grant
+    // racing this narrowing serialises on the row and the list is the scope as it commits
+    // (Greptile on #88); a read before the transaction lost a connection made in between.
+    const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
+      fn.mock.invocationCallOrder[0] ?? Number.NaN;
+    expect(deps.findAgent).not.toHaveBeenCalled();
+    expect(deps.findAgentForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1");
+    expect(order(vi.mocked(deps.findAgentForUpdate))).toBeLessThan(
+      order(vi.mocked(deps.listScopeConnectionIds)),
+    );
+    expect(order(vi.mocked(deps.listScopeConnectionIds))).toBeLessThan(
+      order(vi.mocked(deps.updateAgent)),
+    );
+    expect(order(vi.mocked(deps.updateAgent))).toBeLessThan(
+      order(vi.mocked(deps.replaceAgentConnections)),
+    );
   });
 
   it("refuses an unknown agent before checking any connection", async () => {
-    const deps = fakeDeps({ findAgent: vi.fn(async () => null) });
+    const deps = fakeDeps({ findAgentForUpdate: vi.fn(async () => null) });
     await expect(
       setAgentScope(ctx, PRINCIPAL, "missing", { mode: "listed", connectionIds: ["conn_1"] }, deps),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -462,6 +479,13 @@ describe("addConnectionToAgentScope", () => {
       { personId: "person_1", agentId: "agent_1" },
       "conn_2",
     );
+    // The mode is read from the row locked, inside the transaction, before the insert — the same
+    // lock a narrowing takes, so the two serialise (Greptile on #88).
+    expect(deps.findAgent).not.toHaveBeenCalled();
+    expect(deps.findAgentForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1");
+    expect(
+      vi.mocked(deps.findAgentForUpdate).mock.invocationCallOrder[0] ?? Number.NaN,
+    ).toBeLessThan(vi.mocked(deps.addAgentConnection).mock.invocationCallOrder[0] ?? Number.NaN);
     // The whole-list write is the agent page's (`setAgentScope`); a grant never makes it, so a
     // concurrent edit of the scope is not overwritten with a stale list (Greptile on #87).
     expect(deps.replaceAgentConnections).not.toHaveBeenCalled();
@@ -479,7 +503,7 @@ describe("addConnectionToAgentScope", () => {
 
   /** ADR 0007 as amended 2026-09-19: every grant-on-connect path is a no-op for an agent on `all`. */
   it("is a no-op for an agent on all — the connection is already in its scope — and still refuses a foreign id", async () => {
-    const deps = fakeDeps({ findAgent: vi.fn(async () => openRow) });
+    const deps = fakeDeps({ findAgentForUpdate: vi.fn(async () => openRow) });
     const result = await addConnectionToAgentScope(ctx, PRINCIPAL, "agent_1", "conn_2", deps);
     expect(result.agent.scopeMode).toBe("all");
     expect(result.connectionIds).toEqual(["conn_1", "conn_2", "conn_3"]);
@@ -487,7 +511,7 @@ describe("addConnectionToAgentScope", () => {
     expect(deps.listAgentConnectionIds).not.toHaveBeenCalled();
 
     const foreign = fakeDeps({
-      findAgent: vi.fn(async () => openRow),
+      findAgentForUpdate: vi.fn(async () => openRow),
       findConnectionsByIds: vi.fn(async () => []),
     });
     await expect(
@@ -496,7 +520,7 @@ describe("addConnectionToAgentScope", () => {
   });
 
   it("refuses an unknown agent and a connection that is not the person's, writing nothing", async () => {
-    const noAgent = fakeDeps({ findAgent: vi.fn(async () => null) });
+    const noAgent = fakeDeps({ findAgentForUpdate: vi.fn(async () => null) });
     await expect(
       addConnectionToAgentScope(ctx, PRINCIPAL, "missing", "conn_1", noAgent),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });

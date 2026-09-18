@@ -232,6 +232,10 @@ function harness(overrides: { clock?: Date } = {}) {
       const row = store.agents.get(agentId);
       return row && row.personId === personId ? row : null;
     }),
+    findAgentForUpdate: vi.fn(async (_db, personId, agentId) => {
+      const row = store.agents.get(agentId);
+      return row && row.personId === personId ? row : null;
+    }),
     findAgentByTokenHash: vi.fn(async () => null),
     findAgentByMcpAccessTokenHash: deps.findAgentByMcpAccessTokenHash,
     listAgents: vi.fn(async () => [...store.agents.values()]),

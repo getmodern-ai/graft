@@ -57,6 +57,7 @@ import {
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
   handoffUrl,
+  notifyAgentsReachingConnection,
   openAskOfKind,
   recordApprovalAnswer,
   refuseUnlessOpen,
@@ -584,6 +585,7 @@ export function createApi(options: ApiOptions): Hono {
       approval: approvalDeps,
       handoff,
       authUrl: options.authUrl,
+      notifier: options.notifier,
     };
   };
 
@@ -774,11 +776,28 @@ export function createApi(options: ApiOptions): Hono {
    * one transaction (GRA-28: the console's Add connection, the same form as an agent's proposal with
    * no pending action behind it); without, the row waits for `PUT /connections/:id/credential`.
    */
+  /**
+   * A row made or reconnected is announced to every live session whose scope reaches it — every
+   * agent on `all`, and every agent whose list names it (ADR 0007 as amended 2026-09-19) — through
+   * `@graft/mcp`'s `notifyAgentsReachingConnection`, as the revoke route announces the row leaving.
+   * After the transaction that makes the row, so a session re-fetching on the notification reads
+   * the committed row.
+   */
+  const announceConnection = (principal: Principal, connectionId: string) =>
+    notifyAgentsReachingConnection(
+      ctx,
+      principal,
+      connectionId,
+      { connection: connectionDeps },
+      options.notifier,
+    );
+
   api.post("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const { credential, ...registration } = await parseBody(c.req.raw, connectionBody);
     if (!credential) {
       const connection = await registerConnection(ctx, principal, registration, connectionDeps);
+      await announceConnection(principal, connection.id);
       return c.json({ connection }, 201);
     }
     // With a credential: the row, its ciphertext and — for an authorization-code connection — the
@@ -796,6 +815,7 @@ export function createApi(options: ApiOptions): Hono {
         ? { connection: consent.connection, authorizeUrl: consent.authorizeUrl }
         : { connection };
     });
+    await announceConnection(principal, result.connection.id);
     return c.json(result, 201);
   });
 
@@ -897,13 +917,19 @@ export function createApi(options: ApiOptions): Hono {
   api.put("/connections/:id/credential", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, credentialBody);
+    const id = c.req.param("id");
+    // A re-entry on a revoked row is its reconnection (ADR 0007): the execute tool comes back to
+    // every list whose scope reaches it, so those sessions are told; a rotation on a live row
+    // changes no list and tells nobody.
+    const before = await getConnection(ctx, principal, id, connectionDeps);
     const connection = await setConnectionCredential(
       ctx,
       principal,
-      c.req.param("id"),
+      id,
       body.fields,
       connectionDeps,
     );
+    if (before?.revokedAt) await announceConnection(principal, connection.id);
     return c.json({ connection });
   });
 
@@ -944,6 +970,7 @@ export function createApi(options: ApiOptions): Hono {
   api.post("/connections/:id/reconnect", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const connection = await reconnectConnection(ctx, principal, c.req.param("id"), connectionDeps);
+    await announceConnection(principal, connection.id);
     return c.json({ connection });
   });
 
@@ -1093,6 +1120,7 @@ export function createApi(options: ApiOptions): Hono {
       },
       { consent: consentFor },
     );
+    await announceConnection(principal, result.connection.id);
     return c.json(result, 201);
   });
 
@@ -1138,6 +1166,8 @@ export function createApi(options: ApiOptions): Hono {
       if (typeof connectionId !== "string") {
         throw new ServiceError("BAD_REQUEST", "This credential ask names no connection");
       }
+      // Whether this re-entry is a reconnection (the route above says why it matters).
+      const before = await getConnection(scoped, principal, connectionId, connectionDeps);
       const connection = await setConnectionCredential(
         scoped,
         principal,
@@ -1167,9 +1197,11 @@ export function createApi(options: ApiOptions): Hono {
         { connectionId },
         pendingActionDeps,
       );
-      return { connection, pendingAction };
+      return { connection, pendingAction, reconnected: before?.revokedAt !== null };
     });
-    return c.json(result);
+    const { reconnected, ...answer } = result;
+    if (reconnected) await announceConnection(principal, answer.connection.id);
+    return c.json(answer);
   });
 
   /** One agent's standing approvals — what the console lists to set how a tool asks, or withdraw. */

@@ -36,6 +36,7 @@ import { AUTH_SCHEMES, type AuthScheme, isAuthScheme } from "@graft/proxy/types"
 
 import { DEFAULT_POLL_MS } from "./approval";
 import { connectionAskCard, credentialAskCard, scopeAskCard } from "./ask-card";
+import { notifyAgentsReachingConnection } from "./connected";
 import type { McpDeps } from "./deps";
 import { handoffUrl, signHandoffToken } from "./handoff";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -774,9 +775,16 @@ async function routeProposal(
       settleByConnectionId(ctx, scope, taken, deps, {
         what,
         declinedReason: "connection_declined",
-        onConnected: (connection) => {
-          // The connection's execute tool is now in this agent's list (ADR 0003).
-          notifier?.changed(scope.agentId);
+        onConnected: async (connection) => {
+          // The connection's execute tool is now in the list of every agent whose scope reaches
+          // the row (ADR 0003; `connected.ts`) — this one's, and every agent on `all`.
+          await notifyAgentsReachingConnection(
+            ctx,
+            { personId: scope.personId },
+            connection.id,
+            deps,
+            notifier,
+          );
           return connected(connection, "new");
         },
       }),
@@ -984,12 +992,14 @@ async function connectWithoutPersonStep(
       },
       deps.connection,
     );
-    // The agent that asked gets it, and no other (ADR 0007), as the console's submit does.
+    // The agent that asked gets it (ADR 0007), as the console's submit does — a no-op for an
+    // agent on `all`, whose scope the row is in already (ADR 0007 as amended 2026-09-19).
     await addConnectionToAgentScope(scoped, principal, scope.agentId, created.id, deps.agent);
     return created;
   });
-  // The connection's execute tool is now in this agent's list (ADR 0003).
-  notifier?.changed(scope.agentId);
+  // The connection's execute tool is now in the list of every agent whose scope reaches the row
+  // (ADR 0003; `connected.ts`): this one's, and every agent on `all`.
+  await notifyAgentsReachingConnection(ctx, principal, connection.id, deps, notifier);
   return { isError: false, answer: connected(connection, "provider") };
 }
 
@@ -1206,7 +1216,11 @@ async function settleByConnectionId(
   scope: AgentScope,
   taken: PendingActionRow,
   deps: McpDeps,
-  ask: { what: string; declinedReason: string; onConnected: (c: ConnectionOutput) => Connected },
+  ask: {
+    what: string;
+    declinedReason: string;
+    onConnected: (c: ConnectionOutput) => Connected | Promise<Connected>;
+  },
 ): Promise<ConnectionRequestOutcome> {
   const answer = readConnectionAnswer(taken.answer);
   const connection = answer
@@ -1219,5 +1233,5 @@ async function settleByConnectionId(
       { pendingActionId: taken.id },
     );
   }
-  return { isError: false, answer: ask.onConnected(connection) };
+  return { isError: false, answer: await ask.onConnected(connection) };
 }

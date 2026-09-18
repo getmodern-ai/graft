@@ -333,6 +333,11 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.agents.get(agentId);
       return row && row.personId === personId ? row : null;
     },
+    // No lock in memory: the store has no concurrent transactions to serialise.
+    findAgentForUpdate: async (_db, personId, agentId) => {
+      const row = store.agents.get(agentId);
+      return row && row.personId === personId ? row : null;
+    },
     findAgentByTokenHash: async (_db, tokenHash) =>
       [...store.agents.values()].find((row) => row.tokenHash === tokenHash && !row.revokedAt) ??
       null,

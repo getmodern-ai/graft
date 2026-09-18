@@ -170,6 +170,7 @@ function agentDeps(): AgentDeps {
   return {
     insertAgent: vi.fn(async (_db, input) => ({ ...agentRow, ...input }) as AgentRow),
     findAgent: vi.fn(async () => agentRow),
+    findAgentForUpdate: vi.fn(async () => agentRow),
     findAgentByTokenHash: vi.fn(async () => agentRow),
     findAgentByMcpAccessTokenHash: vi.fn(async () => null),
     listAgents: vi.fn(async () => [agentRow]),
@@ -228,7 +229,8 @@ function connectionDeps(): ConnectionDeps {
     expirePendingActionsForConnection: vi.fn(async () => []),
     deleteWorkingSetEntriesForConnection: vi.fn(async () => []),
     insertWorkingSetChange: vi.fn(async (_db, input) => input as never),
-    listAgentIdsForConnection: vi.fn(async () => []),
+    // The person's `listed` agent holding the row, and an agent on `all` (ADR 0007 as amended 2026-09-19).
+    listAgentIdsForConnection: vi.fn(async () => ["agent_1", "agent_open"]),
     vault: { encrypt: vi.fn(async () => Buffer.from("ciphertext")) },
     providers: DEFAULT_PROVIDERS,
     newId: () => "conn_new",
@@ -804,7 +806,7 @@ describe("the working-set history", () => {
 
 describe("connections", () => {
   it("registers a connection and refuses a private host with the rule's sentence", async () => {
-    const { app } = harness({ user: { id: "person_1" } });
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
     const base = {
       vendor: "demo",
       displayName: "Demo",
@@ -814,7 +816,8 @@ describe("connections", () => {
     };
     const created = await app.request("/api/connections", json(base));
     expect(created.status).toBe(201);
-    expect(await created.json()).toMatchObject({
+    const made = (await created.json()) as { connection: { id: string } };
+    expect(made).toMatchObject({
       connection: {
         // The keyring, named on the wire, when the body names no provider (ADR 0019).
         provider: "keyring",
@@ -823,6 +826,17 @@ describe("connections", () => {
         credentialSetAt: null,
       },
     });
+    // The row is in the scope of every agent on `all` the moment it exists (ADR 0007 as amended
+    // 2026-09-19), so every session whose scope reaches it hears `tools/list_changed` (Greptile on #88).
+    expect(deps.connection.listAgentIdsForConnection).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      made.connection.id,
+    );
+    expect(notifier.changed.mock.calls.map(([agentId]) => agentId)).toEqual([
+      "agent_1",
+      "agent_open",
+    ]);
     const unknown = await app.request("/api/connections", json({ ...base, provider: "broker" }));
     expect(unknown.status).toBe(400);
     expect(await unknown.json()).toMatchObject({
@@ -841,8 +855,8 @@ describe("connections", () => {
   });
 
   /** GRA-6's acceptance criterion at the wire: the fields go in, and only the time comes out. */
-  it("enters a credential and answers credentialSetAt and nothing of the credential", async () => {
-    const { app, deps } = harness({ user: { id: "person_1" } });
+  it("enters a credential and answers credentialSetAt and nothing of the credential; a rotation on a live row tells no session", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
     const res = await app.request(
       "/api/connections/conn_1/credential",
       json({ fields: { apiKey: "sk_live_1" } }, "PUT"),
@@ -856,6 +870,25 @@ describe("connections", () => {
       { apiKey: "sk_live_1" },
       { personId: "person_1", connectionId: "conn_1" },
     );
+    expect(notifier.changed).not.toHaveBeenCalled();
+  });
+
+  /** A re-entry on a revoked row is its reconnection (ADR 0007): the execute tool returns to every list whose scope reaches it. */
+  it("re-entering a credential on a revoked row tells every session whose scope reaches it", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.connection.findConnection).mockResolvedValueOnce({
+      ...connectionRow,
+      revokedAt: NOW,
+    });
+    const res = await app.request(
+      "/api/connections/conn_1/credential",
+      json({ fields: { apiKey: "sk_live_1" } }, "PUT"),
+    );
+    expect(res.status).toBe(200);
+    expect(notifier.changed.mock.calls.map(([agentId]) => agentId)).toEqual([
+      "agent_1",
+      "agent_open",
+    ]);
   });
 
   /** GRA-26: recent vendor calls come from the ledger, under the person, by vendor and execute name. */
@@ -941,7 +974,7 @@ describe("connections", () => {
 
   /** The way back for a revoked gateway row (ADR 0019, GRA-58); a keyring row's stays the credential re-entry. */
   it("reconnects a revoked gateway connection, and refuses a keyring one by naming its way back", async () => {
-    const { app, deps } = harness({ user: { id: "person_1" } });
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
     const gateway = createGatewayProvider({
       hosts: ["api.demo.example"],
       upstreamUrl: "https://gateway.corp.example",
@@ -968,6 +1001,16 @@ describe("connections", () => {
       connection: { id: "conn_g", provider: "gateway", revokedAt: null, credentialSetAt: null },
     });
     expect(deps.connection.reconnectConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_g");
+    // The execute tool returns to every list whose scope reaches the row, and those sessions hear it.
+    expect(deps.connection.listAgentIdsForConnection).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "conn_g",
+    );
+    expect(notifier.changed.mock.calls.map(([agentId]) => agentId)).toEqual([
+      "agent_1",
+      "agent_open",
+    ]);
 
     vi.mocked(deps.connection.findConnection).mockResolvedValue({
       ...connectionRow,
@@ -1058,7 +1101,7 @@ describe("the connection handoff's submits (GRA-28)", () => {
   });
 
   it("creates the connection as edited, with its credential, gives it to the requesting agent, records the answer, and echoes nothing of the secret", async () => {
-    const { app, deps } = harness({ user: { id: "person_1" } });
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
     vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce(
       connectionAction,
     );
@@ -1080,6 +1123,17 @@ describe("the connection handoff's submits (GRA-28)", () => {
     const text = await res.text();
     expect(text).toContain(`"credentialSetAt":"${NOW.toISOString()}"`);
     expect(text).toContain('"answer":{"connectionId":"conn_new"}');
+    // Every session whose scope reaches the new row — the asking agent's and every agent on
+    // `all` — hears `tools/list_changed`, not the asking agent's alone (Greptile on #88).
+    expect(deps.connection.listAgentIdsForConnection).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "conn_new",
+    );
+    expect(notifier.changed.mock.calls.map(([agentId]) => agentId)).toEqual([
+      "agent_1",
+      "agent_open",
+    ]);
     expect(text).not.toContain("sk_live_1");
     expect(text).not.toContain("iphertext");
 

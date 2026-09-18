@@ -15,6 +15,7 @@ import {
 } from "./acquire-job";
 import {
   addAgentConnection,
+  findAgentForUpdate,
   listAgentConnectionIds,
   listAgentIdsForConnection,
   listAllActiveAgents,
@@ -306,6 +307,16 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('"connection"."person_id" = $');
     expect(s.sql).toMatch(/ for update$/);
     expect(s.params).toEqual(["conn_1", "person_1", 1]);
+  });
+
+  /** A scope write's first read (GRA-105, Greptile on #88): the agent row under the person, locked, so two scope writes serialise. */
+  it("an agent read for update takes the person and locks the row", async () => {
+    await findAgentForUpdate(db, "person_1", "agent_1");
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select .* from "agent" where \("agent"\."id" = \$1 and "agent"\."person_id" = \$2\) limit \$3 for update$/,
+    );
+    expect(s.params).toEqual(["agent_1", "person_1", 1]);
   });
 
   /** A person's model key (ADR 0014): the scope and the key are one column, on every statement. */

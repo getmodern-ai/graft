@@ -362,11 +362,16 @@ export async function revokeAgent(
 
 /**
  * Set the agent's scope (CONTEXT.md, *Scope*; `SetAgentScopeInput` says what each shape means).
- * To `all`: the mode is written and the list cleared in one transaction — a list left behind would
- * come back on a later `listed` write as a choice nobody made that day. To `listed`: every id is
- * checked to be the person's before anything is written, and the mode and the list are written in
- * one transaction so a refused id leaves the old scope intact rather than an empty one. The answer
- * is the scope as it now resolves.
+ * One transaction, opened by locking the agent row (`findAgentForUpdate`): every scope write —
+ * this one and the grant after a connect (`addConnectionToAgentScope`) — takes that lock first, so
+ * two of them serialise rather than interleave. To `all`: the mode is written and the list cleared
+ * — a list left behind would come back on a later `listed` write as a choice nobody made that day.
+ * To `listed`: with no list given, the scope as it stands **inside the transaction** becomes the
+ * list — read after the lock, so a connection a concurrent grant is making either committed before
+ * (and is in the set) or waits on the row and then finds the agent on `listed` and writes its list
+ * row; read outside it, a connection made in between was silently lost (Greptile on #88). Every
+ * given id is checked to be the person's before anything is written, so a refused id leaves the
+ * old scope intact rather than an empty one. The answer is the scope as it now resolves.
  */
 export async function setAgentScope(
   ctx: ServiceContext,
@@ -375,25 +380,23 @@ export async function setAgentScope(
   input: SetAgentScopeInput,
   deps: AgentDeps,
 ): Promise<{ agent: AgentOutput; connectionIds: string[] }> {
-  const row = orNotFound(
-    await deps.findAgent(ctx.db, principal.personId, agentId),
-    "Agent not found",
-  );
-  const scope: AgentScope = { personId: principal.personId, agentId: row.id };
-  if (input.mode === "all") {
-    return ctx.db.transaction(async (tx) => {
+  return ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const row = orNotFound(
+      await deps.findAgentForUpdate(tx, principal.personId, agentId),
+      "Agent not found",
+    );
+    const scope: AgentScope = { personId: principal.personId, agentId: row.id };
+    if (input.mode === "all") {
       const updated = await deps.updateAgent(tx, principal.personId, row.id, { scopeMode: "all" });
       await deps.replaceAgentConnections(tx, scope, []);
       return {
         agent: toAgentOutput(updated ?? { ...row, scopeMode: "all" }),
         connectionIds: await deps.listScopeConnectionIds(tx, scope),
       };
-    });
-  }
-  // No list given: the scope as it stands becomes the list (the type's note on materialising).
-  const wanted = input.connectionIds ?? (await deps.listScopeConnectionIds(ctx.db, scope));
-  const unique = await assertOwnedConnections(ctx, principal, wanted, deps);
-  return ctx.db.transaction(async (tx) => {
+    }
+    const wanted = input.connectionIds ?? (await deps.listScopeConnectionIds(tx, scope));
+    const unique = await assertOwnedConnections(scoped, principal, wanted, deps);
     const updated = await deps.updateAgent(tx, principal.personId, row.id, {
       scopeMode: "listed",
     });
@@ -417,7 +420,11 @@ export async function setAgentScope(
  * (`addAgentConnection`), never a read of the list and a rewrite of the whole: a grant that overlaps
  * the agent page's picker or another grant loses neither (Greptile on #87), and adding one already
  * in the list changes nothing. The list read back after it, in the same transaction, is what the
- * caller answers with.
+ * caller answers with. The agent row is read **locked** (`findAgentForUpdate`), inside the
+ * transaction, and the mode decided from that read: a narrowing running at the same time
+ * (`setAgentScope`) takes the same lock, so this grant either sees `listed` and writes its row, or
+ * commits first and the narrowing's materialised list includes the connection (Greptile on #88).
+ * Callers already inside a transaction pass its handle as `ctx.db`; the nested call is a savepoint.
  */
 export async function addConnectionToAgentScope(
   ctx: ServiceContext,
@@ -426,23 +433,26 @@ export async function addConnectionToAgentScope(
   connectionId: string,
   deps: AgentDeps,
 ): Promise<{ agent: AgentOutput; connectionIds: string[] }> {
-  const row = orNotFound(
-    await deps.findAgent(ctx.db, principal.personId, agentId),
-    "Agent not found",
-  );
-  await assertOwnedConnections(ctx, principal, [connectionId], deps);
-  const scope: AgentScope = { personId: principal.personId, agentId: row.id };
-  if (row.scopeMode === "all") {
+  return ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const row = orNotFound(
+      await deps.findAgentForUpdate(tx, principal.personId, agentId),
+      "Agent not found",
+    );
+    await assertOwnedConnections(scoped, principal, [connectionId], deps);
+    const scope: AgentScope = { personId: principal.personId, agentId: row.id };
+    if (row.scopeMode === "all") {
+      return {
+        agent: toAgentOutput(row),
+        connectionIds: await deps.listScopeConnectionIds(tx, scope),
+      };
+    }
+    await deps.addAgentConnection(tx, scope, connectionId);
     return {
       agent: toAgentOutput(row),
-      connectionIds: await deps.listScopeConnectionIds(ctx.db, scope),
+      connectionIds: await deps.listAgentConnectionIds(tx, scope),
     };
-  }
-  const connectionIds = await ctx.db.transaction(async (tx) => {
-    await deps.addAgentConnection(tx, scope, connectionId);
-    return deps.listAgentConnectionIds(tx, scope);
   });
-  return { agent: toAgentOutput(row), connectionIds };
 }
 
 /**

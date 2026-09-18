@@ -19,7 +19,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { initLogger } from "evlog";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "./app";
 import { fakeModelKeyDeps } from "./testing/fake-model-key";
@@ -76,6 +76,8 @@ let store: FakeStore;
 let pipedream: FakePipedreamClient;
 let app: ReturnType<typeof createServer>;
 let mcp: ReturnType<typeof createMcpDeps>;
+/** The process's notifier as the API's routes see it: what the link's return announces to. */
+const apiNotifier = { changed: vi.fn() };
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
@@ -155,6 +157,7 @@ beforeAll(async () => {
       corsOrigins: [],
       handoff,
       authUrl: AUTH_URL,
+      notifier: apiNotifier,
     },
     mcp,
   });
@@ -353,6 +356,10 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     expect(await scopeOf(AGENT_A)).toEqual([connectionId]);
     expect(await scopeOf(AGENT_B)).toEqual([]);
     expect(store.pendingActions.get(actionId)?.answer).toEqual({ connectionId });
+    // The return announces the row to every session whose scope reaches it (Greptile on #88):
+    // A's, on its list; B, on a list without it, is not told.
+    expect(apiNotifier.changed.mock.calls.map(([agentId]) => agentId)).toEqual([AGENT_A]);
+    apiNotifier.changed.mockClear();
 
     // The browser landing twice — a refresh — says connected and makes nothing more.
     const again = consoleOutcome(await landing(minted?.success ?? ""));

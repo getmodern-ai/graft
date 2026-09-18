@@ -157,6 +157,10 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
       const row = agents.get(id);
       return row && row.personId === personId ? row : null;
     }),
+    findAgentForUpdate: vi.fn(async (_db, personId, id) => {
+      const row = agents.get(id);
+      return row && row.personId === personId ? row : null;
+    }),
     findAgentByTokenHash: vi.fn(async () => null),
     findAgentByMcpAccessTokenHash: deps.findAgentByMcpAccessTokenHash,
     listAgents: vi.fn(async () => [...agents.values()]),
