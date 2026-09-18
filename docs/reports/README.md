@@ -85,3 +85,4 @@ first in the outcome.
 | [GRA-81](https://linear.app/get-modern/issue/GRA-81) | [#58](https://github.com/getmodern-ai/graft/pull/58) | 2026-09-17 | sign in with Google or GitHub, through Cando's one door; ADR 0020 |
 | [GRA-82](https://linear.app/get-modern/issue/GRA-82) | [#60](https://github.com/getmodern-ai/graft/pull/60) | 2026-09-18 | forgot password: Cando's email transport and the reset flow, Loops when a key is set; ADR 0021 |
 | [GRA-90](https://linear.app/get-modern/issue/GRA-90) | [#65](https://github.com/getmodern-ai/graft/pull/65) | 2026-09-18 | mail is a seam: the vendor transport and its template ids leave the open core; ADR 0021 rewritten |
+| [GRA-84](https://linear.app/get-modern/issue/GRA-84) | [#71](https://github.com/getmodern-ai/graft/pull/71) | — | the build approval and the keyless connection confirmation as in-chat cards through MCP Apps, answered by an app-only tool; ADR 0006 amended |
