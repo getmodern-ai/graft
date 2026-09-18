@@ -157,6 +157,32 @@ export async function listAgentConnectionIds(db: DbOrTx, scope: AgentScope): Pro
 }
 
 /**
+ * The person's agents whose scope names a connection: the lists a revoke of it changes, since each
+ * loses the connection's execute tool (GRA-69). Under the person through the agent, so a grant to
+ * another person's agent, which the service never writes, would not be answered either.
+ */
+export async function listAgentIdsForConnection(
+  db: DbOrTx,
+  personId: string,
+  connectionId: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ agentId: agentConnection.agentId })
+    .from(agentConnection)
+    .where(
+      and(
+        eq(agentConnection.connectionId, connectionId),
+        inArray(
+          agentConnection.agentId,
+          db.select({ id: agent.id }).from(agent).where(eq(agent.personId, personId)),
+        ),
+      ),
+    )
+    .orderBy(asc(agentConnection.agentId));
+  return rows.map((row) => row.agentId);
+}
+
+/**
  * Replace the scope wholesale: delete what is there, insert what was given. Two statements, so the
  * caller runs it in a transaction; the delete is scoped by the pair, so a mis-scoped call clears
  * nothing and the insert that follows it lands only on an agent the caller has already verified is

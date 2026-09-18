@@ -58,6 +58,10 @@ export async function runScenario(
       status = body<AcquireStatus>(await harness.call("acquire_status", { jobId }));
     }
     for (const line of status.progress.slice(relayed)) options.onProgress?.(line);
+    // The settle point: the job's last row, its result trace, is written before its status turns
+    // terminal, and the tool's first row, its ask, is not written until the use below. The record's
+    // length here divides the two whatever their timestamps say (GRA-63).
+    const settled = world.record.length;
 
     const result =
       status.result && "tool" in status.result ? (status.result as AcquireSuccess) : null;
@@ -98,6 +102,7 @@ export async function runScenario(
       status,
       job,
       attempts,
+      settled,
       traces: world.store.acquireTraces.filter((row) => row.jobId === jobId),
       requests: world.requests.slice(requestsBefore),
       events: world.vendor.events.slice(eventsBefore),
@@ -112,7 +117,8 @@ export async function runScenario(
             tool !== null &&
             row.payload.toolId === tool.id,
         )
-        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
+        .map((row) => ({ ...row, position: positionOf(world, row) }))
+        .sort((a, b) => a.position - b.position),
       ledger: world.store.usage.slice(ledgerBefore),
       ms: Date.now() - startedAt,
       // The job's own figure is the total every turn was charged against the ceiling; the attempts'
@@ -126,6 +132,13 @@ export async function runScenario(
   } finally {
     await harness.close();
   }
+}
+
+/** A pending action's position in the world's record; every one the loop wrote has one, so a missing one is the harness's bug. */
+function positionOf(world: World, row: { id: string }): number {
+  const position = world.record.positionOf(row.id);
+  if (position === null) throw new Error(`the world never recorded pending action ${row.id}`);
+  return position;
 }
 
 /**

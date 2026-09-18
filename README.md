@@ -103,7 +103,7 @@ mcp_servers:
 Hermes now lists Graft's meta-tools — `acquire`, `find_tool`, `promote`, `demote`, `run_tool` and
 the rest — beside its own.
 
-**5. Ask for something no tool covers.** "Fetch my IP from httpbin.org and tell me what it is", say.
+**5. Ask for something no tool covers.** "Get me a fresh UUID from httpbin.org", say.
 The agent proposes a connection (`request_connection`) and hands you a link into the console to
 confirm it; then `acquire` reads the vendor's documentation, writes the module, checks it, dry-runs it
 against the live API with writes stopped at the proxy, publishes it and promotes it — and the new

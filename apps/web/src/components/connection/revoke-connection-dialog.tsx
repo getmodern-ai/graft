@@ -25,7 +25,9 @@ import { count } from "@/lib/format";
  * Revoke a connection (ADR 0007): the credential and every OAuth secret are cleared, every approval
  * for the vendor's tools and every build approval for this connection are deleted, and every open
  * ask about it is closed — for all agents at once — and the tools stay, awaiting reconnection.
- * Re-entering the credential (`reenter-credential-dialog.tsx`) is the reconnection.
+ * Re-entering the credential (`reenter-credential-dialog.tsx`) is the reconnection. A tool promoted
+ * against the connection leaves its agent's list with it, since it cannot run (ADR 0009 as amended
+ * 2026-09-18, GRA-69); the toast counts those too, and the history shows each with its cause.
  *
  * The same `AlertDialog` shape as `agent/revoke-agent-dialog.tsx`, whose comment says why the
  * close requests are ignored while the revoke is in flight (GRA-45).
@@ -52,7 +54,10 @@ export function RevokeConnectionDialog({
         description: `${keyring ? "Credential cleared; " : ""}${count(result.approvalsDeleted, "tool approval")}, ${count(
           result.buildApprovalsDeleted,
           "build approval",
-        )} and ${count(result.pendingActionsExpired, "open ask")} removed. Its tools stay and ask again after reconnection.`,
+        )} and ${count(result.pendingActionsExpired, "open ask")} removed; ${count(
+          result.demoted.length,
+          "promoted tool",
+        )} taken out of agent lists. Its tools stay in the toolbox and ask again after reconnection.`,
       });
       // The revoke stands; what the provider held outside Graft did not let go (ADR 0019). The row
       // records the failure and the card offers Retry release until it succeeds (GRA-59).
@@ -79,8 +84,9 @@ export function RevokeConnectionDialog({
           <AlertDialogDescription>
             {keyring ? "The credential is cleared, every agent loses" : "Every agent loses"} its
             approvals for {connection.vendor} tools at once, and any open ask about this connection
-            is closed. The tools themselves stay in the toolbox and ask again once it is reconnected
-            {keyring ? " with a credential re-entered" : ""}.
+            is closed. A tool promoted against it leaves the agent's list, since it cannot run until
+            the connection is back. The tools themselves stay in the toolbox and ask again once it
+            is reconnected{keyring ? " with a credential re-entered" : ""}.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -73,6 +73,22 @@ describe("promoteTool", () => {
     expect(deps.insertWorkingSetChange).not.toHaveBeenCalled();
   });
 
+  /**
+   * ADR 0009 as amended 2026-09-18 (GRA-69): a revoke demotes the connection's tools because they
+   * cannot run, not because they are unwanted, so nothing here reads the connection and a tool bound
+   * to a revoked one is promotable as any other. The deps carry no connection read at all, which is
+   * what keeps a later `revokedAt` check from being written here by accident.
+   */
+  it("promotes a tool whose connection is revoked: the toolbox keeps it and the promotion asks nothing of the connection", async () => {
+    const bound = { ...tool, defaultConnectionId: "conn_revoked" } as AuthoredToolRow;
+    const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => bound) });
+    await expect(promoteTool(ctx, SCOPE, "tool_1", "agent", deps)).resolves.toEqual({
+      changed: true,
+      entry,
+    });
+    expect(Object.keys(deps).filter((name) => /connection/i.test(name))).toEqual([]);
+  });
+
   /** ADR 0007: the toolbox is the person's; a tool that is not theirs does not exist for them. */
   it("refuses a tool outside the person's toolbox as NOT_FOUND, writing nothing", async () => {
     const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => null) });

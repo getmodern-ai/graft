@@ -415,19 +415,24 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     expect(store.connections.get(connectionId)?.providerRef).toMatch(/^apn_/);
     expect(pipedream.accounts).toHaveLength(1);
 
-    // The connection stays in the agent's scope awaiting reconnection (ADR 0007), and a relayed
-    // call for it is refused by the proxy as not connected: the row resolves to no relay and no
-    // scheme, whatever Pipedream still holds. The revoke swept the build approval too, so it is
-    // granted again here to reach the proxy at all.
-    store.grantBuild(AGENT_A, connectionId);
+    // The connection stays in the agent's scope awaiting reconnection (ADR 0007), but its execute
+    // tool leaves the list (GRA-69), and a client that still names it from a snapshot is refused
+    // as connection_revoked before the build approval or the proxy is reached: nothing relays,
+    // whatever Pipedream still holds, and no build approval is needed to see the refusal. The
+    // proxy answers the same word for a token minted before the revoke (GRA-68); that half is
+    // `app.test.ts`, where the binding carries the row's stamp through to the proxy directly.
+    const eventsBefore = vendor.events.length;
     const a = await connect(TOKEN_A);
     try {
-      expect(await a.toolNames()).toContain(executeToolName(connectionId));
+      expect(await a.toolNames()).not.toContain(executeToolName(connectionId));
       const refused = body(await a.call(executeToolName(connectionId), { command: RUN_LIST }));
-      expect(refused.exitCode).not.toBe(0);
-      expect(JSON.stringify(refused)).toContain("409");
+      expect(refused).toMatchObject({
+        error: "refused",
+        reason: "connection_revoked",
+        connectionId,
+      });
       expect(vendor.requests).toHaveLength(0);
-      expect(vendor.events.at(-1)).toMatchObject({ outcome: "connection_not_ready", connectionId });
+      expect(vendor.events).toHaveLength(eventsBefore);
     } finally {
       await a.close();
     }

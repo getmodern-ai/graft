@@ -59,8 +59,11 @@ export async function listToolsFor(session: SessionContext): Promise<Tool[]> {
   const inScope = new Set(scopeIds);
   return [
     ...FIXED_TOOLS.map((tool) => tool.definition),
+    // A revoked connection has no execute tool: nothing can run against it until the person
+    // reconnects it, which clears `revokedAt` and puts the tool back by itself (ADR 0007; GRA-69).
+    // The scope grant stays, so reconnection needs no second step in the console.
     ...connections
-      .filter((connection) => inScope.has(connection.id))
+      .filter((connection) => inScope.has(connection.id) && connection.revokedAt === null)
       .map((connection) => executeToolDefinition(connection)),
     ...workingSet.map((entry) => authoredToolDefinition(entry.tool)),
   ];

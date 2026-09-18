@@ -131,15 +131,19 @@ export function isConnectionUsable(
  * The proxy's view of a row: the identity it compares against the token, the host set it pins to,
  * and — from the row's provider (ADR 0019) — how the call resolves: the columns to decrypt and
  * inject from, or the relay to send it through. Built field by field, so a column added to the table
- * later does not ride into the proxy by accident. A revoked connection resolves to nothing and the
- * proxy answers `connection_not_ready` for it, whatever its provider — asked here rather than left
- * to the null ciphertext a revoke leaves, because a relay provider's row never had one (ADR 0019):
- * the revoke is the person's, and a capability token minted from a scope that still names the row
- * must not relay through it; and such a row may still carry its reference while the provider's
- * release is outstanding (`releaseFromProvider`), which is exactly when a call must not go through.
- * A row whose provider the deployment has not enabled resolves to nothing, which the proxy answers
- * the same way: a connection made under a provider that is now absent is not one this deployment can
- * call through, and saying so is better than guessing at the keyring.
+ * later does not ride into the proxy by accident. A revoked connection resolves to nothing and
+ * carries its `revokedAt`, so the proxy refuses it `connection_revoked` whatever its provider
+ * (GRA-68), naming the state and the console's Reconnect rather than the columns the revoke left
+ * null. Asked here rather than left to the null ciphertext a revoke leaves, because a relay
+ * provider's row never had one (ADR 0019): the revoke is the person's, and a capability token
+ * minted from a scope that still names the row must not relay through it; and such a row may still
+ * carry its reference while the provider's release is outstanding (`releaseFromProvider`), which
+ * is exactly when a call must not go through. A row whose provider holds nothing for it yet, a
+ * link never finished, carries that provider's name as `pendingProvider`, and the proxy's
+ * `connection_not_ready` says who holds nothing. A row whose provider the deployment has not
+ * enabled resolves to nothing, which the proxy answers `connection_not_ready`: a connection made
+ * under a provider that is now absent is not one this deployment can call through, and saying so
+ * is better than guessing at the keyring.
  */
 export function toProxyConnection(
   row: ConnectionRow,
@@ -150,22 +154,19 @@ export function toProxyConnection(
     personId: row.personId,
     primaryHost: row.primaryHost,
     hosts: row.hosts,
+    revokedAt: row.revokedAt,
   };
-  const resolution = row.revokedAt
-    ? null
-    : (providerNamed(providers, row.provider)?.resolve(row) ?? null);
-  if (!resolution) {
-    return { ...identity, authScheme: null, schemeConfig: null, credentialCiphertext: null };
-  }
-  if (resolution.mode === "relay") {
-    return {
-      ...identity,
-      authScheme: null,
-      schemeConfig: null,
-      credentialCiphertext: null,
-      relay: resolution.relay,
-    };
-  }
+  const nothing: ProxyConnection = {
+    ...identity,
+    authScheme: null,
+    schemeConfig: null,
+    credentialCiphertext: null,
+  };
+  if (row.revokedAt) return nothing;
+  const resolution = providerNamed(providers, row.provider)?.resolve(row) ?? null;
+  if (!resolution) return nothing;
+  if (resolution.mode === "pending") return { ...nothing, pendingProvider: row.provider };
+  if (resolution.mode === "relay") return { ...nothing, relay: resolution.relay };
   return {
     ...identity,
     authScheme: resolution.scheme,
@@ -868,6 +869,19 @@ export type RevokeConnectionResult = {
   buildApprovalsDeleted: number;
   /** Open asks about the connection closed with it — a per-call yes among them (GRA-28). */
   pendingActionsExpired: number;
+  /**
+   * The working-set entries the revoke removed, across every agent of the person (ADR 0009 as
+   * amended 2026-09-18; GRA-69): a promoted tool bound to the connection cannot run, so it leaves
+   * the list with cause `revoke`. The tool stays in the toolbox; `promote` brings it back.
+   */
+  demoted: { agentId: string; toolId: string }[];
+  /**
+   * Every agent whose tool list this revoke changed, sorted: each whose scope names the connection,
+   * when this revoke is the one that revoked it (its execute tool leaves the list once, not on the
+   * re-revoke that retries a provider's release), and each a demotion touched. The core has no
+   * notifier, so the caller announces `tools/list_changed` to these (`@graft/mcp`'s `revoke.ts`).
+   */
+  affectedAgentIds: string[];
   providerRelease: ProviderRelease;
 };
 
@@ -876,6 +890,14 @@ export type RevokeConnectionResult = {
  * tool bound to the vendor and every build approval for the connection are deleted — for all of the
  * person's agents at once — and the authored tools are left where they are, to re-ask after
  * reconnection. One transaction, so a fresh start is all-or-nothing.
+ *
+ * Their promotions do not stay (ADR 0009 as amended 2026-09-18; GRA-69): every working-set entry
+ * for a tool bound to the connection goes, for every agent at once, each recorded as a demotion
+ * with cause `revoke`, because a tool that cannot run has no place in a list. Nothing is deleted
+ * from the toolbox; `find_tool` still finds the tool, `promote` brings it back, and it runs again
+ * once the connection is reconnected. The agents whose list changed ride the result for the caller
+ * to announce, since the connection module holds no notifier and the working-set service is not
+ * imported here: the sweep is one statement of the working-set repo, as the approval sweeps are.
  *
  * The connection's open pending actions go with the approvals (GRA-28, closing GRA-23's known
  * edge): a destructive tool's per-call yes lives on an answered, unconsumed action rather than in
@@ -898,6 +920,12 @@ export async function revokeConnection(
 ): Promise<RevokeConnectionResult | null> {
   const revoked = await ctx.db.transaction(async (tx) => {
     const at = deps.now();
+    // Read before the write, with the row locked: whether this revoke is the transition. A revoke
+    // of a revoked row is the provider release's retry and changes no list, so the scoped agents
+    // are told once; the lock is what makes "once" hold when two revokes overlap, since the second
+    // waits here for the first to commit and then reads the row as revoked.
+    const before = await deps.findConnectionForUpdate(tx, principal.personId, connectionId);
+    const wasLive = before?.revokedAt === null;
     const row = await deps.revokeConnection(tx, principal.personId, connectionId, at);
     if (!row) return null;
     const approvals = await deps.deleteApprovalsForVendor(tx, principal.personId, row.vendor);
@@ -908,12 +936,31 @@ export async function revokeConnection(
       row.id,
       at,
     );
+    const entries = await deps.deleteWorkingSetEntriesForConnection(tx, principal.personId, row.id);
+    for (const entry of entries) {
+      await deps.insertWorkingSetChange(tx, {
+        id: deps.newId(),
+        agentId: entry.agentId,
+        toolId: entry.toolId,
+        change: "demote",
+        cause: "revoke",
+        createdAt: at,
+      });
+    }
+    const scoped = wasLive
+      ? await deps.listAgentIdsForConnection(tx, principal.personId, row.id)
+      : [];
+    const affectedAgentIds = [
+      ...new Set([...scoped, ...entries.map((entry) => entry.agentId)]),
+    ].sort();
     return {
       row,
       result: {
         approvalsDeleted: approvals.length,
         buildApprovalsDeleted: builds.length,
         pendingActionsExpired: actions.length,
+        demoted: entries.map((entry) => ({ agentId: entry.agentId, toolId: entry.toolId })),
+        affectedAgentIds,
       },
     };
   });

@@ -64,8 +64,11 @@ export async function promoteTool(
 
 /**
  * Demote, with the cause the record needs: `agent` for the agent's own call, `idle` or `cap` for
- * the rule, `revoke` for a connection taken away. The tool stays in the toolbox (ADR 0009). A tool
- * not in the working set is a no-op with no change record.
+ * the rule. The tool stays in the toolbox (ADR 0009). A tool not in the working set is a no-op with
+ * no change record. The `revoke` cause is written by the connection service's own sweep rather
+ * than through here (`connection.service.ts`, `revokeConnection`; ADR 0009 as amended 2026-09-18):
+ * one statement of the working-set repo over every agent of the person, as the approval sweeps are,
+ * because the connection module imports no other service.
  */
 export async function demoteTool(
   ctx: ServiceContext,

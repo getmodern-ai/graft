@@ -42,7 +42,7 @@
     "@graft/vault": "workspace:*",
     "@hono/node-server": "^2.1.1",
     "drizzle-orm": "catalog:",
-    "evlog": "^2.27.1",
+    "evlog": "^2.29.0",
     "hono": "catalog:",
     "jose": "catalog:",
     "zod": "catalog:"

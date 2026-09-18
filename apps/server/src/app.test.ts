@@ -506,13 +506,23 @@ describe("a gateway connection through the server", () => {
     expect(seen).toHaveLength(before);
   });
 
-  it("a revoked row is not ready, whatever its provider", async () => {
+  it("a revoked row is refused as revoked, whatever its provider: the binding carries the stamp through toProxyConnection (GRA-68)", async () => {
     const revoked = await gatewayHarness({ ...gatewayRow, revokedAt: new Date() }, true);
     const token = await mint({ connectionIds: ["conn_g"] });
-    const notReady = await revoked.app.request("/api/proxy/c/conn_g/items", {
+    const before = seen.length;
+    const res = await revoked.app.request("/api/proxy/c/conn_g/items", {
       headers: { authorization: `Bearer ${token}` },
     });
-    expect(notReady.status).toBe(409);
-    expect(await notReady.json()).toMatchObject({ reason: "connection_not_ready" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      reason: "connection_revoked",
+      message: "The person revoked this connection; ask them to reconnect it in the console",
+    });
+    expect(revoked.events.at(-1)).toMatchObject({
+      outcome: "connection_revoked",
+      connectionId: "conn_g",
+      relay: null,
+    });
+    expect(seen).toHaveLength(before);
   });
 });

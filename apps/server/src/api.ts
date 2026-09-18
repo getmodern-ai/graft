@@ -32,7 +32,6 @@ import {
   retryProviderRelease,
   revokeAgent,
   revokeApproval,
-  revokeConnection,
   type ServiceContext,
   ServiceError,
   type ServiceErrorCode,
@@ -60,7 +59,9 @@ import {
   openAskOfKind,
   recordApprovalAnswer,
   refuseUnlessOpen,
+  revokeConnectionAndNotify,
   signHandoffToken,
+  type ToolListChangedNotifier,
   verifyHandoff,
 } from "@graft/mcp";
 import { executeToolName } from "@graft/mcp/tool-names";
@@ -182,6 +183,13 @@ export type ApiOptions = {
    * `index.ts` always binds it, and the link routes are mounted only with it.
    */
   authUrl?: string;
+  /**
+   * The process's `tools/list_changed` notifier (`@graft/mcp`'s `notifier.ts`), the one the MCP
+   * endpoint's sessions and the sweep share, so a revoke from the console reaches a live session
+   * the way a promotion does (GRA-69). Optional so a harness with no MCP endpoint binds nothing;
+   * `index.ts` binds `mcp.notifier`, and without it a revoke changes the list silently.
+   */
+  notifier?: Pick<ToolListChangedNotifier, "changed">;
 };
 
 /**
@@ -295,8 +303,9 @@ const changesQuery = z.object({
 
 /**
  * One line of an agent's working-set history as the console reads it (GRA-1, user story 21): what
- * changed, why (`agent`, `publish`, `idle`, `cap`, `revoke` — ADR 0009's two rule causes beside the
- * agent-driven ones), when, and the tool by vendor and name rather than by id alone, so the view
+ * changed, why (`agent` and `publish` from the agent; `idle` and `cap` from ADR 0009's rule;
+ * `revoke` from a connection's revoke, ADR 0009 as amended 2026-09-18), when, and the tool by
+ * vendor and name rather than by id alone, so the view
  * needs no second request to say which tool it was. `tool` is null only for a change whose tool row
  * is gone, which the schema's cascade prevents; the field is nullable so the console never assumes.
  */
@@ -877,17 +886,29 @@ export function createApi(options: ApiOptions): Hono {
   /**
    * Revoke (ADR 0007), and say whether the row's provider let go of what it held outside Graft
    * (ADR 0019). The local revoke has committed by the time the provider is asked, so a release that
-   * failed rides the answer and the wide event — with the connection id, so an operator can find the
-   * row to release by hand — and never the status: revoking again is the retry.
+   * failed rides the answer and the wide event, with the connection id so an operator can find the
+   * row to release by hand, and never the status: revoking again is the retry. Through
+   * `@graft/mcp`'s `revokeConnectionAndNotify` rather than the service, so every live session whose
+   * list the revoke changed hears `tools/list_changed` (GRA-69); the answer also names what left
+   * each agent's working set (`demoted`) and which agents were told (`affectedAgentIds`).
    */
   api.post("/connections/:id/revoke", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const connectionId = c.req.param("id");
     const result = orNotFound(
-      await revokeConnection(ctx, principal, connectionId, connectionDeps),
+      await revokeConnectionAndNotify(
+        ctx,
+        principal,
+        connectionId,
+        { connection: connectionDeps },
+        options.notifier,
+      ),
       "Connection not found",
     );
-    useLogger().set({ providerRelease: { connectionId, ...result.providerRelease } });
+    useLogger().set({
+      providerRelease: { connectionId, ...result.providerRelease },
+      workingSetDemoted: result.demoted.length,
+    });
     return c.json(result);
   });
 
@@ -981,7 +1002,7 @@ export function createApi(options: ApiOptions): Hono {
         allow: body.allow,
         ...(body.askEveryCall === undefined ? {} : { askEveryCall: body.askEveryCall }),
       },
-      { approval: approvalDeps, pendingAction: pendingActionDeps },
+      { approval: approvalDeps, pendingAction: pendingActionDeps, connection: connectionDeps },
     );
     return c.json(result);
   });

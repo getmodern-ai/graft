@@ -99,6 +99,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
   return {
     insertConnection: vi.fn(async (_db, input) => ({ ...row, ...input }) as ConnectionRow),
     findConnection: vi.fn(async () => row),
+    findConnectionForUpdate: vi.fn(async () => row),
     findConnectionByIdUnscoped: vi.fn(async () => row),
     listConnections: vi.fn(async () => [row]),
     setConnectionCredential: vi.fn(async (_db, _p, _id, args) => ({
@@ -137,6 +138,9 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
     expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
+    deleteWorkingSetEntriesForConnection: vi.fn(async () => []),
+    insertWorkingSetChange: vi.fn(async (_db, input) => input as never),
+    listAgentIdsForConnection: vi.fn(async () => []),
     vault: fakeVault(),
     providers: DEFAULT_PROVIDERS,
     newId: () => "conn_new",
@@ -628,10 +632,12 @@ describe("toProxyConnection asks the row's provider how the call resolves (ADR 0
       authScheme: "api_key_header",
       primaryHost: "https://api.unleashedsoftware.com",
       hosts: ["api.unleashedsoftware.com"],
+      revokedAt: null,
       schemeConfig: { headerName: "api-auth-id" },
       credentialCiphertext: CIPHERTEXT,
     });
     expect(proxy).not.toHaveProperty("relay");
+    expect(proxy).not.toHaveProperty("pendingProvider");
   });
 
   it("a relay provider's row carries the relay and none of the row's signing columns", async () => {
@@ -664,8 +670,47 @@ describe("toProxyConnection asks the row's provider how the call resolves (ADR 0
       },
       [broker, keyringProvider],
     );
-    expect(proxy).toMatchObject({ authScheme: null, credentialCiphertext: null });
+    expect(proxy).toMatchObject({ authScheme: null, credentialCiphertext: null, revokedAt: NOW });
     expect(proxy).not.toHaveProperty("relay");
+    expect(proxy).not.toHaveProperty("pendingProvider");
+  });
+
+  it("a link provider's row that holds no reference yet resolves pending, and the proxy is told which provider holds nothing (GRA-68)", () => {
+    const broker: ConnectionProvider = {
+      ...linkProvider(),
+      resolve: (r) =>
+        r.providerRef
+          ? { mode: "relay", relay: { plugin: fakeRelay, obtain: async () => ({}) } }
+          : { mode: "pending" },
+    };
+    const pending = toProxyConnection({ ...row, provider: "broker", providerRef: null }, [
+      broker,
+      keyringProvider,
+    ]);
+    expect(pending).toMatchObject({
+      authScheme: null,
+      schemeConfig: null,
+      credentialCiphertext: null,
+      revokedAt: null,
+      pendingProvider: "broker",
+      primaryHost: "https://api.unleashedsoftware.com",
+    });
+    expect(pending).not.toHaveProperty("relay");
+    // With the reference, the relay and no pending word.
+    const linked = toProxyConnection({ ...row, provider: "broker", providerRef: "acct_1" }, [
+      broker,
+      keyringProvider,
+    ]);
+    expect(linked.relay?.plugin).toBe(fakeRelay);
+    expect(linked).not.toHaveProperty("pendingProvider");
+    // Revoked and without a reference: the revoke is read first, and the row is not pending.
+    const revoked = toProxyConnection(
+      { ...row, provider: "broker", providerRef: null, revokedAt: NOW },
+      [broker, keyringProvider],
+    );
+    expect(revoked).toMatchObject({ revokedAt: NOW });
+    expect(revoked).not.toHaveProperty("pendingProvider");
+    expect(revoked).not.toHaveProperty("relay");
   });
 
   it("a row under a provider the deployment has not enabled resolves to nothing the proxy can use", () => {
@@ -942,15 +987,88 @@ describe("revokeConnection", () => {
       approvalsDeleted: 2,
       buildApprovalsDeleted: 1,
       pendingActionsExpired: 3,
+      demoted: [],
+      affectedAgentIds: [],
     });
     expect(result?.connection.revokedAt).toEqual(NOW);
+    expect(deps.insertWorkingSetChange).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ADR 0009 as amended 2026-09-18 (GRA-69): a promoted tool bound to the connection leaves every
+   * agent's list because it cannot run, recorded with its own cause; the tool itself is not touched.
+   */
+  it("demotes every agent's promoted tools bound to the connection with cause revoke, inside the transaction, and names every agent whose list changed", async () => {
+    const entry = (agentId: string, toolId: string) =>
+      ({ agentId, toolId, promotedAt: NOW, lastUsedAt: null, promotedBy: "agent" }) as never;
+    const deps = fakeDeps({
+      deleteWorkingSetEntriesForConnection: vi.fn(async () => [
+        entry("agent_2", "tool_1"),
+        entry("agent_1", "tool_2"),
+      ]),
+      // Agent 3 holds the connection in its scope with nothing promoted: its execute tool goes.
+      listAgentIdsForConnection: vi.fn(async () => ["agent_1", "agent_3"]),
+    });
+    const transaction = vi.spyOn(fakeDb, "transaction");
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(deps.deleteWorkingSetEntriesForConnection).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "conn_1",
+    );
+    expect(deps.insertWorkingSetChange).toHaveBeenCalledTimes(2);
+    expect(deps.insertWorkingSetChange).toHaveBeenCalledWith(fakeDb, {
+      id: "conn_new",
+      agentId: "agent_2",
+      toolId: "tool_1",
+      change: "demote",
+      cause: "revoke",
+      createdAt: NOW,
+    });
+    expect(deps.insertWorkingSetChange).toHaveBeenCalledWith(
+      fakeDb,
+      expect.objectContaining({ agentId: "agent_1", toolId: "tool_2", cause: "revoke" }),
+    );
+    expect(deps.listAgentIdsForConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    expect(result?.demoted).toEqual([
+      { agentId: "agent_2", toolId: "tool_1" },
+      { agentId: "agent_1", toolId: "tool_2" },
+    ]);
+    expect(result?.affectedAgentIds).toEqual(["agent_1", "agent_2", "agent_3"]);
+  });
+
+  /**
+   * A revoke of a revoked row is the release's retry: no list changes, so nobody is told (Greptile
+   * on #83). The pre-read is the locking one, so two overlapping revokes cannot both see the row
+   * live: the second waits for the first's commit and reads what this test hands it.
+   */
+  it("names no scoped agent on a second revoke of a revoked row, only the agents a demotion touched, reading the row under lock", async () => {
+    const deps = fakeDeps({
+      findConnectionForUpdate: vi.fn(async () => ({ ...row, revokedAt: NOW })),
+      deleteWorkingSetEntriesForConnection: vi.fn(async () => [
+        { agentId: "agent_2", toolId: "tool_1", promotedAt: NOW, lastUsedAt: null } as never,
+      ]),
+      listAgentIdsForConnection: vi.fn(async () => ["agent_1"]),
+    });
+    const result = await revokeConnection(ctx, PRINCIPAL, "conn_1", deps);
+    expect(deps.findConnectionForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1");
+    expect(deps.findConnection).not.toHaveBeenCalled();
+    expect(deps.listAgentIdsForConnection).not.toHaveBeenCalled();
+    expect(result?.affectedAgentIds).toEqual(["agent_2"]);
   });
 
   it("answers null and sweeps nothing for a connection that is not the person's", async () => {
-    const deps = fakeDeps({ revokeConnection: vi.fn(async () => null) });
+    const deps = fakeDeps({
+      findConnectionForUpdate: vi.fn(async () => null),
+      revokeConnection: vi.fn(async () => null),
+    });
     await expect(revokeConnection(ctx, PRINCIPAL, "conn_x", deps)).resolves.toBeNull();
     expect(deps.deleteApprovalsForVendor).not.toHaveBeenCalled();
     expect(deps.expirePendingActionsForConnection).not.toHaveBeenCalled();
+    expect(deps.deleteWorkingSetEntriesForConnection).not.toHaveBeenCalled();
+    expect(deps.listAgentIdsForConnection).not.toHaveBeenCalled();
   });
 });
 
@@ -1000,6 +1118,7 @@ describe("the two shapes of a row", () => {
       authScheme: "api_key_header",
       primaryHost: "https://api.unleashedsoftware.com",
       hosts: ["api.unleashedsoftware.com"],
+      revokedAt: null,
       schemeConfig: { headerName: "api-auth-id" },
       credentialCiphertext: CIPHERTEXT,
     });
@@ -1412,14 +1531,16 @@ describe("a provider with no person step (ADR 0019, GRA-58)", () => {
       authScheme: null,
       schemeConfig: null,
       credentialCiphertext: null,
+      revokedAt: null,
     });
     const revoked = toProxyConnection({ ...gatewayRow, revokedAt: NOW }, providers);
     expect(revoked.relay).toBeUndefined();
-    expect(revoked).toMatchObject({ authScheme: null, credentialCiphertext: null });
-    // A revoked keyring row resolves the same way, as it always did through its null ciphertext.
+    // The stamp rides with it, so the proxy refuses `connection_revoked`, not `connection_not_ready` (GRA-68).
+    expect(revoked).toMatchObject({ authScheme: null, credentialCiphertext: null, revokedAt: NOW });
+    // A revoked keyring row resolves the same way: its null ciphertext, and the stamp beside it.
     expect(
       toProxyConnection({ ...row, revokedAt: NOW, credentialCiphertext: null }, providers),
-    ).toMatchObject({ authScheme: null, credentialCiphertext: null });
+    ).toMatchObject({ authScheme: null, credentialCiphertext: null, revokedAt: NOW });
   });
 
   it("widens a gateway row's host set to a later proposal's, within the gateway's coverage, and never a keyring row's", async () => {

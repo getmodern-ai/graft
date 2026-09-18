@@ -277,6 +277,20 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
   const db = fakeDb as unknown as DbOrTx;
   const ownsAgent = (scope: { personId: string; agentId: string }) =>
     store.agents.get(scope.agentId)?.personId === scope.personId;
+  /** One writer for the change log: the working-set service's promotes and demotes, and a revoke's sweep (GRA-69). */
+  const insertWorkingSetChange: WorkingSetDeps["insertWorkingSetChange"] = async (_db, input) => {
+    const row: WorkingSetChangeRow = {
+      id: input.id,
+      agentId: input.agentId,
+      toolId: input.toolId,
+      change: input.change,
+      cause: input.cause,
+      owner: "person",
+      createdAt: input.createdAt ?? store.now(),
+    };
+    store.changes.push(row);
+    return row;
+  };
 
   const agent: AgentDeps = {
     insertAgent: async (_db, input) => {
@@ -402,6 +416,11 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.connections.get(id);
       return row && row.personId === personId ? row : null;
     },
+    // No lock to take over a map; the same read, so the revoke's transition test reads the store.
+    findConnectionForUpdate: async (_db, personId, id) => {
+      const row = store.connections.get(id);
+      return row && row.personId === personId ? row : null;
+    },
     findConnectionByIdUnscoped: async (_db, id) => store.connections.get(id) ?? null,
     listConnections: async (_db, personId) =>
       [...store.connections.values()].filter((row) => row.personId === personId),
@@ -523,6 +542,27 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       }
       return closed;
     },
+    /** The repo's predicate (GRA-69): the person's tools bound to the connection, every agent's entry. */
+    deleteWorkingSetEntriesForConnection: async (_db, personId, connectionId) => {
+      const removed: WorkingSetRow[] = [];
+      for (const [k, row] of store.workingSet) {
+        const tool = store.tools.get(row.toolId);
+        if (tool?.personId === personId && tool.defaultConnectionId === connectionId) {
+          removed.push(row);
+          store.workingSet.delete(k);
+        }
+      }
+      return removed;
+    },
+    insertWorkingSetChange,
+    listAgentIdsForConnection: async (_db, personId, connectionId) =>
+      [...store.agentConnections.entries()]
+        .filter(
+          ([agentId, ids]) =>
+            ids.has(connectionId) && store.agents.get(agentId)?.personId === personId,
+        )
+        .map(([agentId]) => agentId)
+        .sort(),
     vault: { encrypt: async () => Buffer.from("ciphertext") },
     providers: DEFAULT_PROVIDERS,
     newId: store.newId,
@@ -672,19 +712,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.workingSet.set(key(scope.agentId, toolId), updated);
       return updated;
     },
-    insertWorkingSetChange: async (_db, input) => {
-      const row: WorkingSetChangeRow = {
-        id: input.id,
-        agentId: input.agentId,
-        toolId: input.toolId,
-        change: input.change,
-        cause: input.cause,
-        owner: "person",
-        createdAt: input.createdAt ?? store.now(),
-      };
-      store.changes.push(row);
-      return row;
-    },
+    insertWorkingSetChange,
     listWorkingSetChanges: async (_db, scope, limit) =>
       ownsAgent(scope)
         ? store.changes

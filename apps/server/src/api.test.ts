@@ -175,6 +175,7 @@ function connectionDeps(): ConnectionDeps {
       async (_db, input) => ({ ...connectionRow, ...input }) as ConnectionRow,
     ),
     findConnection: vi.fn(async () => connectionRow),
+    findConnectionForUpdate: vi.fn(async () => connectionRow),
     findConnectionByIdUnscoped: vi.fn(async () => connectionRow),
     listConnections: vi.fn(async () => [connectionRow]),
     setConnectionCredential: vi.fn(async (_db, _p, _id, args) => ({
@@ -204,6 +205,9 @@ function connectionDeps(): ConnectionDeps {
     deleteApprovalsForVendor: vi.fn(async () => []),
     deleteBuildApprovalsForConnection: vi.fn(async () => []),
     expirePendingActionsForConnection: vi.fn(async () => []),
+    deleteWorkingSetEntriesForConnection: vi.fn(async () => []),
+    insertWorkingSetChange: vi.fn(async (_db, input) => input as never),
+    listAgentIdsForConnection: vi.fn(async () => []),
     vault: { encrypt: vi.fn(async () => Buffer.from("ciphertext")) },
     providers: DEFAULT_PROVIDERS,
     newId: () => "conn_new",
@@ -393,6 +397,8 @@ function harness(
     pendingAction: pendingActionDeps(),
     modelKey: fakeModelKeyDeps({ now: () => NOW }),
   };
+  // The process's `tools/list_changed` notifier as the API sees it (GRA-69): what a revoke tells.
+  const notifier = { changed: vi.fn() };
   const app = createServer({
     keys: null,
     vault: { decrypt: async () => ({}) },
@@ -406,10 +412,11 @@ function harness(
       deps: { db: fakeDb as unknown as DbOrTx, ...deps },
       corsOrigins: ["http://localhost:3001"],
       handoff: HANDOFF,
+      notifier,
       ...extra,
     },
   });
-  return { app, deps };
+  return { app, deps, notifier };
 }
 
 const json = (body: unknown, method = "POST") => ({
@@ -823,15 +830,31 @@ describe("connections", () => {
     expect(deps.ledger.listUsageForVendor).toHaveBeenCalledTimes(1);
   });
 
-  it("revokes, answering what was swept", async () => {
-    const { app } = harness({ user: { id: "person_1" } });
+  it("revokes, answering what was swept, and tells every live session whose list changed", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    // Agent 1 holds the connection in its scope; agent 2 had a tool bound to it promoted (GRA-69).
+    deps.connection.listAgentIdsForConnection = vi.fn(async () => ["agent_1"]);
+    deps.connection.deleteWorkingSetEntriesForConnection = vi.fn(async () => [
+      { agentId: "agent_2", toolId: "tool_1" } as never,
+    ]);
     const res = await app.request("/api/connections/conn_1/revoke", { method: "POST" });
     expect(await res.json()).toMatchObject({
       connection: { revokedAt: NOW.toISOString() },
       approvalsDeleted: 0,
       buildApprovalsDeleted: 0,
       pendingActionsExpired: 0,
+      demoted: [{ agentId: "agent_2", toolId: "tool_1" }],
+      affectedAgentIds: ["agent_1", "agent_2"],
     });
+    expect(notifier.changed.mock.calls.map(([agentId]) => agentId)).toEqual(["agent_1", "agent_2"]);
+  });
+
+  it("tells no session when the connection is not the person's", async () => {
+    const { app, deps, notifier } = harness({ user: { id: "person_1" } });
+    deps.connection.revokeConnection = vi.fn(async () => null);
+    const res = await app.request("/api/connections/conn_x/revoke", { method: "POST" });
+    expect(res.status).toBe(404);
+    expect(notifier.changed).not.toHaveBeenCalled();
   });
 
   /** The way back for a revoked gateway row (ADR 0019, GRA-58); a keyring row's stays the credential re-entry. */

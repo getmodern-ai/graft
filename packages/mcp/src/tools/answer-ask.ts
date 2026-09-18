@@ -154,7 +154,7 @@ async function answerBuildAsk(
     principal,
     row.id,
     { allow: answer.allow, via: "card" },
-    { approval: deps.approval, pendingAction: deps.pendingAction },
+    { approval: deps.approval, pendingAction: deps.pendingAction, connection: deps.connection },
   );
   const what = `${String(row.payload.connectionName ?? "the connection")} (${String(row.payload.vendor ?? "")})`;
   const result: AnswerAskResult = {

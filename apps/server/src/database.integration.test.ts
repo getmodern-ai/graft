@@ -17,6 +17,7 @@ import {
   getToolById,
   listConnections,
   listWorkingSet,
+  listWorkingSetChanges,
   modelKeyScope,
   promoteTool,
   registerConnection,
@@ -32,7 +33,7 @@ import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
 import { addConnectionHosts } from "@graft/db/repo/connection";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
-import type { UpstreamRequest } from "@graft/proxy";
+import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
 import {
   CAPABILITY_TOKEN_ALG,
   type CapabilityTokenKeys,
@@ -474,7 +475,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     ).toBeNull();
   });
 
-  it("revokes a connection: ciphertext and approvals gone, the authored tool still there", async () => {
+  it("revokes a connection: ciphertext and approvals gone, the authored tool still there and out of the working set, another connection's tool untouched", async () => {
     const personId = await signUp("revoker@example.com");
     const ctx: ServiceContext = { db };
     const principal = { personId };
@@ -492,7 +493,12 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       connectionDeps,
     );
     await setConnectionCredential(ctx, principal, connection.id, { apiKey: "k" }, connectionDeps);
-    const agent = await createAgent(ctx, principal, { name: "a" }, defaultAgentDeps);
+    const agent = await createAgent(
+      ctx,
+      principal,
+      { name: "a", connectionIds: [connection.id] },
+      defaultAgentDeps,
+    );
     const scope = { personId, agentId: agent.agent.id };
     const tool = await createTool(
       ctx,
@@ -508,14 +514,93 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       defaultToolDeps,
     );
     await setApproval(ctx, scope, tool.id, "allow", defaultApprovalDeps);
+    // A second connection and a tool bound to it, promoted beside the first: the sweep's predicate
+    // (`repo/working-set.ts`, pinned as SQL in `@graft/db`) has to leave it (GRA-69).
+    const other = await registerConnection(
+      ctx,
+      principal,
+      {
+        vendor: "beta",
+        displayName: "Beta",
+        scheme: "api_key_header",
+        schemeConfig: { headerName: "x-key" },
+        primaryHost: "https://api.beta.example",
+      },
+      connectionDeps,
+    );
+    const otherTool = await createTool(
+      ctx,
+      principal,
+      {
+        vendor: "beta",
+        name: "list-things",
+        description: "Lists things",
+        inputSchema: { type: "object" },
+        annotations: { readOnly: true, destructive: false },
+        defaultConnectionId: other.id,
+      },
+      defaultToolDeps,
+    );
+    await promoteTool(ctx, scope, tool.id, "agent", defaultWorkingSetDeps);
+    await promoteTool(ctx, scope, otherTool.id, "agent", defaultWorkingSetDeps);
 
     const result = await revokeConnection(ctx, principal, connection.id, connectionDeps);
-    expect(result).toMatchObject({ approvalsDeleted: 1, buildApprovalsDeleted: 0 });
+    expect(result).toMatchObject({
+      approvalsDeleted: 1,
+      buildApprovalsDeleted: 0,
+      demoted: [{ agentId: agent.agent.id, toolId: tool.id }],
+      affectedAgentIds: [agent.agent.id],
+    });
     expect(result?.connection.revokedAt).toBeInstanceOf(Date);
     expect(result?.connection.credentialSetAt).toBeNull();
 
+    // ADR 0009 as amended 2026-09-18: the connection's tool left the working set with cause
+    // `revoke`; the other connection's promotion is where it was.
+    expect((await listWorkingSet(ctx, scope, defaultWorkingSetDeps)).map((e) => e.toolId)).toEqual([
+      otherTool.id,
+    ]);
+    expect(await listWorkingSetChanges(ctx, scope, 1, defaultWorkingSetDeps)).toMatchObject([
+      { toolId: tool.id, change: "demote", cause: "revoke" },
+    ]);
+
     const proxyRow = await createDatabaseConnections(db).get(connection.id);
     expect(proxyRow?.credentialCiphertext).toBeNull();
+    // The database binding carries the stamp (GRA-68), so a capability token minted from a scope
+    // that still names the row is refused as revoked, not as a row missing a scheme or a credential.
+    expect(proxyRow?.revokedAt).toBeInstanceOf(Date);
+    const events: ProxyEvent[] = [];
+    const app = createServer({
+      keys,
+      vault,
+      connections: createDatabaseConnections(db),
+      followRedirects: false,
+      upstreamFetch: async () => {
+        throw new Error("a revoked connection reaches no vendor");
+      },
+      log: (event) => events.push(event),
+    });
+    const token = await mintCapabilityToken(
+      {
+        personId,
+        agentId: agent.agent.id,
+        connectionIds: [connection.id],
+        tool: "execute",
+        ttlSeconds: 60,
+      },
+      keys,
+    );
+    const refused = await app.request(`/api/proxy/c/${connection.id}/items`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({
+      reason: "connection_revoked",
+      message: "The person revoked this connection; ask them to reconnect it in the console",
+    });
+    expect(events.at(-1)).toMatchObject({
+      outcome: "connection_revoked",
+      connectionId: connection.id,
+    });
     expect(await getToolById(ctx, principal, tool.id, defaultToolDeps)).toMatchObject({
       name: "create-order",
     });
