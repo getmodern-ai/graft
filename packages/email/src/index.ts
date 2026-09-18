@@ -6,7 +6,8 @@ import { consoleTransport, type EmailTransport, type SendResult } from "./transp
  * `@cando/email` (ADR 0011), less the member invitation Graft has no organisation for (ADR 0007),
  * the display-name sanitizer that existed for it, and — the reshaping — the vendor transport, which
  * is the hosted form's and lives in the private package (ADR 0002); the one email here carries
- * nothing a person typed.
+ * nothing a person typed. Two backings ship here: the console transport, the floor, and the SMTP
+ * transport (GRA-92), the working one every self-host can point at its own relay.
  *
  * Transactional mail is email the product sends a person because something concerns them — not
  * a connection (no vendor, no agent acting) and not a handoff (nothing to approve). The package
@@ -23,6 +24,14 @@ export {
   type TemplateName,
   templates,
 } from "./registry";
+export {
+  createSmtpTransport,
+  RENDERERS,
+  type RenderedEmail,
+  render,
+  type SendMailLike,
+  type SmtpTransportOptions,
+} from "./smtp";
 export {
   consoleTransport,
   type EmailTransport,

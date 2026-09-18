@@ -477,6 +477,29 @@ export function signInProvidersFrom(value: {
 }
 
 /**
+ * The open form's mail relay (ADR 0021 as amended for GRA-92), all-or-nothing and off by default:
+ * with the pair, the password-reset email leaves through the SMTP relay the URL names — a mailbox
+ * provider's, SES's SMTP endpoint, a company mail server — under the sender `GRAFT_MAIL_FROM`; without
+ * it the console transport prints the link into the server's log. The URL carries the relay's
+ * credentials (`smtps://user:pass@host:465`), so it is held to the placeholder rule; a URL alone
+ * would send from nobody and a sender alone through nothing, so a partial pair is refused.
+ */
+export const smtpKeys = ["GRAFT_SMTP_URL", "GRAFT_MAIL_FROM"] as const;
+
+/** `smtp://` or `smtps://`, nodemailer's URL form — a plain `http` URL here is a pasted wrong value. */
+export const smtpUrl = z
+  .url({
+    protocol: /^smtps?$/,
+    error:
+      "GRAFT_SMTP_URL must be an smtp:// or smtps:// URL — the relay, its port and its credentials, such as smtps://user:pass@smtp.example.com:465",
+  })
+  .refine(
+    (value) => !value.startsWith("PLACEHOLDER"),
+    "GRAFT_SMTP_URL still holds the secret store's placeholder; populate it or unset it",
+  )
+  .optional();
+
+/**
  * A secret as an environment value: non-empty, and not the placeholder a secrets store leaves in a
  * variable nobody has populated. A placeholder would pass every other check and fail at the first
  * call with the provider's own error, far from the boot log; refused here it is one sentence.
@@ -895,6 +918,13 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   );
   if (partialGithub) issues.push(partialGithub);
 
+  const partialSmtp = partialGroupIssue(
+    value,
+    "The mail relay is partially configured — set GRAFT_SMTP_URL and GRAFT_MAIL_FROM together, or neither.",
+    smtpKeys,
+  );
+  if (partialSmtp) issues.push(partialSmtp);
+
   // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
   // package brings the sandbox, and a `fake` set beside it would be two answers to one question.
   if (value.GRAFT_BACKINGS === "cloud" && value.GRAFT_SANDBOX_BACKEND === "fake") {
@@ -1047,6 +1077,10 @@ export const serverSchema = {
   GRAFT_GOOGLE_CLIENT_SECRET: secretValue("GRAFT_GOOGLE_CLIENT_SECRET"),
   GRAFT_GITHUB_CLIENT_ID: z.string().min(1).optional(),
   GRAFT_GITHUB_CLIENT_SECRET: secretValue("GRAFT_GITHUB_CLIENT_SECRET"),
+
+  /** The open form's mail relay and sender, all-or-nothing — see `smtpKeys`. */
+  GRAFT_SMTP_URL: smtpUrl,
+  GRAFT_MAIL_FROM: z.string().min(1).optional(),
 
   /** The admin opened on first start, all-or-nothing — see `adminKeys`. */
   GRAFT_ADMIN_EMAIL: adminEmail,

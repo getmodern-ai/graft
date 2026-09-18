@@ -7,7 +7,7 @@ import {
   keyringProvider,
   providerListProblem,
 } from "@graft/core";
-import { consoleTransport, type EmailTransport } from "@graft/email";
+import { consoleTransport, createSmtpTransport, type EmailTransport } from "@graft/email";
 import type { ServerEnv } from "@graft/env/server";
 import { createPipedreamClient, type PipedreamClient } from "@graft/pipedream";
 import { createUpstreamFetch } from "@graft/proxy";
@@ -49,8 +49,9 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  * `open` is what this repository holds: the sandbox `GRAFT_SANDBOX_BACKEND` names — Docker when
  * its pair of variables is set, none when it is not, or the in-process fake for a laptop without a
  * daemon, whose toolbox then lives in the fake's own temporary directory — the local AES keyring,
- * the mirror that records a call and copies nothing, and the console mail transport, which prints
- * the one email the server sends into its own log (`@graft/email`). Mail is the seam where the
+ * the mirror that records a call and copies nothing, and for mail the SMTP relay the environment
+ * names or, unset, the console transport, which prints the one email the server sends into its own
+ * log (`@graft/email`). Mail is the seam where the
  * vendor is most tempting to write into the core, and the reason it is not: the hosted form's
  * transport and the ids of its templates are that vendor's and Graft Cloud's, and a self-host has
  * neither — so they live in the private package, which answers `mail` beside the other seams, and
@@ -97,8 +98,9 @@ export type Backings = {
   /** The toolbox as the server holds it, where the sandbox backing sees the same tree. */
   store: ToolboxStore;
   /**
-   * How the server's one email leaves (ADR 0021): the console transport under `open`, and under
-   * `cloud` the private package's — or the console again when it answers no `mail`, so a hosted
+   * How the server's one email leaves (ADR 0021): the SMTP relay the environment names when the
+   * `GRAFT_SMTP_URL`/`GRAFT_MAIL_FROM` pair is set (GRA-92), else the console transport, under
+   * `open`; under `cloud` the private package's transport first, then the same two. A hosted
    * deploy without a mail key still boots and still logs the link. The boot line names it.
    */
   mail: EmailTransport;
@@ -165,6 +167,8 @@ export type BackingsEnv = Pick<
   | "GRAFT_PIPEDREAM_ENVIRONMENT"
   | "GRAFT_PIPEDREAM_CLIENT_ID"
   | "GRAFT_PIPEDREAM_CLIENT_SECRET"
+  | "GRAFT_SMTP_URL"
+  | "GRAFT_MAIL_FROM"
 >;
 
 /**
@@ -226,6 +230,20 @@ export function pipedreamProviderFrom(
     deps.pipedreamClient ??
     createPipedreamClient({ projectId, environment, clientId, clientSecret });
   return createPipedreamProvider({ client });
+}
+
+/**
+ * The mail transport the environment configures (ADR 0021 as amended for GRA-92), or null when the
+ * `GRAFT_SMTP_URL`/`GRAFT_MAIL_FROM` pair is unset: the SMTP relay every self-host has, in either
+ * form — the one backing of this seam that is open code switched on by configuration. `@graft/env`
+ * has refused a half-set pair by the time this runs; the check on both is what makes the narrowing
+ * true for a caller that assembled the environment some other way.
+ */
+export function environmentMail(
+  env: Pick<BackingsEnv, "GRAFT_SMTP_URL" | "GRAFT_MAIL_FROM">,
+): EmailTransport | null {
+  if (!env.GRAFT_SMTP_URL || !env.GRAFT_MAIL_FROM) return null;
+  return createSmtpTransport({ url: env.GRAFT_SMTP_URL, from: env.GRAFT_MAIL_FROM });
 }
 
 export type SelectBackingsDeps = {
@@ -307,7 +325,7 @@ function openBackings(env: BackingsEnv, deps: SelectBackingsDeps): Backings {
     providers: [...environmentProviders(env, deps), keyringProvider],
     store,
     toolboxRoot: store.root,
-    mail: consoleTransport,
+    mail: environmentMail(env) ?? consoleTransport,
   };
 }
 
@@ -363,7 +381,9 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
     providers,
     store: own ?? filesystem,
     toolboxRoot: own ? null : filesystem.root,
-    mail: mail ?? consoleTransport,
+    // The hosted transport when the package has one, the relay the environment names otherwise,
+    // the console as the floor — the hosted tier sets no relay today, but a form is not a rule.
+    mail: mail ?? environmentMail(env) ?? consoleTransport,
   };
 }
 
