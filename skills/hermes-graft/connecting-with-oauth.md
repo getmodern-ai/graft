@@ -14,6 +14,9 @@ Call `request_connection` with `scheme: "oauth_authorization_code"` and, in `sch
 `authorizeUrl` and `tokenUrl` from the vendor's OAuth documentation and the `scopes` the task
 needs, space-separated and as narrow as the task allows. Leave `clientId` out: you cannot know it,
 and the form asks the person for it. Name the documentation page you read as `docsUrl`.
+`primaryHost` and `hosts` are the hosts tool calls will reach, `gmail.googleapis.com` for Gmail,
+never the sign-in endpoints: those live in `schemeConfig`, and one listed under `hosts` is set
+aside and named in the answer.
 
 The answer is `awaiting_connection` with a handoff `url` and a `redirectUri`. Relay both.
 

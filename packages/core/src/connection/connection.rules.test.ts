@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SIGN_IN_HOSTS,
+  setAsideSignInHosts,
   takesCredential,
   validateCredentialFields,
   validateHostSet,
@@ -101,6 +103,115 @@ describe("validateHostSet", () => {
       const verdict = validateHostSet("https://api.vendor.example", [bad]);
       expect(verdict.ok, bad).toBe(false);
     }
+  });
+});
+
+/** GRA-89: sign-in endpoints are not hosts. Over `validateHostSet`'s output, as the meta-tool applies it. */
+describe("setAsideSignInHosts", () => {
+  const GOOGLE = {
+    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    scopes: "https://www.googleapis.com/auth/gmail.readonly",
+  };
+
+  it("sets aside the endpoints' hosts and the scheme's well-known ones, in the order proposed, and keeps the rest", () => {
+    expect(
+      setAsideSignInHosts("oauth_authorization_code", GOOGLE, "https://gmail.googleapis.com", [
+        "gmail.googleapis.com",
+        "oauth2.googleapis.com",
+        "accounts.google.com",
+        "www.googleapis.com",
+      ]),
+    ).toEqual({
+      ok: true,
+      hosts: ["gmail.googleapis.com", "www.googleapis.com"],
+      setAside: ["oauth2.googleapis.com", "accounts.google.com"],
+    });
+    // A port is the host's, not the hostname's.
+    expect(
+      setAsideSignInHosts("oauth_authorization_code", GOOGLE, "https://gmail.googleapis.com", [
+        "gmail.googleapis.com",
+        "accounts.google.com:443",
+      ]),
+    ).toEqual({ ok: true, hosts: ["gmail.googleapis.com"], setAside: ["accounts.google.com:443"] });
+    expect(SIGN_IN_HOSTS.oauth_authorization_code).toEqual([
+      "accounts.google.com",
+      "oauth2.googleapis.com",
+    ]);
+  });
+
+  it("the well-known hosts belong to the scheme whose flow uses them, and the endpoint hosts to any scheme that carries them", () => {
+    // A bearer proposal listing Google's sign-in host is not judged: the rule does not guess.
+    expect(
+      setAsideSignInHosts("bearer", {}, "https://gmail.googleapis.com", [
+        "gmail.googleapis.com",
+        "accounts.google.com",
+      ]),
+    ).toEqual({
+      ok: true,
+      hosts: ["gmail.googleapis.com", "accounts.google.com"],
+      setAside: [],
+    });
+    // Client credentials carry a token URL, and its host is set aside like the code flow's.
+    expect(
+      setAsideSignInHosts(
+        "oauth2_client_credentials",
+        { tokenUrl: "https://identity.xero.example/connect/token" },
+        "https://api.xero.example",
+        ["api.xero.example", "identity.xero.example"],
+      ),
+    ).toEqual({ ok: true, hosts: ["api.xero.example"], setAside: ["identity.xero.example"] });
+  });
+
+  it("never sets aside the primary's hostname, which some vendors share with the token endpoint", () => {
+    // Notion, Slack, HubSpot and Dropbox serve the token endpoint on the API host itself.
+    expect(
+      setAsideSignInHosts(
+        "oauth_authorization_code",
+        {
+          authorizeUrl: "https://api.notion.example/v1/oauth/authorize",
+          tokenUrl: "https://api.notion.example/v1/oauth/token",
+        },
+        "https://api.notion.example/v1",
+        ["api.notion.example"],
+      ),
+    ).toEqual({ ok: true, hosts: ["api.notion.example"], setAside: [] });
+  });
+
+  it("refuses a primary on a well-known sign-in host, or one that is the endpoint URL itself, saying why", () => {
+    const wellKnown = setAsideSignInHosts(
+      "oauth_authorization_code",
+      GOOGLE,
+      "https://accounts.google.com/o/oauth2/v2/auth",
+      ["accounts.google.com", "gmail.googleapis.com"],
+    );
+    expect(wellKnown).toMatchObject({
+      ok: false,
+      host: "accounts.google.com",
+      problem: expect.stringContaining("sign-in host, not an API host"),
+    });
+    expect((wellKnown as { problem: string }).problem).toContain("gmail.googleapis.com");
+
+    const endpoint = setAsideSignInHosts(
+      "oauth2_client_credentials",
+      { tokenUrl: "https://login.vendor.example/oauth/token" },
+      "https://login.vendor.example/oauth/token",
+      ["login.vendor.example"],
+    );
+    expect(endpoint).toMatchObject({
+      ok: false,
+      host: "login.vendor.example",
+      problem: expect.stringContaining("is the tokenUrl endpoint itself"),
+    });
+    // The same host with a different path is an API host, and the token host is then the primary's.
+    expect(
+      setAsideSignInHosts(
+        "oauth2_client_credentials",
+        { tokenUrl: "https://login.vendor.example/oauth/token" },
+        "https://login.vendor.example/api",
+        ["login.vendor.example"],
+      ),
+    ).toEqual({ ok: true, hosts: ["login.vendor.example"], setAside: [] });
   });
 });
 
