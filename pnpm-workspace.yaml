@@ -14,7 +14,7 @@ catalog:
   typescript: ^7
   # The Node 24 line, matching `engines.node` in the root `package.json`.
   "@types/node": ^26.5.1
-  vitest: ^4.1.11
+  vitest: ^5.0.0
   # HTTP, the proxy's way out, tokens, schema validation and the validated environment, at the
   # versions Cando runs (ADR 0011): one line each so the proxy, the token and the server cannot
   # disagree about a compiler-visible type such as `Headers` or a JWT claim set.
