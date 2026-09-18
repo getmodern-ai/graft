@@ -77,9 +77,9 @@ function loopsErrorMessage(body: string): string {
  * Sends through `POST /v1/transactional` with bearer auth and an idempotency key per send.
  *
  * Every non-2xx maps to `delivered: false` and a log line, never a throw. The one worth naming:
- * a 400 for an *unpublished template* is the expected pre-rollout failure mode (ADR 0021 — the
- * registry ships placeholder ids until the rollout ticket publishes the real templates), which
- * is why the log carries the template name and Loops' own message rather than just a status.
+ * a 400 for an *unpublished template* — a template unpublished or renamed in the dashboard out
+ * from under the registry (ADR 0021) — which is why the log carries the template name and Loops'
+ * own message rather than just a status.
  *
  * `fetchImpl` is deps-last like the façade's transport parameter: callers ignore it and get the
  * global fetch, tests replace it. There is no other HTTP-mocking precedent in the repo to match.
