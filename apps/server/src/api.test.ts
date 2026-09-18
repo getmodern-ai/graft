@@ -465,6 +465,33 @@ describe("the session door", () => {
     });
   });
 
+  /** The console loads PostHog only when told to, and the telling needs no session (GRA-100). */
+  it("says whether the console captures analytics without a session — off unless the server was handed a key", async () => {
+    const { app } = harness(null);
+    const res = await app.request("/api/analytics");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ posthog: null });
+    const withPostHog = createServer({
+      keys: null,
+      vault: { decrypt: async () => ({}) },
+      connections: { get: async () => null },
+      followRedirects: false,
+      api: {
+        auth: {
+          handler: async () => new Response("auth", { status: 200 }),
+          getSession: async () => null,
+        },
+        deps: { db: fakeDb as unknown as DbOrTx, ...harness(null).deps },
+        corsOrigins: [],
+        analytics: { posthog: { key: "phc_test", host: "https://us.i.posthog.com" } },
+        handoff: HANDOFF,
+      },
+    });
+    expect(await (await withPostHog.request("/api/analytics")).json()).toEqual({
+      posthog: { key: "phc_test", host: "https://us.i.posthog.com" },
+    });
+  });
+
   it("hands Better Auth's routes to its handler", async () => {
     const { app } = harness(null);
     const res = await app.request("/api/auth/get-session");

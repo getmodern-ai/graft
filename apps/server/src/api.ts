@@ -129,6 +129,15 @@ export type AuthHandle = {
  */
 export type SignInMethods = { social: readonly SocialProviderName[] };
 
+/**
+ * Whether the console captures product analytics, and with what (GRA-100; `observability.ts`):
+ * PostHog's project API key and ingestion host when `GRAFT_POSTHOG_KEY` is set, `null` otherwise,
+ * and the console loads nothing. Public, like `SignInMethods`, because the key is public by design
+ * — every browser that loads a PostHog-instrumented page is handed one — and because the same image
+ * serves both forms, so the value has to come from the running server rather than a build.
+ */
+export type AnalyticsConfig = { posthog: { key: string; host: string } | null };
+
 export type ApiDeps = {
   db: DbOrTx;
   agent: AgentDeps;
@@ -152,6 +161,8 @@ export type ApiOptions = {
   corsOrigins: readonly string[];
   /** The sign-in providers `auth` registered (`@graft/auth`'s `socialProviders`); none when absent. */
   signInMethods?: SignInMethods;
+  /** The console's analytics setting (`observability.ts`); off when absent. */
+  analytics?: AnalyticsConfig;
   /** What signs and roots a handoff URL (`@graft/mcp`'s `handoff.ts`) — the console's URL and the secret. */
   handoff: Pick<HandoffConfig, "consoleUrl" | "secret">;
   /**
@@ -446,6 +457,10 @@ export function createApi(options: ApiOptions): Hono {
    */
   const signInMethods: SignInMethods = { social: options.signInMethods?.social ?? [] };
   api.get("/sign-in-methods", (c) => c.json(signInMethods));
+
+  /** Whether the console loads PostHog, and with what — the key is public, the route needs no session. */
+  const analytics: AnalyticsConfig = options.analytics ?? { posthog: null };
+  api.get("/analytics", (c) => c.json(analytics));
 
   const {
     approval: approvalDeps,

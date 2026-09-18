@@ -32,7 +32,8 @@ import type { SandboxProcessResult } from "@graft/sandbox";
 import { importCapabilityTokenKeys } from "@graft/token";
 import { createCredentialVault } from "@graft/vault";
 import { serve } from "@hono/node-server";
-import { initLogger } from "evlog";
+import { initLogger, log } from "evlog";
+import { useLogger } from "evlog/hono";
 
 import { API_MOUNT_PATH, createServer, MCP_MOUNT_PATH, PROXY_MOUNT_PATH } from "./app";
 import { selectBackings } from "./backings";
@@ -46,6 +47,7 @@ import {
   seedConnections,
 } from "./connections";
 import { createModel } from "./model";
+import { startObservability } from "./observability";
 
 /**
  * The server's boot: validated environment in, one listening process out. Everything it decides
@@ -73,7 +75,17 @@ import { createModel } from "./model";
  * `.env` and the seed are gitignored, and the seed is refused under `NODE_ENV=production`.
  */
 
-initLogger({ env: { service: "graft-server", environment: env.NODE_ENV } });
+/**
+ * Where a wide event goes and what the product counts (GRA-100; `observability.ts`): the Axiom
+ * drain when its pair is set, the PostHog client when its key is, neither otherwise. Started before
+ * the logger because the drain is what the logger is handed; flushed, bounded, on the way out.
+ */
+const observability = startObservability({ env });
+
+initLogger({
+  env: { service: "graft-server", environment: env.NODE_ENV },
+  ...(observability.drain ? { drain: observability.drain } : {}),
+});
 
 /**
  * The key pair is imported here, at boot, so a mis-pasted PEM fails the process with a sentence
@@ -258,6 +270,26 @@ const mcp = createMcpDeps({
     maxAttempts: env.GRAFT_ACQUIRE_MAX_ATTEMPTS,
     tokenCeiling: env.GRAFT_ACQUIRE_TOKEN_CEILING,
   },
+  /**
+   * Every tool call, once (GRA-100): onto this request's wide event under `mcp`, so the line for a
+   * `POST /mcp` says which tool, for which agent, with what outcome — and onto the person's
+   * analytics profile as `tool_called`. Both carry the same fields and neither carries the input.
+   */
+  onToolCall: (event) => {
+    useLogger().set({ mcp: event });
+    observability.analytics.capture({
+      distinctId: event.personId,
+      event: "tool_called",
+      properties: {
+        tool: event.tool,
+        kind: event.kind,
+        agent_id: event.agentId,
+        outcome: event.outcome,
+        reason: event.reason ?? null,
+        latency_ms: event.latencyMs,
+      },
+    });
+  },
 });
 
 /**
@@ -267,21 +299,45 @@ const mcp = createMcpDeps({
  */
 const acquireRunner = createAcquireRunner(mcp, {
   concurrency: env.GRAFT_ACQUIRE_CONCURRENCY,
+  /**
+   * One wide event per job event through evlog's `log`, so the runner's lines drain with the
+   * requests' (GRA-100) — `acquire` is the field a dashboard cuts by. A job's end is also the
+   * product event: `acquire_completed` when a tool was promoted, `acquire_failed` otherwise, on the
+   * person's profile with the cause and the counters and never the goal.
+   */
   onEvent: (event) => {
     if (event.kind === "claimed") {
-      console.log(
-        `acquire: job ${event.jobId} for agent ${event.agentId} ${event.resumed ? "resumed" : "started"}`,
-      );
-    } else if (event.kind === "finished") {
-      const cause = event.failure ? ` (${event.failure})` : "";
-      console.log(`acquire: job ${event.jobId} for agent ${event.agentId} ${event.status}${cause}`);
-    } else {
-      console.error(
-        `acquire: job ${event.jobId} for agent ${event.agentId} failed: ${event.error}`,
-      );
+      log.info({ acquire: { ...event, message: `job ${event.resumed ? "resumed" : "started"}` } });
+      return;
     }
+    if (event.kind === "failed") {
+      log.error({ acquire: { ...event, message: `job failed: ${event.error}` } });
+      observability.analytics.capture({
+        distinctId: event.personId,
+        event: "acquire_failed",
+        properties: { job_id: event.jobId, agent_id: event.agentId, status: "crashed" },
+      });
+      return;
+    }
+    const cause = event.failure ? ` (${event.failure})` : "";
+    log[event.status === "failed" ? "warn" : "info"]({
+      acquire: { ...event, message: `job ${event.status}${cause}` },
+    });
+    observability.analytics.capture({
+      distinctId: event.personId,
+      event: event.status === "succeeded" ? "acquire_completed" : "acquire_failed",
+      properties: {
+        job_id: event.jobId,
+        agent_id: event.agentId,
+        status: event.status,
+        failure: event.failure?.split(":")[0] ?? null,
+        attempts: event.attempts ?? null,
+        token_spend: event.tokenSpend ?? null,
+      },
+    });
   },
-  onError: (error) => console.error("acquire runner tick failed", error),
+  onError: (error) =>
+    log.error({ acquire: { message: "runner tick failed", error: String(error) } }),
 });
 mcp.acquireRunner = acquireRunner;
 
@@ -324,6 +380,8 @@ const app = createServer({
     },
     corsOrigins: env.GRAFT_CORS_ORIGIN,
     signInMethods,
+    // Whether the console loads PostHog, and with what (GRA-100): the server's own setting, shared.
+    analytics: observability.consoleAnalytics,
     handoff,
     // The consent's two ends (`oauth.ts`): the redirect URI on this server's origin, and the one
     // decrypt outside the proxy binding — the client secret, for the code exchange.
@@ -353,11 +411,17 @@ const sweep = startSweep(mcp, {
       report.failed.length > 0
         ? `, ${report.failed.length} failed: ${report.failed.map((f) => `${f.agentId} (${f.error})`).join("; ")}`
         : "";
-    console.log(
-      `working-set sweep: ${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${failed}`,
-    );
+    log.info({
+      sweep: {
+        agents: report.agents,
+        demoted: report.demoted.length,
+        skipped: report.skipped.length,
+        failed: report.failed.length,
+        message: `${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${failed}`,
+      },
+    });
   },
-  onError: (error) => console.error("working-set sweep failed", error),
+  onError: (error) => log.error({ sweep: { message: "sweep failed", error: String(error) } }),
 });
 
 acquireRunner.start();
@@ -374,6 +438,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `${seededCount} connection(s) seeded over the database, ` +
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
       modelSetup.summary +
+      `, ${observability.summary}` +
       `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );
@@ -385,8 +450,10 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     acquireRunner.stop();
     mcp.notifier?.close();
     mcp.inFlight?.close();
-    // The last job's spans are still buffered; a stop that skipped this would lose them.
-    Promise.allSettled([modelSetup.langfuse?.flush()])
+    // The last job's spans, the last batch of wide events and the last captures are still buffered;
+    // a stop that skipped this would lose them. Bounded, because ECS gives thirty seconds before
+    // `SIGKILL` and an ingest endpoint that is down should cost a few of those, not all of them.
+    Promise.allSettled([modelSetup.langfuse?.flush(), observability.flush(5_000)])
       .then(() => db.close())
       .finally(() => process.exit(0));
   });

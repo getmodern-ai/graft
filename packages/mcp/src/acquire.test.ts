@@ -1144,9 +1144,12 @@ describe("a job that fails and tries again", () => {
         kind: "finished",
         jobId,
         agentId: AGENT_A,
+        personId: PERSON,
         status: "failed",
         failure:
           "sandbox_unavailable: The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
+        attempts: 1,
+        tokenSpend: 600,
       });
     } finally {
       sandbox.ensure = ensure;

@@ -118,6 +118,7 @@ export {
   type McpDeps,
   type PublishTool,
   type ToolboxReader,
+  type ToolCallEvent,
 } from "./deps";
 export {
   HANDOFF_PATH,

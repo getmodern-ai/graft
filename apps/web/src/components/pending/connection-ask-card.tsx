@@ -76,6 +76,8 @@ export function ConnectionAskCard({
   });
 
   const connect = useMutation({
+    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
+    mutationKey: ["pending-action", "connection"],
     mutationFn: (value: ConnectionSubmitBody) => submitConnectionProposal(action.id, value),
     onSuccess: ({ connection, authorizeUrl }, submitted) => {
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });

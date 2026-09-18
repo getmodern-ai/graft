@@ -56,6 +56,8 @@ export function CredentialAskCard({
   });
 
   const save = useMutation({
+    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
+    mutationKey: ["pending-action", "credential"],
     mutationFn: (value: Record<string, string>) => submitCredentialRequest(action.id, value),
     onSuccess: ({ connection, authorizeUrl }) => {
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });

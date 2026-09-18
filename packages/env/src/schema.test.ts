@@ -738,6 +738,62 @@ describe("Langfuse", () => {
   });
 });
 
+describe("Axiom (GRA-100)", () => {
+  it("is the key and the dataset or nothing, with the region's URL its own setting", () => {
+    expect(serverEnvIssues({ ...SECRET, GRAFT_AXIOM_DATASET: "graft-prod" })).toEqual([
+      expect.stringMatching(/Axiom is partially configured.*Missing: GRAFT_AXIOM_API_KEY/),
+    ]);
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        GRAFT_AXIOM_API_KEY: "xaat-1",
+        GRAFT_AXIOM_DATASET: "graft-prod",
+      }),
+    ).toEqual([]);
+    expect(
+      fullSchema.parse({
+        ...MINIMAL,
+        GRAFT_AXIOM_API_KEY: "xaat-1",
+        GRAFT_AXIOM_DATASET: "graft-prod",
+        GRAFT_AXIOM_URL: "https://api.eu.axiom.co",
+      }),
+    ).toMatchObject({
+      GRAFT_AXIOM_DATASET: "graft-prod",
+      GRAFT_AXIOM_URL: "https://api.eu.axiom.co",
+    });
+    expect(
+      fullSchema.safeParse({
+        ...MINIMAL,
+        GRAFT_AXIOM_API_KEY: "PLACEHOLDER — populate in the AWS console",
+        GRAFT_AXIOM_DATASET: "graft-prod",
+      }).success,
+    ).toBe(false);
+    expect(fullSchema.safeParse({ ...MINIMAL, GRAFT_AXIOM_URL: "api.axiom.co" }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("PostHog (GRA-100)", () => {
+  it("takes a project API key by shape, with the host its own setting", () => {
+    expect(fullSchema.parse({ ...MINIMAL, GRAFT_POSTHOG_KEY: "phc_abc123XYZ" })).toMatchObject({
+      GRAFT_POSTHOG_KEY: "phc_abc123XYZ",
+    });
+    expect(
+      fullSchema.parse({
+        ...MINIMAL,
+        GRAFT_POSTHOG_KEY: "phc_abc123XYZ",
+        GRAFT_POSTHOG_HOST: "https://eu.i.posthog.com",
+      }),
+    ).toMatchObject({ GRAFT_POSTHOG_HOST: "https://eu.i.posthog.com" });
+    for (const bad of ["abc123", "phx_abc", "phc_", "phc_abc-123", "PLACEHOLDER"]) {
+      const result = fullSchema.safeParse({ ...MINIMAL, GRAFT_POSTHOG_KEY: bad });
+      expect(result.success, bad).toBe(false);
+    }
+    expect(fullSchema.safeParse({ ...MINIMAL, GRAFT_POSTHOG_HOST: "posthog" }).success).toBe(false);
+  });
+});
+
 describe("the gateway provider (ADR 0019, GRA-58)", () => {
   const GATEWAY = {
     GRAFT_GATEWAY_HOSTS: "api.unleashedsoftware.com, *.googleapis.com",

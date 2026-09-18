@@ -32,6 +32,8 @@ import {
 export function useAnswerAsk(action: PendingAction, onAnswered?: () => void) {
   const queryClient = useQueryClient();
   return useMutation({
+    // The product event this counts as, by key (`lib/analytics-events.ts`, GRA-100).
+    mutationKey: ["pending-action", "answer"],
     mutationFn: (answer: PendingAnswer) => answerPendingAction(action.id, answer),
     onSuccess: (_result, answer) => {
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });

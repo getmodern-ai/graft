@@ -628,6 +628,28 @@ globally — `@graft/model/langfuse` carries Cando's argument for that. The job 
 person the user, and every span carries the job id, the attempt and the role (`authoring` | `triage`).
 Absent the pair, the call is exactly what it would be otherwise.
 
+**Axiom and PostHog are the other two observability tools, each off until its variables arrive**
+(GRA-100; `apps/server/src/observability.ts`, in the shape of Cando's CAN-460). **Axiom** is where a
+wide event goes after stdout: with `GRAFT_AXIOM_API_KEY` and `GRAFT_AXIOM_DATASET` (all-or-nothing;
+`GRAFT_AXIOM_URL` only for an organisation outside the default region) evlog's Axiom adapter runs
+behind evlog's batching pipeline and is handed to `initLogger({ drain })` — on the logger, not on the
+Hono middleware, so the acquire runner's and the sweep's own `log` lines drain beside the requests'.
+Every `POST /mcp` event carries the tool call under `mcp` — the tool, its kind, the agent, the
+person, the outcome, the refusal's reason, the latency — from `McpDeps.onToolCall`, which `tools.ts`
+fires once per call from its one dispatch point. **PostHog** is product analytics through
+`@graft/analytics`: `events.ts` is the closed vocabulary (`noun_verbed`, snake case; counts and kinds,
+never content), browser-safe and imported by the console; `Analytics` is the seam with a no-op; the
+`posthog-node` backing is on when `GRAFT_POSTHOG_KEY` is set (`GRAFT_POSTHOG_HOST` names another
+region or a self-hosted instance). The server captures what happens over MCP — `tool_called` from the
+same hook, `acquire_completed` / `acquire_failed` from the runner — and `GET /api/analytics` (public)
+tells the console whether to load `posthog-js` and with what, since the key is public by design and
+one image serves both forms. The console (`apps/web/src/lib/analytics.ts`) loads the chunk lazily,
+identifies the person by id from the `_auth` guard, resets on sign-out, and counts a mutation as an
+event through one chokepoint — `MutationCache.onSuccess` mapping a declared `mutationKey` through
+`analytics-events.ts` — so a dialog never knows PostHog exists. Autocapture and session recording are
+off. Both flush, bounded, on `SIGTERM`. The boot line says `logs stdout` or `logs stdout and axiom
+(<dataset>)`, and `analytics off` or `analytics posthog`. The hosted form's values are graft-cloud's.
+
 ```bash
 cat >> apps/server/.env <<'ENV'
 GRAFT_SANDBOX_BACKEND=fake

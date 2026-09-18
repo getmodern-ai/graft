@@ -394,6 +394,36 @@ export const modelProviderOptionalKeys = [
 export const langfuseKeys = ["GRAFT_LANGFUSE_PUBLIC_KEY", "GRAFT_LANGFUSE_SECRET_KEY"] as const;
 
 /**
+ * Axiom (`apps/server/src/log-drain.ts`; GRA-100), all-or-nothing: with the pair, every wide event
+ * the server writes to stdout is also drained into the named dataset; without it the events stay
+ * on stdout alone and nothing else changes. A key without a dataset would build a drain that 404s
+ * on every batch, a dataset without a key one that 401s — both silently, since a drain failure never
+ * breaks a request — so a half-set pair is refused at boot instead. `GRAFT_AXIOM_URL` sits outside
+ * the group for the reason `GRAFT_LANGFUSE_BASE_URL` does: it has a correct default, the adapter's
+ * (`https://api.axiom.co`), and an organisation on another region is not a half-finished deploy.
+ * The shape is Cando's (ADR 0011); the names are the ones graft-cloud's task definition has carried
+ * since GRA-34.
+ */
+export const axiomKeys = ["GRAFT_AXIOM_API_KEY", "GRAFT_AXIOM_DATASET"] as const;
+
+/**
+ * PostHog's project API key (`@graft/analytics`; GRA-100): `phc_` and a body, the shape PostHog
+ * mints. One setting rather than a group because the host has a correct default, the US cloud, and
+ * the key alone turns analytics on — the server's captures and, through `GET /api/analytics`, the
+ * console's. The key is public by design (every browser that loads the console is handed it), so it
+ * is not held to the placeholder rule the secrets are; a wrong prefix is a pasted wrong value and is
+ * refused as one. Off by default: a self-host sends nothing anywhere unless its operator sets a key
+ * of their own.
+ */
+export const posthogKey = z
+  .string()
+  .regex(
+    /^phc_[A-Za-z0-9]+$/,
+    "GRAFT_POSTHOG_KEY must be a PostHog project API key — phc_ followed by letters and digits",
+  )
+  .optional();
+
+/**
  * The Pipedream connection provider (ADR 0019; GRA-59), all-or-nothing and off by default: with the
  * four, a vendor Pipedream's Connect catalogue offers connects with one click and every call for it
  * relays through Pipedream's proxy; without them the provider is not on the list and every vendor
@@ -899,6 +929,13 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   );
   if (partialLangfuse) issues.push(partialLangfuse);
 
+  const partialAxiom = partialGroupIssue(
+    value,
+    "Axiom is partially configured — set GRAFT_AXIOM_API_KEY and GRAFT_AXIOM_DATASET together, or neither.",
+    axiomKeys,
+  );
+  if (partialAxiom) issues.push(partialAxiom);
+
   /**
    * The gateway provider is the four settings or nothing (`gatewayKeys`); the prefix rides beside
    * them and is refused alone, as a provider setting nothing would read. In production the upstream
@@ -1097,6 +1134,27 @@ export const serverSchema = {
     .url({
       protocol: /^https?$/,
       error: "GRAFT_LANGFUSE_BASE_URL must be an absolute http(s) URL — the Langfuse region's host",
+    })
+    .optional(),
+
+  /** Axiom, all-or-nothing, and its region — see `axiomKeys`. */
+  GRAFT_AXIOM_API_KEY: secretValue("GRAFT_AXIOM_API_KEY"),
+  GRAFT_AXIOM_DATASET: z.string().min(1, "GRAFT_AXIOM_DATASET must not be empty").optional(),
+  GRAFT_AXIOM_URL: z
+    .url({
+      protocol: /^https?$/,
+      error:
+        "GRAFT_AXIOM_URL must be an absolute http(s) URL — the Axiom API base of the organisation's region, such as https://api.eu.axiom.co",
+    })
+    .optional(),
+
+  /** PostHog, the key alone, and its region — see `posthogKey`. */
+  GRAFT_POSTHOG_KEY: posthogKey,
+  GRAFT_POSTHOG_HOST: z
+    .url({
+      protocol: /^https?$/,
+      error:
+        "GRAFT_POSTHOG_HOST must be an absolute http(s) URL — PostHog's ingestion host for the project's region, or a self-hosted instance",
     })
     .optional(),
 

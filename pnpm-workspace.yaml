@@ -87,6 +87,11 @@ catalog:
   next-themes: ^0.4.6
   shadcn: ^4.19.0
   "@material-symbols/svg-400": ^0.47.0
+  # Product analytics (GRA-100): PostHog's two clients, the browser's for the console and Node's for
+  # the server's captures (`@graft/analytics`). One vocabulary, two writers, so both are pinned here
+  # rather than one in each workspace, where the event shape they agree on could drift.
+  posthog-js: ^1.434.0
+  posthog-node: ^5.52.4
 
 # Overrides live here and not under `pnpm` in the root `package.json`: pnpm 11 no longer reads that
 # field and pnpm 10 reads both, so this is the one placement both honour (AGENTS.md, "Conventions",
