@@ -430,7 +430,9 @@ const requestConnectionTool: MetaTool = {
       "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the url to relay: give them the link exactly as returned, say what it is for, wait, and call again with the same proposal once they say it is done; the same link comes back until they have, then connected. " +
       "The page also offers to allow you to build tools against the connection, on by default: left on, acquire against it starts without a second link, so do not tell the person to expect one. " +
       "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list. " +
-      "A connection the person already has for the same vendor and hosts is never proposed twice: usable and in your scope, it answers connected at once; otherwise the call refuses with connection_exists naming it and the step that keeps it (request_credential, the console's Reconnect, or the person adding it to your scope). " +
+      "A connection the person already has for the same vendor and hosts is never proposed twice: usable and in your scope, it answers connected at once. " +
+      "Usable but made for another of their agents, it is an ask of its own: the call answers awaiting_scope with the url to relay, the person allows you to use the existing connection in the console (no new connection, nothing entered), and the call then answers connected. " +
+      "Otherwise the call refuses with connection_exists naming it and the step that keeps it (request_credential, or the console's Reconnect). " +
       "A rotated or expired credential is request_credential against the existing connection, never a new connection: a new connection is a new row with no scope and no approvals. " +
       "A vendor this deployment's API gateway covers connects with no person step: the call answers connected at once with provider gateway, the gateway holds the credential and the scheme you proposed is not used.",
     inputSchema: {

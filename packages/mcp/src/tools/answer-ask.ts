@@ -21,7 +21,11 @@ import {
   DEFAULT_CARD_HOSTS,
   redirectsOnCardHosts,
 } from "../ask-card";
-import { CONNECTION_ASK_KIND, type ConnectionProposalPayload } from "../connection-request";
+import {
+  CONNECTION_ASK_KIND,
+  type ConnectionProposalPayload,
+  SCOPE_ASK_KIND,
+} from "../connection-request";
 import type { SessionContext } from "../context";
 import { isPlainObject, toolRefusal, toolResult } from "../result";
 import type { MetaTool } from "./meta";
@@ -50,17 +54,19 @@ import type { MetaTool } from "./meta";
  *      Neither: `card_not_available`, the console is the place.
  *   2. **The ask is this agent's** (the agent-scoped read answers nothing for another's), **open**
  *      (unanswered, untaken — `answered`) **and in time** (`expired`), in the console's words.
- *   3. **The ask is one the card may answer**: a `build` ask, or a `connection` ask the keyring's
+ *   3. **The ask is one the card may answer**: a `build` ask; a `connection` ask the keyring's
  *      form serves for a scheme that takes no credential (`ask-card.ts`'s `connectionAskAnswerable`,
- *      read from the row, never from the card). A tool's first use, a credential re-entry, a link
- *      provider's ask and any scheme with a secret are `card_not_available`: the handoff URL on the
- *      same result is the floor, and the console keeps the session (ADR 0004, ADR 0006).
+ *      read from the row, never from the card); or a `scope` ask (GRA-104) — a yes or no on a
+ *      connection the person already made, with GRA-75's build choice, nothing entered. A tool's
+ *      first use, a credential re-entry, a link provider's ask and any scheme with a secret are
+ *      `card_not_available`: the handoff URL on the same result is the floor, and the console keeps
+ *      the session (ADR 0004, ADR 0006).
  *
  * What it records is what the console's routes record, through `ask-answer.ts`, with `via:
  * "card"` on the answer JSON. The waiting call — `acquire` polling its build ask,
- * `request_connection` polling its proposal — finds the answer exactly as it finds a console
- * answer and proceeds. The card is answered `{ answered, sentence }` and sends nothing into the
- * chat: what the agent says next is the agent's.
+ * `request_connection` polling its proposal or its scope ask — finds the answer exactly as it
+ * finds a console answer and proceeds. The card is answered `{ answered, sentence }` and sends
+ * nothing into the chat: what the agent says next is the agent's.
  */
 
 export const ANSWER_ASK = ANSWER_ASK_TOOL;
@@ -75,6 +81,9 @@ function refuse(reason: AnswerAskRefusalReason, message: string): CallToolResult
   return toolRefusal(reason, message);
 }
 
+const ANSWER_SHAPES =
+  "answer must be { allow, approveBuild? }, { connect: true, approveBuild } or { decline: true }";
+
 /** The arguments by shape: an id and one of the three answers, nothing else. */
 export function readAnswerAskInput(
   args: Record<string, unknown>,
@@ -83,14 +92,18 @@ export function readAnswerAskInput(
     typeof args.pendingActionId === "string" ? args.pendingActionId.trim() : "";
   if (!pendingActionId) return { error: "pendingActionId must be a non-empty string" };
   const answer = args.answer;
-  if (!isPlainObject(answer)) {
-    return {
-      error: "answer must be { allow }, { connect: true, approveBuild } or { decline: true }",
-    };
-  }
+  if (!isPlainObject(answer)) return { error: ANSWER_SHAPES };
   const keys = Object.keys(answer).sort().join(",");
   if (keys === "allow" && typeof answer.allow === "boolean") {
     return { pendingActionId, answer: { allow: answer.allow } };
+  }
+  // The scope ask's yes carries GRA-75's build choice beside it (GRA-104).
+  if (
+    keys === "allow,approveBuild" &&
+    typeof answer.allow === "boolean" &&
+    typeof answer.approveBuild === "boolean"
+  ) {
+    return { pendingActionId, answer: { allow: answer.allow, approveBuild: answer.approveBuild } };
   }
   if (
     keys === "approveBuild,connect" &&
@@ -102,9 +115,7 @@ export function readAnswerAskInput(
   if (keys === "decline" && answer.decline === true) {
     return { pendingActionId, answer: { decline: true } };
   }
-  return {
-    error: "answer must be { allow }, { connect: true, approveBuild } or { decline: true }",
-  };
+  return { error: ANSWER_SHAPES };
 }
 
 /** The proposal on a connection ask, as `request_connection` recorded it; null for a row this code did not write. */
@@ -142,7 +153,7 @@ async function answerBuildAsk(
   answer: AnswerAskAnswer,
   agentName: string,
 ): Promise<CallToolResult> {
-  if (!("allow" in answer)) {
+  if (!("allow" in answer) || "approveBuild" in answer) {
     return refuse(
       "input_invalid",
       "A build approval is answered { allow: true } or { allow: false }",
@@ -154,7 +165,12 @@ async function answerBuildAsk(
     principal,
     row.id,
     { allow: answer.allow, via: "card" },
-    { approval: deps.approval, pendingAction: deps.pendingAction, connection: deps.connection },
+    {
+      approval: deps.approval,
+      pendingAction: deps.pendingAction,
+      connection: deps.connection,
+      agent: deps.agent,
+    },
   );
   const what = `${String(row.payload.connectionName ?? "the connection")} (${String(row.payload.vendor ?? "")})`;
   const result: AnswerAskResult = {
@@ -162,6 +178,60 @@ async function answerBuildAsk(
     sentence: answer.allow
       ? `Allowed. ${agentName} may build tools against ${what}: reads only, every write previewed, until the first real use, which asks you once. Withdraw it any time from the agent's page in the console.`
       : `Declined. Nothing was recorded; ${agentName}'s next acquire against ${what} asks again.`,
+  };
+  return toolResult(result);
+}
+
+/**
+ * A `scope` ask (GRA-104): the connection the person already holds joins this agent's scope on a
+ * yes — with the build approval when the choice was left on — through the same function the
+ * console's answer route calls; a no records the decline and nothing else. Nothing is entered,
+ * which is why the card may answer it (ADR 0006 as amended).
+ */
+async function answerScopeAsk(
+  session: SessionContext,
+  row: PendingActionRow,
+  answer: AnswerAskAnswer,
+  agentName: string,
+): Promise<CallToolResult> {
+  if (!("allow" in answer)) {
+    return refuse(
+      "input_invalid",
+      "A scope ask is answered { allow: true, approveBuild? } or { allow: false }",
+    );
+  }
+  const { ctx, principal, scope, deps, notifier } = session;
+  const recorded = await recordApprovalAnswer(
+    ctx,
+    principal,
+    row.id,
+    {
+      allow: answer.allow,
+      ...(answer.approveBuild === undefined ? {} : { approveBuild: answer.approveBuild }),
+      via: "card",
+    },
+    {
+      approval: deps.approval,
+      pendingAction: deps.pendingAction,
+      connection: deps.connection,
+      agent: deps.agent,
+    },
+  );
+  const what = `${String(row.payload.displayName ?? "the connection")} (${String(row.payload.vendor ?? "")})`;
+  if (!answer.allow) {
+    const result: AnswerAskResult = {
+      answered: true,
+      sentence: `Declined. Nothing changed; ${agentName} will be told.`,
+    };
+    return toolResult(result);
+  }
+  // The connection's execute tool is now in this agent's list (ADR 0003).
+  notifier.changed(scope.agentId);
+  const result: AnswerAskResult = {
+    answered: true,
+    sentence: `Allowed. ${what} is in ${agentName}'s scope${
+      recorded.buildApproval ? ", and it may build tools against it" : ""
+    }; it is the connection you already had, so nothing was entered and no new connection was made.`,
   };
   return toolResult(result);
 }
@@ -246,7 +316,7 @@ export const answerAsk: MetaTool = {
   definition: {
     name: ANSWER_ASK,
     description:
-      "Called by Graft's ask card, never by you: it records the person's click on the card a chat product renders for acquire's build approval or request_connection's confirmation. " +
+      "Called by Graft's ask card, never by you: it records the person's click on the card a chat product renders for acquire's build approval, request_connection's confirmation or its scope ask. " +
       "Do not call it yourself, and never on the person's behalf. If you see it in your list, ignore it; the person answers in the card or in the console, and you call the asking tool again afterwards.",
     inputSchema: {
       type: "object",
@@ -258,7 +328,7 @@ export const answerAsk: MetaTool = {
         answer: {
           type: "object",
           description:
-            "{ allow: boolean } for a build approval; { connect: true, approveBuild: boolean } or { decline: true } for a connection that takes no credential.",
+            "{ allow: boolean } for a build approval; { allow: boolean, approveBuild?: boolean } for a scope ask; { connect: true, approveBuild: boolean } or { decline: true } for a connection that takes no credential.",
           properties: {
             allow: { type: "boolean" },
             connect: { type: "boolean", const: true },
@@ -316,11 +386,12 @@ export const answerAsk: MetaTool = {
       return refuse("expired", ASK_EXPIRED_MESSAGE);
     }
 
-    // 3. The two asks the amendment admits; everything else keeps the console and its session.
+    // 3. The three asks the amendment admits; everything else keeps the console and its session.
     if (row.kind === "build") return answerBuildAsk(session, row, input.answer, agent.name);
     if (row.kind === CONNECTION_ASK_KIND) {
       return answerConnectionAsk(session, row, input.answer, agent.name);
     }
+    if (row.kind === SCOPE_ASK_KIND) return answerScopeAsk(session, row, input.answer, agent.name);
     return refuse(
       CARD_NOT_AVAILABLE,
       `A ${row.kind} ask is answered in the console, where the person's session is. ${CONSOLE_IS_THE_PLACE}`,

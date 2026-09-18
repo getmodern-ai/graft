@@ -126,6 +126,24 @@ const buildAction: PendingActionRow = {
   payload: { connectionId: "conn_1", vendor: "demo", connectionName: "Demo", hosts: [] },
 };
 
+/** An agent's ask to use a connection of the person's it was not given (GRA-104): `conn_2`, beside the `conn_1` its scope holds. */
+const scopeAction: PendingActionRow = {
+  ...openAction,
+  id: "pa_3",
+  kind: "scope",
+  connectionId: "conn_2",
+  payload: {
+    connectionId: "conn_2",
+    vendor: "demo",
+    displayName: "Demo (other)",
+    provider: "keyring",
+    primaryHost: "https://api.demo.example",
+    hosts: ["api.demo.example"],
+    scheme: "api_key_header",
+    docsUrl: null,
+  },
+};
+
 const approvalRow: ApprovalRow = {
   agentId: "agent_1",
   toolId: "tool_1",
@@ -1443,6 +1461,137 @@ describe("pending actions", () => {
     // A build yes is in its row in full and was spent; a build decline records nothing and is left
     // for the agent's next call to read once.
     expect(deps.pendingAction.consumePendingAction).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The scope ask (GRA-104): the generic answer route, with the same body plus `approveBuild`.
+   * A yes is the scope write the agent page's picker makes, then the build approval when asked for,
+   * in the answer's transaction; a no writes nothing; either way the answer is left for the agent's
+   * waiting call to take.
+   */
+  describe("a scope ask", () => {
+    const answersScope = (deps: ReturnType<typeof harness>["deps"]) =>
+      vi
+        .mocked(deps.pendingAction.answerPendingAction)
+        .mockImplementation(async (_db, _p, _id, args) => ({
+          ...scopeAction,
+          answer: args.answer,
+          answeredAt: NOW,
+        }));
+
+    it("Allow with the build choice grows the agent's scope by the one connection, then grants the build approval, in that order, and leaves the answer for the agent", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      answersScope(deps);
+      const res = await app.request(
+        "/api/pending-actions/pa_3/answer",
+        json({ allow: true, approveBuild: true }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        pendingAction: { id: "pa_3", kind: "scope", answer: { allow: true, approveBuild: true } },
+        connectionIds: ["conn_1", "conn_2"],
+        // The fake's row (it answers `conn_1` whatever it is given); the insert below is the proof.
+        buildApproval: { agentId: "agent_1" },
+      });
+      expect(deps.pendingAction.answerPendingAction).toHaveBeenCalledWith(
+        fakeDb,
+        "person_1",
+        "pa_3",
+        { answer: { allow: true, approveBuild: true }, answeredAt: NOW },
+      );
+      // The connection is checked to be the person's and unrevoked before anything is written.
+      expect(deps.connection.findConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_2");
+      // The scope write is the agent page's own: read, then replace with the one added.
+      expect(deps.agent.replaceAgentConnections).toHaveBeenCalledWith(
+        fakeDb,
+        { personId: "person_1", agentId: "agent_1" },
+        ["conn_1", "conn_2"],
+      );
+      expect(deps.approval.insertBuildApproval).toHaveBeenCalledWith(fakeDb, {
+        agentId: "agent_1",
+        connectionId: "conn_2",
+        grantedAt: NOW,
+      });
+      // Answer, scope, approval — the order the transaction writes them (as far as the fakes show).
+      const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
+        fn.mock.invocationCallOrder[0] ?? Number.NaN;
+      expect(order(vi.mocked(deps.pendingAction.answerPendingAction))).toBeLessThan(
+        order(vi.mocked(deps.agent.replaceAgentConnections)),
+      );
+      expect(order(vi.mocked(deps.agent.replaceAgentConnections))).toBeLessThan(
+        order(vi.mocked(deps.approval.insertBuildApproval)),
+      );
+      // No tool approval is touched, and the answer is the agent's waiting call to take.
+      expect(deps.approval.upsertApproval).not.toHaveBeenCalled();
+      expect(deps.pendingAction.consumePendingAction).not.toHaveBeenCalled();
+    });
+
+    it("Allow with the choice off grows the scope and grants nothing else", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      answersScope(deps);
+      const res = await app.request("/api/pending-actions/pa_3/answer", json({ allow: true }));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ connectionIds: ["conn_1", "conn_2"] });
+      expect(body).not.toHaveProperty("buildApproval");
+      expect(deps.agent.replaceAgentConnections).toHaveBeenCalledTimes(1);
+      expect(deps.approval.insertBuildApproval).not.toHaveBeenCalled();
+    });
+
+    it("Decline records the no and writes nothing else, and the agent's next call reads it", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      answersScope(deps);
+      const res = await app.request(
+        "/api/pending-actions/pa_3/answer",
+        json({ allow: false, approveBuild: true }),
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        pendingAction: { answer: { allow: false, approveBuild: true } },
+      });
+      expect(body).not.toHaveProperty("connectionIds");
+      expect(body).not.toHaveProperty("buildApproval");
+      expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+      expect(deps.approval.insertBuildApproval).not.toHaveBeenCalled();
+      expect(deps.pendingAction.consumePendingAction).not.toHaveBeenCalled();
+    });
+
+    it("a revoke that beat the answer closes the ask and refuses 409 connection_revoked, growing no scope", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      answersScope(deps);
+      vi.mocked(deps.connection.findConnection).mockResolvedValueOnce({
+        ...connectionRow,
+        id: "conn_2",
+        revokedAt: NOW,
+      });
+      const res = await app.request(
+        "/api/pending-actions/pa_3/answer",
+        json({ allow: true, approveBuild: true }),
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "connection_revoked", connectionId: "conn_2" },
+      });
+      expect(deps.connection.expirePendingActionsForConnection).toHaveBeenCalledWith(
+        fakeDb,
+        "person_1",
+        "conn_2",
+        NOW,
+      );
+      expect(deps.agent.replaceAgentConnections).not.toHaveBeenCalled();
+      expect(deps.approval.insertBuildApproval).not.toHaveBeenCalled();
+    });
+
+    it("refuses approveBuild that is not a boolean as 400", async () => {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      const res = await app.request(
+        "/api/pending-actions/pa_3/answer",
+        json({ allow: true, approveBuild: "yes" }),
+      );
+      expect(res.status).toBe(400);
+      expect(deps.pendingAction.answerPendingAction).not.toHaveBeenCalled();
+    });
   });
 
   it("maps an answered or expired action to 409 and 410, and a bad body to 400", async () => {

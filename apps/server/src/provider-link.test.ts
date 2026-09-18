@@ -541,21 +541,24 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
 
   it("two landings of one link at once make one connection — the database refuses the second claim and it reads the ask the first answered", async () => {
     // A fresh agent, so the ask is new. The person's existing Gmail connection is not in its scope,
-    // which since GRA-76 is a refusal naming the row and the scope step — a relay provider's row
-    // counts as the connection the person already has — so the row is set aside for the landing.
+    // which since GRA-104 is the scope ask — a relay provider's row counts as the connection the
+    // person already has (GRA-76), and this is Aleks's Claude.ai case of 2026-09-19 — so the row is
+    // set aside for the landing this test is about.
     store.addAgent({ id: "agent_c", personId: PERSON, token: `${TOKEN_B}c`, name: "third" });
     const a = await connect(`${TOKEN_B}c`);
     const setAside = [...store.connections.values()].filter((row) => row.vendor === "gmail");
     try {
-      const refused = body(await a.call("request_connection", PROPOSAL));
-      expect(refused).toMatchObject({
-        error: "refused",
-        reason: "connection_exists",
+      const asked = body(await a.call("request_connection", PROPOSAL));
+      expect(asked).toMatchObject({
+        error: "awaiting_scope",
+        reason: "awaiting_scope",
         connectionId: setAside[0]?.id,
         provider: "pipedream",
-        inScope: false,
-        message: expect.stringContaining("under Scope"),
+        url: expect.stringContaining("/pending/"),
+        message: expect.stringContaining("via pipedream"),
       });
+      expect(String(asked.message)).toContain("allow you to use it");
+      expect(String(asked.message)).not.toContain("under Scope");
       for (const row of setAside) store.connections.delete(row.id);
 
       const said = body(await a.call("request_connection", PROPOSAL));

@@ -153,8 +153,9 @@ and `chatgpt.com`, the two products' callbacks), or the session's client declare
 extension in `initialize`, which binds it to the specification's host rules; ADR 0018 registers
 any client dynamically, so the OAuth grant alone would admit a naive client that lists the tool to
 its model — only for **that agent's own ask**, only while it is **open and in time**, and only for
-**two asks**: the build approval, and the connection confirmation for a
-proposal whose scheme takes no credential and whose provider connects through the form. The record
+**three asks**: the build approval; the connection confirmation for a proposal whose scheme takes
+no credential and whose provider connects through the form; and, since 2026-09-19 (GRA-104, the
+paragraph below), the scope ask. The record
 is the console's record — the same `build_approval` row, the same connection row in the same
 agent's scope, the same answer on the action, through the same functions
 (`packages/mcp/src/ask-answer.ts`) — with `via: "card"` on the answer to say which door it came
@@ -187,7 +188,27 @@ client's model out too, since a client can register itself but cannot register a
 confirm that neither lists `answer_ask` to its model; a host that does is a host the card is
 withdrawn from, by taking it off the list.
 
+**The third card: a connection the person holds but this agent was not given** (added 2026-09-19,
+GRA-104; decided by Aleks after his Claude.ai test of 2026-09-19). A proposal that matches a live,
+usable connection of the person's made for another of their agents used to be the one person step
+with no handoff: `request_connection` refused `connection_exists` with `inScope: false` and a
+sentence telling the person to find the agent's page and its Scope picker, so the model relayed a
+warning-shaped tool call and no link, and the card had nothing to render. It is now an **ask** of its
+own kind, `scope` — a pending action stamped with the connection, a signed handoff URL, the same wait
+and poll as the connection ask, and `awaiting_scope` in GRA-55's shape — whose page says "<agent>
+asks to use <connection> (<vendor>, via <provider>)" with Allow, Decline and GRA-75's build choice on
+by default. Allow is the scope change the agent page's picker makes and, ticked, the build approval,
+in one transaction on the generic answer route (`{ allow: true, approveBuild? }`); the next call
+answers `connected` with the execute tool named. The card renders it as answerable and `answer_ask`
+admits `{ allow, approveBuild? }` for it under the same gate, because it is a yes or no on a
+connection the person already made, with nothing to enter — the same standing as the build approval.
+A revoked row and a live row in scope keep GRA-76's answers; a live row outside the scope whose
+credential is missing keeps its refusal, since allowing it would give the agent nothing to call
+through. GRA-105 (a new agent's default scope) may narrow when this ask is reached; the ask itself
+does not move.
+
 **Unchanged.** ADR 0004 and ADR 0008. Elicitation keeps its place before the handoff for the clients
 that show a form. `acquire` still asks once per agent per connection; the connection confirmation
 still offers the build approval on by default (ADR 0008 as amended 2026-09-18, GRA-75), on the card as
-on the page. Hermes renders no apps, and its skill is untouched.
+on the page. Hermes renders no apps; its skill names `awaiting_scope` beside the other handoffs and
+is otherwise untouched.

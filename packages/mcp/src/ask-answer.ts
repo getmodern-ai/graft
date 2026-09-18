@@ -23,6 +23,7 @@ import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 
 import { readApprovalAnswer } from "./approval";
+import { readScopeAnswer, SCOPE_ASK_KIND } from "./connection-request";
 
 /**
  * Recording the person's answer to an ask — the writes the console's two answer routes make
@@ -33,7 +34,9 @@ import { readApprovalAnswer } from "./approval";
  * a yes from the card and a yes from the console page are the same `build_approval` row, the same
  * `connection` row in the same agent's scope, the same `answer` on the action — with one field,
  * `via: "card"`, that says which door it came through, carried on the answer JSON and read by
- * nothing (the console shows what it always showed).
+ * nothing (the console shows what it always showed). The `scope` ask (GRA-104) rides the generic
+ * answer too: its yes is the scope grant the agent page's picker makes and, with `approveBuild`,
+ * the build approval, in the answer's transaction (`recordAnswer`).
  *
  * Lives in `@graft/mcp` rather than `@graft/core` because the ask's payloads and answer shapes
  * are this package's (`approval.ts`, `connection-request.ts`), and the server imports both; the
@@ -83,6 +86,8 @@ export type ApprovalAnswerDeps = {
   pendingAction: PendingActionDeps;
   /** The connection the ask is about, read again at the moment of recording (GRA-69; the header). */
   connection: ConnectionDeps;
+  /** The scope write a `scope` ask's yes makes (GRA-104) — the agent page's own seam. */
+  agent: AgentDeps;
 };
 
 /** A revoke that beat the answer: the ask is closed and the caller is told, after the transaction. */
@@ -92,26 +97,34 @@ export type ApprovalAnswerRecord = {
   pendingAction: PendingActionRow;
   approval?: ApprovalRow;
   buildApproval?: BuildApprovalRow;
+  /** For a `scope` ask's yes (GRA-104): the agent's scope after the grant. */
+  connectionIds?: string[];
 };
 
 /**
- * The person's answer to a `tool` or `build` ask, `{ allow, askEveryCall? }` plus whatever the
- * door adds. Recording the answer and writing the approval it is for happen in one transaction:
- * for a `tool` ask the answer becomes the standing `approval` row (`allow` or `deny` — a no holds
- * too, ADR 0008), and `askEveryCall` with an allow sets the tool's per-call opt-in on or off,
- * absent leaving it as it stands (ADR 0008, amendment of 2026-09-15); for a `build` ask an
+ * The person's answer to a `tool`, `build` or `scope` ask, `{ allow, askEveryCall?, approveBuild? }`
+ * plus whatever the door adds. Recording the answer and writing the record it is for happen in one
+ * transaction: for a `tool` ask the answer becomes the standing `approval` row (`allow` or `deny`
+ * — a no holds too, ADR 0008), and `askEveryCall` with an allow sets the tool's per-call opt-in on
+ * or off, absent leaving it as it stands (ADR 0008, amendment of 2026-09-15); for a `build` ask an
  * `allow` grants the build approval and a decline writes nothing, so the next `acquire` asks
- * again. Any other kind records the answer and nothing else, which a waiting connection call
- * reads as a decline.
+ * again; for a `scope` ask (GRA-104) an `allow` adds the connection to the asking agent's scope —
+ * the same write the agent page's picker makes (`addConnectionToAgentScope`) — and, with
+ * `approveBuild`, grants the build approval for it (GRA-75), while a decline writes nothing. Any
+ * other kind records the answer and nothing else, which a waiting connection call reads as a
+ * decline.
  *
  * **An answer the standing row now carries in full is consumed here.** Otherwise it would outlive
  * the row: a yes left answered-but-unconsumed would still be found and honoured by a call made
- * after the approval was withdrawn, which is exactly what withdrawing is meant to prevent. The two
+ * after the approval was withdrawn, which is exactly what withdrawing is meant to prevent. The
  * answers the agent's next call must read for itself stay unconsumed — a yes on a tool set to ask
- * every call (the row says allow and the rule still says ask, so this call's yes is the action's)
- * and a build decline (no row records it). A call that is waiting sees the consumed action as
- * `CONFLICT` and reads the rule again (`approval.ts`), which is how it proceeds on a yes and
- * refuses on a no.
+ * every call (the row says allow and the rule still says ask, so this call's yes is the action's),
+ * a build decline (no row records it), and the scope ask's answer either way: the waiting
+ * `request_connection` reads it to say `connected` with the execute tool named, or `scope_declined`,
+ * and on a yes it checks the scope as it stands then, so a yes outliving a later withdrawal is
+ * refused there rather than honoured (`connection-request.ts`, `awaitScope`). A call that is
+ * waiting sees a consumed action as `CONFLICT` and reads the rule again (`approval.ts`), which is
+ * how it proceeds on a yes and refuses on a no.
  *
  * **The connection is read again before anything is written.** A revoke deletes every approval for
  * the connection and closes its open asks (ADR 0007), but an ask inserted after that sweep ran is
@@ -125,7 +138,11 @@ export async function recordApprovalAnswer(
   ctx: ServiceContext,
   principal: Principal,
   id: string,
-  answer: Record<string, unknown> & { allow: boolean; askEveryCall?: boolean },
+  answer: Record<string, unknown> & {
+    allow: boolean;
+    askEveryCall?: boolean;
+    approveBuild?: boolean;
+  },
   deps: ApprovalAnswerDeps,
 ): Promise<ApprovalAnswerRecord> {
   const outcome = await ctx.db.transaction(
@@ -207,8 +224,45 @@ async function recordAnswer(
       await settle();
       return { pendingAction: action, buildApproval };
     }
+    if (action.kind === SCOPE_ASK_KIND && typeof action.payload.connectionId === "string") {
+      return grantScope(scoped, principal, action, action.payload.connectionId, deps);
+    }
     return { pendingAction: action };
   }
+}
+
+/**
+ * A `scope` ask's yes (GRA-104): the connection joins the asking agent's scope — and no other
+ * agent's (ADR 0007) — through the write the agent page's picker makes, and the build approval
+ * is granted for it when the person left GRA-75's choice on; the scope first, so a recorded
+ * approval never lacks the scope it is for. A no writes nothing. Either way the answer stays for
+ * the waiting `request_connection` to read (the header says why).
+ */
+async function grantScope(
+  scoped: ServiceContext,
+  principal: Principal,
+  action: PendingActionRow,
+  connectionId: string,
+  deps: ApprovalAnswerDeps,
+): Promise<ApprovalAnswerRecord> {
+  const said = readScopeAnswer(action.answer);
+  if (!said.allow) return { pendingAction: action };
+  const { connectionIds } = await addConnectionToAgentScope(
+    scoped,
+    principal,
+    action.agentId,
+    connectionId,
+    deps.agent,
+  );
+  const buildApproval = said.approveBuild
+    ? await grantBuildApproval(
+        scoped,
+        { personId: principal.personId, agentId: action.agentId },
+        connectionId,
+        deps.approval,
+      )
+    : undefined;
+  return { pendingAction: action, connectionIds, ...(buildApproval ? { buildApproval } : {}) };
 }
 
 /** What the person confirms: the proposal as edited (or as proposed), the credential, and GRA-75's build choice. */

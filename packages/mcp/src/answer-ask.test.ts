@@ -494,6 +494,159 @@ describe("answer_ask on a connection ask", () => {
 });
 
 /**
+ * The third card (GRA-104): a connection the person holds that this agent was not given. ChatGPT's
+ * agent holds Delta; Claude proposes it and gets a `scope` ask, answerable since nothing is
+ * entered. Allow through the card is the console's record — the scope grant and, with the choice
+ * on, the build approval — and `request_connection` then answers connected; the static-token
+ * agent is refused at guard 1 as for every card.
+ */
+describe("answer_ask on a scope ask", () => {
+  const DELTA_CONN = "conn_delta";
+  const DELTA = {
+    vendor: "delta",
+    displayName: "Delta Books",
+    primaryHost: "https://api.delta.example/v1",
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "x-delta-key" },
+    docsUrl: "https://developer.delta.example/docs",
+  };
+
+  beforeEach(() => {
+    store.addConnection({
+      id: DELTA_CONN,
+      personId: PERSON,
+      vendor: "delta",
+      displayName: "Delta Books",
+      primaryHost: "https://api.delta.example/v1",
+      schemeConfig: { headerName: "x-delta-key" },
+    });
+    store.agentConnections.get(OTHER)?.add(DELTA_CONN);
+  });
+
+  it("rides awaiting_scope as an answerable card with the row's facts and the documentation proposed", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const result = await claude.call("request_connection", DELTA);
+    expect(text(result)).toMatchObject({
+      error: "awaiting_scope",
+      reason: "awaiting_scope",
+      connectionId: DELTA_CONN,
+      provider: "keyring",
+    });
+    expect(cardOf(result)).toMatchObject({
+      kind: "scope",
+      answerable: true,
+      agentName: "Claude",
+      vendor: "delta",
+      displayName: "Delta Books",
+      primaryHost: "https://api.delta.example/v1",
+      hosts: ["api.delta.example"],
+      scheme: "api_key_header",
+      takesCredential: true,
+      docsUrl: "https://developer.delta.example/docs",
+    });
+    expect(cardOf(result)).not.toHaveProperty("provider");
+  });
+
+  it("records an Allow with the build choice as the console does, and request_connection then answers connected with the execute tool", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", DELTA));
+    const { body } = await answer(claude, card.pendingActionId, {
+      allow: true,
+      approveBuild: true,
+    });
+    expect(body).toMatchObject({
+      answered: true,
+      sentence: expect.stringContaining("Allowed. Delta Books (delta) is in Claude's scope"),
+    });
+    expect(body.sentence).toContain("may build tools against it");
+    expect(store.pendingActions.get(card.pendingActionId)?.answer).toEqual({
+      allow: true,
+      approveBuild: true,
+      via: "card",
+    });
+    expect(store.agentConnections.get(CLAUDE)?.has(DELTA_CONN)).toBe(true);
+    expect(store.agentConnections.get(OTHER)?.has(DELTA_CONN)).toBe(true);
+    expect(store.agentConnections.get(HERMES)?.has(DELTA_CONN)).toBe(false);
+    expect(store.buildApprovals.get(`${CLAUDE} ${DELTA_CONN}`)).toBeDefined();
+    // No new row: the person's one connection, now in two scopes.
+    expect([...store.connections.values()].filter((row) => row.vendor === "delta")).toHaveLength(1);
+
+    const again = await claude.call("request_connection", DELTA);
+    expect(again.isError).toBeFalsy();
+    expect(text(again)).toMatchObject({
+      status: "connected",
+      connectionId: DELTA_CONN,
+      executeTool: executeToolName(DELTA_CONN),
+    });
+    expect(await claude.toolNames()).toContain(executeToolName(DELTA_CONN));
+    const job = await claude.call("acquire", { connectionId: DELTA_CONN, goal: "list books" });
+    expect(text(job)).toMatchObject({ jobId: expect.any(String) });
+  });
+
+  it("records an Allow with the choice off: in scope, no build approval, and acquire then asks", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", DELTA));
+    const { body } = await answer(claude, card.pendingActionId, {
+      allow: true,
+      approveBuild: false,
+    });
+    expect(body.sentence).not.toContain("may build tools");
+    expect(store.agentConnections.get(CLAUDE)?.has(DELTA_CONN)).toBe(true);
+    expect(store.buildApprovals.get(`${CLAUDE} ${DELTA_CONN}`)).toBeUndefined();
+    expect(text(await claude.call("request_connection", DELTA))).toMatchObject({
+      status: "connected",
+    });
+    expect(
+      text(await claude.call("acquire", { connectionId: DELTA_CONN, goal: "x" })),
+    ).toMatchObject({ reason: "awaiting_approval" });
+  });
+
+  it("records a Decline as the console's, growing nothing, and request_connection says scope_declined", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", DELTA));
+    const { body } = await answer(claude, card.pendingActionId, { allow: false });
+    expect(body).toMatchObject({ answered: true, sentence: expect.stringContaining("Declined") });
+    expect(store.pendingActions.get(card.pendingActionId)?.answer).toEqual({
+      allow: false,
+      via: "card",
+    });
+    expect(store.agentConnections.get(CLAUDE)?.has(DELTA_CONN)).toBe(false);
+    expect(text(await claude.call("request_connection", DELTA))).toMatchObject({
+      reason: "scope_declined",
+      connectionId: DELTA_CONN,
+    });
+  });
+
+  it("refuses a static-token agent's scope ask as card_not_available, and a connect-shaped answer as input_invalid", async () => {
+    const hermes = await connect(TOKEN_HERMES);
+    const card = cardOf(await hermes.call("request_connection", DELTA));
+    expect(card).toMatchObject({ kind: "scope", answerable: true });
+    const refused = await answer(hermes, card.pendingActionId, { allow: true, approveBuild: true });
+    expect(refused.body).toMatchObject({ reason: CARD_NOT_AVAILABLE });
+    expect(store.agentConnections.get(HERMES)?.has(DELTA_CONN)).toBe(false);
+    expect(store.pendingActions.get(card.pendingActionId)?.answeredAt).toBeNull();
+
+    const claude = await connect(TOKEN_CLAUDE);
+    const own = cardOf(await claude.call("request_connection", DELTA));
+    const wrong = await answer(claude, own.pendingActionId, { connect: true, approveBuild: true });
+    expect(wrong.body).toMatchObject({ reason: "input_invalid" });
+    expect(store.agentConnections.get(CLAUDE)?.has(DELTA_CONN)).toBe(false);
+  });
+
+  it("refuses approveBuild on a build ask as input_invalid: the choice is the scope and connection asks' alone", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("acquire", { connectionId: CONN, goal: "list orders" }));
+    expect(card.kind).toBe("build");
+    const { body } = await answer(claude, card.pendingActionId, {
+      allow: true,
+      approveBuild: true,
+    });
+    expect(body).toMatchObject({ reason: "input_invalid" });
+    expect(store.buildApprovals.get(`${CLAUDE} ${CONN}`)).toBeUndefined();
+  });
+});
+
+/**
  * Guard 1's second half (Greptile on #71): the OAuth grant alone admits any dynamically registered
  * client, so the card's tool answers only for a client whose hiding of app-only tools is
  * established — every registered redirect on a card host, or the extension declared in

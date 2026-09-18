@@ -4,12 +4,14 @@ import type { AnswerAskAnswer, AnswerOutcome, AskCard } from "./shape";
  * The card as DOM — a pure function of the ask's data and two handlers, so the render is tested
  * with a document and no host (`render.test.ts`), and `main.ts` is only the wiring to the host.
  *
- * Three shapes, in Cando's card anatomy (ADR 0017) and the console's voice: the **build approval**
+ * Four shapes, in Cando's card anatomy (ADR 0017) and the console's voice: the **build approval**
  * (Allow or Deny), the **connection confirmation** for a scheme that takes no credential (Connect
- * or Decline, with GRA-75's build choice on by default), and, for every ask the card may not
- * answer — a scheme with a secret, a credential re-entry, a link provider's ask, a tool's first use
- * — the proposal as text and one button, *Open in the console*, which opens the handoff URL.
- * Secrets are entered in the console and nowhere else (ADR 0004, ADR 0006).
+ * or Decline, with GRA-75's build choice on by default), the **scope ask** — a connection the
+ * person already holds, asked for by an agent that was not given it (GRA-104): Allow or Decline,
+ * with the same build choice — and, for every ask the card may not answer — a scheme with a
+ * secret, a credential re-entry, a link provider's ask, a tool's first use — the proposal as text
+ * and one button, *Open in the console*, which opens the handoff URL. Secrets are entered in the
+ * console and nowhere else (ADR 0004, ADR 0006).
  *
  * After a click the buttons are disabled, and the outcome the server answered — or its refusal
  * — replaces them as one sentence. The card never writes into the chat: the person's click is the
@@ -55,6 +57,8 @@ export function kindLabel(card: AskCard): string {
       return "Credential re-entry";
     case "tool":
       return "Approval";
+    case "scope":
+      return "Scope";
   }
 }
 
@@ -74,6 +78,8 @@ export function titleOf(card: AskCard): string {
       return `Re-enter the credential for ${what}`;
     case "tool":
       return `Approve ${card.toolName ?? "a tool"} against ${what}`;
+    case "scope":
+      return `Let ${card.agentName} use ${what}?`;
   }
 }
 
@@ -93,6 +99,8 @@ export function descriptionOf(card: AskCard): string {
       return `The vendor refused ${card.agentName}'s calls. The new credential is entered in the console, never here or in the chat.`;
     case "tool":
       return `${card.agentName} wants to run a tool that changes data. The console shows the tool's description and lets you set it to ask every time.`;
+    case "scope":
+      return `You already have this connection${card.provider ? `, via ${card.provider}` : ""}; it was made for another of your agents. Allowing adds it to ${card.agentName}'s scope: no new connection, nothing entered, and its approvals stay as they are.`;
   }
 }
 
@@ -105,7 +113,7 @@ export function factsOf(card: AskCard): Array<{ label: string; value: string; mo
   ];
   if (card.primaryHost) facts.push({ label: "Primary host", value: card.primaryHost, mono: true });
   facts.push({ label: "Hosts", value: card.hosts.join(", "), mono: true });
-  if (card.kind === "connection" || card.kind === "credential") {
+  if (card.kind === "connection" || card.kind === "credential" || card.kind === "scope") {
     facts.push({ label: "Scheme", value: schemeLabel(card.scheme) });
   }
   if (card.provider && card.provider !== "keyring") {
@@ -122,7 +130,7 @@ function expiresLabel(iso: string): string {
   return at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
-/** The label of the build choice on a keyless connection card (GRA-75), on by default. */
+/** The label of the build choice on a keyless connection card and a scope card (GRA-75, GRA-104), on by default. */
 export function buildChoiceLabel(card: AskCard): string {
   return `Also allow ${card.agentName} to build tools against this connection`;
 }
@@ -240,7 +248,8 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     return root;
   }
 
-  // A keyless connection: the build choice above the two buttons, on by default (GRA-75).
+  // A keyless connection, or a scope ask: the build choice above the two buttons, on by default
+  // (GRA-75; GRA-104 for the scope ask, where Allow carries it as `approveBuild` beside `allow`).
   const choice = el(doc, "label", "ask-choice");
   const box = el(doc, "input");
   box.type = "checkbox";
@@ -248,6 +257,17 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
   box.name = "approveBuild";
   choice.append(box, el(doc, "span", undefined, buildChoiceLabel(card)));
   actions.before(choice);
+
+  if (card.kind === "scope") {
+    const decline = button(doc, "Decline", "secondary", () => void submit({ allow: false }));
+    const allow = button(doc, "Allow", "primary", () => {
+      box.disabled = true;
+      void submit({ allow: true, approveBuild: box.checked });
+    });
+    buttons.push(decline, allow);
+    actions.append(decline, allow);
+    return root;
+  }
 
   const decline = button(doc, "Decline", "secondary", () => void submit({ decline: true }));
   const connect = button(doc, "Connect", "primary", () => {

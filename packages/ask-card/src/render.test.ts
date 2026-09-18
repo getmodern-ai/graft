@@ -51,6 +51,21 @@ const SECRET: AskCard = {
   answerable: false,
 };
 
+/** A connection the person holds through Pipedream, made for another agent (GRA-104). */
+const SCOPE: AskCard = {
+  ...BUILD,
+  pendingActionId: "pa_7",
+  kind: "scope",
+  vendor: "gmail",
+  displayName: "Gmail",
+  primaryHost: "https://gmail.googleapis.com",
+  hosts: ["gmail.googleapis.com", "www.googleapis.com"],
+  scheme: "pipedream_connect_proxy",
+  takesCredential: false,
+  docsUrl: "https://developers.google.com/gmail/api",
+  provider: "pipedream",
+};
+
 const CONSOLE_ONLY: AskCard[] = [
   SECRET,
   { ...SECRET, pendingActionId: "pa_4", providerConnect: "link", provider: "pipedream" },
@@ -175,6 +190,55 @@ describe("a connection confirmation for a scheme that takes no credential", () =
     [...root.querySelectorAll("button")].find((b) => b.textContent === "Decline")?.click();
     await flush();
     expect(h.answer).toHaveBeenCalledWith({ decline: true });
+  });
+});
+
+describe("a scope ask: a connection the person holds that this agent was not given", () => {
+  it("asks to let the agent use the connection, names the provider and hosts, says nothing is entered, and offers a checked build choice with Decline and Allow", () => {
+    const root = renderAsk(SCOPE, handlers(), document);
+    expect(root.dataset).toMatchObject({ kind: "scope", answerable: "true" });
+    expect(root.querySelector("h1")?.textContent).toBe("Let Claude use Gmail (gmail)?");
+    expect(root.textContent).toContain("via pipedream");
+    expect(root.textContent).toContain("made for another of your agents");
+    expect(root.textContent).toContain("nothing entered");
+    expect(root.textContent).toContain("gmail.googleapis.com, www.googleapis.com");
+    expect(root.textContent).toContain("https://developers.google.com/gmail/api");
+    // No provenance note: nothing here was proposed by the model, the row is the person's.
+    expect(root.querySelector(".ask-note")).toBeNull();
+    const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(root.textContent).toContain(buildChoiceLabel(SCOPE));
+    expect(buttons(root)).toEqual(["Decline", "Allow"]);
+  });
+
+  it("sends { allow: true, approveBuild } with the box as the person left it, and freezes the box", async () => {
+    const h = handlers();
+    const root = renderAsk(SCOPE, h, document);
+    const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
+    box.checked = false;
+    [...root.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    await flush();
+    expect(h.answer).toHaveBeenCalledWith({ allow: true, approveBuild: false });
+    expect(box.disabled).toBe(true);
+    expect(root.querySelector(".ask-outcome")?.textContent).toBe("Done.");
+
+    const again = handlers();
+    const second = renderAsk(SCOPE, again, document);
+    [...second.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    await flush();
+    expect(again.answer).toHaveBeenCalledWith({ allow: true, approveBuild: true });
+  });
+
+  it("sends { allow: false } on Decline, never the connection ask's decline shape", async () => {
+    const h = handlers();
+    const root = renderAsk(SCOPE, h, document);
+    [...root.querySelectorAll("button")].find((b) => b.textContent === "Decline")?.click();
+    await flush();
+    expect(h.answer).toHaveBeenCalledWith({ allow: false });
+  });
+
+  it("reads off the wire as a scope card", () => {
+    expect(readAskCard({ reason: "awaiting_scope", card: SCOPE })).toEqual(SCOPE);
   });
 });
 

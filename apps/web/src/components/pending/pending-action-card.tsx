@@ -2,6 +2,7 @@ import { BuildAskCard } from "@/components/pending/build-ask-card";
 import { ConnectionAskCard } from "@/components/pending/connection-ask-card";
 import { CredentialAskCard } from "@/components/pending/credential-ask-card";
 import { ProviderLinkAskCard } from "@/components/pending/provider-link-ask-card";
+import { ScopeAskCard } from "@/components/pending/scope-ask-card";
 import { ToolAskCard } from "@/components/pending/tool-ask-card";
 import { UnknownAskCard } from "@/components/pending/unknown-ask-card";
 import { type PendingAction, readAsk } from "@/lib/pending-action-queries";
@@ -30,6 +31,8 @@ export function PendingActionCard({
       return <ProviderLinkAskCard ask={ask} onAnswered={onAnswered} />;
     case "credential":
       return <CredentialAskCard ask={ask} onAnswered={onAnswered} />;
+    case "scope":
+      return <ScopeAskCard ask={ask} onAnswered={onAnswered} />;
     default:
       return <UnknownAskCard action={action} onAnswered={onAnswered} />;
   }

@@ -217,10 +217,10 @@ describe("SERVER_INSTRUCTIONS", () => {
     }
   });
 
-  it("names the three handoffs, run_tool for a snapshotted list, and the wire name", () => {
+  it("names the four handoffs, run_tool for a snapshotted list, and the wire name", () => {
     for (const fact of [
       "awaiting_",
-      "(approval, connection, credential)",
+      "(approval, connection, credential, scope)",
       "exactly as returned",
       "then wait",
       "run_tool { vendor, name, input }",
@@ -417,5 +417,26 @@ describe("the connection descriptions and the Hermes skill", () => {
       expect(words(description ?? ""), name).toContain(needle);
     }
     expect(skill, "SKILL.md").toContain(needle);
+  });
+
+  /**
+   * The scope ask (GRA-104): a connection the person holds that this agent was not given is a
+   * handoff, `awaiting_scope`, named in the instructions' handoff list, in `request_connection`'s
+   * description and in the skill — so no text the agent reads sends the person to find the Scope
+   * page on their own.
+   */
+  it("name awaiting_scope as the fourth handoff, with no new connection and nothing entered", async () => {
+    const skill = words(await readFile(HERMES_SKILL_PATH, "utf8"));
+    const description = words(
+      META_TOOLS.find((tool) => tool.definition.name === "request_connection")?.definition
+        .description ?? "",
+    );
+    expect(description).toContain("awaiting_scope");
+    expect(description).toContain(words("no new connection, nothing entered"));
+    expect(skill).toContain("awaiting_scope");
+    expect(skill).toContain(words("no new connection, nothing entered"));
+    expect(words(SERVER_INSTRUCTIONS)).toContain(
+      words("(approval, connection, credential, scope)"),
+    );
   });
 });
