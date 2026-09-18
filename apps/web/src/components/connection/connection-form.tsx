@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   type ConnectionDraft,
   type DraftErrors,
+  hostsNoticeTitle,
   hostsOf,
   isScheme,
   parametersFor,
@@ -200,18 +201,16 @@ export function ConnectionFormFields({
 /**
  * Where the credential will go, as the form stands — every host the proxy will pin the connection
  * to (ADR 0010), named beside the secret inputs so the person reads them before typing (ADR 0006).
- * An `Alert`, the primitive's own frame, as every notice in this form is.
+ * The title follows the scheme (`hostsNoticeTitle`): a keyless scheme has no credential to send, so
+ * it says the vendor is reached there. An `Alert`, the primitive's own frame, as every notice in
+ * this form is.
  */
 export function HostsNotice({ draft }: { draft: ConnectionDraft }) {
   const hosts = hostsOf(draft);
   return (
     <Alert>
       <LanguageIcon />
-      <AlertTitle>
-        {hosts
-          ? "The credential will be sent to these hosts and to nothing else"
-          : "Fix the hosts above to see where the credential will be sent"}
-      </AlertTitle>
+      <AlertTitle>{hostsNoticeTitle(draft)}</AlertTitle>
       {hosts ? (
         <AlertDescription>
           <ul className="flex flex-wrap gap-1.5">

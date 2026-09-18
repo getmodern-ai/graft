@@ -35,6 +35,36 @@ export const passwordResetVariables = z.object({
 
 export type PasswordResetVariables = z.infer<typeof passwordResetVariables>;
 
+export const emailVerificationVariables = z.object({
+  /**
+   * Better Auth's own verify link, `<auth base>/api/auth/verify-email?token=…&callbackURL=…`,
+   * passed through whole (GRA-94). Unlike the reset link this one *has* to hit the API: that GET
+   * is what marks the address verified, opens the session and redirects to `callbackURL` — a
+   * console route consuming the token would have to re-implement all three. Nothing
+   * user-controlled belongs in this template.
+   */
+  verifyUrl: z.url(),
+});
+
+export type EmailVerificationVariables = z.infer<typeof emailVerificationVariables>;
+
+export const accountExistsVariables = z.object({
+  /**
+   * The login door with the address pre-filled: `<console origin>/login?email=…`. "Forgot
+   * password?" lives on that screen, so this email carries one link, not two.
+   */
+  loginUrl: z.url(),
+});
+
+export type AccountExistsVariables = z.infer<typeof accountExistsVariables>;
+
+/** Every template's variables, keyed as the templates are — what a renderer or a send is typed over. */
+export type TemplateVariables = {
+  passwordReset: PasswordResetVariables;
+  emailVerification: EmailVerificationVariables;
+  accountExists: AccountExistsVariables;
+};
+
 /** Identity with inference: ties each `subject` callback to its own `dataVariables` schema. */
 function defineTemplate<Variables extends z.ZodType>(
   template: EmailTemplate<Variables>,
@@ -48,6 +78,20 @@ export const templates = {
     // A fixed subject on purpose: the reset URL is the only variable, and a token has no
     // business in a subject line.
     subject: () => "Reset your Graft password",
+  }),
+  emailVerification: defineTemplate({
+    dataVariables: emailVerificationVariables,
+    // Fixed, like the reset's: the verify URL is the only variable and carries a token.
+    subject: () => "Verify your email for Graft",
+  }),
+  /**
+   * Sent instead of a verification email when a sign-up names an address already on file
+   * (GRA-94). The door shows the same "check your email" either way, so the wire confirms
+   * nothing; the inbox is where the truth lands, for the one person entitled to it.
+   */
+  accountExists: defineTemplate({
+    dataVariables: accountExistsVariables,
+    subject: () => "You already have a Graft account",
   }),
 } as const;
 

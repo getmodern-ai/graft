@@ -21,6 +21,7 @@ import {
 } from "@graft/core";
 import { createDb } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
+import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { user } from "@graft/db/schema/auth";
 import { createMcpDeps } from "@graft/mcp";
 import { generateTestKeys } from "@graft/mcp/testing/fake-vendor";
@@ -168,6 +169,9 @@ let [person] = await db.select({ id: user.id }).from(user).where(eq(user.email, 
 if (!person) {
   const signedUp = await auth.api.signUpEmail({ body: { name: "Proof", email, password } });
   person = { id: signedUp.user.id };
+  // Registering opens no session until the address is verified (GRA-94); the proof's person is
+  // the laptop's own, so mark it as the boot marks its admin.
+  await markPersonEmailVerified(db, email);
   console.log(`signed up ${email}`);
 }
 const principal = { personId: person.id };

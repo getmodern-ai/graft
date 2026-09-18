@@ -19,7 +19,7 @@ import {
 import { createDb } from "@graft/db";
 import { applyMigrations, MIGRATIONS_DIR } from "@graft/db/migrate";
 import { checkMigrationChain, readMigrationChain } from "@graft/db/migration-chain";
-import { countPersons } from "@graft/db/repo/person";
+import { countPersons, markPersonEmailVerified } from "@graft/db/repo/person";
 import { signInProvidersFrom } from "@graft/env/schema";
 import { env } from "@graft/env/server";
 import { createAcquireRunner, createMcpDeps, startSweep } from "@graft/mcp";
@@ -138,7 +138,7 @@ const auth = createAuth({
   socialProviders: signInProviders,
   // The mail seam's backing (ADR 0021): the console transport under `open`, the private package's
   // under `cloud` — the selector chose it with the other four seams.
-  passwordReset: { consoleUrl: env.GRAFT_CONSOLE_URL, transport: backings.mail },
+  mail: { consoleUrl: env.GRAFT_CONSOLE_URL, transport: backings.mail },
 });
 
 // The one admin a fresh self-hosted database opens with (`boot.ts`): through Better Auth's own
@@ -151,6 +151,10 @@ await bootstrapAdmin(
     countPersons: () => countPersons(db),
     signUp: async (input) => {
       await auth.api.signUpEmail({ body: input });
+      // The operator typed this address into the environment: the trust verification withholds
+      // from a stranger's sign-up is theirs to give (GRA-94), and the sign-up above has just sent a
+      // verification link nowhere useful — the console transport's log, on a first boot.
+      await markPersonEmailVerified(db, input.email);
     },
     log: console.log,
   },

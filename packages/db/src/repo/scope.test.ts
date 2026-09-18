@@ -34,7 +34,7 @@ import {
   listPendingActionsByKind,
   settleAnsweredToolActions,
 } from "./pending-action";
-import { countPersons } from "./person";
+import { countPersons, markPersonEmailVerified } from "./person";
 import { deletePersonModelKey, findPersonModelKey, upsertPersonModelKey } from "./person-model-key";
 import { findToolVersion, listToolVersions, setCurrentToolVersion } from "./tool";
 import { listUsage, listUsageForVendor } from "./usage";
@@ -289,6 +289,18 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toMatch(/^select .* from "agent" where "agent"\."revoked_at" is null order by/);
     expect(s.sql).not.toContain('person_id" =');
     expect(s.params).toEqual([]);
+  });
+
+  /** The boot's other write (GRA-94): the bootstrapped admin is verified by address, before any person has signed in. */
+  it("the boot's marking of the admin as verified is unscoped, by address, over Better Auth's table alone", async () => {
+    await markPersonEmailVerified(db, "admin@example.com");
+    const s = only();
+    expect(s.sql).toMatch(
+      /^update "user" set "email_verified" = \$1, "updated_at" = \$2 where "user"\."email" = \$3 returning "id"$/,
+    );
+    expect(s.sql).not.toContain("person_id");
+    expect(s.params[0]).toBe(true);
+    expect(s.params[2]).toBe("admin@example.com");
   });
 
   /** The boot's count of persons is the third (GRA-33): whether anybody exists yet, before the admin is opened. */
