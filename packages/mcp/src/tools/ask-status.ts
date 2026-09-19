@@ -104,8 +104,8 @@ export const askStatus: MetaTool = {
   definition: {
     name: ASK_STATUS,
     description:
-      "Called by Graft's ask card, never by you: it reads where one of this agent's asks stands and answers { state, sentence }, state being open, answered, declined or expired and sentence what the card shows for it. " +
-      "Takes pendingActionId, the ask the awaiting result named. It records nothing. " +
+      "Called by Graft's ask card while it waits for a window it opened: reads where one of this agent's asks stands and answers { state, sentence }, state being open, answered, declined or expired and sentence what the card shows for it. " +
+      "Takes pendingActionId, the ask the awaiting result named. Records nothing. App-only (_meta.ui.visibility app), so a host hides it from the model. " +
       "Refuses card_not_available for a static-token agent and ask_not_found for another agent's ask.",
     inputSchema: {
       type: "object",

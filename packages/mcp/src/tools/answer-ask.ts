@@ -33,8 +33,9 @@ import type { MetaTool } from "./meta";
  * MCP Apps extension leaves it out of the model's list and forwards only the card's `tools/call`
  * to it. Nothing on the wire proves that: a view's call reaches Graft as an ordinary `tools/call`
  * under the agent's own session, the same as the model's would (the ticket's research, point 1),
- * so every guard here is Graft's own, and the description opens by telling a model that does see
- * the tool not to call it.
+ * so every guard here is Graft's own; the description says whose the tool is, and the rule that a
+ * model leaves it alone is `SERVER_INSTRUCTIONS`' (GRA-111: descriptions describe, instructions
+ * instruct).
  *
  * The guards, in order, each a refusal the card shows as a sentence. The first two are the card
  * gate every app-only tool shares (`./card-gate.ts`, whose header has the argument): **the
@@ -356,8 +357,8 @@ export const answerAsk: MetaTool = {
   definition: {
     name: ANSWER_ASK,
     description:
-      "Called by Graft's ask card, never by you: it records the person's click on the card a chat product renders for acquire's build approval, request_connection's confirmation or its scope ask. " +
-      "Do not call it yourself, and never on the person's behalf. If you see it in your list, ignore it; the person answers in the card or in the console, and you call the asking tool again afterwards.",
+      "Called by Graft's ask card with the person's click, on a chat product that renders the card: records the person's answer to acquire's build approval, a tool's first-use approval, request_connection's confirmation or its scope ask, or a decline of a link provider's ask, the same record the console's answer makes. " +
+      "App-only (_meta.ui.visibility app), so a host hides it from the model; the answer is the person's, given on the card or in the console, after which the asking tool's repeated call continues.",
     inputSchema: {
       type: "object",
       properties: {

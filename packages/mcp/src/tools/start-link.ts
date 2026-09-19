@@ -36,9 +36,9 @@ export const startLink: MetaTool = {
   definition: {
     name: START_LINK,
     description:
-      "Called by Graft's ask card, never by you: it mints a connection provider's sign-in link for one of this agent's open connection asks and answers { url, expiresAt, provider }. " +
+      "Called by Graft's ask card on a chat product that renders it: mints a connection provider's sign-in link for one of this agent's open connection asks and answers { url, expiresAt, provider }, which the card opens in a popup. " +
       "Takes pendingActionId, the ask the awaiting result named, and approveBuild, whether the asking agent may build tools against the connection once it is made. " +
-      "Serves only an ask routed to a provider that connects with a link, such as Pipedream; the link's return makes the connection and answers the ask. " +
+      "Serves only an ask routed to a provider that connects with a link, such as Pipedream; the link's return makes the connection and answers the ask. App-only (_meta.ui.visibility app), so a host hides it from the model. " +
       "Refuses card_not_available for a static-token agent or an ask another provider serves, ask_not_found for another agent's ask, answered or expired for a closed one.",
     inputSchema: {
       type: "object",

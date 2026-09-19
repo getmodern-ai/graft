@@ -229,8 +229,9 @@ export const PROPOSAL_PROVENANCE_NOTE =
  * What every awaiting answer says about the build approval (GRA-75; ADR 0008, amendment of
  * 2026-09-18): the confirmation page offers it, on by default, for the asking agent and the
  * connection it is about to make — so the agent does not promise the person a second link that
- * `acquire` will not send. The tool's description says the same (`tools/meta.ts`), as does the
- * Hermes skill; `session.test.ts` pins the two.
+ * `acquire` will not send. The rule is `SERVER_INSTRUCTIONS`' and the Hermes skill's;
+ * `request_connection`'s description states the fact without the rule (GRA-111: descriptions
+ * describe, instructions instruct), and `session.test.ts` pins all four texts.
  */
 export const BUILD_APPROVAL_ON_THE_PAGE =
   "The same page offers to allow you to build tools against the connection, on by default; left on, acquire against it starts without a second link, so do not tell them to expect one.";
