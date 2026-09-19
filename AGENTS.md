@@ -325,15 +325,25 @@ directory on the server's own disk for a laptop without a daemon — the toolbox
 directory too, for as long as the process does — which is not a sandbox, and `@graft/env` refuses it
 in production and beside `cloud`.
 
-**The `initialize` result carries the playbook** (GRA-54). `SERVER_INSTRUCTIONS` in
-`packages/mcp/src/session.ts` is what a client that loads no skill — Claude.ai, ChatGPT, a bare MCP
-client — shows its model: the order of operations, the handoff and secrets rules, `run_tool` for a
-client that snapshots its list, and the approval grain. It is held under `INSTRUCTIONS_BUDGET`
-because some clients truncate the field; the long form of each rule is the tool's own description,
-opening with when to call it (`tools/meta.ts`, `tools/authoring.ts`, `tools/execute.ts`).
-`packages/mcp/src/session.test.ts` pins the shared sentences to `skills/hermes-graft/SKILL.md` and
-each description to its "when" sentence, so a rule changed in one place fails until the other says
-the same. Edit both, and re-run the live check the ticket records if the order of operations moves.
+**The `initialize` result carries the playbook, and the descriptions carry none of it** (GRA-54,
+GRA-111). `SERVER_INSTRUCTIONS` in `packages/mcp/src/session.ts` is what a client that loads no skill
+— Claude.ai, ChatGPT, a bare MCP client — shows its model, and the one place on the wire a rule of
+conduct lives: the order of operations, the handoff and secrets rules, the keyless and rotation
+rules, the build approval on the connection page, `run_tool` for a client that snapshots its list,
+the approval grain, and whose tool `answer_ask` is. Every tool description (`tools/meta.ts`,
+`tools/authoring.ts`, `tools/execute.ts`, `tools/answer-ask.ts`) is a capability statement in the
+third person — what the tool does, its arguments, its answer shapes, the `awaiting_*` shapes and
+their `url` included — opening with when it is used, stated as a fact and not as an instruction:
+ChatGPT's classifier badged GRA-54's rule-bearing descriptions "Suspicious Instruction" on every
+call, and both hosts' published guidance puts behaviour in `instructions` (the research comment on
+GRA-111 has the sources). `INSTRUCTIONS_BUDGET` is 2,048, Claude Code's documented per-server cap
+on both fields (its CHANGELOG, 2.1.84), and the order of operations sits in the first 512 characters,
+OpenAI's front-loading rule. `packages/mcp/src/session.test.ts` pins the shared sentences to
+`skills/hermes-graft/SKILL.md`, each description to its opening sentence, every fixed tool's whole
+definition against a denylist of conduct markers (`never`, `do not`, `always`, `you`), and every
+description to the same 2,048. A rule belongs in the instructions and the skill; a fact about what a
+tool answers belongs in its description; re-run the live check the ticket records if the order of
+operations moves.
 
 **The ask card is an MCP App a chat product renders in place of the handoff link** (GRA-84; ADR 0006
 as amended 2026-09-18). `packages/ask-card` (`@graft/ask-card`) is one HTML page — plain TypeScript
@@ -379,8 +389,8 @@ choice, pre-ticked — and posts the generic `POST /api/pending-actions/:id/answ
 the build approval in the answer's transaction, and leaves the answer for the agent's next call,
 which answers `connected` naming the execute tool, or `scope_declined`. The ask card renders
 `card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow, approveBuild? }` for it under
-the same gate. `SERVER_INSTRUCTIONS` names `scope` in its handoff list (1798 of the 1800 budget),
-and `session.test.ts` pins the word across the description and the Hermes skill.
+the same gate. `SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts`
+pins the word across the description and the Hermes skill.
 
 **A person's connections reach every agent of theirs by default; scope is a narrowing the person
 opts into** (GRA-105; ADR 0007 as amended 2026-09-19). `agent.scope_mode` is `all` or `listed`
