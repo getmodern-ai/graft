@@ -29,7 +29,6 @@ import {
   widenProviderConnectionHosts,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
-import { SCHEME_CREDENTIAL_FIELDS } from "@graft/proxy/credential-fields";
 import { hostSetOf } from "@graft/proxy/credential-source";
 import { SCHEME_PARAMETERS } from "@graft/proxy/scheme-parameters";
 import { AUTH_SCHEMES, type AuthScheme, isAuthScheme } from "@graft/proxy/types";
@@ -306,7 +305,8 @@ export type ConnectionProposalInput = {
 export type CredentialRequestInput = { connectionId: string; reason?: string };
 
 /**
- * The scheme table in one sentence, for the tool's description — generated so it cannot drift. The
+ * The scheme table in one sentence — each signing scheme and the parameters a proposal carries for
+ * it — for `request_connection`'s `schemeConfig` description, generated so it cannot drift. The
  * signing schemes alone: a relay scheme is a provider's and never one the agent proposes (ADR 0019).
  */
 export function describeSchemes(): string {
@@ -316,10 +316,10 @@ export function describeSchemes(): string {
       ...rule.required,
       ...rule.optional.map((parameter) => `optional ${parameter}`),
     ];
-    // What the person supplies on the form: the scheme's secret fields, and the parameters only
-    // they can know — an OAuth client id (ADR 0005), which the proposal leaves out.
-    const entered = [...(rule.personEntered ?? []), ...SCHEME_CREDENTIAL_FIELDS[scheme]].join(", ");
-    return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${entered || "nothing"})`;
+    // The parameters the proposal carries, and nothing of what the person types on the form: the
+    // secret fields and an OAuth client id (ADR 0005) are the console's, and naming them in a tool's
+    // schema is what ChatGPT's classifier read as risk handling (GRA-121).
+    return `${scheme}: ${parameters.join(", ") || "none"}`;
   }).join("; ");
 }
 
