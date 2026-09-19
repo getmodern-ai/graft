@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+import type { ConnectionOutput } from "@graft/core";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -12,6 +13,7 @@ import type { McpDeps } from "./deps";
 import { createToolListChangedNotifier } from "./notifier";
 import { INSTRUCTIONS_BUDGET, openAgentSession, SERVER_INSTRUCTIONS } from "./session";
 import { createFakeDeps, createFakeStore } from "./testing/fake-deps";
+import { authoredToolDefinition } from "./tools";
 import { ADVANCED_WHEN, AUTHORING_TOOLS } from "./tools/authoring";
 import { executeToolDefinition } from "./tools/execute";
 import { META_TOOLS } from "./tools/meta";
@@ -303,6 +305,24 @@ describe("every meta-tool description", () => {
   }
 });
 
+/** One connection in scope, as `executeToolDefinition` reads it. */
+const DEMO_CONNECTION: ConnectionOutput = {
+  id: "conn_1",
+  provider: "keyring",
+  vendor: "demo",
+  displayName: "Demo Orders",
+  scheme: "api_key_header",
+  schemeConfig: { headerName: "x-demo-key" },
+  primaryHost: "https://api.demo.example",
+  hosts: ["api.demo.example"],
+  credentialSetAt: null,
+  oauth: null,
+  providerReleaseFailedAt: null,
+  revokedAt: null,
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
+
 describe("the authoring set and the execute tool", () => {
   for (const tool of AUTHORING_TOOLS) {
     it(`${tool.definition.name} opens with the advanced-set when sentence`, () => {
@@ -311,27 +331,106 @@ describe("the authoring set and the execute tool", () => {
   }
 
   it("execute__<connection id> says it is the by-hand path and what to do with the build ask", () => {
-    const definition = executeToolDefinition({
-      id: "conn_1",
-      provider: "keyring",
-      vendor: "demo",
-      displayName: "Demo Orders",
-      scheme: "api_key_header",
-      schemeConfig: { headerName: "x-demo-key" },
-      primaryHost: "https://api.demo.example",
-      hosts: ["api.demo.example"],
-      credentialSetAt: null,
-      oauth: null,
-      providerReleaseFailedAt: null,
-      revokedAt: null,
-      createdAt: new Date(0),
-      updatedAt: new Date(0),
-    });
+    const definition = executeToolDefinition(DEMO_CONNECTION);
     expect(definition.description).toContain(
       "when the person asked you to author a tool yourself rather than through acquire",
     );
     expect(definition.description).toContain("awaiting_approval");
     expect(definition.description).toContain("exactly as returned");
+  });
+});
+
+/**
+ * Both hints, said outright, on every fixed tool (GRA-114). MCP reads an unset `destructiveHint` as
+ * true, and ChatGPT's Actions list tagged acquire, publish_tool, write_file, run_command, run_tool
+ * and execute__ DESTRUCTIVE for it. The rule: `false` wherever the tool destroys nothing at a vendor
+ * — acquire dry-runs (ADR 0004), publish_tool writes the person's toolbox, write_file and run_command
+ * act in the agent's sandbox — and `true` on the two that carry another request, whose hint only
+ * the carried tool's own annotations (the check's, GRA-3) can say. Keyed by wire name; the key set is
+ * the fixed tool set, so a new tool with no row here fails.
+ */
+const HINTS: Record<string, { readOnlyHint: boolean; destructiveHint: boolean }> = {
+  acquire: { readOnlyHint: false, destructiveHint: false },
+  acquire_status: { readOnlyHint: true, destructiveHint: false },
+  find_tool: { readOnlyHint: true, destructiveHint: false },
+  promote: { readOnlyHint: false, destructiveHint: false },
+  demote: { readOnlyHint: false, destructiveHint: false },
+  run_tool: { readOnlyHint: false, destructiveHint: true },
+  request_connection: { readOnlyHint: false, destructiveHint: false },
+  request_credential: { readOnlyHint: false, destructiveHint: false },
+  answer_ask: { readOnlyHint: false, destructiveHint: false },
+  write_file: { readOnlyHint: false, destructiveHint: false },
+  read_file: { readOnlyHint: true, destructiveHint: false },
+  run_command: { readOnlyHint: false, destructiveHint: false },
+  wait_for_process: { readOnlyHint: true, destructiveHint: false },
+  read_web_page: { readOnlyHint: true, destructiveHint: false },
+  check_tool: { readOnlyHint: true, destructiveHint: false },
+  publish_tool: { readOnlyHint: false, destructiveHint: false },
+  read_tool_source: { readOnlyHint: true, destructiveHint: false },
+};
+
+/** The one sentence run_tool and execute__ carry for their `destructiveHint: true` (GRA-114). */
+const CARRIED_HINT =
+  /Marked destructive because the hint is the carried (tool|command)'s, which the host cannot know per call/;
+
+describe("every fixed tool's annotations", () => {
+  const fixed = [...META_TOOLS, ...AUTHORING_TOOLS];
+
+  it("has a row in the table, and the table names every fixed tool", () => {
+    expect(fixed.map((tool) => tool.definition.name).sort()).toEqual(Object.keys(HINTS).sort());
+  });
+
+  for (const tool of fixed) {
+    const name = tool.definition.name;
+    it(`${name} declares both hints, and they are the table's`, () => {
+      // `toEqual` on the whole object: a hint left unset is a failure, not a default.
+      expect(tool.definition.annotations).toEqual(HINTS[name]);
+    });
+  }
+
+  it("execute__<connection id> declares both hints, destructive because the command is the request's", () => {
+    const definition = executeToolDefinition(DEMO_CONNECTION);
+    expect(definition.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
+    expect(definition.description).toMatch(CARRIED_HINT);
+  });
+
+  it("run_tool says its destructive hint is the carried tool's", () => {
+    const description = META_TOOLS.find((tool) => tool.definition.name === "run_tool")?.definition
+      .description;
+    expect(description).toMatch(CARRIED_HINT);
+  });
+
+  it("only run_tool and execute__ are destructive", () => {
+    const destructive = Object.entries(HINTS)
+      .filter(([, hints]) => hints.destructiveHint)
+      .map(([name]) => name);
+    expect(destructive).toEqual(["run_tool"]);
+  });
+
+  /** An authored tool's hints are the check's, passed through from the row (ADR 0008), never a default. */
+  it("an authored tool in the list carries the row's own hints, both ways", () => {
+    const store = createFakeStore();
+    const row = (destructive: boolean, readOnly: boolean) =>
+      store.addTool({
+        id: `tool_${destructive}_${readOnly}`,
+        personId: "person_1",
+        vendor: "demo",
+        name: `hints-${destructive}-${readOnly}`,
+        description: "A tool whose hints are the check's.",
+        inputSchema: { type: "object", properties: {} },
+        readOnly,
+        destructive,
+        defaultConnectionId: null,
+        path: "/tools/demo",
+      }).tool;
+    expect(authoredToolDefinition(row(true, false)).annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(authoredToolDefinition(row(false, true)).annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
   });
 });
 

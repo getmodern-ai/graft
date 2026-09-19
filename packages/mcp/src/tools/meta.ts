@@ -231,7 +231,8 @@ const runTool: MetaTool = {
       "Exactly what calling the tool first-class does: the input is validated against the tool's inputSchema, which the acquire result and find_tool's hits carry and an input_invalid refusal answers beside the problems, and the vendor's answer, or the tool's failure, comes back verbatim. " +
       "A tool that changes something may answer awaiting_approval with a url on its first call: give the person the link exactly as returned, wait, and call again with the same arguments once they have answered. " +
       "With dryRun: true reads reach the vendor and every other method stops at the proxy with a preview of the request; the answer is a dry-run report and nothing changes at the vendor. " +
-      `For a call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds, pass detached: true and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}), then poll the returned processName with wait_for_process. A dry run is always waited for.`,
+      `For a call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds, pass detached: true and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}), then poll the returned processName with wait_for_process. A dry run is always waited for. ` +
+      "Marked destructive because the hint is the carried tool's, which the host cannot know per call: the tool's own annotations are in find_tool's hit and the acquire result.",
     inputSchema: {
       type: "object",
       properties: {
@@ -261,6 +262,9 @@ const runTool: MetaTool = {
       required: ["vendor", "name"],
       additionalProperties: false,
     },
+    // As destructive as the tool it carries, which a host cannot know per call; the tool's own hints
+    // ride on the find_tool hit (GRA-114).
+    annotations: { readOnlyHint: false, destructiveHint: true },
   },
   handle: async (args, { deps, scope, channel }) => {
     const key = readToolKey(args);
@@ -318,6 +322,9 @@ const acquire: MetaTool = {
       required: ["connectionId", "goal"],
       additionalProperties: false,
     },
+    // Both hints said outright: unset, MCP reads destructiveHint as true, and a host tags the tool so
+    // (GRA-114). acquire dry-runs and never writes at the vendor (ADR 0004).
+    annotations: { readOnlyHint: false, destructiveHint: false },
     // The ask card renders for this tool's results (GRA-84): a build approval in place, or the link.
     _meta: ASK_CARD_TOOL_META,
   },
