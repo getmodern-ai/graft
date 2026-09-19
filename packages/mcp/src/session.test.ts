@@ -574,7 +574,8 @@ const SHARED = [
   "call find_tool first",
   "no authoring needed",
   "only when nothing fits",
-  "in one sentence, only when it changed",
+  // GRA-125: acquire_status answers only news, so "only when it changed" left the instructions.
+  "relay the newest progress line in a sentence",
   "do not start a second acquire for the same goal",
   "unless the person asked you to author by hand",
   // Handoffs.

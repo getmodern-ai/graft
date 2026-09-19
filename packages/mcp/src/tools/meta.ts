@@ -14,7 +14,8 @@ import {
 import { AUTH_SCHEMES } from "@graft/proxy/types";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
-import { type AcquireStarted, acquireStatusOf } from "../acquire/shapes";
+import { awaitJobNews, STATUS_WAIT_MS } from "../acquire/await";
+import { acquireStatusOf } from "../acquire/shapes";
 import { requireBuildApproval } from "../approval";
 import { ASK_CARD_TOOL_META } from "../ask-card";
 import {
@@ -303,14 +304,14 @@ function toolNotFound(key: { vendor: string; name: string }): CallToolResult {
 
 /** The line a job carries before its runner has said anything — what `acquire` answers with at once. */
 export const FIRST_PROGRESS_LINE =
-  "Queued: Graft's model will read the vendor's documentation, draft the tool, prove it with reads, publish and dry-run it, then promote it into your working set. Poll acquire_status with the jobId for progress.";
+  "Queued: Graft's model will read the vendor's documentation, draft the tool, prove it with reads, publish and dry-run it, then promote it into your working set. acquire_status with the jobId answers when there is news.";
 
 const acquire: MetaTool = {
   definition: {
     name: ACQUIRE,
     description:
       "Used when find_tool found nothing that covers the task and the vendor has a connection in the agent's scope: starts the job in which Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into the agent's working set. " +
-      "Answers { jobId, status, progress } at once, before anything is built; acquire_status reads the job from then on. " +
+      "Waits a short while for the job: a job that finishes in time answers with result, as acquire_status does; otherwise answers { jobId, status, progress } and acquire_status reads the job from then on, itself waiting for news. " +
       "The first acquire against a connection may instead answer awaiting_approval with a url, unless the person granted the build approval when they confirmed the connection: a handoff whose next step is the person's, in the console or on the ask card; the same call with the same arguments, once they have answered, starts the job.",
     inputSchema: {
       type: "object",
@@ -372,6 +373,9 @@ const acquire: MetaTool = {
         "This deployment has no model configured, so Graft cannot author a tool. Say so rather than retrying; the advanced tools (write_file, check_tool, publish_tool) still let you drive the loop yourself.",
       );
     }
+    // One deadline for the whole call: the build approval's wait and the job's wait share it, so
+    // a call is never open for twice the configured limit (Greptile on #99).
+    const deadline = Date.now() + Math.max(0, deps.handoff.waitMs);
     const gate = await requireBuildApproval(ctx, scope, connectionId, deps, channel);
     if (!gate.pass) return toolAskResult(session, gate);
 
@@ -387,12 +391,13 @@ const acquire: MetaTool = {
       deps.acquireJob,
     );
     deps.acquireRunner?.kick();
-    const started: AcquireStarted = {
-      jobId: job.id,
-      status: job.status === "running" ? "running" : "queued",
-      progress: job.progress,
-    };
-    return toolResult(started);
+    // Hold the call for the approvals' wait (GRA-125; `../acquire/await.ts`): a job that settles
+    // in time answers with its result, and the model never has a chance to be impatient.
+    const settled = await awaitJobNews(ctx, scope, job.id, deps, {
+      sinceProgress: Number.POSITIVE_INFINITY,
+      maxWaitMs: deadline - Date.now(),
+    });
+    return toolResult(acquireStatusOf(settled ?? job));
   },
 };
 
@@ -400,13 +405,21 @@ const acquireStatus: MetaTool = {
   definition: {
     name: ACQUIRE_STATUS,
     description:
-      "Used with the jobId acquire answered, every ten to twenty seconds while the job is queued or running: reads the job. " +
+      "Used with the jobId acquire answered while the job is queued or running: reads the job, waiting a short while for news, a progress line newer than the caller has seen (after, the count of lines already seen) or the end, so a call answers when there is something new. " +
       "Answers status, the progress lines so far, the attempt count and, once the job has settled, result. " +
       "On succeeded, result.tool is the new tool's wire name, vendor__name, with result.vendor, result.name and result.inputSchema as run_tool takes them; the tool is callable first-class once the tool list refreshes and through run_tool before that. " +
       "On failed, result.failure names the cause in one word, result.message says it in a sentence, and result.lastDiagnostics and result.tried carry what the job saw.",
     inputSchema: {
       type: "object",
-      properties: { jobId: { type: "string", description: "The id acquire returned." } },
+      properties: {
+        jobId: { type: "string", description: "The id acquire returned." },
+        after: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "How many progress lines the caller has seen; the call waits for a newer one or the end. Unset, the count as of the call.",
+        },
+      },
       required: ["jobId"],
       additionalProperties: false,
     },
@@ -415,6 +428,12 @@ const acquireStatus: MetaTool = {
   handle: async (args, { ctx, scope, deps }) => {
     const jobId = typeof args.jobId === "string" ? args.jobId.trim() : "";
     if (!jobId) return toolRefusal("input_invalid", "jobId must be a string");
+    if (
+      args.after !== undefined &&
+      !(typeof args.after === "number" && Number.isInteger(args.after) && args.after >= 0)
+    ) {
+      return toolRefusal("input_invalid", "after must be a non-negative integer when given");
+    }
     const job = await getAcquireJob(ctx, scope, jobId, deps.acquireJob);
     if (!job) {
       return toolRefusal(
@@ -422,7 +441,13 @@ const acquireStatus: MetaTool = {
         `No acquire job ${jobId} was started by this agent. The id is the one acquire answered with.`,
       );
     }
-    return toolResult(acquireStatusOf(job));
+    // Wait for news rather than answer the same lines again (GRA-125): the approvals' wait bounds
+    // the hold, so a deployment that answers approvals at once answers this at once too.
+    const news = await awaitJobNews(ctx, scope, jobId, deps, {
+      sinceProgress: typeof args.after === "number" ? args.after : job.progress.length,
+      maxWaitMs: Math.min(STATUS_WAIT_MS, deps.handoff.waitMs),
+    });
+    return toolResult(acquireStatusOf(news ?? job));
   },
 };
 
