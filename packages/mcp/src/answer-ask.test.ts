@@ -1224,6 +1224,51 @@ describe("the awaiting message under a rendered card", () => {
     expectConsoleForm(text(await hermes.call("request_credential", { connectionId: CONN })));
   });
 
+  it("keeps the card and the card form when a sign-in host was set aside, with the set-aside sentence on both forms", async () => {
+    // GRA-89's rebuild of the outcome dropped the card before this (Greptile on #96). Sign-in hosts
+    // are the OAuth scheme's (`SIGN_IN_HOSTS` in `@graft/core`), so the proposal is Gmail's.
+    const withSignIn = {
+      vendor: "gmail",
+      displayName: "Gmail",
+      primaryHost: "https://gmail.googleapis.com",
+      hosts: ["gmail.googleapis.com", "accounts.google.com"],
+      scheme: "oauth_authorization_code",
+      schemeConfig: {
+        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenUrl: "https://oauth2.googleapis.com/token",
+      },
+    };
+    const claude = await connect(TOKEN_CLAUDE);
+    const carded = await claude.call("request_connection", withSignIn);
+    const body = text(carded);
+    expectCardForm(body);
+    expect(body.hostsSetAside).toEqual(["accounts.google.com"]);
+    expect(body.message).toContain("accounts.google.com is a sign-in endpoint and was set aside");
+    expect(cardOf(carded)).toMatchObject({ kind: "connection", hosts: ["gmail.googleapis.com"] });
+
+    // The OAuth lead's console relay reads "Then relay this link" (ADR 0005's guide), so the
+    // console form is checked by that sentence rather than the shared helper.
+    const hermes = await connect(TOKEN_HERMES);
+    const plain = text(await hermes.call("request_connection", withSignIn));
+    expect(plain).not.toHaveProperty("cardShown");
+    expect(plain.message).toContain("Then relay this link so they can enter the client id");
+    expect(plain.message).not.toContain("shown as a card");
+    expect(plain.message).toContain("accounts.google.com is a sign-in endpoint and was set aside");
+  });
+
+  it("names no console in a keyless proposal's card-form lead: the card's button is the confirmation", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const keyless = text(await claude.call("request_connection", KEYLESS));
+    expect(keyless.message).toMatch(
+      /confirm the connection to Open-Meteo \(open-meteo\) — the scheme/,
+    );
+    expect(keyless.message).not.toContain("in the console — the scheme");
+    const hermes = await connect(TOKEN_HERMES);
+    expect(text(await hermes.call("request_connection", KEYLESS)).message).toContain(
+      "confirm the connection to Open-Meteo (open-meteo) in the console",
+    );
+  });
+
   it("reads the client once per session: the client row is not re-read on every awaiting result", async () => {
     let clientReads = 0;
     const findMcpClient = deps.findMcpClient;

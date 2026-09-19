@@ -655,6 +655,9 @@ export async function requestConnection(
  * Whatever the call answers, the agent is told which of the hosts it listed were set aside as
  * sign-in endpoints (GRA-89) and which the connection reaches, so it does not read the shorter host
  * set on the card, or in a later `connected`, as something lost. Nothing is added when none were.
+ * The outcome's other fields ride through untouched: the card, and the card-form message with the
+ * same sentence appended (GRA-120) — until then this rebuild dropped the card, so a proposal that
+ * named a sign-in host rendered none (Greptile on #96).
  */
 function namingHostsSetAside(
   outcome: ConnectionRequestOutcome,
@@ -667,11 +670,18 @@ function namingHostsSetAside(
     `${setAside.join(", ")} ${one ? "is a sign-in endpoint and was" : "are sign-in endpoints and were"} set aside, not recorded on the connection: ` +
     "tool calls never reach a sign-in endpoint (the sign-in runs in the console or on the provider's page), and hosts is for the hosts they do reach, " +
     `here ${hosts.join(", ")}.`;
-  const said = outcome.answer.message;
-  const message = typeof said === "string" && said.length > 0 ? `${said} ${sentence}` : sentence;
-  return outcome.isError
-    ? { isError: true, answer: { ...outcome.answer, message, hostsSetAside: [...setAside] } }
-    : { isError: false, answer: { ...outcome.answer, message, hostsSetAside: [...setAside] } };
+  const appended = (said: unknown) =>
+    typeof said === "string" && said.length > 0 ? `${said} ${sentence}` : sentence;
+  const hostsSetAside = [...setAside];
+  if (!outcome.isError) {
+    const { answer } = outcome;
+    return { ...outcome, answer: { ...answer, message: appended(answer.message), hostsSetAside } };
+  }
+  return {
+    ...outcome,
+    answer: { ...outcome.answer, message: appended(outcome.answer.message), hostsSetAside },
+    ...(outcome.cardMessage === undefined ? {} : { cardMessage: appended(outcome.cardMessage) }),
+  };
 }
 
 /**
@@ -822,8 +832,10 @@ async function routeProposal(
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
             : // A keyless scheme (GRA-66) has nothing to enter: the ask is a confirmation of the
-              // hosts, and the message names no credential and no secret (GRA-91).
-              `Graft needs the person to confirm the connection to ${payload.displayName} (${payload.vendor}) in the console — the scheme takes no credential, so nothing is entered. ` +
+              // hosts, and the message names no credential and no secret (GRA-91). Under a card
+              // the confirmation is the card's own button (GRA-84), so the card form names no
+              // console in its lead (Greptile on #96).
+              `Graft needs the person to confirm the connection to ${payload.displayName} (${payload.vendor})${form === "card" ? "" : " in the console"} — the scheme takes no credential, so nothing is entered. ` +
               `${handoffSentence(form, "Relay this link so they can check the hosts and confirm it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
