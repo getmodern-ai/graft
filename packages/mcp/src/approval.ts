@@ -635,16 +635,24 @@ async function askByHandoff(
       `It expires at ${action.expiresAt.toISOString()}. ${afterAnswer}`,
   };
   // The card a chat product renders for this ask (GRA-84): the build approval answerable in place,
-  // a tool's first use with the console button alone.
+  // and since GRA-116 the tool's first use too, with the tool's facts as the console's card has them.
   const card = approvalAskCard({
     action,
-    kind: subject.kind,
     agentName,
     connection: subject.connection,
     url,
     ...(subject.kind === "tool"
-      ? { toolName: authoredToolName(subject.tool.vendor, subject.tool.name) }
-      : {}),
+      ? {
+          kind: "tool",
+          toolName: authoredToolName(subject.tool.vendor, subject.tool.name),
+          tool: {
+            description: subject.tool.description,
+            readOnly: subject.tool.readOnly,
+            destructive: subject.tool.destructive,
+            askEveryCall: subject.askEveryCall,
+          },
+        }
+      : { kind: "build" }),
   });
   return { pass: false, answer: awaiting, card };
 }

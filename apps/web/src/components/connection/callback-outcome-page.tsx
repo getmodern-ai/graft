@@ -47,14 +47,20 @@ export function callbackOutcomeTitle(status: CallbackOutcomeStatus): string {
   return OUTCOMES[status].title;
 }
 
+/** What the page adds when the ask card opened it (GRA-117): the card is where the person is. */
+export const FROM_CARD_NOTE = "The card in your chat updates on its own.";
+
 export function CallbackOutcomePage({
   status,
   message,
   onClose,
+  fromCard = false,
 }: {
   status: CallbackOutcomeStatus;
   message: string;
   onClose: () => void;
+  /** Opened by the ask card rather than a console page (`card.rules.ts`): say the card settles itself. */
+  fromCard?: boolean;
 }) {
   const { title, Icon, fallback } = OUTCOMES[status];
   return (
@@ -65,7 +71,10 @@ export function CallbackOutcomePage({
             <Icon />
           </EmptyMedia>
           <EmptyTitle>{title}</EmptyTitle>
-          <EmptyDescription>{message || fallback}</EmptyDescription>
+          <EmptyDescription>
+            {message || fallback}
+            {fromCard ? ` ${FROM_CARD_NOTE}` : null}
+          </EmptyDescription>
         </EmptyHeader>
         <Button onClick={onClose}>Close this window</Button>
       </Empty>

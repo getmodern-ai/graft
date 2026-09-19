@@ -173,21 +173,30 @@ describe("the ask card over the session", () => {
     }
   });
 
-  it("lists answer_ask as app-only — the host hides it; this server cannot — with a description that tells a model off", async () => {
+  it("lists answer_ask, start_link and ask_status as app-only — the host hides them; this server cannot — each opening by telling a model off", async () => {
     const harness = await initialize();
     try {
       const { tools } = await harness.client.listTools();
-      const answerAsk = tools.find((tool) => tool.name === "answer_ask");
-      expect(answerAsk?._meta).toEqual({ ui: { visibility: ["app"] } });
-      expect(answerAsk?.description?.startsWith("Called by Graft's ask card, never by you:")).toBe(
-        true,
-      );
+      // The card's three tools (GRA-84; GRA-117 added the link's start and the status read).
+      for (const name of ["answer_ask", "start_link", "ask_status"]) {
+        const tool = tools.find((candidate) => candidate.name === name);
+        expect(tool?._meta, name).toEqual({ ui: { visibility: ["app"] } });
+        expect(
+          tool?.description?.startsWith("Called by Graft's ask card, never by you:"),
+          name,
+        ).toBe(true);
+      }
       // No other tool is app-only.
       expect(
-        tools.filter(
-          (tool) => (tool._meta?.ui as { visibility?: string[] } | undefined)?.visibility,
-        ),
-      ).toHaveLength(1);
+        tools
+          .filter((tool) => (tool._meta?.ui as { visibility?: string[] } | undefined)?.visibility)
+          .map((tool) => tool.name)
+          .sort(),
+      ).toEqual(["answer_ask", "ask_status", "start_link"]);
+      // The status read is the one of the three a host may call freely: it records nothing.
+      expect(tools.find((tool) => tool.name === "ask_status")?.annotations?.readOnlyHint).toBe(
+        true,
+      );
     } finally {
       await harness.close();
     }
@@ -264,8 +273,10 @@ const WHEN: Record<string, string> = {
     "Call request_connection when the vendor a task needs has no connection in your scope",
   request_credential:
     "Call request_credential when a tool's call comes back with the vendor's 401 or 403",
-  // The ask card's tool (GRA-84): the host hides it from the model; the "when" is a "never".
+  // The ask card's tools (GRA-84, GRA-117): the host hides them from the model; the "when" is a "never".
   answer_ask: "Called by Graft's ask card, never by you",
+  start_link: "Called by Graft's ask card, never by you",
+  ask_status: "Called by Graft's ask card, never by you",
 };
 
 /** The tools that can answer a handoff, and so must say what to do with one. */

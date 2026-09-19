@@ -36,6 +36,8 @@ import { isPlainObject, toolAwaitingOrError, toolRefusal, toolResult, withCard }
 import { runAuthoredTool } from "../run";
 import { authoredToolName } from "../tool-names";
 import { answerAsk } from "./answer-ask";
+import { askStatus } from "./ask-status";
+import { startLink } from "./start-link";
 
 /**
  * The fixed meta-tools every agent sees (CONTEXT.md, *Meta-tool*): the front door, `acquire` and
@@ -543,7 +545,8 @@ const requestCredentialTool: MetaTool = {
 
 /**
  * In the order the list carries them: the loop's tools first, the connection handoffs, and last
- * the ask card's own tool, which a host hides from the model (`./answer-ask.ts`).
+ * the ask card's own three tools, which a host hides from the model (`./answer-ask.ts`,
+ * `./start-link.ts`, `./ask-status.ts`).
  */
 export const META_TOOLS: readonly MetaTool[] = [
   acquire,
@@ -555,4 +558,6 @@ export const META_TOOLS: readonly MetaTool[] = [
   requestConnectionTool,
   requestCredentialTool,
   answerAsk,
+  startLink,
+  askStatus,
 ];

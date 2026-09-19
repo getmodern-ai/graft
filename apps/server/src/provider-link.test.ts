@@ -306,6 +306,17 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     });
     expect(store.pendingActions.get(actionId)?.answeredAt).toBeNull();
     expect(await listConnections()).toEqual([]);
+    // The console's link carries no `from`, so its landing page stays up for the person.
+    expect(errored.from).toBeUndefined();
+  });
+
+  it("a return whose link the ask card minted carries from=card through to the console's page (GRA-117), read from the query alone", async () => {
+    const minted = pipedream.tokens.at(-1);
+    const fromCard = consoleOutcome(await landing(`${minted?.error ?? ""}&from=card`));
+    expect(fromCard).toMatchObject({ status: "failed", pendingActionId: actionId, from: "card" });
+    // Another word is not the card's, and is not copied.
+    const other = consoleOutcome(await landing(`${minted?.error ?? ""}&from=elsewhere`));
+    expect(other.from).toBeUndefined();
   });
 
   it("a state that is not Graft's is refused before anything is read, naming no ask", async () => {

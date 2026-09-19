@@ -1,4 +1,4 @@
-import type { AskCard } from "@graft/ask-card/shape";
+import type { AskCard, AskCardTool } from "@graft/ask-card/shape";
 import { type ConnectionOutput, takesCredential } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { ConnectionScheme } from "@graft/db/schema/connection";
@@ -24,13 +24,16 @@ import type {
  * documentation link, the expiry, the handoff URL — never a secret, since none is on the row
  * either — and `answerable`, the server's word on whether the card may answer in place.
  *
- * `answerable` is the amendment's scope as one boolean: true for the build approval, for a
- * connection proposal whose scheme takes no credential and whose provider connects through the
- * form, and for the scope ask — a yes or no on a connection the person already made (GRA-104);
- * false for everything else — a scheme with a secret, a link provider's ask, a credential
- * re-entry, a tool's first use — where the card shows the console button and nothing it could
- * click. `tools/answer-ask.ts` applies the same predicate again before recording anything: the
- * card is the person's, but its word is not trusted over the row's.
+ * `answerable` is the amendment's scope as one boolean: true for the build approval, for a tool's
+ * first-use approval (GRA-116), for a connection proposal whose scheme takes no credential and
+ * whose provider connects through the form, and for the scope ask — a yes or no on a connection
+ * the person already made (GRA-104); false for everything else — a scheme with a secret, a
+ * credential re-entry, a link provider's ask — where the card has nothing it may record itself.
+ * What it does instead (GRA-117, GRA-118): opens the console page, or the provider's link
+ * `tools/start-link.ts` mints, in the person's browser with `from=card`, and polls
+ * `tools/ask-status.ts` until the ask is settled elsewhere. `tools/answer-ask.ts` applies the
+ * same predicate again before recording anything: the card is the person's, but its word is not
+ * trusted over the row's.
  *
  * The resource's `_meta.ui.csp` is declared **empty** (GRA-112): the card reaches Graft through
  * the host's own bridge (`tools/call` over `postMessage`) and fetches nothing from any origin, so
@@ -135,15 +138,20 @@ export function redirectsOnCardHosts(
   });
 }
 
-/** The card for a `build` or `tool` ask (`approval.ts`): the connection's facts, answerable only as a build approval. */
-export function approvalAskCard(args: {
-  action: PendingActionRow;
-  kind: "build" | "tool";
-  agentName: string;
-  connection: ConnectionOutput;
-  url: string;
-  toolName?: string;
-}): AskCard {
+/**
+ * The card for a `build` or `tool` ask (`approval.ts`): the connection's facts, and for a tool's
+ * first use (GRA-116) the tool's — its wire name, its description in the model's words, its two
+ * hints and whether it is set to ask every time. Both are answerable: a yes or no on facts the
+ * person can read, with nothing to enter (ADR 0006 as amended 2026-09-19).
+ */
+export function approvalAskCard(
+  args: {
+    action: PendingActionRow;
+    agentName: string;
+    connection: ConnectionOutput;
+    url: string;
+  } & ({ kind: "build" } | { kind: "tool"; toolName: string; tool: AskCardTool }),
+): AskCard {
   const { action, connection } = args;
   return {
     pendingActionId: action.id,
@@ -158,16 +166,18 @@ export function approvalAskCard(args: {
     docsUrl: null,
     expiresAt: action.expiresAt.toISOString(),
     url: args.url,
-    answerable: args.kind === "build",
+    answerable: true,
     ...(connection.provider !== "keyring" ? { provider: connection.provider } : {}),
-    ...(args.toolName ? { toolName: args.toolName } : {}),
+    ...(args.kind === "tool" ? { toolName: args.toolName, tool: args.tool } : {}),
   };
 }
 
 /**
  * Whether a `connection` ask may be answered from the card: the keyring's form (or an ask made
- * before providers existed, which is the keyring's), for a scheme with nothing to enter. A link
- * provider's ask is a button on the console; a scheme with a secret is a form there.
+ * before providers existed, which is the keyring's), for a scheme with nothing to enter. A scheme
+ * with a secret is a form on the console, which the card opens as a popup (GRA-118); a link
+ * provider's ask is started from the card through `start_link` and answered by the link's return
+ * (GRA-117) — the card may decline it, and nothing else.
  */
 export function connectionAskAnswerable(
   payload: Pick<ConnectionProposalPayload, "providerConnect" | "scheme">,

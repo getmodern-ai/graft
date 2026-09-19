@@ -171,12 +171,13 @@ render for the very results it exists for; refusals and failures stay errors.
 console* wherever it may not answer, and a card that never mounts (Claude.ai's open rendering
 defect, anthropics/claude-ai-mcp#61) costs the person nothing they had.
 
-**What keeps the session.** A write's first-use approval, a credential re-entry, a link provider's
-ask and every scheme with a secret are not the card's to answer: the card shows the proposal and the
-one console button. Secrets are entered in the console, never through a tool argument or a chat
-(ADR 0004), and this amendment moves none of that; a person's identity is not available inside the
-card — only the agent's session is (GRA-83) — so a write's ask, which the person may set to ask
-every time, keeps the page where that setting lives.
+**What keeps the session.** A credential re-entry and every scheme with a secret are not the card's
+to answer: the card shows the proposal and the one console button. Secrets are entered in the
+console, never through a tool argument or a chat (ADR 0004), and this amendment moves none of that;
+a person's identity is not available inside the card — only the agent's session is (GRA-83). As
+first written this paragraph kept a write's first-use approval and a link provider's ask on the
+console too; the paragraph of 2026-09-19 below moves both into the card, and narrows what stays to
+the secret alone.
 
 **Why a hidden tool and not a route.** The ticket weighed a token-bound post to Graft's origin, with
 the handoff token as the whole authority, against an app-only tool. The tool was chosen because it
@@ -211,6 +212,31 @@ credential is missing keeps its refusal, since allowing it would give the agent 
 through. Since ADR 0007's amendment of 2026-09-19 (GRA-105) a new agent reaches every connection
 of the person's, so this ask is reached only for an agent the person limited to a list; the ask
 itself does not move.
+
+**The fourth card, and the two asks the card starts without answering** (added 2026-09-19,
+GRA-116, GRA-117, GRA-118; decided by Aleks after the live card tests of 2026-09-19: every person
+step except the one-time OAuth consent should stay in the chat). **A write's first-use approval is
+the fourth card.** The `tool` ask (ADR 0008) renders "Allow <agent> to run <vendor__name>?" with
+the tool's description marked as the model's words, its read-only and destructive hints, the
+connection and the agent, Allow and Deny; `answer_ask { allow }` records it through
+`recordApprovalAnswer` exactly as the console's answer route does — an allow that holds, a deny
+that holds — under the same gate. The ask-every-call setting is not the card's: it stays on the
+agent's page, the card says when it is on, and a yes on such a tool is for the one waiting call, as
+the console's is. **A link provider's connection starts from the card.** The card mints the
+provider's link itself through a second app-only tool, `start_link { pendingActionId,
+approveBuild }` → `{ url, expiresAt, provider }`, the same `mintProviderLink` the console's button
+calls (`packages/mcp/src/provider-link.ts`), and opens it with `ui/open-link`; the return leg is the
+server's route unchanged — it makes the row and answers the ask — so the card answers nothing for
+it and may only decline it. **The console remains where a secret is typed, opened from the card
+as a popup that closes itself.** For a scheme with a credential and a credential re-entry the
+card's button reads *Enter the secret in Graft* and opens the handoff URL with `from=card`; the
+pending page closes itself 1.5 s after a successful submit and tells its opener at its own origin
+(`graft:ask`), and the link's return page does the same when its link carried the flag. The card
+cannot hear either page — it is a frame on the host's origin — so it polls a third app-only read,
+`ask_status { pendingActionId }` → `{ state: open | answered | declined | expired, sentence }`,
+every three seconds until the ask is settled, and shows the sentence; the two new tools are gated
+as `answer_ask` is (`packages/mcp/src/tools/card-gate.ts`), and `ask_status` records nothing. A
+host that refuses `ui/open-link` leaves the card with the console button it always had.
 
 **Unchanged.** ADR 0004 and ADR 0008. Elicitation keeps its place before the handoff for the clients
 that show a form. `acquire` still asks once per agent per connection; the connection confirmation
