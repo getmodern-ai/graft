@@ -393,7 +393,8 @@ in the console* under a `card_not_available` refusal or where the host refused `
 console reads the flag through `@graft/core`'s browser-safe `connection/card.rules.ts`
 (`openedFromCard`, `askAnsweredMessage`, `FROM_CARD_CLOSE_MS`): `/pending/:id?from=card` posts
 `graft:ask` to its opener and closes itself 1.5 s after a successful submit, `/link/callback?from=card`
-closes on any outcome, and neither behaves differently without it. `@graft/ask-card/shape` spells
+closes on a success and stays on a failure (the ask is still open, and the card is where the person
+tries again), and neither behaves differently without it. `@graft/ask-card/shape` spells
 `from=card` a second time, import-free, and `ask-card.test.ts` pins the two spellings together.
 
 **A connection the person holds but this agent was not given is the `scope` ask** (GRA-104; ADR

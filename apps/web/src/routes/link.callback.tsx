@@ -25,8 +25,10 @@ import { announceConsent, OAUTH_CALLBACK_CLOSE_MS } from "@/lib/oauth-consent";
  * Public, outside `_auth` and the shell, on purpose, for the reasons the consent's route gives.
  *
  * A link the ask card minted arrives with `from=card` (GRA-117; `card.rules.ts`): nothing in the
- * console is waiting, the card polls Graft for the outcome itself, so the page says so and, on
- * any outcome, closes itself after the same moment — a refusal's sentence is repeated by the card.
+ * console is waiting, the card polls Graft for the outcome itself, so the page says so. A success
+ * closes itself after the same moment; a failure stays, because the ask is still open and the
+ * card, which reads `open` from Graft, has no sentence for it — this page is the one that says
+ * what went wrong, and the card's button is where the person tries again (Greptile on #94).
  *
  * Nothing here is trusted beyond what it is: the query is read into five fields and no more, the
  * message is posted to this page's own origin alone, and the waiting card takes it only for the ask
@@ -56,10 +58,10 @@ function LinkCallbackRoute() {
       origin: window.location.origin,
       channel: "BroadcastChannel" in window ? new BroadcastChannel(LINK_CHANNEL) : null,
     });
-    if (status !== "connected" && !fromCard) return;
+    if (status !== "connected") return;
     const timer = setTimeout(() => window.close(), OAUTH_CALLBACK_CLOSE_MS);
     return () => clearTimeout(timer);
-  }, [status, pendingActionId, connectionId, message, fromCard]);
+  }, [status, pendingActionId, connectionId, message]);
 
   const close = () => {
     window.close();

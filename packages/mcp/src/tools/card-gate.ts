@@ -94,10 +94,9 @@ export async function admitCardCall(
     };
   }
   if (options.open !== false) {
-    if (row.answeredAt || row.consumedAt) {
-      return { refused: cardRefusal("answered", ASK_ANSWERED_MESSAGE) };
-    }
-    if (row.expiresAt.getTime() <= deps.pendingAction.now().getTime()) {
+    if (row.answeredAt) return { refused: cardRefusal("answered", ASK_ANSWERED_MESSAGE) };
+    // Consumed with no answer is a revoke's closing: expired, as the console says (`ask-status.ts`).
+    if (row.consumedAt || row.expiresAt.getTime() <= deps.pendingAction.now().getTime()) {
       return { refused: cardRefusal("expired", ASK_EXPIRED_MESSAGE) };
     }
   }

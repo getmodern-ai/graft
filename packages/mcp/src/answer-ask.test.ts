@@ -1071,6 +1071,31 @@ describe("start_link and ask_status", () => {
       state: "expired",
       sentence: expect.stringContaining(ASK_EXPIRED_MESSAGE),
     });
+
+    // Closed by a revoke — `expirePendingActionsForConnection` stamps both clocks and records no
+    // answer — reads expired too, never declined: nobody said no (Greptile on #94). The row is
+    // stamped as the repo stamps it, since a proposal's ask carries no connection id to revoke.
+    const closed = cardOf(
+      await claude.call("request_connection", {
+        ...SECRET,
+        vendor: "gamma",
+        displayName: "Gamma",
+        primaryHost: "https://api.gamma.example",
+      }),
+    );
+    const row = store.pendingActions.get(closed.pendingActionId);
+    if (!row) throw new Error("the ask was not stored");
+    store.pendingActions.set(closed.pendingActionId, {
+      ...row,
+      expiresAt: clock,
+      consumedAt: clock,
+    });
+    expect(await status(claude, closed.pendingActionId)).toMatchObject({
+      state: "expired",
+      sentence: expect.stringContaining(ASK_EXPIRED_MESSAGE),
+    });
+    const refused = await answer(claude, closed.pendingActionId, { decline: true });
+    expect(refused.body).toMatchObject({ reason: "expired", message: ASK_EXPIRED_MESSAGE });
   });
 
   it("refuses ask_status under the card gate: a static-token agent, another agent's ask, no id", async () => {

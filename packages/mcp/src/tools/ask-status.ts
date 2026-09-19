@@ -19,7 +19,8 @@ import type { MetaTool } from "./meta";
  * What it answers is read off the row alone: `open` while unanswered and in time; `answered` for a
  * yes — a connection ask or a credential ask whose answer names a connection, any other kind whose
  * answer says `allow`; `declined` for the rest of the answers; `expired` once the time passed
- * unanswered, which is also what a revoke leaves behind. The sentence beside it is the console's
+ * unanswered, and also what a revoke leaves behind: both clocks stamped, no answer, which is
+ * `expired` here and never `declined` (Greptile on #94). The sentence beside it is the console's
  * settled sentence for that kind, in the card's voice — the card shows it in place of its buttons
  * and adds nothing. Gated like `answer_ask` (`./card-gate.ts`) less the open check, since a
  * closed ask's state is the very thing asked; read-only, and it records nothing.
@@ -32,10 +33,11 @@ export const ASK_OPEN_SENTENCE = "Waiting for you to finish in the window that o
 
 /** Where the ask stands, off the row: the header's four states. */
 export function askState(row: PendingActionRow, now: Date): AskStatusState {
-  if (row.answeredAt || row.consumedAt) {
-    return saidYes(row) ? "answered" : "declined";
-  }
-  return row.expiresAt.getTime() <= now.getTime() ? "expired" : "open";
+  if (row.answeredAt) return saidYes(row) ? "answered" : "declined";
+  // Consumed with no answer is a revoke's closing (`expirePendingActionsForConnection` stamps both
+  // clocks and records nothing), so it reads as the console reads it: expired, never declined.
+  if (row.consumedAt || row.expiresAt.getTime() <= now.getTime()) return "expired";
+  return "open";
 }
 
 function saidYes(row: PendingActionRow): boolean {

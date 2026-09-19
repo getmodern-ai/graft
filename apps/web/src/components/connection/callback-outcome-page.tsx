@@ -49,6 +49,9 @@ export function callbackOutcomeTitle(status: CallbackOutcomeStatus): string {
 
 /** What the page adds when the ask card opened it (GRA-117): the card is where the person is. */
 export const FROM_CARD_NOTE = "The card in your chat updates on its own.";
+/** The same, when the link failed: the ask is still open, and the card is where to try again. */
+export const FROM_CARD_RETRY_NOTE =
+  "The card in your chat is still waiting; close this window and try again from there.";
 
 export function CallbackOutcomePage({
   status,
@@ -73,7 +76,7 @@ export function CallbackOutcomePage({
           <EmptyTitle>{title}</EmptyTitle>
           <EmptyDescription>
             {message || fallback}
-            {fromCard ? ` ${FROM_CARD_NOTE}` : null}
+            {fromCard ? ` ${status === "connected" ? FROM_CARD_NOTE : FROM_CARD_RETRY_NOTE}` : null}
           </EmptyDescription>
         </EmptyHeader>
         <Button onClick={onClose}>Close this window</Button>
