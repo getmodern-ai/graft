@@ -449,20 +449,23 @@ in the create dialog and the consent card, and in the agent page's Scope section
 (`scope-editor.tsx`); the labels and the write's body are `src/lib/scope-mode.ts`, tested.
 
 **A tool follows its vendor's reconnected connection** (GRA-122; ADR 0007 as amended 2026-09-20).
-`authored_tool.default_connection_id` is the row the tool was authored against, and a run reads it
-(`packages/mcp/src/run.ts`). When the person revoked that row and the vendor is live again under
-another row of theirs, the run against the revoked default follows the **one** live, usable
-connection of the tool's vendor in the agent's scope and rebinds the tool to it in one patch
-(`updateToolDefinition`); with none the `connection_revoked` refusal stands as GRA-69 left it, and
-with several it names them under `alternatives` and says the step is the person's
-(`revoke.ts`'s `revokedConnectionRefusal`). A caller that names the connection
+`authored_tool.default_connection_id` is the row the tool was authored against, and a run resolves
+the connection **per agent** (`packages/mcp/src/run.ts`): the default when this agent holds it
+live; otherwise — revoked, or a live row another agent of the person's holds and this one was never
+given — the **one** live, usable connection of the tool's vendor in this agent's scope. The row is
+rebound (`updateToolDefinition`, one patch) only when its default is revoked, dead for every agent;
+a live default outside the scope is another agent's and stays. With no such connection the
+`connection_revoked` or `connection_not_in_scope` refusal stands as before, and with several it
+names them under `alternatives` and says the step is the person's (`revoke.ts`'s
+`revokedConnectionRefusal`, `run.ts`'s `notInScopeRefusal`). A caller that names the connection
 (`AuthoredRunArgs.connectionId`) is never followed: `acquire`'s dry run passes the job's connection,
 so a version published onto an existing tool row is proved against the connection the job authored
-it for, and a publish onto an existing tool under `activate: false` rebinds the row to
-`defaultConnectionId` in the publish's transaction when it differs (`packages/publish`, step 8).
-The job's "did not run" progress line and `tried[].summary` carry a refusal's `reason: message`
-rather than the word `refused`. `packages/mcp/src/server.test.ts` (the GRA-122 describe),
-`acquire.test.ts` and `publish.service.test.ts` are the suites.
+it for; a publish onto an existing tool under `activate: false` rebinds the row to
+`defaultConnectionId` in the publish's transaction only when the row's default is missing or
+revoked — a live default waits for the pass, so a failed job leaves the tool where it was
+(`packages/publish`, step 8). The job's "did not run" progress line and `tried[].summary` carry a
+refusal's `reason: message` rather than the word `refused`. `packages/mcp/src/server.test.ts` (the
+GRA-122 describe), `acquire.test.ts` and `publish.service.test.ts` are the suites.
 
 ### The self-hosted image
 
@@ -707,8 +710,9 @@ proves with reads, publishes, dry-runs, retries, promotes. **A job's publish mov
 so `authored_tool.current_version_id` names only a version that passed its dry run (ADR 0012, L0 as
 amended 2026-09-17); a job that never passes leaves a tool with no current version, which `find_tool`
 omits and `promote` and a run refuse as `tool_has_no_version`. The dry run runs the version against the
-job's connection, never the tool row's default, and the publish rebinds an existing row to it
-(GRA-122; the paragraph *A tool follows its vendor's reconnected connection* above). The runner is the second plain scheduler
+job's connection, never the tool row's default, and the publish rebinds an existing row to it when
+the row's default is revoked (GRA-122; the paragraph *A tool follows its vendor's reconnected
+connection* above). The runner is the second plain scheduler
 beside the sweep: `GRAFT_ACQUIRE_CONCURRENCY` (default 2) jobs at once, kicked by the meta-tool and
 polling for what a previous process left queued or running with a stale heartbeat. Each job is bounded
 by `GRAFT_ACQUIRE_MAX_ATTEMPTS` (default 4 — every draft is an attempt, a check refusal included) and

@@ -64,18 +64,23 @@ import { authoredToolName } from "./tool-names";
  * loads the module from `/tools/<version path>` (ADR 0002's seam is what makes that true on every
  * backing). The vendor's answer, or the runner's failure, comes back verbatim (GRA-1, user story 37).
  *
- * **A tool whose default connection was revoked follows the one live connection of its vendor**
- * (GRA-122). An authored tool is bound to a vendor rather than a row (CONTEXT.md, *Authored tool*),
- * and the row it defaults to is the one it was authored against; when the person revoked that row
- * and connected the vendor again under a new one — a link provider's second proposal used to make a
- * new row beside the released one — every tool of the vendor answered `connection_revoked` until
- * re-authored, with no rebind anywhere. Now, when the default is revoked and exactly one live,
- * usable connection of the tool's vendor is in the agent's scope, the run goes there and the tool's
- * default is rebound to it in one patch, so the next call reads it directly; with none, or with
- * several, the refusal stands and names the step (`revokedConnectionRefusal`). The scope is read
- * before the choice, so a live row the agent was never given is never followed; the approval gate
- * still sits after the choice, so a write asks on the connection it will run against (ADR 0008). A
- * caller that names the connection (`connectionId`) gets no following: it said which.
+ * **A tool whose default connection this agent cannot use follows the one live connection of its
+ * vendor in the agent's scope** (GRA-122). An authored tool is bound to a vendor rather than a row
+ * (CONTEXT.md, *Authored tool*), and the row it defaults to is the one it was authored against; when
+ * the person revoked that row and connected the vendor again under a new one — a link provider's
+ * second proposal used to make a new row beside the released one — every tool of the vendor
+ * answered `connection_revoked` until re-authored, with no rebind anywhere. Now the connection a
+ * run uses is resolved **per agent**: the default when this agent holds it live; otherwise — the
+ * default revoked, or a live row another agent of the person's holds and this one was never given
+ * (the tool row is the person's, the scopes are per agent, ADR 0007) — the one live, usable
+ * connection of the tool's vendor in this agent's scope; with none, or with several, the refusal
+ * stands and names the step (`revokedConnectionRefusal`, `notInScopeRefusal`). The row's default
+ * is **rebound only when it is revoked** — dead for every agent, so moving it takes nothing from
+ * anyone and the next call reads it directly; a live default outside this agent's scope is another
+ * agent's and stays, and this agent's calls resolve to its own row each time (Greptile on #98). The
+ * scope is read before the choice, so a live row the agent was never given is never followed; the
+ * approval gate still sits after the choice, so a write asks on the connection it will run against
+ * (ADR 0008). A caller that names the connection (`connectionId`) gets no following: it said which.
  */
 
 /**
@@ -378,8 +383,8 @@ export type AuthoredRunArgs = {
    * job's (GRA-122): a version published onto an existing tool row is proved against the connection
    * the job authored it for, not against a default the person may have revoked since. Held to the
    * same check as the default: in the agent's scope, which names the person's rows and no others
-   * (`connection_not_in_scope` otherwise). Unset, the default decides, and a revoked default follows
-   * the one live connection of the vendor (the header).
+   * (`connection_not_in_scope` otherwise). Unset, the default decides, and a default this agent
+   * cannot use follows the one live connection of the vendor in its scope (the header).
    */
   connectionId?: string;
 };
@@ -489,47 +494,59 @@ async function runHeld(
     );
   }
   const scopeIds = await getAgentScope(ctx, scope, deps.agent);
-  if (!scopeIds.includes(bound)) {
+  const inScope = scopeIds.includes(bound);
+  if (args.connectionId && !inScope) {
     return refuse(
       "connection_not_in_scope",
-      args.connectionId
-        ? `${wireName} was asked to run against connection ${bound}, which is not in this agent's scope. The person can add it in the console.`
-        : `${wireName} runs against connection ${bound}, which is not in this agent's scope. The person can add it in the console.`,
+      `${wireName} was asked to run against connection ${bound}, which is not in this agent's scope. The person can add it in the console.`,
       versioned,
     );
   }
   // After the scope check and before the gate: a revoked connection's approvals are gone with it,
   // and asking the person for them again is not the next step (GRA-69).
+  const connection = inScope ? await getConnection(ctx, principal, bound, deps.connection) : null;
+  const revoked = connection?.revokedAt != null;
+  if (args.connectionId && revoked && connection) {
+    await record("refused", versioned);
+    return { answer: revokedConnectionRefusal(connection), isError: true };
+  }
   let connectionId = bound;
   let gated = tool;
-  const connection = await getConnection(ctx, principal, bound, deps.connection);
-  if (connection?.revokedAt) {
-    // The header's last paragraph (GRA-122): the one live connection of the vendor in scope, or the
-    // refusal naming what stands in the way. A caller that named the connection is not followed.
-    const live = args.connectionId
-      ? []
-      : await liveConnectionsOfVendor(ctx, principal, tool.vendor, bound, scopeIds, deps);
+  if (!inScope || revoked) {
+    // The header's last paragraph (GRA-122): the one live connection of the vendor in this agent's
+    // scope, or the refusal naming what stands in the way.
+    const live = await liveConnectionsOfVendor(ctx, principal, tool.vendor, bound, scopeIds, deps);
     const [target] = live;
     if (!target || live.length !== 1) {
       await record("refused", versioned);
-      return { answer: revokedConnectionRefusal(connection, live), isError: true };
-    }
-    const rebound = await updateToolDefinition(
-      ctx,
-      principal,
-      tool.id,
-      { defaultConnectionId: target.id },
-      deps.tool,
-    );
-    if (!rebound) {
-      return refuse(
-        "tool_not_found",
-        `${wireName} left the toolbox while its connection was being chosen; find_tool searches it.`,
-        versioned,
-      );
+      return {
+        answer:
+          revoked && connection
+            ? revokedConnectionRefusal(connection, live)
+            : notInScopeRefusal(wireName, bound, live),
+        isError: true,
+      };
     }
     connectionId = target.id;
-    gated = rebound;
+    if (revoked) {
+      // Dead for every agent, so the row follows; a live default outside this scope is another
+      // agent's and stays (the header).
+      const rebound = await updateToolDefinition(
+        ctx,
+        principal,
+        tool.id,
+        { defaultConnectionId: target.id },
+        deps.tool,
+      );
+      if (!rebound) {
+        return refuse(
+          "tool_not_found",
+          `${wireName} left the toolbox while its connection was being chosen; find_tool searches it.`,
+          versioned,
+        );
+      }
+      gated = rebound;
+    }
   }
 
   const validator = compileInputSchema(tool.inputSchema);
@@ -640,17 +657,45 @@ async function runHeld(
 }
 
 /**
- * The live connections of a vendor this agent may run against, other than the one revoked — the
- * candidates a tool whose default was revoked may follow (the header; GRA-122). In the scope, and
- * usable as `request_connection` judges usable (`isConnectionUsable`: not revoked, its provider
- * enabled, its credential or consent in place), so a row the agent was never given, or one that
- * would refuse the call anyway, is neither followed nor named.
+ * The refusal for a tool whose default connection is live but not in this agent's scope, and which
+ * no single live connection of the vendor in the scope can stand in for (the header; GRA-122). With
+ * none, the sentence GRA-1 left; with several, they are named — in the sentence and under
+ * `alternatives`, as `revokedConnectionRefusal` names them — and the choice is the person's.
+ */
+function notInScopeRefusal(
+  wireName: string,
+  connectionId: string,
+  alternatives: readonly ConnectionOutput[],
+): Refusal {
+  const runs = `${wireName} runs against connection ${connectionId}, which is not in this agent's scope.`;
+  if (alternatives.length === 0) {
+    return refusal("connection_not_in_scope", `${runs} The person can add it in the console.`);
+  }
+  const named = alternatives.map((other) => `${other.displayName} (${other.id})`).join(", ");
+  return refusal(
+    "connection_not_in_scope",
+    `${runs} ${alternatives.length} live connections of the same vendor are — ${named} — so the tool cannot follow one on its own; it does when there is exactly one. Ask the person to add ${connectionId} to this agent's scope in the console, or to say which of the others to use; acquire against that one authors the tool there.`,
+    {
+      alternatives: alternatives.map((other) => ({
+        connectionId: other.id,
+        displayName: other.displayName,
+      })),
+    },
+  );
+}
+
+/**
+ * The live connections of a vendor this agent may run against, other than the tool's default — the
+ * candidates a tool whose default this agent cannot use may follow (the header; GRA-122). In the
+ * scope, and usable as `request_connection` judges usable (`isConnectionUsable`: not revoked, its
+ * provider enabled, its credential or consent in place), so a row the agent was never given, or one
+ * that would refuse the call anyway, is neither followed nor named.
  */
 async function liveConnectionsOfVendor(
   ctx: ServiceContext,
   principal: Principal,
   vendor: string,
-  revokedId: string,
+  defaultId: string,
   scopeIds: readonly string[],
   deps: McpDeps,
 ): Promise<ConnectionOutput[]> {
@@ -658,7 +703,7 @@ async function liveConnectionsOfVendor(
   return rows.filter(
     (row) =>
       row.vendor === vendor &&
-      row.id !== revokedId &&
+      row.id !== defaultId &&
       scopeIds.includes(row.id) &&
       isConnectionUsable(row, deps.connection.providers),
   );

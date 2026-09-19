@@ -767,6 +767,67 @@ describe("a tool whose connection was revoked follows the vendor's one live conn
       await a.close();
     }
   }, 30_000);
+
+  /**
+   * Greptile on #98: the tool row is the person's and the scopes are per agent, so an agent whose
+   * scope never held the row's live default — another agent's account — resolves to its own row of
+   * the vendor each call, and the row's default, which that other agent uses, is not moved.
+   */
+  it("follows a live default outside this agent's scope to the agent's one live connection without rebinding, and with none or several answers connection_not_in_scope naming them", async () => {
+    // The fixtures the previous case left: the tool, LIVE and SECOND live, none in A's scope.
+    const tool = store.tools.get(TOOL);
+    if (!tool) throw new Error("no rebind fixture");
+    store.tools.set(TOOL, { ...tool, defaultConnectionId: SECOND });
+    const scopeOfA = store.agentConnections.get(AGENT_A);
+    const a = await connect(TOKEN_A);
+    try {
+      // No row of the vendor in A's scope: the refusal as it always was.
+      const none = await a.call("run_tool", call);
+      expect(none.isError).toBe(true);
+      expect(body(none)).toMatchObject({ error: "refused", reason: "connection_not_in_scope" });
+      expect(body(none).message).toContain("The person can add it in the console");
+      expect(body(none)).not.toHaveProperty("alternatives");
+
+      // One live row of the vendor in A's scope: A runs there; the row keeps the other agent's default.
+      scopeOfA?.add(LIVE);
+      const requestsBefore = vendor.requests.length;
+      const ran = await a.call("run_tool", call);
+      expect(ran.isError, JSON.stringify(ran.content)).not.toBe(true);
+      expect(body(ran)).toEqual(VENDOR_BODY);
+      expect(vendor.requests.slice(requestsBefore).at(-1)?.headers.get("x-demo-key")).toBe(
+        "rebind-live-key",
+      );
+      expect(store.tools.get(TOOL)?.defaultConnectionId).toBe(SECOND);
+
+      // Two live rows in A's scope beside the default: named, and the choice is the person's.
+      const THIRD = "conn_rebind_third";
+      store.addConnection({
+        id: THIRD,
+        personId: PERSON,
+        vendor: "rebind",
+        displayName: "Rebind (third)",
+        primaryHost: "https://api.rebind.example",
+      });
+      scopeOfA?.add(THIRD);
+      const several = await a.call("run_tool", call);
+      expect(several.isError).toBe(true);
+      expect(body(several)).toMatchObject({
+        error: "refused",
+        reason: "connection_not_in_scope",
+        alternatives: [
+          { connectionId: LIVE, displayName: "Rebind (live)" },
+          { connectionId: THIRD, displayName: "Rebind (third)" },
+        ],
+      });
+      expect(body(several).message).toContain("2 live connections of the same vendor");
+      expect(store.tools.get(TOOL)?.defaultConnectionId).toBe(SECOND);
+      scopeOfA?.delete(THIRD);
+    } finally {
+      for (const id of [LIVE, SECOND]) scopeOfA?.delete(id);
+      store.tools.set(TOOL, tool);
+      await a.close();
+    }
+  }, 30_000);
 });
 
 describe("find_tool", () => {

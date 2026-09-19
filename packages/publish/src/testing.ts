@@ -113,7 +113,8 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
       });
       return version;
     },
-    findConnection: async (_db, personId, id) => ({ id, personId }) as never,
+    // A live row of the person's: enough for the owned-connection check and for `bindingIsDead`.
+    findConnection: async (_db, personId, id) => ({ id, personId, revokedAt: null }) as never,
   };
 }
 
