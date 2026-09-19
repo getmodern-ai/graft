@@ -36,6 +36,7 @@ import { isPlainObject, toolAwaitingOrError, toolRefusal, toolResult, withCard }
 import { runAuthoredTool } from "../run";
 import { authoredToolName } from "../tool-names";
 import { answerAsk } from "./answer-ask";
+import { queryWords, rankTools } from "./find-tool.match";
 
 /**
  * The fixed meta-tools every agent sees (CONTEXT.md, *Meta-tool*): the front door, `acquire` and
@@ -96,7 +97,7 @@ const findTool: MetaTool = {
     name: FIND_TOOL,
     description:
       "Call find_tool first, before acquire, whenever a task has no tool in your list. " +
-      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description; a tool no version of which has passed its dry run is not listed. " +
+      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description, every word of the query, in any order; a tool no version of which has passed its dry run is not listed. " +
       "Each hit carries vendor and name (what promote, demote and run_tool take), its inputSchema (what run_tool's input must match), whether it is in your working set, and its read-only and destructive hints. " +
       "A hit that is not promoted is one promote call from your list. When the answer is empty, call request_connection if the vendor has no connection in your scope (an execute__<connectionId> tool in your list names each one), otherwise acquire.",
     inputSchema: {
@@ -113,34 +114,36 @@ const findTool: MetaTool = {
     annotations: { readOnlyHint: true, destructiveHint: false },
   },
   handle: async (args, { ctx, principal, scope, deps }) => {
-    const query = typeof args.query === "string" ? args.query.trim().toLowerCase() : "";
-    if (!query) return toolRefusal("input_invalid", "query must be a non-empty string");
+    const query = typeof args.query === "string" ? args.query : "";
+    if (queryWords(query).length === 0) {
+      return toolRefusal(
+        "input_invalid",
+        "query must be a non-empty string with a word of two or more characters",
+      );
+    }
     const [tools, workingSet] = await Promise.all([
       listTools(ctx, principal, deps.tool),
       listWorkingSet(ctx, scope, deps.workingSet),
     ]);
     const promoted = new Set(workingSet.map((entry) => entry.toolId));
-    // Case-insensitive substring over the three fields, in toolbox order. Ranking — by how recently
-    // an agent used the tool, by how many agents hold it — belongs here and reads the ledger and the
-    // working-set records (ADR 0009, ADR 0012); the alpha has too few tools per toolbox to need it.
+    // Every word of the query, in any order, across vendor, name and description, ranked by where
+    // the words hit (`find-tool.match.ts`, GRA-115). Ranking by use — how recently an agent ran the
+    // tool, how many agents hold it — would read the ledger and the working-set records (ADR 0009,
+    // ADR 0012); the alpha has too few tools per toolbox to need it.
     // A tool with no current version is what an acquire job that never passed its dry run leaves
     // (GRA-77): nothing runnable, so nothing to find — its versions and reports stay for the console.
-    const hits: FoundTool[] = tools
-      .filter((tool) => tool.currentVersionId !== null)
-      .filter((tool) =>
-        [tool.vendor, tool.name, authoredToolName(tool.vendor, tool.name), tool.description].some(
-          (field) => field.toLowerCase().includes(query),
-        ),
-      )
-      .map((tool) => ({
-        vendor: tool.vendor,
-        name: tool.name,
-        tool: authoredToolName(tool.vendor, tool.name),
-        description: tool.description,
-        promoted: promoted.has(tool.id),
-        inputSchema: tool.inputSchema,
-        annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
-      }));
+    const hits: FoundTool[] = rankTools(
+      tools.filter((tool) => tool.currentVersionId !== null),
+      query,
+    ).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      tool: authoredToolName(tool.vendor, tool.name),
+      description: tool.description,
+      promoted: promoted.has(tool.id),
+      inputSchema: tool.inputSchema,
+      annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
+    }));
     return toolResult({
       tools: hits,
       note:
