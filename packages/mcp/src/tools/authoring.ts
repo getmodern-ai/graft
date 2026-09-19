@@ -129,6 +129,9 @@ const writeFile: MetaTool = {
       required: ["path", "content"],
       additionalProperties: false,
     },
+    // The sandbox's own files, no vendor; both hints said outright because MCP reads an unset
+    // destructiveHint as true (GRA-114).
+    annotations: { readOnlyHint: false, destructiveHint: false },
   },
   handle: async (args, session) => {
     if (typeof args.content !== "string") {
@@ -214,6 +217,8 @@ const runCommandTool: MetaTool = {
       required: ["command"],
       additionalProperties: false,
     },
+    // No credential and no vendor reach (the description says so); GRA-114 for the explicit false.
+    annotations: { readOnlyHint: false, destructiveHint: false },
   },
   handle: async (args, session) => {
     const parsed = readCommandInput(args);
@@ -410,6 +415,8 @@ const publishTool: MetaTool = {
       required: ["vendor", "name", "description", "inputSchema", "path"],
       additionalProperties: false,
     },
+    // Writes the person's own toolbox; the dry run it offers changes nothing at the vendor (GRA-114).
+    annotations: { readOnlyHint: false, destructiveHint: false },
   },
   handle: async (args, session) => {
     const vendor = typeof args.vendor === "string" ? args.vendor.trim() : "";

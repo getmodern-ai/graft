@@ -47,6 +47,7 @@ export function executeToolDefinition(connection: ConnectionOutput): Tool {
       `Answers like run_command, the exit code and the output cut to its last ${MAX_OUTPUT_CHARS} characters, and is killed after timeoutSeconds (default ${DEFAULT_COMMAND_TIMEOUT_SECONDS}, at most ${MAX_COMMAND_TIMEOUT_SECONDS} when waiting). ` +
       `With dryRun: true the proxy makes GET and HEAD calls for real and stops every other method before it reaches ${label}, answering 202 with header x-graft-dry-run: intercepted and a JSON preview of the request that would have been sent. ` +
       "The first call against a connection may answer awaiting_approval with a url: give the person the link exactly as returned, wait, and call again once they have answered. " +
+      "Marked destructive because the hint is the carried command's, which the host cannot know per call. " +
       detachedAdvice(),
     inputSchema: {
       type: "object",
@@ -65,6 +66,8 @@ export function executeToolDefinition(connection: ConnectionOutput): Tool {
       required: ["command"],
       additionalProperties: false,
     },
+    // As destructive as the command it carries, which a host cannot know per call (GRA-114).
+    annotations: { readOnlyHint: false, destructiveHint: true },
   };
 }
 
