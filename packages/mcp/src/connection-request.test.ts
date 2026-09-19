@@ -270,12 +270,12 @@ async function submitCredential(actionId: string, credential: Record<string, str
 const actionsOf = (agentId: string, kind: string) =>
   [...store.pendingActions.values()].filter((row) => row.agentId === agentId && row.kind === kind);
 
-/** The awaiting answer as the agent reads it, with the row it names. */
+/** The awaiting answer as the agent reads it, with the row it names — a result, not an error (GRA-112). */
 function awaiting(
   result: CallToolResult,
   error: "awaiting_connection" | "awaiting_credential" | "awaiting_scope",
 ) {
-  expect(result.isError).toBe(true);
+  expect(result.isError).toBe(false);
   const said = body(result);
   expect(said).toMatchObject({
     error,
@@ -745,7 +745,7 @@ describe("the connection confirmation and the build approval (GRA-75)", () => {
         status: "connected",
       });
       const asked = await a.call("acquire", { connectionId: other.id, goal: "List things" });
-      expect(asked.isError).toBe(true);
+      expect(asked.isError).toBe(false);
       expect(body(asked)).toMatchObject({
         error: "awaiting_approval",
         pendingActionId: expect.any(String),
@@ -1982,7 +1982,7 @@ describe("request_connection asks to use a connection the person holds but this 
       });
       expect(store.buildApprovals.get(`${AGENT_B} ${row.id}`)).toBeUndefined();
       const asked = await b.call("acquire", { connectionId: row.id, goal: "List books" });
-      expect(asked.isError).toBe(true);
+      expect(asked.isError).toBe(false);
       expect(body(asked)).toMatchObject({ error: "awaiting_approval" });
     } finally {
       await b.close();

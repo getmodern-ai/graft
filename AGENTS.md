@@ -342,14 +342,18 @@ over `@modelcontextprotocol/ext-apps`'s `app-with-deps`, no React — that `vite
 so nothing may be linked. Its stylesheet carries a copy of the console's `cando:tokens` block and
 `src/bundle.test.ts` fails on a colour literal outside the `:root`/`.dark` rules (ADR 0017 over one
 file). The MCP server (`packages/mcp/src/ask-card.ts`, `session.ts`) declares `resources`, lists the
-one resource `ui://graft/ask` (`text/html;profile=mcp-app`, no `_meta.ui.csp`: the card fetches
-nothing) and serves the page from `@graft/ask-card`'s `ASK_CARD_HTML_PATH`, which resolves to
+one resource `ui://graft/ask` (`text/html;profile=mcp-app`, an empty `_meta.ui.csp` said outright:
+the card fetches nothing) and serves the page from `@graft/ask-card`'s `ASK_CARD_HTML_PATH`, which resolves to
 `packages/ask-card/dist/ask.html` in a checkout and to `dist/ask.html` beside the server's bundle,
 where `apps/server/tsdown.config.ts` copies it and the Dockerfile's `build` stage builds it first.
 `acquire`, `request_connection` and `request_credential` carry `_meta.ui.resourceUri` unconditionally
-(Claude.ai declares no extension), and their awaiting results carry the card's data under
-`structuredContent.card` beside GRA-55's unchanged `url`, `message` and `reason` (`result.ts`'s
-`withCard`). The card answers by calling `answer_ask` (`tools/answer-ask.ts`), declared
+(Claude.ai declares no extension) with ChatGPT's alias `openai/outputTemplate` beside it, and the
+resource carries the `openai/widget*` aliases of its `ui` keys (GRA-112); their awaiting results
+carry the card's data under `structuredContent.card` beside GRA-55's unchanged `url`, `message` and
+`reason` (`result.ts`'s `withCard`). **An awaiting result is not an MCP error**: every `awaiting_*`
+answer returns through `result.ts`'s `toolAwaiting` with `isError: false` and the same JSON, because
+a host renders no view for an error result (ext-apps issue 694) — refusals and failures stay
+`isError: true`. The card answers by calling `answer_ask` (`tools/answer-ask.ts`), declared
 `_meta.ui.visibility: ["app"]` so the host hides it from the model; the tool refuses a static-token
 agent, an OAuth client whose hiding is not established (neither every registered redirect URI on a
 `GRAFT_CARD_HOSTS` host nor the MCP Apps extension declared in `initialize`), another agent's ask,

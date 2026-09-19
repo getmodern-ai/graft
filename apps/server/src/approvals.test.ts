@@ -194,7 +194,7 @@ describe("an ask over MCP, answered over HTTP", () => {
     const a = await connect();
     try {
       const first = await a.call("demo__create-item");
-      expect(first.isError).toBe(true);
+      expect(first.isError).toBe(false);
       const said = body(first);
       expect(said).toMatchObject({
         error: "awaiting_approval",

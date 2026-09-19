@@ -32,7 +32,7 @@ import {
   requestCredential,
 } from "../connection-request";
 import type { SessionContext } from "../context";
-import { isPlainObject, toolError, toolRefusal, toolResult, withCard } from "../result";
+import { isPlainObject, toolAwaitingOrError, toolRefusal, toolResult, withCard } from "../result";
 import { runAuthoredTool } from "../run";
 import { authoredToolName } from "../tool-names";
 import { answerAsk } from "./answer-ask";
@@ -278,7 +278,7 @@ const runTool: MetaTool = {
       mode: { detached, timeoutSeconds, dryRun },
       channel,
     });
-    return run.isError ? toolError(run.answer) : toolResult(run.answer);
+    return run.isError ? toolAwaitingOrError(run.answer) : toolResult(run.answer);
   },
 };
 
@@ -360,7 +360,7 @@ const acquire: MetaTool = {
       );
     }
     const gate = await requireBuildApproval(ctx, scope, connectionId, deps, channel);
-    if (!gate.pass) return withCard(toolError(gate.answer), gate.card);
+    if (!gate.pass) return withCard(toolAwaitingOrError(gate.answer), gate.card);
 
     const job = await createAcquireJob(
       ctx,
@@ -488,7 +488,7 @@ const requestConnectionTool: MetaTool = {
     if ("error" in input) return toolRefusal("input_invalid", input.error);
     const outcome = await requestConnection(ctx, scope, input, deps, notifier);
     return outcome.isError
-      ? withCard(toolError(outcome.answer), outcome.card)
+      ? withCard(toolAwaitingOrError(outcome.answer), outcome.card)
       : toolResult(outcome.answer);
   },
 };
@@ -536,7 +536,7 @@ const requestCredentialTool: MetaTool = {
       deps,
     );
     return outcome.isError
-      ? withCard(toolError(outcome.answer), outcome.card)
+      ? withCard(toolAwaitingOrError(outcome.answer), outcome.card)
       : toolResult(outcome.answer);
   },
 };

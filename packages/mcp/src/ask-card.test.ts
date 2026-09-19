@@ -178,15 +178,24 @@ describe("what the card may answer", () => {
 });
 
 describe("the resource and the tool metadata", () => {
-  it("name one resource with the app MIME type and no CSP, and the two _meta shapes the extension defines", () => {
+  it("name one resource with the app MIME type, an empty CSP and ChatGPT's aliases, and the two _meta shapes the extension defines", () => {
     expect(ASK_CARD_RESOURCE).toEqual({
       uri: ASK_CARD_RESOURCE_URI,
       name: "graft-ask",
       title: "Graft ask card",
       description: expect.any(String),
       mimeType: "text/html;profile=mcp-app",
+      _meta: {
+        ui: { csp: { connectDomains: [], resourceDomains: [] }, prefersBorder: true },
+        "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
+        "openai/widgetPrefersBorder": true,
+        "openai/widgetDescription": expect.stringContaining("Graft's ask card"),
+      },
     });
-    expect(ASK_CARD_TOOL_META).toEqual({ ui: { resourceUri: "ui://graft/ask" } });
+    expect(ASK_CARD_TOOL_META).toEqual({
+      ui: { resourceUri: "ui://graft/ask" },
+      "openai/outputTemplate": "ui://graft/ask",
+    });
     expect(APP_ONLY_TOOL_META).toEqual({ ui: { visibility: ["app"] } });
   });
 

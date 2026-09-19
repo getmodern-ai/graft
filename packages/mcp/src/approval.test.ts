@@ -260,12 +260,12 @@ const actionsOf = (agentId: string, kind: string) =>
 
 const approvalOf = (agentId: string, toolId: string) => store.approvals.get(`${agentId} ${toolId}`);
 
-/** `awaiting_approval` as the agent reads it, with the pending action it names. */
+/** `awaiting_approval` as the agent reads it, with the pending action it names — a result, not an error (GRA-112). */
 function awaiting(result: CallToolResult): {
   answer: Record<string, unknown>;
   action: PendingActionRow;
 } {
-  expect(result.isError).toBe(true);
+  expect(result.isError).toBe(false);
   const said = body(result);
   expect(said).toMatchObject({
     error: "awaiting_approval",

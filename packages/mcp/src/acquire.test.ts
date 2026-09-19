@@ -377,7 +377,7 @@ describe("the door", () => {
     const jobsBefore = store.acquireJobs.size;
     try {
       const result = await b.call("acquire", { connectionId: CONN_DEMO, goal: "List items" });
-      expect(result.isError).toBe(true);
+      expect(result.isError).toBe(false);
       expect(body(result)).toMatchObject({
         error: "awaiting_approval",
         reason: "awaiting_approval",

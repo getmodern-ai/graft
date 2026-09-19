@@ -178,7 +178,8 @@ export type McpDeps = {
  * (ADR 0003): a fixed meta-tool, a connection's execute tool, or an authored tool in the working
  * set — an unknown name is reported as `authored`, since that is the list it would have been in.
  * `outcome` is MCP's `isError` read back: `refused` when the answer is Graft's own refusal shape
- * (`result.ts`), `error` for a run's failure or an internal one, `ok` otherwise.
+ * (`result.ts`), `error` for a run's failure or an internal one, `ok` otherwise — an awaiting
+ * answer included, since it is a result and not an error (GRA-112, `result.ts`'s `toolAwaiting`).
  */
 export type ToolCallEvent = {
   tool: string;
@@ -186,7 +187,7 @@ export type ToolCallEvent = {
   agentId: string;
   personId: string;
   outcome: "ok" | "refused" | "error";
-  /** The refusal's `reason` — `connection_not_in_scope`, `awaiting_approval`, … — when `outcome` is `refused`. */
+  /** The refusal's `reason` — `connection_not_in_scope`, `approval_declined`, … — when `outcome` is `refused`. */
   reason?: string;
   latencyMs: number;
 };

@@ -357,7 +357,11 @@ export type AuthoredRunArgs = {
   versionId?: string;
 };
 
-/** The vendor's answer verbatim, or — marked for the harness — a refusal or the runner's failure. */
+/**
+ * The vendor's answer verbatim, or — marked — a refusal, the runner's failure, or the approval
+ * gate's `awaiting_approval`; the caller sorts the last onto the wire as a result and the others as
+ * errors (`result.ts`'s `toolAwaitingOrError`, GRA-112).
+ */
 export type AuthoredRunAnswer =
   | { isError: false; answer: unknown }
   | { isError: true; answer: Record<string, unknown> };

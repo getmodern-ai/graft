@@ -161,7 +161,11 @@ agent's scope, the same answer on the action, through the same functions
 (`packages/mcp/src/ask-answer.ts`) — with `via: "card"` on the answer to say which door it came
 through. The tool's result is GRA-55's shape unchanged: `awaiting_*`, the URL and the message stay
 in the text the model reads, and the card's data rides beside them in `structuredContent` alone, so
-a host that renders nothing shows exactly what it showed before.
+a host that renders nothing shows exactly what it showed before. An awaiting result is **not an MCP
+error** (`isError: false`; added 2026-09-19, GRA-112, after the live ChatGPT test mounted the frame
+blank): the person's step is the tool's answer, and a host renders no view for an error result —
+ChatGPT unmounts the frame and Claude never mounts it (ext-apps issue 694) — so the card could not
+render for the very results it exists for; refusals and failures stay errors.
 
 **The handoff URL is the floor.** Every ask still returns it, the card shows it as *Open in the
 console* wherever it may not answer, and a card that never mounts (Claude.ai's open rendering
