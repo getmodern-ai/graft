@@ -468,10 +468,12 @@ describe("a job that passes first time", () => {
           hints: "GET /items",
         }),
       );
+      // acquire_status's shape (GRA-125), and with the suite's wait at 0, unfinished: no result yet.
       expect(started).toEqual({
         jobId: expect.any(String),
         status: expect.stringMatching(/^(queued|running)$/),
         progress: [FIRST_PROGRESS_LINE],
+        attempts: 0,
       });
       const jobId = started.jobId as string;
 
@@ -593,6 +595,106 @@ describe("a job that passes first time", () => {
 });
 
 describe("a job that fails and tries again", () => {
+  /**
+   * GRA-125: a chat model polled `acquire_status` seven times in twelve seconds, then ran its own
+   * code through `execute__` while the job it started went on to succeed unused. So `acquire` holds
+   * its call for the approvals' wait and answers the settled job when it finishes in time, and
+   * `acquire_status` holds its call until there is news. The suite's wait is 0 elsewhere, so every
+   * other test sees the old shape; here the wait is long enough for the scripted job.
+   */
+  it("acquire waits for the job and answers the result when it settles in time; acquire_status waits for news", async () => {
+    const scripted = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    deps.model = scripted;
+    const waitBefore = deps.handoff.waitMs;
+    deps.handoff = { ...deps.handoff, waitMs: 20_000, pollMs: 25 };
+    const a = await connect(TOKEN_A);
+    try {
+      const settled = body<AcquireStatus>(
+        await a.call("acquire", { connectionId: CONN_DEMO, goal: "List the items" }),
+      );
+      // The job finished inside the wait: the answer is acquire_status's, result included.
+      expect(settled.status).toBe("succeeded");
+      expect((settled.result as AcquireSuccess).tool).toBe(LIST_ITEMS);
+      expect(settled.progress.length).toBeGreaterThan(1);
+
+      // A settled job answers at once, whatever `after` says.
+      const t0 = Date.now();
+      const again = body<AcquireStatus>(
+        await a.call("acquire_status", { jobId: settled.jobId, after: 1000 }),
+      );
+      expect(again.status).toBe("succeeded");
+      expect(Date.now() - t0).toBeLessThan(2_000);
+
+      // `after` must be a count.
+      const bad = await a.call("acquire_status", { jobId: settled.jobId, after: -1 });
+      expect(bad.isError).toBe(true);
+      expect(body(bad).reason).toBe("input_invalid");
+    } finally {
+      deps.handoff = { ...deps.handoff, waitMs: waitBefore, pollMs: undefined };
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  it("acquire_status holds its call until a progress line newer than the caller's arrives", async () => {
+    // A model turn that waits to be released: the job sits in its first turn until `release`.
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const scripted = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    deps.model = {
+      name: scripted.name,
+      open: (context) => {
+        const conversation = scripted.open(context);
+        let first = true;
+        return {
+          turn: async (situation) => {
+            if (first) {
+              first = false;
+              await gate;
+            }
+            return conversation.turn(situation);
+          },
+        };
+      },
+    };
+    const waitBefore = deps.handoff.waitMs;
+    deps.handoff = { ...deps.handoff, waitMs: 0, pollMs: 25 };
+    const a = await connect(TOKEN_A);
+    try {
+      const started = body<AcquireStatus>(
+        await a.call("acquire", { connectionId: CONN_DEMO, goal: "List the items" }),
+      );
+      expect(["queued", "running"]).toContain(started.status);
+
+      // With the wait at 0 the status answers at once, news or none.
+      const immediate = body<AcquireStatus>(
+        await a.call("acquire_status", { jobId: started.jobId, after: 1000 }),
+      );
+      expect(["queued", "running"]).toContain(immediate.status);
+
+      // With a wait, the call holds until the job moves: release the model turn while it waits.
+      deps.handoff = { ...deps.handoff, waitMs: 20_000, pollMs: 25 };
+      const seen = immediate.progress.length;
+      const pending = a.call("acquire_status", { jobId: started.jobId, after: seen });
+      setTimeout(() => release(), 200);
+      const news = body<AcquireStatus>(await pending);
+      expect(news.progress.length).toBeGreaterThan(seen);
+    } finally {
+      release();
+      deps.handoff = { ...deps.handoff, waitMs: waitBefore, pollMs: undefined };
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
   it("records a first attempt whose dry run failed and a second that passed, each with its diagnosis", async () => {
     deps.model = createScriptedModel([
       write(
