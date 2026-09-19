@@ -623,7 +623,8 @@ describe("the instructions and the Hermes skill", () => {
  * reads promises a second link. The fact — acquire starts without a second link — is said by four
  * texts: the instructions, `request_connection`'s description, the awaiting answer's sentence and
  * the skill. The rule — do not tell the person to expect one — is the instructions' and the skill's
- * alone (GRA-111), and the description is checked not to carry it. Compared as words, like SHARED.
+ * alone (GRA-111), and the description is checked not to carry it, nor the word "approval" (GRA-121).
+ * Compared as words, like SHARED.
  */
 describe("the build approval on the connection page", () => {
   it("is a fact in four texts and a rule in two", async () => {
@@ -643,9 +644,11 @@ describe("the build approval on the connection page", () => {
     ] as const) {
       expect(text, name).toContain(fact);
     }
-    const onByDefault = words("build approval, on by default");
-    expect(description).toContain(onByDefault);
-    expect(instructions).toContain(onByDefault);
+    // The instructions name the approval; the description says only that building is offered, on
+    // by default (GRA-121: "approval" in a description was one of the words the classifier named).
+    expect(instructions).toContain(words("build approval, on by default"));
+    expect(description).toContain(words("on by default"));
+    expect(description).not.toContain("approval");
     const rule = words("do not tell the person to expect one");
     expect(instructions).toContain(rule);
     expect(skill).toContain(rule);

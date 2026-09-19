@@ -360,20 +360,32 @@ describe("the proposal's rules, before any record exists", () => {
     expect(readConnectionProposal(PROPOSAL)).toEqual(PROPOSAL);
   });
 
-  it("describes every scheme with its parameters and the fields the person enters, from the tables", () => {
+  /**
+   * The parameters a proposal carries, per scheme, and nothing of what the person types: the
+   * secret fields and the OAuth client id (ADR 0005) are the console form's, and a schema that
+   * named them was what ChatGPT's classifier badged (GRA-121).
+   */
+  it("describes every scheme with the parameters a proposal carries, and none of the fields the person enters", () => {
     const text = describeSchemes();
+    expect(text).toContain("api_key_header: headerName, optional prefix");
+    expect(text).toContain("basic: none");
+    expect(text).toContain("none: none");
     expect(text).toContain(
-      "api_key_header (parameters: headerName, optional prefix; the person enters: apiKey)",
+      "oauth2_client_credentials: tokenUrl, optional scopes, optional clientAuth",
     );
-    expect(text).toContain("basic (parameters: none; the person enters: username, password)");
-    expect(text).toContain("none (parameters: none; the person enters: nothing)");
     expect(text).toContain(
-      "oauth2_client_credentials (parameters: tokenUrl, optional scopes, optional clientAuth; the person enters: clientId, clientSecret)",
+      "oauth_authorization_code: authorizeUrl, tokenUrl, optional scopes, optional clientAuth",
     );
-    // The client id is the person's to enter, not the agent's to propose (ADR 0005).
-    expect(text).toContain(
-      "oauth_authorization_code (parameters: authorizeUrl, tokenUrl, optional scopes, optional clientAuth; the person enters: clientId, clientSecret)",
-    );
+    for (const typed of [
+      "apiKey",
+      "clientSecret",
+      "clientId",
+      "password",
+      "privateKey",
+      "enters",
+    ]) {
+      expect(text, typed).not.toContain(typed);
+    }
   });
 
   /** ADR 0005: the agent proposes the endpoints and scopes; the client id it cannot know. */

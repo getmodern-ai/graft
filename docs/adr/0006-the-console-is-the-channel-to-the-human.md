@@ -258,6 +258,17 @@ reading the client's word for its rendering. A static-token agent's answer, an u
 client's and every refusal are byte for byte what they were; Hermes renders no card, so its skill
 does not name `cardShown` and `session.test.ts` says why.
 
+**A card that fails to mount once after a deploy is the host's** (noted 2026-09-20, GRA-124). Twice
+on Claude.ai, a few minutes after a deploy of the hosted form, the first card-bearing result in an
+open chat drew Claude's "Unable to reach Graft" banner where the card goes, and the repeated call
+rendered it. The server's request log shows the shape: Claude's frame made no request at all for
+that first result; on the next it sent two requests with no session id and not an `initialize`,
+was answered 400 by the SDK's transport, then initialised and read the resource. ChatGPT's client
+over the same deploy got 404 for its old session ids and re-initialised silently, the spec's path.
+Graft's sessions are in-memory transports and a deploy ends them; the answers are the spec's
+(`packages/mcp/src/http.ts`); nothing here changes, and the fallback sentence above is what the
+person gets.
+
 **Unchanged.** ADR 0004 and ADR 0008. Elicitation keeps its place before the handoff for the clients
 that show a form. `acquire` still asks once per agent per connection; the connection confirmation
 still offers the build approval on by default (ADR 0008 as amended 2026-09-18, GRA-75), on the card as
