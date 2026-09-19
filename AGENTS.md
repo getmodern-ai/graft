@@ -549,8 +549,9 @@ point (GRA-23), which in development is the Vite origin.
 the `Sidebar` primitive off canvas at its own 16rem — the `sidebar_state` cookie it writes is read
 back by `src/lib/sidebar-state.ts`, ⌘B toggles it, and below `md` it is the drawer, closed on the
 router's `onBeforeNavigate` — with `SkipNav` first in the tree and the `<main>` region carrying
-`MAIN_CONTENT_ID`. `main-sidebar.tsx` draws the mark (`src/components/graft-mark.tsx` — the wave mark getgraft.ai and
-the docs carry, drawn in tokens; GRA-97), the four destinations from `src/lib/main-sidebar-nav-items.ts` (a pure data
+`MAIN_CONTENT_ID`. `main-sidebar.tsx` draws the wordmark (`src/components/graft-wordmark.tsx` — the
+supplied SVG with outlined lettering, also used by `AuthHeader`, drawn in tokens; GRA-108), the four
+destinations from `src/lib/main-sidebar-nav-items.ts` (a pure data
 module, tested) with the open-ask count as a `SidebarMenuBadge` and the count in the link's own
 name, and `account-menu.tsx` at the foot: name and email, the Theme radio group (label *inside* the
 group — Base UI's `Menu.GroupLabel` throws outside one), Sign out through `src/lib/sign-out.ts`,
