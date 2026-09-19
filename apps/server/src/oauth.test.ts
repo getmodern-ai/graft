@@ -81,6 +81,10 @@ let tokenEndpoint: (request: UpstreamRequest) => Response = () => tokenResponse(
 let api: (token: string | null) => Response = () => Response.json(MESSAGES);
 /** The exchanges the callback made, through the server's own fetch seam. */
 const exchanges: UpstreamRequest[] = [];
+/** A connection id whose next locked read finds it revoked: a revoke committing just before the lock is granted. */
+let revokeAtLock: string | null = null;
+/** The connection deps the server was built with, for the spies on its locked read and its write. */
+let connectionDeps: ReturnType<typeof createFakeDeps>["connection"];
 /** The process's notifier as the API's routes see it: what a connect or a reconnection announces to. */
 const apiNotifier = { changed: vi.fn() };
 const announced = () => apiNotifier.changed.mock.calls.map(([agentId]) => agentId);
@@ -102,6 +106,17 @@ beforeAll(async () => {
   const fake = createFakeDeps(store);
   const connection = {
     ...fake.connection,
+    // Spied, so a test can see the callback classify a reconnection from the row *locked* — and
+    // play a revoke landing at the moment the lock is granted (`revokeAtLock`).
+    findConnectionForUpdate: vi.fn(async (db, personId: string, id: string) => {
+      if (revokeAtLock === id) {
+        revokeAtLock = null;
+        const row = store.connections.get(id);
+        if (row) store.connections.set(id, { ...row, revokedAt: new Date() });
+      }
+      return fake.connection.findConnectionForUpdate(db, personId, id);
+    }),
+    setConnectionCredential: vi.fn(fake.connection.setConnectionCredential),
     vault: {
       encrypt: (
         fields: Record<string, string>,
@@ -109,6 +124,7 @@ beforeAll(async () => {
       ) => vendor.vault.encrypt(fields, scope),
     },
   };
+  connectionDeps = connection;
   vendor = await startFakeVendor({
     keys,
     connections: [],
@@ -616,23 +632,36 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
   /**
    * The one consent that changes a list: the row was revoked when the browser came back, and
    * `completeOAuthConsent` clears the mark with the record, so the execute tool returns to every
-   * list whose scope reaches the row and those sessions are told (Greptile on #88). Played by
-   * marking the row revoked between the consent's start and its return — in practice a revoke
-   * clears the client secret and the re-entry that restores it is the reconnection that announces
-   * (the next test), so this is the guard's own case rather than a flow the console offers.
+   * list whose scope reaches the row and those sessions are told (Greptile on #88). The revoke is
+   * played as landing **between the callback's unlocked read of the row and its locked one** — the
+   * moment a revoke committing under the same row lock would surface — so the classification is
+   * shown to come from the locked row inside the transaction, before the record is written; read
+   * from the unlocked row it would say "live" and the write would clear the revoke with nobody
+   * told. In practice a revoke clears the client secret and the re-entry that restores it is the
+   * reconnection that announces (the next test), so this is the guard's own case rather than a
+   * flow the console offers.
    */
-  it("a consent completed on a row revoked meanwhile is its reconnection, and tells every session whose scope reaches it", async () => {
+  it("a consent completed on a row revoked meanwhile is its reconnection, classified from the row locked inside the transaction, and tells every session whose scope reaches it", async () => {
     apiNotifier.changed.mockClear();
+    const lockedRead = vi.mocked(connectionDeps.findConnectionForUpdate);
+    const write = vi.mocked(connectionDeps.setConnectionCredential);
+    lockedRead.mockClear();
+    write.mockClear();
     const started = (await (
       await app.request(`/api/connections/${connectionId}/oauth/authorize-url`, json({}))
     ).json()) as { authorizeUrl: string };
     const state = new URL(started.authorizeUrl).searchParams.get("state") as string;
-    const row = store.connections.get(connectionId);
-    if (!row) throw new Error("no row");
-    store.connections.set(connectionId, { ...row, revokedAt: new Date() });
+    expect(store.connections.get(connectionId)?.revokedAt).toBeNull();
+    revokeAtLock = connectionId;
 
     expect(landing(await callback({ code: "while-revoked", state })).status).toBe("connected");
+    expect(revokeAtLock).toBeNull();
     expect(store.connections.get(connectionId)?.revokedAt).toBeNull();
+    // Locked read first, the record written after it, and the announcement from what the lock saw.
+    expect(lockedRead).toHaveBeenCalledWith(expect.anything(), PERSON, connectionId);
+    expect(lockedRead.mock.invocationCallOrder[0] ?? Number.NaN).toBeLessThan(
+      write.mock.invocationCallOrder[0] ?? Number.NaN,
+    );
     expect(announced()).toEqual([AGENT_A]);
     apiNotifier.changed.mockClear();
   });

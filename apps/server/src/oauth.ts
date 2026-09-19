@@ -248,11 +248,16 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
       ...(expiresAt ? { expiresAt } : {}),
     };
 
-    // Whether this consent brings a revoked row back (the options' note on `notifier`): read from
-    // the row as it was before the record is written, since the write clears the mark.
-    const reconnection = row.revokedAt !== null;
-    await ctx.db.transaction(async (tx) => {
+    // Whether this consent brings a revoked row back (the options' note on `notifier`) is decided
+    // from the row **locked, inside the transaction** (`findConnectionForUpdate`, the lock a revoke
+    // takes first): read from the unlocked `row` above, a revoke committing between that read and
+    // the write would be cleared by the write with nobody told (Greptile on #88). The flag comes
+    // out of the transaction for the announcement after the commit.
+    const completed = await ctx.db.transaction(async (tx) => {
       const scoped: ServiceContext = { db: tx };
+      const locked = await options.connection.findConnectionForUpdate(tx, personId, row.id);
+      if (!locked) return null;
+      const reconnection = locked.revokedAt !== null;
       await completeOAuthConsent(scoped, principal, row.id, record, options.connection);
       // The waiting `request_connection` or `request_credential` takes `{ connectionId }` as the
       // answer (GRA-28). An ask answered, expired or closed meanwhile does not undo the consent —
@@ -276,11 +281,13 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
           }
         }
       }
+      return { reconnection };
     });
+    if (!completed) return failed("The connection this consent was for no longer exists.");
 
     // Committed: a row brought back from revoked re-enters every list whose scope reaches it, and
     // those sessions are told; a first consent or a re-consent of a live row changes no list.
-    if (reconnection) {
+    if (completed.reconnection) {
       await notifyAgentsReachingConnection(
         ctx,
         principal,
