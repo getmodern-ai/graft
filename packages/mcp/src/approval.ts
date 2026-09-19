@@ -138,7 +138,8 @@ export const DESCRIPTION_PROVENANCE_NOTE =
 /**
  * What a gate answers: proceed, or the body the tool returns instead — a refusal or
  * `awaiting_approval`, the latter with the ask card's data beside it (`ask-card.ts`, GRA-84) for
- * the tools that render one; a caller that does not attaches nothing.
+ * the tools that render one; a caller that does not attaches nothing. On the wire the two part:
+ * the refusal is an error, the awaiting answer a result (`result.ts`'s `toolAwaitingOrError`).
  */
 export type GateOutcome =
   | { pass: true }

@@ -228,7 +228,8 @@ describe("the card data on an awaiting result", () => {
   it("rides a build ask's awaiting_approval in structuredContent alone, answerable, with the connection's facts", async () => {
     const claude = await connect(TOKEN_CLAUDE);
     const result = await claude.call("acquire", { connectionId: CONN, goal: "list orders" });
-    expect(result.isError).toBe(true);
+    // A result, not an error (GRA-112): a host mounts no view for an error result.
+    expect(result.isError).toBe(false);
     expect(text(result)).toMatchObject({ reason: "awaiting_approval", url: expect.any(String) });
     const card = cardOf(result);
     expect(card).toMatchObject({

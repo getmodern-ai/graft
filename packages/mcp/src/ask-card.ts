@@ -32,18 +32,30 @@ import type {
  * click. `tools/answer-ask.ts` applies the same predicate again before recording anything: the
  * card is the person's, but its word is not trusted over the row's.
  *
- * No `_meta.ui.csp` on the resource, on purpose: the card reaches Graft through the host's own
- * bridge (`tools/call` over `postMessage`) and fetches nothing from any origin, so there is no
- * domain to allow. GRA-55's result shape is untouched: `content`'s text, `url`, `message` and
- * `reason` are what they were, and `card` sits beside them in `structuredContent` alone
- * (`result.ts`'s `withCard`), so a host that renders nothing shows exactly the sentence and link
- * it showed before.
+ * The resource's `_meta.ui.csp` is declared **empty** (GRA-112): the card reaches Graft through
+ * the host's own bridge (`tools/call` over `postMessage`) and fetches nothing from any origin, so
+ * there is no domain to allow — and saying so outright, rather than leaving the field for the
+ * host's default, is what ChatGPT's troubleshooting entry for "structured content only, no
+ * component" asks a server to confirm (the GRA-84 research of 2026-09-19). Beside every MCP Apps
+ * key sits ChatGPT's documented compatibility alias — `openai/outputTemplate` on the tool,
+ * `openai/widgetCSP`, `openai/widgetPrefersBorder` and `openai/widgetDescription` on the resource
+ * — belt and braces for a host that reads the alias first; ext-apps' own `registerAppTool` writes
+ * none, so nothing here depends on them. GRA-55's result shape is untouched: `content`'s text,
+ * `url`, `message` and `reason` are what they were, and `card` sits beside them in
+ * `structuredContent` alone (`result.ts`'s `withCard`), so a host that renders nothing shows
+ * exactly the sentence and link it showed before. What did move is `isError`: an awaiting result
+ * is a result (`result.ts`'s `toolAwaiting`), because neither host mounts a view for an error
+ * result (ext-apps issue 694) — the card GRA-84 shipped could not render on either host until then.
  */
 
 export const ASK_CARD_RESOURCE_URI = "ui://graft/ask";
 
 /** The MIME type the MCP Apps extension names for an app's page; both hosts key on it. */
 export const ASK_CARD_MIME_TYPE = "text/html;profile=mcp-app";
+
+/** One sentence on what the page shows, for ChatGPT's `openai/widgetDescription` (the header). */
+const ASK_CARD_WIDGET_DESCRIPTION =
+  "Graft's ask card: a build approval, a keyless connection confirmation or a scope ask answered in place, or a link to the console.";
 
 export const ASK_CARD_RESOURCE: Resource = {
   uri: ASK_CARD_RESOURCE_URI,
@@ -52,11 +64,27 @@ export const ASK_CARD_RESOURCE: Resource = {
   description:
     "The card Graft shows for an ask a tool answers with: a build approval, a connection confirmation or a scope ask the person answers in place, or the link to answer it in the console.",
   mimeType: ASK_CARD_MIME_TYPE,
+  // The extension's keys, then ChatGPT's aliases of each (the header): an empty CSP because the
+  // card fetches nothing, and a border, since the card is a form and not a figure.
+  _meta: {
+    ui: {
+      csp: { connectDomains: [], resourceDomains: [] },
+      prefersBorder: true,
+    },
+    "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
+    "openai/widgetPrefersBorder": true,
+    "openai/widgetDescription": ASK_CARD_WIDGET_DESCRIPTION,
+  },
 };
 
-/** On a tool definition: render `ui://graft/ask` for this tool's results. Exactly three tools carry it (`tools/meta.ts`). */
+/**
+ * On a tool definition: render `ui://graft/ask` for this tool's results. Exactly three tools carry
+ * it (`tools/meta.ts`). `openai/outputTemplate` is ChatGPT's documented alias of `ui.resourceUri`,
+ * same value (the header).
+ */
 export const ASK_CARD_TOOL_META: NonNullable<Tool["_meta"]> = {
   ui: { resourceUri: ASK_CARD_RESOURCE_URI },
+  "openai/outputTemplate": ASK_CARD_RESOURCE_URI,
 };
 
 /**

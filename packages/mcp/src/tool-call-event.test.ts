@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { toolError, toolRefusal, toolResult } from "./result";
+import { toolAwaiting, toolAwaitingOrError, toolError, toolRefusal, toolResult } from "./result";
 import { authoredToolName, executeToolName } from "./tool-names";
 import { toolCallEvent } from "./tools";
 
@@ -32,6 +32,30 @@ describe("toolCallEvent", () => {
       outcome: "refused",
       reason: "connection_not_in_scope",
       latencyMs: 3,
+    });
+  });
+
+  it("reads an awaiting answer as ok — a result, not an error (GRA-112) — and sorts a refusal the other way", () => {
+    const awaiting = {
+      error: "awaiting_approval",
+      reason: "awaiting_approval",
+      url: "https://c/x",
+    };
+    expect(toolAwaiting(awaiting)).toEqual({
+      content: [{ type: "text", text: JSON.stringify(awaiting) }],
+      structuredContent: awaiting,
+      isError: false,
+    });
+    expect(toolAwaitingOrError(awaiting)).toEqual(toolAwaiting(awaiting));
+    expect(toolCallEvent(session, "acquire", toolAwaitingOrError(awaiting), 30)).toMatchObject({
+      kind: "meta",
+      outcome: "ok",
+    });
+    const refused = { error: "refused", reason: "approval_declined", message: "No." };
+    expect(toolAwaitingOrError(refused)).toEqual(toolError(refused));
+    expect(toolCallEvent(session, "acquire", toolAwaitingOrError(refused), 30)).toMatchObject({
+      outcome: "refused",
+      reason: "approval_declined",
     });
   });
 

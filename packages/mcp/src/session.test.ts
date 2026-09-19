@@ -127,8 +127,14 @@ describe("the ask card over the session", () => {
       expect(resources).toEqual([
         expect.objectContaining({ uri: ASK_CARD_RESOURCE_URI, mimeType: ASK_CARD_MIME_TYPE }),
       ]);
-      // No CSP and no domain on the resource: the card fetches nothing (the file's header says why).
-      expect(resources[0]).not.toHaveProperty("_meta");
+      // An empty CSP, said outright, and no domain: the card fetches nothing (the file's header
+      // says why); each extension key beside ChatGPT's alias of it (GRA-112).
+      expect(resources[0]?._meta).toEqual({
+        ui: { csp: { connectDomains: [], resourceDomains: [] }, prefersBorder: true },
+        "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
+        "openai/widgetPrefersBorder": true,
+        "openai/widgetDescription": expect.stringContaining("Graft's ask card"),
+      });
       const read = await harness.client.readResource({ uri: ASK_CARD_RESOURCE_URI });
       expect(read.contents).toEqual([
         { uri: ASK_CARD_RESOURCE_URI, mimeType: ASK_CARD_MIME_TYPE, text: FAKE_CARD_HTML },
@@ -141,7 +147,7 @@ describe("the ask card over the session", () => {
     }
   });
 
-  it("points acquire, request_connection and request_credential at the card, and nothing else", async () => {
+  it("points acquire, request_connection and request_credential at the card, under both keys, and nothing else", async () => {
     const harness = await initialize();
     try {
       const { tools } = await harness.client.listTools();
@@ -150,9 +156,16 @@ describe("the ask card over the session", () => {
         .map((tool) => tool.name)
         .sort();
       expect(rendering).toEqual(["acquire", "request_connection", "request_credential"]);
+      // ChatGPT's alias rides on exactly the same three (GRA-112).
+      const aliased = tools
+        .filter((tool) => tool._meta?.["openai/outputTemplate"] !== undefined)
+        .map((tool) => tool.name)
+        .sort();
+      expect(aliased).toEqual(rendering);
       for (const name of rendering) {
         expect(tools.find((tool) => tool.name === name)?._meta).toEqual({
           ui: { resourceUri: ASK_CARD_RESOURCE_URI },
+          "openai/outputTemplate": ASK_CARD_RESOURCE_URI,
         });
       }
     } finally {

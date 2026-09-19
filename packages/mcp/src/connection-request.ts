@@ -277,6 +277,8 @@ export type AwaitingHandoff = {
 /**
  * What either tool answers: `connected`, or the body it returns instead — a refusal, or an
  * awaiting answer with the ask card's data beside it (`ask-card.ts`, GRA-84) for the host to render.
+ * `isError` here means "not `connected`"; on the wire the awaiting answer is a result and the
+ * refusal an error (`result.ts`'s `toolAwaitingOrError`, GRA-112).
  */
 export type ConnectionRequestOutcome =
   | { isError: false; answer: Connected }

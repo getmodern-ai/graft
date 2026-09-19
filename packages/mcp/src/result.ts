@@ -11,6 +11,14 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
  * call is the same vocabulary. A **failure** is whatever the run said, verbatim; the run path's
  * shape is `{ error, exitCode, stderrTail }` (`run.ts`). Both set `isError`, which is MCP's way of
  * telling a harness the model should read the content as a problem rather than a result.
+ *
+ * An **awaiting** answer — `{ error: "awaiting_approval" | "awaiting_connection" |
+ * "awaiting_credential" | "awaiting_scope", reason, url, message, … }` (`approval.ts`,
+ * `connection-request.ts`) — is the fourth shape and is **not** an error (GRA-112; ADR 0006 as
+ * amended 2026-09-19): the person's step is the tool's answer, and an MCP Apps host renders no view
+ * for an error result (ext-apps issue 694), so a card on an `isError: true` result never mounts.
+ * `toolAwaiting` returns it with the same JSON and `isError: false`; the `awaiting_` word in the
+ * body is what every harness reads, and none reads `isError` for it.
  */
 
 export function toolResult(value: unknown): CallToolResult {
@@ -50,6 +58,34 @@ export function toolError(value: Record<string, unknown>): CallToolResult {
     structuredContent: value,
     isError: true,
   };
+}
+
+/** Whether a body is an awaiting answer: its `error` is an `awaiting_*` word (the header). */
+export function isAwaitingAnswer(value: Record<string, unknown>): boolean {
+  return typeof value.error === "string" && value.error.startsWith("awaiting_");
+}
+
+/**
+ * An awaiting answer as a result, not an error (GRA-112): the same text block and
+ * `structuredContent` a `toolError` would carry, byte for byte, with `isError: false` said outright
+ * so a host that reads the field strictly reads a result.
+ */
+export function toolAwaiting(value: Record<string, unknown>): CallToolResult {
+  return {
+    content: [{ type: "text", text: JSON.stringify(value) }],
+    structuredContent: value,
+    isError: false,
+  };
+}
+
+/**
+ * The body a gate or an ask flow hands back instead of the tool's result — an awaiting answer, or
+ * a refusal — sorted onto the wire: awaiting as a result, anything else as an error. Every path
+ * that can answer `awaiting_*` returns through here (`tools/meta.ts`, `tools/execute.ts`,
+ * `tools.ts`), so the rule lives once.
+ */
+export function toolAwaitingOrError(value: Record<string, unknown>): CallToolResult {
+  return isAwaitingAnswer(value) ? toolAwaiting(value) : toolError(value);
 }
 
 /**
