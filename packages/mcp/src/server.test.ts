@@ -317,6 +317,14 @@ describe("the tool list", () => {
       });
       const execute = tools.find((tool) => tool.name === executeToolName(CONN_DEMO));
       expect(execute?.description).toContain("Demo Orders");
+      // Both can answer the tool ask on a first write, so both name the card's resource under
+      // its key and ChatGPT's alias (GRA-116): a host renders a card only for a tool that does.
+      for (const tool of [listItems, execute]) {
+        expect(tool?._meta, tool?.name).toEqual({
+          ui: { resourceUri: "ui://graft/ask" },
+          "openai/outputTemplate": "ui://graft/ask",
+        });
+      }
     } finally {
       await a.close();
     }

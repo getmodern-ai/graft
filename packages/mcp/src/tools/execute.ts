@@ -1,7 +1,7 @@
 import { type ConnectionOutput, getConnection, recordUsage } from "@graft/core";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
-
 import { requireBuildApproval } from "../approval";
+import { ASK_CARD_TOOL_META } from "../ask-card";
 import {
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   MAX_COMMAND_TIMEOUT_SECONDS,
@@ -68,6 +68,8 @@ export function executeToolDefinition(connection: ConnectionOutput): Tool {
     },
     // As destructive as the command it carries, which a host cannot know per call (GRA-114).
     annotations: { readOnlyHint: false, destructiveHint: true },
+    // The first call against a connection may answer the tool ask's card (GRA-116; `../tools.ts`).
+    _meta: ASK_CARD_TOOL_META,
   };
 }
 

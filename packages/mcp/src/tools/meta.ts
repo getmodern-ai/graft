@@ -269,6 +269,8 @@ const runTool: MetaTool = {
     // As destructive as the tool it carries, which a host cannot know per call; the tool's own hints
     // ride on the find_tool hit (GRA-114).
     annotations: { readOnlyHint: false, destructiveHint: true },
+    // The carried tool's first call may answer the tool ask's card (GRA-116; `../tools.ts`).
+    _meta: ASK_CARD_TOOL_META,
   },
   handle: async (args, { deps, scope, channel }) => {
     const key = readToolKey(args);
