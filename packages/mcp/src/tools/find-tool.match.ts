@@ -28,7 +28,7 @@ export function queryWords(query: string): string[] {
   const words = query
     .toLowerCase()
     .split(WORD_SEPARATOR)
-    .filter((word) => word.length > 1);
+    .filter((word) => [...word].length > 1);
   return [...new Set(words)];
 }
 

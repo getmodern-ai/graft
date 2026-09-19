@@ -440,9 +440,9 @@ const HINTS: Record<string, { readOnlyHint: boolean; destructiveHint: boolean }>
   request_connection: { readOnlyHint: false, destructiveHint: false },
   request_credential: { readOnlyHint: false, destructiveHint: false },
   answer_ask: { readOnlyHint: false, destructiveHint: false },
-  write_file: { readOnlyHint: false, destructiveHint: false },
+  write_file: { readOnlyHint: false, destructiveHint: true },
   read_file: { readOnlyHint: true, destructiveHint: false },
-  run_command: { readOnlyHint: false, destructiveHint: false },
+  run_command: { readOnlyHint: false, destructiveHint: true },
   wait_for_process: { readOnlyHint: true, destructiveHint: false },
   read_web_page: { readOnlyHint: true, destructiveHint: false },
   check_tool: { readOnlyHint: true, destructiveHint: false },
@@ -481,11 +481,11 @@ describe("every fixed tool's annotations", () => {
     expect(description).toMatch(CARRIED_HINT);
   });
 
-  it("only run_tool and execute__ are destructive", () => {
+  it("only run_tool, execute__, write_file and run_command are destructive", () => {
     const destructive = Object.entries(HINTS)
       .filter(([, hints]) => hints.destructiveHint)
       .map(([name]) => name);
-    expect(destructive).toEqual(["run_tool"]);
+    expect(destructive).toEqual(["run_tool", "write_file", "run_command"]);
   });
 
   /** An authored tool's hints are the check's, passed through from the row (ADR 0008), never a default. */

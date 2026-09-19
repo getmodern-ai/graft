@@ -111,3 +111,10 @@ describe("rankTools", () => {
     expect(rankTools([items, ping], "")).toEqual([]);
   });
 });
+
+describe("one-character words are counted in code points (Greptile on #91)", () => {
+  it("drops a single non-BMP character as one character, not two UTF-16 units", () => {
+    expect(queryWords("𐐷")).toEqual([]);
+    expect(queryWords("𐐷𐐷 items")).toEqual(["𐐷𐐷", "items"]);
+  });
+});

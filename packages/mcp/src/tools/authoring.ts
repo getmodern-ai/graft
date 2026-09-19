@@ -120,7 +120,7 @@ const writeFile: MetaTool = {
     description:
       ADVANCED +
       "Writes a file on the agent's sandbox, creating directories as needed and replacing what was there. A relative path lands in the agent's drafts directory on the toolbox, which every sandbox of the agent's shares; an absolute path is written where it says. " +
-      `Up to ${MAX_WRITE_BYTES} bytes. Answers the path and the bytes written; check_tool checks a module before publish_tool publishes it.`,
+      `Up to ${MAX_WRITE_BYTES} bytes. Answers the path and the bytes written; check_tool checks a module before publish_tool publishes it. Marked destructive because an absolute path can replace a file anywhere on the shared toolbox mount.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -135,7 +135,7 @@ const writeFile: MetaTool = {
     },
     // The sandbox's own files, no vendor; both hints said outright because MCP reads an unset
     // destructiveHint as true (GRA-114).
-    annotations: { readOnlyHint: false, destructiveHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
   },
   handle: async (args, session) => {
     if (typeof args.content !== "string") {
@@ -210,7 +210,7 @@ const runCommandTool: MetaTool = {
       `Runs a shell command on the agent's sandbox and waits for it. Answers the exit code and the output (stdout and stderr interleaved; long output is cut to its last ${MAX_OUTPUT_CHARS} characters). ` +
       `Killed after timeoutSeconds (default ${DEFAULT_COMMAND_TIMEOUT_SECONDS}, at most ${MAX_COMMAND_TIMEOUT_SECONDS} when waiting). ` +
       `${detachedAdvice()} ` +
-      "Nothing run here holds a credential or reaches a vendor; code that calls a connection runs through that connection's execute__<connection id> tool.",
+      "Nothing run here holds a credential or reaches a vendor; code that calls a connection runs through that connection's execute__<connection id> tool. Marked destructive because a command can delete or overwrite files on the shared toolbox mount.",
     inputSchema: {
       type: "object",
       properties: {
@@ -225,7 +225,7 @@ const runCommandTool: MetaTool = {
       additionalProperties: false,
     },
     // No credential and no vendor reach (the description says so); GRA-114 for the explicit false.
-    annotations: { readOnlyHint: false, destructiveHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
   },
   handle: async (args, session) => {
     const parsed = readCommandInput(args);
