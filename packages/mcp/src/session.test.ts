@@ -19,14 +19,17 @@ import { executeToolDefinition } from "./tools/execute";
 import { META_TOOLS } from "./tools/meta";
 
 /**
- * The handshake carries the playbook (GRA-54). A client that loads no skill — Claude.ai, ChatGPT, a
- * bare MCP client — learns how to use Graft from two things and nothing else: the `instructions`
- * field of the `initialize` result and the tool descriptions. This suite holds both to what the
- * ticket asks: the instructions arrive, fit the budget some clients truncate at, and read in Graft's
- * voice; every fixed tool's description opens with when to call it and says what to do with a
- * handoff where it can return one; and the sentences the instructions share with the Hermes skill
- * (`skills/hermes-graft/SKILL.md`) are present in both, so the two cannot disagree on the order of
- * operations, the approval rule, the secrets rule, `run_tool` or where its input schema is read.
+ * The handshake carries the playbook (GRA-54), and the descriptions carry none of it (GRA-111). A
+ * client that loads no skill — Claude.ai, ChatGPT, a bare MCP client — learns how to use Graft from
+ * two things and nothing else: the `instructions` field of the `initialize` result and the tool
+ * descriptions. This suite holds each to its role: the instructions arrive, fit Claude Code's 2KB
+ * cap with the order of operations in the first 512 characters, read in Graft's voice and carry
+ * every rule of conduct; every fixed tool's description opens with when it is used, states the
+ * handoff shape it can answer, speaks in the third person and carries no rule (ChatGPT's classifier
+ * badged the rule-bearing ones "Suspicious Instruction"); and the sentences the instructions share
+ * with the Hermes skill (`skills/hermes-graft/SKILL.md`) are present in both, so the two cannot
+ * disagree on the order of operations, the approval rule, the secrets rule, the keyless and rotation
+ * rules, `run_tool` or where its input schema is read.
  */
 
 const TOKEN = "grft_session_test_token_0000000000000000000000";
@@ -118,7 +121,8 @@ describe("the initialize result", () => {
  * The ask card (GRA-84; ADR 0006 as amended 2026-09-18) as a host sees it over the handshake: the
  * `resources` capability, one resource listed and readable as the page, the render pointer on
  * exactly the three tools that can ask, the card's own tool hidden by visibility — and the
- * instructions untouched, since the card is the host's affair and the budget is spent.
+ * instructions naming `answer_ask` once, as the card's (GRA-111 moved that rule out of the
+ * description).
  */
 describe("the ask card over the session", () => {
   it("declares resources, lists ui://graft/ask with the app MIME type, and reads it as the page", async () => {
@@ -175,15 +179,13 @@ describe("the ask card over the session", () => {
     }
   });
 
-  it("lists answer_ask as app-only — the host hides it; this server cannot — with a description that tells a model off", async () => {
+  it("lists answer_ask as app-only — the host hides it; this server cannot — with a description that says whose it is", async () => {
     const harness = await initialize();
     try {
       const { tools } = await harness.client.listTools();
       const answerAsk = tools.find((tool) => tool.name === "answer_ask");
       expect(answerAsk?._meta).toEqual({ ui: { visibility: ["app"] } });
-      expect(answerAsk?.description?.startsWith("Called by Graft's ask card, never by you:")).toBe(
-        true,
-      );
+      expect(answerAsk?.description?.startsWith("Called by Graft's ask card")).toBe(true);
       // No other tool is app-only.
       expect(
         tools.filter(
@@ -195,16 +197,44 @@ describe("the ask card over the session", () => {
     }
   });
 
-  it("leaves the instructions untouched: no card, no answer_ask, the budget as it was", () => {
-    expect(SERVER_INSTRUCTIONS).not.toContain("answer_ask");
-    expect(SERVER_INSTRUCTIONS).not.toMatch(/\bcard\b/);
+  it("has the instructions name answer_ask once, as the card's and not the model's", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("answer_ask is the ask card's, not yours.");
+    expect(SERVER_INSTRUCTIONS.match(/answer_ask/g)).toHaveLength(1);
   });
 });
 
 describe("SERVER_INSTRUCTIONS", () => {
-  it("stays under the budget some clients truncate at", () => {
+  /** 2,048: Claude Code's per-server cap on the field (CHANGELOG 2.1.84), the one a host documents. */
+  it("stays under the budget, which is the one documented cap", () => {
+    expect(INSTRUCTIONS_BUDGET).toBe(2_048);
     expect(SERVER_INSTRUCTIONS.length).toBeLessThanOrEqual(INSTRUCTIONS_BUDGET);
     expect(SERVER_INSTRUCTIONS.length).toBeGreaterThan(INSTRUCTIONS_BUDGET / 2);
+  });
+
+  /** OpenAI: "Keep the most important details in the first 512 characters" (plugins/build/mcp-server). */
+  it("puts the order of operations in the first 512 characters", () => {
+    const head = SERVER_INSTRUCTIONS.slice(0, 512);
+    for (const step of [
+      "Call find_tool first",
+      "promote it",
+      "call request_connection",
+      "Call acquire only when nothing fits",
+    ]) {
+      expect(head, step).toContain(step);
+    }
+  });
+
+  /** The rules GRA-111 moved out of the descriptions, each present here in the words the skill uses. */
+  it("carries every rule of conduct the descriptions used to", () => {
+    for (const rule of [
+      "There is no route to a vendor except through a Graft tool.",
+      "Never propose a made-up key for a vendor that documents none.",
+      "A rotated or expired credential is request_credential on the existing connection, never a new one.",
+      "so do not tell the person to expect one",
+      "answer_ask is the ask card's, not yours.",
+    ]) {
+      expect(SERVER_INSTRUCTIONS, rule).toContain(rule);
+    }
   });
 
   it("reads in Graft's voice: no em dashes, no exclamation marks, no avoided nouns", () => {
@@ -250,27 +280,29 @@ describe("SERVER_INSTRUCTIONS", () => {
 });
 
 /**
- * The sentence each meta-tool's description opens with — when to call it — pinned so a rewrite that
- * loses the "when" fails here. Keyed by wire name, and the key set is the meta-tool set: a new
- * meta-tool with no entry fails too.
+ * The sentence each meta-tool's description opens with — when it is used, stated as a fact (GRA-111:
+ * "Used when", "Used for", never "Call X when") — pinned so a rewrite that loses the "when" or turns
+ * it back into an instruction fails here. Keyed by wire name, and the key set is the meta-tool set:
+ * a new meta-tool with no entry fails too. The order-of-operations facts are GRA-54's: find_tool
+ * before acquire, promote for a found tool, request_connection for a vendor with no connection,
+ * acquire when nothing covers the task, run_tool for a tool not in the visible list.
  */
 const WHEN: Record<string, string> = {
-  acquire: "Call acquire when find_tool found nothing that covers the task",
-  acquire_status: "Call acquire_status with the jobId acquire returned",
-  find_tool: "Call find_tool first, before acquire, whenever a task has no tool in your list",
-  promote: "Call promote when find_tool found a tool that is not in your working set",
-  demote: "Call demote when you no longer need a tool in your working set",
+  acquire:
+    "Used when find_tool found nothing that covers the task and the vendor has a connection in the agent's scope",
+  acquire_status: "Used with the jobId acquire answered",
+  find_tool: "Used first, before acquire, for a task no listed tool covers",
+  promote: "Used for a tool find_tool found that is not in the agent's working set",
+  demote: "Used for a tool the agent no longer needs in its working set",
   run_tool:
-    "Call run_tool to run a toolbox tool by vendor and name when it is not in your visible list",
-  request_connection:
-    "Call request_connection when the vendor a task needs has no connection in your scope",
-  request_credential:
-    "Call request_credential when a tool's call comes back with the vendor's 401 or 403",
-  // The ask card's tool (GRA-84): the host hides it from the model; the "when" is a "never".
-  answer_ask: "Called by Graft's ask card, never by you",
+    "Runs a toolbox tool by vendor and name, for the case where it is not in the agent's visible list",
+  request_connection: "Used when the vendor a task needs has no connection in the agent's scope",
+  request_credential: "Used when a tool's call comes back with the vendor's 401 or 403",
+  // The ask card's tool (GRA-84): the host hides it from the model; the description says whose it is.
+  answer_ask: "Called by Graft's ask card",
 };
 
-/** The tools that can answer a handoff, and so must say what to do with one. */
+/** The tools that can answer a handoff, and so must state its shape. */
 const HANDS_OFF = ["acquire", "run_tool", "request_connection", "request_credential"];
 
 describe("every meta-tool description", () => {
@@ -280,8 +312,8 @@ describe("every meta-tool description", () => {
 
   for (const tool of META_TOOLS) {
     const name = tool.definition.name;
-    it(`${name} says when to call it`, () => {
-      expect(tool.definition.description).toContain(WHEN[name]);
+    it(`${name} opens with when it is used`, () => {
+      expect(tool.definition.description?.startsWith(WHEN[name] ?? "\u0000")).toBe(true);
     });
   }
 
@@ -290,17 +322,66 @@ describe("every meta-tool description", () => {
     const description = META_TOOLS.find((tool) => tool.definition.name === "find_tool")?.definition
       .description;
     expect(description).toContain(
-      "call request_connection if the vendor has no connection in your scope",
+      "request_connection when the vendor has no connection in the agent's scope",
     );
   });
 
+  /**
+   * The handoff as a fact about the answer (GRA-111): the awaiting word, the url, and that the same
+   * call continues it. What the agent does with the link is the instructions' handoff rule.
+   */
   for (const name of HANDS_OFF) {
-    it(`${name} says what to do with the handoff it can return`, () => {
+    it(`${name} states the handoff shape it can answer`, () => {
       const description = META_TOOLS.find((tool) => tool.definition.name === name)?.definition
         .description;
       expect(description).toContain("awaiting_");
-      expect(description).toContain("exactly as returned");
-      expect(description).toMatch(/call (acquire |it )?again/);
+      expect(description).toMatch(/awaiting_\w+ with a url/);
+      expect(description).toMatch(/the same (call|proposal)/);
+    });
+  }
+});
+
+/**
+ * Descriptions describe; instructions instruct (GRA-111). ChatGPT's prompt-injection classifier read
+ * the rule-bearing descriptions GRA-54 wrote as a "Suspicious Instruction" and badged the person's
+ * confirmation on every call, and both hosts' published guidance says the same thing: Anthropic's
+ * review criteria, "Describe what the tool does. Do not tell Claude how to behave."; OpenAI's, put
+ * "required tool sequences" in `instructions`. So a fixed tool's definition is a capability
+ * statement in the third person: no imperative to the model, no rule of conduct, not a word about
+ * how the person is to be spoken to. The denylist is the markers those carry, and the whole
+ * definition is scanned, since a property description is metadata the host reads too.
+ * `SERVER_INSTRUCTIONS` is exempt by design; it is where those words belong.
+ */
+const CONDUCT_MARKERS = [
+  /\bnever\b/i,
+  /\bdo not\b/i,
+  /\balways\b/i,
+  /\byou must\b/i,
+  /tell the person/i,
+  /ask the person/i,
+  // Third person: the description speaks of "the agent" and "the person", not to "you".
+  /\byou\b/i,
+  /\byour\b/i,
+];
+
+describe("every fixed tool's definition", () => {
+  const definitions = () => [
+    ...META_TOOLS.map((tool) => tool.definition),
+    ...AUTHORING_TOOLS.map((tool) => tool.definition),
+    executeToolDefinition(DEMO_CONNECTION),
+  ];
+
+  for (const definition of definitions()) {
+    it(`${definition.name} carries no rule of conduct and speaks in the third person`, () => {
+      const text = JSON.stringify(definition);
+      for (const marker of CONDUCT_MARKERS) {
+        expect(text, String(marker)).not.toMatch(marker);
+      }
+    });
+
+    /** Claude Code truncates a description at 2KB, the same cap as the instructions (CHANGELOG 2.1.84). */
+    it(`${definition.name}'s description fits the 2KB a host truncates at`, () => {
+      expect(definition.description?.length ?? 0).toBeLessThanOrEqual(INSTRUCTIONS_BUDGET);
     });
   }
 });
@@ -330,13 +411,13 @@ describe("the authoring set and the execute tool", () => {
     });
   }
 
-  it("execute__<connection id> says it is the by-hand path and what to do with the build ask", () => {
+  it("execute__<connection id> says it is the by-hand path and states the build ask's shape", () => {
     const definition = executeToolDefinition(DEMO_CONNECTION);
     expect(definition.description).toContain(
-      "when the person asked you to author a tool yourself rather than through acquire",
+      "for an agent the person asked to author a tool itself rather than through acquire",
     );
-    expect(definition.description).toContain("awaiting_approval");
-    expect(definition.description).toContain("exactly as returned");
+    expect(definition.description).toContain("awaiting_approval with a url");
+    expect(definition.description).toMatch(/the same call/);
   });
 });
 
@@ -452,9 +533,15 @@ const SHARED = [
   "the link exactly as returned",
   "then wait",
   "call the same tool again with the same arguments",
-  // Secrets.
+  // Secrets, and the two connection rules GRA-111 moved here from the descriptions.
   "never ask the person for an API key, a password or a token in chat, whatever the vendor calls it",
   "the console is where secrets go; you never see one",
+  "never propose a made-up key",
+  "request_credential on the existing connection, never a new one",
+  "starts without a second link",
+  "do not tell the person to expect one",
+  // No route to a vendor but a Graft tool.
+  "there is no route to a vendor except through a Graft tool",
   // A snapshotted list.
   "some clients snapshot the tool list per conversation",
   "run_tool { vendor, name, input } calls it by name",
@@ -484,51 +571,59 @@ describe("the instructions and the Hermes skill", () => {
 
 /**
  * GRA-75: the person may grant the build approval on the connection page, so no text the agent
- * reads promises a second link. Pinned as words, like SHARED, between `request_connection`'s
- * description, the awaiting answer's sentence and the skill — not the instructions, which have no
- * room for it under the budget (1774 of 1800 on 2026-09-18); the description is the long form.
+ * reads promises a second link. The fact — acquire starts without a second link — is said by four
+ * texts: the instructions, `request_connection`'s description, the awaiting answer's sentence and
+ * the skill. The rule — do not tell the person to expect one — is the instructions' and the skill's
+ * alone (GRA-111), and the description is checked not to carry it. Compared as words, like SHARED.
  */
 describe("the build approval on the connection page", () => {
-  it("is said the same way by request_connection's description, its awaiting answer and the Hermes skill", async () => {
+  it("is a fact in four texts and a rule in two", async () => {
     const skill = words(await readFile(HERMES_SKILL_PATH, "utf8"));
     const description = words(
       META_TOOLS.find((tool) => tool.definition.name === "request_connection")?.definition
         .description ?? "",
     );
     const awaiting = words(BUILD_APPROVAL_ON_THE_PAGE);
-    for (const sentence of [
-      "allow you to build tools against the connection, on by default",
-      "acquire against it starts without a second link",
-    ]) {
-      const needle = words(sentence);
-      expect(description, `description: ${sentence}`).toContain(needle);
-      expect(awaiting, `awaiting answer: ${sentence}`).toContain(needle);
-      expect(skill, `SKILL.md: ${sentence}`).toContain(needle);
+    const instructions = words(SERVER_INSTRUCTIONS);
+    const fact = words("starts without a second link");
+    for (const [name, text] of [
+      ["instructions", instructions],
+      ["description", description],
+      ["awaiting answer", awaiting],
+      ["SKILL.md", skill],
+    ] as const) {
+      expect(text, name).toContain(fact);
     }
-    expect(description).toContain(words("do not tell the person to expect one"));
-    expect(skill).toContain(words("do not tell the person to expect one"));
+    const onByDefault = words("build approval, on by default");
+    expect(description).toContain(onByDefault);
+    expect(instructions).toContain(onByDefault);
+    const rule = words("do not tell the person to expect one");
+    expect(instructions).toContain(rule);
+    expect(skill).toContain(rule);
+    expect(description).not.toContain(rule);
   });
 });
 
 /**
- * The rotation rule (ADR 0008 as amended 2026-09-18; GRA-76), carried by the two connection tools'
- * descriptions and the skill rather than by the instructions: `SERVER_INSTRUCTIONS` sits within
- * thirty characters of `INSTRUCTIONS_BUDGET`, and the descriptions are the long form a client
- * reads beside them. One sentence, three texts, compared as words.
+ * The rotation rule (ADR 0008 as amended 2026-09-18; GRA-76) is the instructions' and the skill's
+ * (GRA-111 moved it out of the two connection descriptions, where ChatGPT's classifier read it as
+ * an instruction). One sentence, two texts, compared as words; and neither connection description
+ * says "never" about anything.
  */
 const ROTATION_RULE =
-  "a rotated or expired credential is request_credential against the existing connection, never a new connection: a new connection is a new row with no scope and no approvals";
+  "a rotated or expired credential is request_credential on the existing connection, never a new one";
 
-describe("the connection descriptions and the Hermes skill", () => {
-  it("say a rotation is request_credential against the existing connection, never a new one", async () => {
+describe("the rotation rule", () => {
+  it("is said by the instructions and the Hermes skill, and by no description", async () => {
     const skill = words(await readFile(HERMES_SKILL_PATH, "utf8"));
     const needle = words(ROTATION_RULE);
+    expect(words(SERVER_INSTRUCTIONS), "instructions").toContain(needle);
+    expect(skill, "SKILL.md").toContain(needle);
     for (const name of ["request_connection", "request_credential"]) {
       const description = META_TOOLS.find((tool) => tool.definition.name === name)?.definition
         .description;
-      expect(words(description ?? ""), name).toContain(needle);
+      expect(words(description ?? ""), name).not.toContain("never");
     }
-    expect(skill, "SKILL.md").toContain(needle);
   });
 
   /**

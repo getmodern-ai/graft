@@ -96,10 +96,9 @@ const findTool: MetaTool = {
   definition: {
     name: FIND_TOOL,
     description:
-      "Call find_tool first, before acquire, whenever a task has no tool in your list. " +
-      "It searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description, every word of the query, in any order; a tool no version of which has passed its dry run is not listed. " +
-      "Each hit carries vendor and name (what promote, demote and run_tool take), its inputSchema (what run_tool's input must match), whether it is in your working set, and its read-only and destructive hints. " +
-      "A hit that is not promoted is one promote call from your list. When the answer is empty, call request_connection if the vendor has no connection in your scope (an execute__<connectionId> tool in your list names each one), otherwise acquire.",
+      "Used first, before acquire, for a task no listed tool covers: searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description, matching every word of the query in any order; a tool no version of which has passed its dry run is not listed. " +
+      "Each hit carries vendor and name (the arguments promote, demote and run_tool take), its inputSchema (the shape run_tool's input must match), whether it is in the agent's working set, and its read-only and destructive hints. " +
+      "A hit that is not promoted is one promote call from the agent's list. An empty answer leads to request_connection when the vendor has no connection in the agent's scope (each connection in scope is named by an execute__<connectionId> tool in the list), otherwise to acquire.",
     inputSchema: {
       type: "object",
       properties: {
@@ -158,8 +157,8 @@ const promote: MetaTool = {
   definition: {
     name: PROMOTE,
     description:
-      "Call promote when find_tool found a tool that is not in your working set. " +
-      "It appears in your tool list as vendor__name with its own schema, so re-fetch the list, or call it through run_tool until the list refreshes. " +
+      "Used for a tool find_tool found that is not in the agent's working set: adds it. " +
+      "The tool then appears in the agent's list as vendor__name with its own schema once the list is re-fetched, and run_tool calls it by name before that. " +
       "Answers the working set's new size. Nothing is authored.",
     inputSchema: {
       type: "object",
@@ -198,9 +197,9 @@ const demote: MetaTool = {
   definition: {
     name: DEMOTE,
     description:
-      "Call demote when you no longer need a tool in your working set, to keep your list short. " +
+      "Used for a tool the agent no longer needs in its working set: removes it and keeps the list short. " +
       "The tool stays in the toolbox, one find_tool and promote away; nothing is deleted. " +
-      "Your tool list changes; re-fetch it. Answers the working set's new size.",
+      "The tool list changes (tools/list_changed). Answers the working set's new size.",
     inputSchema: {
       type: "object",
       properties: toolKeyProperties,
@@ -230,11 +229,11 @@ const runTool: MetaTool = {
   definition: {
     name: RUN_TOOL,
     description:
-      "Call run_tool to run a toolbox tool by vendor and name when it is not in your visible list: the turn a tool was just published or promoted, or a client that snapshots the list per conversation. " +
-      "Exactly what calling the tool first-class does: the input is validated against the tool's inputSchema, which the acquire result and find_tool's hits carry and an input_invalid refusal answers beside the problems, and the vendor's answer, or the tool's failure, comes back verbatim. " +
-      "A tool that changes something may answer awaiting_approval with a url on its first call: give the person the link exactly as returned, wait, and call again with the same arguments once they have answered. " +
+      "Runs a toolbox tool by vendor and name, for the case where it is not in the agent's visible list: the turn a tool was just published or promoted, or a client that snapshots the list per conversation. " +
+      "The effect is exactly a first-class call: the input is validated against the tool's inputSchema, which the acquire result and find_tool's hits carry and an input_invalid refusal answers beside the problems, and the vendor's answer, or the tool's failure, comes back verbatim. " +
+      "A tool that changes something may answer awaiting_approval with a url on its first call: a handoff whose next step is the person's, in the console; the same call with the same arguments, once they have answered, runs the tool. " +
       "With dryRun: true reads reach the vendor and every other method stops at the proxy with a preview of the request; the answer is a dry-run report and nothing changes at the vendor. " +
-      `For a call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds, pass detached: true and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}), then poll the returned processName with wait_for_process. A dry run is always waited for. ` +
+      `A call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds takes detached: true and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}), and answers a processName that wait_for_process polls; a dry run is waited for whatever detached says. ` +
       "Marked destructive because the hint is the carried tool's, which the host cannot know per call: the tool's own annotations are in find_tool's hit and the acquire result.",
     inputSchema: {
       type: "object",
@@ -243,7 +242,7 @@ const runTool: MetaTool = {
         input: {
           type: "object",
           description:
-            "The tool's input, matching the inputSchema the acquire result or find_tool answered. Omit for a tool that takes nothing.",
+            "The tool's input, matching the inputSchema the acquire result or find_tool answered; absent for a tool that takes nothing.",
         },
         dryRun: {
           type: "boolean",
@@ -253,7 +252,7 @@ const runTool: MetaTool = {
         detached: {
           type: "boolean",
           description:
-            "Start the run in the background and return a processName at once; poll it with wait_for_process.",
+            "Starts the run in the background and answers a processName at once, which wait_for_process polls.",
         },
         timeoutSeconds: {
           type: "integer",
@@ -304,22 +303,20 @@ const acquire: MetaTool = {
   definition: {
     name: ACQUIRE,
     description:
-      "Call acquire when find_tool found nothing that covers the task and the vendor has a connection in your scope. " +
-      "Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into your working set. " +
-      "Answers a jobId at once, before anything is built: poll acquire_status with it and relay progress. " +
-      "The first acquire against a connection may answer awaiting_approval with a url, unless the person allowed building when they confirmed the connection: give the person the link exactly as returned, wait, and call acquire again with the same arguments once they have answered. " +
-      "Do not start a second acquire for the same goal while one runs.",
+      "Used when find_tool found nothing that covers the task and the vendor has a connection in the agent's scope: starts the job in which Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into the agent's working set. " +
+      "Answers { jobId, status, progress } at once, before anything is built; acquire_status reads the job from then on. " +
+      "The first acquire against a connection may instead answer awaiting_approval with a url, unless the person granted the build approval when they confirmed the connection: a handoff whose next step is the person's, in the console or on the ask card; the same call with the same arguments, once they have answered, starts the job.",
     inputSchema: {
       type: "object",
       properties: {
         connectionId: {
           type: "string",
-          description: "The connection to author against; it must be in your scope.",
+          description: "The connection to author against, one in the agent's scope.",
         },
         goal: { type: "string", description: "What the tool must do, in a sentence or two." },
         hints: {
           type: "string",
-          description: "Anything you already know: an endpoint, a documentation URL, a field name.",
+          description: "Anything already known: an endpoint, a documentation URL, a field name.",
         },
       },
       required: ["connectionId", "goal"],
@@ -397,11 +394,10 @@ const acquireStatus: MetaTool = {
   definition: {
     name: ACQUIRE_STATUS,
     description:
-      "Call acquire_status with the jobId acquire returned, every ten to twenty seconds while the job is queued or running, or when the person asks how it is going. " +
+      "Used with the jobId acquire answered, every ten to twenty seconds while the job is queued or running: reads the job. " +
       "Answers status, the progress lines so far, the attempt count and, once the job has settled, result. " +
-      "Tell the person a new progress line in one sentence, only when it changed. " +
-      "On succeeded, result.tool is the new tool's wire name, vendor__name: call it for the person's request, through run_tool until it is in your list. " +
-      "On failed, say what result.failure and result.message say in the person's words and what you will try next; never reach the vendor yourself.",
+      "On succeeded, result.tool is the new tool's wire name, vendor__name, with result.vendor, result.name and result.inputSchema as run_tool takes them; the tool is callable first-class once the tool list refreshes and through run_tool before that. " +
+      "On failed, result.failure names the cause in one word, result.message says it in a sentence, and result.lastDiagnostics and result.tried carry what the job saw.",
     inputSchema: {
       type: "object",
       properties: { jobId: { type: "string", description: "The id acquire returned." } },
@@ -428,30 +424,23 @@ const requestConnectionTool: MetaTool = {
   definition: {
     name: REQUEST_CONNECTION,
     description:
-      "Call request_connection when the vendor a task needs has no connection in your scope: no execute__ tool names it and find_tool shows none. " +
-      "Propose its hosts, auth scheme, non-secret parameters and the documentation URL you read, and receive a handoff url. " +
-      "The person opens it in the console, checks what you proposed, edits it if need be and enters the secret there; you never see the credential, this tool never takes one, and you never ask for one in chat. " +
-      "Every host must be a public https host: private, loopback, link-local and cloud-metadata addresses are refused here and again by the proxy. " +
-      "List under hosts the hosts tool calls will reach, not the sign-in endpoints: the hosts of authorizeUrl and tokenUrl, and Google's accounts.google.com and oauth2.googleapis.com, are set aside and named in the answer, and a primaryHost that is one is refused. " +
-      `Schemes: ${describeSchemes()}. ` +
-      "For a public API that documents no credential (Open-Meteo, an open-data endpoint) propose scheme none: the person confirms the connection and enters nothing. Never propose a key scheme with a made-up value for such a vendor — some read the key's presence and answer differently, Open-Meteo with a redirect to its paid host. " +
-      "For oauth_authorization_code (Gmail, Slack user tokens, Notion) propose authorizeUrl, tokenUrl and scopes from the vendor's OAuth documentation and leave clientId out: the person registers a client at the vendor with the redirect URI the form shows, enters its id and secret on the form, and completes the consent in a popup; the awaiting answer carries that redirectUri so you can tell them exactly what to paste, and the call answers connected once the tokens are stored. " +
-      "On a deployment with a connection provider such as Pipedream, a vendor it covers (Gmail on Graft Cloud) needs no client and no secret: the awaiting answer names the provider, the person presses one button in the console and signs in at the vendor on the provider's page, and the vendor's token stays with the provider — say so instead of the client instructions. " +
-      "The call waits a short while for the person; if they have not finished it answers awaiting_connection with the url to relay: give them the link exactly as returned, say what it is for, wait, and call again with the same proposal once they say it is done; the same link comes back until they have, then connected. " +
-      "The page also offers to allow you to build tools against the connection, on by default: left on, acquire against it starts without a second link, so do not tell the person to expect one. " +
-      "Once connected the connection is in your scope and its execute__<connectionId> tool is in your list. " +
-      "A connection the person already has for the same vendor and hosts is never proposed twice: usable and in your scope, it answers connected at once. " +
-      "Usable but made for another of their agents, it is an ask of its own: the call answers awaiting_scope with the url to relay, the person allows you to use the existing connection in the console (no new connection, nothing entered), and the call then answers connected. " +
-      "Otherwise the call refuses with connection_exists naming it and the step that keeps it (request_credential, or the console's Reconnect). " +
-      "A rotated or expired credential is request_credential against the existing connection, never a new connection: a new connection is a new row with no scope and no approvals. " +
-      "A vendor this deployment's API gateway covers connects with no person step: the call answers connected at once with provider gateway, the gateway holds the credential and the scheme you proposed is not used.",
+      "Used when the vendor a task needs has no connection in the agent's scope. " +
+      "Takes a proposal (hosts, auth scheme, non-secret parameters, documentation URL) and answers a handoff url: the person checks and edits the proposal in the console and enters the secret there. This tool takes no credential. " +
+      "Hosts must be public https hosts. Sign-in endpoints (the hosts of authorizeUrl and tokenUrl, and Google's) are set aside and named in the answer; a primaryHost that is one is refused. " +
+      "A public API that documents no credential is scheme none; the person confirms and enters nothing. " +
+      "For oauth_authorization_code the proposal carries authorizeUrl, tokenUrl and scopes and no clientId: the person registers a client at the vendor with the redirect URI the form shows (redirectUri in the awaiting answer), enters its id and secret and completes the consent. " +
+      "A vendor a provider such as Pipedream covers needs no client and no secret: the awaiting answer names the provider and the person signs in at the vendor from the console. " +
+      "The call waits a short while for the person, then answers awaiting_connection with a url, the same url until they have finished, then connected; the same proposal, repeated, picks the ask up. " +
+      "Connected, the connection is in the agent's scope with its execute__<connectionId> tool in the list; the page also offers the build approval, on by default, so acquire against the connection starts without a second link. " +
+      "A connection the person already has for the same vendor and hosts is not made twice: in the agent's scope, connected at once; made for another of their agents, awaiting_scope with a url, answered by the person in the console (no new connection, nothing entered), then connected on the repeated call; otherwise connection_exists names it and the step that keeps it (request_credential, or the console's Reconnect). " +
+      "A vendor this deployment's API gateway covers connects with no person step: connected at once with provider gateway, the credential held by the gateway.",
     inputSchema: {
       type: "object",
       properties: {
         vendor: {
           type: "string",
           description:
-            'A kebab-case vendor slug, e.g. "unleashed" — the key tools authored against this connection are bound to.',
+            'A kebab-case vendor slug, e.g. "unleashed": the key tools authored against this connection are bound to.',
         },
         displayName: {
           type: "string",
@@ -467,23 +456,23 @@ const requestConnectionTool: MetaTool = {
           type: "array",
           items: { type: "string" },
           description:
-            "Other hostnames the connection may reach (an SDK that spans several hosts); the primary's is included on its own. Never a sign-in endpoint: those belong in schemeConfig and are set aside here.",
+            "Other hostnames the connection may reach (an SDK that spans several hosts); the primary's is included on its own. Sign-in endpoints belong in schemeConfig and are set aside here.",
         },
         scheme: {
           type: "string",
           enum: [...AUTH_SCHEMES],
-          description:
-            "The auth scheme, as the proxy names them — the one the vendor documents. A vendor a provider such as Pipedream covers is connected by that provider instead; you still name the scheme the vendor documents.",
+          description: `The auth scheme, as the proxy names them: the one the vendor documents. Schemes: ${describeSchemes()}. A vendor a provider such as Pipedream covers is connected by that provider instead, under the scheme the vendor documents.`,
         },
         schemeConfig: {
           type: "object",
           additionalProperties: { type: "string" },
           description:
-            'The scheme\'s non-secret parameters, e.g. { "headerName": "x-api-key" } for api_key_header. Never a secret.',
+            'The scheme\'s non-secret parameters, e.g. { "headerName": "x-api-key" } for api_key_header; the secret itself is entered in the console.',
         },
         docsUrl: {
           type: "string",
-          description: "The documentation page you read, so the person can check it.",
+          description:
+            "The documentation page the proposal was read from, for the person to check.",
         },
       },
       required: ["vendor", "primaryHost", "scheme"],
@@ -507,23 +496,21 @@ const requestCredentialTool: MetaTool = {
   definition: {
     name: REQUEST_CREDENTIAL,
     description:
-      "Call request_credential when a tool's call comes back with the vendor's 401 or 403, or the person says a key was rotated: it asks them to re-enter the connection's credential in the console and answers a handoff url. " +
-      "Never ask for the new key in chat. The connection must be in your scope. " +
-      "A rotated or expired credential is request_credential against the existing connection, never a new connection: a new connection is a new row with no scope and no approvals. " +
-      "The re-entry replaces the credential and changes no approval; a revoked connection is reconnected by it. " +
-      "The call waits a short while; if the person has not finished it answers awaiting_credential with the url: give them the link exactly as returned, say what it is for, wait, and call again once they say it is done; the same link comes back until they have, then connected.",
+      "Used when a tool's call comes back with the vendor's 401 or 403, or the person reports a rotated key: asks the person to re-enter the credential of a connection in the agent's scope, in the console, and answers a handoff url. This tool takes no credential. " +
+      "The re-entry replaces the credential on the existing connection and changes no approval; a revoked connection is reconnected by it. " +
+      "The call waits a short while for the person, then answers awaiting_credential with a url, the same url on every call until they have finished, then connected; the same call, repeated, picks the ask up.",
     inputSchema: {
       type: "object",
       properties: {
         connectionId: {
           type: "string",
           description:
-            "The connection whose credential the vendor refused — the id in execute__<connectionId>.",
+            "The connection whose credential the vendor refused: the id in execute__<connectionId>.",
         },
         reason: {
           type: "string",
           description:
-            "What the vendor said, in a sentence, so the person knows why; shown as your words.",
+            "What the vendor said, in a sentence, shown to the person as the agent's words.",
         },
       },
       required: ["connectionId"],
