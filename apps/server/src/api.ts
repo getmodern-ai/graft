@@ -565,6 +565,7 @@ export function createApi(options: ApiOptions): Hono {
         getSession: options.auth.getSession,
         handoff,
         oauth: options.oauth,
+        notifier: options.notifier,
       }),
     );
   }
