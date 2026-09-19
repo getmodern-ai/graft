@@ -373,6 +373,9 @@ const acquire: MetaTool = {
         "This deployment has no model configured, so Graft cannot author a tool. Say so rather than retrying; the advanced tools (write_file, check_tool, publish_tool) still let you drive the loop yourself.",
       );
     }
+    // One deadline for the whole call: the build approval's wait and the job's wait share it, so
+    // a call is never open for twice the configured limit (Greptile on #99).
+    const deadline = Date.now() + Math.max(0, deps.handoff.waitMs);
     const gate = await requireBuildApproval(ctx, scope, connectionId, deps, channel);
     if (!gate.pass) return toolAskResult(session, gate);
 
@@ -392,7 +395,7 @@ const acquire: MetaTool = {
     // in time answers with its result, and the model never has a chance to be impatient.
     const settled = await awaitJobNews(ctx, scope, job.id, deps, {
       sinceProgress: Number.POSITIVE_INFINITY,
-      maxWaitMs: deps.handoff.waitMs,
+      maxWaitMs: deadline - Date.now(),
     });
     return toolResult(acquireStatusOf(settled ?? job));
   },
