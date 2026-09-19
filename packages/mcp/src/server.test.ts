@@ -29,6 +29,10 @@ import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
 import { authoredToolName, executeToolName } from "./tool-names";
+import { AUTHORING_TOOLS } from "./tools/authoring";
+
+const AUTHORING_NAMES = new Set(AUTHORING_TOOLS.map((tool) => tool.definition.name));
+
 import { META_TOOL_NAMES } from "./tools";
 import { readWebPage } from "./web-page";
 
@@ -828,6 +832,61 @@ describe("a tool whose connection was revoked follows the vendor's one live conn
       await a.close();
     }
   }, 30_000);
+});
+
+/**
+ * GRA-125 (ADR 0004 as amended 2026-09-20): a chat product's agent — one held over OAuth — lists
+ * the meta-tools and its promoted tools alone; the authoring set and the execute__ tools are for an
+ * agent driven by hand under a static token, and a call to one by a chat product's agent is refused
+ * by name. find_tool carries the agent's connections, which is where such an agent learns the
+ * connectionId acquire takes.
+ */
+describe("a chat product's agent", () => {
+  const AGENT_CHAT = "agent_chat";
+  const TOKEN_CHAT = "grft_token_for_agent_chat_00000000000000000000";
+
+  it("lists neither the authoring set nor an execute tool, is refused by name when it calls one, and learns its connections from find_tool", async () => {
+    store.addAgent({
+      scopeMode: "all",
+      id: AGENT_CHAT,
+      personId: PERSON,
+      token: TOKEN_CHAT,
+      connectedVia: { clientId: "client_chat", clientName: "ChatGPT" },
+    });
+    const chat = await connect(TOKEN_CHAT);
+    const a = await connect(TOKEN_A);
+    try {
+      const names = await chat.names();
+      expect(names).toEqual([...META_TOOL_NAMES.filter((n) => !AUTHORING_NAMES.has(n))]);
+      expect(names.some((n) => n.startsWith("execute__"))).toBe(false);
+      // The static-token agent's list is what it was.
+      expect(await a.names()).toContain(executeToolName(CONN_DEMO));
+      expect(await a.names()).toContain("write_file");
+
+      for (const [name, args] of [
+        ["write_file", { path: "x.ts", content: "" }],
+        [executeToolName(CONN_DEMO), { command: "true" }],
+        ["read_web_page", { url: "https://docs.demo.example" }],
+      ] as const) {
+        const refused = body(await chat.call(name, args as Record<string, unknown>));
+        expect(refused, name).toMatchObject({ error: "refused", reason: "advanced_tools_hidden" });
+        expect(String(refused.message)).toContain("acquire");
+      }
+
+      const found = body(await chat.call("find_tool", { query: "nothing-like-this" }));
+      expect(found.tools).toEqual([]);
+      expect(found.connections).toEqual(
+        expect.arrayContaining([
+          { connectionId: CONN_DEMO, vendor: "demo", displayName: "Demo Orders" },
+        ]),
+      );
+      expect(String(found.note)).toContain("connections");
+    } finally {
+      await chat.close();
+      await a.close();
+      store.agents.delete(AGENT_CHAT);
+    }
+  });
 });
 
 describe("find_tool", () => {

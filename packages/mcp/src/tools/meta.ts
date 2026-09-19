@@ -7,6 +7,7 @@ import {
   getAgentScope,
   getToolByName,
   HINTS_MAX_LENGTH,
+  listConnections,
   listTools,
   listWorkingSet,
   promoteTool,
@@ -102,7 +103,7 @@ const findTool: MetaTool = {
     description:
       "Used first, before acquire, for a task no listed tool covers: searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description, matching every word of the query in any order; a tool no version of which has passed its dry run is not listed. " +
       "Each hit carries vendor and name (the arguments promote, demote and run_tool take), its inputSchema (the shape run_tool's input must match), whether it is in the agent's working set, and its read-only and destructive hints. " +
-      "A hit that is not promoted is one promote call from the agent's list. An empty answer leads to request_connection when the vendor has no connection in the agent's scope (each connection in scope is named by an execute__<connectionId> tool in the list), otherwise to acquire.",
+      "A hit that is not promoted is one promote call from the agent's list. The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named.",
     inputSchema: {
       type: "object",
       properties: {
@@ -124,10 +125,22 @@ const findTool: MetaTool = {
         "query must be a non-empty string with a word of two or more characters",
       );
     }
-    const [tools, workingSet] = await Promise.all([
+    const [tools, workingSet, scopeIds, allConnections] = await Promise.all([
       listTools(ctx, principal, deps.tool),
       listWorkingSet(ctx, scope, deps.workingSet),
+      getAgentScope(ctx, scope, deps.agent),
+      listConnections(ctx, principal, deps.connection),
     ]);
+    // The connections acquire can author against, by id (GRA-125): a chat product's agent lists
+    // no execute__ tools, so this is where it learns a connectionId.
+    const inScope = new Set(scopeIds);
+    const connections = allConnections
+      .filter((connection) => inScope.has(connection.id) && connection.revokedAt === null)
+      .map((connection) => ({
+        connectionId: connection.id,
+        vendor: connection.vendor,
+        displayName: connection.displayName,
+      }));
     const promoted = new Set(workingSet.map((entry) => entry.toolId));
     // Every word of the query, in any order, across vendor, name and description, ranked by where
     // the words hit (`find-tool.match.ts`, GRA-115). Ranking by use — how recently an agent ran the
@@ -149,9 +162,10 @@ const findTool: MetaTool = {
     }));
     return toolResult({
       tools: hits,
+      connections,
       note:
         hits.length === 0
-          ? "Nothing in the toolbox matches. If the vendor has a connection in your scope (an execute__<connectionId> tool in your list names it), acquire authors a new tool against it; if not, request_connection comes first."
+          ? "Nothing in the toolbox matches. If the vendor is among connections, acquire authors a new tool against its connectionId; if not, request_connection comes first."
           : "promote a tool to add it to your list; run_tool runs one without promoting it.",
     });
   },

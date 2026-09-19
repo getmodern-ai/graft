@@ -327,6 +327,13 @@ directory on the server's own disk for a laptop without a daemon — the toolbox
 directory too, for as long as the process does — which is not a sandbox, and `@graft/env` refuses it
 in production and beside `cloud`.
 
+**A chat product's agent lists no authoring tool and no `execute__` tool** (GRA-125; ADR 0004 as
+amended 2026-09-20). `packages/mcp/src/by-hand.ts` judges the agent once per session by its
+`connected_via_client_id`: a static-token agent (Hermes, OpenClaw) lists the whole set; an agent a
+chat product holds over OAuth lists the meta-tools and its promoted tools, and a call to a hidden tool
+is refused `advanced_tools_hidden`. `find_tool` answers `connections` — every live connection in the
+agent's scope with the `connectionId` `acquire` takes — which is where such an agent learns one.
+
 **The `initialize` result carries the playbook, and the descriptions carry none of it** (GRA-54,
 GRA-111). `SERVER_INSTRUCTIONS` in `packages/mcp/src/session.ts` is what a client that loads no skill
 — Claude.ai, ChatGPT, a bare MCP client — shows its model, and the one place on the wire a rule of
