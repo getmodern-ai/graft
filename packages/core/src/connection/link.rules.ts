@@ -12,6 +12,8 @@
  * connection when there is one. The waiting console is waiting on the ask.
  */
 
+import { FROM_CARD, FROM_CARD_PARAM } from "./card.rules";
+
 /** Where the provider's page sends the browser back: the server's return route, no session. */
 export const LINK_CALLBACK_PATH = "/api/providers/link/callback";
 
@@ -73,16 +75,23 @@ export const LINK_CONSOLE_CALLBACK_PATH = "/link/callback";
 
 /**
  * The redirect the return route answers with: the console route with the outcome in its query and
- * nothing else in it. `oauth.rules.ts`'s `oauthCallbackRedirect` has the string handling and the
+ * nothing else in it — save `from=card` when the link was minted by the ask card (GRA-117;
+ * `card.rules.ts`), which the return route copies through from its own query so the console page
+ * knows to close itself. `oauth.rules.ts`'s `oauthCallbackRedirect` has the string handling and the
  * constraint (`GRAFT_CONSOLE_URL` carrying a path is GRA-50's gap); a null id is left out rather
  * than written as the word `null`.
  */
-export function linkCallbackRedirect(consoleUrl: string, outcome: LinkCallbackOutcome): string {
+export function linkCallbackRedirect(
+  consoleUrl: string,
+  outcome: LinkCallbackOutcome,
+  options: { fromCard?: boolean } = {},
+): string {
   const base = consoleUrl.replace(/\/+$/, "");
   const query = new URLSearchParams({ status: outcome.status });
   if (outcome.pendingActionId !== null) query.set("pendingActionId", outcome.pendingActionId);
   if (outcome.connectionId !== null) query.set("connectionId", outcome.connectionId);
   query.set("message", outcome.message);
+  if (options.fromCard) query.set(FROM_CARD_PARAM, FROM_CARD);
   return `${base}${LINK_CONSOLE_CALLBACK_PATH}?${query}`;
 }
 

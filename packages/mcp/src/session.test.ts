@@ -179,19 +179,27 @@ describe("the ask card over the session", () => {
     }
   });
 
-  it("lists answer_ask as app-only — the host hides it; this server cannot — with a description that says whose it is", async () => {
+  it("lists answer_ask, start_link and ask_status as app-only — the host hides them; this server cannot — each with a description that says whose it is", async () => {
     const harness = await initialize();
     try {
       const { tools } = await harness.client.listTools();
-      const answerAsk = tools.find((tool) => tool.name === "answer_ask");
-      expect(answerAsk?._meta).toEqual({ ui: { visibility: ["app"] } });
-      expect(answerAsk?.description?.startsWith("Called by Graft's ask card")).toBe(true);
+      // The card's three tools (GRA-84; GRA-117 added the link's start and the status read).
+      for (const name of ["answer_ask", "start_link", "ask_status"]) {
+        const tool = tools.find((candidate) => candidate.name === name);
+        expect(tool?._meta, name).toEqual({ ui: { visibility: ["app"] } });
+        expect(tool?.description?.startsWith("Called by Graft's ask card"), name).toBe(true);
+      }
       // No other tool is app-only.
       expect(
-        tools.filter(
-          (tool) => (tool._meta?.ui as { visibility?: string[] } | undefined)?.visibility,
-        ),
-      ).toHaveLength(1);
+        tools
+          .filter((tool) => (tool._meta?.ui as { visibility?: string[] } | undefined)?.visibility)
+          .map((tool) => tool.name)
+          .sort(),
+      ).toEqual(["answer_ask", "ask_status", "start_link"]);
+      // The status read is the one of the three a host may call freely: it records nothing.
+      expect(tools.find((tool) => tool.name === "ask_status")?.annotations?.readOnlyHint).toBe(
+        true,
+      );
     } finally {
       await harness.close();
     }
@@ -298,8 +306,11 @@ const WHEN: Record<string, string> = {
     "Runs a toolbox tool by vendor and name, for the case where it is not in the agent's visible list",
   request_connection: "Used when the vendor a task needs has no connection in the agent's scope",
   request_credential: "Used when a tool's call comes back with the vendor's 401 or 403",
-  // The ask card's tool (GRA-84): the host hides it from the model; the description says whose it is.
+  // The ask card's tools (GRA-84; GRA-117 added the link's start and the status read): the host
+  // hides them from the model; each description says whose it is.
   answer_ask: "Called by Graft's ask card",
+  start_link: "Called by Graft's ask card",
+  ask_status: "Called by Graft's ask card",
 };
 
 /** The tools that can answer a handoff, and so must state its shape. */
@@ -440,6 +451,8 @@ const HINTS: Record<string, { readOnlyHint: boolean; destructiveHint: boolean }>
   request_connection: { readOnlyHint: false, destructiveHint: false },
   request_credential: { readOnlyHint: false, destructiveHint: false },
   answer_ask: { readOnlyHint: false, destructiveHint: false },
+  start_link: { readOnlyHint: false, destructiveHint: false },
+  ask_status: { readOnlyHint: true, destructiveHint: false },
   write_file: { readOnlyHint: false, destructiveHint: true },
   read_file: { readOnlyHint: true, destructiveHint: false },
   run_command: { readOnlyHint: false, destructiveHint: true },

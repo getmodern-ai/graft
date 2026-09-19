@@ -367,11 +367,35 @@ a host renders no view for an error result (ext-apps issue 694) — refusals and
 `_meta.ui.visibility: ["app"]` so the host hides it from the model; the tool refuses a static-token
 agent, an OAuth client whose hiding is not established (neither every registered redirect URI on a
 `GRAFT_CARD_HOSTS` host nor the MCP Apps extension declared in `initialize`), another agent's ask,
-a closed or expired ask, and every ask but the build approval, the keyless connection confirmation
-and the scope ask, and records the rest through `ask-answer.ts` — the same functions
-the console's `POST /pending-actions/:id/answer` and `/connection` call, with `via: "card"` on the
-answer. `packages/mcp/src/answer-ask.test.ts` is the suite; `pnpm --filter @graft/ask-card build`
-before `pnpm --filter @graft/mcp test` on a fresh checkout, or let `pnpm run test` order it.
+a closed or expired ask, and every ask but the build approval, the tool's first-use approval
+(GRA-116), the keyless connection confirmation, the scope ask and a link provider's decline, and
+records the rest through `ask-answer.ts` — the same functions the console's
+`POST /pending-actions/:id/answer` and `/connection` call, with `via: "card"` on the answer. The
+gate is `tools/card-gate.ts`, shared with the two other app-only tools. `packages/mcp/src/answer-ask.test.ts`
+is the suite; `pnpm --filter @graft/ask-card build` before `pnpm --filter @graft/mcp test` on a
+fresh checkout, or let `pnpm run test` order it.
+
+**Every ask settles in the card; the console is a popup for the secret alone** (GRA-116, GRA-117,
+GRA-118; ADR 0006 as amended 2026-09-19). Three more tools and one query. `start_link
+{ pendingActionId, approveBuild }` → `{ url, expiresAt, provider }` (`tools/start-link.ts`, app-only,
+the card gate) mints a link provider's Connect Link for the agent's own open connection ask through
+`packages/mcp/src/provider-link.ts`'s `mintProviderLink` — the function `POST /api/pending-actions/:id/link`
+now calls too, so the two doors issue one link — with the build choice signed into the state and
+`from=card` on the return URIs, which `apps/server/src/provider-link.ts`'s return route copies onto
+its console redirect; `McpDeps.authUrl` is `GRAFT_AUTH_URL` for it. `ask_status { pendingActionId }`
+→ `{ state, sentence }` (`tools/ask-status.ts`, app-only, read-only, the gate less the open check)
+reads where the ask stands off the row — `open`, `answered`, `declined`, `expired` — with the
+console's settled sentence for the kind. The card (`packages/ask-card/src/render.ts`) opens every
+page it sends the person to with `from=card` (`withFromCard`; `ASK_STATUS_POLL_MS` is 3 s) and polls
+`ask_status` until the ask is settled or the render is abandoned: *Connect through <provider>* on a
+link ask, *Enter the secret in Graft* on a scheme with a credential or a credential re-entry, *Open
+in the console* under a `card_not_available` refusal or where the host refused `ui/open-link`. The
+console reads the flag through `@graft/core`'s browser-safe `connection/card.rules.ts`
+(`openedFromCard`, `askAnsweredMessage`, `FROM_CARD_CLOSE_MS`): `/pending/:id?from=card` posts
+`graft:ask` to its opener and closes itself 1.5 s after a successful submit, `/link/callback?from=card`
+closes on a success and stays on a failure (the ask is still open, and the card is where the person
+tries again), and neither behaves differently without it. `@graft/ask-card/shape` spells
+`from=card` a second time, import-free, and `ask-card.test.ts` pins the two spellings together.
 
 **A connection the person holds but this agent was not given is the `scope` ask** (GRA-104; ADR
 0006 as amended 2026-09-19). `request_connection`'s match against the person's rows

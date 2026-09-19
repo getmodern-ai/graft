@@ -47,14 +47,23 @@ export function callbackOutcomeTitle(status: CallbackOutcomeStatus): string {
   return OUTCOMES[status].title;
 }
 
+/** What the page adds when the ask card opened it (GRA-117): the card is where the person is. */
+export const FROM_CARD_NOTE = "The card in your chat updates on its own.";
+/** The same, when the link failed: the ask is still open, and the card is where to try again. */
+export const FROM_CARD_RETRY_NOTE =
+  "The card in your chat is still waiting; close this window and try again from there.";
+
 export function CallbackOutcomePage({
   status,
   message,
   onClose,
+  fromCard = false,
 }: {
   status: CallbackOutcomeStatus;
   message: string;
   onClose: () => void;
+  /** Opened by the ask card rather than a console page (`card.rules.ts`): say the card settles itself. */
+  fromCard?: boolean;
 }) {
   const { title, Icon, fallback } = OUTCOMES[status];
   return (
@@ -65,7 +74,10 @@ export function CallbackOutcomePage({
             <Icon />
           </EmptyMedia>
           <EmptyTitle>{title}</EmptyTitle>
-          <EmptyDescription>{message || fallback}</EmptyDescription>
+          <EmptyDescription>
+            {message || fallback}
+            {fromCard ? ` ${status === "connected" ? FROM_CARD_NOTE : FROM_CARD_RETRY_NOTE}` : null}
+          </EmptyDescription>
         </EmptyHeader>
         <Button onClick={onClose}>Close this window</Button>
       </Empty>

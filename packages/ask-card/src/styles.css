@@ -408,3 +408,47 @@ body {
   color: var(--muted-foreground);
   font-size: 12px;
 }
+
+/* Waiting on a page the card opened (GRA-118): the muted band, in the muted voice. */
+.ask-outcome[data-tone="waiting"] {
+  color: var(--muted-foreground);
+}
+
+/* A tool's description in the model's words (GRA-116) — the console's figure: a badge, a sentence,
+ * the quote on an inset rule. */
+.ask-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.ask-quote figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.ask-quote blockquote {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  font-style: italic;
+}
+
+/* Cando's outline Badge: a hairline frame, small type, no fill. */
+.ask-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}

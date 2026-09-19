@@ -1,5 +1,7 @@
 import type { AskCard } from "@graft/ask-card/shape";
+import { answerPendingAction, createPipedreamProvider, keyringProvider } from "@graft/core";
 import { createScriptedModel } from "@graft/model";
+import { createFakePipedreamClient } from "@graft/pipedream/fake";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -13,6 +15,8 @@ import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { executeToolName } from "./tool-names";
 import { ANSWER_ASK, CARD_NOT_AVAILABLE } from "./tools/answer-ask";
+import { ASK_OPEN_SENTENCE, ASK_STATUS } from "./tools/ask-status";
+import { START_LINK } from "./tools/start-link";
 
 /**
  * The ask card's tool as a host would drive it (GRA-84; ADR 0006 as amended 2026-09-18), on the
@@ -368,23 +372,15 @@ describe("answer_ask on a build ask", () => {
     expect(late.body).toMatchObject({ reason: "expired", message: ASK_EXPIRED_MESSAGE });
   });
 
-  it("refuses a tool's first-use ask as card_not_available: the console keeps the session for a write", async () => {
+  it("refuses a credential ask as card_not_available: the secret is the console's", async () => {
     const claude = await connect(TOKEN_CLAUDE);
-    const row = await deps.pendingAction.insertPendingAction(deps.db, {
-      id: "pa_tool",
-      agentId: CLAUDE,
-      kind: "tool",
-      payload: { toolId: "tool_1", toolName: "demo__create-order", connectionId: CONN },
-      connectionId: CONN,
-      expiresAt: new Date(clock.getTime() + 60_000),
-      createdAt: clock,
-    });
-    const { body } = await answer(claude, row.id, { allow: true });
+    const card = cardOf(await claude.call("request_credential", { connectionId: CONN }));
+    const { body } = await answer(claude, card.pendingActionId, { allow: true });
     expect(body).toMatchObject({
       reason: CARD_NOT_AVAILABLE,
       message: expect.stringContaining("console"),
     });
-    expect(store.approvals.size).toBe(0);
+    expect(store.pendingActions.get(card.pendingActionId)?.answeredAt).toBeNull();
   });
 
   it("refuses a malformed answer as input_invalid before reading anything", async () => {
@@ -403,6 +399,117 @@ describe("answer_ask on a build ask", () => {
     const wrongShape = await answer(claude, card.pendingActionId, { decline: true });
     expect(wrongShape.body).toMatchObject({ reason: "input_invalid" });
     expect(store.pendingActions.get(card.pendingActionId)?.answeredAt).toBeNull();
+  });
+});
+
+/**
+ * The fourth card (GRA-116): a write's first use. The ask is inserted as `approval.ts` records it
+ * — an authored tool's run needs a sandbox this suite has not — and answered through the card;
+ * what is asserted is the standing approval the console's route would write, the setting left
+ * alone, and the action spent or left for the waiting call exactly as `recordApprovalAnswer` does.
+ */
+describe("answer_ask on a tool ask", () => {
+  beforeEach(() => {
+    store.addTool({
+      id: "tool_1",
+      personId: PERSON,
+      vendor: "demo",
+      name: "create-order",
+      description: "Creates a sales order at Demo.",
+      inputSchema: { type: "object" },
+      readOnly: false,
+      destructive: false,
+      defaultConnectionId: CONN,
+      path: "tools/demo/create-order/v1",
+    });
+  });
+
+  const toolAsk = (agentId: string, askEveryCall = false) =>
+    deps.pendingAction.insertPendingAction(deps.db, {
+      id: `pa_tool_${store.newId()}`,
+      agentId,
+      kind: "tool",
+      payload: {
+        toolId: "tool_1",
+        toolName: "demo__create-order",
+        vendor: "demo",
+        description: "Creates a sales order at Demo.",
+        annotations: { readOnlyHint: false, destructiveHint: false },
+        connectionId: CONN,
+        connectionName: "Demo Orders",
+        hosts: ["api.demo.example"],
+        note: "",
+        askEveryCall,
+      },
+      connectionId: CONN,
+      expiresAt: new Date(clock.getTime() + 60_000),
+      createdAt: clock,
+    });
+
+  it("records an Allow as the standing approval, spends the action, and leaves the setting alone", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const row = await toolAsk(CLAUDE);
+    const { result, body } = await answer(claude, row.id, { allow: true });
+    expect(result.isError, JSON.stringify(body)).toBeFalsy();
+    expect(body).toMatchObject({
+      answered: true,
+      sentence: expect.stringContaining("Allowed. Claude may run demo__create-order"),
+    });
+    expect(store.pendingActions.get(row.id)?.answer).toEqual({ allow: true, via: "card" });
+    expect(store.pendingActions.get(row.id)?.consumedAt).not.toBeNull();
+    expect(store.approvals.get(`${CLAUDE} tool_1`)).toMatchObject({
+      decision: "allow",
+      askEveryCall: false,
+    });
+  });
+
+  it("records a Deny as the standing no, which holds", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const row = await toolAsk(CLAUDE);
+    const { body } = await answer(claude, row.id, { allow: false });
+    expect(body).toMatchObject({ answered: true, sentence: expect.stringContaining("Denied") });
+    expect(store.approvals.get(`${CLAUDE} tool_1`)).toMatchObject({ decision: "deny" });
+    expect(store.pendingActions.get(row.id)?.consumedAt).not.toBeNull();
+  });
+
+  it("on a tool set to ask every call, an Allow is for that one call: the action stays for it, the setting stays on, and the sentence says so", async () => {
+    await deps.approval.upsertApproval(deps.db, {
+      agentId: CLAUDE,
+      toolId: "tool_1",
+      decision: "allow",
+      decidedAt: clock,
+      askEveryCall: true,
+    });
+    const claude = await connect(TOKEN_CLAUDE);
+    const row = await toolAsk(CLAUDE, true);
+    const { body } = await answer(claude, row.id, { allow: true });
+    expect(body.sentence).toContain("Allowed for this call");
+    expect(store.approvals.get(`${CLAUDE} tool_1`)).toMatchObject({
+      decision: "allow",
+      askEveryCall: true,
+    });
+    const after = store.pendingActions.get(row.id);
+    expect(after?.answeredAt).not.toBeNull();
+    // Left for the waiting call to take, as the console's answer is.
+    expect(after?.consumedAt).toBeNull();
+  });
+
+  it("refuses the setting on the answer as input_invalid, a static-token agent as card_not_available, and another agent's ask as ask_not_found", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const row = await toolAsk(CLAUDE);
+    const wrong = await answer(claude, row.id, { allow: true, approveBuild: true });
+    expect(wrong.body).toMatchObject({ reason: "input_invalid" });
+    const other = await connect(TOKEN_OTHER);
+    expect((await answer(other, row.id, { allow: true })).body).toMatchObject({
+      reason: "ask_not_found",
+    });
+
+    const hermes = await connect(TOKEN_HERMES);
+    const own = await toolAsk(HERMES);
+    expect((await answer(hermes, own.id, { allow: true })).body).toMatchObject({
+      reason: CARD_NOT_AVAILABLE,
+    });
+    expect(store.approvals.size).toBe(0);
   });
 });
 
@@ -484,7 +591,7 @@ describe("answer_ask on a connection ask", () => {
     });
     expect(body).toMatchObject({
       reason: CARD_NOT_AVAILABLE,
-      message: expect.stringContaining("credential is entered there"),
+      message: expect.stringContaining("credential is entered in the console"),
     });
     expect(store.connections.size).toBe(1);
     expect(store.pendingActions.get(card.pendingActionId)?.answeredAt).toBeNull();
@@ -739,5 +846,266 @@ describe("the card-host gate", () => {
       redirectsOnCardHosts(["https://CLAUDE.AI/cb", "https://app.claude.ai/x"], ["claude.ai"]),
     ).toBe(true);
     expect(redirectsOnCardHosts(["https://notclaude.ai/cb"], ["claude.ai"])).toBe(false);
+  });
+});
+
+/**
+ * The card starts a link provider's connect and waits on it (GRA-117, GRA-118). Pipedream is the
+ * fake client behind the real provider, so what is asserted is the token the fake minted — the
+ * return URIs on this server's origin, the signed state, `from=card` — and the ask left open for
+ * the return to answer; the return itself is `apps/server/src/provider-link.test.ts`. Then
+ * `ask_status` through every state, on this ask and on the others.
+ */
+describe("start_link and ask_status", () => {
+  const GMAIL = {
+    vendor: "gmail",
+    displayName: "Gmail",
+    primaryHost: "https://gmail.googleapis.com/gmail/v1",
+    hosts: ["www.googleapis.com"],
+    scheme: "oauth_authorization_code",
+    schemeConfig: {
+      authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+      scopes: "https://www.googleapis.com/auth/gmail.readonly",
+    },
+  };
+  const AUTH_URL = "http://graft.test";
+  let pipedream: ReturnType<typeof createFakePipedreamClient>;
+
+  beforeEach(() => {
+    pipedream = createFakePipedreamClient({ projectId: "proj_test" });
+    deps.connection = {
+      ...deps.connection,
+      providers: [createPipedreamProvider({ client: pipedream }), keyringProvider],
+    };
+    deps.authUrl = AUTH_URL;
+  });
+
+  const status = async (agent: Awaited<ReturnType<typeof connect>>, pendingActionId: string) =>
+    text(await agent.call(ASK_STATUS, { pendingActionId }));
+  const startLink = async (
+    agent: Awaited<ReturnType<typeof connect>>,
+    args: Record<string, unknown>,
+  ) => text(await agent.call(START_LINK, args));
+
+  it("rides a link provider's proposal as a card that names the provider and is not answerable", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const result = await claude.call("request_connection", GMAIL);
+    expect(text(result)).toMatchObject({ reason: "awaiting_connection", provider: "pipedream" });
+    expect(cardOf(result)).toMatchObject({
+      kind: "connection",
+      provider: "pipedream",
+      providerConnect: "link",
+      answerable: false,
+      hosts: ["gmail.googleapis.com", "www.googleapis.com"],
+    });
+  });
+
+  it("mints Pipedream's link for the agent's own ask with the build choice, both return URIs on this server with from=card, and leaves the ask open", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", GMAIL));
+    const result = await claude.call(START_LINK, {
+      pendingActionId: card.pendingActionId,
+      approveBuild: true,
+    });
+    expect(result.isError).toBeFalsy();
+    const started = text(result);
+    expect(started).toMatchObject({ provider: "pipedream", url: expect.any(String) });
+    expect(new URL(started.url as string).searchParams.get("app")).toBe("gmail");
+    expect(new Date(started.expiresAt as string).getTime()).toBeGreaterThan(clock.getTime());
+
+    const minted = pipedream.tokens.at(-1);
+    expect(minted).toMatchObject({ externalUserId: `graft-person-${PERSON}`, app: "gmail" });
+    for (const [uri, outcome] of [
+      [minted?.success, "success"],
+      [minted?.error, "error"],
+    ] as const) {
+      const url = new URL(uri ?? "");
+      expect(url.origin + url.pathname).toBe(`${AUTH_URL}/api/providers/link/callback`);
+      expect(url.searchParams.get("outcome")).toBe(outcome);
+      expect(url.searchParams.get("from")).toBe("card");
+      expect(url.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    }
+    // The ask is the return's to answer; the card reads it as open meanwhile.
+    expect(store.pendingActions.get(card.pendingActionId)?.answeredAt).toBeNull();
+    expect(await status(claude, card.pendingActionId)).toEqual({
+      state: "open",
+      sentence: ASK_OPEN_SENTENCE,
+    });
+
+    // The return made the row and answered the ask (`provider-link.ts`): the card reads connected.
+    await answerPendingAction(
+      { db: deps.db },
+      { personId: PERSON },
+      card.pendingActionId,
+      { connectionId: "conn_gmail" },
+      deps.pendingAction,
+    );
+    expect(await status(claude, card.pendingActionId)).toMatchObject({
+      state: "answered",
+      sentence: expect.stringContaining("Connected through pipedream. Gmail (gmail)"),
+    });
+  });
+
+  it("declines a link provider's ask through answer_ask, and refuses its connect: the return makes the row", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", GMAIL));
+    const connected = await answer(claude, card.pendingActionId, {
+      connect: true,
+      approveBuild: true,
+    });
+    expect(connected.body).toMatchObject({
+      reason: CARD_NOT_AVAILABLE,
+      message: expect.stringContaining("start_link"),
+    });
+    const declined = await answer(claude, card.pendingActionId, { decline: true });
+    expect(declined.body).toMatchObject({ answered: true });
+    expect(store.pendingActions.get(card.pendingActionId)?.answer).toEqual({
+      allow: false,
+      via: "card",
+    });
+    expect(await status(claude, card.pendingActionId)).toMatchObject({
+      state: "declined",
+      sentence: expect.stringContaining("Declined"),
+    });
+    expect(text(await claude.call("request_connection", GMAIL))).toMatchObject({
+      reason: "connection_declined",
+    });
+  });
+
+  it("refuses start_link under the card gate and for an ask no link serves", async () => {
+    const hermes = await connect(TOKEN_HERMES);
+    const own = cardOf(await hermes.call("request_connection", GMAIL));
+    expect(await startLink(hermes, { pendingActionId: own.pendingActionId })).toMatchObject({
+      reason: CARD_NOT_AVAILABLE,
+    });
+
+    const claude = await connect(TOKEN_CLAUDE);
+    expect(await startLink(claude, { pendingActionId: own.pendingActionId })).toMatchObject({
+      reason: "ask_not_found",
+    });
+    const keyless = cardOf(await claude.call("request_connection", KEYLESS));
+    expect(await startLink(claude, { pendingActionId: keyless.pendingActionId })).toMatchObject({
+      reason: CARD_NOT_AVAILABLE,
+      message: expect.stringContaining("credential is entered"),
+    });
+    const build = cardOf(await claude.call("acquire", { connectionId: CONN, goal: "list" }));
+    expect(await startLink(claude, { pendingActionId: build.pendingActionId })).toMatchObject({
+      reason: CARD_NOT_AVAILABLE,
+    });
+    expect(await startLink(claude, { pendingActionId: "" })).toMatchObject({
+      reason: "input_invalid",
+    });
+    expect(
+      await startLink(claude, { pendingActionId: keyless.pendingActionId, approveBuild: "yes" }),
+    ).toMatchObject({ reason: "input_invalid" });
+    expect(pipedream.tokens).toHaveLength(0);
+
+    // A server with no public URL cannot say where the return lands.
+    deps.authUrl = undefined;
+    const gmail = cardOf(await claude.call("request_connection", GMAIL));
+    expect(await startLink(claude, { pendingActionId: gmail.pendingActionId })).toMatchObject({
+      reason: CARD_NOT_AVAILABLE,
+      message: expect.stringContaining("public URL"),
+    });
+  });
+
+  it("reads a secret's connection ask through the console's answer, a credential ask, a build ask and an expiry", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const secretResult = await claude.call("request_connection", SECRET);
+    expect(text(secretResult)).toMatchObject({ reason: "awaiting_connection" });
+    const secret = cardOf(secretResult);
+    expect(await status(claude, secret.pendingActionId)).toEqual({
+      state: "open",
+      sentence: ASK_OPEN_SENTENCE,
+    });
+    // The console's form stored the credential and answered the ask (GRA-28).
+    await answerPendingAction(
+      { db: deps.db },
+      { personId: PERSON },
+      secret.pendingActionId,
+      { connectionId: "conn_acme" },
+      deps.pendingAction,
+    );
+    expect(await status(claude, secret.pendingActionId)).toEqual({
+      state: "answered",
+      sentence:
+        "Connected. Acme Orders (acme) is in Claude's scope; the credential is stored and never shown again.",
+    });
+
+    const credential = cardOf(await claude.call("request_credential", { connectionId: CONN }));
+    await answerPendingAction(
+      { db: deps.db },
+      { personId: PERSON },
+      credential.pendingActionId,
+      { connectionId: CONN },
+      deps.pendingAction,
+    );
+    expect(await status(claude, credential.pendingActionId)).toMatchObject({
+      state: "answered",
+      sentence: expect.stringContaining(
+        "Connected; the credential is stored and never shown again",
+      ),
+    });
+
+    // A build ask answered on the card reads answered, spent or not.
+    const build = cardOf(await claude.call("acquire", { connectionId: CONN, goal: "list" }));
+    await answer(claude, build.pendingActionId, { allow: true });
+    expect(await status(claude, build.pendingActionId)).toMatchObject({
+      state: "answered",
+      sentence: expect.stringContaining("Allowed. Claude may build tools against Demo Orders"),
+    });
+
+    // Past its time unanswered: expired, in the console's words. A fresh ask — the credential
+    // ask above was answered, and asking again would take that answer and say connected.
+    const late = cardOf(
+      await claude.call("request_connection", {
+        ...SECRET,
+        vendor: "beta",
+        displayName: "Beta",
+        primaryHost: "https://api.beta.example",
+      }),
+    );
+    clock = new Date(clock.getTime() + deps.handoff.ttlMs + 1);
+    expect(await status(claude, late.pendingActionId)).toMatchObject({
+      state: "expired",
+      sentence: expect.stringContaining(ASK_EXPIRED_MESSAGE),
+    });
+
+    // Closed by a revoke — `expirePendingActionsForConnection` stamps both clocks and records no
+    // answer — reads expired too, never declined: nobody said no (Greptile on #94). The row is
+    // stamped as the repo stamps it, since a proposal's ask carries no connection id to revoke.
+    const closed = cardOf(
+      await claude.call("request_connection", {
+        ...SECRET,
+        vendor: "gamma",
+        displayName: "Gamma",
+        primaryHost: "https://api.gamma.example",
+      }),
+    );
+    const row = store.pendingActions.get(closed.pendingActionId);
+    if (!row) throw new Error("the ask was not stored");
+    store.pendingActions.set(closed.pendingActionId, {
+      ...row,
+      expiresAt: clock,
+      consumedAt: clock,
+    });
+    expect(await status(claude, closed.pendingActionId)).toMatchObject({
+      state: "expired",
+      sentence: expect.stringContaining(ASK_EXPIRED_MESSAGE),
+    });
+    const refused = await answer(claude, closed.pendingActionId, { decline: true });
+    expect(refused.body).toMatchObject({ reason: "expired", message: ASK_EXPIRED_MESSAGE });
+  });
+
+  it("refuses ask_status under the card gate: a static-token agent, another agent's ask, no id", async () => {
+    const hermes = await connect(TOKEN_HERMES);
+    const own = cardOf(await hermes.call("request_credential", { connectionId: CONN }));
+    expect(await status(hermes, own.pendingActionId)).toMatchObject({
+      reason: CARD_NOT_AVAILABLE,
+    });
+    const claude = await connect(TOKEN_CLAUDE);
+    expect(await status(claude, own.pendingActionId)).toMatchObject({ reason: "ask_not_found" });
+    expect(text(await claude.call(ASK_STATUS, {}))).toMatchObject({ reason: "input_invalid" });
   });
 });

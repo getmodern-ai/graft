@@ -48,5 +48,25 @@ export type {
   AnswerOutcome,
   AskCard,
   AskCardKind,
+  AskCardTool,
+  AskStatusInput,
+  AskStatusOutcome,
+  AskStatusResult,
+  AskStatusState,
+  StartLinkInput,
+  StartLinkOutcome,
+  StartLinkResult,
 } from "./shape";
-export { ANSWER_ASK_TOOL, readAnswerOutcome, readAskCard } from "./shape";
+export {
+  ANSWER_ASK_TOOL,
+  ASK_STATUS_POLL_MS,
+  ASK_STATUS_TOOL,
+  FROM_CARD,
+  FROM_CARD_PARAM,
+  readAnswerOutcome,
+  readAskCard,
+  readAskStatusOutcome,
+  readStartLinkOutcome,
+  START_LINK_TOOL,
+  withFromCard,
+} from "./shape";

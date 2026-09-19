@@ -136,6 +136,14 @@ export type McpDeps = {
    */
   oauthRedirectUri?: string;
   /**
+   * `GRAFT_AUTH_URL` — the server's own origin, on which a link provider's return route answers
+   * (ADR 0019; `apps/server/src/provider-link.ts`), so the ask card's `start_link` can mint a
+   * link whose return lands there (`provider-link.ts`, GRA-117). Optional so a harness with no
+   * link provider needs nothing; `apps/server` always binds it, and without it `start_link`
+   * refuses with a sentence saying the console is the place.
+   */
+  authUrl?: string;
+  /**
    * The `tools/list_changed` notifier, one per process, shared by the endpoint's sessions and the
    * sweep (`sweep.ts`) so a demotion the rule makes reaches the harness exactly as one the agent made
    * does (ADR 0003). `createMcpDeps` makes it; `createMcpHttpApp` makes its own when it is absent.

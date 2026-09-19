@@ -268,6 +268,9 @@ const mcp = createMcpDeps({
   oauthRedirectUri: oauthRedirectUri(env.GRAFT_AUTH_URL),
   // The 401's discovery hint (ADR 0018): where the endpoint's protected resource metadata answers.
   resourceMetadataUrl: protectedResourceMetadataUrl(env.GRAFT_AUTH_URL),
+  // The origin a link provider's return route answers on (ADR 0019), for the card's `start_link`
+  // (GRA-117) — the same value `api.ts` hands the console's link route.
+  authUrl: env.GRAFT_AUTH_URL,
   model: modelSetup.model,
   acquire: {
     maxAttempts: env.GRAFT_ACQUIRE_MAX_ATTEMPTS,

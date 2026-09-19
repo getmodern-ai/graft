@@ -1,4 +1,10 @@
 import { readAskCardHtml } from "@graft/ask-card";
+import { FROM_CARD, FROM_CARD_PARAM, withFromCard } from "@graft/ask-card/shape";
+import {
+  FROM_CARD as CORE_FROM_CARD,
+  FROM_CARD_PARAM as CORE_FROM_CARD_PARAM,
+  openedFromCard,
+} from "@graft/core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -68,7 +74,7 @@ describe("what the card may answer", () => {
     ).toBe(false);
   });
 
-  it("marks a build ask answerable, and a tool's or a credential ask never", () => {
+  it("marks a build ask and a tool ask answerable, and a credential ask or a link provider's never", () => {
     const store = createFakeStore();
     const row = store.addConnection({
       id: "conn_1",
@@ -100,6 +106,13 @@ describe("what the card may answer", () => {
       url,
       answerable: true,
     });
+    // A tool's first use is answerable since GRA-116, with the tool's facts beside its name.
+    const tool = {
+      description: "Creates a sales order at Demo.",
+      readOnly: false,
+      destructive: true,
+      askEveryCall: true,
+    };
     expect(
       approvalAskCard({
         action: { ...action, kind: "tool" },
@@ -108,8 +121,9 @@ describe("what the card may answer", () => {
         connection,
         url,
         toolName: "demo__create-order",
+        tool,
       }),
-    ).toMatchObject({ kind: "tool", answerable: false, toolName: "demo__create-order" });
+    ).toMatchObject({ kind: "tool", answerable: true, toolName: "demo__create-order", tool });
     expect(
       credentialAskCard({
         action: { ...action, kind: "credential" },
@@ -174,6 +188,21 @@ describe("what the card may answer", () => {
         payload: { ...payload, provider: "keyring", scheme: "api_key_header", docsUrl: null },
       }),
     ).not.toHaveProperty("provider");
+  });
+});
+
+/**
+ * `from=card` is written in two import-free places (GRA-117, GRA-118): `@graft/ask-card`'s shape,
+ * which the card's bundle reads, and `@graft/core`'s `card.rules.ts`, which the console's routes
+ * read. Neither may import the other, so this is where they are held to one another.
+ */
+describe("the from=card query", () => {
+  it("is spelled the same by the card and by the console's rules", () => {
+    expect(FROM_CARD_PARAM).toBe(CORE_FROM_CARD_PARAM);
+    expect(FROM_CARD).toBe(CORE_FROM_CARD);
+    const opened = new URL(withFromCard("http://console.graft.test/pending/pa_1?t=abc"));
+    expect(openedFromCard(Object.fromEntries(opened.searchParams))).toBe(true);
+    expect(openedFromCard({ t: "abc" })).toBe(false);
   });
 });
 

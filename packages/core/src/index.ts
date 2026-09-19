@@ -82,6 +82,15 @@ export {
   setApproval,
   setAskEveryCall,
 } from "./approval/approval.service";
+export {
+  ASK_ANSWERED_MESSAGE_TYPE,
+  type AskAnsweredMessage,
+  askAnsweredMessage,
+  FROM_CARD,
+  FROM_CARD_CLOSE_MS,
+  FROM_CARD_PARAM,
+  openedFromCard,
+} from "./connection/card.rules";
 export { type ConnectionDeps, createConnectionDeps } from "./connection/connection.deps";
 export {
   DISPLAY_NAME_MAX_LENGTH,

@@ -645,6 +645,9 @@ importers:
       '@graft/config':
         specifier: workspace:*
         version: link:../config
+      '@graft/pipedream':
+        specifier: workspace:*
+        version: link:../pipedream
       '@graft/vault':
         specifier: workspace:*
         version: link:../vault
