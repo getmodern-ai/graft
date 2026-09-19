@@ -30,10 +30,12 @@ import {
   updateAskEveryCall,
 } from "./approval";
 import {
+  addConnectionHosts,
   findConnection,
   findConnectionByIdUnscoped,
   findConnectionForUpdate,
   revokeConnection,
+  setConnectionProviderRef,
 } from "./connection";
 import {
   answerPendingAction,
@@ -430,6 +432,34 @@ describe("person-scoped statements take the person", () => {
       expect(s.sql).toContain(`"${column}" = `);
     }
     expect(s.sql).toContain('"connection"."person_id" = $');
+  });
+
+  /**
+   * The two statements a link's return reconnects a released row with (GRA-122): the reference
+   * written and the stamp cleared, then the host set grown to the union — each under the person.
+   */
+  it("a link's reconnection writes the reference and widens the hosts under the person", async () => {
+    await setConnectionProviderRef(db, "person_1", "conn_1", "acct_1");
+    const reference = only();
+    expect(reference.sql).toMatch(/^update "connection" set/);
+    for (const column of ["provider_ref", "revoked_at", "provider_release_failed_at"]) {
+      expect(reference.sql).toContain(`"${column}" = `);
+    }
+    expect(reference.sql).toContain('"connection"."id" = $');
+    expect(reference.sql).toContain('"connection"."person_id" = $');
+    expect(reference.params).toEqual(expect.arrayContaining(["acct_1", "conn_1", "person_1"]));
+
+    statements = [];
+    await addConnectionHosts(db, "person_1", "conn_1", ["www.googleapis.com"]);
+    const hosts = only();
+    expect(hosts.sql).toMatch(
+      /^update "connection" set "hosts" = "connection"\."hosts" \|\| ARRAY\(SELECT h FROM unnest\(ARRAY\[\$\d+\]::text\[\]\) AS h WHERE NOT \(h = ANY\("connection"\."hosts"\)\)\)/,
+    );
+    expect(hosts.sql).toContain('"connection"."id" = $');
+    expect(hosts.sql).toContain('"connection"."person_id" = $');
+    expect(hosts.params).toEqual(
+      expect.arrayContaining(["www.googleapis.com", "conn_1", "person_1"]),
+    );
   });
 
   it("revoking an agent is guarded on it not being revoked already", async () => {

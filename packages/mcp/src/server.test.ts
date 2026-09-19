@@ -87,12 +87,29 @@ beforeAll(async () => {
         primaryHost: "https://api.demo.example/v2",
         credential: { apiKey: API_KEY },
       },
+      // Two live Rebind accounts, for the tool that follows one once its own row is revoked (GRA-122).
+      {
+        id: "conn_rebind_live",
+        personId: PERSON,
+        primaryHost: "https://api.rebind.example",
+        credential: { apiKey: "rebind-live-key" },
+      },
+      {
+        id: "conn_rebind_second",
+        personId: PERSON,
+        primaryHost: "https://api.rebind.example",
+        credential: { apiKey: "rebind-second-key" },
+      },
     ],
   });
   sandbox = createFakeSandboxBackend();
 
   // The person's toolbox on disk — what a publish writes and every sandbox of theirs mounts.
-  for (const path of ["tools/demo/list-items/v1", "tools/other/ping/v1"]) {
+  for (const path of [
+    "tools/demo/list-items/v1",
+    "tools/other/ping/v1",
+    "tools/rebind/count-things/v1",
+  ]) {
     const dir = join(sandbox.toolboxRoot(PERSON), path);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "index.ts"), LIST_ITEMS_MODULE);
@@ -624,6 +641,195 @@ describe("a revoked connection (GRA-69)", () => {
   }, 30_000);
 });
 
+describe("a tool whose connection was revoked follows the vendor's one live connection (GRA-122)", () => {
+  const OLD = "conn_rebind_old";
+  const LIVE = "conn_rebind_live";
+  const SECOND = "conn_rebind_second";
+  const TOOL = "tool_count_rebind";
+  const call = { vendor: "rebind", name: "count-things", input: {} };
+
+  /**
+   * The live case: Gmail revoked and connected again under a new row, every Gmail tool still bound
+   * to the old one. With no live row the refusal names the reconnect; with exactly one live row of
+   * the vendor in the agent's scope the run goes there and the tool is rebound; with two the
+   * refusal names both and rebinds nothing; a caller that names the connection is never followed.
+   */
+  it("runs against the one live connection and rebinds the tool to it; with none or several the refusal names the step; a named connection is never followed", async () => {
+    const old = store.addConnection({
+      id: OLD,
+      personId: PERSON,
+      vendor: "rebind",
+      displayName: "Rebind (old)",
+      primaryHost: "https://api.rebind.example",
+    });
+    store.connections.set(OLD, { ...old, revokedAt: new Date(), credentialSetAt: null });
+    const { tool: bound } = store.addTool({
+      id: TOOL,
+      personId: PERSON,
+      vendor: "rebind",
+      name: "count-things",
+      description: "Counts things at Rebind.",
+      inputSchema: { type: "object" },
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: OLD,
+      path: "tools/rebind/count-things/v1",
+    });
+    const scopeOfA = store.agentConnections.get(AGENT_A);
+    scopeOfA?.add(OLD);
+    const a = await connect(TOKEN_A);
+    try {
+      // No live row of the vendor: the refusal as GRA-69 left it, naming the console's reconnect.
+      const none = await a.call("run_tool", call);
+      expect(none.isError).toBe(true);
+      expect(body(none)).toMatchObject({
+        error: "refused",
+        reason: "connection_revoked",
+        connectionId: OLD,
+      });
+      expect(body(none).message).toContain("reconnect it in the console");
+      expect(body(none)).not.toHaveProperty("alternatives");
+      expect(store.tools.get(TOOL)?.defaultConnectionId).toBe(OLD);
+
+      // A live row of the vendor the agent was never given is not followed either.
+      store.addConnection({
+        id: LIVE,
+        personId: PERSON,
+        vendor: "rebind",
+        displayName: "Rebind (live)",
+        primaryHost: "https://api.rebind.example",
+      });
+      const outOfScope = await a.call("run_tool", call);
+      expect(body(outOfScope)).toMatchObject({ reason: "connection_revoked", connectionId: OLD });
+      expect(body(outOfScope)).not.toHaveProperty("alternatives");
+
+      // Exactly one live row of the vendor in scope: the run goes there, and the tool follows.
+      scopeOfA?.add(LIVE);
+      const requestsBefore = vendor.requests.length;
+      const ran = await a.call("run_tool", call);
+      expect(ran.isError, JSON.stringify(ran.content)).not.toBe(true);
+      expect(body(ran)).toEqual(VENDOR_BODY);
+      expect(vendor.requests.slice(requestsBefore).at(-1)?.headers.get("x-demo-key")).toBe(
+        "rebind-live-key",
+      );
+      expect(store.tools.get(TOOL)?.defaultConnectionId).toBe(LIVE);
+      expect(store.usage.at(-1)).toMatchObject({ toolId: TOOL, outcome: "ok" });
+
+      // Two live rows in scope: nothing is chosen, and the refusal names both.
+      store.tools.set(TOOL, { ...bound, defaultConnectionId: OLD });
+      store.addConnection({
+        id: SECOND,
+        personId: PERSON,
+        vendor: "rebind",
+        displayName: "Rebind (second)",
+        primaryHost: "https://api.rebind.example",
+      });
+      scopeOfA?.add(SECOND);
+      const several = await a.call("run_tool", call);
+      expect(several.isError).toBe(true);
+      expect(body(several)).toMatchObject({
+        error: "refused",
+        reason: "connection_revoked",
+        connectionId: OLD,
+        alternatives: [
+          { connectionId: LIVE, displayName: "Rebind (live)" },
+          { connectionId: SECOND, displayName: "Rebind (second)" },
+        ],
+      });
+      expect(body(several).message).toContain("2 other live rebind connections");
+      expect(body(several).message).toContain("Rebind (second)");
+      expect(store.tools.get(TOOL)?.defaultConnectionId).toBe(OLD);
+
+      // A caller that names the connection said which: a revoked one is refused, alternatives or not.
+      const named = await runAuthoredTool(
+        deps,
+        { personId: PERSON, agentId: AGENT_A },
+        {
+          ...call,
+          connectionId: OLD,
+          mode: { detached: false, timeoutSeconds: 30, dryRun: true },
+          channel: NO_ELICITATION,
+        },
+      );
+      expect(named.isError).toBe(true);
+      expect(named.answer).toMatchObject({ reason: "connection_revoked", connectionId: OLD });
+      expect(named.answer).not.toHaveProperty("alternatives");
+      expect(store.tools.get(TOOL)?.defaultConnectionId).toBe(OLD);
+
+      // The second row out of the scope again: one live row, followed and rebound as before.
+      scopeOfA?.delete(SECOND);
+      const again = await a.call("run_tool", call);
+      expect(again.isError).not.toBe(true);
+      expect(body(again)).toEqual(VENDOR_BODY);
+      expect(store.tools.get(TOOL)?.defaultConnectionId).toBe(LIVE);
+    } finally {
+      for (const id of [OLD, LIVE, SECOND]) scopeOfA?.delete(id);
+      await a.close();
+    }
+  }, 30_000);
+
+  /**
+   * Greptile on #98: the tool row is the person's and the scopes are per agent, so an agent whose
+   * scope never held the row's live default — another agent's account — resolves to its own row of
+   * the vendor each call, and the row's default, which that other agent uses, is not moved.
+   */
+  it("follows a live default outside this agent's scope to the agent's one live connection without rebinding, and with none or several answers connection_not_in_scope naming them", async () => {
+    // The fixtures the previous case left: the tool, LIVE and SECOND live, none in A's scope.
+    const tool = store.tools.get(TOOL);
+    if (!tool) throw new Error("no rebind fixture");
+    store.tools.set(TOOL, { ...tool, defaultConnectionId: SECOND });
+    const scopeOfA = store.agentConnections.get(AGENT_A);
+    const a = await connect(TOKEN_A);
+    try {
+      // No row of the vendor in A's scope: the refusal as it always was.
+      const none = await a.call("run_tool", call);
+      expect(none.isError).toBe(true);
+      expect(body(none)).toMatchObject({ error: "refused", reason: "connection_not_in_scope" });
+      expect(body(none).message).toContain("The person can add it in the console");
+      expect(body(none)).not.toHaveProperty("alternatives");
+
+      // One live row of the vendor in A's scope: A runs there; the row keeps the other agent's default.
+      scopeOfA?.add(LIVE);
+      const requestsBefore = vendor.requests.length;
+      const ran = await a.call("run_tool", call);
+      expect(ran.isError, JSON.stringify(ran.content)).not.toBe(true);
+      expect(body(ran)).toEqual(VENDOR_BODY);
+      expect(vendor.requests.slice(requestsBefore).at(-1)?.headers.get("x-demo-key")).toBe(
+        "rebind-live-key",
+      );
+      expect(store.tools.get(TOOL)?.defaultConnectionId).toBe(SECOND);
+
+      // Two live rows in A's scope beside the default: named, and the choice is the person's.
+      const THIRD = "conn_rebind_third";
+      store.addConnection({
+        id: THIRD,
+        personId: PERSON,
+        vendor: "rebind",
+        displayName: "Rebind (third)",
+        primaryHost: "https://api.rebind.example",
+      });
+      scopeOfA?.add(THIRD);
+      const several = await a.call("run_tool", call);
+      expect(several.isError).toBe(true);
+      expect(body(several)).toMatchObject({
+        error: "refused",
+        reason: "connection_not_in_scope",
+        alternatives: [
+          { connectionId: LIVE, displayName: "Rebind (live)" },
+          { connectionId: THIRD, displayName: "Rebind (third)" },
+        ],
+      });
+      expect(body(several).message).toContain("2 live connections of the same vendor");
+      expect(store.tools.get(TOOL)?.defaultConnectionId).toBe(SECOND);
+      scopeOfA?.delete(THIRD);
+    } finally {
+      for (const id of [LIVE, SECOND]) scopeOfA?.delete(id);
+      store.tools.set(TOOL, tool);
+      await a.close();
+    }
+  }, 30_000);
+});
+
 describe("find_tool", () => {
   it("returns a demoted tool with what promote needs, and never another person's", async () => {
     const b = await connect(TOKEN_B);
@@ -765,6 +971,51 @@ describe("runAuthoredTool by version id", () => {
     expect(store.usage.at(-1)).toMatchObject({ versionId: v2.id, dryRun: true, outcome: "ok" });
     // The pointer is the caller's to move, not the run's.
     expect(store.tools.get("tool_list_items")?.currentVersionId).toBe("tool_list_items_v1");
+  }, 30_000);
+
+  it("runs against the connection the caller names instead of the tool's default, held to the agent's scope (GRA-122)", async () => {
+    // The tool bound to another person's row: the default would be refused, the named connection runs.
+    const tool = store.tools.get("tool_list_items");
+    if (!tool) throw new Error("no list-items fixture");
+    store.tools.set("tool_list_items", { ...tool, defaultConnectionId: "conn_theirs" });
+    try {
+      const requestsBefore = vendor.requests.length;
+      const named = await runAuthoredTool(deps, scope, {
+        vendor: "demo",
+        name: "list-items",
+        versionId: "tool_list_items_v1",
+        connectionId: CONN_DEMO,
+        input: { limit: 1 },
+        mode: dryRun,
+        channel: NO_ELICITATION,
+      });
+      expect(named.isError, JSON.stringify(named.answer)).toBe(false);
+      expect(vendor.requests.slice(requestsBefore).at(-1)?.headers.get("x-demo-key")).toBe(API_KEY);
+      // Naming the connection binds nothing: the row's default is the publish's and the pass's to move.
+      expect(store.tools.get("tool_list_items")?.defaultConnectionId).toBe("conn_theirs");
+
+      // Another person's row, and the person's own row outside this agent's scope, are both refused
+      // before anything runs — the scope names the person's rows and no others.
+      for (const connectionId of ["conn_theirs", CONN_OTHER, "no_such_connection"]) {
+        const refused = await runAuthoredTool(deps, scope, {
+          vendor: "demo",
+          name: "list-items",
+          connectionId,
+          input: {},
+          mode: dryRun,
+          channel: NO_ELICITATION,
+        });
+        expect(refused.isError).toBe(true);
+        expect(refused.answer).toMatchObject({
+          error: "refused",
+          reason: "connection_not_in_scope",
+          message: expect.stringContaining(`was asked to run against connection ${connectionId}`),
+        });
+        expect(store.usage.at(-1)).toMatchObject({ outcome: "refused", toolId: "tool_list_items" });
+      }
+    } finally {
+      store.tools.set("tool_list_items", tool);
+    }
   }, 30_000);
 
   it("refuses a version that is another tool's, or nobody's, before anything runs", async () => {

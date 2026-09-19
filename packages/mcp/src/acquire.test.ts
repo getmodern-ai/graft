@@ -54,9 +54,12 @@ const AGENT_B = "agent_b";
 const TOKEN_A = "grft_acquire_token_a_00000000000000000000000000";
 const TOKEN_B = "grft_acquire_token_b_00000000000000000000000000";
 const CONN_DEMO = "conn_demo";
+/** A second Demo account of the person's, in A's scope — what a tool follows once the first is revoked (GRA-122). */
+const CONN_DEMO_2 = "conn_demo_2";
 const CONN_OTHER = "conn_other";
 /** The planted credential: shaped like nothing the job's own redaction recognises by name alone. */
 const API_KEY = "zq8Wv2pLm9Kd4Xr7Tn1Bs6Yc3Hf5Jg0A";
+const API_KEY_2 = "Kd4Xr7Tn1Bs6Yc3Hf5Jg0Azq8Wv2pLm9";
 const DOCS_URL = "https://docs.demo.example/items";
 const LIST_ITEMS = authoredToolName("demo", "list-items");
 const VENDOR_BODY = { items: [{ id: "itm_1", name: "Widget" }], vendor: "demo" };
@@ -143,6 +146,13 @@ beforeAll(async () => {
         hosts: ["files.demo.example"],
         credential: { apiKey: API_KEY },
       },
+      {
+        id: CONN_DEMO_2,
+        personId: PERSON,
+        primaryHost: "https://api.demo.example/v2",
+        hosts: ["files.demo.example"],
+        credential: { apiKey: API_KEY_2 },
+      },
     ],
     respond: (request) => {
       const url = new URL(request.url);
@@ -204,6 +214,14 @@ beforeAll(async () => {
     hosts: ["files.demo.example"],
   });
   store.addConnection({
+    id: CONN_DEMO_2,
+    personId: PERSON,
+    vendor: "demo",
+    displayName: "Demo Orders (second account)",
+    primaryHost: "https://api.demo.example/v2",
+    hosts: ["files.demo.example"],
+  });
+  store.addConnection({
     id: CONN_OTHER,
     personId: PERSON,
     vendor: "other",
@@ -215,7 +233,7 @@ beforeAll(async () => {
     personId: PERSON,
     token: TOKEN_A,
     name: "laptop Hermes",
-    connectionIds: [CONN_DEMO],
+    connectionIds: [CONN_DEMO, CONN_DEMO_2],
   });
   store.addAgent({
     scopeMode: "listed",
@@ -226,6 +244,7 @@ beforeAll(async () => {
   });
   // A has the build approval (ADR 0008); B does not, and is what the ask is asserted on.
   store.grantBuild(AGENT_A, CONN_DEMO);
+  store.grantBuild(AGENT_A, CONN_DEMO_2);
 
   const fakeCheck: ModuleCheck = async (input) => ({
     entry: input.entry,
@@ -1174,6 +1193,125 @@ describe("a job that fails and tries again", () => {
       await a.close();
     }
   }, 60_000);
+
+  /**
+   * GRA-122's live case: the person revoked the connection a tool was authored against and
+   * connected the vendor again under another row; a job against the new row publishes v2 of the
+   * same tool. The dry run must run against the job's connection, not the row's revoked default,
+   * and the row must follow — at publish, before the pass — so the job spends no attempt on a
+   * refusal the model cannot fix.
+   */
+  it("dry-runs a republished version against the job's connection, not the tool row's revoked default, and rebinds the row at publish (GRA-122)", async () => {
+    const CONN_GONE = "conn_demo_gone";
+    const gone = store.addConnection({
+      id: CONN_GONE,
+      personId: PERSON,
+      vendor: "demo",
+      displayName: "Demo Orders (revoked)",
+      primaryHost: "https://api.demo.example/v2",
+    });
+    store.connections.set(CONN_GONE, {
+      ...gone,
+      revokedAt: new Date(),
+      credentialCiphertext: null,
+      credentialSetAt: null,
+    });
+    store.agentConnections.get(AGENT_A)?.add(CONN_GONE);
+    const rebound = authoredToolName("demo", "list-rebound");
+    // Every patch to a tool row, so the publish's rebind is told apart from the pass's definition.
+    const patches: Record<string, unknown>[] = [];
+    const update = deps.tool.updateAuthoredTool;
+    deps.tool.updateAuthoredTool = async (db, personId, toolId, patch) => {
+      patches.push(patch);
+      return update(db, personId, toolId, patch);
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      deps.model = createScriptedModel([
+        write("goal", draft({ name: "list-rebound" }), "Read the documentation: /items."),
+      ]);
+      const first = await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List, rebound" });
+      expect(first.status.status).toBe("succeeded");
+      const toolId = (first.status.result as AcquireSuccess).toolId;
+      const tool = store.tools.get(toolId);
+      if (!tool) throw new Error("the first job left no tool row");
+      // The row bound to the connection the person has since revoked.
+      store.tools.set(toolId, { ...tool, defaultConnectionId: CONN_GONE });
+      patches.length = 0;
+
+      deps.model = createScriptedModel([
+        write(
+          "goal",
+          draft({ name: "list-rebound", description: "Lists items from Demo Orders, again." }),
+          "The documented path, again.",
+        ),
+      ]);
+      const requestsBefore = vendor.requests.length;
+      const second = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO_2,
+        goal: "List, rebound, from the second account",
+      });
+      expect(second.status.status).toBe("succeeded");
+      expect(second.status.attempts).toBe(1);
+      expect(second.status.result).toMatchObject({ tool: rebound, toolId, version: 2 });
+      expect(second.status.progress.join("\n")).not.toContain("did not run");
+      // The publish rebound the row before the dry run; the pass then applied the definition.
+      expect(patches[0]).toEqual({ defaultConnectionId: CONN_DEMO_2 });
+      expect(store.tools.get(toolId)).toMatchObject({
+        defaultConnectionId: CONN_DEMO_2,
+        description: "Lists items from Demo Orders, again.",
+      });
+      // The dry run's read left under the second account's key, and nothing under the first's.
+      const reads = vendor.requests.slice(requestsBefore);
+      expect(reads.length).toBeGreaterThan(0);
+      for (const request of reads) {
+        expect(request.headers.get("x-demo-key")).toBe(API_KEY_2);
+      }
+    } finally {
+      deps.tool.updateAuthoredTool = update;
+      store.agentConnections.get(AGENT_A)?.delete(CONN_GONE);
+      await a.close();
+    }
+  }, 60_000);
+
+  it("names a refused dry run by its reason and message in the progress line and the attempt's summary, not by the word refused (GRA-122)", async () => {
+    deps.acquire = { maxAttempts: 2, tokenCeiling: 400_000 };
+    // A test input the tool's own schema refuses: the run is refused `input_invalid` before
+    // anything reaches the sandbox — a refusal, as `connection_revoked` was live. Twice, so the
+    // job ends on the attempt budget with both attempts in `tried`.
+    const badInput = draft({ name: "list-badly", testInput: { limit: 0 } });
+    deps.model = createScriptedModel([
+      write("goal", badInput, "A test input the schema refuses."),
+      write("dry_run_failed", badInput, "The same input again."),
+      write("dry_run_failed", badInput, "A third draft, never made: the budget is spent."),
+    ]);
+    const a = await connect(TOKEN_A);
+    try {
+      const { status } = await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List badly" });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("attempt_budget");
+      const badly = authoredToolName("demo", "list-badly");
+      const didNotRun = (version: number) =>
+        expect.stringMatching(
+          new RegExp(`^The dry run of ${badly} v${version} did not run: input_invalid: .*limit`),
+        );
+      expect(failure.tried).toEqual([
+        {
+          attempt: 1,
+          outcome: "run_failed",
+          summary: didNotRun(1),
+          note: "A test input the schema refuses.",
+        },
+        { attempt: 2, outcome: "run_failed", summary: didNotRun(2), note: "The same input again." },
+      ]);
+      const line = status.progress.find((entry) => entry.includes("did not run"));
+      expect(line).toContain(`the dry run of ${badly} did not run (input_invalid: `);
+      expect(status.progress.join("\n")).not.toContain("(refused)");
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
 
   it("ends on the token ceiling with a result naming it", async () => {
     deps.acquire = { maxAttempts: 4, tokenCeiling: 1_000 };

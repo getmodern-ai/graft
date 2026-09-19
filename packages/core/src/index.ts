@@ -378,6 +378,7 @@ export {
   moveToolPointer,
   nextVersionNumber,
   publishToolVersion,
+  rebindToolIfConnectionDead,
   recordDryRun,
   TOOL_DESCRIPTION_MAX_LENGTH,
   TOOL_NAME_MAX_LENGTH,
