@@ -105,7 +105,8 @@ export function notAvailableYet(what: string, ticket: string): CallToolResult {
  * alone, never in the text block. The text is what the model reads and what GRA-55 fixed — the
  * `url`, the `message`, the `reason` — and the card is the host's to render, so it rides where a
  * host looks and a model's transcript does not change by a character. Without a card the result
- * is returned as it was.
+ * is returned as it was. What the text says under a rendered card is `card-client.ts`'s
+ * `toolAskResult` (GRA-120), which calls this last.
  */
 export function withCard(result: CallToolResult, card: AskCard | undefined): CallToolResult {
   if (!card) return result;

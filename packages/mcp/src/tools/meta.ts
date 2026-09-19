@@ -25,6 +25,7 @@ import {
   MAX_COMMAND_TIMEOUT_SECONDS,
   MAX_DETACHED_TIMEOUT_SECONDS,
 } from "../bounds";
+import { toolAskResult } from "../card-client";
 import {
   describeSchemes,
   readConnectionProposal,
@@ -32,7 +33,7 @@ import {
   requestCredential,
 } from "../connection-request";
 import type { SessionContext } from "../context";
-import { isPlainObject, toolAwaitingOrError, toolRefusal, toolResult, withCard } from "../result";
+import { isPlainObject, toolRefusal, toolResult } from "../result";
 import { runAuthoredTool } from "../run";
 import { authoredToolName } from "../tool-names";
 import { answerAsk } from "./answer-ask";
@@ -272,7 +273,8 @@ const runTool: MetaTool = {
     // The carried tool's first call may answer the tool ask's card (GRA-116; `../tools.ts`).
     _meta: ASK_CARD_TOOL_META,
   },
-  handle: async (args, { deps, scope, channel }) => {
+  handle: async (args, session) => {
+    const { deps, scope, channel } = session;
     const key = readToolKey(args);
     if ("error" in key) return toolRefusal("input_invalid", key.error);
     if (args.input !== undefined && !isPlainObject(args.input)) {
@@ -288,9 +290,7 @@ const runTool: MetaTool = {
       mode: { detached, timeoutSeconds, dryRun },
       channel,
     });
-    return run.isError
-      ? withCard(toolAwaitingOrError(run.answer), run.card)
-      : toolResult(run.answer);
+    return run.isError ? toolAskResult(session, run) : toolResult(run.answer);
   },
 };
 
@@ -373,7 +373,7 @@ const acquire: MetaTool = {
       );
     }
     const gate = await requireBuildApproval(ctx, scope, connectionId, deps, channel);
-    if (!gate.pass) return withCard(toolAwaitingOrError(gate.answer), gate.card);
+    if (!gate.pass) return toolAskResult(session, gate);
 
     const job = await createAcquireJob(
       ctx,
@@ -488,13 +488,12 @@ const requestConnectionTool: MetaTool = {
     // The ask card renders for this tool's results (GRA-84): a keyless confirmation in place, or the link.
     _meta: ASK_CARD_TOOL_META,
   },
-  handle: async (args, { ctx, scope, deps, notifier }) => {
+  handle: async (args, session) => {
+    const { ctx, scope, deps, notifier } = session;
     const input = readConnectionProposal(args);
     if ("error" in input) return toolRefusal("input_invalid", input.error);
     const outcome = await requestConnection(ctx, scope, input, deps, notifier);
-    return outcome.isError
-      ? withCard(toolAwaitingOrError(outcome.answer), outcome.card)
-      : toolResult(outcome.answer);
+    return outcome.isError ? toolAskResult(session, outcome) : toolResult(outcome.answer);
   },
 };
 
@@ -526,7 +525,8 @@ const requestCredentialTool: MetaTool = {
     // The ask card renders for this tool's results too (GRA-84), with the console button alone.
     _meta: ASK_CARD_TOOL_META,
   },
-  handle: async (args, { ctx, scope, deps }) => {
+  handle: async (args, session) => {
+    const { ctx, scope, deps } = session;
     const connectionId = typeof args.connectionId === "string" ? args.connectionId : "";
     if (!connectionId.trim()) {
       return toolRefusal("input_invalid", "connectionId must be a non-empty string");
@@ -538,9 +538,7 @@ const requestCredentialTool: MetaTool = {
       { connectionId, ...(reason === undefined ? {} : { reason }) },
       deps,
     );
-    return outcome.isError
-      ? withCard(toolAwaitingOrError(outcome.answer), outcome.card)
-      : toolResult(outcome.answer);
+    return outcome.isError ? toolAskResult(session, outcome) : toolResult(outcome.answer);
   },
 };
 

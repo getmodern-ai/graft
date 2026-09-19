@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ASK_ANSWERED_MESSAGE, ASK_EXPIRED_MESSAGE } from "./ask-answer";
 import { redirectsOnCardHosts } from "./ask-card";
 import type { McpDeps } from "./deps";
+import { cardHandoffSentence } from "./handoff-message";
 import { createToolListChangedNotifier } from "./notifier";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
@@ -1107,5 +1108,187 @@ describe("start_link and ask_status", () => {
     const claude = await connect(TOKEN_CLAUDE);
     expect(await status(claude, own.pendingActionId)).toMatchObject({ reason: "ask_not_found" });
     expect(text(await claude.call(ASK_STATUS, {}))).toMatchObject({ reason: "input_invalid" });
+  });
+});
+
+/**
+ * The awaiting message under a rendered card (GRA-120; ADR 0006 as amended 2026-09-20). The same
+ * ask reaches two kinds of client: one the server knows renders the card — the card gate's client
+ * half, `card-client.ts` — and one it does not. For the first, `message` takes the card form and
+ * `cardShown: true` rides beside `url`, in the text block the model reads and in
+ * `structuredContent` alike; for the second, the result is byte for byte GRA-55's. `url`,
+ * `reason`, `pendingActionId` and `expiresAt` are the same in both.
+ */
+describe("the awaiting message under a rendered card", () => {
+  const CONSOLE_FORM = "Relay this link";
+
+  /** The two forms, for the same `url` and `expiresAt`. */
+  function expectCardForm(body: Record<string, unknown>) {
+    expect(body.cardShown).toBe(true);
+    expect(body.message).toContain(cardHandoffSentence(String(body.url), String(body.expiresAt)));
+    expect(body.message).toContain("shown as a card in this conversation");
+    expect(body.message).not.toContain(CONSOLE_FORM);
+  }
+  function expectConsoleForm(body: Record<string, unknown>) {
+    expect(body).not.toHaveProperty("cardShown");
+    expect(body.message).toContain(CONSOLE_FORM);
+    expect(body.message).not.toContain("shown as a card");
+  }
+
+  it("a build ask: the console form for a static-token agent, the card form for a card-host OAuth agent, the rest of the answer the same", async () => {
+    const hermes = await connect(TOKEN_HERMES);
+    const claude = await connect(TOKEN_CLAUDE);
+    const plain = await hermes.call("acquire", { connectionId: CONN, goal: "list orders" });
+    const carded = await claude.call("acquire", { connectionId: CONN, goal: "list orders" });
+    for (const result of [plain, carded]) expect(result.isError).toBe(false);
+
+    const plainBody = text(plain);
+    expectConsoleForm(plainBody);
+    expect(plainBody.message).toContain("Graft needs the person's approval before");
+
+    const cardedBody = text(carded);
+    expectCardForm(cardedBody);
+    // The lead — what is asked, what the answer will mean — is the same in both forms.
+    expect(cardedBody.message).toContain("Graft needs the person's approval before");
+    expect(cardedBody.message).toContain("Call again once they have answered");
+    expect(cardedBody).toMatchObject({
+      error: "awaiting_approval",
+      reason: "awaiting_approval",
+      url: expect.stringContaining(CONSOLE_URL),
+      expiresAt: expect.any(String),
+      pendingActionId: expect.any(String),
+    });
+    // Both blocks carry the flag; the card rides in `structuredContent` alone as before.
+    const card = cardOf(carded);
+    expect((carded.structuredContent as Record<string, unknown>).cardShown).toBe(true);
+    expect(card.url).toBe(cardedBody.url);
+    // The flag is not on the card's data: the card reads nothing from it.
+    expect(card).not.toHaveProperty("cardShown");
+  });
+
+  it("an OAuth client nothing vouches for reads the console form, and the same client the card form once its session declared the extension", async () => {
+    const unknown = await connect(TOKEN_UNKNOWN);
+    expectConsoleForm(text(await unknown.call("acquire", { connectionId: CONN, goal: "list" })));
+
+    const declared = await connect(TOKEN_UNKNOWN, { declaresExtension: true });
+    expectCardForm(text(await declared.call("acquire", { connectionId: CONN, goal: "list" })));
+
+    // A static-token agent's session declaring the extension changes nothing: the harness holds
+    // the token, and the card renders for a chat product's agent alone.
+    const hermes = await connect(TOKEN_HERMES, { declaresExtension: true });
+    expectConsoleForm(text(await hermes.call("acquire", { connectionId: CONN, goal: "list" })));
+  });
+
+  it("a connection ask, a secret's connection ask, a credential ask and a scope ask take the card form too, their leads kept", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const keyless = text(await claude.call("request_connection", KEYLESS));
+    expectCardForm(keyless);
+    expect(keyless.message).toContain("the scheme takes no credential, so nothing is entered");
+    expect(keyless.message).toContain("Call request_connection again with the same proposal");
+
+    // A scheme with a secret: the card opens the console for the secret (GRA-118), so the ask is
+    // still answered from the card, and the message says so in the same words.
+    const secret = text(await claude.call("request_connection", SECRET));
+    expectCardForm(secret);
+    expect(secret.message).toContain("the secret never passes through you");
+
+    const credential = text(await claude.call("request_credential", { connectionId: CONN }));
+    expectCardForm(credential);
+    expect(credential).toMatchObject({ reason: "awaiting_credential" });
+
+    // A scope ask: a connection made for another agent (GRA-104).
+    store.addConnection({
+      id: "conn_scope",
+      personId: PERSON,
+      vendor: "delta",
+      displayName: "Delta Books",
+      primaryHost: "https://api.delta.example/v1",
+      schemeConfig: { headerName: "x-delta-key" },
+    });
+    store.agentConnections.get(OTHER)?.add("conn_scope");
+    const scope = text(
+      await claude.call("request_connection", {
+        vendor: "delta",
+        displayName: "Delta Books",
+        primaryHost: "https://api.delta.example/v1",
+        scheme: "api_key_header",
+        schemeConfig: { headerName: "x-delta-key" },
+      }),
+    );
+    expect(scope).toMatchObject({ reason: "awaiting_scope", connectionId: "conn_scope" });
+    expectCardForm(scope);
+
+    // The same asks for a static-token agent: the console form, untouched.
+    const hermes = await connect(TOKEN_HERMES);
+    expectConsoleForm(text(await hermes.call("request_connection", KEYLESS)));
+    expectConsoleForm(text(await hermes.call("request_credential", { connectionId: CONN })));
+  });
+
+  it("keeps the card and the card form when a sign-in host was set aside, with the set-aside sentence on both forms", async () => {
+    // GRA-89's rebuild of the outcome dropped the card before this (Greptile on #96). Sign-in hosts
+    // are the OAuth scheme's (`SIGN_IN_HOSTS` in `@graft/core`), so the proposal is Gmail's.
+    const withSignIn = {
+      vendor: "gmail",
+      displayName: "Gmail",
+      primaryHost: "https://gmail.googleapis.com",
+      hosts: ["gmail.googleapis.com", "accounts.google.com"],
+      scheme: "oauth_authorization_code",
+      schemeConfig: {
+        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenUrl: "https://oauth2.googleapis.com/token",
+      },
+    };
+    const claude = await connect(TOKEN_CLAUDE);
+    const carded = await claude.call("request_connection", withSignIn);
+    const body = text(carded);
+    expectCardForm(body);
+    expect(body.hostsSetAside).toEqual(["accounts.google.com"]);
+    expect(body.message).toContain("accounts.google.com is a sign-in endpoint and was set aside");
+    expect(cardOf(carded)).toMatchObject({ kind: "connection", hosts: ["gmail.googleapis.com"] });
+
+    // The OAuth lead's console relay reads "Then relay this link" (ADR 0005's guide), so the
+    // console form is checked by that sentence rather than the shared helper.
+    const hermes = await connect(TOKEN_HERMES);
+    const plain = text(await hermes.call("request_connection", withSignIn));
+    expect(plain).not.toHaveProperty("cardShown");
+    expect(plain.message).toContain("Then relay this link so they can enter the client id");
+    expect(plain.message).not.toContain("shown as a card");
+    expect(plain.message).toContain("accounts.google.com is a sign-in endpoint and was set aside");
+  });
+
+  it("names no console in a keyless proposal's card-form lead: the card's button is the confirmation", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const keyless = text(await claude.call("request_connection", KEYLESS));
+    expect(keyless.message).toMatch(
+      /confirm the connection to Open-Meteo \(open-meteo\) — the scheme/,
+    );
+    expect(keyless.message).not.toContain("in the console — the scheme");
+    const hermes = await connect(TOKEN_HERMES);
+    expect(text(await hermes.call("request_connection", KEYLESS)).message).toContain(
+      "confirm the connection to Open-Meteo (open-meteo) in the console",
+    );
+  });
+
+  it("reads the client once per session: the client row is not re-read on every awaiting result", async () => {
+    let clientReads = 0;
+    const findMcpClient = deps.findMcpClient;
+    deps.findMcpClient = async (db, clientId) => {
+      clientReads += 1;
+      return findMcpClient(db, clientId);
+    };
+    const claude = await connect(TOKEN_CLAUDE);
+    await claude.call("acquire", { connectionId: CONN, goal: "list orders" });
+    await claude.call("request_connection", KEYLESS);
+    await claude.call("request_credential", { connectionId: CONN });
+    expect(clientReads).toBe(1);
+  });
+
+  it("leaves a refusal alone: no card, no flag, an error as before", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const refused = await claude.call("acquire", { connectionId: "conn_missing", goal: "list" });
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toMatchObject({ error: "refused", reason: "connection_not_in_scope" });
+    expect(text(refused)).not.toHaveProperty("cardShown");
+    expect(refused.structuredContent).not.toHaveProperty("card");
   });
 });

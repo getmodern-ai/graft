@@ -4,7 +4,7 @@ import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { ASK_ANSWERED_MESSAGE, ASK_EXPIRED_MESSAGE } from "../ask-answer";
-import { DEFAULT_CARD_HOSTS, redirectsOnCardHosts } from "../ask-card";
+import { clientRendersCards } from "../card-client";
 import type { SessionContext } from "../context";
 import { toolRefusal } from "../result";
 
@@ -24,7 +24,8 @@ import { toolRefusal } from "../result";
  *      `claude.ai` and `chatgpt.com` — the callbacks the two products register; `McpDeps.cardHosts`),
  *      or **the session's client declared the MCP Apps extension** in `initialize`, whose host
  *      requirements include hiding `visibility: ["app"]` tools (`SessionContext.uiExtensionDeclared`).
- *      Neither: `card_not_available`, the console is the place.
+ *      Neither: `card_not_available`, the console is the place. The verdict is `card-client.ts`'s
+ *      `clientRendersCards`, held per session, which the awaiting results read too (GRA-120).
  *   2. **The ask is this agent's** (the agent-scoped read answers nothing for another's) and,
  *      where the tool acts on it, **open** (unanswered, untaken — `answered`) **and in time**
  *      (`expired`), in the console's words. `ask_status` reads a closed ask on purpose and passes
@@ -67,20 +68,15 @@ export async function admitCardCall(
     };
   }
   //    And only a client whose hiding of app-only tools is established — the header's two
-  //    signals. The redirect read is skipped when the session already declared the extension.
-  if (!session.uiExtensionDeclared()) {
-    const client = await deps.findMcpClient(ctx.db, agent.connectedVia.clientId);
-    if (
-      !client ||
-      !redirectsOnCardHosts(client.redirectUris, deps.cardHosts ?? DEFAULT_CARD_HOSTS)
-    ) {
-      return {
-        refused: cardRefusal(
-          CARD_NOT_AVAILABLE,
-          `The ask card answers only for a chat product known to hide this tool from its model: ${agent.connectedVia.clientName} neither declared the MCP Apps extension nor is registered on a card host (GRAFT_CARD_HOSTS). ${CONSOLE_IS_THE_PLACE}`,
-        ),
-      };
-    }
+  //    signals, judged once per session (`card-client.ts`); an agent this far is an OAuth one, so
+  //    a no here is the client's.
+  if (!(await clientRendersCards(session))) {
+    return {
+      refused: cardRefusal(
+        CARD_NOT_AVAILABLE,
+        `The ask card answers only for a chat product known to hide this tool from its model: ${agent.connectedVia.clientName} neither declared the MCP Apps extension nor is registered on a card host (GRAFT_CARD_HOSTS). ${CONSOLE_IS_THE_PLACE}`,
+      ),
+    };
   }
 
   // 2. This agent's own ask — and, where asked, open and in time, in the console's words.
