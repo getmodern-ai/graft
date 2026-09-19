@@ -10,7 +10,7 @@ import {
 } from "../bounds";
 import type { SessionContext } from "../context";
 import { heldInFlight } from "../in-flight";
-import { toolAwaitingOrError, toolError, toolRefusal, toolResult } from "../result";
+import { toolAwaitingOrError, toolError, toolRefusal, toolResult, withCard } from "../result";
 import { revokedConnectionRefusal } from "../revoke";
 import { runWithCapability } from "../run";
 import { openAgentSandbox, runCommand, withSandbox } from "../sandbox";
@@ -115,7 +115,7 @@ export async function callExecuteTool(
       },
       deps.ledger,
     );
-    return toolAwaitingOrError(gate.answer);
+    return withCard(toolAwaitingOrError(gate.answer), gate.card);
   }
 
   // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).

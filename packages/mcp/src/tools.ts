@@ -18,7 +18,7 @@ import { ASK_CARD_TOOL_META } from "./ask-card";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "./bounds";
 import type { SessionContext } from "./context";
 import type { ToolCallEvent } from "./deps";
-import { toolAwaitingOrError, toolError, toolRefusal, toolResult } from "./result";
+import { toolAwaitingOrError, toolError, toolRefusal, toolResult, withCard } from "./result";
 import { runAuthoredTool } from "./run";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
 import { AUTHORING_TOOLS } from "./tools/authoring";
@@ -166,7 +166,9 @@ async function dispatch(
         mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: false },
         channel: session.channel,
       });
-      return run.isError ? toolAwaitingOrError(run.answer) : toolResult(run.answer);
+      return run.isError
+        ? withCard(toolAwaitingOrError(run.answer), run.card)
+        : toolResult(run.answer);
     }
   }
 

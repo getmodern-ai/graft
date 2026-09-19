@@ -288,7 +288,9 @@ const runTool: MetaTool = {
       mode: { detached, timeoutSeconds, dryRun },
       channel,
     });
-    return run.isError ? toolAwaitingOrError(run.answer) : toolResult(run.answer);
+    return run.isError
+      ? withCard(toolAwaitingOrError(run.answer), run.card)
+      : toolResult(run.answer);
   },
 };
 
