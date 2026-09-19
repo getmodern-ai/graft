@@ -77,3 +77,27 @@ the agent was made, which is not what the person is deciding. The person is the 
 (CONTEXT.md, *Person*); the agent is a harness of theirs; separation is theirs to ask for, on the
 agent's page, and visible there. GRA-104's `scope` ask stays worth having for a narrowed agent and
 stops being the everyday path.
+
+## Amendment 2026-09-20: a tool follows its vendor's reconnected connection
+
+Decided under GRA-122, from a live check of 2026-09-20: both Gmail rows revoked, Gmail connected
+again from a chat through a link provider, and every Gmail tool dead — `run_tool` answered
+`connection_revoked`, and `acquire`'s job burned two attempts dry-running new versions against the
+revoked default. The consequence above, "every tool bound to that connection's vendor stays
+published and re-asks after reconnection", held only when the reconnection kept the row's id, and a
+link provider's reconnect-in-place demanded the same primary host and the exact host set, so a
+second proposal spelling `…/gmail/v1` with one more host made a new row beside the released one.
+
+**The connection's identity survives a revoke and a reconnect of the vendor through the same
+provider, whatever hosts the second proposal names within the provider's coverage**: the released
+row is the match, its hosts grow to the union, its primary host and name stay (the proxy prepends
+the primary host's path to every module path, so moving it would break the tools kept), and the
+most recently revoked row is chosen when several qualify. **And a tool's binding follows the
+vendor** where the reconnection made a new row anyway: a run against a revoked default goes to the
+one live, usable connection of the tool's vendor in the agent's scope and rebinds the tool to it;
+with several such connections the refusal names them and the choice is the person's; a caller that
+names the connection — `acquire`'s dry run names the job's — is never followed, and the job's
+publish rebinds an existing tool row to the job's connection before the dry run. The scope is read
+before the choice, so the property this ADR states is kept: an authored tool running for one agent
+still reaches no connection that agent was never given. The approval grain does not move (ADR
+0008): the tool re-asks on the connection it now runs against, as it did after any reconnection.
