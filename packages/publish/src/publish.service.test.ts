@@ -349,7 +349,7 @@ describe("a module with no dependencies", () => {
 
     // The person revoked the old one and connected the vendor again: the binding moves at publish,
     // and nothing else does.
-    h.tool.findConnection = async (_db, personId, id) =>
+    h.tool.findConnectionForUpdate = async (_db, personId, id) =>
       ({ id, personId, revokedAt: id === "conn_old" ? NOW : null }) as never;
     const third = first.map((file) => ({ ...file, content: `${file.content}// v3\n` }));
     const result = await publish({

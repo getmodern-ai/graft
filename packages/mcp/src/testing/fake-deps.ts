@@ -704,6 +704,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return updated;
     },
     findConnection: connection.findConnection,
+    findConnectionForUpdate: connection.findConnectionForUpdate,
     newId: store.newId,
     now: store.now,
   };

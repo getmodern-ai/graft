@@ -10,11 +10,12 @@ import {
   isConnectionUsable,
   listConnections,
   type Principal,
+  rebindToolIfConnectionDead,
   recordDryRun,
   recordUsage,
   type ServiceContext,
+  ServiceError,
   touchToolUsed,
-  updateToolDefinition,
 } from "@graft/core";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import { EXIT_TIMEOUT, EXIT_USAGE, MODULE_ENTRIES, RUNNER_PATH } from "@graft/runner";
@@ -76,8 +77,11 @@ import { authoredToolName } from "./tool-names";
  * connection of the tool's vendor in this agent's scope; with none, or with several, the refusal
  * stands and names the step (`revokedConnectionRefusal`, `notInScopeRefusal`). The row's default
  * is **rebound only when it is revoked** — dead for every agent, so moving it takes nothing from
- * anyone and the next call reads it directly; a live default outside this agent's scope is another
- * agent's and stays, and this agent's calls resolve to its own row each time (Greptile on #98). The
+ * anyone and the next call reads it directly — through `rebindToolIfConnectionDead`, which reads
+ * the default's row locked and writes only if it is still dead, so a reconnection landing meanwhile
+ * wins and the run goes to the reconnected row; a live default outside this agent's scope is
+ * another agent's and stays, and this agent's calls resolve to its own row each time (Greptile on
+ * #98). The
  * scope is read before the choice, so a live row the agent was never given is never followed; the
  * approval gate still sits after the choice, so a write asks on the connection it will run against
  * (ADR 0008). A caller that names the connection (`connectionId`) gets no following: it said which.
@@ -529,23 +533,22 @@ async function runHeld(
     }
     connectionId = target.id;
     if (revoked) {
-      // Dead for every agent, so the row follows; a live default outside this scope is another
-      // agent's and stays (the header).
-      const rebound = await updateToolDefinition(
-        ctx,
-        principal,
-        tool.id,
-        { defaultConnectionId: target.id },
-        deps.tool,
-      );
-      if (!rebound) {
+      // Dead for every agent, so the row follows — unless the person reconnected it meanwhile, in
+      // which case it is live again and the run goes there; a live default outside this scope is
+      // another agent's and stays (the header).
+      let result: Awaited<ReturnType<typeof rebindToolIfConnectionDead>>;
+      try {
+        result = await rebindToolIfConnectionDead(ctx, principal, tool.id, target.id, deps.tool);
+      } catch (error) {
+        if (!(error instanceof ServiceError) || error.code !== "NOT_FOUND") throw error;
         return refuse(
           "tool_not_found",
           `${wireName} left the toolbox while its connection was being chosen; find_tool searches it.`,
           versioned,
         );
       }
-      gated = rebound;
+      gated = result.tool;
+      if (!result.rebound) connectionId = result.tool.defaultConnectionId ?? target.id;
     }
   }
 

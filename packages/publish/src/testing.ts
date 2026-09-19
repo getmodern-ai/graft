@@ -113,8 +113,11 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
       });
       return version;
     },
-    // A live row of the person's: enough for the owned-connection check and for `bindingIsDead`.
+    // A live row of the person's: enough for the owned-connection check and for the rebind's
+    // locked read (`rebindToolIfConnectionDead`), which a test overrides to read as revoked.
     findConnection: async (_db, personId, id) => ({ id, personId, revokedAt: null }) as never,
+    findConnectionForUpdate: async (_db, personId, id) =>
+      ({ id, personId, revokedAt: null }) as never,
   };
 }
 

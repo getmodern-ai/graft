@@ -453,17 +453,19 @@ in the create dialog and the consent card, and in the agent page's Scope section
 the connection **per agent** (`packages/mcp/src/run.ts`): the default when this agent holds it
 live; otherwise — revoked, or a live row another agent of the person's holds and this one was never
 given — the **one** live, usable connection of the tool's vendor in this agent's scope. The row is
-rebound (`updateToolDefinition`, one patch) only when its default is revoked, dead for every agent;
-a live default outside the scope is another agent's and stays. With no such connection the
+rebound only when its default is revoked, dead for every agent, through `@graft/core`'s
+`rebindToolIfConnectionDead`, which reads the default's row locked (`ToolDeps.findConnectionForUpdate`)
+and writes only if it is still dead, so a reconnection landing meanwhile wins; a live default
+outside the scope is another agent's and stays. With no such connection the
 `connection_revoked` or `connection_not_in_scope` refusal stands as before, and with several it
 names them under `alternatives` and says the step is the person's (`revoke.ts`'s
 `revokedConnectionRefusal`, `run.ts`'s `notInScopeRefusal`). A caller that names the connection
 (`AuthoredRunArgs.connectionId`) is never followed: `acquire`'s dry run passes the job's connection,
 so a version published onto an existing tool row is proved against the connection the job authored
 it for; a publish onto an existing tool under `activate: false` rebinds the row to
-`defaultConnectionId` in the publish's transaction only when the row's default is missing or
-revoked — a live default waits for the pass, so a failed job leaves the tool where it was
-(`packages/publish`, step 8). The job's "did not run" progress line and `tried[].summary` carry a
+`defaultConnectionId` through the same function, in the publish's transaction, only when the row's
+default is missing or revoked — a live default waits for the pass, so a failed job leaves the tool
+where it was (`packages/publish`, step 8). The job's "did not run" progress line and `tried[].summary` carry a
 refusal's `reason: message` rather than the word `refused`. `packages/mcp/src/server.test.ts` (the
 GRA-122 describe), `acquire.test.ts` and `publish.service.test.ts` are the suites.
 

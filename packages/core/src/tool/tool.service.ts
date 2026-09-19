@@ -233,6 +233,49 @@ export async function updateToolDefinition(
 }
 
 /**
+ * Rebind a tool whose default connection is dead — none, gone, or revoked — to `connectionId`, and
+ * leave a live one alone (GRA-122). The publish under `activate: false` and a run that followed the
+ * vendor's one live connection both call this, so a tool the person revoked and reconnected under a
+ * new row works again at once, and a tool that works keeps the row it works through. The default's
+ * row is read **locked** (`findConnectionForUpdate`) in one transaction with the write, so a
+ * reconnection racing this either landed first and is seen live, or waits for the commit and lands
+ * on the row the rebind left — it is never overwritten (Greptile on #98). Answers the row as it
+ * stands and whether it moved; `NOT_FOUND` when the tool is not the person's. Nested inside a
+ * caller's transaction it is a savepoint, which is what the publish does.
+ */
+export async function rebindToolIfConnectionDead(
+  ctx: ServiceContext,
+  principal: Principal,
+  toolId: string,
+  connectionId: string,
+  deps: ToolDeps,
+): Promise<{ tool: AuthoredToolRow; rebound: boolean }> {
+  return ctx.db.transaction(async (tx) => {
+    const scoped = { db: tx };
+    const tool = orNotFound(
+      await deps.findAuthoredToolById(tx, principal.personId, toolId),
+      "Tool not found",
+    );
+    if (tool.defaultConnectionId === connectionId) return { tool, rebound: false };
+    const current = tool.defaultConnectionId
+      ? await deps.findConnectionForUpdate(tx, principal.personId, tool.defaultConnectionId)
+      : null;
+    if (current && current.revokedAt === null) return { tool, rebound: false };
+    const rebound = orNotFound(
+      await updateToolDefinition(
+        scoped,
+        principal,
+        toolId,
+        { defaultConnectionId: connectionId },
+        deps,
+      ),
+      "Tool not found",
+    );
+    return { tool: rebound, rebound: true };
+  });
+}
+
+/**
  * Make a version the one the tool runs as: the definition becomes the version's — prose, schema,
  * the check's annotations, the binding — and the pointer moves onto it, in one transaction, so a
  * list never shows one version's description over another's schema. The pointer names only a
