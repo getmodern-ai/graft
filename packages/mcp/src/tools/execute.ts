@@ -1,7 +1,7 @@
 import { type ConnectionOutput, getConnection, recordUsage } from "@graft/core";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
-
 import { requireBuildApproval } from "../approval";
+import { ASK_CARD_TOOL_META } from "../ask-card";
 import {
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   MAX_COMMAND_TIMEOUT_SECONDS,
@@ -10,7 +10,7 @@ import {
 } from "../bounds";
 import type { SessionContext } from "../context";
 import { heldInFlight } from "../in-flight";
-import { toolAwaitingOrError, toolError, toolRefusal, toolResult } from "../result";
+import { toolAwaitingOrError, toolError, toolRefusal, toolResult, withCard } from "../result";
 import { revokedConnectionRefusal } from "../revoke";
 import { runWithCapability } from "../run";
 import { openAgentSandbox, runCommand, withSandbox } from "../sandbox";
@@ -68,6 +68,8 @@ export function executeToolDefinition(connection: ConnectionOutput): Tool {
     },
     // As destructive as the command it carries, which a host cannot know per call (GRA-114).
     annotations: { readOnlyHint: false, destructiveHint: true },
+    // The first call against a connection may answer the tool ask's card (GRA-116; `../tools.ts`).
+    _meta: ASK_CARD_TOOL_META,
   };
 }
 
@@ -113,7 +115,7 @@ export async function callExecuteTool(
       },
       deps.ledger,
     );
-    return toolAwaitingOrError(gate.answer);
+    return withCard(toolAwaitingOrError(gate.answer), gate.card);
   }
 
   // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).

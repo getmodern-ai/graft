@@ -13,7 +13,7 @@ import type { McpDeps } from "./deps";
 import { createToolListChangedNotifier } from "./notifier";
 import { INSTRUCTIONS_BUDGET, openAgentSession, SERVER_INSTRUCTIONS } from "./session";
 import { createFakeDeps, createFakeStore } from "./testing/fake-deps";
-import { authoredToolDefinition } from "./tools";
+import { authoredToolDefinition, META_TOOL_NAMES } from "./tools";
 import { ADVANCED_WHEN, AUTHORING_TOOLS } from "./tools/authoring";
 import { executeToolDefinition } from "./tools/execute";
 import { META_TOOLS } from "./tools/meta";
@@ -153,7 +153,7 @@ describe("the ask card over the session", () => {
     }
   });
 
-  it("points acquire, request_connection and request_credential at the card, under both keys, and nothing else", async () => {
+  it("points every tool that can ask at the card, under both keys, and nothing else", async () => {
     const harness = await initialize();
     try {
       const { tools } = await harness.client.listTools();
@@ -161,8 +161,19 @@ describe("the ask card over the session", () => {
         .filter((tool) => (tool._meta?.ui as { resourceUri?: string } | undefined)?.resourceUri)
         .map((tool) => tool.name)
         .sort();
-      expect(rendering).toEqual(["acquire", "request_connection", "request_credential"]);
-      // ChatGPT's alias rides on exactly the same three (GRA-112).
+      // The three asking meta-tools, run_tool, and every tool outside the fixed set — the
+      // execute__ tools and the authored tools in the list — whose first write is the tool ask
+      // (GRA-116): a host renders a card only for a tool whose definition names the resource.
+      const asking = tools
+        .map((tool) => tool.name)
+        .filter(
+          (name) =>
+            ["acquire", "request_connection", "request_credential", "run_tool"].includes(name) ||
+            !META_TOOL_NAMES.includes(name),
+        )
+        .sort();
+      expect(rendering).toEqual(asking);
+      // ChatGPT's alias rides on exactly the same set (GRA-112).
       const aliased = tools
         .filter((tool) => tool._meta?.["openai/outputTemplate"] !== undefined)
         .map((tool) => tool.name)

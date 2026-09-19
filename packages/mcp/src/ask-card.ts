@@ -15,9 +15,12 @@ import type {
  * in place of a handoff link, for the tools that can ask. Three pieces meet here. The one
  * **resource** the server lists, `ui://graft/ask`, whose body is `@graft/ask-card`'s built page
  * (`session.ts` serves it). The **tool metadata** that makes a host fetch and render it —
- * `_meta.ui.resourceUri` on `acquire`, `request_connection` and `request_credential`, declared
- * unconditionally because Claude.ai renders apps without declaring the extension in `initialize`
- * (the ticket's research), and on no other tool. And the **card data** an awaiting result carries
+ * `_meta.ui.resourceUri` on every tool that can ask — `acquire`, `request_connection`,
+ * `request_credential`, and since GRA-116 `run_tool`, each `execute__<connection id>` and each
+ * authored tool in the list, whose first write answers the tool ask — declared unconditionally
+ * because Claude.ai renders apps without declaring the extension in `initialize` (the ticket's
+ * research), and on no other tool; a host mounts the page for every result of such a tool, and the
+ * page draws nothing for a result that is not an ask. And the **card data** an awaiting result carries
  * under `structuredContent.card`, built by the two ask flows (`approval.ts`,
  * `connection-request.ts`) from the same rows the console's handoff page reads: the agent's name,
  * the vendor, the connection and its hosts, the scheme and whether it takes a credential, the

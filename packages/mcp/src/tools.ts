@@ -13,11 +13,12 @@ import {
   McpError,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { ASK_CARD_TOOL_META } from "./ask-card";
 
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "./bounds";
 import type { SessionContext } from "./context";
 import type { ToolCallEvent } from "./deps";
-import { toolAwaitingOrError, toolError, toolRefusal, toolResult } from "./result";
+import { toolAwaitingOrError, toolError, toolRefusal, toolResult, withCard } from "./result";
 import { runAuthoredTool } from "./run";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
 import { AUTHORING_TOOLS } from "./tools/authoring";
@@ -38,7 +39,12 @@ const FIXED_BY_NAME = new Map(FIXED_TOOLS.map((tool) => [tool.definition.name, t
 /** The names every agent's list carries whatever its working set holds. */
 export const META_TOOL_NAMES: readonly string[] = FIXED_TOOLS.map((tool) => tool.definition.name);
 
-/** An authored tool as the harness sees it: the row's prose, schema and derived annotations. */
+/**
+ * An authored tool as the harness sees it: the row's prose, schema and derived annotations, and
+ * the ask card's resource (GRA-116): a write's first call answers `awaiting_approval` with the tool
+ * ask's card, and a host renders a card only for a tool whose definition names the resource — so
+ * every tool that can ask carries it, the card drawing nothing for a result that is not an ask.
+ */
 export function authoredToolDefinition(tool: AuthoredToolRow): Tool {
   return {
     name: authoredToolName(tool.vendor, tool.name),
@@ -46,6 +52,7 @@ export function authoredToolDefinition(tool: AuthoredToolRow): Tool {
     // Stored as `type: "object"` — the tool service refuses anything else at create.
     inputSchema: tool.inputSchema as Tool["inputSchema"],
     annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
+    _meta: ASK_CARD_TOOL_META,
   };
 }
 
@@ -159,7 +166,9 @@ async function dispatch(
         mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: false },
         channel: session.channel,
       });
-      return run.isError ? toolAwaitingOrError(run.answer) : toolResult(run.answer);
+      return run.isError
+        ? withCard(toolAwaitingOrError(run.answer), run.card)
+        : toolResult(run.answer);
     }
   }
 

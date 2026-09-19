@@ -356,8 +356,11 @@ one resource `ui://graft/ask` (`text/html;profile=mcp-app`, an empty `_meta.ui.c
 the card fetches nothing) and serves the page from `@graft/ask-card`'s `ASK_CARD_HTML_PATH`, which resolves to
 `packages/ask-card/dist/ask.html` in a checkout and to `dist/ask.html` beside the server's bundle,
 where `apps/server/tsdown.config.ts` copies it and the Dockerfile's `build` stage builds it first.
-`acquire`, `request_connection` and `request_credential` carry `_meta.ui.resourceUri` unconditionally
-(Claude.ai declares no extension) with ChatGPT's alias `openai/outputTemplate` beside it, and the
+Every tool that can ask carries `_meta.ui.resourceUri` unconditionally (Claude.ai declares no
+extension): `acquire`, `request_connection`, `request_credential`, and — since a host renders a card
+only for a tool whose definition names the resource (GRA-116's live check, 2026-09-20) — `run_tool`,
+every `execute__<id>` and every authored tool in the list, whose first write answers the tool ask;
+ChatGPT's alias `openai/outputTemplate` rides beside it, and the
 resource carries the `openai/widget*` aliases of its `ui` keys (GRA-112); their awaiting results
 carry the card's data under `structuredContent.card` beside GRA-55's unchanged `url`, `message` and
 `reason` (`result.ts`'s `withCard`). **An awaiting result is not an MCP error**: every `awaiting_*`

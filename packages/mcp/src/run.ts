@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-
+import type { AskCard } from "@graft/ask-card/shape";
 import {
   type AgentScope,
   getAgentScope,
@@ -16,7 +16,6 @@ import { EXIT_TIMEOUT, EXIT_USAGE, MODULE_ENTRIES, RUNNER_PATH } from "@graft/ru
 import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
 import { sandboxPath } from "@graft/toolbox";
-
 import { type AskChannel, gateToolCall } from "./approval";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
@@ -364,7 +363,8 @@ export type AuthoredRunArgs = {
  */
 export type AuthoredRunAnswer =
   | { isError: false; answer: unknown }
-  | { isError: true; answer: Record<string, unknown> };
+  /** `card` rides beside the gate's `awaiting_approval` — the tool ask as a chat product renders it (GRA-116). */
+  | { isError: true; answer: Record<string, unknown>; card?: AskCard };
 
 /**
  * Run one authored tool for an agent, end to end — see the header. Every exit records a ledger
@@ -492,7 +492,7 @@ async function runHeld(
     const gate = await gateToolCall(ctx, scope, { tool, connectionId }, deps, args.channel);
     if (!gate.pass) {
       await record("refused", versioned);
-      return { answer: gate.answer, isError: true };
+      return { answer: gate.answer, isError: true, card: gate.card };
     }
   }
 
