@@ -210,13 +210,20 @@ beforeAll(async () => {
     primaryHost: "https://api.other.example",
   });
   store.addAgent({
+    scopeMode: "listed",
     id: AGENT_A,
     personId: PERSON,
     token: TOKEN_A,
     name: "laptop Hermes",
     connectionIds: [CONN_DEMO],
   });
-  store.addAgent({ id: AGENT_B, personId: PERSON, token: TOKEN_B, connectionIds: [CONN_DEMO] });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_B,
+    personId: PERSON,
+    token: TOKEN_B,
+    connectionIds: [CONN_DEMO],
+  });
   // A has the build approval (ADR 0008); B does not, and is what the ask is asserted on.
   store.grantBuild(AGENT_A, CONN_DEMO);
 

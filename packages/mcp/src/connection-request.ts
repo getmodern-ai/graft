@@ -36,6 +36,7 @@ import { AUTH_SCHEMES, type AuthScheme, isAuthScheme } from "@graft/proxy/types"
 
 import { DEFAULT_POLL_MS } from "./approval";
 import { connectionAskCard, credentialAskCard, scopeAskCard } from "./ask-card";
+import { notifyAgentsReachingConnection } from "./connected";
 import type { McpDeps } from "./deps";
 import { handoffUrl, signHandoffToken } from "./handoff";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -131,6 +132,15 @@ import { executeToolName } from "./tool-names";
  * revoked row and a live row in scope keep GRA-76's answers; a live row outside the scope whose
  * credential is missing keeps its refusal too, since allowing it would give the agent nothing to
  * call through.
+ *
+ * **An agent on `all` never reaches the scope ask, and every grant here is a no-op for it**
+ * (ADR 0007 as amended 2026-09-19; GRA-105). `getAgentScope` answers every connection of the
+ * person's for such an agent, so `existingConnectionFor` finds every usable row in scope and
+ * answers `connected`; the `scope` ask and the gateway's `connection_not_in_scope` are the
+ * narrowed agent's answers alone. The grant after a connect (`addConnectionToAgentScope`, here and
+ * in the console's submit, the link's return and the scope ask's yes) writes nothing for an agent
+ * on `all` — the row is the person's and therefore already that agent's — and this file does not
+ * read the mode to know it.
  */
 
 export const CONNECTION_ASK_KIND = "connection";
@@ -765,11 +775,12 @@ async function routeProposal(
       settleByConnectionId(ctx, scope, taken, deps, {
         what,
         declinedReason: "connection_declined",
-        onConnected: (connection) => {
-          // The connection's execute tool is now in this agent's list (ADR 0003).
-          notifier?.changed(scope.agentId);
-          return connected(connection, "new");
-        },
+        // No announcement here: the path that made the row — the console's submit, the link's
+        // return, the ask card's confirm — told every session whose scope reaches it when the row
+        // was created (`connected.ts`), and this settle only reads the recorded answer; a second
+        // `tools/list_changed` for an unchanged list would make every client re-fetch for nothing
+        // (Greptile on #88).
+        onConnected: (connection) => connected(connection, "new"),
       }),
     ...(redirectUri ? { awaitingExtra: { redirectUri } } : {}),
     ...(link ? { awaitingExtra: { provider: provider.name } } : {}),
@@ -975,12 +986,14 @@ async function connectWithoutPersonStep(
       },
       deps.connection,
     );
-    // The agent that asked gets it, and no other (ADR 0007), as the console's submit does.
+    // The agent that asked gets it (ADR 0007), as the console's submit does — a no-op for an
+    // agent on `all`, whose scope the row is in already (ADR 0007 as amended 2026-09-19).
     await addConnectionToAgentScope(scoped, principal, scope.agentId, created.id, deps.agent);
     return created;
   });
-  // The connection's execute tool is now in this agent's list (ADR 0003).
-  notifier?.changed(scope.agentId);
+  // The connection's execute tool is now in the list of every agent whose scope reaches the row
+  // (ADR 0003; `connected.ts`): this one's, and every agent on `all`.
+  await notifyAgentsReachingConnection(ctx, principal, connection.id, deps, notifier);
   return { isError: false, answer: connected(connection, "provider") };
 }
 
@@ -1197,7 +1210,11 @@ async function settleByConnectionId(
   scope: AgentScope,
   taken: PendingActionRow,
   deps: McpDeps,
-  ask: { what: string; declinedReason: string; onConnected: (c: ConnectionOutput) => Connected },
+  ask: {
+    what: string;
+    declinedReason: string;
+    onConnected: (c: ConnectionOutput) => Connected | Promise<Connected>;
+  },
 ): Promise<ConnectionRequestOutcome> {
   const answer = readConnectionAnswer(taken.answer);
   const connection = answer
@@ -1210,5 +1227,5 @@ async function settleByConnectionId(
       { pendingActionId: taken.id },
     );
   }
-  return { isError: false, answer: ask.onConnected(connection) };
+  return { isError: false, answer: await ask.onConnected(connection) };
 }

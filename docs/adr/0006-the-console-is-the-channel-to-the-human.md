@@ -204,8 +204,9 @@ admits `{ allow, approveBuild? }` for it under the same gate, because it is a ye
 connection the person already made, with nothing to enter — the same standing as the build approval.
 A revoked row and a live row in scope keep GRA-76's answers; a live row outside the scope whose
 credential is missing keeps its refusal, since allowing it would give the agent nothing to call
-through. GRA-105 (a new agent's default scope) may narrow when this ask is reached; the ask itself
-does not move.
+through. Since ADR 0007's amendment of 2026-09-19 (GRA-105) a new agent reaches every connection
+of the person's, so this ask is reached only for an agent the person limited to a list; the ask
+itself does not move.
 
 **Unchanged.** ADR 0004 and ADR 0008. Elicitation keeps its place before the handoff for the clients
 that show a form. `acquire` still asks once per agent per connection; the connection confirmation

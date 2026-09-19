@@ -26,6 +26,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { recordApprovalAnswer } from "./ask-answer";
+import { notifyAgentsReachingConnection } from "./connected";
 import {
   BUILD_APPROVAL_ON_THE_PAGE,
   CONNECTION_ASK_KIND,
@@ -42,7 +43,7 @@ import {
 } from "./connection-request";
 import type { McpDeps } from "./deps";
 import { HANDOFF_TOKEN_PARAM, verifyHandoff } from "./handoff";
-import { createToolListChangedNotifier } from "./notifier";
+import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
@@ -107,8 +108,20 @@ beforeAll(async () => {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "index.ts"), MODULE);
 
-  store.addAgent({ id: AGENT_A, personId: PERSON, token: TOKEN_A, name: "laptop Hermes" });
-  store.addAgent({ id: AGENT_B, personId: PERSON, token: TOKEN_B, name: "server OpenClaw" });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_A,
+    personId: PERSON,
+    token: TOKEN_A,
+    name: "laptop Hermes",
+  });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_B,
+    personId: PERSON,
+    token: TOKEN_B,
+    name: "server OpenClaw",
+  });
 
   const fake = createFakeDeps(store);
   deps = {
@@ -146,8 +159,13 @@ afterEach(() => {
   deps.handoff.ttlMs = 60_000;
 });
 
-async function connect(token: string) {
-  const notifier = createToolListChangedNotifier({ windowMs: 50 });
+/**
+ * A harness over the in-memory pair, counting `tools/list_changed`. Two harnesses handed one
+ * `shared` notifier stand for two agents of one process, which is how a change announced to one
+ * agent is shown to reach — or not reach — the other (as `server.test.ts`'s harness does).
+ */
+async function connect(token: string, shared?: ToolListChangedNotifier) {
+  const notifier = shared ?? createToolListChangedNotifier({ windowMs: 50 });
   const session = await openAgentSession(deps, token, notifier);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await session.server.connect(serverTransport);
@@ -163,6 +181,7 @@ async function connect(token: string) {
   await client.connect(clientTransport);
   return {
     client,
+    notifier,
     listChanged: () => listChanged,
     call: async (name: string, args: Record<string, unknown> = {}) =>
       (await client.callTool({ name, arguments: args })) as CallToolResult,
@@ -170,7 +189,7 @@ async function connect(token: string) {
     close: async () => {
       await client.close();
       await session.close();
-      notifier.close();
+      if (!shared) notifier.close();
     },
   };
 }
@@ -191,12 +210,15 @@ const principal = { personId: PERSON };
 
 /**
  * What the console's submit route does for a `connection` ask: create, add to the agent's scope,
- * grant the build approval when the person left the control on (GRA-75), record.
+ * grant the build approval when the person left the control on (GRA-75), record — and, given the
+ * process's notifier, announce the row to every session whose scope reaches it, as the route does
+ * after its transaction (`connected.ts`); the settle that follows announces nothing.
  */
 async function submitConnection(
   actionId: string,
   credential: Record<string, string>,
   choices: { approveBuild?: boolean } = {},
+  notifier?: ToolListChangedNotifier,
 ) {
   const action = store.pendingActions.get(actionId);
   if (!action) throw new Error(`no action ${actionId}`);
@@ -231,6 +253,8 @@ async function submitConnection(
     { connectionId: connection.id },
     deps.pendingAction,
   );
+  if (notifier)
+    await notifyAgentsReachingConnection(ctx(), principal, connection.id, deps, notifier);
   return connection;
 }
 
@@ -522,7 +546,12 @@ describe("request_connection through a harness", () => {
 
       // The person opens the link and enters the key; the console creates the connection.
       const before = await a.toolNames();
-      const connection = await submitConnection(action.id, { apiKey: "sk_live_acme_1" });
+      const connection = await submitConnection(
+        action.id,
+        { apiKey: "sk_live_acme_1" },
+        {},
+        a.notifier,
+      );
       expect(connection.credentialSetAt).not.toBeNull();
       expect(JSON.stringify(connection)).not.toContain("sk_live_acme_1");
 
@@ -1396,6 +1425,52 @@ describe("request_connection through the gateway provider (GRA-58)", () => {
     }
   }, 60_000);
 
+  /** ADR 0007 as amended 2026-09-19: the grant after a no-person-step connect writes no list row for an agent on `all`. */
+  it("connects for an agent on all connections with no list row written, and a second all agent finds the row in scope at once", async () => {
+    const OPEN_1 = "agent_open_1";
+    const OPEN_2 = "agent_open_2";
+    const TOKEN_OPEN_1 = "grft_connection_token_o1_0000000000000000000000000";
+    const TOKEN_OPEN_2 = "grft_connection_token_o2_0000000000000000000000000";
+    store.addAgent({ scopeMode: "all", id: OPEN_1, personId: PERSON, token: TOKEN_OPEN_1 });
+    store.addAgent({ scopeMode: "all", id: OPEN_2, personId: PERSON, token: TOKEN_OPEN_2 });
+    // One notifier for the process: what `one` connects, `two` must hear about (Greptile on #88).
+    const shared = createToolListChangedNotifier({ windowMs: 50 });
+    const one = await connect(TOKEN_OPEN_1, shared);
+    const two = await connect(TOKEN_OPEN_2, shared);
+    const listed = await connect(TOKEN_B, shared);
+    try {
+      const said = body(await one.call("request_connection", COVERED));
+      expect(said).toMatchObject({ status: "connected", provider: "gateway" });
+      const id = said.connectionId as string;
+      made.push(id);
+      expect(store.agentConnections.get(OPEN_1)?.size ?? 0).toBe(0);
+      await until(() => one.listChanged() > 0);
+      expect(await one.toolNames()).toContain(executeToolName(id));
+      // The row entered `two`'s scope the moment it existed, so its session is told and its list
+      // carries the execute tool without a call of its own; B, on a list without the row, hears
+      // nothing and lists nothing new.
+      await until(() => two.listChanged() > 0);
+      expect(await two.toolNames()).toContain(executeToolName(id));
+      expect(listed.listChanged()).toBe(0);
+      expect(await listed.toolNames()).not.toContain(executeToolName(id));
+
+      // The other `all` agent: in scope already, connected with no refusal and no widening.
+      const other = body(await two.call("request_connection", COVERED));
+      expect(other).toMatchObject({ status: "connected", connectionId: id, provider: "gateway" });
+      expect(other.message).toContain("already connected");
+      expect(rowsFor("unleashed")).toHaveLength(1);
+    } finally {
+      await one.close();
+      await two.close();
+      await listed.close();
+      shared.close();
+      store.agents.delete(OPEN_1);
+      store.agents.delete(OPEN_2);
+      store.agentConnections.delete(OPEN_1);
+      store.agentConnections.delete(OPEN_2);
+    }
+  });
+
   it("refuses to grow another agent's scope by itself, and to undo a revoke: both name the console step", async () => {
     const a = await connect(TOKEN_A);
     const b = await connect(TOKEN_B);
@@ -2013,6 +2088,154 @@ describe("request_connection asks to use a connection the person holds but this 
  * the server's route makes (`connectThroughProvider`), which checks the row's hosts against the
  * provider's coverage, so a set-aside host that reached the payload would fail it.
  */
+describe("an agent on all connections reaches the person's rows without an ask (GRA-105)", () => {
+  const AGENT_C = "agent_c";
+  const TOKEN_C = "grft_connection_token_c_00000000000000000000000000";
+  const DELTA = {
+    vendor: "delta",
+    displayName: "Delta Books",
+    primaryHost: "https://api.delta.example/v1",
+    hosts: ["files.delta.example"],
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "x-delta-key" },
+    docsUrl: "https://developer.delta.example/docs",
+  };
+  const made: string[] = [];
+
+  /** Agent A's live Delta row, as the console made it, which no other agent was given a list row for. */
+  function theirs(id: string): ConnectionRow {
+    const row = store.addConnection({
+      id,
+      personId: PERSON,
+      vendor: "delta",
+      displayName: "Delta Books",
+      primaryHost: "https://api.delta.example/v1",
+      hosts: ["files.delta.example"],
+      schemeConfig: { headerName: "x-delta-key" },
+    });
+    store.agentConnections.get(AGENT_A)?.add(id);
+    made.push(id);
+    return row;
+  }
+
+  beforeEach(() => {
+    // The amendment's default for a new agent: `all`, no list — a third agent of the same person.
+    store.addAgent({
+      scopeMode: "all",
+      id: AGENT_C,
+      personId: PERSON,
+      token: TOKEN_C,
+      name: "Claude",
+    });
+  });
+
+  afterEach(() => {
+    store.agents.delete(AGENT_C);
+    store.agentConnections.delete(AGENT_C);
+    for (const id of made) {
+      store.connections.delete(id);
+      for (const scope of store.agentConnections.values()) scope.delete(id);
+    }
+    made.length = 0;
+    for (const [id, pending] of store.pendingActions) {
+      if (pending.agentId === AGENT_C) store.pendingActions.delete(id);
+    }
+  });
+
+  it("answers connected at once for a connection another agent's ask made — no scope ask, no list row — and lists its execute tool; the listed agent beside it still gets the ask", async () => {
+    const row = theirs("conn_delta_open");
+    const c = await connect(TOKEN_C);
+    const b = await connect(TOKEN_B);
+    try {
+      // The row is in C's list at once: the person's connection is every `all` agent's.
+      expect(await c.toolNames()).toContain(executeToolName(row.id));
+
+      const said = await c.call("request_connection", DELTA);
+      expect(said.isError, JSON.stringify(body(said))).toBeFalsy();
+      expect(body(said)).toMatchObject({
+        status: "connected",
+        connectionId: row.id,
+        provider: "keyring",
+        executeTool: executeToolName(row.id),
+        message: expect.stringContaining("already connected"),
+      });
+      expect(actionsOf(AGENT_C, SCOPE_ASK_KIND)).toEqual([]);
+      expect(actionsOf(AGENT_C, CONNECTION_ASK_KIND)).toEqual([]);
+      // Nothing was written to the list: `all` holds none (ADR 0007 as amended 2026-09-19).
+      expect(store.agentConnections.get(AGENT_C)?.size ?? 0).toBe(0);
+
+      // The narrowed agent's path is unchanged: B, on a list without the row, is asked.
+      const { action } = awaiting(await b.call("request_connection", DELTA), "awaiting_scope");
+      expect(action.agentId).toBe(AGENT_B);
+      store.pendingActions.delete(action.id);
+    } finally {
+      await c.close();
+      await b.close();
+    }
+  });
+
+  it("hears tools/list_changed when another agent's proposal is connected in the console, and lists the execute tool without a call of its own", async () => {
+    const EPSILON = {
+      vendor: "epsilon",
+      displayName: "Epsilon",
+      primaryHost: "https://api.epsilon.example",
+      scheme: "api_key_header",
+      schemeConfig: { headerName: "x-epsilon-key" },
+    };
+    const shared = createToolListChangedNotifier({ windowMs: 50 });
+    const b = await connect(TOKEN_B, shared);
+    const c = await connect(TOKEN_C, shared);
+    try {
+      const { action } = awaiting(
+        await b.call("request_connection", EPSILON),
+        "awaiting_connection",
+      );
+      // The console's submit announces the row once, to every session whose scope reaches it —
+      // B's, on its list, and C's, on `all` (Greptile on #88) — before either agent calls again.
+      const connection = await submitConnection(action.id, { apiKey: "eps_1" }, {}, shared);
+      made.push(connection.id);
+      await until(() => b.listChanged() > 0 && c.listChanged() > 0);
+      expect(await c.toolNames()).toContain(executeToolName(connection.id));
+      expect(store.agentConnections.get(AGENT_C)?.size ?? 0).toBe(0);
+      // Past the notifier's window, so a second event would be delivered rather than coalesced.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const heard = { b: b.listChanged(), c: c.listChanged() };
+
+      // B's next call takes the recorded answer and says connected — and announces nothing: the
+      // list changed when the row was made, and a second event would only make both re-fetch.
+      const next = await b.call("request_connection", EPSILON);
+      expect(body(next)).toMatchObject({ status: "connected", connectionId: connection.id });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect({ b: b.listChanged(), c: c.listChanged() }).toEqual(heard);
+    } finally {
+      await b.close();
+      await c.close();
+      shared.close();
+      for (const [id, pending] of store.pendingActions) {
+        if (pending.agentId === AGENT_B && pending.payload.vendor === "epsilon") {
+          store.pendingActions.delete(id);
+        }
+      }
+    }
+  });
+
+  it("request_credential on a connection it was never listed for is in scope, since every connection of the person's is", async () => {
+    const row = theirs("conn_delta_open_2");
+    const c = await connect(TOKEN_C);
+    try {
+      const result = await c.call("request_credential", {
+        connectionId: row.id,
+        reason: "401 from the vendor",
+      });
+      const { action } = awaiting(result, "awaiting_credential");
+      expect(action).toMatchObject({ kind: CREDENTIAL_ASK_KIND, agentId: AGENT_C });
+      store.pendingActions.delete(action.id);
+    } finally {
+      await c.close();
+    }
+  });
+});
+
 describe("sign-in endpoints are not hosts (GRA-89)", () => {
   /** The proposal Hermes made, sign-in hosts and all. */
   const HERMES_GMAIL = {

@@ -24,6 +24,7 @@ import type {
 import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 import type { UsageLedgerRow } from "@graft/db/repo/usage";
 import type { WorkingSetChangeRow, WorkingSetRow } from "@graft/db/repo/working-set";
+import type { AgentScopeMode } from "@graft/db/schema/agent";
 import type { ConnectionScheme } from "@graft/db/schema/connection";
 
 /**
@@ -62,6 +63,12 @@ export type FakeStore = {
     id: string;
     personId: string;
     token: string;
+    /**
+     * Required, never defaulted (ADR 0007 as amended 2026-09-19): a fixture agent says which scope
+     * it has, so the amendment's default of `all` for a *new* agent changes no suite's meaning
+     * silently. `listed` with `connectionIds` is what every agent was before it.
+     */
+    scopeMode: AgentScopeMode;
     name?: string;
     connectionIds?: readonly string[];
     /** The MCP client whose consent minted the agent (ADR 0018) — what the ask card's tool gates on (GRA-84). */
@@ -131,6 +138,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         tokenPrefix: input.token.slice(0, 8),
         connectedViaClientId: input.connectedVia?.clientId ?? null,
         connectedViaClientName: input.connectedVia?.clientName ?? null,
+        scopeMode: input.scopeMode,
         workingSetCap: 20,
         idleWindowDays: 21,
         revokedAt: null,
@@ -308,6 +316,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         tokenPrefix: input.tokenPrefix ?? null,
         connectedViaClientId: input.connectedViaClientId ?? null,
         connectedViaClientName: input.connectedViaClientName ?? null,
+        // The column's default (schema/agent.ts): a new agent reaches every connection.
+        scopeMode: input.scopeMode ?? "all",
         workingSetCap: input.workingSetCap ?? 20,
         idleWindowDays: input.idleWindowDays ?? 21,
         revokedAt: null,
@@ -320,6 +330,11 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return row;
     },
     findAgent: async (_db, personId, agentId) => {
+      const row = store.agents.get(agentId);
+      return row && row.personId === personId ? row : null;
+    },
+    // No lock in memory: the store has no concurrent transactions to serialise.
+    findAgentForUpdate: async (_db, personId, agentId) => {
       const row = store.agents.get(agentId);
       return row && row.personId === personId ? row : null;
     },
@@ -370,6 +385,18 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     },
     listAgentConnectionIds: async (_db, scope) =>
       ownsAgent(scope) ? [...(store.agentConnections.get(scope.agentId) ?? [])].sort() : [],
+    // The repo's one statement, as the store sees it (ADR 0007 as amended 2026-09-19): every
+    // connection of the person's for an agent on `all`, revoked ones included; the list otherwise.
+    listScopeConnectionIds: async (_db, scope) => {
+      if (!ownsAgent(scope)) return [];
+      if (store.agents.get(scope.agentId)?.scopeMode === "all") {
+        return [...store.connections.values()]
+          .filter((row) => row.personId === scope.personId)
+          .map((row) => row.id)
+          .sort();
+      }
+      return [...(store.agentConnections.get(scope.agentId) ?? [])].sort();
+    },
     findConnectionsByIds: async (_db, personId, ids) =>
       ids.flatMap((id) => {
         const row = store.connections.get(id);
@@ -567,13 +594,17 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return removed;
     },
     insertWorkingSetChange,
+    // The repo's predicate (ADR 0007 as amended 2026-09-19): every agent on `all`, and every agent
+    // whose list names the row, under the person.
     listAgentIdsForConnection: async (_db, personId, connectionId) =>
-      [...store.agentConnections.entries()]
+      [...store.agents.values()]
         .filter(
-          ([agentId, ids]) =>
-            ids.has(connectionId) && store.agents.get(agentId)?.personId === personId,
+          (agent) =>
+            agent.personId === personId &&
+            (agent.scopeMode === "all" ||
+              store.agentConnections.get(agent.id)?.has(connectionId) === true),
         )
-        .map(([agentId]) => agentId)
+        .map((agent) => agent.id)
         .sort(),
     vault: { encrypt: async () => Buffer.from("ciphertext") },
     providers: DEFAULT_PROVIDERS,

@@ -17,7 +17,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { initLogger } from "evlog";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "./app";
 import { createDatabaseCredentialRotation } from "./connections";
@@ -81,6 +81,13 @@ let tokenEndpoint: (request: UpstreamRequest) => Response = () => tokenResponse(
 let api: (token: string | null) => Response = () => Response.json(MESSAGES);
 /** The exchanges the callback made, through the server's own fetch seam. */
 const exchanges: UpstreamRequest[] = [];
+/** A connection id whose next locked read finds it revoked: a revoke committing just before the lock is granted. */
+let revokeAtLock: string | null = null;
+/** The connection deps the server was built with, for the spies on its locked read and its write. */
+let connectionDeps: ReturnType<typeof createFakeDeps>["connection"];
+/** The process's notifier as the API's routes see it: what a connect or a reconnection announces to. */
+const apiNotifier = { changed: vi.fn() };
+const announced = () => apiNotifier.changed.mock.calls.map(([agentId]) => agentId);
 
 function tokenResponse(overrides: Record<string, unknown> = {}) {
   issued += 1;
@@ -99,6 +106,17 @@ beforeAll(async () => {
   const fake = createFakeDeps(store);
   const connection = {
     ...fake.connection,
+    // Spied, so a test can see the callback classify a reconnection from the row *locked* — and
+    // play a revoke landing at the moment the lock is granted (`revokeAtLock`).
+    findConnectionForUpdate: vi.fn(async (db, personId: string, id: string) => {
+      if (revokeAtLock === id) {
+        revokeAtLock = null;
+        const row = store.connections.get(id);
+        if (row) store.connections.set(id, { ...row, revokedAt: new Date() });
+      }
+      return fake.connection.findConnectionForUpdate(db, personId, id);
+    }),
+    setConnectionCredential: vi.fn(fake.connection.setConnectionCredential),
     vault: {
       encrypt: (
         fields: Record<string, string>,
@@ -106,6 +124,7 @@ beforeAll(async () => {
       ) => vendor.vault.encrypt(fields, scope),
     },
   };
+  connectionDeps = connection;
   vendor = await startFakeVendor({
     keys,
     connections: [],
@@ -126,7 +145,13 @@ beforeAll(async () => {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "index.ts"), MODULE);
 
-  store.addAgent({ id: AGENT_A, personId: PERSON, token: TOKEN_A, name: "laptop Hermes" });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_A,
+    personId: PERSON,
+    token: TOKEN_A,
+    name: "laptop Hermes",
+  });
 
   const handoff = {
     consoleUrl: CONSOLE_URL,
@@ -165,6 +190,7 @@ beforeAll(async () => {
       },
       corsOrigins: [],
       handoff,
+      notifier: apiNotifier,
       oauth: {
         authUrl: AUTH_URL,
         decrypt: (ciphertext, scope) => vendor.vault.decrypt(ciphertext, scope),
@@ -348,6 +374,10 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
       connectionIds: string[];
     };
     expect(scope.connectionIds).toEqual([connectionId]);
+    // The row entered A's list the moment the submit made it — before any consent — and the
+    // submit is what tells A's session (`connected.ts`); the callback later adds nothing.
+    expect(announced()).toEqual([AGENT_A]);
+    apiNotifier.changed.mockClear();
 
     // Before the consent: the agent's call still waits, and the proxy refuses the vendor call.
     const a = await connect(TOKEN_A);
@@ -457,8 +487,11 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
     });
     expectNoSecret(JSON.stringify(connections));
 
-    // The ask is answered by the callback; the waiting tool takes it.
+    // The ask is answered by the callback; the waiting tool takes it. Neither announces: the list
+    // gained the execute tool when the submit made the row, and the tokens change no list
+    // (Greptile on #88, twice: the settle's repeat and the callback's silence).
     expect(store.pendingActions.get(actionId)?.answer).toEqual({ connectionId });
+    expect(announced()).toEqual([]);
     const a = await connect(TOKEN_A);
     try {
       const connected = await a.call("request_connection", PROPOSAL);
@@ -596,6 +629,43 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
     }
   });
 
+  /**
+   * The one consent that changes a list: the row was revoked when the browser came back, and
+   * `completeOAuthConsent` clears the mark with the record, so the execute tool returns to every
+   * list whose scope reaches the row and those sessions are told (Greptile on #88). The revoke is
+   * played as landing **between the callback's unlocked read of the row and its locked one** — the
+   * moment a revoke committing under the same row lock would surface — so the classification is
+   * shown to come from the locked row inside the transaction, before the record is written; read
+   * from the unlocked row it would say "live" and the write would clear the revoke with nobody
+   * told. In practice a revoke clears the client secret and the re-entry that restores it is the
+   * reconnection that announces (the next test), so this is the guard's own case rather than a
+   * flow the console offers.
+   */
+  it("a consent completed on a row revoked meanwhile is its reconnection, classified from the row locked inside the transaction, and tells every session whose scope reaches it", async () => {
+    apiNotifier.changed.mockClear();
+    const lockedRead = vi.mocked(connectionDeps.findConnectionForUpdate);
+    const write = vi.mocked(connectionDeps.setConnectionCredential);
+    lockedRead.mockClear();
+    write.mockClear();
+    const started = (await (
+      await app.request(`/api/connections/${connectionId}/oauth/authorize-url`, json({}))
+    ).json()) as { authorizeUrl: string };
+    const state = new URL(started.authorizeUrl).searchParams.get("state") as string;
+    expect(store.connections.get(connectionId)?.revokedAt).toBeNull();
+    revokeAtLock = connectionId;
+
+    expect(landing(await callback({ code: "while-revoked", state })).status).toBe("connected");
+    expect(revokeAtLock).toBeNull();
+    expect(store.connections.get(connectionId)?.revokedAt).toBeNull();
+    // Locked read first, the record written after it, and the announcement from what the lock saw.
+    expect(lockedRead).toHaveBeenCalledWith(expect.anything(), PERSON, connectionId);
+    expect(lockedRead.mock.invocationCallOrder[0] ?? Number.NaN).toBeLessThan(
+      write.mock.invocationCallOrder[0] ?? Number.NaN,
+    );
+    expect(announced()).toEqual([AGENT_A]);
+    apiNotifier.changed.mockClear();
+  });
+
   it("revoke clears the tokens, the client secret, the consent state, the approvals and the build approval, and leaves the tool", async () => {
     store.addTool({
       id: "tool_mail_list",
@@ -638,12 +708,17 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
     const tools = (await (await app.request("/api/tools")).json()) as { tools: { id: string }[] };
     expect(tools.tools.map((tool) => tool.id)).toContain("tool_mail_list");
 
-    // Reconnecting after a revoke: the client secret again, then the consent.
+    // Reconnecting after a revoke: the client secret again, then the consent. The re-entry is the
+    // reconnection — it clears `revoked_at` — so it is what announces the row's return; the consent
+    // that follows finds the row live and announces nothing more.
+    apiNotifier.changed.mockClear();
     const reentered = await app.request(
       `/api/connections/${connectionId}/credential`,
       json({ fields: { clientSecret: "client-secret-value" } }, "PUT"),
     );
     expect(reentered.status).toBe(200);
+    expect(announced()).toEqual([AGENT_A]);
+    apiNotifier.changed.mockClear();
     expect(
       ((await reentered.json()) as { connection: ConnectionWire }).connection.oauth,
     ).toMatchObject({
@@ -658,5 +733,6 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
       revokedAt: null,
       oauth: { status: "connected" },
     });
+    expect(announced()).toEqual([]);
   });
 });

@@ -157,6 +157,10 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
       const row = agents.get(id);
       return row && row.personId === personId ? row : null;
     }),
+    findAgentForUpdate: vi.fn(async (_db, personId, id) => {
+      const row = agents.get(id);
+      return row && row.personId === personId ? row : null;
+    }),
     findAgentByTokenHash: vi.fn(async () => null),
     findAgentByMcpAccessTokenHash: deps.findAgentByMcpAccessTokenHash,
     listAgents: vi.fn(async () => [...agents.values()]),
@@ -167,6 +171,7 @@ function harness(session: { user: { id: string } } | null = { user: { id: "perso
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),
     listAgentConnectionIds: vi.fn(async () => []),
+    listScopeConnectionIds: vi.fn(async () => []),
     findConnectionsByIds: vi.fn(async () => []),
     listAllActiveAgents: vi.fn(async () => []),
     newId: () => `agent_${++counter}`,
@@ -450,14 +455,16 @@ describe("the console's consent routes", () => {
       json({
         request: request(client_id, pkce.challenge),
         decision: "allow",
-        agent: { kind: "new", name: "Inspector", connectionIds: [] },
+        agent: { kind: "new", name: "Inspector" },
       }),
     );
     expect(allowed.status).toBe(200);
     const body = (await allowed.json()) as {
       redirectTo: string;
-      agent: { id: string; connectedVia: unknown };
+      agent: { id: string; connectedVia: unknown; scopeMode: string };
     };
+    // No mode named: the agent reaches every connection (ADR 0007 as amended 2026-09-19).
+    expect(body.agent.scopeMode).toBe("all");
     const url = new URL(body.redirectTo);
     expect(url.origin + url.pathname).toBe(REDIRECT);
     expect(url.searchParams.get("code")).toMatch(/^grftc_/);

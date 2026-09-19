@@ -92,6 +92,7 @@ export {
   MAX_COMMAND_TIMEOUT_SECONDS,
   MAX_DETACHED_TIMEOUT_SECONDS,
 } from "./bounds";
+export { notifyAgentsReachingConnection } from "./connected";
 export {
   type AwaitingHandoff,
   CONNECTION_ASK_KIND,

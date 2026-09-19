@@ -24,8 +24,18 @@ describe("a sweep's demotion reads back through the working-set history route", 
   it("records the cause the console shows, under the person, with the tool named", async () => {
     let clock = new Date("2026-09-01T09:00:00Z");
     const store = createFakeStore({ now: () => clock });
-    store.addAgent({ id: "agent_a", personId: "person_1", token: "grft_a_000000000000000000" });
-    store.addAgent({ id: "agent_b", personId: "person_2", token: "grft_b_000000000000000000" });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_a",
+      personId: "person_1",
+      token: "grft_a_000000000000000000",
+    });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_b",
+      personId: "person_2",
+      token: "grft_b_000000000000000000",
+    });
     store.addTool({
       id: "tool_1",
       personId: "person_1",

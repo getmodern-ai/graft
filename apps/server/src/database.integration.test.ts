@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { createAuth } from "@graft/auth";
 import {
+  addConnectionToAgentScope,
   createAgent,
   createConnectionDeps,
   createModelKeyDeps,
@@ -12,6 +13,7 @@ import {
   defaultWorkingSetDeps,
   deletePersonModelKey,
   findPersonModelKeyRow,
+  getAgentScope,
   getConnection,
   getPersonModelKey,
   getToolById,
@@ -25,6 +27,7 @@ import {
   revokeAgent,
   revokeConnection,
   type ServiceContext,
+  setAgentScope,
   setApproval,
   setConnectionCredential,
   setPersonModelKey,
@@ -259,6 +262,112 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     });
   });
 
+  /**
+   * ADR 0007 as amended 2026-09-19 (GRA-105), against the real column and the real statement: the
+   * column defaults to `all`, an agent on `all` resolves every connection of its person's — the
+   * ones made after it too, and none of another person's — and an agent on `listed` resolves its
+   * list; the grant that follows a connect writes no list row for the former.
+   */
+  it("resolves an agent's scope for its mode in the statement: all is every connection of the person's, present and future; listed is its list", async () => {
+    const alice = await signUp("scope-alice@example.com");
+    const bob = await signUp("scope-bob@example.com");
+    const ctx: ServiceContext = { db };
+    const proposal = {
+      vendor: "demo",
+      displayName: "Demo vendor",
+      scheme: "api_key_header" as const,
+      schemeConfig: { headerName: "x-demo-key" },
+      primaryHost: "https://api.demo.example/v2",
+    };
+
+    const column = await db.execute<{ column_default: string | null; is_nullable: string }>(
+      sql`select column_default, is_nullable from information_schema.columns
+          where table_schema = 'public' and table_name = 'agent' and column_name = 'scope_mode'`,
+    );
+    expect(column.rows[0]).toEqual({ column_default: "'all'::text", is_nullable: "NO" });
+
+    const first = await registerConnection(ctx, { personId: alice }, proposal, connectionDeps);
+    const open = await createAgent(ctx, { personId: alice }, { name: "open" }, defaultAgentDeps);
+    const listed = await createAgent(
+      ctx,
+      { personId: alice },
+      { name: "listed", scopeMode: "listed", connectionIds: [first.id] },
+      defaultAgentDeps,
+    );
+    expect(open.agent.scopeMode).toBe("all");
+    expect(open.connectionIds).toEqual([first.id]);
+    expect(listed.connectionIds).toEqual([first.id]);
+
+    // A connection made after the agent, and one of another person's.
+    const second = await registerConnection(
+      ctx,
+      { personId: alice },
+      { ...proposal, vendor: "other", primaryHost: "https://api.other.example" },
+      connectionDeps,
+    );
+    await registerConnection(ctx, { personId: bob }, proposal, connectionDeps);
+
+    const openScope = { personId: alice, agentId: open.agent.id };
+    const listedScope = { personId: alice, agentId: listed.agent.id };
+    expect(await getAgentScope(ctx, openScope, defaultAgentDeps)).toEqual(
+      [first.id, second.id].sort(),
+    );
+    expect(await getAgentScope(ctx, listedScope, defaultAgentDeps)).toEqual([first.id]);
+    // The right agent under the wrong person: nothing, on either branch of the statement.
+    expect(
+      await getAgentScope(ctx, { personId: bob, agentId: open.agent.id }, defaultAgentDeps),
+    ).toEqual([]);
+
+    // The grant after a connect: a list row for the listed agent, none for the open one.
+    await addConnectionToAgentScope(
+      ctx,
+      { personId: alice },
+      open.agent.id,
+      second.id,
+      defaultAgentDeps,
+    );
+    await addConnectionToAgentScope(
+      ctx,
+      { personId: alice },
+      listed.agent.id,
+      second.id,
+      defaultAgentDeps,
+    );
+    const rows = await db.execute<{ agent_id: string; connection_id: string }>(
+      sql`select agent_id, connection_id from agent_connection
+          where agent_id in (${open.agent.id}, ${listed.agent.id}) order by agent_id, connection_id`,
+    );
+    expect(rows.rows).toEqual(
+      [first.id, second.id]
+        .sort()
+        .map((connection_id) => ({ agent_id: listed.agent.id, connection_id })),
+    );
+
+    // Narrowed to a list with none given: the scope as it stood becomes the list.
+    const narrowed = await setAgentScope(
+      ctx,
+      { personId: alice },
+      open.agent.id,
+      { mode: "listed" },
+      defaultAgentDeps,
+    );
+    expect(narrowed.agent.scopeMode).toBe("listed");
+    expect(narrowed.connectionIds).toEqual([first.id, second.id].sort());
+    // And back to all: the list is cleared.
+    const widened = await setAgentScope(
+      ctx,
+      { personId: alice },
+      open.agent.id,
+      { mode: "all" },
+      defaultAgentDeps,
+    );
+    expect(widened.agent.scopeMode).toBe("all");
+    const cleared = await db.execute<{ n: string }>(
+      sql`select count(*)::text as n from agent_connection where agent_id = ${open.agent.id}`,
+    );
+    expect(cleared.rows[0]?.n).toBe("0");
+  });
+
   it("round-trips a credential: ciphertext in the row, decrypted by the proxy alone, never in the public shape", async () => {
     const personId = await signUp("linus@example.com");
     const ctx: ServiceContext = { db };
@@ -326,7 +435,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     const agent = await createAgent(
       ctx,
       principal,
-      { name: "smoke", connectionIds: [registered.id] },
+      { name: "smoke", scopeMode: "listed", connectionIds: [registered.id] },
       defaultAgentDeps,
     );
     const token = await mintCapabilityToken(
@@ -496,7 +605,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     const agent = await createAgent(
       ctx,
       principal,
-      { name: "a", connectionIds: [connection.id] },
+      { name: "a", scopeMode: "listed", connectionIds: [connection.id] },
       defaultAgentDeps,
     );
     const scope = { personId, agentId: agent.agent.id };

@@ -119,9 +119,26 @@ beforeAll(async () => {
     vendor: "demo",
     primaryHost: "https://api.demo.example/v2",
   });
-  store.addAgent({ id: AGENT_A, personId: PERSON, token: TOKEN_A, connectionIds: [CONN_DEMO] });
-  store.addAgent({ id: AGENT_B, personId: PERSON, token: TOKEN_B, connectionIds: [CONN_DEMO] });
-  const revoked = store.addAgent({ id: AGENT_REVOKED, personId: PERSON, token: TOKEN_REVOKED });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_A,
+    personId: PERSON,
+    token: TOKEN_A,
+    connectionIds: [CONN_DEMO],
+  });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_B,
+    personId: PERSON,
+    token: TOKEN_B,
+    connectionIds: [CONN_DEMO],
+  });
+  const revoked = store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_REVOKED,
+    personId: PERSON,
+    token: TOKEN_REVOKED,
+  });
   store.agents.set(AGENT_REVOKED, { ...revoked, revokedAt: new Date() });
 
   store.addTool({
@@ -302,6 +319,26 @@ describe("the tool list", () => {
       expect(execute?.description).toContain("Demo Orders");
     } finally {
       await a.close();
+    }
+  });
+
+  /** ADR 0007 as amended 2026-09-19: an agent on `all` lists every live connection of the person's, and nobody else's. */
+  it("for an agent on all connections carries the execute tool of every connection the person has, another person's excluded, with no list row behind it", async () => {
+    const AGENT_OPEN = "agent_open";
+    const TOKEN_OPEN = "grft_token_for_agent_open_00000000000000000000";
+    store.addAgent({ scopeMode: "all", id: AGENT_OPEN, personId: PERSON, token: TOKEN_OPEN });
+    const open = await connect(TOKEN_OPEN);
+    try {
+      expect(await open.names()).toEqual([
+        ...META_TOOL_NAMES,
+        executeToolName(CONN_DEMO),
+        executeToolName(CONN_OTHER),
+      ]);
+      expect(store.agentConnections.get(AGENT_OPEN)?.size ?? 0).toBe(0);
+    } finally {
+      await open.close();
+      store.agents.delete(AGENT_OPEN);
+      store.agentConnections.delete(AGENT_OPEN);
     }
   });
 

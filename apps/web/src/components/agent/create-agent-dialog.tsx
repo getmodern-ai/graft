@@ -1,9 +1,9 @@
+import type { AgentScopeMode } from "@graft/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { ScopeModeField } from "@/components/agent/scope-mode-field";
 import { TokenOnce } from "@/components/agent/token-once";
-import { ConnectionPicker } from "@/components/connection/connection-picker";
-import { RetryNotice } from "@/components/retry-notice";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,20 +15,22 @@ import {
 } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { agentKeys, type CreatedAgent, createAgent } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
 
 /**
  * Create an agent: a name, the cap and the idle window (ADR 0009's two per-agent knobs), and the
- * initial scope. The answer carries the token, and this dialog is where it is shown — once. Closing
- * the dialog is the end of it; the agent's page shows the prefix and the snippet, never the token.
+ * scope — `All connections` by default, or `Limit to these` with the picker (ADR 0007 as amended
+ * 2026-09-19; `scope-mode-field.tsx`). The answer carries the token, and this dialog is where it is
+ * shown — once. Closing the dialog is the end of it; the agent's page shows the prefix and the
+ * snippet, never the token.
  *
  * The connections arrive from a read the agents route starts without awaiting (`agents.index.tsx`),
- * so the dialog can open before they have: `connections` is `undefined` until then, the scope
- * draws skeleton rows in the picker's place, and Create waits — a scope chosen from a list that
- * has not arrived would be an empty one nobody chose (raised by Greptile on #30). A read that
- * failed shows the same Retry a table body does, and Create still waits.
+ * so the dialog can open before they have: `connections` is `undefined` until then and, under
+ * `Limit to these`, the scope draws skeleton rows in the picker's place and Create waits — a scope
+ * chosen from a list that has not arrived would be an empty one nobody chose (raised by Greptile on
+ * #30). A read that failed shows the same Retry a table body does, and Create still waits. Under
+ * `All connections` nothing is chosen from the list, so Create does not wait for it.
  */
 export function CreateAgentDialog({
   open,
@@ -47,6 +49,7 @@ export function CreateAgentDialog({
   const [name, setName] = useState("");
   const [cap, setCap] = useState("20");
   const [idleDays, setIdleDays] = useState("21");
+  const [scopeMode, setScopeMode] = useState<AgentScopeMode>("all");
   const [scope, setScope] = useState<Set<string>>(new Set());
   const [created, setCreated] = useState<CreatedAgent | null>(null);
 
@@ -66,6 +69,7 @@ export function CreateAgentDialog({
       setName("");
       setCap("20");
       setIdleDays("21");
+      setScopeMode("all");
       setScope(new Set());
       create.reset();
     }, 200);
@@ -96,7 +100,8 @@ export function CreateAgentDialog({
                 name,
                 workingSetCap: Number(cap),
                 idleWindowDays: Number(idleDays),
-                connectionIds: [...scope],
+                scopeMode,
+                ...(scopeMode === "listed" ? { connectionIds: [...scope] } : {}),
               });
             }}
           >
@@ -145,36 +150,15 @@ export function CreateAgentDialog({
                   />
                 </Field>
               </div>
-              <Field>
-                <FieldLabel>Scope</FieldLabel>
-                <FieldDescription>
-                  The connections this agent may use. Its tools cannot reach a connection outside
-                  the scope; you can change it any time.
-                </FieldDescription>
-                {connections ? (
-                  <ConnectionPicker
-                    connections={connections}
-                    selected={scope}
-                    onChange={setScope}
-                  />
-                ) : connectionsFailed ? (
-                  <p className="text-muted-foreground text-sm">
-                    <RetryNotice
-                      error={connectionsFailed.error}
-                      message="Could not load your connections."
-                      onRetry={connectionsFailed.onRetry}
-                      retrying={connectionsFailed.retrying}
-                    />
-                  </p>
-                ) : (
-                  // Two rows at the picker's own height, so the dialog does not jump when it lands.
-                  <div className="flex flex-col gap-2.5" aria-busy="true">
-                    {[0, 1].map((row) => (
-                      <Skeleton key={row} className="h-14 w-full rounded-lg" />
-                    ))}
-                  </div>
-                )}
-              </Field>
+              <ScopeModeField
+                id="agent-scope"
+                mode={scopeMode}
+                onModeChange={setScopeMode}
+                selected={scope}
+                onSelectedChange={setScope}
+                connections={connections}
+                connectionsFailed={connectionsFailed}
+              />
             </FieldGroup>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={close}>
@@ -182,7 +166,11 @@ export function CreateAgentDialog({
               </Button>
               <Button
                 type="submit"
-                disabled={create.isPending || name.trim().length === 0 || connections === undefined}
+                disabled={
+                  create.isPending ||
+                  name.trim().length === 0 ||
+                  (scopeMode === "listed" && connections === undefined)
+                }
               >
                 {create.isPending ? "Creating…" : "Create agent"}
               </Button>

@@ -114,7 +114,7 @@ function AgentRoute() {
         <div className="flex min-w-0 flex-col gap-6">
           {agent.revokedAt ? null : <HarnessSnippet agent={agent} />}
           <ScopeEditor
-            key={connectionIds.join(",")}
+            key={`${agent.scopeMode}:${connectionIds.join(",")}`}
             agent={agent}
             connectionIds={connectionIds}
             connections={connectionData.connections}

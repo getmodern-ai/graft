@@ -19,7 +19,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { initLogger } from "evlog";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "./app";
 import { fakeModelKeyDeps } from "./testing/fake-model-key";
@@ -76,6 +76,8 @@ let store: FakeStore;
 let pipedream: FakePipedreamClient;
 let app: ReturnType<typeof createServer>;
 let mcp: ReturnType<typeof createMcpDeps>;
+/** The process's notifier as the API's routes see it: what the link's return announces to. */
+const apiNotifier = { changed: vi.fn() };
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
@@ -101,8 +103,20 @@ beforeAll(async () => {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "index.ts"), MODULE);
 
-  store.addAgent({ id: AGENT_A, personId: PERSON, token: TOKEN_A, name: "laptop Hermes" });
-  store.addAgent({ id: AGENT_B, personId: PERSON, token: TOKEN_B, name: "server OpenClaw" });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_A,
+    personId: PERSON,
+    token: TOKEN_A,
+    name: "laptop Hermes",
+  });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_B,
+    personId: PERSON,
+    token: TOKEN_B,
+    name: "server OpenClaw",
+  });
 
   const fake = createFakeDeps(store);
   const connection = { ...fake.connection, providers };
@@ -143,6 +157,7 @@ beforeAll(async () => {
       corsOrigins: [],
       handoff,
       authUrl: AUTH_URL,
+      notifier: apiNotifier,
     },
     mcp,
   });
@@ -341,6 +356,10 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     expect(await scopeOf(AGENT_A)).toEqual([connectionId]);
     expect(await scopeOf(AGENT_B)).toEqual([]);
     expect(store.pendingActions.get(actionId)?.answer).toEqual({ connectionId });
+    // The return announces the row to every session whose scope reaches it (Greptile on #88):
+    // A's, on its list; B, on a list without it, is not told.
+    expect(apiNotifier.changed.mock.calls.map(([agentId]) => agentId)).toEqual([AGENT_A]);
+    apiNotifier.changed.mockClear();
 
     // The browser landing twice — a refresh — says connected and makes nothing more.
     const again = consoleOutcome(await landing(minted?.success ?? ""));
@@ -485,8 +504,20 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
 
   /** GRA-75: the card's build choice rides the signed state and is recorded with the connection the return makes. */
   it("a link started with approveBuild records the asking agent's build approval with the connection it makes; one started bare records none", async () => {
-    store.addAgent({ id: "agent_d", personId: PERSON, token: `${TOKEN_B}d`, name: "fourth" });
-    store.addAgent({ id: "agent_e", personId: PERSON, token: `${TOKEN_B}e`, name: "fifth" });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_d",
+      personId: PERSON,
+      token: `${TOKEN_B}d`,
+      name: "fourth",
+    });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_e",
+      personId: PERSON,
+      token: `${TOKEN_B}e`,
+      name: "fifth",
+    });
     const ticked = await connect(`${TOKEN_B}d`);
     const bare = await connect(`${TOKEN_B}e`);
     // Since GRA-76 a live Gmail row of the person's outside the asking agent's scope is a
@@ -544,7 +575,13 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     // which since GRA-104 is the scope ask — a relay provider's row counts as the connection the
     // person already has (GRA-76), and this is Aleks's Claude.ai case of 2026-09-19 — so the row is
     // set aside for the landing this test is about.
-    store.addAgent({ id: "agent_c", personId: PERSON, token: `${TOKEN_B}c`, name: "third" });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_c",
+      personId: PERSON,
+      token: `${TOKEN_B}c`,
+      name: "third",
+    });
     const a = await connect(`${TOKEN_B}c`);
     const setAside = [...store.connections.values()].filter((row) => row.vendor === "gmail");
     try {

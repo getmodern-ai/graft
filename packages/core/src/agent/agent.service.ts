@@ -1,4 +1,5 @@
 import type { AgentConnectedVia, AgentRow } from "@graft/db/repo/agent";
+import type { AgentScopeMode } from "@graft/db/schema/agent";
 
 import type { ServiceContext } from "../context";
 import { orNotFound, ServiceError } from "../errors";
@@ -15,7 +16,18 @@ import type { AgentDeps } from "./agent.deps";
  * copies into a harness (`createAgent`), or at an MCP client's consent, with no static token at all
  * (`createAgentForClient`) — that agent is reached through the tokens the client holds, and the
  * row records which client it was connected from.
+ *
+ * **The scope has a mode** (ADR 0007 as amended 2026-09-19; GRA-105). `all`, the default for a new
+ * agent, is every connection of the person's, present and future, and holds no list; `listed` is
+ * the rows the person ticked or the agent's own proposals added, as every agent's scope was before
+ * the amendment. `getAgentScope` resolves the mode to ids in one statement, and every caller that
+ * mints a capability token reads that — so the token names ids under both modes and the property
+ * the ADR states does not move. A grant into the scope (`addConnectionToAgentScope`) is a no-op
+ * for an agent on `all`, which is what makes every grant-on-connect path in `@graft/mcp` and
+ * `apps/server` right without knowing the mode.
  */
+
+export type { AgentScopeMode };
 
 /** Bounds the console form and the API share — the schema's columns are unbounded on purpose. */
 export const AGENT_NAME_MAX_LENGTH = 100;
@@ -32,6 +44,8 @@ export type AgentOutput = {
   /** Null for an agent minted at an MCP client's consent, which holds no static token (ADR 0018). */
   tokenPrefix: string | null;
   connectedVia: AgentConnectedViaOutput | null;
+  /** `all` or `listed` (the header's paragraph on the mode). */
+  scopeMode: AgentScopeMode;
   workingSetCap: number;
   idleWindowDays: number;
   revokedAt: Date | null;
@@ -48,6 +62,7 @@ export function toAgentOutput(row: AgentRow): AgentOutput {
       row.connectedViaClientId && row.connectedViaClientName
         ? { clientId: row.connectedViaClientId, clientName: row.connectedViaClientName }
         : null,
+    scopeMode: row.scopeMode,
     workingSetCap: row.workingSetCap,
     idleWindowDays: row.idleWindowDays,
     revokedAt: row.revokedAt,
@@ -60,9 +75,24 @@ export type CreateAgentInput = {
   name: string;
   workingSetCap?: number;
   idleWindowDays?: number;
-  /** The initial scope; every id must be one of the person's connections. */
+  /** `all` when absent (ADR 0007 as amended 2026-09-19); `listed` takes `connectionIds` as the list. */
+  scopeMode?: AgentScopeMode;
+  /**
+   * The initial list under `listed`; every id must be one of the person's connections. Refused
+   * with a list under `all`, which has none — a caller that sends both has two answers in mind.
+   */
   connectionIds?: readonly string[];
 };
+
+/**
+ * What a scope write says (`PUT /api/agents/:id/scope`): every connection, or a list. A `listed`
+ * write with no list **materialises** the scope as it stands — every connection of the person's
+ * for an agent on `all`, its list otherwise — so a person narrowing an agent starts from what it
+ * had and unticks, rather than from nothing.
+ */
+export type SetAgentScopeInput =
+  | { mode: "all" }
+  | { mode: "listed"; connectionIds?: readonly string[] };
 
 export type AgentLimitsPatch = {
   name?: string;
@@ -125,9 +155,26 @@ async function assertOwnedConnections(
 }
 
 /**
+ * `connectionIds` is a list, and only a `listed` scope has one: refused rather than dropped, since
+ * silently discarding what the caller named would leave them believing the agent was narrowed.
+ */
+function assertListMatchesMode(
+  scopeMode: AgentScopeMode,
+  connectionIds: readonly string[] | undefined,
+): void {
+  if (scopeMode === "all" && connectionIds !== undefined && connectionIds.length > 0) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      "connectionIds names a list, and an agent on all connections has none — send scopeMode: listed with it",
+    );
+  }
+}
+
+/**
  * The insert both mints share: validated limits, a confirmed scope, the row and its scope in one
  * transaction. The token columns and the origin columns are the caller's — the two mints differ in
- * exactly those.
+ * exactly those. The `connectionIds` answered are the scope as it now resolves: the list under
+ * `listed`, every connection of the person's under `all`.
  */
 async function insertNewAgent(
   ctx: ServiceContext,
@@ -140,31 +187,31 @@ async function insertNewAgent(
   deps: AgentDeps,
 ): Promise<{ row: AgentRow; connectionIds: string[] }> {
   validateLimits(input);
-  const connectionIds = await assertOwnedConnections(
-    ctx,
-    principal,
-    input.connectionIds ?? [],
-    deps,
-  );
-  const row = await ctx.db.transaction(async (tx) => {
+  const scopeMode = input.scopeMode ?? "all";
+  assertListMatchesMode(scopeMode, input.connectionIds);
+  const listed =
+    scopeMode === "listed"
+      ? await assertOwnedConnections(ctx, principal, input.connectionIds ?? [], deps)
+      : [];
+  return ctx.db.transaction(async (tx) => {
     const inserted = await deps.insertAgent(tx, {
       id: deps.newId(),
       personId: principal.personId,
       name: input.name.trim(),
+      scopeMode,
       ...columns,
       ...(input.workingSetCap === undefined ? {} : { workingSetCap: input.workingSetCap }),
       ...(input.idleWindowDays === undefined ? {} : { idleWindowDays: input.idleWindowDays }),
     });
-    if (connectionIds.length > 0) {
-      await deps.replaceAgentConnections(
-        tx,
-        { personId: principal.personId, agentId: inserted.id },
-        connectionIds,
-      );
+    const scope: AgentScope = { personId: principal.personId, agentId: inserted.id };
+    if (listed.length > 0) {
+      await deps.replaceAgentConnections(tx, scope, listed);
     }
-    return inserted;
+    return {
+      row: inserted,
+      connectionIds: scopeMode === "all" ? await deps.listScopeConnectionIds(tx, scope) : listed,
+    };
   });
-  return { row, connectionIds };
 }
 
 /**
@@ -314,38 +361,70 @@ export async function revokeAgent(
 }
 
 /**
- * Replace the agent's scope (CONTEXT.md, *Scope*). Every id is checked to be the person's before
- * anything is written, and the two statements run in one transaction so a refused id leaves the
- * old scope intact rather than an empty one.
+ * Set the agent's scope (CONTEXT.md, *Scope*; `SetAgentScopeInput` says what each shape means).
+ * One transaction, opened by locking the agent row (`findAgentForUpdate`): every scope write —
+ * this one and the grant after a connect (`addConnectionToAgentScope`) — takes that lock first, so
+ * two of them serialise rather than interleave. To `all`: the mode is written and the list cleared
+ * — a list left behind would come back on a later `listed` write as a choice nobody made that day.
+ * To `listed`: with no list given, the scope as it stands **inside the transaction** becomes the
+ * list — read after the lock, so a connection a concurrent grant is making either committed before
+ * (and is in the set) or waits on the row and then finds the agent on `listed` and writes its list
+ * row; read outside it, a connection made in between was silently lost (Greptile on #88). Every
+ * given id is checked to be the person's before anything is written, so a refused id leaves the
+ * old scope intact rather than an empty one. The answer is the scope as it now resolves.
  */
 export async function setAgentScope(
   ctx: ServiceContext,
   principal: Principal,
   agentId: string,
-  connectionIds: readonly string[],
+  input: SetAgentScopeInput,
   deps: AgentDeps,
 ): Promise<{ agent: AgentOutput; connectionIds: string[] }> {
-  const row = orNotFound(
-    await deps.findAgent(ctx.db, principal.personId, agentId),
-    "Agent not found",
-  );
-  const unique = await assertOwnedConnections(ctx, principal, connectionIds, deps);
-  const scope: AgentScope = { personId: principal.personId, agentId: row.id };
-  await ctx.db.transaction(async (tx) => {
+  return ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const row = orNotFound(
+      await deps.findAgentForUpdate(tx, principal.personId, agentId),
+      "Agent not found",
+    );
+    const scope: AgentScope = { personId: principal.personId, agentId: row.id };
+    if (input.mode === "all") {
+      const updated = await deps.updateAgent(tx, principal.personId, row.id, { scopeMode: "all" });
+      await deps.replaceAgentConnections(tx, scope, []);
+      return {
+        agent: toAgentOutput(updated ?? { ...row, scopeMode: "all" }),
+        connectionIds: await deps.listScopeConnectionIds(tx, scope),
+      };
+    }
+    const wanted = input.connectionIds ?? (await deps.listScopeConnectionIds(tx, scope));
+    const unique = await assertOwnedConnections(scoped, principal, wanted, deps);
+    const updated = await deps.updateAgent(tx, principal.personId, row.id, {
+      scopeMode: "listed",
+    });
     await deps.replaceAgentConnections(tx, scope, unique);
+    return {
+      agent: toAgentOutput(updated ?? { ...row, scopeMode: "listed" }),
+      connectionIds: unique,
+    };
   });
-  return { agent: toAgentOutput(row), connectionIds: unique };
 }
 
 /**
- * Add one connection to an agent's scope, keeping the rest — what the console does when it creates
- * the connection an agent proposed (GRA-28): the connection is the person's, and only the agent that
- * asked is given it; every other agent of the person waits for the person to add it (ADR 0007). The
- * connection is checked to be the person's like any scope write; adding one already in the scope
- * changes nothing. The write is one idempotent insert on the scope's key (`addAgentConnection`),
- * never a read of the list and a rewrite of the whole: a grant that overlaps the agent page's
- * picker or another grant loses neither (Greptile on #87). The list read back after it, in the
- * same transaction, is what the caller answers with.
+ * Add one connection to an agent's list, keeping the rest — what every grant-on-connect does when
+ * a connection an agent proposed is made (GRA-28, GRA-58, GRA-59) and what a `scope` ask's yes does
+ * (GRA-104): the connection is the person's, and the agent that asked is given it. **A no-op for an
+ * agent on `all`** (ADR 0007 as amended 2026-09-19): the connection is the person's, so it is
+ * already in that agent's scope, and writing a list row would leave one behind for a later `listed`
+ * write to resurface; the answer is the scope as it resolves. The connection is checked to be the
+ * person's like any scope write under either mode, so a foreign id is `NOT_FOUND` whatever the
+ * mode. Under `listed` the write is one idempotent insert on the scope's key
+ * (`addAgentConnection`), never a read of the list and a rewrite of the whole: a grant that overlaps
+ * the agent page's picker or another grant loses neither (Greptile on #87), and adding one already
+ * in the list changes nothing. The list read back after it, in the same transaction, is what the
+ * caller answers with. The agent row is read **locked** (`findAgentForUpdate`), inside the
+ * transaction, and the mode decided from that read: a narrowing running at the same time
+ * (`setAgentScope`) takes the same lock, so this grant either sees `listed` and writes its row, or
+ * commits first and the narrowing's materialised list includes the connection (Greptile on #88).
+ * Callers already inside a transaction pass its handle as `ctx.db`; the nested call is a savepoint.
  */
 export async function addConnectionToAgentScope(
   ctx: ServiceContext,
@@ -354,26 +433,41 @@ export async function addConnectionToAgentScope(
   connectionId: string,
   deps: AgentDeps,
 ): Promise<{ agent: AgentOutput; connectionIds: string[] }> {
-  const row = orNotFound(
-    await deps.findAgent(ctx.db, principal.personId, agentId),
-    "Agent not found",
-  );
-  await assertOwnedConnections(ctx, principal, [connectionId], deps);
-  const scope: AgentScope = { personId: principal.personId, agentId: row.id };
-  const connectionIds = await ctx.db.transaction(async (tx) => {
+  return ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const row = orNotFound(
+      await deps.findAgentForUpdate(tx, principal.personId, agentId),
+      "Agent not found",
+    );
+    await assertOwnedConnections(scoped, principal, [connectionId], deps);
+    const scope: AgentScope = { personId: principal.personId, agentId: row.id };
+    if (row.scopeMode === "all") {
+      return {
+        agent: toAgentOutput(row),
+        connectionIds: await deps.listScopeConnectionIds(tx, scope),
+      };
+    }
     await deps.addAgentConnection(tx, scope, connectionId);
-    return deps.listAgentConnectionIds(tx, scope);
+    return {
+      agent: toAgentOutput(row),
+      connectionIds: await deps.listAgentConnectionIds(tx, scope),
+    };
   });
-  return { agent: toAgentOutput(row), connectionIds };
 }
 
-/** The connection ids in an agent's scope — what `acquire` and every exec mint tokens within. */
+/**
+ * The connection ids in an agent's scope — what `acquire` and every exec mint tokens within —
+ * resolved for the agent's mode in one statement (ADR 0007 as amended 2026-09-19): every
+ * connection of the person's under `all`, the list under `listed`. Revoked rows are in the set
+ * under both, as they always were under a list (GRA-69); a caller that must not use one checks
+ * `revokedAt` on the row it holds, as every exec and `listToolsFor` do.
+ */
 export async function getAgentScope(
   ctx: ServiceContext,
   scope: AgentScope,
   deps: AgentDeps,
 ): Promise<string[]> {
-  return deps.listAgentConnectionIds(ctx.db, scope);
+  return deps.listScopeConnectionIds(ctx.db, scope);
 }
 
 /** An agent as the sweep sees it: its scope, and the two limits the rule reads (ADR 0009). */

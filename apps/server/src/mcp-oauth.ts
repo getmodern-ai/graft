@@ -27,6 +27,7 @@ import {
   type SessionLike,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import { agentScopeMode } from "@graft/db/schema/agent";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -290,7 +291,13 @@ const consentBody = z.object({
   decision: z.enum(["allow", "deny"]),
   agent: z
     .discriminatedUnion("kind", [
-      z.object({ kind: z.literal("new"), name: z.string(), connectionIds: z.array(z.string()) }),
+      z.object({
+        kind: z.literal("new"),
+        name: z.string(),
+        /** `all` when absent (ADR 0007 as amended 2026-09-19); `listed` takes `connectionIds`. */
+        scopeMode: z.enum(agentScopeMode).optional(),
+        connectionIds: z.array(z.string()).optional(),
+      }),
       z.object({ kind: z.literal("existing"), agentId: z.string() }),
     ])
     .optional(),

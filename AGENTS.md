@@ -120,7 +120,12 @@ skips without `TEST_DATABASE_URL` and refuses to skip under `CI`, where the work
 `TEST_DATABASE_URL=postgresql://postgres:password@localhost:5432/graft pnpm --filter @graft/server test`.
 Every other suite runs with fakes and no database — `packages/core/src/agent/agent.service.test.ts`
 is the reference shape — and `packages/db`'s suites pin the *rendered* SQL, which is where the rule
-that every agent-scoped read takes the scope in the statement (ADR 0007) is asserted.
+that every agent-scoped read takes the scope in the statement (ADR 0007) is asserted. The scope
+itself is one such statement since ADR 0007's amendment of 2026-09-19 (GRA-105):
+`listScopeConnectionIds` in `packages/db/src/repo/agent.ts` resolves an agent's `scope_mode` — `all`,
+every connection of the person's, or `listed`, the rows in `agent_connection` — under the person and
+both ids on each branch, and `getAgentScope` is that read; every mint of a capability token goes
+through it, so the token names ids under either mode.
 
 ### Running the server locally
 
@@ -224,8 +229,8 @@ optional caller-header prefix — all-or-nothing and off by default, read by `ga
 `apps/server/src/backings.ts`, which puts the provider first in either form's order. A proposal every
 host of which it covers connects with **no person step**: `request_connection` makes the row
 (`registerProviderConnection`, scheme `gateway`, no credential) and grows the asking agent's scope in
-one transaction; a row the person revoked or has not given this agent is refused with the console
-step that would grant it, and a narrower in-scope gateway row is widened to a later proposal's
+one transaction (a no-op for an agent on `all`, GRA-105); a row the person revoked or has not given
+this agent is refused with the console step that would grant it, and a narrower in-scope gateway row is widened to a later proposal's
 hosts within the coverage. The relay carries the vendor URL in the path, `<upstream>/<host>/<path>`,
 and the provider brings the relay leg its own fetch with the gateway's hostname exempt from the
 resolver's private-address rule (`createUpstreamFetch({ unguardedHosts })`, on `ProxyRelay.
@@ -268,8 +273,8 @@ connect token held to the same window — and opens it in a popup; the return
 which account the person now holds under the app, minus the ids the person's other rows already
 name, then in one transaction makes the row (`connectThroughProvider`: `provider_ref` = the account
 id, `scheme` = `pipedream_connect_proxy`, `credential_ciphertext` null for life, a revoked row of
-the same vendor and hosts reconnected in place), adds it to the requesting agent's scope, answers
-the ask, and redirects to the console's `/link/callback` (`link.rules.ts` writes and reads the
+the same vendor and hosts reconnected in place), adds it to the requesting agent's scope (a no-op
+for an agent on `all`, GRA-105), answers the ask, and redirects to the console's `/link/callback` (`link.rules.ts` writes and reads the
 query). A revoke calls Pipedream's `DELETE …/accounts/{id}`; the revoke keeps `provider_ref` until
 that succeeds, and a failure is stamped on `provider_release_failed_at` (migration 0007), which the
 connection card shows with **Retry release** (`POST /api/connections/:id/release`).
@@ -300,8 +305,9 @@ authorization endpoint judges the request and sends the browser to the console's
 the request as its query — a client or a redirect URI in doubt lands there as a refusal rather than
 being redirected anywhere — and the console's `GET`/`POST /api/mcp-oauth/{request,consent}` describe
 and decide it with the person's session. The decision mints the agent (`createAgentForClient`: no
-static token, `connected_via_client_id`/`_name` recorded) or names an existing one and binds an
-authorization code to it. Tokens are opaque and hashed in `mcp_token` (`@graft/db/repo/mcp-oauth`);
+static token, `connected_via_client_id`/`_name` recorded, on every connection of the person's
+unless the consent's `scopeMode: "listed"` limits it to `connectionIds` — ADR 0007 as amended
+2026-09-19) or names an existing one and binds an authorization code to it. Tokens are opaque and hashed in `mcp_token` (`@graft/db/repo/mcp-oauth`);
 `requireAgent` dispatches on the prefix — `grft_` static, `grfta_` access token — and both resolve to
 one agent, so nothing past the door knows which arrived. Access tokens live an hour; refresh tokens
 rotate — one successor per predecessor, the claim and the pair one transaction — and live with the
@@ -371,6 +377,23 @@ which answers `connected` naming the execute tool, or `scope_declined`. The ask 
 `card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow, approveBuild? }` for it under
 the same gate. `SERVER_INSTRUCTIONS` names `scope` in its handoff list (1798 of the 1800 budget),
 and `session.test.ts` pins the word across the description and the Hermes skill.
+
+**A person's connections reach every agent of theirs by default; scope is a narrowing the person
+opts into** (GRA-105; ADR 0007 as amended 2026-09-19). `agent.scope_mode` is `all` or `listed`
+(`agentScopeMode` in `packages/db/src/schema/agent.ts`; migration 0009 added the column as `listed`
+for every existing row and moved the default to `all`). `AgentOutput.scopeMode` is on the wire;
+`GET /api/agents/:id` answers `connectionIds` as the scope resolves under the mode; `POST /api/agents`
+and the consent's `agent: { kind: "new" }` take `scopeMode` (default `all`) and refuse
+`connectionIds` beside `all`; `PUT /api/agents/:id/scope` takes `{ mode: "all" }` or
+`{ mode: "listed", connectionIds? }` (`ScopeBody`, exported for the console), a `listed` write with
+no list materialising the scope as it stood. In `@graft/core`, `addConnectionToAgentScope` is a
+no-op for an agent on `all`, which is what makes every grant-on-connect path right without reading
+the mode, and `listAgentIdsForConnection` — the agents a revoke announces to — takes every agent on
+`all`. An agent on `all` never reaches the `scope` ask above: `existingConnectionFor` finds every
+usable row in scope and answers `connected`. The console draws the mode as a `Select` — `All
+connections` first, `Limit to these` revealing the picker — through `components/agent/scope-mode-field.tsx`
+in the create dialog and the consent card, and in the agent page's Scope section
+(`scope-editor.tsx`); the labels and the write's body are `src/lib/scope-mode.ts`, tested.
 
 ### The self-hosted image
 

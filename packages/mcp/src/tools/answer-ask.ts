@@ -21,6 +21,7 @@ import {
   DEFAULT_CARD_HOSTS,
   redirectsOnCardHosts,
 } from "../ask-card";
+import { notifyAgentsReachingConnection } from "../connected";
 import {
   CONNECTION_ASK_KIND,
   type ConnectionProposalPayload,
@@ -242,7 +243,7 @@ async function answerConnectionAsk(
   answer: AnswerAskAnswer,
   agentName: string,
 ): Promise<CallToolResult> {
-  const { ctx, principal, scope, deps, notifier } = session;
+  const { ctx, principal, deps, notifier } = session;
   const payload = proposalOf(row);
   if (!payload || !connectionAskAnswerable(payload)) {
     return refuse(
@@ -301,8 +302,15 @@ async function answerConnectionAsk(
     },
     { answerExtra: { via: "card" } },
   );
-  // The connection's execute tool is now in this agent's list (ADR 0003).
-  notifier.changed(scope.agentId);
+  // The connection's execute tool is now in the list of every agent whose scope reaches the row
+  // (ADR 0003; `connected.ts`): this one's, and every agent on `all`.
+  await notifyAgentsReachingConnection(
+    ctx,
+    principal,
+    confirmed.connection.id,
+    { connection: deps.connection },
+    notifier,
+  );
   const result: AnswerAskResult = {
     answered: true,
     sentence: `Connected. ${what} is in ${agentName}'s scope${

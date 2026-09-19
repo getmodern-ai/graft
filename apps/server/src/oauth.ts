@@ -17,7 +17,11 @@ import {
   verifyOAuthState,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
-import type { HandoffConfig } from "@graft/mcp";
+import {
+  type HandoffConfig,
+  notifyAgentsReachingConnection,
+  type ToolListChangedNotifier,
+} from "@graft/mcp";
 import {
   clientAuthOf,
   createUpstreamFetch,
@@ -81,6 +85,15 @@ export type OAuthRouteOptions = {
   getSession: (headers: Headers) => Promise<Parameters<typeof requirePerson>[0]>;
   handoff: Pick<HandoffConfig, "consoleUrl" | "secret">;
   oauth: OAuthOptions;
+  /**
+   * The process's `tools/list_changed` notifier: the callback announces the row to every session
+   * whose scope reaches it when the consent it completes is the row's **reconnection** — the row
+   * was revoked and `completeOAuthConsent` clears `revoked_at` with the record — as `api.ts`'s
+   * connection routes and `provider-link.ts` announce theirs (`@graft/mcp`'s `connected.ts`). A
+   * first consent announces nothing: the row entered every reaching list when the submit made it,
+   * and the submit told those sessions then; the tokens change no list.
+   */
+  notifier?: Pick<ToolListChangedNotifier, "changed">;
 };
 
 /**
@@ -235,8 +248,16 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
       ...(expiresAt ? { expiresAt } : {}),
     };
 
-    await ctx.db.transaction(async (tx) => {
+    // Whether this consent brings a revoked row back (the options' note on `notifier`) is decided
+    // from the row **locked, inside the transaction** (`findConnectionForUpdate`, the lock a revoke
+    // takes first): read from the unlocked `row` above, a revoke committing between that read and
+    // the write would be cleared by the write with nobody told (Greptile on #88). The flag comes
+    // out of the transaction for the announcement after the commit.
+    const completed = await ctx.db.transaction(async (tx) => {
       const scoped: ServiceContext = { db: tx };
+      const locked = await options.connection.findConnectionForUpdate(tx, personId, row.id);
+      if (!locked) return null;
+      const reconnection = locked.revokedAt !== null;
       await completeOAuthConsent(scoped, principal, row.id, record, options.connection);
       // The waiting `request_connection` or `request_credential` takes `{ connectionId }` as the
       // answer (GRA-28). An ask answered, expired or closed meanwhile does not undo the consent —
@@ -260,8 +281,21 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
           }
         }
       }
+      return { reconnection };
     });
+    if (!completed) return failed("The connection this consent was for no longer exists.");
 
+    // Committed: a row brought back from revoked re-enters every list whose scope reaches it, and
+    // those sessions are told; a first consent or a re-consent of a live row changes no list.
+    if (completed.reconnection) {
+      await notifyAgentsReachingConnection(
+        ctx,
+        principal,
+        row.id,
+        { connection: options.connection },
+        options.notifier,
+      );
+    }
     return land({
       status: "connected",
       connectionId: row.id,

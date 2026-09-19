@@ -47,6 +47,7 @@ import {
 import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
+import { agentScopeMode } from "@graft/db/schema/agent";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
@@ -56,6 +57,7 @@ import {
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
   handoffUrl,
+  notifyAgentsReachingConnection,
   openAskOfKind,
   recordApprovalAnswer,
   refuseUnlessOpen,
@@ -239,12 +241,23 @@ const agentBody = z.object({
   name: z.string(),
   workingSetCap: z.number().int().optional(),
   idleWindowDays: z.number().int().optional(),
+  /** `all` when absent (ADR 0007 as amended 2026-09-19); `listed` takes `connectionIds`. */
+  scopeMode: z.enum(agentScopeMode).optional(),
   connectionIds: z.array(z.string()).optional(),
 });
 
-const agentPatch = agentBody.omit({ connectionIds: true }).partial();
+const agentPatch = agentBody.omit({ connectionIds: true, scopeMode: true }).partial();
 
-const scopeBody = z.object({ connectionIds: z.array(z.string()) });
+/**
+ * `PUT /agents/:id/scope`: every connection, or a list — `SetAgentScopeInput` in `@graft/core`
+ * says what a `listed` write with no list does. The console imports `ScopeBody` rather than
+ * writing the shape again.
+ */
+const scopeBody = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }),
+  z.object({ mode: z.literal("listed"), connectionIds: z.array(z.string()).optional() }),
+]);
+export type ScopeBody = z.input<typeof scopeBody>;
 
 /** The scheme's secret fields as the console posts them; the service holds them to the scheme's table. */
 const credentialFields = z.record(z.string(), z.unknown());
@@ -552,6 +565,7 @@ export function createApi(options: ApiOptions): Hono {
         getSession: options.auth.getSession,
         handoff,
         oauth: options.oauth,
+        notifier: options.notifier,
       }),
     );
   }
@@ -572,6 +586,7 @@ export function createApi(options: ApiOptions): Hono {
       approval: approvalDeps,
       handoff,
       authUrl: options.authUrl,
+      notifier: options.notifier,
     };
   };
 
@@ -742,9 +757,7 @@ export function createApi(options: ApiOptions): Hono {
   api.put("/agents/:id/scope", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, scopeBody);
-    return c.json(
-      await setAgentScope(ctx, principal, c.req.param("id"), body.connectionIds, agentDeps),
-    );
+    return c.json(await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps));
   });
 
   /** The person's toolbox, demoted tools included — what a connection's tools are read from (ADR 0007). */
@@ -764,11 +777,28 @@ export function createApi(options: ApiOptions): Hono {
    * one transaction (GRA-28: the console's Add connection, the same form as an agent's proposal with
    * no pending action behind it); without, the row waits for `PUT /connections/:id/credential`.
    */
+  /**
+   * A row made or reconnected is announced to every live session whose scope reaches it — every
+   * agent on `all`, and every agent whose list names it (ADR 0007 as amended 2026-09-19) — through
+   * `@graft/mcp`'s `notifyAgentsReachingConnection`, as the revoke route announces the row leaving.
+   * After the transaction that makes the row, so a session re-fetching on the notification reads
+   * the committed row.
+   */
+  const announceConnection = (principal: Principal, connectionId: string) =>
+    notifyAgentsReachingConnection(
+      ctx,
+      principal,
+      connectionId,
+      { connection: connectionDeps },
+      options.notifier,
+    );
+
   api.post("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const { credential, ...registration } = await parseBody(c.req.raw, connectionBody);
     if (!credential) {
       const connection = await registerConnection(ctx, principal, registration, connectionDeps);
+      await announceConnection(principal, connection.id);
       return c.json({ connection }, 201);
     }
     // With a credential: the row, its ciphertext and — for an authorization-code connection — the
@@ -786,6 +816,7 @@ export function createApi(options: ApiOptions): Hono {
         ? { connection: consent.connection, authorizeUrl: consent.authorizeUrl }
         : { connection };
     });
+    await announceConnection(principal, result.connection.id);
     return c.json(result, 201);
   });
 
@@ -887,13 +918,19 @@ export function createApi(options: ApiOptions): Hono {
   api.put("/connections/:id/credential", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, credentialBody);
+    const id = c.req.param("id");
+    // A re-entry on a revoked row is its reconnection (ADR 0007): the execute tool comes back to
+    // every list whose scope reaches it, so those sessions are told; a rotation on a live row
+    // changes no list and tells nobody.
+    const before = await getConnection(ctx, principal, id, connectionDeps);
     const connection = await setConnectionCredential(
       ctx,
       principal,
-      c.req.param("id"),
+      id,
       body.fields,
       connectionDeps,
     );
+    if (before?.revokedAt) await announceConnection(principal, connection.id);
     return c.json({ connection });
   });
 
@@ -934,6 +971,7 @@ export function createApi(options: ApiOptions): Hono {
   api.post("/connections/:id/reconnect", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const connection = await reconnectConnection(ctx, principal, c.req.param("id"), connectionDeps);
+    await announceConnection(principal, connection.id);
     return c.json({ connection });
   });
 
@@ -1083,6 +1121,7 @@ export function createApi(options: ApiOptions): Hono {
       },
       { consent: consentFor },
     );
+    await announceConnection(principal, result.connection.id);
     return c.json(result, 201);
   });
 
@@ -1128,6 +1167,8 @@ export function createApi(options: ApiOptions): Hono {
       if (typeof connectionId !== "string") {
         throw new ServiceError("BAD_REQUEST", "This credential ask names no connection");
       }
+      // Whether this re-entry is a reconnection (the route above says why it matters).
+      const before = await getConnection(scoped, principal, connectionId, connectionDeps);
       const connection = await setConnectionCredential(
         scoped,
         principal,
@@ -1157,9 +1198,11 @@ export function createApi(options: ApiOptions): Hono {
         { connectionId },
         pendingActionDeps,
       );
-      return { connection, pendingAction };
+      return { connection, pendingAction, reconnected: before?.revokedAt !== null };
     });
-    return c.json(result);
+    const { reconnected, ...answer } = result;
+    if (reconnected) await announceConnection(principal, answer.connection.id);
+    return c.json(answer);
   });
 
   /** One agent's standing approvals — what the console lists to set how a tool asks, or withdraw. */

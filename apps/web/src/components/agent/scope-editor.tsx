@@ -1,3 +1,4 @@
+import type { AgentScopeMode } from "@graft/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -12,16 +13,36 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { type Agent, agentKeys, setAgentScope } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
-
-const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
-  a.size === b.size && [...a].every((id) => b.has(id));
+import {
+  readScopeMode,
+  SCOPE_MODE_DESCRIPTION,
+  SCOPE_MODE_ITEMS,
+  scopeBodyFor,
+  scopeDirty,
+} from "@/lib/scope-mode";
 
 /**
- * The agent's scope, edited as a set (CONTEXT.md, *Scope*). Saved whole — the server replaces the
- * set in one transaction — and in effect on the agent's next MCP call: the capability token minted
- * for its next exec names exactly these connections (ADR 0007).
+ * The agent's scope (CONTEXT.md, *Scope*; ADR 0007 as amended 2026-09-19): the mode as the
+ * `Select` primitive — `All connections`, every connection the person has now and adds later, or
+ * `Limit to these`, the picker — and under the latter the list, edited as a set. Saved whole: the
+ * server writes the mode and replaces the list in one transaction, and the change is in effect on
+ * the agent's next MCP call, when the capability token minted for its next exec names exactly the
+ * connections the scope resolves to.
+ *
+ * Switching to `Limit to these` starts the picker from the scope as it stands — `connectionIds`
+ * from `GET /agents/:id` is the resolved set under either mode — so a person narrowing an agent
+ * unticks what it should lose rather than re-ticking what it should keep; the parent remounts this
+ * on a save (its `key`), which is how the draft follows the saved state.
  */
 export function ScopeEditor({
   agent,
@@ -29,16 +50,19 @@ export function ScopeEditor({
   connections,
 }: {
   agent: Agent;
+  /** The scope as it resolves for the agent's mode — the list, or every connection of the person's. */
   connectionIds: readonly string[];
   connections: readonly Connection[];
 }) {
   const queryClient = useQueryClient();
-  const saved = new Set(connectionIds);
-  const [draft, setDraft] = useState<Set<string>>(saved);
-  const dirty = !sameSet(draft, saved);
+  const saved = { mode: agent.scopeMode, connectionIds: new Set(connectionIds) };
+  const [mode, setMode] = useState<AgentScopeMode>(agent.scopeMode);
+  const [draft, setDraft] = useState<Set<string>>(new Set(connectionIds));
+  const dirty = scopeDirty(saved, { mode, connectionIds: draft });
+  const frozen = agent.revokedAt !== null;
 
   const save = useMutation({
-    mutationFn: () => setAgentScope(agent.id, [...draft]),
+    mutationFn: () => setAgentScope(agent.id, scopeBodyFor(mode, draft)),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
         queryKey: agentKeys.one(agent.id),
@@ -49,33 +73,64 @@ export function ScopeEditor({
     },
   });
 
+  const reset = () => {
+    setMode(saved.mode);
+    setDraft(new Set(saved.connectionIds));
+  };
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Scope</CardTitle>
         <CardDescription>
           The connections this agent may use. An authored tool running for it cannot reach a
-          connection outside this set.
+          connection outside them.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <ConnectionPicker
-          connections={connections}
-          selected={draft}
-          onChange={setDraft}
-          disabled={agent.revokedAt !== null || save.isPending}
-        />
+        <Field>
+          <FieldLabel htmlFor="scope-mode">Connections</FieldLabel>
+          <Select
+            value={mode}
+            items={SCOPE_MODE_ITEMS}
+            disabled={frozen || save.isPending}
+            onValueChange={(next) => {
+              const read = readScopeMode(next);
+              if (read) setMode(read);
+            }}
+          >
+            <SelectTrigger id="scope-mode" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SCOPE_MODE_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <FieldDescription>{SCOPE_MODE_DESCRIPTION[mode]}</FieldDescription>
+          {mode === "listed" ? (
+            <ConnectionPicker
+              connections={connections}
+              selected={draft}
+              onChange={setDraft}
+              disabled={frozen || save.isPending}
+            />
+          ) : null}
+        </Field>
       </CardContent>
-      {connections.length > 0 && agent.revokedAt === null ? (
+      {frozen ? null : (
         <CardFooter className="justify-end gap-2">
-          <Button variant="outline" disabled={!dirty} onClick={() => setDraft(new Set(saved))}>
+          <Button variant="outline" disabled={!dirty || save.isPending} onClick={reset}>
             Reset
           </Button>
           <Button disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
             {save.isPending ? "Saving…" : "Save scope"}
           </Button>
         </CardFooter>
-      ) : null}
+      )}
     </Card>
   );
 }
