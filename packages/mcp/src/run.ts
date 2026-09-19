@@ -363,8 +363,11 @@ export type AuthoredRunArgs = {
  */
 export type AuthoredRunAnswer =
   | { isError: false; answer: unknown }
-  /** `card` rides beside the gate's `awaiting_approval` — the tool ask as a chat product renders it (GRA-116). */
-  | { isError: true; answer: Record<string, unknown>; card?: AskCard };
+  /**
+   * `card` rides beside the gate's `awaiting_approval` — the tool ask as a chat product renders it
+   * (GRA-116) — with the message in its card form beside it (GRA-120; `card-client.ts`).
+   */
+  | { isError: true; answer: Record<string, unknown>; card?: AskCard; cardMessage?: string };
 
 /**
  * Run one authored tool for an agent, end to end — see the header. Every exit records a ledger
@@ -492,7 +495,7 @@ async function runHeld(
     const gate = await gateToolCall(ctx, scope, { tool, connectionId }, deps, args.channel);
     if (!gate.pass) {
       await record("refused", versioned);
-      return { answer: gate.answer, isError: true, card: gate.card };
+      return { answer: gate.answer, isError: true, card: gate.card, cardMessage: gate.cardMessage };
     }
   }
 

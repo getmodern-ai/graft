@@ -363,7 +363,17 @@ every `execute__<id>` and every authored tool in the list, whose first write ans
 ChatGPT's alias `openai/outputTemplate` rides beside it, and the
 resource carries the `openai/widget*` aliases of its `ui` keys (GRA-112); their awaiting results
 carry the card's data under `structuredContent.card` beside GRA-55's unchanged `url`, `message` and
-`reason` (`result.ts`'s `withCard`). **An awaiting result is not an MCP error**: every `awaiting_*`
+`reason` (`result.ts`'s `withCard`). **For a client the server knows renders the card, the awaiting
+`message` takes its card form and `cardShown: true` rides beside `url`** (GRA-120; ADR 0006 as
+amended 2026-09-20): `packages/mcp/src/card-client.ts`'s `clientRendersCards` is the card gate's
+client half — an OAuth agent whose session declared the MCP Apps extension or whose client is
+registered on a `GRAFT_CARD_HOSTS` host — held once per session, and its `toolAskResult` is where
+every awaiting result goes onto the wire (`tools/meta.ts`, `tools/execute.ts`, `tools.ts`); each
+ask flow writes both forms through `handoff-message.ts`, so the console form a static-token agent
+or an unvouched client reads is byte for byte what it was, and `url` never changes.
+`SERVER_INSTRUCTIONS` carries the one clause on what `cardShown` means; the Hermes skill does not,
+since a Hermes agent never receives it, and `session.test.ts` records that. **An awaiting result
+is not an MCP error**: every `awaiting_*`
 answer returns through `result.ts`'s `toolAwaiting` with `isError: false` and the same JSON, because
 a host renders no view for an error result (ext-apps issue 694) — refusals and failures stay
 `isError: true`. The card answers by calling `answer_ask` (`tools/answer-ask.ts`), declared

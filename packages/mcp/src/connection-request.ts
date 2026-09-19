@@ -39,6 +39,7 @@ import { connectionAskCard, credentialAskCard, scopeAskCard } from "./ask-card";
 import { notifyAgentsReachingConnection } from "./connected";
 import type { McpDeps } from "./deps";
 import { handoffUrl, signHandoffToken } from "./handoff";
+import { type HandoffForm, handoffSentence } from "./handoff-message";
 import type { ToolListChangedNotifier } from "./notifier";
 import { isPlainObject, refusal } from "./result";
 import { executeToolName } from "./tool-names";
@@ -283,7 +284,13 @@ export type AwaitingHandoff = {
  */
 export type ConnectionRequestOutcome =
   | { isError: false; answer: Connected }
-  | { isError: true; answer: Record<string, unknown>; card?: AskCard };
+  | {
+      isError: true;
+      answer: Record<string, unknown>;
+      card?: AskCard;
+      /** The awaiting `message` in its card form (`handoff-message.ts`, GRA-120), for a client that renders the card. */
+      cardMessage?: string;
+    };
 
 /** The proposal as the agent sends it, before normalisation. */
 export type ConnectionProposalInput = {
@@ -787,10 +794,10 @@ async function routeProposal(
       }),
     ...(redirectUri ? { awaitingExtra: { redirectUri } } : {}),
     ...(link ? { awaitingExtra: { provider: provider.name } } : {}),
-    awaitingMessage: (url, expiresAt) =>
+    awaitingMessage: (url, expiresAt, form) =>
       link
         ? `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) through ${provider.name} — one click: they sign in at the vendor on ${provider.name}'s page, and the vendor's token stays there; nothing passes through you, and nothing is typed in the console. ` +
-          `Relay this link so they can press Connect: ${url} It expires at ${expiresAt}. ` +
+          `${handoffSentence(form, "Relay this link so they can press Connect", url, expiresAt)} ` +
           `${BUILD_APPROVAL_ON_THE_PAGE} ` +
           "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
         : oauth
@@ -800,19 +807,24 @@ async function routeProposal(
             (redirectUri
               ? `and paste exactly this redirect URI into it: ${redirectUri} `
               : "and paste the redirect URI the form shows into it. ") +
-            `Then relay this link so they can enter the client id and secret and complete the consent in a popup: ${url} It expires at ${expiresAt}. ` +
+            `${handoffSentence(
+              form,
+              "Then relay this link so they can enter the client id and secret and complete the consent in a popup",
+              url,
+              expiresAt,
+            )} ` +
             `${BUILD_APPROVAL_ON_THE_PAGE} ` +
             "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected. " +
             "A Google Cloud project in Testing mode expires refresh tokens after seven days, so a Google connection reconnects weekly until the app is published."
           : takesCredential(payload.scheme)
             ? `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
-              `Relay this link so they can check the hosts and enter it: ${url} It expires at ${expiresAt}. ` +
+              `${handoffSentence(form, "Relay this link so they can check the hosts and enter it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
             : // A keyless scheme (GRA-66) has nothing to enter: the ask is a confirmation of the
               // hosts, and the message names no credential and no secret (GRA-91).
               `Graft needs the person to confirm the connection to ${payload.displayName} (${payload.vendor}) in the console — the scheme takes no credential, so nothing is entered. ` +
-              `Relay this link so they can check the hosts and confirm it: ${url} It expires at ${expiresAt}. ` +
+              `${handoffSentence(form, "Relay this link so they can check the hosts and confirm it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
   });
@@ -876,9 +888,9 @@ async function awaitScope(
     what,
     card: (url, agentName) => scopeAskCard({ action, agentName, payload, url }),
     awaitingExtra: { connectionId: connection.id, provider: connection.provider },
-    awaitingMessage: (url, expiresAt) =>
+    awaitingMessage: (url, expiresAt, form) =>
       `The person already has a connection to ${what}${via}, made for another of their agents; Graft needs them to allow you to use it — no new connection, nothing entered. ` +
-      `Relay this link so they can allow it in the console: ${url} It expires at ${expiresAt}. ` +
+      `${handoffSentence(form, "Relay this link so they can allow it in the console", url, expiresAt)} ` +
       `${BUILD_APPROVAL_ON_THE_PAGE} ` +
       "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
     settle: async (taken) => {
@@ -1099,9 +1111,9 @@ export async function requestCredential(
         declinedReason: "credential_declined",
         onConnected: (row) => connected(row, "credential"),
       }),
-    awaitingMessage: (url, expiresAt) =>
+    awaitingMessage: (url, expiresAt, form) =>
       `Graft needs the person to re-enter the credential for ${connection.displayName} (${connection.vendor}) in the console — the secret never passes through you. ` +
-      `Relay this link: ${url} It expires at ${expiresAt}. ` +
+      `${handoffSentence(form, "Relay this link", url, expiresAt)} ` +
       "Call request_credential again once they have — the answer is kept, and the call then answers connected.",
   });
 }
@@ -1152,7 +1164,8 @@ async function waitForAnswer(
     what: string;
     /** What the taken answer means for this ask — `connected`, or the refusal that says what the person said. */
     settle: (taken: PendingActionRow) => Promise<ConnectionRequestOutcome>;
-    awaitingMessage: (url: string, expiresAt: string) => string;
+    /** The awaiting message, in the console form or the card form (`handoff-message.ts`, GRA-120). */
+    awaitingMessage: (url: string, expiresAt: string, form: HandoffForm) => string;
     /** What the awaiting answer carries beyond the link — an OAuth proposal's redirect URI, a provider's name, the scope ask's connection. */
     awaitingExtra?: Pick<AwaitingHandoff, "redirectUri" | "provider" | "connectionId">;
     /** The ask card's data for a host that renders one (GRA-84), given the link and the agent's name. */
@@ -1199,12 +1212,17 @@ async function waitForAnswer(
     pendingActionId: action.id,
     url,
     expiresAt,
-    message: ask.awaitingMessage(url, expiresAt),
+    message: ask.awaitingMessage(url, expiresAt, "console"),
     ...ask.awaitingExtra,
   };
   // The agent's name is read here, on the ask path alone: the card shows who is asking.
   const agent = await getAgent(ctx, { personId: scope.personId }, scope.agentId, deps.agent);
-  return { isError: true, answer: awaiting, card: ask.card(url, agent?.name ?? scope.agentId) };
+  return {
+    isError: true,
+    answer: awaiting,
+    card: ask.card(url, agent?.name ?? scope.agentId),
+    cardMessage: ask.awaitingMessage(url, expiresAt, "card"),
+  };
 }
 
 /** The connection and credential asks' answer: the row the console named, or the generic decline. */

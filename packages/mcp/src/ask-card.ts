@@ -46,10 +46,13 @@ import type {
  * key sits ChatGPT's documented compatibility alias — `openai/outputTemplate` on the tool,
  * `openai/widgetCSP`, `openai/widgetPrefersBorder` and `openai/widgetDescription` on the resource
  * — belt and braces for a host that reads the alias first; ext-apps' own `registerAppTool` writes
- * none, so nothing here depends on them. GRA-55's result shape is untouched: `content`'s text,
- * `url`, `message` and `reason` are what they were, and `card` sits beside them in
- * `structuredContent` alone (`result.ts`'s `withCard`), so a host that renders nothing shows
- * exactly the sentence and link it showed before. What did move is `isError`: an awaiting result
+ * none, so nothing here depends on them. GRA-55's result shape is kept for a host that renders
+ * nothing: `content`'s text, `url`, `message` and `reason` are what they were, and `card` sits
+ * beside them in `structuredContent` alone (`result.ts`'s `withCard`), so such a host shows
+ * exactly the sentence and link it showed before. For a client the server knows renders the card
+ * (`card-client.ts`, GRA-120), `message` takes its card form and `cardShown: true` rides beside
+ * `url`, so the model says the person answers on the card rather than relaying the link a second
+ * time; `url` itself never changes. What did move for every client is `isError`: an awaiting result
  * is a result (`result.ts`'s `toolAwaiting`), because neither host mounts a view for an error
  * result (ext-apps issue 694) — the card GRA-84 shipped could not render on either host until then.
  */

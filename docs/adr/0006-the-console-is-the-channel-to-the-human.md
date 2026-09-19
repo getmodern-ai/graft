@@ -238,6 +238,26 @@ every three seconds until the ask is settled, and shows the sentence; the two ne
 as `answer_ask` is (`packages/mcp/src/tools/card-gate.ts`), and `ask_status` records nothing. A
 host that refuses `ui/open-link` leaves the card with the console button it always had.
 
+**The awaiting answer says where the ask is** (added 2026-09-20, GRA-120; decided by Aleks after
+the live ChatGPT and Claude.ai tests of 2026-09-19 and 2026-09-20). With the card rendered, the
+model still pasted the console link beneath it and said "once you approve it, I can call X again",
+because `SERVER_INSTRUCTIONS` said "send them the link exactly as returned" of every awaiting
+answer and the answer's `message` said the same; under a card the link is a second door to the
+same ask and the sentence is noise. The server already knows, per session, whether the client
+renders the card and hides its tools — the gate's client half above — so the same verdict now
+shapes the answer: for such a session the awaiting `message` takes its **card form** — the ask is
+shown as a card in this conversation and the person answers it from there; the url opens the same
+ask in the console for a person who cannot see the card — and `cardShown: true` rides beside
+`url`, in the text the model reads and in `structuredContent` alike (`packages/mcp/src/card-client.ts`,
+`handoff-message.ts`). The instructions gain one clause, that a `cardShown` answer is answered on
+the card and the url is relayed only to a person who says they cannot see it; the descriptions
+gain nothing (GRA-111). **The handoff URL stays the floor**: it is on every answer in both forms,
+unchanged, and a card that never mounts (anthropics/claude-ai-mcp#61) costs the person one
+sentence — "I cannot see a card" — before the model relays it, which is the accepted risk of
+reading the client's word for its rendering. A static-token agent's answer, an unvouched OAuth
+client's and every refusal are byte for byte what they were; Hermes renders no card, so its skill
+does not name `cardShown` and `session.test.ts` says why.
+
 **Unchanged.** ADR 0004 and ADR 0008. Elicitation keeps its place before the handoff for the clients
 that show a form. `acquire` still asks once per agent per connection; the connection confirmation
 still offers the build approval on by default (ADR 0008 as amended 2026-09-18, GRA-75), on the card as

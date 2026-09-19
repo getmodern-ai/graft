@@ -29,7 +29,8 @@ import { META_TOOLS } from "./tools/meta";
  * badged the rule-bearing ones "Suspicious Instruction"); and the sentences the instructions share
  * with the Hermes skill (`skills/hermes-graft/SKILL.md`) are present in both, so the two cannot
  * disagree on the order of operations, the approval rule, the secrets rule, the keyless and rotation
- * rules, `run_tool` or where its input schema is read.
+ * rules, `run_tool` or where its input schema is read. One clause is the instructions' alone: what
+ * `cardShown: true` means (GRA-120), which a Hermes agent never receives.
  */
 
 const TOKEN = "grft_session_test_token_0000000000000000000000";
@@ -256,6 +257,29 @@ describe("SERVER_INSTRUCTIONS", () => {
     }
   });
 
+  /**
+   * The card clause (GRA-120; ADR 0006 as amended 2026-09-20): an awaiting answer with `cardShown:
+   * true` is answered on the card in the conversation, and the url is relayed only to a person who
+   * says they cannot see it. It sits beside the handoff rule, so a client reading the first 512
+   * characters plus the handoff paragraph has both. It is the instructions' alone and deliberately
+   * **not** in the Hermes skill: Hermes renders no card and holds a static token, so its awaiting
+   * answers never carry `cardShown` (`card-client.ts`), and a rule about a field it never sees
+   * would be noise in the skill. The SHARED list below therefore does not name it.
+   */
+  it("says what cardShown: true means, right after the handoff rule, and the skill does not", async () => {
+    const clause =
+      "If cardShown is true the ask is on a card in this conversation: relay the url only if they say they cannot see it.";
+    expect(SERVER_INSTRUCTIONS).toContain(clause);
+    expect(SERVER_INSTRUCTIONS.indexOf(clause)).toBeGreaterThan(
+      SERVER_INSTRUCTIONS.indexOf("call the same tool again with the same arguments"),
+    );
+    expect(SERVER_INSTRUCTIONS.indexOf(clause)).toBeLessThan(
+      SERVER_INSTRUCTIONS.indexOf("Never ask the person for an API key"),
+    );
+    const skill = await readFile(HERMES_SKILL_PATH, "utf8");
+    expect(skill).not.toContain("cardShown");
+  });
+
   it("reads in Graft's voice: no em dashes, no exclamation marks, no avoided nouns", () => {
     expect(SERVER_INSTRUCTIONS).not.toMatch(/[—!]/);
     // CONTEXT.md's Avoid lists, the ones a playbook is most tempted by.
@@ -287,6 +311,7 @@ describe("SERVER_INSTRUCTIONS", () => {
       "(approval, connection, credential, scope)",
       "exactly as returned",
       "then wait",
+      "cardShown",
       "run_tool { vendor, name, input }",
       "inputSchema for run_tool",
       "notifications/tools/list_changed",
