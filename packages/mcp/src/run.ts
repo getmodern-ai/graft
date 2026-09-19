@@ -2,14 +2,19 @@ import { randomUUID } from "node:crypto";
 import type { AskCard } from "@graft/ask-card/shape";
 import {
   type AgentScope,
+  type ConnectionOutput,
   getAgentScope,
   getConnection,
   getToolByName,
   getToolVersion,
+  isConnectionUsable,
+  listConnections,
+  type Principal,
   recordDryRun,
   recordUsage,
   type ServiceContext,
   touchToolUsed,
+  updateToolDefinition,
 } from "@graft/core";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import { EXIT_TIMEOUT, EXIT_USAGE, MODULE_ENTRIES, RUNNER_PATH } from "@graft/runner";
@@ -41,10 +46,11 @@ import { authoredToolName } from "./tool-names";
  * first-class tool runs).
  *
  * In order: the tool and its current version — or the version the caller names, for `acquire`'s
- * dry run of one not yet activated — from the person's toolbox (ADR 0007); the tool's
- * default connection, which must be in the agent's scope — the scope is where the security property
- * lives, and a tool bound to a connection the agent was never given is refused here, before any
- * token exists; the input against the stored schema; then **mint, run, tally** in that order — the
+ * dry run of one not yet activated — from the person's toolbox (ADR 0007); the connection — the
+ * tool's default, or the one the caller names (`acquire`'s dry run names the job's, GRA-122) —
+ * which must be in the agent's scope — the scope is where the security property lives, and a tool
+ * bound to a connection the agent was never given is refused here, before any token exists; the
+ * input against the stored schema; then **mint, run, tally** in that order — the
  * capability token first, so an unconfigured deployment answers without provisioning anything; the
  * runner over the version directory the pointer names, with the token in the process environment
  * and nowhere else (ADR 0010); then `last_used_at` and the ledger row, whatever the run said
@@ -57,6 +63,19 @@ import { authoredToolName } from "./tool-names";
  * A run never reads the toolbox through a store: the sandbox sees the mounted volume, and the runner
  * loads the module from `/tools/<version path>` (ADR 0002's seam is what makes that true on every
  * backing). The vendor's answer, or the runner's failure, comes back verbatim (GRA-1, user story 37).
+ *
+ * **A tool whose default connection was revoked follows the one live connection of its vendor**
+ * (GRA-122). An authored tool is bound to a vendor rather than a row (CONTEXT.md, *Authored tool*),
+ * and the row it defaults to is the one it was authored against; when the person revoked that row
+ * and connected the vendor again under a new one — a link provider's second proposal used to make a
+ * new row beside the released one — every tool of the vendor answered `connection_revoked` until
+ * re-authored, with no rebind anywhere. Now, when the default is revoked and exactly one live,
+ * usable connection of the tool's vendor is in the agent's scope, the run goes there and the tool's
+ * default is rebound to it in one patch, so the next call reads it directly; with none, or with
+ * several, the refusal stands and names the step (`revokedConnectionRefusal`). The scope is read
+ * before the choice, so a live row the agent was never given is never followed; the approval gate
+ * still sits after the choice, so a write asks on the connection it will run against (ADR 0008). A
+ * caller that names the connection (`connectionId`) gets no following: it said which.
  */
 
 /**
@@ -354,6 +373,15 @@ export type AuthoredRunArgs = {
    * tool with none is refused as `tool_has_no_version`.
    */
   versionId?: string;
+  /**
+   * The connection to run against instead of the tool's default — `acquire`'s dry run passes the
+   * job's (GRA-122): a version published onto an existing tool row is proved against the connection
+   * the job authored it for, not against a default the person may have revoked since. Held to the
+   * same check as the default: in the agent's scope, which names the person's rows and no others
+   * (`connection_not_in_scope` otherwise). Unset, the default decides, and a revoked default follows
+   * the one live connection of the vendor (the header).
+   */
+  connectionId?: string;
 };
 
 /**
@@ -452,28 +480,56 @@ async function runHeld(
   }
   const versioned = { toolId: tool.id, versionId: version.id };
 
-  if (!tool.defaultConnectionId) {
+  const bound = args.connectionId ?? tool.defaultConnectionId;
+  if (!bound) {
     return refuse(
       "connection_not_bound",
       `${wireName} is bound to no connection, so there is nothing to run it against.`,
       versioned,
     );
   }
-  const connectionId = tool.defaultConnectionId;
   const scopeIds = await getAgentScope(ctx, scope, deps.agent);
-  if (!scopeIds.includes(connectionId)) {
+  if (!scopeIds.includes(bound)) {
     return refuse(
       "connection_not_in_scope",
-      `${wireName} runs against connection ${connectionId}, which is not in this agent's scope. The person can add it in the console.`,
+      args.connectionId
+        ? `${wireName} was asked to run against connection ${bound}, which is not in this agent's scope. The person can add it in the console.`
+        : `${wireName} runs against connection ${bound}, which is not in this agent's scope. The person can add it in the console.`,
       versioned,
     );
   }
   // After the scope check and before the gate: a revoked connection's approvals are gone with it,
   // and asking the person for them again is not the next step (GRA-69).
-  const connection = await getConnection(ctx, principal, connectionId, deps.connection);
+  let connectionId = bound;
+  let gated = tool;
+  const connection = await getConnection(ctx, principal, bound, deps.connection);
   if (connection?.revokedAt) {
-    await record("refused", versioned);
-    return { answer: revokedConnectionRefusal(connection), isError: true };
+    // The header's last paragraph (GRA-122): the one live connection of the vendor in scope, or the
+    // refusal naming what stands in the way. A caller that named the connection is not followed.
+    const live = args.connectionId
+      ? []
+      : await liveConnectionsOfVendor(ctx, principal, tool.vendor, bound, scopeIds, deps);
+    const [target] = live;
+    if (!target || live.length !== 1) {
+      await record("refused", versioned);
+      return { answer: revokedConnectionRefusal(connection, live), isError: true };
+    }
+    const rebound = await updateToolDefinition(
+      ctx,
+      principal,
+      tool.id,
+      { defaultConnectionId: target.id },
+      deps.tool,
+    );
+    if (!rebound) {
+      return refuse(
+        "tool_not_found",
+        `${wireName} left the toolbox while its connection was being chosen; find_tool searches it.`,
+        versioned,
+      );
+    }
+    connectionId = target.id;
+    gated = rebound;
   }
 
   const validator = compileInputSchema(tool.inputSchema);
@@ -492,7 +548,7 @@ async function runHeld(
   // token's claim, so nothing changes at the vendor and no trust is spent — publishing's dry run
   // (`publish_tool`) asks nothing for the same reason.
   if (!args.mode.dryRun) {
-    const gate = await gateToolCall(ctx, scope, { tool, connectionId }, deps, args.channel);
+    const gate = await gateToolCall(ctx, scope, { tool: gated, connectionId }, deps, args.channel);
     if (!gate.pass) {
       await record("refused", versioned);
       return { answer: gate.answer, isError: true, card: gate.card, cardMessage: gate.cardMessage };
@@ -581,4 +637,29 @@ async function runHeld(
   await record("ok", versioned);
   const bounded = boundResult(run.result);
   return { answer: "truncated" in bounded ? bounded : bounded.result, isError: false };
+}
+
+/**
+ * The live connections of a vendor this agent may run against, other than the one revoked — the
+ * candidates a tool whose default was revoked may follow (the header; GRA-122). In the scope, and
+ * usable as `request_connection` judges usable (`isConnectionUsable`: not revoked, its provider
+ * enabled, its credential or consent in place), so a row the agent was never given, or one that
+ * would refuse the call anyway, is neither followed nor named.
+ */
+async function liveConnectionsOfVendor(
+  ctx: ServiceContext,
+  principal: Principal,
+  vendor: string,
+  revokedId: string,
+  scopeIds: readonly string[],
+  deps: McpDeps,
+): Promise<ConnectionOutput[]> {
+  const rows = await listConnections(ctx, principal, deps.connection);
+  return rows.filter(
+    (row) =>
+      row.vendor === vendor &&
+      row.id !== revokedId &&
+      scopeIds.includes(row.id) &&
+      isConnectionUsable(row, deps.connection.providers),
+  );
 }

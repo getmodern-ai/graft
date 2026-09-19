@@ -14,6 +14,7 @@ import {
   publishToolVersion as recordPublishedVersion,
   type ServiceContext,
   type ToolDeps,
+  updateToolDefinition,
   validateToolDefinition,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
@@ -69,10 +70,14 @@ import {
  *     updated with the check's annotations, the pointer moved — `@graft/core`'s one transaction.
  *     Under `activate: false` the last two do not happen: the version row is written, the tool row
  *     is created if there is none (with the draft's definition and a null pointer), and an existing
- *     tool keeps its definition and its pointer. That is `acquire`'s publish (GRA-77): the pointer
- *     names only a version that passed its dry run, so the job dry-runs the version by id and
- *     activates it (`@graft/core`'s `activateToolVersion`) on the pass, and a failed job leaves the
- *     tool where it was — or, on a first publish, with no current version at all.
+ *     tool keeps its definition and its pointer — all but its binding: when `defaultConnectionId`
+ *     names a connection other than the row's, the row is rebound to it in the same transaction
+ *     (GRA-122), because the job dry-runs the version against that connection and a default the
+ *     person revoked since would leave every run of the tool refused until the pass. That is
+ *     `acquire`'s publish (GRA-77): the pointer names only a version that passed its dry run, so
+ *     the job dry-runs the version by id and activates it (`@graft/core`'s `activateToolVersion`)
+ *     on the pass, and a failed job leaves the tool where it was — or, on a first publish, with no
+ *     current version at all.
  *  9. The mirror is asked to copy the version, and the publish returns without waiting.
  *
  * A directory written and then not recorded (a failed install, a database down at step 8) stays on
@@ -117,7 +122,10 @@ export type PublishArgs = {
 
 export type PublishSuccess = {
   ok: true;
-  /** The tool's row as the publish left it: under `activate: false`, an existing tool's is unchanged. */
+  /**
+   * The tool's row as the publish left it: under `activate: false`, an existing tool's is unchanged
+   * but for its binding, which follows `defaultConnectionId` (step 8 above; GRA-122).
+   */
   tool: AuthoredToolRow;
   version: ToolVersionRow;
   /** The check's advice — non-refusing observations the model may act on. */
@@ -286,7 +294,21 @@ export async function publishToolVersion(
       ));
     if (args.activate === false) {
       const version = await addToolVersion(scoped, principal, tool.id, versionInput, deps.tool);
-      return { tool, version };
+      // The binding follows the connection this publish names (step 8; GRA-122): the prose, the
+      // schema and the pointer wait for the pass, the connection the dry run needs does not.
+      const rebound =
+        existing &&
+        args.defaultConnectionId &&
+        existing.defaultConnectionId !== args.defaultConnectionId
+          ? await updateToolDefinition(
+              scoped,
+              principal,
+              tool.id,
+              { defaultConnectionId: args.defaultConnectionId },
+              deps.tool,
+            )
+          : null;
+      return { tool: rebound ?? tool, version };
     }
     return recordPublishedVersion(scoped, principal, tool.id, versionInput, definition, deps.tool);
   });

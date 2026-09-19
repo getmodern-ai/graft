@@ -322,6 +322,54 @@ describe("a module with no dependencies", () => {
     expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/v2")).toEqual(second);
   });
 
+  it("under activate: false, a republish onto a tool bound to another connection rebinds it to this publish's and leaves the rest where it was (GRA-122)", async () => {
+    const first = await readFixture("hello");
+    const activated = await publish({
+      draftPath: await draft("job1", first),
+      defaultConnectionId: "conn_old",
+    });
+    expect(activated.ok).toBe(true);
+    if (!activated.ok) return;
+    expect(h.tool.tools[0]?.defaultConnectionId).toBe("conn_old");
+
+    // The job's connection differs from the row's default — the person revoked the old one and
+    // connected the vendor again — so the binding moves at publish, and nothing else does.
+    const second = first.map((file) => ({ ...file, content: `${file.content}// v2\n` }));
+    const result = await publish({
+      draftPath: await draft("job2", second),
+      jobId: "job2",
+      description: "Greets a name through the vendor, politely",
+      defaultConnectionId: "conn_new",
+      activate: false,
+    });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) return;
+    expect(result.version).toMatchObject({ path: "tools/demo/hello/v2", versionNumber: 2 });
+    expect(result.tool).toMatchObject({
+      defaultConnectionId: "conn_new",
+      description: "Greets a name through the vendor",
+      currentVersionId: activated.version.id,
+    });
+    expect(h.tool.tools[0]).toMatchObject({
+      defaultConnectionId: "conn_new",
+      description: "Greets a name through the vendor",
+      currentVersionId: activated.version.id,
+    });
+
+    // The same connection again writes nothing to the tool row.
+    const update = vi.spyOn(h.tool, "updateAuthoredTool");
+    const third = first.map((file) => ({ ...file, content: `${file.content}// v3\n` }));
+    const unchanged = await publish({
+      draftPath: await draft("job3", third),
+      jobId: "job3",
+      defaultConnectionId: "conn_new",
+      activate: false,
+    });
+    expect(unchanged.ok).toBe(true);
+    expect(update).not.toHaveBeenCalled();
+    expect(h.tool.tools[0]?.defaultConnectionId).toBe("conn_new");
+  });
+
   it("carries the check's advice on a success", async () => {
     const result = await publish({
       draftPath: await draft("job1", [

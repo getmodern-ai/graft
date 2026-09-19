@@ -904,6 +904,10 @@ class AcquireLoop {
       vendor,
       name: draft.name,
       versionId: version.id,
+      // The job's connection, not the tool row's default (GRA-122): a republish onto an existing
+      // tool leaves the default where the pass will move it, and a default the person revoked
+      // since would refuse the dry run of every version this job publishes.
+      connectionId,
       input: draft.testInput,
       mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true },
       channel: NO_ELICITATION,
@@ -913,7 +917,7 @@ class AcquireLoop {
       : readDryRunReport((dry.answer as { dryRun?: unknown }).dryRun);
     if (!report) {
       const failure = dry.isError ? dry.answer : { error: "The run produced no dry-run report." };
-      const line = typeof failure.error === "string" ? failure.error : JSON.stringify(failure);
+      const line = describeRunFailure(failure);
       const didNotRun = `The dry run of ${wire} v${version.versionNumber} did not run: ${line}`;
       await this.trace("dry_run", didNotRun, {
         attempt: attempt.number,
@@ -1223,6 +1227,23 @@ class AcquireLoop {
   private end(kind: AcquireFailureKind, message: string, lastDiagnostics: unknown): JobEnded {
     return new JobEnded(this.failure(kind, message, lastDiagnostics));
   }
+}
+
+/**
+ * A dry run that did not run, in one line for the progress and the attempt's summary. A refusal
+ * carries its reason and message (`result.ts`), and both are the line (GRA-122): `refused` alone,
+ * which is all `error` says of one, hid `connection_revoked` and its sentence from the job's
+ * `tried` on 2026-09-20. Anything else is the runner's sentence, or the whole failure as JSON.
+ */
+function describeRunFailure(failure: Record<string, unknown>): string {
+  if (
+    failure.error === "refused" &&
+    typeof failure.reason === "string" &&
+    typeof failure.message === "string"
+  ) {
+    return `${failure.reason}: ${failure.message}`;
+  }
+  return typeof failure.error === "string" ? failure.error : JSON.stringify(failure);
 }
 
 function toModelDiagnostic(diagnostic: {
