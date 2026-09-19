@@ -15,12 +15,13 @@ import type { AcquireJobRow } from "@graft/db/repo/acquire-job";
  * message }`, with the build ask's `awaiting_approval` body passed through from `approval.ts`.
  */
 
-/** `acquire`'s answer once a job exists: its id, its status, and the first progress line at once. */
-export type AcquireStarted = {
-  jobId: string;
-  status: "queued" | "running";
-  progress: string[];
-};
+/**
+ * `acquire`'s answer once a job exists is `AcquireStatus` (GRA-125): the call waits the approvals'
+ * wait for the job, so a fast job answers settled with `result`, and a slow one answers `queued` or
+ * `running` with the lines so far. Until GRA-125 this was `AcquireStarted`, the id and the first
+ * line at once.
+ */
+export type AcquireStarted = AcquireStatus;
 
 /** The job succeeded: the tool is published, promoted for the calling agent, and in its list. */
 export type AcquireSuccess = {

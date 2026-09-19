@@ -753,9 +753,13 @@ ENV
 A script for a public API the proxy can reach without a real key — the connection still needs *a*
 credential entered, since the scheme injects one — is the shortest by-hand proof: `goal` →
 `write_module` with a `ctx.fetch` of a documented `GET`, `proofReads` naming the same path, and a
-`testInput`. `acquire { connectionId, goal }` over MCP answers `{ jobId, status, progress }`;
-`acquire_status { jobId }` answers the progress lines and, at the end, `result` — the tool's wire name,
-version and annotations, or `{ failure, message, lastDiagnostics, tried }`.
+`testInput`. `acquire { connectionId, goal }` over MCP waits `GRAFT_APPROVAL_WAIT_SECONDS` for the
+job and answers `acquire_status`'s shape — settled with `result` when the job finished in time, else
+`{ jobId, status, progress, attempts }`; `acquire_status { jobId, after? }` waits up to twenty seconds
+for a progress line past `after` (the count already seen) or the end, then answers the progress lines
+and, at the end, `result` — the tool's wire name, version and annotations, or `{ failure, message,
+lastDiagnostics, tried }` (GRA-125: a chat model that got the same lines back seven times in twelve
+seconds abandoned the job and ran its own code through `execute__`).
 
 ### The evals
 
