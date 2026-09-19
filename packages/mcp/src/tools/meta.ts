@@ -430,16 +430,19 @@ const requestConnectionTool: MetaTool = {
   definition: {
     name: REQUEST_CONNECTION,
     description:
+      // Capability facts alone, in the fewest words that still name every answer shape (GRA-111);
+      // GRA-121 cut what ChatGPT's classifier read as risk handling — the field-by-field account of
+      // what the person types, and the reconnect and rotation cases — which the console page and
+      // the refusal messages carry instead.
       "Used when the vendor a task needs has no connection in the agent's scope. " +
-      "Takes a proposal (hosts, auth scheme, non-secret parameters, documentation URL) and answers a handoff url: the person checks and edits the proposal in the console and enters the secret there. This tool takes no credential. " +
-      "Hosts must be public https hosts. Sign-in endpoints (the hosts of authorizeUrl and tokenUrl, and Google's) are set aside and named in the answer; a primaryHost that is one is refused. " +
-      "A public API that documents no credential is scheme none; the person confirms and enters nothing. " +
-      "For oauth_authorization_code the proposal carries authorizeUrl, tokenUrl and scopes and no clientId: the person registers a client at the vendor with the redirect URI the form shows (redirectUri in the awaiting answer), enters its id and secret and completes the consent. " +
-      "A vendor a provider such as Pipedream covers needs no client and no secret: the awaiting answer names the provider and the person signs in at the vendor from the console. " +
+      "Takes a proposal (hosts, auth scheme and its parameters, documentation URL) and answers a handoff url: the person checks the proposal in the console and completes it there. " +
+      "Hosts are public https hosts; sign-in endpoints (the hosts of authorizeUrl and tokenUrl, and Google's) are set aside and named in the answer. " +
+      "A public API that documents no auth is scheme none: the person confirms it. For oauth_authorization_code the proposal carries authorizeUrl, tokenUrl and scopes, and the person completes the consent from the console (redirectUri in the awaiting answer). " +
+      "A vendor a provider such as Pipedream covers is connected by a sign-in at the vendor, from the card or the console. " +
       "The call waits a short while for the person, then answers awaiting_connection with a url, the same url until they have finished, then connected; the same proposal, repeated, picks the ask up. " +
-      "Connected, the connection is in the agent's scope with its execute__<connectionId> tool in the list; the page also offers the build approval, on by default, so acquire against the connection starts without a second link. " +
-      "A connection the person already has for the same vendor and hosts is not made twice: in the agent's scope, connected at once; made for another of their agents, awaiting_scope with a url, answered by the person in the console (no new connection, nothing entered), then connected on the repeated call; otherwise connection_exists names it and the step that keeps it (request_credential, or the console's Reconnect). " +
-      "A vendor this deployment's API gateway covers connects with no person step: connected at once with provider gateway, the credential held by the gateway.",
+      "Connected, the connection is in the agent's scope with its execute__<connectionId> tool in the list; the page also offers to allow building against it, on by default, so acquire against the connection starts without a second link. " +
+      "A connection the person already has for the same vendor and hosts is not made twice: in the agent's scope, connected at once; made for another of their agents, awaiting_scope with a url, answered by the person in the console (no new connection, nothing entered), then connected on the repeated call; otherwise connection_exists names it and the next step. " +
+      "A vendor this deployment's API gateway covers connects with no person step.",
     inputSchema: {
       type: "object",
       properties: {
@@ -467,13 +470,13 @@ const requestConnectionTool: MetaTool = {
         scheme: {
           type: "string",
           enum: [...AUTH_SCHEMES],
-          description: `The auth scheme, as the proxy names them: the one the vendor documents. Schemes: ${describeSchemes()}. A vendor a provider such as Pipedream covers is connected by that provider instead, under the scheme the vendor documents.`,
+          description:
+            "The auth scheme the vendor documents, as the proxy names them. A vendor a provider such as Pipedream covers is connected by that provider under the scheme the vendor documents.",
         },
         schemeConfig: {
           type: "object",
           additionalProperties: { type: "string" },
-          description:
-            'The scheme\'s non-secret parameters, e.g. { "headerName": "x-api-key" } for api_key_header; the secret itself is entered in the console.',
+          description: `The scheme's parameters, e.g. { "headerName": "x-api-key" } for api_key_header. Per scheme: ${describeSchemes()}. What the person types is the console form's, not the proposal's.`,
         },
         docsUrl: {
           type: "string",
