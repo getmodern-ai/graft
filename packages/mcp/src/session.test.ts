@@ -364,6 +364,24 @@ const CONDUCT_MARKERS = [
   /\byour\b/i,
 ];
 
+/** One connection in scope, as `executeToolDefinition` reads it. */
+const DEMO_CONNECTION: ConnectionOutput = {
+  id: "conn_1",
+  provider: "keyring",
+  vendor: "demo",
+  displayName: "Demo Orders",
+  scheme: "api_key_header",
+  schemeConfig: { headerName: "x-demo-key" },
+  primaryHost: "https://api.demo.example",
+  hosts: ["api.demo.example"],
+  credentialSetAt: null,
+  oauth: null,
+  providerReleaseFailedAt: null,
+  revokedAt: null,
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
+
 describe("every fixed tool's definition", () => {
   const definitions = () => [
     ...META_TOOLS.map((tool) => tool.definition),
@@ -385,24 +403,6 @@ describe("every fixed tool's definition", () => {
     });
   }
 });
-
-/** One connection in scope, as `executeToolDefinition` reads it. */
-const DEMO_CONNECTION: ConnectionOutput = {
-  id: "conn_1",
-  provider: "keyring",
-  vendor: "demo",
-  displayName: "Demo Orders",
-  scheme: "api_key_header",
-  schemeConfig: { headerName: "x-demo-key" },
-  primaryHost: "https://api.demo.example",
-  hosts: ["api.demo.example"],
-  credentialSetAt: null,
-  oauth: null,
-  providerReleaseFailedAt: null,
-  revokedAt: null,
-  createdAt: new Date(0),
-  updatedAt: new Date(0),
-};
 
 describe("the authoring set and the execute tool", () => {
   for (const tool of AUTHORING_TOOLS) {
