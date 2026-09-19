@@ -775,18 +775,12 @@ async function routeProposal(
       settleByConnectionId(ctx, scope, taken, deps, {
         what,
         declinedReason: "connection_declined",
-        onConnected: async (connection) => {
-          // The connection's execute tool is now in the list of every agent whose scope reaches
-          // the row (ADR 0003; `connected.ts`) — this one's, and every agent on `all`.
-          await notifyAgentsReachingConnection(
-            ctx,
-            { personId: scope.personId },
-            connection.id,
-            deps,
-            notifier,
-          );
-          return connected(connection, "new");
-        },
+        // No announcement here: the path that made the row — the console's submit, the link's
+        // return, the ask card's confirm — told every session whose scope reaches it when the row
+        // was created (`connected.ts`), and this settle only reads the recorded answer; a second
+        // `tools/list_changed` for an unchanged list would make every client re-fetch for nothing
+        // (Greptile on #88).
+        onConnected: (connection) => connected(connection, "new"),
       }),
     ...(redirectUri ? { awaitingExtra: { redirectUri } } : {}),
     ...(link ? { awaitingExtra: { provider: provider.name } } : {}),

@@ -26,6 +26,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { recordApprovalAnswer } from "./ask-answer";
+import { notifyAgentsReachingConnection } from "./connected";
 import {
   BUILD_APPROVAL_ON_THE_PAGE,
   CONNECTION_ASK_KIND,
@@ -180,6 +181,7 @@ async function connect(token: string, shared?: ToolListChangedNotifier) {
   await client.connect(clientTransport);
   return {
     client,
+    notifier,
     listChanged: () => listChanged,
     call: async (name: string, args: Record<string, unknown> = {}) =>
       (await client.callTool({ name, arguments: args })) as CallToolResult,
@@ -208,12 +210,15 @@ const principal = { personId: PERSON };
 
 /**
  * What the console's submit route does for a `connection` ask: create, add to the agent's scope,
- * grant the build approval when the person left the control on (GRA-75), record.
+ * grant the build approval when the person left the control on (GRA-75), record — and, given the
+ * process's notifier, announce the row to every session whose scope reaches it, as the route does
+ * after its transaction (`connected.ts`); the settle that follows announces nothing.
  */
 async function submitConnection(
   actionId: string,
   credential: Record<string, string>,
   choices: { approveBuild?: boolean } = {},
+  notifier?: ToolListChangedNotifier,
 ) {
   const action = store.pendingActions.get(actionId);
   if (!action) throw new Error(`no action ${actionId}`);
@@ -248,6 +253,8 @@ async function submitConnection(
     { connectionId: connection.id },
     deps.pendingAction,
   );
+  if (notifier)
+    await notifyAgentsReachingConnection(ctx(), principal, connection.id, deps, notifier);
   return connection;
 }
 
@@ -539,7 +546,12 @@ describe("request_connection through a harness", () => {
 
       // The person opens the link and enters the key; the console creates the connection.
       const before = await a.toolNames();
-      const connection = await submitConnection(action.id, { apiKey: "sk_live_acme_1" });
+      const connection = await submitConnection(
+        action.id,
+        { apiKey: "sk_live_acme_1" },
+        {},
+        a.notifier,
+      );
       expect(connection.credentialSetAt).not.toBeNull();
       expect(JSON.stringify(connection)).not.toContain("sk_live_acme_1");
 
@@ -2178,15 +2190,23 @@ describe("an agent on all connections reaches the person's rows without an ask (
         await b.call("request_connection", EPSILON),
         "awaiting_connection",
       );
-      const connection = await submitConnection(action.id, { apiKey: "eps_1" });
+      // The console's submit announces the row once, to every session whose scope reaches it —
+      // B's, on its list, and C's, on `all` (Greptile on #88) — before either agent calls again.
+      const connection = await submitConnection(action.id, { apiKey: "eps_1" }, {}, shared);
       made.push(connection.id);
-      // B's next call takes the answer; the announcement that follows reaches every session
-      // whose scope holds the row — B's, on its list, and C's, on `all` (Greptile on #88).
-      const next = await b.call("request_connection", EPSILON);
-      expect(body(next)).toMatchObject({ status: "connected", connectionId: connection.id });
       await until(() => b.listChanged() > 0 && c.listChanged() > 0);
       expect(await c.toolNames()).toContain(executeToolName(connection.id));
       expect(store.agentConnections.get(AGENT_C)?.size ?? 0).toBe(0);
+      // Past the notifier's window, so a second event would be delivered rather than coalesced.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const heard = { b: b.listChanged(), c: c.listChanged() };
+
+      // B's next call takes the recorded answer and says connected — and announces nothing: the
+      // list changed when the row was made, and a second event would only make both re-fetch.
+      const next = await b.call("request_connection", EPSILON);
+      expect(body(next)).toMatchObject({ status: "connected", connectionId: connection.id });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect({ b: b.listChanged(), c: c.listChanged() }).toEqual(heard);
     } finally {
       await b.close();
       await c.close();
