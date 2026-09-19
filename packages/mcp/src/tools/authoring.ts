@@ -116,7 +116,7 @@ const writeFile: MetaTool = {
     description:
       ADVANCED +
       "Write a file on your sandbox, creating directories as needed and replacing what was there. A relative path lands in your drafts directory on the toolbox, which every sandbox of yours shares; an absolute path is written where it says. " +
-      `Up to ${MAX_WRITE_BYTES} bytes. Answers the path and the bytes written; check_tool the module before you publish it.`,
+      `Up to ${MAX_WRITE_BYTES} bytes. Answers the path and the bytes written; check_tool the module before you publish it. Marked destructive because an absolute path can replace a file anywhere on the shared toolbox mount.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -131,7 +131,7 @@ const writeFile: MetaTool = {
     },
     // The sandbox's own files, no vendor; both hints said outright because MCP reads an unset
     // destructiveHint as true (GRA-114).
-    annotations: { readOnlyHint: false, destructiveHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
   },
   handle: async (args, session) => {
     if (typeof args.content !== "string") {
@@ -173,7 +173,7 @@ const readFile: MetaTool = {
       required: ["path"],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: true, destructiveHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: true },
   },
   handle: async (args, session) => {
     const resolved = resolveSandboxPath(args.path, session.drafts);
@@ -250,7 +250,7 @@ const waitForProcess: MetaTool = {
         processName: { type: "string", description: "The processName a detached start returned." },
         maxWaitSeconds: {
           type: "integer",
-          description: `Seconds to wait for the process to finish before answering. Default ${DEFAULT_WAIT_SECONDS}, maximum ${MAX_WAIT_SECONDS}.`,
+          description: `Seconds to wait for the process to finish before answering. Default ${DEFAULT_WAIT_SECONDS}, maximum ${MAX_WAIT_SECONDS}. Marked destructive because a command can delete or overwrite files on the shared toolbox mount.`,
           minimum: 1,
           maximum: MAX_WAIT_SECONDS,
         },
