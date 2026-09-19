@@ -652,6 +652,34 @@ describe("find_tool", () => {
       await a.close();
     }
   });
+
+  // Every word of the query, in any order, across the three fields (GRA-115); the rule itself is
+  // `tools/find-tool.match.test.ts`, this is the same rule reached over the wire.
+  it("matches every word of the query in any order, and reads a hyphenated name as words", async () => {
+    const b = await connect(TOKEN_B);
+    const names = (found: Record<string, unknown>) =>
+      (found.tools as { name: string }[]).map((t) => t.name);
+    try {
+      // Out of order, and drawn from two fields: "orders" is in the description, "demo" the vendor.
+      expect(names(body(await b.call("find_tool", { query: "orders demo" })))).toEqual([
+        "list-items",
+      ]);
+      // The name "list-items" read as two words, in either order, and as the wire name.
+      expect(names(body(await b.call("find_tool", { query: "items list" })))).toEqual([
+        "list-items",
+      ]);
+      expect(names(body(await b.call("find_tool", { query: LIST_ITEMS })))).toEqual(["list-items"]);
+      // A word absent from every field is a miss, however many others hit.
+      expect(names(body(await b.call("find_tool", { query: "list items nowhere" })))).toEqual([]);
+      // A query with no word of two or more characters is refused, never the whole toolbox.
+      expect(body(await b.call("find_tool", { query: "x" }))).toMatchObject({
+        error: "refused",
+        reason: "input_invalid",
+      });
+    } finally {
+      await b.close();
+    }
+  });
 });
 
 describe("a tool with no current version", () => {
