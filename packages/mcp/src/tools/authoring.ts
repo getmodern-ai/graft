@@ -173,7 +173,7 @@ const readFile: MetaTool = {
       required: ["path"],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: true, destructiveHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false },
   },
   handle: async (args, session) => {
     const resolved = resolveSandboxPath(args.path, session.drafts);
@@ -218,7 +218,7 @@ const runCommandTool: MetaTool = {
       additionalProperties: false,
     },
     // No credential and no vendor reach (the description says so); GRA-114 for the explicit false.
-    annotations: { readOnlyHint: false, destructiveHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true },
   },
   handle: async (args, session) => {
     const parsed = readCommandInput(args);

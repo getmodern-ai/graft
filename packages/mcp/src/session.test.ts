@@ -400,11 +400,11 @@ describe("every fixed tool's annotations", () => {
     expect(description).toMatch(CARRIED_HINT);
   });
 
-  it("only run_tool and execute__ are destructive", () => {
+  it("only run_tool, execute__, write_file and run_command are destructive", () => {
     const destructive = Object.entries(HINTS)
       .filter(([, hints]) => hints.destructiveHint)
       .map(([name]) => name);
-    expect(destructive).toEqual(["run_tool"]);
+    expect(destructive).toEqual(["run_tool", "write_file", "run_command"]);
   });
 
   /** An authored tool's hints are the check's, passed through from the row (ADR 0008), never a default. */
