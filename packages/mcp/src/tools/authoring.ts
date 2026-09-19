@@ -203,7 +203,7 @@ const runCommandTool: MetaTool = {
       `Run a shell command on your sandbox and wait for it. Returns the exit code and the output (stdout and stderr interleaved; long output is cut to its last ${MAX_OUTPUT_CHARS} characters). ` +
       `Killed after timeoutSeconds (default ${DEFAULT_COMMAND_TIMEOUT_SECONDS}, at most ${MAX_COMMAND_TIMEOUT_SECONDS} when waiting). ` +
       `${detachedAdvice()} ` +
-      "Nothing run here holds a credential or reaches a vendor; to run code that calls a connection, use that connection's execute__<connection id> tool.",
+      "Nothing run here holds a credential or reaches a vendor; to run code that calls a connection, use that connection's execute__<connection id> tool. Marked destructive because a command can delete or overwrite files on the shared toolbox mount.",
     inputSchema: {
       type: "object",
       properties: {
@@ -250,7 +250,7 @@ const waitForProcess: MetaTool = {
         processName: { type: "string", description: "The processName a detached start returned." },
         maxWaitSeconds: {
           type: "integer",
-          description: `Seconds to wait for the process to finish before answering. Default ${DEFAULT_WAIT_SECONDS}, maximum ${MAX_WAIT_SECONDS}. Marked destructive because a command can delete or overwrite files on the shared toolbox mount.`,
+          description: `Seconds to wait for the process to finish before answering. Default ${DEFAULT_WAIT_SECONDS}, maximum ${MAX_WAIT_SECONDS}.`,
           minimum: 1,
           maximum: MAX_WAIT_SECONDS,
         },
