@@ -747,7 +747,10 @@ in `events.ts`: `noun_verbed`, counts and kinds, never content) and **model tele
 `Backings` carries the three and the boot line names each: `logs stdout, analytics off, model
 telemetry off` on every self-host. Every `POST /mcp` event carries the tool call under `mcp` — the
 tool, its kind, the agent, the person, the outcome, the refusal's reason, the latency — from
-`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point; the runner's
+`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point; a `/mcp`
+request the door or the SDK's transport refuses before any tool runs carries the refusal under
+`mcpRefusal` — status, JSON-RPC code, the answer's own sentence, whether a session was named — from
+`McpDeps.onTransportRefusal` (GRA-131: a bare 400 in the log was a guess); the runner's
 and the sweep's lines ride under `acquire` and `sweep`. Product events are captured server-side at
 two chokepoints and nowhere in the console: the API's mutation routes
 (`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person

@@ -1,5 +1,5 @@
 import { hashAgentToken } from "@graft/core";
-import type { McpDeps } from "@graft/mcp";
+import type { McpDeps, TransportRefusalEvent } from "@graft/mcp";
 import { createFakeDeps, createFakeStore } from "@graft/mcp/testing/fake-deps";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -31,6 +31,7 @@ afterAll(async () => {
 });
 
 function harness() {
+  const refusals: TransportRefusalEvent[] = [];
   const store = createFakeStore();
   store.addAgent({ scopeMode: "listed", id: "agent_a", personId: "person_1", token: TOKEN_A });
   store.addAgent({ scopeMode: "listed", id: "agent_b", personId: "person_1", token: TOKEN_B });
@@ -61,6 +62,9 @@ function harness() {
     },
     sandbox,
     keys: null,
+    onTransportRefusal: (event) => {
+      refusals.push(event);
+    },
     proxyPublicUrl: "http://localhost:3000/api/proxy",
     resourceMetadataUrl: "http://graft.test/.well-known/oauth-protected-resource/mcp",
     checkModule: async () => ({
@@ -86,7 +90,7 @@ function harness() {
     followRedirects: false,
     mcp,
   });
-  return { app, store };
+  return { app, store, refusals };
 }
 
 const INITIALIZE = JSON.stringify({
@@ -317,6 +321,76 @@ describe("the MCP endpoint", () => {
       );
       expect(response.status).toBe(200);
       expect(response.headers.get("mcp-session-id")).toEqual(expect.any(String));
+    });
+  });
+
+  /** GRA-131: every refused request names its reason to the hook, the door's and the transport's alike. */
+  describe("a refused request reaches onTransportRefusal", () => {
+    const listTools = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+
+    it("tells the hook the door's reason word for a 401, and Graft's own 404 and 400", async () => {
+      const { app, refusals } = harness();
+      await app.request(MCP_MOUNT_PATH, post({}));
+      await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A}`, "mcp-session-id": "nope" }, listTools),
+      );
+      await app.request(MCP_MOUNT_PATH, {
+        method: "GET",
+        headers: { authorization: `Bearer ${TOKEN_A}`, accept: "text/event-stream" },
+      });
+      expect(refusals).toEqual([
+        expect.objectContaining({
+          status: 401,
+          message: "token_missing",
+          method: "POST",
+          hasSessionHeader: false,
+        }),
+        expect.objectContaining({
+          status: 404,
+          code: -32001,
+          message: "Session not found",
+          sessionId: "nope",
+        }),
+        expect.objectContaining({
+          status: 400,
+          code: -32000,
+          method: "GET",
+          hasSessionHeader: false,
+        }),
+      ]);
+    });
+
+    it("tells the hook the SDK's sentence for a request the transport refuses, and nothing for one it answers", async () => {
+      const { app, refusals } = harness();
+      const opened = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A}` }),
+      );
+      const sessionId = opened.headers.get("mcp-session-id") ?? "";
+      const listed = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A}`, "mcp-session-id": sessionId }, listTools),
+      );
+      expect(listed.status).toBe(200);
+      expect(refusals).toEqual([]);
+      // An `initialize` under a live session is the SDK's own 400.
+      const again = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A}`, "mcp-session-id": sessionId }),
+      );
+      expect(again.status).toBe(400);
+      expect(refusals).toEqual([
+        expect.objectContaining({
+          status: 400,
+          code: -32600,
+          message: "Invalid Request: Server already initialized",
+          method: "POST",
+          hasSessionHeader: true,
+        }),
+      ]);
+      // The client still got the SDK's body, untouched by the read.
+      expect(await again.json()).toMatchObject({ error: { code: -32600 } });
     });
   });
 });
