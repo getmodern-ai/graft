@@ -545,7 +545,13 @@ describe("answer_ask on a connection ask", () => {
     const again = await claude.call("request_connection", KEYLESS);
     expect(again.isError).toBeFalsy();
     expect(text(again)).toMatchObject({ status: "connected", connectionId });
-    expect(await claude.toolNames()).toContain(executeToolName(connectionId));
+    // A chat product's agent lists no execute__ tool (GRA-125); it learns the connection from
+    // find_tool's connections instead, which is what acquire takes below.
+    expect(await claude.toolNames()).not.toContain(executeToolName(connectionId));
+    const found = text(await claude.call("find_tool", { query: "forecast weather" }));
+    expect(found.connections).toEqual(
+      expect.arrayContaining([expect.objectContaining({ connectionId, vendor: KEYLESS.vendor })]),
+    );
     // The approval given on the card stands, so acquire against the new connection asks nothing.
     const job = await claude.call("acquire", { connectionId, goal: "today's forecast" });
     expect(text(job)).toMatchObject({ jobId: expect.any(String) });
@@ -692,7 +698,12 @@ describe("answer_ask on a scope ask", () => {
       connectionId: DELTA_CONN,
       executeTool: executeToolName(DELTA_CONN),
     });
-    expect(await claude.toolNames()).toContain(executeToolName(DELTA_CONN));
+    // No execute__ tool for a chat product's agent (GRA-125); the connection is in scope all the same.
+    expect(await claude.toolNames()).not.toContain(executeToolName(DELTA_CONN));
+    const found = text(await claude.call("find_tool", { query: "delta" }));
+    expect(found.connections).toEqual(
+      expect.arrayContaining([expect.objectContaining({ connectionId: DELTA_CONN })]),
+    );
     const job = await claude.call("acquire", { connectionId: DELTA_CONN, goal: "list books" });
     expect(text(job)).toMatchObject({ jobId: expect.any(String) });
   });

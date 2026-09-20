@@ -15,6 +15,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { ASK_CARD_TOOL_META } from "./ask-card";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "./bounds";
+import { agentDrivesByHand, hiddenToolRefusal } from "./by-hand";
 import { toolAskResult } from "./card-client";
 import type { SessionContext } from "./context";
 import type { ToolCallEvent } from "./deps";
@@ -35,6 +36,8 @@ import { META_TOOLS, type MetaTool } from "./tools/meta";
 
 const FIXED_TOOLS: readonly MetaTool[] = [...META_TOOLS, ...AUTHORING_TOOLS];
 const FIXED_BY_NAME = new Map(FIXED_TOOLS.map((tool) => [tool.definition.name, tool]));
+/** The authoring set by name — what a chat product's agent neither lists nor calls (`by-hand.ts`). */
+const AUTHORING_BY_NAME = new Set(AUTHORING_TOOLS.map((tool) => tool.definition.name));
 
 /** The names every agent's list carries whatever its working set holds. */
 export const META_TOOL_NAMES: readonly string[] = FIXED_TOOLS.map((tool) => tool.definition.name);
@@ -58,20 +61,25 @@ export function authoredToolDefinition(tool: AuthoredToolRow): Tool {
 
 export async function listToolsFor(session: SessionContext): Promise<Tool[]> {
   const { ctx, principal, scope, deps } = session;
-  const [scopeIds, connections, workingSet] = await Promise.all([
+  const [scopeIds, connections, workingSet, byHand] = await Promise.all([
     getAgentScope(ctx, scope, deps.agent),
     listConnections(ctx, principal, deps.connection),
     listWorkingSet(ctx, scope, deps.workingSet),
+    agentDrivesByHand(session),
   ]);
   const inScope = new Set(scopeIds);
+  // A chat product's agent lists the meta-tools and its promoted tools alone (GRA-125): the
+  // authoring set and the execute__ tools are for an agent driven by hand (`by-hand.ts`).
   return [
-    ...FIXED_TOOLS.map((tool) => tool.definition),
+    ...(byHand ? FIXED_TOOLS : META_TOOLS).map((tool) => tool.definition),
     // A revoked connection has no execute tool: nothing can run against it until the person
     // reconnects it, which clears `revokedAt` and puts the tool back by itself (ADR 0007; GRA-69).
     // The scope grant stays, so reconnection needs no second step in the console.
-    ...connections
-      .filter((connection) => inScope.has(connection.id) && connection.revokedAt === null)
-      .map((connection) => executeToolDefinition(connection)),
+    ...(byHand
+      ? connections
+          .filter((connection) => inScope.has(connection.id) && connection.revokedAt === null)
+          .map((connection) => executeToolDefinition(connection))
+      : []),
     ...workingSet.map((entry) => authoredToolDefinition(entry.tool)),
   ];
 }
@@ -146,10 +154,17 @@ async function dispatch(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
   const fixed = FIXED_BY_NAME.get(name);
-  if (fixed) return fixed.handle(args, session);
+  if (fixed) {
+    // Hidden from a chat product's agent, and refused when called anyway (GRA-125; `by-hand.ts`).
+    if (AUTHORING_BY_NAME.has(name) && !(await agentDrivesByHand(session))) {
+      return hiddenToolRefusal(name);
+    }
+    return fixed.handle(args, session);
+  }
 
   const connectionId = parseExecuteToolName(name);
   if (connectionId) {
+    if (!(await agentDrivesByHand(session))) return hiddenToolRefusal(name);
     const scopeIds = await getAgentScope(session.ctx, session.scope, session.deps.agent);
     return callExecuteTool(session, connectionId, scopeIds, args);
   }

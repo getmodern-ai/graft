@@ -40,3 +40,24 @@ for a person running a strong model who wants their own agent to drive.
   holding the pen they never would be.
 - **A long-running MCP tool call is a client-compatibility risk.** The job pattern with progress is
   the design; a blocking variant with a short timeout exists only for tiny acquisitions.
+
+## Amendment 2026-09-20: a chat product's agent holds no pen at all
+
+Measured live on 2026-09-20 with a fresh account on both chat products (GRA-125): a Claude.ai agent
+asked for the weather called the connection's `execute__` tool for Open-Meteo instead of `find_tool`,
+so the person was asked to approve building for code the chat model would run by hand while a
+finished weather tool sat in the toolbox; a ChatGPT agent abandoned a running `acquire` job after
+seven status polls and answered by writing and running its own code through `write_file` and
+`execute__`, with the person's Gmail credential injected. Both are the chat model taking the pen this
+decision gives to Graft's model, and the instructions telling it not to did not hold.
+
+So the authoring set — `write_file`, `read_file`, `run_command`, `wait_for_process`,
+`read_web_page`, `check_tool`, `publish_tool`, `read_tool_source` — and every `execute__<connection>`
+tool are listed for an agent its person drives by hand, a harness under a static token (the Hermes
+skill's "author by hand" case), and for no agent a chat product holds over OAuth (ADR 0018). A chat
+product's agent lists the meta-tools and its promoted tools; a call to a hidden tool is refused
+`advanced_tools_hidden` by name (`packages/mcp/src/by-hand.ts`). Since such an agent no longer
+learns a connection's id from an `execute__` tool's name, `find_tool` answers `connections` — every
+live connection in the agent's scope with the `connectionId` `acquire` takes. A console setting that
+opens the set for a chat product's agent whose person wants to author by hand is a later ticket;
+until then the static token is that door.
