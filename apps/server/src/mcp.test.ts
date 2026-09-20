@@ -20,8 +20,9 @@ initLogger({ silent: true });
 
 const TOKEN_A = "grft_server_test_token_a_000000000000000000000";
 const TOKEN_B = "grft_server_test_token_b_000000000000000000000";
-/** An access token a chat product holds for agent A after an OAuth consent (ADR 0018); the fake resolves it below. */
+/** Access tokens chat products hold for agents A and B after an OAuth consent (ADR 0018); the fake resolves them below. */
 const TOKEN_A_OAUTH = "grfta_server_test_access_token_a_00000000000000";
+const TOKEN_B_OAUTH = "grfta_server_test_access_token_b_00000000000000";
 
 const sandboxes: FakeSandboxBackend[] = [];
 
@@ -40,16 +41,23 @@ function harness() {
     ...fake,
     agent: {
       ...fake.agent,
-      findAgentByMcpAccessTokenHash: async (_db, tokenHash) =>
-        tokenHash === hashAgentToken(TOKEN_A_OAUTH)
+      findAgentByMcpAccessTokenHash: async (_db, tokenHash) => {
+        const agentId =
+          tokenHash === hashAgentToken(TOKEN_A_OAUTH)
+            ? "agent_a"
+            : tokenHash === hashAgentToken(TOKEN_B_OAUTH)
+              ? "agent_b"
+              : null;
+        return agentId
           ? {
-              tokenId: "tok_a",
-              agentId: "agent_a",
+              tokenId: `tok_${agentId}`,
+              agentId,
               personId: "person_1",
               clientId: "client_claude",
               expiresAt: null,
             }
-          : null,
+          : null;
+      },
     },
     sandbox,
     keys: null,
@@ -249,6 +257,26 @@ describe("the MCP endpoint", () => {
       expect((await readText(third)).result?.tools?.map((tool) => tool.name)).toContain(
         "find_tool",
       );
+    });
+
+    /** Greptile on #102: two agents presenting one unknown id at once must not share a session. */
+    it("keeps the agent boundary when two agents present one unknown id at once: one is answered, the other refused", async () => {
+      const { app } = harness();
+      const stale = "one-stale-id-two-agents";
+      const as = (token: string) =>
+        app.request(
+          MCP_MOUNT_PATH,
+          post({ authorization: `Bearer ${token}`, "mcp-session-id": stale }, listTools),
+        );
+      const [a, b] = await Promise.all([as(TOKEN_A_OAUTH), as(TOKEN_B_OAUTH)]);
+      expect([a.status, b.status].sort()).toEqual([200, 401]);
+      const refused = a.status === 401 ? a : b;
+      expect(await refused.json()).toMatchObject({ reason: "session_mismatch" });
+      // The session stays with the agent that got it; the other is refused again, not re-opened over it.
+      const winner = a.status === 200 ? TOKEN_A_OAUTH : TOKEN_B_OAUTH;
+      const loser = winner === TOKEN_A_OAUTH ? TOKEN_B_OAUTH : TOKEN_A_OAUTH;
+      expect((await as(winner)).status).toBe(200);
+      expect((await as(loser)).status).toBe(401);
     });
 
     it("answers a session-less request that is not an initialize, carrying the id it opened", async () => {
