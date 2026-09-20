@@ -34,16 +34,23 @@ jobs:
           commits=$(gh api \
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits" \
             --paginate --slurp)
-          # Two kinds of commit are passed over. A bot's, by the `[bot]` suffix on its author's
-          # login, because a bot holds no copyright and can certify nothing; Dependabot's are the
-          # ones this repository sees. And a merge commit, by its second parent, because a
-          # contributor who merges `main` into their branch wrote none of what it carries.
+          # One kind of commit is passed over: a bot's, by the `[bot]` suffix on its author's
+          # login, because a bot holds no copyright and can certify nothing. Dependabot's are the
+          # ones this repository sees, and the CLA workflow's allowlist said the same.
+          #
+          # A merge commit is not passed over, though the DCO apps in common use do pass one over.
+          # A contributor who resolves a conflict while merging writes content in the merge itself,
+          # and "every commit is signed off" is what CONTRIBUTING.md, AGENTS.md and ADR 0022 say
+          # (Greptile on #112). `git merge --signoff` signs one.
+          #
+          # The line has to be a whole line: a trailing tab or space is allowed and anything else
+          # after the address is not, so `Signed-off-by: A <a@b> and friends` fails rather than
+          # passing as a sign-off it is not.
           missing=$(jq -r '
             .[]
             | .[]
-            | select((.parents | length) < 2)
             | select(((.author.login // "") | endswith("[bot]")) | not)
-            | select((.commit.message | test("(^|\n)Signed-off-by: [^\n]+<[^\n>]+>")) | not)
+            | select((.commit.message | test("(^|\n)Signed-off-by: [^\n<]+ <[^\n<> ]+>[ \t]*(\n|$)")) | not)
             | "\(.sha) \(.commit.message | split("\n")[0])"
           ' <<<"$commits")
           if [ -n "$missing" ]; then

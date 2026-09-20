@@ -28,8 +28,9 @@ Sign off by adding this line to every commit message, with your real name and ad
 Signed-off-by: Your Name <you@example.com>
 ```
 
-`git commit -s` writes it from your git identity. `git rebase --signoff origin/main` adds it to a
-branch already written. The `DCO` check on the pull request names any commit that lacks one.
+`git commit -s` writes it from your git identity, `git merge --signoff` signs a merge, and
+`git rebase --signoff origin/main` adds the line to a branch already written. Every commit in the
+pull request needs one, and the `DCO` check names any that lacks it.
 
 ## Two rules before you write code
 
