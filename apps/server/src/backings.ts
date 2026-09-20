@@ -22,6 +22,13 @@ import {
   isRelayScheme,
   RELAY_SCHEMES,
 } from "@graft/proxy";
+import {
+  type BucketPolicy,
+  createMemoryRateLimiter,
+  type RateLimitBucket,
+  type RateLimiter,
+  UNLIMITED,
+} from "@graft/ratelimit";
 import { createFakeSandboxBackend } from "@graft/sandbox/fake";
 import type { SandboxBackend } from "@graft/sandbox/types";
 import { createDockerSandboxBackend } from "@graft/sandbox-docker";
@@ -131,6 +138,13 @@ export type Backings = {
   logDrain: LogDrain | null;
   analytics: Analytics;
   modelTelemetry: ModelTelemetryBacking | null;
+  /**
+   * The rate-limit seam (GRA-149; `@graft/ratelimit`), whose **default in both forms is
+   * `UNLIMITED`**: the self-hosted form is unlimited until an operator sets a `GRAFT_RATE_LIMIT_*`
+   * variable, and the hosted form's numbers are the private package's. Never null, because every
+   * door asks the seam rather than asking whether there is one; `UNLIMITED` is the absence.
+   */
+  rateLimiter: RateLimiter;
 };
 
 /**
@@ -153,6 +167,13 @@ export type CloudBackings = {
   logDrain?: LogDrain;
   analytics?: Analytics;
   modelTelemetry?: ModelTelemetryBacking;
+  /**
+   * The hosted form's rate limiter (GRA-149) with the hosted tier's own numbers, high, or a
+   * backing of its own over a shared store. Absent, the selector falls back to what the
+   * environment configures and then to `UNLIMITED`, so a hosted deploy that has not set a limit
+   * behaves exactly as a self-host does.
+   */
+  rateLimiter?: RateLimiter;
 };
 
 /**
@@ -189,6 +210,12 @@ export type BackingsEnv = Pick<
   | "GRAFT_GATEWAY_HEADER_PREFIX"
   | "GRAFT_SMTP_URL"
   | "GRAFT_MAIL_FROM"
+  | "GRAFT_RATE_LIMIT_SIGN_IN"
+  | "GRAFT_RATE_LIMIT_OAUTH_REGISTER"
+  | "GRAFT_RATE_LIMIT_OAUTH_TOKEN"
+  | "GRAFT_RATE_LIMIT_MCP"
+  | "GRAFT_RATE_LIMIT_PROXY"
+  | "GRAFT_RATE_LIMIT_API"
 >;
 
 /**
@@ -237,6 +264,28 @@ export function environmentMail(
 ): EmailTransport | null {
   if (!env.GRAFT_SMTP_URL || !env.GRAFT_MAIL_FROM) return null;
   return createSmtpTransport({ url: env.GRAFT_SMTP_URL, from: env.GRAFT_MAIL_FROM });
+}
+
+/**
+ * The rate limiter the environment configures (GRA-149; `@graft/ratelimit`), or null when not one
+ * `GRAFT_RATE_LIMIT_*` variable is set, which is the default in both forms and the decision: a
+ * self-host is unlimited unless its operator says otherwise. Not a group, so a bucket is read on
+ * its own and the buckets nobody set stay `null`, which the backing reads as unlimited.
+ *
+ * The `satisfies` is what holds the three lists together: a bucket added to `RateLimitBucket`
+ * without a variable here, or a variable here that names no bucket, does not compile.
+ */
+export function environmentRateLimiter(env: BackingsEnv): RateLimiter | null {
+  const policy = {
+    sign_in: env.GRAFT_RATE_LIMIT_SIGN_IN ?? null,
+    oauth_register: env.GRAFT_RATE_LIMIT_OAUTH_REGISTER ?? null,
+    oauth_token: env.GRAFT_RATE_LIMIT_OAUTH_TOKEN ?? null,
+    mcp: env.GRAFT_RATE_LIMIT_MCP ?? null,
+    proxy: env.GRAFT_RATE_LIMIT_PROXY ?? null,
+    api: env.GRAFT_RATE_LIMIT_API ?? null,
+  } satisfies Record<RateLimitBucket, BucketPolicy | null>;
+  if (Object.values(policy).every((rule) => rule === null)) return null;
+  return createMemoryRateLimiter(policy);
 }
 
 export type SelectBackingsDeps = {
@@ -312,6 +361,7 @@ function openBackings(env: BackingsEnv): Backings {
     logDrain: null,
     analytics: NO_ANALYTICS,
     modelTelemetry: null,
+    rateLimiter: environmentRateLimiter(env) ?? UNLIMITED,
   };
 }
 
@@ -351,6 +401,7 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
     logDrain,
     analytics,
     modelTelemetry,
+    rateLimiter,
     ...seams
   } = created;
   // The environment's gateway first (GRA-58), then the hosted providers in the order the private
@@ -373,6 +424,9 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
     logDrain: logDrain ?? null,
     analytics: analytics ?? NO_ANALYTICS,
     modelTelemetry: modelTelemetry ?? null,
+    // The hosted tier's numbers when it set any, the environment's otherwise, and unlimited as the
+    // floor in either case: the same order mail takes, and the same decision (GRA-149).
+    rateLimiter: rateLimiter ?? environmentRateLimiter(env) ?? UNLIMITED,
   };
 }
 
@@ -469,6 +523,7 @@ export function assertCloudBackings(
     ["logDrain", "log drain", ["drain", "flush"]],
     ["analytics", "analytics backing", ["capture", "shutdown"]],
     ["modelTelemetry", "model telemetry backing", ["flush", "shutdown"]],
+    ["rateLimiter", "rate limiter", ["check"]],
   ];
   for (const [key, what, members] of named) {
     const backing = record[key];
