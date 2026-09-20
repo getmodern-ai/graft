@@ -430,6 +430,8 @@ describe("the console's consent routes", () => {
       redirectTarget: "localhost:6274",
       scope: null,
       resource: `${AUTH_URL}/mcp`,
+      // The Inspector's callback is on localhost, so it meets the console for every ask (GRA-150).
+      rendersCards: false,
     });
 
     const unregistered = await app.request(
@@ -446,6 +448,35 @@ describe("the console's consent routes", () => {
     );
     expect(noPkce.status).toBe(400);
     expect(await noPkce.json()).toMatchObject({ details: { reason: "invalid_request" } });
+  });
+
+  it("says a client registered on a card host will show the ask card, and one on any other host will not", async () => {
+    // The consent page's sentence and the MCP endpoint's gate read one function over one parsed
+    // list (GRA-150; `@graft/mcp`'s `redirectsOnCardHosts`).
+    const { app } = harness();
+    const onList = await register(app, {
+      redirect_uris: ["https://claude.ai/api/mcp/auth_callback"],
+      client_name: "Claude",
+    });
+    const described = await app.request(
+      `${AUTH_URL}/api/mcp-oauth/request?${new URLSearchParams({
+        ...request(onList.client_id, generatePkce().challenge),
+        redirect_uri: "https://claude.ai/api/mcp/auth_callback",
+      })}`,
+    );
+    expect(described.status).toBe(200);
+    expect(await described.json()).toMatchObject({ rendersCards: true });
+
+    // One redirect off the list is enough: the client could be sent back somewhere else.
+    const mixed = await register(app, {
+      redirect_uris: ["https://claude.ai/api/mcp/auth_callback", REDIRECT],
+      client_name: "Mixed",
+    });
+    const mixedDescribed = await app.request(
+      `${AUTH_URL}/api/mcp-oauth/request?${new URLSearchParams(request(mixed.client_id, generatePkce().challenge))}`,
+    );
+    expect(mixedDescribed.status).toBe(200);
+    expect(await mixedDescribed.json()).toMatchObject({ rendersCards: false });
   });
 
   it("mints the agent on an allow and answers the redirect with the code; a deny answers access_denied", async () => {

@@ -28,6 +28,7 @@ import {
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import { agentScopeMode } from "@graft/db/schema/agent";
+import { DEFAULT_CARD_HOSTS, redirectsOnCardHosts } from "@graft/mcp";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -61,6 +62,12 @@ export type McpOAuthServerOptions = {
   authUrl: string;
   /** `GRAFT_CONSOLE_URL` — where the authorization endpoint sends the browser to consent. */
   consoleUrl: string;
+  /**
+   * `GRAFT_CARD_HOSTS`, already parsed: the same list `McpDeps.cardHosts` carries (GRA-150), so
+   * the sentence the consent page shows and the gate the MCP server applies cannot disagree.
+   * `DEFAULT_CARD_HOSTS` when absent, as the MCP server's own fallback is.
+   */
+  cardHosts?: readonly string[];
 };
 
 /** Where `createMcpOAuthApp` is mounted; the endpoints in `MCP_OAUTH_PATHS` sit under it. */
@@ -273,6 +280,13 @@ export type ConsentRequestDescription = {
   redirectTarget: string;
   scope: string | null;
   resource: string;
+  /**
+   * Whether this client will be admitted to the ask card once connected: every registered
+   * redirect URI on a card host, which is the whole rule since ADR 0006's amendment of
+   * 2026-09-21 (GRA-150). The page says so in one sentence, because it changes where the person
+   * answers every ask this client's agent makes.
+   */
+  rendersCards: boolean;
 };
 
 const consentRequestSchema = z.object({
@@ -342,6 +356,12 @@ export function createMcpConsentRoutes(
       redirectTarget: redirectTargetOf(verdict.request.redirectUri),
       scope: verdict.request.scope,
       resource: verdict.request.resource,
+      // The card gate's client half, read here from the same function and the same parsed list
+      // (`@graft/mcp`'s `card-client.ts`; GRA-150): one rule, two readers.
+      rendersCards: redirectsOnCardHosts(
+        verdict.client.redirectUris,
+        options.cardHosts ?? DEFAULT_CARD_HOSTS,
+      ),
     };
     return c.json(description);
   });
