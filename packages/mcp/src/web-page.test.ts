@@ -2,8 +2,10 @@ import { fetch as undiciFetch } from "undici";
 import { describe, expect, it } from "vitest";
 
 import {
+  ACCEPT_LANGUAGE,
   checkUrl,
   defaultWebPageDeps,
+  dropElements,
   htmlToText,
   readWebPage,
   type WebPageDeps,
@@ -101,6 +103,24 @@ describe("readWebPage", () => {
     expect(second).toMatchObject({ ok: true, offset: first.nextOffset });
   });
 
+  it("asks for English, so a documentation site does not pick a locale for the server's address (GRA-138)", async () => {
+    // Nine Google reference pages on 2026-09-20, nine `?hl=` locales, none English: the site
+    // redirects on Accept-Language, and the reader sent none.
+    let headers: Headers | undefined;
+    await readWebPage(
+      { url: "https://docs.vendor.example/" },
+      deps({
+        fetch: async (_url, init) => {
+          headers = new Headers(init?.headers);
+          return new Response("Hello", { headers: { "content-type": "text/plain" } });
+        },
+      }),
+    );
+    expect(ACCEPT_LANGUAGE).toBe("en");
+    expect(headers?.get("accept-language")).toBe("en");
+    expect(headers?.get("user-agent")).toContain("Graft");
+  });
+
   it("fetches with undici's own fetch, the copy the pinned Agent belongs to (GRA-91)", () => {
     // The global fetch is Node's bundled undici, a different copy: handed the package's `Agent` as
     // its dispatcher it fails every read with "invalid onRequestStart method". The module's header
@@ -117,5 +137,90 @@ describe("htmlToText", () => {
     );
     expect(title).toBe("T & U");
     expect(text).toBe("- one\n- two <b>");
+  });
+
+  /**
+   * GRA-139: on Google's reference pages the menu and the language switcher were the first 14,900
+   * of the 16,000 characters the job reads, and the response body fell past the cut. The chrome is
+   * not the page, and a page that marks its content with `main` is that element.
+   */
+  it("drops nav, header, footer and aside — nested ones whole — when the page marks no content element", () => {
+    const { text } = htmlToText(
+      "<body><header><nav><ul><li>Home</li><li>Products</li></ul><nav>Deutsch Español</nav></nav></header>" +
+        "<div><h1>Method: list</h1><p>GET /v1/items</p></div>" +
+        "<aside>Was this helpful?</aside><footer>© Vendor</footer></body>",
+    );
+    expect(text).toBe("Method: list\n\nGET /v1/items");
+  });
+
+  it("reads the main element as the page when it has content, and the whole body when it does not", () => {
+    const menu = "<div class='menu'>Overview Guides Reference Samples Support</div>";
+    const body = `<p>${"The endpoint returns the record. ".repeat(10)}</p>`;
+    const { text } = htmlToText(`<body>${menu}<main>${body}</main>${menu}</body>`);
+    expect(text).not.toContain("Overview Guides");
+    expect(text.startsWith("The endpoint returns the record.")).toBe(true);
+
+    // A `main` holding a heading and nothing else is a frame, and the body is read as before.
+    const sparse = htmlToText(`<body>${menu}<main><h1>Loading</h1></main></body>`);
+    expect(sparse.text).toContain("Overview Guides");
+    expect(sparse.text).toContain("Loading");
+
+    // One article, no main: the article is the page. Two articles: a listing, read whole.
+    const one = htmlToText(`<body>${menu}<article>${body}</article></body>`);
+    expect(one.text).not.toContain("Overview Guides");
+    const two = htmlToText(
+      `<body>${menu}<article>${body}</article><article>${body}</article></body>`,
+    );
+    expect(two.text).toContain("Overview Guides");
+  });
+
+  /** Greptile on #113: the content element's own header, footer and aside are prose; only its navs go. */
+  it("keeps a header, footer and aside inside the content element, and drops only its navs", () => {
+    const body = `<p>${"The endpoint returns the record. ".repeat(10)}</p>`;
+    const { text } = htmlToText(
+      "<body><nav>Site menu</nav><main><article>" +
+        "<header><h1>users.messages.list</h1><p>Updated 2026-09-01</p></header>" +
+        "<nav>- On this page: request, response</nav>" +
+        `${body}<aside>Note: ids are opaque strings.</aside><footer>Last reviewed by the API team.</footer>` +
+        "</article></main><footer>© Vendor</footer></body>",
+    );
+    expect(text).toContain("users.messages.list");
+    expect(text).toContain("Updated 2026-09-01");
+    expect(text).toContain("Note: ids are opaque strings.");
+    expect(text).toContain("Last reviewed by the API team.");
+    expect(text).not.toContain("Site menu");
+    expect(text).not.toContain("On this page");
+    expect(text).not.toContain("© Vendor");
+  });
+
+  /** Greptile on #113: `nav` is not `nav-menu`, `main` is not `main-content`, and a hidden `main` is not the page. */
+  it("matches whole tag names only, and passes over a hidden main for the one that is shown", () => {
+    const body = `<p>${"The endpoint returns the record. ".repeat(10)}</p>`;
+    const custom = htmlToText(
+      `<body><nav-menu>Custom menu</nav-menu><main-content>Custom wrapper</main-content>${body}</body>`,
+    );
+    expect(custom.text).toContain("Custom menu");
+    expect(custom.text).toContain("Custom wrapper");
+    expect(custom.text).toContain("The endpoint returns the record.");
+
+    const stale = `<p>${"An old page kept for a transition. ".repeat(10)}</p>`;
+    const hidden = htmlToText(
+      `<body><main hidden>${stale}</main><main aria-hidden="true">${stale}</main><main>${body}</main></body>`,
+    );
+    expect(hidden.text).not.toContain("An old page");
+    expect(hidden.text.startsWith("The endpoint returns the record.")).toBe(true);
+  });
+});
+
+describe("dropElements", () => {
+  it("removes every named element whole, nesting respected, and a never-closed one to the end", () => {
+    expect(dropElements("a<nav>b<nav>c</nav>d</nav>e", ["nav"])).toBe("ae");
+    expect(dropElements("a<nav class='x'>b</nav>c<NAV>d</NAV>e", ["nav"])).toBe("ace");
+    expect(dropElements("a<nav/>b<navigation>c</navigation>", ["nav"])).toBe(
+      "ab<navigation>c</navigation>",
+    );
+    expect(dropElements("a<nav-menu>b</nav-menu>c", ["nav"])).toBe("a<nav-menu>b</nav-menu>c");
+    expect(dropElements("a<footer>b", ["footer"])).toBe("a");
+    expect(dropElements("a</nav>b", ["nav"])).toBe("a</nav>b");
   });
 });
