@@ -31,7 +31,7 @@ export function AgentActions({ agent }: { agent: Agent }) {
         >
           <MoreHorizIcon />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="w-max min-w-44 whitespace-nowrap">
           {active ? (
             <DropdownMenuItem onClick={() => setConnecting(true)}>
               Connection details
