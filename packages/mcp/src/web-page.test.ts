@@ -144,7 +144,7 @@ describe("htmlToText", () => {
    * of the 16,000 characters the job reads, and the response body fell past the cut. The chrome is
    * not the page, and a page that marks its content with `main` is that element.
    */
-  it("drops nav, header, footer and aside — nested ones whole — and keeps the rest", () => {
+  it("drops nav, header, footer and aside — nested ones whole — when the page marks no content element", () => {
     const { text } = htmlToText(
       "<body><header><nav><ul><li>Home</li><li>Products</li></ul><nav>Deutsch Español</nav></nav></header>" +
         "<div><h1>Method: list</h1><p>GET /v1/items</p></div>" +
@@ -173,6 +173,43 @@ describe("htmlToText", () => {
     );
     expect(two.text).toContain("Overview Guides");
   });
+
+  /** Greptile on #113: the content element's own header, footer and aside are prose; only its navs go. */
+  it("keeps a header, footer and aside inside the content element, and drops only its navs", () => {
+    const body = `<p>${"The endpoint returns the record. ".repeat(10)}</p>`;
+    const { text } = htmlToText(
+      "<body><nav>Site menu</nav><main><article>" +
+        "<header><h1>users.messages.list</h1><p>Updated 2026-09-01</p></header>" +
+        "<nav>- On this page: request, response</nav>" +
+        `${body}<aside>Note: ids are opaque strings.</aside><footer>Last reviewed by the API team.</footer>` +
+        "</article></main><footer>© Vendor</footer></body>",
+    );
+    expect(text).toContain("users.messages.list");
+    expect(text).toContain("Updated 2026-09-01");
+    expect(text).toContain("Note: ids are opaque strings.");
+    expect(text).toContain("Last reviewed by the API team.");
+    expect(text).not.toContain("Site menu");
+    expect(text).not.toContain("On this page");
+    expect(text).not.toContain("© Vendor");
+  });
+
+  /** Greptile on #113: `nav` is not `nav-menu`, `main` is not `main-content`, and a hidden `main` is not the page. */
+  it("matches whole tag names only, and passes over a hidden main for the one that is shown", () => {
+    const body = `<p>${"The endpoint returns the record. ".repeat(10)}</p>`;
+    const custom = htmlToText(
+      `<body><nav-menu>Custom menu</nav-menu><main-content>Custom wrapper</main-content>${body}</body>`,
+    );
+    expect(custom.text).toContain("Custom menu");
+    expect(custom.text).toContain("Custom wrapper");
+    expect(custom.text).toContain("The endpoint returns the record.");
+
+    const stale = `<p>${"An old page kept for a transition. ".repeat(10)}</p>`;
+    const hidden = htmlToText(
+      `<body><main hidden>${stale}</main><main aria-hidden="true">${stale}</main><main>${body}</main></body>`,
+    );
+    expect(hidden.text).not.toContain("An old page");
+    expect(hidden.text.startsWith("The endpoint returns the record.")).toBe(true);
+  });
 });
 
 describe("dropElements", () => {
@@ -182,6 +219,7 @@ describe("dropElements", () => {
     expect(dropElements("a<nav/>b<navigation>c</navigation>", ["nav"])).toBe(
       "ab<navigation>c</navigation>",
     );
+    expect(dropElements("a<nav-menu>b</nav-menu>c", ["nav"])).toBe("a<nav-menu>b</nav-menu>c");
     expect(dropElements("a<footer>b", ["footer"])).toBe("a");
     expect(dropElements("a</nav>b", ["nav"])).toBe("a</nav>b");
   });

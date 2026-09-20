@@ -359,10 +359,12 @@ function concat(chunks: Uint8Array[], total: number): Uint8Array {
  * gone (so `&lt;div&gt;` in a code sample comes out literal), tidy the whitespace. Good enough for
  * documentation, which is the use; not a renderer.
  *
- * A site's chrome is not content either (GRA-139): `nav`, `header`, `footer` and `aside` go the way
- * of scripts, and when the page marks its content with `main` (or, failing that, one `article`),
- * that element is the page. On Google's reference pages the menu and the language switcher were the
- * first 14,900 of the 16,000 characters the job reads, and the response body fell past the cut.
+ * A site's chrome is not content either (GRA-139). When the page marks its content — a `main` that
+ * is not hidden, or a lone `article` — that element is the page and only its `nav`s go (an on-page
+ * table of contents is a menu; an article's own `header` or `aside` is prose and stays). When it
+ * marks nothing, `nav`, `header`, `footer` and `aside` go the way of scripts. On Google's reference
+ * pages the menu and the language switcher were the first 14,900 of the 16,000 characters the job
+ * reads, and the response body fell past the cut.
  */
 export function htmlToText(html: string): { title: string | null; text: string } {
   const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(html);
@@ -371,16 +373,15 @@ export function htmlToText(html: string): { title: string | null; text: string }
       null
     : null;
 
-  const withoutChrome = dropElements(
-    html
-      .replace(/<!--[\s\S]*?-->/g, "")
-      .replace(
-        /<(script|style|noscript|template|svg|head|title|iframe|object|canvas)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,
-        "",
-      ),
-    CHROME_ELEMENTS,
-  );
-  const content = contentElement(withoutChrome) ?? withoutChrome;
+  const document = html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(
+      /<(script|style|noscript|template|svg|head|title|iframe|object|canvas)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,
+      "",
+    );
+  const marked = contentElement(document);
+  const content =
+    marked === null ? dropElements(document, CHROME_ELEMENTS) : dropElements(marked, ["nav"]);
 
   const stripped = content
     .replace(/<br\s*\/?>/gi, "\n")
@@ -400,14 +401,15 @@ export function htmlToText(html: string): { title: string | null; text: string }
 const CHROME_ELEMENTS = ["nav", "header", "footer", "aside"] as const;
 
 /**
- * A `main`, or the one `article` when there is no `main` and exactly one article: the element the
- * page says its content is. Null when the page says nothing, or when what it says is too short to
- * be the page (a `main` holding a heading and a spinner), so the whole body is read as before.
+ * The first `main` that is not hidden, or the one `article` when there is no such `main` and
+ * exactly one article: the element the page says its content is. Null when the page says nothing,
+ * or when what it says is too short to be the page (a `main` holding a heading and a spinner), so
+ * the whole document is read as before.
  */
 function contentElement(html: string): string | null {
-  const main = elementsNamed(html, "main");
+  const main = elementsNamed(html, "main").find((element) => !isHidden(element));
   const candidate =
-    main[0] ??
+    main ??
     (() => {
       const articles = elementsNamed(html, "article");
       return articles.length === 1 ? articles[0] : undefined;
@@ -420,8 +422,22 @@ function contentElement(html: string): string | null {
   return text.length >= MIN_CONTENT_CHARS ? candidate : null;
 }
 
-/** Below this, a `main` is a frame with nothing in it yet and the whole body is read instead. */
+/** Below this, a `main` is a frame with nothing in it yet and the whole document is read instead. */
 const MIN_CONTENT_CHARS = 200;
+
+/** An element whose open tag carries `hidden` (or `aria-hidden="true"`) is not what the page shows. */
+function isHidden(element: string): boolean {
+  const open = /^<[^>]*>/.exec(element)?.[0] ?? "";
+  return /\shidden(?=[\s=/>])/i.test(open) || /\saria-hidden\s*=\s*["']?true/i.test(open);
+}
+
+/**
+ * The open and close tags of one element name — the name followed by whitespace, `/` or `>`, so
+ * `nav` never matches `<nav-menu>` and `main` never matches `<main-content>`.
+ */
+function tagsNamed(name: string): RegExp {
+  return new RegExp(`<(/?)${name}(?=[\\s/>])[^>]*>`, "gi");
+}
 
 /**
  * Every element with one of `names`, removed whole. A regex cannot pair an open tag with its own
@@ -431,11 +447,10 @@ const MIN_CONTENT_CHARS = 200;
 export function dropElements(html: string, names: readonly string[]): string {
   let out = html;
   for (const name of names) {
-    const tags = new RegExp(`<(/?)${name}\\b[^>]*>`, "gi");
     let kept = "";
     let cursor = 0;
     let depth = 0;
-    for (const match of out.matchAll(tags)) {
+    for (const match of out.matchAll(tagsNamed(name))) {
       const closing = match[1] === "/";
       if (!closing) {
         if (/\/\s*>$/.test(match[0])) {
@@ -464,11 +479,10 @@ export function dropElements(html: string, names: readonly string[]): string {
  * outermost elements only.
  */
 function elementsNamed(html: string, name: string): string[] {
-  const tags = new RegExp(`<(/?)${name}\\b[^>]*>`, "gi");
   const found: string[] = [];
   let depth = 0;
   let start = 0;
-  for (const match of html.matchAll(tags)) {
+  for (const match of html.matchAll(tagsNamed(name))) {
     const closing = match[1] === "/";
     if (!closing) {
       if (/\/\s*>$/.test(match[0])) continue;
