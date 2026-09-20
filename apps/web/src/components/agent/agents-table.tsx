@@ -84,7 +84,7 @@ export function AgentsTable({
             />
           </TableBodyNote>
         ) : agents.length === 0 ? (
-          <TableBodyNote colSpan={COLUMNS}>
+          <TableBodyNote colSpan={COLUMNS} className="text-center">
             No agents yet. Create one to connect your harness.
           </TableBodyNote>
         ) : (
