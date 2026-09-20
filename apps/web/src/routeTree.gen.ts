@@ -20,11 +20,11 @@ import { Route as LinkCallbackRouteImport } from './routes/link.callback'
 import { Route as OauthCallbackRouteImport } from './routes/oauth.callback'
 import { Route as AuthShellConsentRouteImport } from './routes/_auth/_shell/consent'
 import { Route as AuthShellSettingsRouteImport } from './routes/_auth/_shell/settings'
+import { Route as AuthPendingIdRouteImport } from './routes/_auth/pending.$id'
 import { Route as AuthShellAgentsIndexRouteImport } from './routes/_auth/_shell/agents.index'
 import { Route as AuthShellAgentsAgentIdRouteImport } from './routes/_auth/_shell/agents.$agentId'
 import { Route as AuthShellConnectionsIndexRouteImport } from './routes/_auth/_shell/connections.index'
 import { Route as AuthShellPendingIndexRouteImport } from './routes/_auth/_shell/pending.index'
-import { Route as AuthShellPendingIdRouteImport } from './routes/_auth/_shell/pending.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -79,6 +79,11 @@ const AuthShellSettingsRoute = AuthShellSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AuthShellRouteRoute,
 } as any)
+const AuthPendingIdRoute = AuthPendingIdRouteImport.update({
+  id: '/pending/$id',
+  path: '/pending/$id',
+  getParentRoute: () => AuthRouteRoute,
+} as any)
 const AuthShellAgentsIndexRoute = AuthShellAgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
@@ -100,11 +105,6 @@ const AuthShellPendingIndexRoute = AuthShellPendingIndexRouteImport.update({
   path: '/pending/',
   getParentRoute: () => AuthShellRouteRoute,
 } as any)
-const AuthShellPendingIdRoute = AuthShellPendingIdRouteImport.update({
-  id: '/pending/$id',
-  path: '/pending/$id',
-  getParentRoute: () => AuthShellRouteRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -116,8 +116,8 @@ export interface FileRoutesByFullPath {
   '/oauth/callback': typeof OauthCallbackRoute
   '/consent': typeof AuthShellConsentRoute
   '/settings': typeof AuthShellSettingsRoute
+  '/pending/$id': typeof AuthPendingIdRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
-  '/pending/$id': typeof AuthShellPendingIdRoute
   '/agents/': typeof AuthShellAgentsIndexRoute
   '/connections/': typeof AuthShellConnectionsIndexRoute
   '/pending/': typeof AuthShellPendingIndexRoute
@@ -132,8 +132,8 @@ export interface FileRoutesByTo {
   '/oauth/callback': typeof OauthCallbackRoute
   '/consent': typeof AuthShellConsentRoute
   '/settings': typeof AuthShellSettingsRoute
+  '/pending/$id': typeof AuthPendingIdRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
-  '/pending/$id': typeof AuthShellPendingIdRoute
   '/agents': typeof AuthShellAgentsIndexRoute
   '/connections': typeof AuthShellConnectionsIndexRoute
   '/pending': typeof AuthShellPendingIndexRoute
@@ -151,8 +151,8 @@ export interface FileRoutesById {
   '/oauth/callback': typeof OauthCallbackRoute
   '/_auth/_shell/consent': typeof AuthShellConsentRoute
   '/_auth/_shell/settings': typeof AuthShellSettingsRoute
+  '/_auth/pending/$id': typeof AuthPendingIdRoute
   '/_auth/_shell/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
-  '/_auth/_shell/pending/$id': typeof AuthShellPendingIdRoute
   '/_auth/_shell/agents/': typeof AuthShellAgentsIndexRoute
   '/_auth/_shell/connections/': typeof AuthShellConnectionsIndexRoute
   '/_auth/_shell/pending/': typeof AuthShellPendingIndexRoute
@@ -169,8 +169,8 @@ export interface FileRouteTypes {
     | '/oauth/callback'
     | '/consent'
     | '/settings'
-    | '/agents/$agentId'
     | '/pending/$id'
+    | '/agents/$agentId'
     | '/agents/'
     | '/connections/'
     | '/pending/'
@@ -185,8 +185,8 @@ export interface FileRouteTypes {
     | '/oauth/callback'
     | '/consent'
     | '/settings'
-    | '/agents/$agentId'
     | '/pending/$id'
+    | '/agents/$agentId'
     | '/agents'
     | '/connections'
     | '/pending'
@@ -203,8 +203,8 @@ export interface FileRouteTypes {
     | '/oauth/callback'
     | '/_auth/_shell/consent'
     | '/_auth/_shell/settings'
+    | '/_auth/pending/$id'
     | '/_auth/_shell/agents/$agentId'
-    | '/_auth/_shell/pending/$id'
     | '/_auth/_shell/agents/'
     | '/_auth/_shell/connections/'
     | '/_auth/_shell/pending/'
@@ -300,6 +300,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthShellSettingsRouteImport
       parentRoute: typeof AuthShellRouteRoute
     }
+    '/_auth/pending/$id': {
+      id: '/_auth/pending/$id'
+      path: '/pending/$id'
+      fullPath: '/pending/$id'
+      preLoaderRoute: typeof AuthPendingIdRouteImport
+      parentRoute: typeof AuthRouteRoute
+    }
     '/_auth/_shell/agents/': {
       id: '/_auth/_shell/agents/'
       path: '/agents'
@@ -328,13 +335,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthShellPendingIndexRouteImport
       parentRoute: typeof AuthShellRouteRoute
     }
-    '/_auth/_shell/pending/$id': {
-      id: '/_auth/_shell/pending/$id'
-      path: '/pending/$id'
-      fullPath: '/pending/$id'
-      preLoaderRoute: typeof AuthShellPendingIdRouteImport
-      parentRoute: typeof AuthShellRouteRoute
-    }
   }
 }
 
@@ -342,7 +342,6 @@ interface AuthShellRouteRouteChildren {
   AuthShellConsentRoute: typeof AuthShellConsentRoute
   AuthShellSettingsRoute: typeof AuthShellSettingsRoute
   AuthShellAgentsAgentIdRoute: typeof AuthShellAgentsAgentIdRoute
-  AuthShellPendingIdRoute: typeof AuthShellPendingIdRoute
   AuthShellAgentsIndexRoute: typeof AuthShellAgentsIndexRoute
   AuthShellConnectionsIndexRoute: typeof AuthShellConnectionsIndexRoute
   AuthShellPendingIndexRoute: typeof AuthShellPendingIndexRoute
@@ -352,7 +351,6 @@ const AuthShellRouteRouteChildren: AuthShellRouteRouteChildren = {
   AuthShellConsentRoute: AuthShellConsentRoute,
   AuthShellSettingsRoute: AuthShellSettingsRoute,
   AuthShellAgentsAgentIdRoute: AuthShellAgentsAgentIdRoute,
-  AuthShellPendingIdRoute: AuthShellPendingIdRoute,
   AuthShellAgentsIndexRoute: AuthShellAgentsIndexRoute,
   AuthShellConnectionsIndexRoute: AuthShellConnectionsIndexRoute,
   AuthShellPendingIndexRoute: AuthShellPendingIndexRoute,
@@ -364,10 +362,12 @@ const AuthShellRouteRouteWithChildren = AuthShellRouteRoute._addFileChildren(
 
 interface AuthRouteRouteChildren {
   AuthShellRouteRoute: typeof AuthShellRouteRouteWithChildren
+  AuthPendingIdRoute: typeof AuthPendingIdRoute
 }
 
 const AuthRouteRouteChildren: AuthRouteRouteChildren = {
   AuthShellRouteRoute: AuthShellRouteRouteWithChildren,
+  AuthPendingIdRoute: AuthPendingIdRoute,
 }
 
 const AuthRouteRouteWithChildren = AuthRouteRoute._addFileChildren(
