@@ -15,7 +15,7 @@ const COLUMNS = 4;
 
 /**
  * Every promotion and demotion, newest first — tool-list churn is a first-class event (ADR 0003).
- * Owns its read for the reason `working-set-table.tsx` gives. Below `md` the cause column steps
+ * Owns its read for the reason `working-set-table.tsx` gives. Below a 42rem content width the cause column steps
  * out and the cause follows the tool name in muted text instead, so the one fact the history
  * exists to show is never off the screen.
  */
@@ -34,14 +34,14 @@ export function WorkingSetHistory({ agentId }: { agentId: string }) {
           toolbox and one <code className="font-mono">find_tool</code> away.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <DataTable layout="grid">
+      <CardContent className="@container">
+        <DataTable layout="grid" className="min-w-96">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-26 md:w-36">When</TableHead>
-              <TableHead className="w-24 md:w-28">Change</TableHead>
+              <TableHead className="@2xl:w-36 w-26">When</TableHead>
+              <TableHead className="@2xl:w-28 w-24">Change</TableHead>
               <TableHead>Tool</TableHead>
-              <TableHead className="hidden md:table-cell md:w-56">Cause</TableHead>
+              <TableHead className="@2xl:table-cell hidden @2xl:w-56">Cause</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -78,12 +78,12 @@ export function WorkingSetHistory({ agentId }: { agentId: string }) {
                           A tool no longer in the toolbox
                         </span>
                       )}
-                      <span className="truncate text-muted-foreground text-xs md:hidden">
+                      <span className="@2xl:hidden truncate text-muted-foreground text-xs">
                         {WORKING_SET_CAUSE[change.cause]}
                       </span>
                     </span>
                   </TableCell>
-                  <TableCell className="hidden text-muted-foreground md:table-cell">
+                  <TableCell className="@2xl:table-cell hidden text-muted-foreground">
                     {WORKING_SET_CAUSE[change.cause]}
                   </TableCell>
                 </DataTableRow>

@@ -34,8 +34,8 @@ import {
 /**
  * The agent's scope (CONTEXT.md, *Scope*; ADR 0007 as amended 2026-09-19): the mode as the
  * `Select` primitive — `All connections`, every connection the person has now and adds later, or
- * `Selected connections`, the picker — and under the latter the list, edited as a set. Saved whole: the
- * server writes the mode and replaces the list in one transaction, and the change is in effect on
+ * `Selected connections`, the picker. Both modes show the current connections; only a selected
+ * list is editable. The server saves the mode and list in one transaction, taking effect on
  * the agent's next MCP call, when the capability token minted for its next exec names exactly the
  * connections the scope resolves to.
  *
@@ -81,7 +81,7 @@ export function ScopeEditor({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Scope</CardTitle>
+        <CardTitle>Connections</CardTitle>
         <CardDescription>
           The connections this agent may use. An authored tool running for it cannot reach a
           connection outside them.
@@ -111,14 +111,14 @@ export function ScopeEditor({
             </SelectContent>
           </Select>
           <FieldDescription>{SCOPE_MODE_DESCRIPTION[mode]}</FieldDescription>
-          {mode === "listed" ? (
-            <ConnectionPicker
-              connections={connections}
-              selected={draft}
-              onChange={setDraft}
-              disabled={frozen || save.isPending}
-            />
-          ) : null}
+          <ConnectionPicker
+            connections={connections}
+            selected={
+              mode === "all" ? new Set(connections.map((connection) => connection.id)) : draft
+            }
+            onChange={setDraft}
+            disabled={mode === "all" || frozen || save.isPending}
+          />
         </Field>
       </CardContent>
       {frozen ? null : (

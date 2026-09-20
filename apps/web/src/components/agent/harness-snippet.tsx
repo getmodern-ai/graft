@@ -21,7 +21,7 @@ export function HarnessSnippet({ agent }: { agent: Agent }) {
           <CardDescription>
             {client} connected over OAuth and holds this agent's tokens, refreshing them itself;
             there is nothing to paste into a config. Every call it makes is this agent: its scope,
-            its working set, its approvals. Revoke the agent to end the connection — {client} will
+            its working set, its approvals. Revoke the agent to end the connection. {client} will
             then ask you to connect again.
           </CardDescription>
         </CardHeader>

@@ -39,7 +39,7 @@ const COLUMNS = 5;
  *
  * Withdraw stays a visible button in its own column rather than going behind a row menu: it is the
  * row's one action, and a menu of one item is a click for nothing. The column's header is for a
- * screen reader alone (Cando's `connections-table.tsx`). Below `md` the decided-at column steps
+ * screen reader alone (Cando's `connections-table.tsx`). Below a 42rem content width the decided-at column steps
  * out; the answer and the switch keep their room.
  */
 export function ApprovalsCard({ agent }: { agent: Agent }) {
@@ -84,15 +84,15 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
           and the answer holds, unless you set it to ask every time here or on the ask itself.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <DataTable layout="grid">
+      <CardContent className="@container">
+        <DataTable layout="grid" className="min-w-96">
           <TableHeader>
             <TableRow>
               <TableHead>Tool</TableHead>
-              <TableHead className="w-20 md:w-24">Answer</TableHead>
-              <TableHead className="hidden md:table-cell md:w-36">Decided</TableHead>
-              <TableHead className="w-24 md:w-36">Asks every time</TableHead>
-              <TableHead className="w-22 md:w-28">
+              <TableHead className="@2xl:w-24 w-20">Answer</TableHead>
+              <TableHead className="@2xl:table-cell hidden @2xl:w-36">Decided</TableHead>
+              <TableHead className="@2xl:w-36 w-24">Asks every time</TableHead>
+              <TableHead className="@2xl:w-28 w-22">
                 <span className="sr-only">Actions</span>
               </TableHead>
             </TableRow>
@@ -114,8 +114,7 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
               </TableBodyNote>
             ) : rows.length === 0 ? (
               <TableBodyNote colSpan={COLUMNS}>
-                Nothing answered yet — the first tool this agent runs that is not read-only will
-                ask.
+                Nothing answered yet. The first tool this agent runs that is not read-only will ask.
               </TableBodyNote>
             ) : (
               rows.map((approval) => {
@@ -139,7 +138,7 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
                     <TableCell>
                       <StatusChip chip={APPROVAL_DECISION_CHIP[approval.decision]} />
                     </TableCell>
-                    <TableCell className="hidden truncate text-muted-foreground md:table-cell">
+                    <TableCell className="@2xl:table-cell hidden truncate text-muted-foreground">
                       <Time iso={approval.decidedAt} />
                     </TableCell>
                     <TableCell>

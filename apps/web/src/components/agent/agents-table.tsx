@@ -6,33 +6,18 @@ import { RetryNotice } from "@/components/retry-notice";
 import { StatusChip } from "@/components/status-chip";
 import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states";
 import { Time } from "@/components/time";
-import { Badge } from "@/components/ui/badge";
 import { DataTable, DataTableRow, DataTableSubHeader } from "@/components/ui/data-table";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Agent } from "@/lib/agent-queries";
 import { count } from "@/lib/format";
 import { agentStatusChip } from "@/lib/status-chips";
 
-const COLUMNS = 7;
+const COLUMNS = 8;
 
 /**
- * The agents list — one row per harness connected to Graft (CONTEXT.md, *Agent*).
- *
- * Grid layout, so the five fact columns hold their widths and a long name cannot move the dates
- * (Cando's `connections-table.tsx`). The name is the auto-sized column: it is the only prose in
- * the row and the way into the agent, drawn as plain text that underlines on hover, the dress of
- * every inline link in Cando's tables.
- *
- * Below `md` the token, cap and idle window step out to keep the name and Actions readable.
- * The agent's detail page still shows those facts (ADR 0017: compose from the table pattern).
- *
- * **An agent an MCP client connected wears the client's name as a chip beside its own** (ADR
- * 0018) — an outline `Badge`, dynamic text like the vendor badge in the connection picker, not a
- * status from `status-chips.ts`. Its Token cell says "OAuth" when it holds no static token: the
- * client holds the tokens, and there is no prefix to show.
- *
- * Loading, failed and empty are the body's own rows (`table-body-states.tsx`), following
- * Cando's `connections-table.tsx` BodyNote. The header and the page's New agent action stay put.
+ * The recorded OAuth client names the harness (ADR 0018); static tokens record no client.
+ * Compact widths keep that name below the agent link. The remaining facts live in the drawer.
+ * Cando's members-panel.tsx supplies the group bands (ADR 0017).
  */
 export function AgentsTable({
   agents,
@@ -60,9 +45,10 @@ export function AgentsTable({
       <TableHeader>
         <TableRow>
           <TableHead>Agent</TableHead>
-          <TableHead className="hidden md:table-cell md:w-40">Token</TableHead>
-          <TableHead className="hidden md:table-cell md:w-24">Cap</TableHead>
-          <TableHead className="hidden md:table-cell md:w-28">Idle window</TableHead>
+          <TableHead className="hidden md:table-cell md:w-36">Harness</TableHead>
+          <TableHead className="hidden xl:table-cell xl:w-36">Token</TableHead>
+          <TableHead className="hidden lg:table-cell lg:w-24">Cap</TableHead>
+          <TableHead className="hidden lg:table-cell lg:w-28">Idle window</TableHead>
           <TableHead className="w-26 md:w-36">Created</TableHead>
           <TableHead className="w-20 md:w-24">Status</TableHead>
           <TableHead className="w-12">
@@ -99,29 +85,37 @@ export function AgentsTable({
                   <DataTableRow key={agent.id}>
                     <TableCell className="truncate">
                       <Link
+                        id={`agent-link-${agent.id}`}
+                        aria-haspopup="dialog"
                         to="/agents/$agentId"
                         params={{ agentId: agent.id }}
                         className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                       >
                         {agent.name}
                       </Link>
-                      {agent.connectedVia ? (
-                        <Badge variant="outline" className="ml-2 align-middle">
-                          {agent.connectedVia.clientName}
-                        </Badge>
-                      ) : null}
+                      <span className="block truncate text-muted-foreground text-xs md:hidden">
+                        {agent.connectedVia?.clientName ?? "Not recorded"}
+                      </span>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">
+                    <TableCell
+                      className="hidden truncate md:table-cell"
+                      title={agent.connectedVia?.clientName}
+                    >
+                      {agent.connectedVia?.clientName ?? (
+                        <span className="text-muted-foreground">Not recorded</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden xl:table-cell">
                       {agent.tokenPrefix ? (
                         <code className="font-mono text-xs">{agent.tokenPrefix}…</code>
                       ) : (
                         <span className="text-muted-foreground">OAuth</span>
                       )}
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">
+                    <TableCell className="hidden lg:table-cell">
                       {count(agent.workingSetCap, "tool")}
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">
+                    <TableCell className="hidden lg:table-cell">
                       {count(agent.idleWindowDays, "day")}
                     </TableCell>
                     <TableCell className="truncate text-muted-foreground">

@@ -25,7 +25,7 @@ import type { Connection } from "@/lib/connection-queries";
  * shown — once. Closing the dialog is the end of it; the agent's page shows the prefix and the
  * snippet, never the token.
  *
- * The connections arrive from a read the agents route starts without awaiting (`agents.index.tsx`),
+ * The connections arrive from a read the agents route starts without awaiting (`agents.tsx`),
  * so the dialog can open before they have: `connections` is `undefined` until then and, under
  * `Selected connections`, the scope draws skeleton rows in the picker's place and Create waits — a scope
  * chosen from a list that has not arrived would be an empty one nobody chose (raised by Greptile on

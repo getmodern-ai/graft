@@ -56,9 +56,9 @@ export function LimitsForm({ agent }: { agent: Agent }) {
         <CardTitle>Name, cap and idle window</CardTitle>
         <CardDescription>
           The working set contracts by rule: a tool unused past the idle window is demoted, and when
-          more than the cap are promoted the least recently used go first — never one used inside
-          the window, and never while the agent has a run in flight. A demoted tool stays in the
-          toolbox.
+          more than the cap are promoted the least recently used go first. Tools used inside the
+          window stay promoted, and nothing is demoted while the agent has a run in flight. A
+          demoted tool stays in the toolbox.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -66,6 +66,7 @@ export function LimitsForm({ agent }: { agent: Agent }) {
           <FieldLabel htmlFor="limits-name">Name</FieldLabel>
           <Input
             id="limits-name"
+            placeholder="Enter agent name"
             required
             disabled={disabled}
             value={name}
@@ -74,9 +75,10 @@ export function LimitsForm({ agent }: { agent: Agent }) {
         </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field>
-            <FieldLabel htmlFor="limits-cap">Working-set cap</FieldLabel>
+            <FieldLabel htmlFor="limits-cap">Working set cap</FieldLabel>
             <Input
               id="limits-cap"
+              placeholder="Enter tool cap"
               type="number"
               min={1}
               step={1}
@@ -85,12 +87,13 @@ export function LimitsForm({ agent }: { agent: Agent }) {
               value={cap}
               onChange={(event) => setCap(event.target.value)}
             />
-            <FieldDescription>How many tools may be promoted at once.</FieldDescription>
+            <FieldDescription>The target number of tools in the working set.</FieldDescription>
           </Field>
           <Field>
             <FieldLabel htmlFor="limits-idle">Idle window (days)</FieldLabel>
             <Input
               id="limits-idle"
+              placeholder="Enter number of days"
               type="number"
               min={1}
               step={1}

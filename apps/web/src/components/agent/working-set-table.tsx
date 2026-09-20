@@ -23,13 +23,13 @@ const COLUMNS = 5;
  * The working set as the harness sees it (ADR 0003): exactly these tools are in the agent's MCP
  * list beside the meta-tools. "Last used" is the contraction rule's clock (ADR 0009).
  *
- * Owns its read rather than taking rows from the route: the agent's page awaits the agent alone
- * and only starts this query (`agents.$agentId.tsx`), so the card paints at once with skeleton
- * rows and fills when the set arrives — pending is its own state, never the empty branch.
+ * Owns its read: `agents.$agentId.tsx` prefetches without awaiting, so this card paints skeleton
+ * rows until the set arrives. Pending stays distinct from empty.
  *
  * One line per tool, at the table's 40px rhythm: the description the agent's model wrote follows
  * the wire name in muted text and truncates where the column runs out, rather than taking a
- * second line under it. Below `md` the two promotion columns step out and the name keeps the room.
+ * second line under it. Below a 42rem content width the two promotion columns step out
+ * and the name keeps the room.
  */
 export function WorkingSetTable({ agent }: { agent: Agent }) {
   const { data, isPending, isError, error, isFetching, refetch } = useQuery(
@@ -49,19 +49,19 @@ export function WorkingSetTable({ agent }: { agent: Agent }) {
           ) : null}
         </CardTitle>
         <CardDescription>
-          The authored tools currently promoted for this agent — its MCP tool list, beside the
+          The authored tools currently promoted for this agent in its MCP tool list, beside the
           meta-tools. Idle window {count(agent.idleWindowDays, "day")}.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <DataTable layout="grid">
+      <CardContent className="@container">
+        <DataTable layout="grid" className="min-w-96">
           <TableHeader>
             <TableRow>
               <TableHead>Tool</TableHead>
-              <TableHead className="w-24 md:w-28">Asks</TableHead>
-              <TableHead className="hidden md:table-cell md:w-32">Promoted by</TableHead>
-              <TableHead className="hidden md:table-cell md:w-36">Promoted</TableHead>
-              <TableHead className="w-26 md:w-36">Last used</TableHead>
+              <TableHead className="@2xl:w-28 w-24">Asks</TableHead>
+              <TableHead className="@2xl:table-cell hidden @2xl:w-32">Promoted by</TableHead>
+              <TableHead className="@2xl:table-cell hidden @2xl:w-36">Promoted</TableHead>
+              <TableHead className="@2xl:w-36 w-26">Last used</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -78,7 +78,7 @@ export function WorkingSetTable({ agent }: { agent: Agent }) {
               </TableBodyNote>
             ) : entries.length === 0 ? (
               <TableBodyNote colSpan={COLUMNS}>
-                Nothing is promoted yet — a tool arrives here when the agent promotes one it found
+                Nothing is promoted yet. A tool arrives here when the agent promotes one it found
                 with <code className="font-mono">find_tool</code>, or publishes one.
               </TableBodyNote>
             ) : (
@@ -103,10 +103,10 @@ export function WorkingSetTable({ agent }: { agent: Agent }) {
                       destructive={entry.tool.destructive}
                     />
                   </TableCell>
-                  <TableCell className="hidden md:table-cell">
+                  <TableCell className="@2xl:table-cell hidden">
                     {PROMOTED_BY[entry.promotedBy]}
                   </TableCell>
-                  <TableCell className="hidden truncate text-muted-foreground md:table-cell">
+                  <TableCell className="@2xl:table-cell hidden truncate text-muted-foreground">
                     <Time iso={entry.promotedAt} />
                   </TableCell>
                   <TableCell className="truncate text-muted-foreground">
