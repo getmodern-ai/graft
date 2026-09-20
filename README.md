@@ -127,10 +127,12 @@ beyond a per-agent cap. Nothing is deleted; a demoted tool is one `find_tool` ca
   sibling-daemon arrangement for deployments where that is not acceptable.
 - **The host list is the model's proposal and your decision.** The console shows the hosts before
   the credential is entered. Waving them through widens what the proxy will allow.
-- **No third-party security audit has been done.** One maintainer, and a young codebase: the first
-  commit is dated 9 September 2026 and the code was written with heavy coding-agent assistance
-  under the working agreement in [`AGENTS.md`](AGENTS.md). Read it before you point it at an
-  account that matters.
+- **No third-party security audit has been done.** The design is ours, reviewed by us. Report a
+  vulnerability to the address in `SECURITY.md`, which also says what is in scope; never to a
+  public issue.
+- **One maintainer, and a young codebase.** The first commit is dated 9 September 2026 and the
+  code was written with heavy coding-agent assistance under the working agreement in
+  [`AGENTS.md`](AGENTS.md). Read it before you point it at an account that matters.
 - **Node 24, Postgres 18 and a Docker daemon** are required, and a vendor without public
   documentation is out of reach by design (ADR 0001).
 
@@ -177,6 +179,10 @@ docker compose build graft
 docker compose run --rm --no-deps graft node dist/keys.mjs >> .env
 ```
 
+That last line prints six `.env` lines: the three secrets Graft refuses to start without, the
+capability-token key pair, and a fresh `GRAFT_ADMIN_PASSWORD`. Nothing in this repository ships a
+value for any of them.
+
 `.github/workflows/release.yml` publishes `ghcr.io/getmodern-ai/graft` and
 `ghcr.io/getmodern-ai/graft-sandbox` on a `v*` tag. There is no tag yet, so build from the checkout.
 
@@ -184,9 +190,11 @@ docker compose run --rm --no-deps graft node dist/keys.mjs >> .env
 (`anthropic` or `openai`) and `GRAFT_MODEL_API_KEY`; the two model ids default per provider. Graft
 refuses to start without its secrets and names each one that is missing.
 
-**Change `GRAFT_ADMIN_EMAIL` and `GRAFT_ADMIN_PASSWORD` before the console is reachable from
-anywhere but this machine.** The compose file carries development defaults, and the password in
-them is literally `change-me-before-exposing-this`.
+**Set `GRAFT_ADMIN_EMAIL` to your own address.** It is the address the bootstrapped admin signs in
+with, and the password beside it is the one the keys script just minted into `.env`. The pair is
+all-or-nothing, and a password under 16 characters, a secret store's placeholder, or the one this
+repository shipped before the defaults were removed is refused at boot with a sentence naming the
+variable. Leave both unset to register through the console's `/signup` instead.
 
 **3. Bring it up.**
 
@@ -266,8 +274,9 @@ pnpm run test
 ```
 
 Those, plus the design-token, migration-chain and image guards, are the `Typecheck, Lint & Test`
-check in CI. The compose file above is also the development environment: `pnpm run db:start` brings
-up its Postgres alone for a server run from source with `pnpm run dev`.
+check in CI. The compose file above is also the development environment. Nothing publishes Postgres
+on the host by default; `pnpm run db:start` adds `docker-compose.dev.yml`, which binds it to
+`127.0.0.1:5432` for a server run from source with `pnpm run dev`.
 [`AGENTS.md`](AGENTS.md) lists every root command, the database loop, and how to add a package.
 Contributions are accepted under the
 Developer Certificate of Origin: sign off each commit with `git commit -s`.
