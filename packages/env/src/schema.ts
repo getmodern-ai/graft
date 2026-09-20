@@ -541,8 +541,8 @@ export const pendingActionTtlHours = z.coerce
  * callback is on `claude.ai`, ChatGPT's on `chatgpt.com`, and those two are the default; a
  * self-hoster whose chat product answers on another host adds it here. **This is the whole rule**
  * since GRA-150: a client not on the list is sent to the console, whatever it declares about
- * itself in `initialize`, which it writes. A hostname and nothing
- * more: a scheme or a path would never match a URI's hostname and would admit nobody silently.
+ * itself in `initialize`, which it writes. A hostname and nothing more: a scheme or a path would
+ * never match a URI's hostname and would admit nobody silently.
  * The consumers are `@graft/mcp`'s card gate (`card-client.ts`), whose `DEFAULT_CARD_HOSTS`
  * repeats this default for a deployment built without the environment, and the console's consent
  * page, which says which way a client will go before the person connects.
