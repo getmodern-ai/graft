@@ -42,7 +42,7 @@ import {
 import { hostSetOf } from "@graft/proxy/credential-source";
 import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
-import type { PublishOutcome } from "@graft/publish";
+import type { PublishArgs, PublishOutcome } from "@graft/publish";
 import type { SandboxHandle } from "@graft/sandbox";
 import { draftPath, sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import { NO_ELICITATION } from "../approval";
@@ -67,6 +67,7 @@ import {
   type AcquireSuccess,
   acquireNextStep,
   DEFAULT_ACQUIRE_CONFIG,
+  DEFAULT_STORE_MISS_RETRY_DELAYS_MS,
 } from "./shapes";
 
 /**
@@ -795,6 +796,52 @@ class AcquireLoop {
     return reads;
   }
 
+  /**
+   * The store found nothing at a draft the check just read: the toolbox's view of a path another
+   * sandbox wrote can lag (GRA-123), and the refusal is the store's, not the module's. The job holds
+   * the draft, so it writes the files through the store itself — the side the publish reads — and
+   * publishes again; then, while the store still misses, waits and asks once per configured delay.
+   * Only after that is the model shown a refusal it can do nothing about but resubmit (GRA-141:
+   * one re-ask, with the store's own refresh, was not enough, and each miss cost an attempt).
+   */
+  private async publishAfterStoreMiss(
+    attempt: OpenAttempt,
+    args: PublishArgs,
+    publish: NonNullable<McpDeps["publishTool"]>,
+  ): Promise<PublishOutcome> {
+    let outcome: PublishOutcome | null = null;
+    const store = this.deps.toolbox;
+    if (store) {
+      await this.trace(
+        "publish",
+        `The toolbox store found nothing at ${args.draftPath} for attempt ${attempt.number}, though the check read it; writing the draft through the store and publishing again.`,
+        { attempt: attempt.number },
+      );
+      await store.writeTree(args.toolboxId, args.draftPath, attempt.draft.files);
+      outcome = await publish(args);
+      if (outcome.ok || !isStoreMiss(outcome)) return outcome;
+    } else {
+      await this.trace(
+        "publish",
+        `The toolbox store found nothing at ${args.draftPath} for attempt ${attempt.number}, though the check read it; this deployment gives the job no store to write through, so it waits and asks again.`,
+        { attempt: attempt.number },
+      );
+    }
+    const delays = this.config.storeMissRetryDelaysMs ?? DEFAULT_STORE_MISS_RETRY_DELAYS_MS;
+    for (const [index, delayMs] of delays.entries()) {
+      await this.trace(
+        "publish",
+        `The toolbox store still finds nothing at ${args.draftPath}; waiting ${delayMs} ms and asking again (${index + 1} of ${delays.length}).`,
+        { attempt: attempt.number },
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      outcome = await publish(args);
+      if (outcome.ok || !isStoreMiss(outcome)) return outcome;
+    }
+    // No store and no delays configured: the store is asked once more, as GRA-123 had it.
+    return outcome ?? (await publish(args));
+  }
+
   private async publishAndDryRun(
     attempt: OpenAttempt,
     connectionId: string,
@@ -830,15 +877,7 @@ class AcquireLoop {
       };
       outcome = await publish(args);
       if (!outcome.ok && isStoreMiss(outcome)) {
-        // The store did not find the draft the check just read (GRA-123): the toolbox's view of
-        // a path written by another sandbox can lag, and the refusal is the store's, not the
-        // module's. Asked once more before the model is shown a diagnostic it cannot act on.
-        await this.trace(
-          "publish",
-          `The toolbox store found nothing at ${attempt.row.draftPath} for attempt ${attempt.number}, though the check read it; asking the store again once.`,
-          { attempt: attempt.number },
-        );
-        outcome = await publish(args);
+        outcome = await this.publishAfterStoreMiss(attempt, args, publish);
       }
     } catch (error) {
       // A bad name or description is the publish's refusal before it reads anything; the model
