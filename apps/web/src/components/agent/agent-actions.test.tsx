@@ -18,6 +18,7 @@ const agent: Agent = {
   workingSetCap: 20,
   idleWindowDays: 21,
   revokedAt: null,
+  archivedAt: null,
   createdAt: "2026-09-20T00:00:00Z",
   updatedAt: "2026-09-20T00:00:00Z",
 };
@@ -105,6 +106,58 @@ async function waitFor(check: () => void) {
 }
 
 describe("agent actions", () => {
+  it("cancels archiving without a request, then keeps a failed confirmation available to retry", async () => {
+    let rejectArchive: (error: Error) => void = () => {};
+    const pending = new Promise<Response>((_resolve, reject) => {
+      rejectArchive = reject;
+    });
+    const fetch = vi
+      .fn()
+      .mockReturnValueOnce(pending)
+      .mockResolvedValueOnce(
+        Response.json({ agent: { ...agent, archivedAt: "2026-09-20T00:00:00Z" } }),
+      );
+    vi.stubGlobal("fetch", fetch);
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    await mount();
+    await click("Actions for Laptop");
+    await click("Archive");
+    expect(document.querySelector("[role=alertdialog]")?.textContent).toContain(
+      "working set and history stay available",
+    );
+    await click("Cancel");
+    await waitFor(() => expect(document.querySelector("[role=alertdialog]")).toBeNull());
+    expect(fetch).not.toHaveBeenCalled();
+    await click("Actions for Laptop");
+    await click("Archive");
+    await click("Archive agent");
+    await waitFor(() => expect((control("Cancel") as HTMLButtonElement).disabled).toBe(true));
+    await act(async () =>
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    expect(document.querySelector("[role=alertdialog]")).not.toBeNull();
+    await click("Archiving…");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await act(async () => rejectArchive(new Error("offline")));
+    await waitFor(() => expect((control("Cancel") as HTMLButtonElement).disabled).toBe(false));
+    await click("Archive agent");
+    await waitFor(() => expect(document.querySelector("[role=alertdialog]")).toBeNull());
+    expect(fetch.mock.calls[1]?.[0]).toBe("/api/agents/agent_1/archive");
+    expect(fetch.mock.calls[1]?.[1].method).toBe("POST");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["agents"] });
+  });
+
+  it("leaves archived agents without an actionable dropdown", async () => {
+    await mount({
+      ...agent,
+      revokedAt: "2026-09-20T00:00:00Z",
+      archivedAt: "2026-09-20T00:00:00Z",
+    });
+    expect((control("Actions for Laptop") as HTMLButtonElement).disabled).toBe(true);
+    await click("Actions for Laptop");
+    expect(document.querySelector("[role=menu]")).toBeNull();
+  });
+
   it("opens with saved values, cancels without saving, restores focus and discards the draft", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
