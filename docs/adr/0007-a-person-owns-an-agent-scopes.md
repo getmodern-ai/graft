@@ -106,3 +106,17 @@ run only when the row's default is revoked, so a failed job leaves a working too
 an authored tool running for one agent still reaches no connection that agent was never given. The
 approval grain does not move (ADR 0008): the tool re-asks on the connection it now runs against, as
 it did after any reconnection.
+
+## Amendment 2026-09-20: archiving an agent retires its access and keeps its records
+
+GRA-133 adds **Archive** to the console's agents list, beside GRA-132's **Edit**. Archiving stamps
+`archived_at` and revokes the agent in the same transaction as its MCP tokens (ADR 0018), preserving
+an earlier revocation timestamp. A repeated archive returns the first result. Every write and the
+read on a retry take the person's id, as every agent operation does.
+
+An archived agent leaves the console's default list; **Show archived** includes it again. Its
+row, scope, working set, approvals and history remain the person's records, and its detail page
+remains readable. Archive does not delete connections or tools and does not offer a way to revive
+access: reconnecting a harness creates another agent. Revocation alone remains distinct and keeps
+the agent in the default list. As with revocation, subsequent authentication is refused; archiving
+does not cancel a run already in flight or invalidate a capability token already minted for it.

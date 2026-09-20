@@ -15,6 +15,7 @@ import {
 } from "@/components/page/page-header";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Empty,
   EmptyDescription,
@@ -22,7 +23,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { agentsQuery } from "@/lib/agent-queries";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { agentListQuery, agentsQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
 
 /**
@@ -46,7 +48,8 @@ function AgentsRoute() {
   // `useQuery`, not the suspense form: the table draws its own pending and failed rows, and a
   // refetch that fails has to reach it as state rather than as a throw the route boundary would
   // swallow the whole screen for.
-  const agents = useQuery(agentsQuery);
+  const [showArchived, setShowArchived] = useState(false);
+  const agents = useQuery(agentListQuery(showArchived));
   const connections = useQuery(connectionsQuery);
   const [creating, setCreating] = useState(false);
   const rows = agents.data?.agents ?? [];
@@ -66,6 +69,14 @@ function AgentsRoute() {
           </PageHeaderDescription>
         </PageHeaderContent>
         <PageHeaderActions>
+          <Field orientation="horizontal">
+            <Checkbox
+              id="show-archived-agents"
+              checked={showArchived}
+              onCheckedChange={setShowArchived}
+            />
+            <FieldLabel htmlFor="show-archived-agents">Show archived</FieldLabel>
+          </Field>
           <Button onClick={() => setCreating(true)}>
             <AddIcon />
             New agent
@@ -79,10 +90,11 @@ function AgentsRoute() {
             <EmptyMedia variant="icon">
               <SmartToyIcon />
             </EmptyMedia>
-            <EmptyTitle>No agents yet</EmptyTitle>
+            <EmptyTitle>No agents to show</EmptyTitle>
             <EmptyDescription>
-              Create one to get a token and the block to paste into your harness's MCP configuration
-              — a name is all it takes.
+              {showArchived
+                ? "Create one to connect your harness — a name is all it takes."
+                : "Create an agent or turn on Show archived to view past agents."}
             </EmptyDescription>
           </EmptyHeader>
           <Button onClick={() => setCreating(true)}>

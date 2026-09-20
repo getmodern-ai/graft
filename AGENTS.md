@@ -569,6 +569,13 @@ re-consent`), `outline` for waiting on something (a credential, a consent, a rec
 `secondary` for the neutral rest; `ToolAnnotations` reads its three from the same file. Labels are
 sentence case, like every label in the console, and its colocated test pins both.
 
+**Agent actions** (GRA-132, GRA-133): the agents table's dropdown opens the name/cap/idle-window
+edit dialog or the archive confirmation. `POST /api/agents/:id/archive` stamps `archived_at` and
+revokes static and OAuth access in one transaction; the row and its history remain readable
+(ADR 0007's archive amendment). `GET /api/agents` hides archived rows unless `includeArchived=true`,
+which the console's **Show archived** choice sends. Revocation alone keeps the row in the default
+list. Migration 0011 adds the nullable timestamp; existing agents remain unarchived.
+
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
 auto — and `DataTableRow` for the 40px rhythm; a column the row cannot afford at 390px steps out

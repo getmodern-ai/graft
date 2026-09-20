@@ -88,6 +88,7 @@ function agentRow(id: string, overrides: Partial<AgentRow> = {}): AgentRow {
     scopeMode: "listed",
     workingSetCap: 20,
     idleWindowDays: 21,
+    archivedAt: null,
     revokedAt: null,
     owner: "person",
     createdAt: NOW,
@@ -241,6 +242,7 @@ function harness(overrides: { clock?: Date } = {}) {
     listAgents: vi.fn(async () => [...store.agents.values()]),
     updateAgent: vi.fn(async () => null),
     revokeAgent: vi.fn(async () => null),
+    archiveAgent: vi.fn(async () => null),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
     setAgentConnectedVia: vi.fn(async (_db, _personId, agentId, via) => {
       const row = store.agents.get(agentId);

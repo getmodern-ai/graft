@@ -52,6 +52,7 @@ export type AgentOutput = {
   workingSetCap: number;
   idleWindowDays: number;
   revokedAt: Date | null;
+  archivedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -69,6 +70,7 @@ export function toAgentOutput(row: AgentRow): AgentOutput {
     workingSetCap: row.workingSetCap,
     idleWindowDays: row.idleWindowDays,
     revokedAt: row.revokedAt,
+    archivedAt: row.archivedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -359,6 +361,24 @@ export async function revokeAgent(
       now,
     );
     return revoked;
+  });
+  return row ? toAgentOutput(row) : null;
+}
+
+/** Archive and revoke every token in one transaction, keeping history readable (ADR 0007). */
+export async function archiveAgent(
+  ctx: ServiceContext,
+  principal: Principal,
+  agentId: string,
+  deps: AgentDeps,
+): Promise<AgentOutput | null> {
+  const row = await ctx.db.transaction(async (tx) => {
+    const now = deps.now();
+    const archived = await deps.archiveAgent(tx, principal.personId, agentId, now);
+    // A repeated request reads the first archive back; a foreign id still reads nothing.
+    if (!archived) return deps.findAgent(tx, principal.personId, agentId);
+    await deps.revokeMcpTokensForAgent(tx, { personId: principal.personId, agentId }, now);
+    return archived;
   });
   return row ? toAgentOutput(row) : null;
 }

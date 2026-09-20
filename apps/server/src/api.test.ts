@@ -49,6 +49,7 @@ const agentRow: AgentRow = {
   scopeMode: "listed",
   workingSetCap: 20,
   idleWindowDays: 21,
+  archivedAt: null,
   revokedAt: null,
   owner: "person",
   createdAt: NOW,
@@ -176,6 +177,7 @@ function agentDeps(): AgentDeps {
     listAgents: vi.fn(async () => [agentRow]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...agentRow, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
+    archiveAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW, archivedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
     setAgentConnectedVia: vi.fn(async () => agentRow),
     replaceAgentConnections: vi.fn(async () => {}),
@@ -558,6 +560,42 @@ describe("the session door", () => {
 });
 
 describe("agents", () => {
+  it("hides archived agents by default, includes them on request, and keeps revoked agents visible", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.agent.listAgents).mockResolvedValue([
+      agentRow,
+      { ...agentRow, id: "revoked", revokedAt: NOW },
+      { ...agentRow, id: "archived", revokedAt: NOW, archivedAt: NOW },
+    ]);
+    const normal = (await (await app.request("/api/agents")).json()) as {
+      agents: { id: string }[];
+    };
+    expect(normal.agents.map((agent) => agent.id)).toEqual([agentRow.id, "revoked"]);
+    const all = (await (await app.request("/api/agents?includeArchived=true")).json()) as {
+      agents: { id: string }[];
+    };
+    expect(all.agents.map((agent) => agent.id)).toEqual([agentRow.id, "revoked", "archived"]);
+    expect(deps.agent.listAgents).toHaveBeenCalledWith(fakeDb, "person_1");
+  });
+
+  it("archives under the person's session and refuses a missing or foreign agent", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const result = await app.request("/api/agents/agent_1/archive", { method: "POST" });
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({
+      agent: { id: "agent_1", archivedAt: NOW.toISOString(), revokedAt: NOW.toISOString() },
+    });
+    expect(deps.agent.archiveAgent).toHaveBeenCalledWith(fakeDb, "person_1", "agent_1", NOW);
+    vi.mocked(deps.agent.archiveAgent).mockResolvedValue(null);
+    vi.mocked(deps.agent.findAgent).mockResolvedValue(null);
+    expect((await app.request("/api/agents/foreign/archive", { method: "POST" })).status).toBe(404);
+    const signedOut = harness(null);
+    expect(
+      (await signedOut.app.request("/api/agents/agent_1/archive", { method: "POST" })).status,
+    ).toBe(401);
+    expect(signedOut.deps.agent.archiveAgent).not.toHaveBeenCalled();
+  });
+
   it("creates an agent, answering the token once, and never shows it again", async () => {
     const { app } = harness({ user: { id: "person_1" } });
     const created = await app.request(

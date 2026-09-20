@@ -141,6 +141,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         scopeMode: input.scopeMode,
         workingSetCap: 20,
         idleWindowDays: 21,
+        archivedAt: null,
         revokedAt: null,
         owner: "person",
         createdAt: at,
@@ -320,6 +321,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         scopeMode: input.scopeMode ?? "all",
         workingSetCap: input.workingSetCap ?? 20,
         idleWindowDays: input.idleWindowDays ?? 21,
+        archivedAt: null,
         revokedAt: null,
         owner: "person",
         createdAt: at,
@@ -369,6 +371,13 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.agents.get(agentId);
       if (!row || row.personId !== personId || row.revokedAt) return null;
       const updated = { ...row, revokedAt: at };
+      store.agents.set(agentId, updated);
+      return updated;
+    },
+    archiveAgent: async (_db, personId, agentId, at) => {
+      const row = store.agents.get(agentId);
+      if (!row || row.personId !== personId || row.archivedAt) return null;
+      const updated = { ...row, archivedAt: at, revokedAt: row.revokedAt ?? at };
       store.agents.set(agentId, updated);
       return updated;
     },

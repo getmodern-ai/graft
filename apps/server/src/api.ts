@@ -3,6 +3,7 @@ import {
   type AgentDeps,
   type ApprovalDeps,
   answerPendingAction,
+  archiveAgent,
   type ConnectionDeps,
   createAgent,
   deletePersonModelKey,
@@ -647,7 +648,13 @@ export function createApi(options: ApiOptions): Hono {
 
   api.get("/agents", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    return c.json({ agents: await listAgents(ctx, principal, agentDeps) });
+    const agents = await listAgents(ctx, principal, agentDeps);
+    return c.json({
+      agents:
+        c.req.query("includeArchived") === "true"
+          ? agents
+          : agents.filter((agent) => !agent.archivedAt),
+    });
   });
 
   api.post("/agents", async (c) => {
@@ -684,6 +691,15 @@ export function createApi(options: ApiOptions): Hono {
     const agent = orNotFound(
       await revokeAgent(ctx, principal, c.req.param("id"), agentDeps),
       "Agent not found, or already revoked",
+    );
+    return c.json({ agent });
+  });
+
+  api.post("/agents/:id/archive", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const agent = orNotFound(
+      await archiveAgent(ctx, principal, c.req.param("id"), agentDeps),
+      "Agent not found",
     );
     return c.json({ agent });
   });

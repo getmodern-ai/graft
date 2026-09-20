@@ -48,6 +48,7 @@ export {
   type AgentOutput,
   type AgentScopeMode,
   addConnectionToAgentScope,
+  archiveAgent,
   type CreateAgentForClientInput,
   type CreateAgentInput,
   connectExistingAgentToClient,

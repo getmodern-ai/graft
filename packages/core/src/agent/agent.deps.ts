@@ -1,5 +1,6 @@
 import {
   addAgentConnection,
+  archiveAgent,
   findAgent,
   findAgentByTokenHash,
   findAgentForUpdate,
@@ -32,6 +33,7 @@ export type AgentDeps = {
   listAgents: typeof listAgents;
   updateAgent: typeof updateAgent;
   revokeAgent: typeof revokeAgent;
+  archiveAgent: typeof archiveAgent;
   /** Revoking an agent revokes every token an MCP client holds for it (ADR 0018), in the same transaction. */
   revokeMcpTokensForAgent: typeof revokeMcpTokensForAgent;
   /** The consent naming an existing agent records which client it was connected from (ADR 0018). */
@@ -62,6 +64,7 @@ export const defaultAgentDeps: AgentDeps = {
   listAgents,
   updateAgent,
   revokeAgent,
+  archiveAgent,
   revokeMcpTokensForAgent,
   setAgentConnectedVia,
   replaceAgentConnections,

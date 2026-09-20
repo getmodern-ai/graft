@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { createAuth } from "@graft/auth";
 import {
   addConnectionToAgentScope,
+  archiveAgent,
   createAgent,
   createConnectionDeps,
   createModelKeyDeps,
@@ -13,6 +14,7 @@ import {
   defaultWorkingSetDeps,
   deletePersonModelKey,
   findPersonModelKeyRow,
+  getAgent,
   getAgentScope,
   getConnection,
   getPersonModelKey,
@@ -259,6 +261,83 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     });
     await expect(requireAgent(ctx, "grft_not_a_token", defaultAgentDeps)).rejects.toMatchObject({
       code: "UNAUTHORIZED",
+    });
+  });
+
+  it("archives once, refuses other people, stops static access and retains the working set and history", async () => {
+    const personId = await signUp("archive@example.com");
+    const principal = { personId };
+    const ctx: ServiceContext = { db };
+    const created = await createAgent(ctx, principal, { name: "past agent" }, defaultAgentDeps);
+    const scope = { personId, agentId: created.agent.id };
+    expect(created.agent.archivedAt).toBeNull();
+    const tool = await createTool(
+      ctx,
+      principal,
+      {
+        vendor: "demo",
+        name: "archive-proof",
+        description: "Lists items",
+        inputSchema: { type: "object" },
+        annotations: { readOnly: true, destructive: false },
+      },
+      defaultToolDeps,
+    );
+    await promoteTool(ctx, scope, tool.id, "agent", defaultWorkingSetDeps);
+    const workingSet = await listWorkingSet(ctx, scope, defaultWorkingSetDeps);
+    const history = await listWorkingSetChanges(ctx, scope, 100, defaultWorkingSetDeps);
+
+    expect(
+      await archiveAgent(ctx, { personId: "someone-else" }, created.agent.id, defaultAgentDeps),
+    ).toBeNull();
+    await expect(requireAgent(ctx, created.token, defaultAgentDeps)).resolves.toEqual(scope);
+
+    const [first, second] = await Promise.all([
+      archiveAgent(ctx, principal, created.agent.id, defaultAgentDeps),
+      archiveAgent(ctx, principal, created.agent.id, defaultAgentDeps),
+    ]);
+    expect(first?.archivedAt).toBeInstanceOf(Date);
+    expect(first?.revokedAt).toEqual(first?.archivedAt);
+    expect(second).toEqual(first);
+    expect(await getAgent(ctx, principal, created.agent.id, defaultAgentDeps)).toEqual(first);
+    await expect(requireAgent(ctx, created.token, defaultAgentDeps)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    expect(await listWorkingSet(ctx, scope, defaultWorkingSetDeps)).toEqual(workingSet);
+    expect(await listWorkingSetChanges(ctx, scope, 100, defaultWorkingSetDeps)).toEqual(history);
+    expect(history.length).toBeGreaterThan(0);
+
+    const alreadyRevoked = await createAgent(
+      ctx,
+      principal,
+      { name: "revoked first" },
+      defaultAgentDeps,
+    );
+    const revoked = await revokeAgent(ctx, principal, alreadyRevoked.agent.id, defaultAgentDeps);
+    const archived = await archiveAgent(ctx, principal, alreadyRevoked.agent.id, defaultAgentDeps);
+    expect(archived?.revokedAt).toEqual(revoked?.revokedAt);
+    expect(archived?.archivedAt).toBeInstanceOf(Date);
+  });
+
+  it("rolls the archive back if revoking OAuth tokens fails", async () => {
+    const personId = await signUp("archive-rollback@example.com");
+    const principal = { personId };
+    const ctx: ServiceContext = { db };
+    const created = await createAgent(ctx, principal, { name: "still here" }, defaultAgentDeps);
+    await expect(
+      archiveAgent(ctx, principal, created.agent.id, {
+        ...defaultAgentDeps,
+        revokeMcpTokensForAgent: async () => {
+          throw new Error("token write failed");
+        },
+      }),
+    ).rejects.toThrow("token write failed");
+    expect(await getAgent(ctx, principal, created.agent.id, defaultAgentDeps)).toMatchObject({
+      archivedAt: null,
+      revokedAt: null,
+    });
+    await expect(requireAgent(ctx, created.token, defaultAgentDeps)).resolves.toMatchObject({
+      agentId: created.agent.id,
     });
   });
 

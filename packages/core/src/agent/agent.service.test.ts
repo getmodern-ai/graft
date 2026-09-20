@@ -8,6 +8,7 @@ import { hashAgentToken } from "../tenancy";
 import type { AgentDeps } from "./agent.deps";
 import {
   addConnectionToAgentScope,
+  archiveAgent,
   connectExistingAgentToClient,
   createAgent,
   createAgentForClient,
@@ -36,6 +37,7 @@ const row: AgentRow = {
   scopeMode: "listed",
   workingSetCap: 20,
   idleWindowDays: 21,
+  archivedAt: null,
   revokedAt: null,
   owner: "person",
   createdAt: NOW,
@@ -61,6 +63,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     listAgents: vi.fn(async () => [row]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...row, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })),
+    archiveAgent: vi.fn(async () => ({ ...row, revokedAt: NOW, archivedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
     setAgentConnectedVia: vi.fn(async (_db, _p, _a, via) => ({
       ...row,
@@ -242,6 +245,54 @@ describe("updateAgentLimits", () => {
     await expect(
       updateAgentLimits(ctx, PRINCIPAL, "missing", { name: "x" }, deps),
     ).resolves.toBeNull();
+  });
+});
+
+describe("archiveAgent", () => {
+  it("archives and revokes OAuth tokens through the same transaction handle", async () => {
+    const deps = fakeDeps();
+    const result = await archiveAgent(ctx, PRINCIPAL, row.id, deps);
+    expect(result).toMatchObject({ id: row.id, revokedAt: NOW, archivedAt: NOW });
+    expect(result).not.toHaveProperty("tokenHash");
+    expect(deps.archiveAgent).toHaveBeenCalledWith(fakeDb, PRINCIPAL.personId, row.id, NOW);
+    expect(deps.revokeMcpTokensForAgent).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: PRINCIPAL.personId, agentId: row.id },
+      NOW,
+    );
+  });
+
+  it("returns the first archive on retry, without moving its timestamps", async () => {
+    const archived = { ...row, archivedAt: NOW, revokedAt: new Date("2026-09-01T00:00:00Z") };
+    const deps = fakeDeps({
+      archiveAgent: vi.fn(async () => null),
+      findAgent: vi.fn(async () => archived),
+    });
+    expect(await archiveAgent(ctx, PRINCIPAL, row.id, deps)).toMatchObject({
+      id: row.id,
+      archivedAt: NOW,
+      revokedAt: archived.revokedAt,
+    });
+    expect(deps.revokeMcpTokensForAgent).not.toHaveBeenCalled();
+  });
+
+  it("returns nothing for a missing or foreign agent and touches no OAuth tokens", async () => {
+    const deps = fakeDeps({
+      archiveAgent: vi.fn(async () => null),
+      findAgent: vi.fn(async () => null),
+    });
+    expect(await archiveAgent(ctx, PRINCIPAL, "foreign", deps)).toBeNull();
+    expect(deps.findAgent).toHaveBeenCalledWith(fakeDb, PRINCIPAL.personId, "foreign");
+    expect(deps.revokeMcpTokensForAgent).not.toHaveBeenCalled();
+  });
+
+  it("propagates a token revoke failure so the transaction can roll back", async () => {
+    const deps = fakeDeps({
+      revokeMcpTokensForAgent: vi.fn(async () => {
+        throw new Error("unavailable");
+      }),
+    });
+    await expect(archiveAgent(ctx, PRINCIPAL, row.id, deps)).rejects.toThrow("unavailable");
   });
 });
 
