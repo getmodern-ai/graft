@@ -579,7 +579,7 @@ timestamp; existing agents remain unarchived. An empty agents table keeps its he
 full-width sentence, following Cando's connections table.
 
 **Agent harnesses** (GRA-135): the Harnesses column names `connectedVia.clientName`, recorded at
-OAuth consent (ADR 0018). Without a recorded harness it says "Not configured"; for an active agent
+OAuth consent (ADR 0018). Without a recorded harness it says "Not connected"; for an active agent
 that opens Connection details, also available in its actions menu. This label is a setup prompt,
 not a live connectivity check: static tokens carry no harness identity. The dialog shares creation's
 MCP instructions but cannot retrieve the token; it shows the prefix and a saved-token placeholder

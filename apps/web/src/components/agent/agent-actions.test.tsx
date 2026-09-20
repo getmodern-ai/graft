@@ -150,11 +150,11 @@ describe("agent actions", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it.each([0, 1])("opens the same setup from Not configured in table layout %s", async (index) => {
+  it.each([0, 1])("opens the same setup from Not connected in table layout %s", async (index) => {
     await mount(agent, true);
     expect(document.body.textContent).not.toContain("Not recorded");
     const trigger = document.querySelectorAll<HTMLButtonElement>(
-      'button[aria-label="Not configured: connection details for Laptop"]',
+      'button[aria-label="Not connected: connection details for Laptop"]',
     )[index];
     if (!trigger) throw new Error("Missing harness setup trigger");
     await act(async () => {
@@ -186,7 +186,7 @@ describe("agent actions", () => {
 
   it("offers no connection setup for a revoked agent", async () => {
     await mount({ ...agent, revokedAt: "2026-09-20T00:00:00Z" }, true);
-    expect(document.querySelector('button[aria-label^="Not configured:"]')).toBeNull();
+    expect(document.querySelector('button[aria-label^="Not connected:"]')).toBeNull();
     await click("Actions for Laptop");
     expect(document.querySelector("[role=menu]")?.textContent).not.toContain("Connection details");
   });

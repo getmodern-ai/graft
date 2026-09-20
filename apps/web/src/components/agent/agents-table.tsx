@@ -160,17 +160,17 @@ function AgentHarnesses({ agent }: { agent: AgentTableRow }) {
   const active = !agent.revokedAt && !agent.archivedAt;
   const names = agent.harnessNames ?? (agent.connectedVia ? [agent.connectedVia.clientName] : []);
   if (names.length === 0) {
-    if (!active) return <span className="text-muted-foreground">Not configured</span>;
+    if (!active) return <span className="text-muted-foreground">Not connected</span>;
     return (
       <>
         <Button
           ref={trigger}
           variant="link"
-          className="h-auto p-0 text-muted-foreground"
-          aria-label={`Not configured: connection details for ${agent.name}`}
+          className="h-auto p-0 text-info"
+          aria-label={`Not connected: connection details for ${agent.name}`}
           onClick={() => setConnecting(true)}
         >
-          Not configured
+          Not connected
         </Button>
         {connecting ? (
           <AgentConnectionDialog
