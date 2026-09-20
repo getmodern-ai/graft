@@ -125,16 +125,29 @@ function jsonRpcError(status: 400 | 404, code: number, message: string): Respons
 }
 
 /**
+ * The hook told, and never in the way: a hook that throws is the deployment's problem, not the
+ * client's, whose 401 challenge or JSON-RPC error must still reach it.
+ */
+function tell(onRefusal: McpDeps["onTransportRefusal"], event: TransportRefusalEvent): void {
+  try {
+    onRefusal?.(event);
+  } catch {
+    // Telemetry never replaces an answer.
+  }
+}
+
+/**
  * The transport's refusal read off its answer (GRA-131): a 4xx whose body is a JSON-RPC error is
- * reported with the error's code and message; anything else with the status alone. The body is
- * read from a clone, so the answer goes to the client as it was.
+ * reported with the error's code and message; anything else with the status alone. A 5xx is the
+ * transport's own failure, not a refusal, and is not reported here. The body is read from a
+ * clone, so the answer goes to the client as it was.
  */
 async function reportTransportRefusal(
   response: Response,
   request: Request,
   onRefusal: McpDeps["onTransportRefusal"],
 ): Promise<Response> {
-  if (!onRefusal || response.status < 400) return response;
+  if (!onRefusal || response.status < 400 || response.status >= 500) return response;
   let code: number | undefined;
   let message = response.statusText || `HTTP ${response.status}`;
   try {
@@ -144,7 +157,7 @@ async function reportTransportRefusal(
   } catch {
     // Not JSON: the status is the whole story.
   }
-  onRefusal({
+  tell(onRefusal, {
     status: response.status,
     ...(code === undefined ? {} : { code }),
     message,
@@ -222,14 +235,14 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
     const requestSessionId = request.headers.get("mcp-session-id") ?? undefined;
     /** Graft's own refusal, told to the hook with its reason word before it is answered. */
     const refused = (response: Response, message: string, code?: number): Response => {
-      deps.onTransportRefusal?.({
+      tell(deps.onTransportRefusal, {
         status: response.status,
         ...(code === undefined ? {} : { code }),
         message,
         method: request.method,
         hasSessionHeader: requestSessionId !== undefined,
         ...(requestSessionId === undefined ? {} : { sessionId: requestSessionId }),
-      } satisfies TransportRefusalEvent);
+      });
       return response;
     };
     /** The transport's answer, its refusal reported when it is one. */
