@@ -572,6 +572,10 @@ export const cardHosts = z
  * all-or-nothing (`adminKeys`), because an email with no password would present as a console nobody
  * can enter. Read once, by `apps/server/src/boot.ts`, and only while the database holds no person;
  * a later change to either variable changes nothing, and the boot line says so.
+ *
+ * The operator types the address and the keys script mints the password (GRA-148): neither the
+ * compose file nor `.env.example` carries a default any more, so the documented walkthrough cannot
+ * leave an account behind whose password is in this repository.
  */
 export const adminEmail = z
   .email({
@@ -579,12 +583,35 @@ export const adminEmail = z
   })
   .optional();
 
-/** Eight characters is Better Auth's own floor; a shorter value would fail the sign-up, not the boot. */
+/**
+ * The value the compose file and `.env.example` carried until GRA-148, when the admin's password
+ * moved to `apps/server/src/scripts/generate-keys.ts`. Kept here as a denylist entry, because a
+ * `.env` copied before that change still holds it and the account it opens is sign-in-able by
+ * anyone who has read this repository.
+ */
+export const RETIRED_ADMIN_PASSWORD = "change-me-before-exposing-this";
+
+/**
+ * Sixteen characters, not Better Auth's floor of eight: the keys script mints a 32-character one
+ * and this account faces whatever network the console faces, so the floor is set where a typed
+ * password is worth having rather than where the library stops refusing (GRA-148). Held to the
+ * placeholder rule for the reason `secretValue` gives, and to the retired value above.
+ */
+export const ADMIN_PASSWORD_MIN_LENGTH = 16;
+
 export const adminPassword = z
   .string()
   .min(
-    8,
-    "GRAFT_ADMIN_PASSWORD must be at least 8 characters — Better Auth refuses a shorter password",
+    ADMIN_PASSWORD_MIN_LENGTH,
+    `GRAFT_ADMIN_PASSWORD must be at least ${ADMIN_PASSWORD_MIN_LENGTH} characters; mint one with \`node dist/keys.mjs\` (from a checkout, \`pnpm --filter @graft/server keys\`)`,
+  )
+  .refine(
+    (value) => value !== RETIRED_ADMIN_PASSWORD,
+    "GRAFT_ADMIN_PASSWORD still holds the value this repository shipped until GRA-148, which anyone who has read it knows; mint one with `node dist/keys.mjs` (from a checkout, `pnpm --filter @graft/server keys`)",
+  )
+  .refine(
+    (value) => !value.startsWith("PLACEHOLDER"),
+    "GRAFT_ADMIN_PASSWORD still holds the secret store's placeholder; populate it or unset it",
   )
   .optional();
 

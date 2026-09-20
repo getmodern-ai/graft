@@ -55,8 +55,8 @@ import { describeObservability, flushObservability } from "./observability";
  *
  * To run it on a laptop:
  *
- *   pnpm run db:start                                        # Postgres 18 in Docker, port 5432
- *   pnpm --filter @graft/server keys >> apps/server/.env     # a key pair, a keyring, an auth and a handoff secret
+ *   pnpm run db:start                                        # Postgres 18 in Docker, on 127.0.0.1:5432
+ *   pnpm --filter @graft/server keys >> apps/server/.env     # a key pair, a keyring, an auth and a handoff secret, and the admin's password
  *   cat >> apps/server/.env <<'EOF'
  *   GRAFT_DATABASE_URL=postgresql://postgres:password@localhost:5432/graft
  *   GRAFT_AUTH_URL=http://localhost:3000

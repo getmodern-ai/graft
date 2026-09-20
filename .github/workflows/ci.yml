@@ -214,6 +214,11 @@ jobs:
       # linked into the checkout (GRA-38), and this is the open image's proof that it was not. The
       # selector runs before the database pool is opened (`apps/server/src/index.ts`), so the run
       # needs no Postgres, and the keyring secret is not required under `cloud`, so it is left out.
+      #
+      # A fourth run hands it the admin password this repository shipped until GRA-148, which the
+      # compose file and `.env.example` supplied as a default, and must refuse it by name: the
+      # documented walkthrough now mints one with `node dist/keys.mjs`, and a `.env` copied before
+      # that change is the one way the retired value still reaches a deployment.
       - name: Build the server image
         run: docker build -f apps/server/Dockerfile -t graft-server:ci .
 
@@ -247,3 +252,12 @@ jobs:
             -e GRAFT_AUTH_URL=http://localhost:3000 \
             -e GRAFT_CONSOLE_URL=http://localhost:3000 \
             -e GRAFT_HANDOFF_SECRET=ci-handoff-secret-that-is-long-enough-32
+          refuses "GRAFT_ADMIN_PASSWORD" \
+            -e GRAFT_DATABASE_URL=postgresql://postgres:postgres@nowhere:5432/graft \
+            -e GRAFT_AUTH_SECRET=ci-auth-secret-that-is-long-enough-32 \
+            -e GRAFT_AUTH_URL=http://localhost:3000 \
+            -e GRAFT_CONSOLE_URL=http://localhost:3000 \
+            -e GRAFT_HANDOFF_SECRET=ci-handoff-secret-that-is-long-enough-32 \
+            -e GRAFT_KEYRING_SECRET=ci-keyring-secret-that-is-long-enough-32 \
+            -e GRAFT_ADMIN_EMAIL=admin@example.com \
+            -e GRAFT_ADMIN_PASSWORD=change-me-before-exposing-this

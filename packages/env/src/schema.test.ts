@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ADMIN_PASSWORD_MIN_LENGTH,
   acquireConcurrency,
   acquireMaxAttempts,
   acquireTokenCeiling,
@@ -34,6 +35,7 @@ import {
   packageMinWeeklyDownloads,
   pendingActionTtlHours,
   port,
+  RETIRED_ADMIN_PASSWORD,
   sandboxBackend,
   serverEnvIssues,
   serverSchema,
@@ -942,13 +944,33 @@ describe("GRAFT_CONSOLE_DIR", () => {
 });
 
 describe("the bootstrapped admin (GRA-33)", () => {
-  it("takes an email address and a password of Better Auth's minimum, and is optional", () => {
+  it("takes an email address, and is optional", () => {
     expect(adminEmail.parse(undefined)).toBeUndefined();
     expect(adminEmail.parse("admin@example.com")).toBe("admin@example.com");
     expect(adminEmail.safeParse("admin").error?.issues[0]?.message).toContain("GRAFT_ADMIN_EMAIL");
-    expect(adminPassword.parse("eight-ch")).toBe("eight-ch");
-    expect(adminPassword.safeParse("seven77").error?.issues[0]?.message).toContain(
-      "GRAFT_ADMIN_PASSWORD",
+    expect(adminPassword.parse(undefined)).toBeUndefined();
+  });
+
+  /**
+   * The floor and the denylist are GRA-148's: the keys script mints this password now, and a
+   * `.env` copied before that change still carries the one the compose file supplied.
+   */
+  it("refuses a short password, the retired one and a placeholder, naming the variable", () => {
+    const minted = "x".repeat(ADMIN_PASSWORD_MIN_LENGTH);
+    expect(adminPassword.parse(minted)).toBe(minted);
+
+    for (const value of [
+      "eight-ch",
+      "x".repeat(ADMIN_PASSWORD_MIN_LENGTH - 1),
+      RETIRED_ADMIN_PASSWORD,
+      "PLACEHOLDER_admin_password",
+    ]) {
+      const result = adminPassword.safeParse(value);
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_ADMIN_PASSWORD");
+    }
+    expect(adminPassword.safeParse(RETIRED_ADMIN_PASSWORD).error?.issues[0]?.message).toContain(
+      "GRA-148",
     );
   });
 
@@ -956,14 +978,14 @@ describe("the bootstrapped admin (GRA-33)", () => {
     expect(serverEnvIssues({ ...SECRET, GRAFT_ADMIN_EMAIL: "admin@example.com" })).toEqual([
       expect.stringMatching(/admin is partially configured.*Missing: GRAFT_ADMIN_PASSWORD/),
     ]);
-    expect(serverEnvIssues({ ...SECRET, GRAFT_ADMIN_PASSWORD: "change-me-please" })).toEqual([
-      expect.stringMatching(/Missing: GRAFT_ADMIN_EMAIL/),
-    ]);
+    expect(
+      serverEnvIssues({ ...SECRET, GRAFT_ADMIN_PASSWORD: "a-minted-password-32-characters-x" }),
+    ).toEqual([expect.stringMatching(/Missing: GRAFT_ADMIN_EMAIL/)]);
     expect(
       serverEnvIssues({
         ...SECRET,
         GRAFT_ADMIN_EMAIL: "admin@example.com",
-        GRAFT_ADMIN_PASSWORD: "change-me-please",
+        GRAFT_ADMIN_PASSWORD: "a-minted-password-32-characters-x",
       }),
     ).toEqual([]);
   });
