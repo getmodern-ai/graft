@@ -429,9 +429,9 @@ no-op for an agent on `all`, which is what makes every grant-on-connect path rig
 the mode, and `listAgentIdsForConnection` — the agents a revoke announces to — takes every agent on
 `all`. An agent on `all` never reaches the `scope` ask above: `existingConnectionFor` finds every
 usable row in scope and answers `connected`. The console draws the mode as a `Select` — `All
-connections` first, `Limit to these` revealing the picker — through `components/agent/scope-mode-field.tsx`
-in the create dialog and the consent card, and in the agent drawer's Connections section
-(`scope-editor.tsx`); the labels and the write's body are `src/lib/scope-mode.ts`, tested.
+connections` first, `Selected connections` revealing the picker — through `components/agent/scope-mode-field.tsx`
+in the create dialog and the consent card; the labels and the write's body are
+`src/lib/scope-mode.ts`, tested.
 
 **A tool follows its vendor's reconnected connection** (GRA-122; ADR 0007 as amended 2026-09-20).
 `authored_tool.default_connection_id` is the row the tool was authored against, and a run resolves
@@ -578,18 +578,10 @@ omitting empty sections. Revocation alone keeps the row unarchived. Migration 00
 timestamp; existing agents remain unarchived. An empty agents table keeps its headers and a muted
 full-width sentence, following Cando's connections table.
 
-**Agent details** (GRA-135): `agents.tsx` keeps the list mounted and its nested
-`agents.$agentId.tsx` opens Cando's right-side `Sheet` at the same `/agents/:agentId` URL.
-The Harness column names `connectedVia.clientName`, recorded at OAuth consent (ADR 0018);
-a static-token agent says "Not recorded", never a name inferred from its label or a live status.
-The drawer retains scope, limits, working set, approvals, history and revocation, with actual
-connections shown under both scope modes. Archived and revoked agents remain read-only. Queries
-start without awaiting so the drawer owns loading and retry; each route id remounts its drafts.
-The drawer's tables use container widths because viewport breakpoints do not describe a sheet.
-Its panel matches Cando Figma node `404:601149`, read through the remote MCP at the person's
-explicit request: a 685px right panel, 24px horizontal gutters, a compact header, and headings
-outside settings cards. `AgentDetailsSection` composes the existing settings primitives. The
-scrollport holds an auto-height column so cards never flex-shrink and clip their contents.
+**Agent harnesses** (GRA-135): the Harness column names `connectedVia.clientName`, recorded at
+OAuth consent (ADR 0018); a static-token agent says "Not recorded", never a name inferred from
+its label or a live status. Agent names are plain text. The drawer is deferred; existing
+`/agents/:agentId` links redirect to the table. Editing and archiving stay in the row's menu.
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
@@ -599,8 +591,8 @@ text instead. Loading, empty and failed are rows *inside* the body, never a spin
 beside the table: `components/table-body-states.tsx` holds `TableLoadingRows` (one full-span
 skeleton per row) and `TableBodyNote` (one full-span sentence), and the failed note carries
 `components/retry-notice.tsx`, Cando's inline Retry. A table owns its read (`useQuery`, not the
-suspense form) so those states are reachable; the agent drawer starts its reads without awaiting
-and paints its own pending states (GRA-135). Connections stay cards —
+suspense form) so those states are reachable. The agents table starts its reads without awaiting
+and paints its own pending rows. Connections stay cards —
 each carries a status, hosts, tools, two actions and a table — with Cando's card anatomy, and the
 recent calls are a disclosure in the body, not the banded `CardFooter`. A notice inside a form is
 an `Alert`; a labelled control with a sentence beside it is an `Item` (`components/ui/item.tsx`,

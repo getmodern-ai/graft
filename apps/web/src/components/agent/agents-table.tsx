@@ -1,4 +1,3 @@
-import { Link } from "@tanstack/react-router";
 import { Fragment } from "react";
 
 import { AgentActions } from "@/components/agent/agent-actions";
@@ -16,7 +15,7 @@ const COLUMNS = 8;
 
 /**
  * The recorded OAuth client names the harness (ADR 0018); static tokens record no client.
- * Compact widths keep that name below the agent link. The remaining facts live in the drawer.
+ * Compact widths keep that name below the agent name.
  * Cando's members-panel.tsx supplies the group bands (ADR 0017).
  */
 export function AgentsTable({
@@ -84,15 +83,7 @@ export function AgentsTable({
                 {group.agents.map((agent) => (
                   <DataTableRow key={agent.id}>
                     <TableCell className="truncate">
-                      <Link
-                        id={`agent-link-${agent.id}`}
-                        aria-haspopup="dialog"
-                        to="/agents/$agentId"
-                        params={{ agentId: agent.id }}
-                        className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                      >
-                        {agent.name}
-                      </Link>
+                      <span>{agent.name}</span>
                       <span className="block truncate text-muted-foreground text-xs md:hidden">
                         {agent.connectedVia?.clientName ?? "Not recorded"}
                       </span>

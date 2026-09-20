@@ -1,5 +1,4 @@
 import type * as React from "react";
-import { cn } from "@/lib/utils";
 
 /**
  * A titled group of settings cards.
@@ -13,23 +12,14 @@ import { cn } from "@/lib/utils";
  */
 export function SettingsSection({
   heading,
-  description,
-  className,
-  headingClassName,
   children,
 }: {
-  heading: React.ReactNode;
-  description?: React.ReactNode;
-  className?: string;
-  headingClassName?: string;
+  heading: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className={cn("flex flex-col gap-3", className)}>
-      <div>
-        <h2 className={cn("font-medium text-lg", headingClassName)}>{heading}</h2>
-        {description ? <div className="text-muted-foreground text-sm">{description}</div> : null}
-      </div>
+    <section className="flex flex-col gap-3">
+      <h2 className="font-medium text-lg">{heading}</h2>
       {children}
     </section>
   );
