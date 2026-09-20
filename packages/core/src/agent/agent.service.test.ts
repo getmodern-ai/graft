@@ -62,6 +62,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...row, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
+    listConnectedHarnesses: vi.fn(async () => []),
     setAgentConnectedVia: vi.fn(async (_db, _p, _a, via) => ({
       ...row,
       connectedViaClientId: via.clientId,

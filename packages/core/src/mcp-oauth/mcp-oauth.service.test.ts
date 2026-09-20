@@ -242,6 +242,7 @@ function harness(overrides: { clock?: Date } = {}) {
     updateAgent: vi.fn(async () => null),
     revokeAgent: vi.fn(async () => null),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
+    listConnectedHarnesses: vi.fn(async () => []),
     setAgentConnectedVia: vi.fn(async (_db, _personId, agentId, via) => {
       const row = store.agents.get(agentId);
       if (!row || row.connectedViaClientId) return null;

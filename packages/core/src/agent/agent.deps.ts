@@ -14,7 +14,11 @@ import {
   updateAgent,
 } from "@graft/db/repo/agent";
 import { findConnectionsByIds } from "@graft/db/repo/connection";
-import { findAgentByMcpAccessTokenHash, revokeMcpTokensForAgent } from "@graft/db/repo/mcp-oauth";
+import {
+  findAgentByMcpAccessTokenHash,
+  listConnectedHarnesses,
+  revokeMcpTokensForAgent,
+} from "@graft/db/repo/mcp-oauth";
 
 /**
  * The agent module's test seam: the repositories it reads and writes, the clock and the id source.
@@ -30,6 +34,7 @@ export type AgentDeps = {
   /** The MCP door's second read (ADR 0018): an OAuth access token to its agent, revoked ones filtered in the statement. */
   findAgentByMcpAccessTokenHash: typeof findAgentByMcpAccessTokenHash;
   listAgents: typeof listAgents;
+  listConnectedHarnesses: typeof listConnectedHarnesses;
   updateAgent: typeof updateAgent;
   revokeAgent: typeof revokeAgent;
   /** Revoking an agent revokes every token an MCP client holds for it (ADR 0018), in the same transaction. */
@@ -60,6 +65,7 @@ export const defaultAgentDeps: AgentDeps = {
   findAgentByTokenHash,
   findAgentByMcpAccessTokenHash,
   listAgents,
+  listConnectedHarnesses,
   updateAgent,
   revokeAgent,
   revokeMcpTokensForAgent,

@@ -35,16 +35,13 @@ export function RevokeAgentDialog({
 }) {
   const queryClient = useQueryClient();
   // What is being cut (ADR 0018): a static token, the tokens an MCP client holds, or both.
-  const client = agent.connectedVia?.clientName ?? null;
-  const verb = agent.tokenPrefix === null ? "Revoke agent" : "Revoke token";
+  const verb = agent.tokenPrefix && !agent.connectedVia ? "Revoke token" : "Revoke agent";
   const revoke = useMutation({
     mutationFn: () => revokeAgent(agent.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       toast.success(`${agent.name} is revoked`, {
-        description: client
-          ? `${client} is refused at the MCP endpoint from now on and will ask you to connect again.`
-          : "Its harness is refused at the MCP endpoint from now on.",
+        description: "Every harness using this agent must connect again.",
       });
       onOpenChange(false);
     },
@@ -61,19 +58,8 @@ export function RevokeAgentDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Revoke {agent.name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            {agent.tokenPrefix ? (
-              <>
-                The token <code className="font-mono">{agent.tokenPrefix}…</code>
-                {client ? ` and the tokens ${client} holds` : ""} stop working immediately and
-                cannot be restored.
-              </>
-            ) : (
-              <>The tokens {client} holds stop working immediately and cannot be restored.</>
-            )}{" "}
-            The agent's working set and history stay here.{" "}
-            {client
-              ? `To reconnect ${client}, connect it again; it will ask for a new agent.`
-              : "To reconnect the harness, create a new agent."}
+            All tokens for this agent stop working immediately and cannot be restored. The agent's
+            working set and history stay here. Each harness will need to connect as a new agent.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

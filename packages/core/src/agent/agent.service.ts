@@ -6,6 +6,8 @@ import { orNotFound, ServiceError } from "../errors";
 import { type AgentScope, mintAgentToken, type Principal } from "../tenancy";
 import type { AgentDeps } from "./agent.deps";
 
+export type { ConnectedHarnessRow as ConnectedHarnessOutput } from "@graft/db/repo/mcp-oauth";
+
 /**
  * Agents (CONTEXT.md; ADR 0007): create with a token shown once, list, revoke, tune the cap and
  * the idle window, set the scope. Plain functions — callable from the JSON API, the console later,
@@ -314,6 +316,14 @@ export async function getAgent(
 ): Promise<AgentOutput | null> {
   const row = await deps.findAgent(ctx.db, principal.personId, agentId);
   return row ? toAgentOutput(row) : null;
+}
+
+export async function listConnectedHarnesses(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  deps: Pick<AgentDeps, "listConnectedHarnesses">,
+) {
+  return deps.listConnectedHarnesses(ctx.db, scope);
 }
 
 /** The cap and the idle window are per agent and editable (ADR 0009); the name rides along. */
