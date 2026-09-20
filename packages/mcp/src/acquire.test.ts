@@ -621,6 +621,62 @@ describe("a job that fails and tries again", () => {
    * `acquire_status` holds its call until there is news. The suite's wait is 0 elsewhere, so every
    * other test sees the old shape; here the wait is long enough for the scripted job.
    */
+  /** GRA-123: a `draft-missing` refusal is the store's miss, and the job asks once more before the model sees it. */
+  it("asks the toolbox store a second time when the publish finds nothing at a draft the check read, and publishes on that answer", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    const publishBefore = deps.publishTool;
+    let calls = 0;
+    deps.publishTool = async (args) => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: false,
+          refusals: [
+            {
+              rule: "draft-missing",
+              file: "index.ts",
+              line: 1,
+              column: 1,
+              text: "",
+              message: `Nothing is at ${args.draftPath} in the toolbox`,
+              hint: "Write the draft first.",
+            },
+          ],
+          advice: [],
+          annotations: { readOnly: false, destructive: true },
+        } as never;
+      }
+      if (!publishBefore) throw new Error("no publish in this suite");
+      return publishBefore(args);
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+      expect((status.result as AcquireSuccess).tool).toBe(LIST_ITEMS);
+      expect(calls).toBe(2);
+      const { attempts, traces } = rowsOf(jobId);
+      // One attempt, passed: the miss cost the model nothing and was never shown to it.
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
+      expect(
+        traces.some(
+          (row) => row.kind === "publish" && row.text.includes("asking the store again once"),
+        ),
+      ).toBe(true);
+      const model = deps.model as ReturnType<typeof createScriptedModel>;
+      expect(model.conversations[0]?.situations.map((situation) => situation.kind)).not.toContain(
+        "publish_refused",
+      );
+    } finally {
+      deps.publishTool = publishBefore;
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
   it("acquire waits for the job and answers the result when it settles in time; acquire_status waits for news", async () => {
     const scripted = createScriptedModel([
       write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),

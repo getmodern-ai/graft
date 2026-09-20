@@ -1,3 +1,4 @@
+import { hashAgentToken } from "@graft/core";
 import type { McpDeps } from "@graft/mcp";
 import { createFakeDeps, createFakeStore } from "@graft/mcp/testing/fake-deps";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -19,6 +20,8 @@ initLogger({ silent: true });
 
 const TOKEN_A = "grft_server_test_token_a_000000000000000000000";
 const TOKEN_B = "grft_server_test_token_b_000000000000000000000";
+/** An access token a chat product holds for agent A after an OAuth consent (ADR 0018); the fake resolves it below. */
+const TOKEN_A_OAUTH = "grfta_server_test_access_token_a_00000000000000";
 
 const sandboxes: FakeSandboxBackend[] = [];
 
@@ -32,8 +35,22 @@ function harness() {
   store.addAgent({ scopeMode: "listed", id: "agent_b", personId: "person_1", token: TOKEN_B });
   const sandbox = createFakeSandboxBackend();
   sandboxes.push(sandbox);
+  const fake = createFakeDeps(store);
   const mcp: McpDeps = {
-    ...createFakeDeps(store),
+    ...fake,
+    agent: {
+      ...fake.agent,
+      findAgentByMcpAccessTokenHash: async (_db, tokenHash) =>
+        tokenHash === hashAgentToken(TOKEN_A_OAUTH)
+          ? {
+              tokenId: "tok_a",
+              agentId: "agent_a",
+              personId: "person_1",
+              clientId: "client_claude",
+              expiresAt: null,
+            }
+          : null,
+    },
     sandbox,
     keys: null,
     proxyPublicUrl: "http://localhost:3000/api/proxy",
@@ -165,5 +182,93 @@ describe("the MCP endpoint", () => {
     } finally {
       await client.close();
     }
+  });
+
+  /**
+   * GRA-129 (ADR 0018 as amended 2026-09-20): a chat product's client keeps its session id across a
+   * deploy and its card frame draws a banner on the 404, so for an access token the session is
+   * re-opened under the id it presents; a static-token harness keeps the specification's answers.
+   */
+  describe("a session the process no longer holds", () => {
+    const listTools = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const readText = async (response: Response) => {
+      const text = await response.text();
+      const data = text
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim());
+      return JSON.parse(data[data.length - 1] ?? text) as {
+        result?: { tools?: { name: string }[] };
+      };
+    };
+
+    it("is re-opened in place for an access token: the request is answered under the same id, and the id keeps working", async () => {
+      const { app } = harness();
+      const stale = "session-from-before-the-deploy";
+      const first = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A_OAUTH}`, "mcp-session-id": stale }, listTools),
+      );
+      expect(first.status).toBe(200);
+      expect(first.headers.get("mcp-session-id")).toBe(stale);
+      const tools = (await readText(first)).result?.tools?.map((tool) => tool.name) ?? [];
+      expect(tools).toContain("find_tool");
+      // A chat product's agent, so the list carries no authoring tool (GRA-125).
+      expect(tools).not.toContain("write_module");
+
+      const second = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A_OAUTH}`, "mcp-session-id": stale }, listTools),
+      );
+      expect(second.status).toBe(200);
+
+      // The re-opened session is bound to agent A: another agent's token against it is refused.
+      const hijack = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_B}`, "mcp-session-id": stale }, listTools),
+      );
+      expect(hijack.status).toBe(401);
+      expect(await hijack.json()).toMatchObject({ reason: "session_mismatch" });
+    });
+
+    it("answers a session-less request that is not an initialize, carrying the id it opened", async () => {
+      const { app } = harness();
+      const response = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A_OAUTH}` }, listTools),
+      );
+      expect(response.status).toBe(200);
+      const id = response.headers.get("mcp-session-id");
+      expect(id).toEqual(expect.any(String));
+      const again = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A_OAUTH}`, "mcp-session-id": id ?? "" }, listTools),
+      );
+      expect(again.status).toBe(200);
+    });
+
+    it("stays the specification's 404 and 400 for a static-token agent, which re-initialises", async () => {
+      const { app } = harness();
+      const unknown = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A}`, "mcp-session-id": "nope" }, listTools),
+      );
+      expect(unknown.status).toBe(404);
+      const noSession = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A}` }, listTools),
+      );
+      expect(noSession.status).toBe(400);
+    });
+
+    it("still initialises a fresh session for an access token as before", async () => {
+      const { app } = harness();
+      const response = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A_OAUTH}` }),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("mcp-session-id")).toEqual(expect.any(String));
+    });
   });
 });

@@ -267,7 +267,9 @@ was answered 400 by the SDK's transport, then initialised and read the resource.
 over the same deploy got 404 for its old session ids and re-initialised silently, the spec's path.
 Graft's sessions are in-memory transports and a deploy ends them; the answers are the spec's
 (`packages/mcp/src/http.ts`); nothing here changes, and the fallback sentence above is what the
-person gets.
+person gets. *Superseded 2026-09-20 (GRA-129):* the banner came back on every open Claude chat after
+every deploy, so the transport now re-opens a session it no longer holds for a chat product's
+client — ADR 0018 as amended 2026-09-20 has the rule; the fallback sentence stays for the rest.
 
 **Unchanged.** ADR 0004 and ADR 0008. Elicitation keeps its place before the handoff for the clients
 that show a form. `acquire` still asks once per agent per connection; the connection confirmation
