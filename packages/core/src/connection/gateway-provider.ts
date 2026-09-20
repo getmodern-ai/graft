@@ -101,7 +101,7 @@ export function createGatewayProvider(config: GatewayProviderConfig): Connection
   return {
     name: GATEWAY_PROVIDER,
     connect: { kind: "none", scheme: GATEWAY_RELAY_SCHEME },
-    covers: (_vendor, hosts) => gatewayCovers(patterns, hosts),
+    covers: async (_vendor, hosts) => gatewayCovers(patterns, hosts),
     resolve: () => ({ mode: "relay", relay }),
     revoke: async () => undefined,
   };

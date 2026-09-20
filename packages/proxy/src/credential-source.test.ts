@@ -116,7 +116,7 @@ describe("credentialSource", () => {
   it("names the provider that holds nothing yet for a row whose link never completed, and keeps 'no credential yet' for an unrevoked keyring row (GRA-68)", () => {
     expect(
       credentialSource(
-        connection({ authScheme: null, credentialCiphertext: null, pendingProvider: "pipedream" }),
+        connection({ authScheme: null, credentialCiphertext: null, pendingProvider: "broker" }),
         { decryptCredential },
       ),
     ).toMatchObject({
@@ -124,7 +124,7 @@ describe("credentialSource", () => {
       status: 409,
       reason: "connection_not_ready",
       message:
-        "The pipedream provider holds no account for this connection yet; the person has not finished connecting it",
+        "The broker provider holds no account for this connection yet; the person has not finished connecting it",
     });
     expect(
       credentialSource(connection({ credentialCiphertext: null, revokedAt: null }), {

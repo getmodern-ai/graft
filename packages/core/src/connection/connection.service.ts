@@ -346,7 +346,7 @@ export async function registerProviderConnection(
   refuse(validateDisplayName(input.displayName));
   const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
   if (!hostSet.ok) refuseHostSet(hostSet);
-  if (!provider.covers(input.vendor, hostSet.hosts)) {
+  if (!(await provider.covers(input.vendor, hostSet.hosts))) {
     throw new ServiceError(
       "BAD_REQUEST",
       `The ${provider.name} provider does not cover ${input.vendor} at ${hostSet.hosts.join(", ")}`,
@@ -400,7 +400,7 @@ export async function widenProviderConnectionHosts(
   }
   const union = validateHostSet(row.primaryHost, [...row.hosts, ...hosts]);
   if (!union.ok) refuseHostSet(union);
-  if (!provider.covers(row.vendor, union.hosts)) {
+  if (!(await provider.covers(row.vendor, union.hosts))) {
     throw new ServiceError(
       "BAD_REQUEST",
       `The ${provider.name} provider does not cover ${row.vendor} at ${union.hosts.join(", ")}`,
@@ -517,7 +517,7 @@ export async function connectThroughProvider(
   refuse(validateDisplayName(input.displayName));
   const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
   if (!hostSet.ok) refuseHostSet(hostSet);
-  if (!provider.covers(input.vendor, hostSet.hosts)) {
+  if (!(await provider.covers(input.vendor, hostSet.hosts))) {
     throw new ServiceError(
       "BAD_REQUEST",
       `The ${provider.name} provider does not cover ${input.vendor} at ${hostSet.hosts.join(", ")}`,
@@ -531,7 +531,7 @@ export async function connectThroughProvider(
   // provider let go (`recordProviderRelease`), and still set while the release is outstanding. The
   // hosts need not match (GRA-122; the header): the row is a candidate when the provider covers the
   // union of its hosts and the proposal's, and the most recently revoked candidate is the one.
-  const released = releasedRowFor(
+  const released = await releasedRowFor(
     await deps.listConnections(ctx.db, principal.personId),
     provider,
     input.vendor,
@@ -594,12 +594,12 @@ export async function connectThroughProvider(
  * and the union of its hosts and the proposal's a set the provider covers — the most recently
  * revoked when several qualify. Null when the proposal makes a new row.
  */
-function releasedRowFor(
+async function releasedRowFor(
   rows: readonly ConnectionRow[],
   provider: ConnectionProvider,
   vendor: string,
   proposedHosts: readonly string[],
-): { row: ConnectionRow; hosts: string[] } | null {
+): Promise<{ row: ConnectionRow; hosts: string[] } | null> {
   const candidates: { row: ConnectionRow; hosts: string[] }[] = [];
   for (const row of rows) {
     if (
@@ -611,7 +611,7 @@ function releasedRowFor(
       continue;
     }
     const union = validateHostSet(row.primaryHost, [...row.hosts, ...proposedHosts]);
-    if (!union.ok || !provider.covers(row.vendor, union.hosts)) continue;
+    if (!union.ok || !(await provider.covers(row.vendor, union.hosts))) continue;
     candidates.push({ row, hosts: union.hosts });
   }
   candidates.sort((a, b) => (b.row.revokedAt?.getTime() ?? 0) - (a.row.revokedAt?.getTime() ?? 0));

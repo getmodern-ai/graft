@@ -102,7 +102,7 @@ export function forwardableRequestHeaders(inbound: Headers): Headers {
  * (a dry-run preview, a job ended as `vendor_unreachable`). A vendor's response carrying one is
  * therefore dropped before anything of the proxy's is set: a vendor may not speak in the proxy's
  * voice, whether by accident or to end a job it would rather not be built against (GRA-79,
- * Greptile on #59). The relays run through the same return path, so a gateway's or Pipedream's
+ * Greptile on #59). The relays run through the same return path, so a gateway's or a broker's
  * answer is held to it too. Family-wide by prefix, for the reason `STRIPPED_PREFIXES` gives.
  */
 export const PROXY_RESPONSE_HEADER_PREFIX = "x-graft-";

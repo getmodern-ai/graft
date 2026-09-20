@@ -199,3 +199,30 @@ private knowledge:
   yet. The proxy still knows nothing of what a provider is: the name is opaque text for that
   sentence, and a row handed to the proxy without the stamp is refused as before, through the
   nothing `toProxyConnection` resolves a revoked row to.
+- **The Pipedream provider left for the private package, coverage is the vendor's catalogue, and the
+  relay scheme is generic** (2026-09-20; GRA-103, GRA-126). Two paragraphs above no longer hold as
+  written. "A provider's code is open while its configuration may be hosted" was this record's
+  reading of ADR 0002 before its amendment of 2026-09-19 said the stricter thing — the open
+  repository carries no vendor's client, variable or id — so the Pipedream provider, its Connect
+  client, its relay plugin, its fakes, its `GRAFT_PIPEDREAM_*` group and its proof scripts moved
+  whole to graft-cloud's private package, which answers the provider in `Backings.providers` when the
+  group is set; the open repository keeps the seam, the keyring and the gateway (a company's own
+  gateway is not a vendor of Graft's), and a **fake link provider** (`packages/core/src/connection/
+  testing/fake-link-provider.ts`) drives the open suites that exercised the link's two ends against
+  the real provider. What was the vendor table (`PIPEDREAM_APPS`, one hand-written row for Gmail)
+  went with it and did not come back as a table: live on 2026-09-20 a person asked ChatGPT to connect
+  Google Calendar and was sent to register a Google OAuth client, because the table had one row and
+  every vendor after Gmail was a code change. The provider now decides coverage by **asking the
+  catalogue** — Pipedream's `GET /v1/connect/apps/{slug}` carries the app's `name_slug`, its
+  `auth_type` and under `connect` the `allowed_domains` its proxy forwards to and whether the proxy
+  is on — so a vendor is covered when the catalogue has a proxy-enabled app for it whose allowed
+  domains contain every proposed host; the slug is matched with `-` read as `_`, then by search on
+  the app's name; answers are cached in the process (an hour for a hit, five minutes for a miss).
+  Which is why **`covers` and a link's `target` are async** from this date: the seam's question may
+  be the catalogue's to answer, and `providerFor` awaits each provider in order. And the **relay
+  scheme is generic**: `RELAY_SCHEMES` is `gateway` and `relay`, a hosted relay provider's rows
+  carry `relay` (migration 0010 moved the rows written as `pipedream_connect_proxy`), and the
+  proxy's `RELAYS` catalogue is gone — the plugin arrives on the resolution (`ProxyRelay.plugin`),
+  which the gateway provider already did, so the proxy names no upstream but the open form's own.
+  The wide event's `relay` still says which upstream carried the call: that is the plugin's name,
+  not the row's scheme.

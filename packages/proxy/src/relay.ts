@@ -1,10 +1,8 @@
-import { gatewayRelay } from "./gateway-relay";
-import { pipedreamConnectProxyRelay } from "./pipedream-relay";
-import type { RelayHeaderRules, RelayPlugin, RelayScheme } from "./types";
+import type { RelayHeaderRules, RelayPlugin } from "./types";
 
 /**
- * The relay engine's own half (ADR 0019; ported from Cando's `pipedream_connect_proxy`, CAN-563 to
- * CAN-567, with the Pipedream constants taken out and left as parameters). A relay scheme does not
+ * The relay engine's own half (ADR 0019; ported from Cando's broker relay, CAN-563 to CAN-567,
+ * with the broker's constants taken out and left as parameters). A relay scheme does not
  * present a credential to the vendor: it rewrites the request the ladder resolved — vendor host,
  * path and query — into a request to an upstream proxy that holds the credential and answers with
  * the vendor's response. Which upstream, and how the vendor URL is carried to it, is the plugin's
@@ -14,13 +12,17 @@ import type { RelayHeaderRules, RelayPlugin, RelayScheme } from "./types";
  *
  * Two lessons the rules encode. The prefix is applied to a header that *already* carries it, so a
  * caller cannot smuggle a stripped `authorization` or `cookie` past the outgoing policy by naming it
- * `x-pd-proxy-authorization` — the upstream strips exactly one prefix, and a doubled one reaches the
+ * `<prefix>authorization` — the upstream strips exactly one prefix, and a doubled one reaches the
  * vendor as a harmless unknown header (Greptile on Cando's PR #525). And a header the upstream
- * refuses is dropped rather than prefixed: Pipedream answers `400 Unsupported header` for a prefixed
- * `user-agent`, which Node's fetch sends on every request and the outgoing policy rightly keeps for
- * an ordinary vendor — Cando's first relayed call in production failed on a header nobody chose
- * (CAN-566). The predicates below are the surface; the sets stay private (CAN-567) so nothing can
- * mutate a rule process-wide.
+ * refuses is dropped rather than prefixed: a broker's proxy answers `400 Unsupported header` for a
+ * prefixed `user-agent`, which Node's fetch sends on every request and the outgoing policy rightly
+ * keeps for an ordinary vendor — Cando's first relayed call in production failed on a header nobody
+ * chose (CAN-566). The predicates below are the surface; the sets stay private (CAN-567) so nothing
+ * can mutate a rule process-wide.
+ *
+ * There is no catalogue of plugins here (GRA-103): a connection's provider hands the proxy the
+ * plugin on the resolution (`ProxyRelay.plugin`), the gateway's from `gateway-relay.ts` and a
+ * hosted provider's from beside itself, so this package names no upstream but the open form's own.
  */
 
 /** Forward every caller header under its own name, drop nothing: a gateway that fronts the vendor itself. */
@@ -70,17 +72,3 @@ export function relayRulesOf(
 ): RelayHeaderRules {
   return { ...plugin.rules, ...overrides };
 }
-
-/**
- * The relay plugins this package implements, keyed by the scheme name a connection row carries —
- * the open catalogue: `gateway` is a company's API gateway (`gateway-relay.ts`, GRA-58) and
- * `pipedream_connect_proxy` is Pipedream's Connect proxy (`pipedream-relay.ts`, GRA-59). A
- * connection's provider (`@graft/core`'s `ConnectionProvider`) picks one of these and hands it to
- * the proxy on `ProxyConnection.relay`; the proxy never looks a scheme up by name itself, which is
- * what lets a test drive the engine with a plugin of its own beside the catalogued ones.
- * `relay.test.ts` holds each entry's `scheme` to its key.
- */
-export const RELAYS: Record<RelayScheme, RelayPlugin> = {
-  gateway: gatewayRelay,
-  pipedream_connect_proxy: pipedreamConnectProxyRelay,
-};

@@ -1,7 +1,10 @@
 import type { AskCard } from "@graft/ask-card/shape";
-import { answerPendingAction, createPipedreamProvider, keyringProvider } from "@graft/core";
+import { answerPendingAction, keyringProvider } from "@graft/core";
+import {
+  createFakeLinkProvider,
+  type FakeLinkProvider,
+} from "@graft/core/connection/testing/fake-link-provider";
 import { createScriptedModel } from "@graft/model";
-import { createFakePipedreamClient } from "@graft/pipedream/fake";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -862,11 +865,12 @@ describe("the card-host gate", () => {
 });
 
 /**
- * The card starts a link provider's connect and waits on it (GRA-117, GRA-118). Pipedream is the
- * fake client behind the real provider, so what is asserted is the token the fake minted — the
- * return URIs on this server's origin, the signed state, `from=card` — and the ask left open for
- * the return to answer; the return itself is `apps/server/src/provider-link.test.ts`. Then
- * `ask_status` through every state, on this ask and on the others.
+ * The card starts a link provider's connect and waits on it (GRA-117, GRA-118). The provider is
+ * `@graft/core`'s fake link provider covering Gmail — the hosted form's broker is the private
+ * package's (GRA-103) — so what is asserted is the link the fake minted: the return URIs on this
+ * server's origin, the signed state, `from=card`, and the ask left open for the return to answer;
+ * the return itself is `apps/server/src/provider-link.test.ts`. Then `ask_status` through every
+ * state, on this ask and on the others.
  */
 describe("start_link and ask_status", () => {
   const GMAIL = {
@@ -882,14 +886,11 @@ describe("start_link and ask_status", () => {
     },
   };
   const AUTH_URL = "http://graft.test";
-  let pipedream: ReturnType<typeof createFakePipedreamClient>;
+  let broker: FakeLinkProvider;
 
   beforeEach(() => {
-    pipedream = createFakePipedreamClient({ projectId: "proj_test" });
-    deps.connection = {
-      ...deps.connection,
-      providers: [createPipedreamProvider({ client: pipedream }), keyringProvider],
-    };
+    broker = createFakeLinkProvider({ name: "broker", covers: (vendor) => vendor === "gmail" });
+    deps.connection = { ...deps.connection, providers: [broker, keyringProvider] };
     deps.authUrl = AUTH_URL;
   });
 
@@ -903,17 +904,17 @@ describe("start_link and ask_status", () => {
   it("rides a link provider's proposal as a card that names the provider and is not answerable", async () => {
     const claude = await connect(TOKEN_CLAUDE);
     const result = await claude.call("request_connection", GMAIL);
-    expect(text(result)).toMatchObject({ reason: "awaiting_connection", provider: "pipedream" });
+    expect(text(result)).toMatchObject({ reason: "awaiting_connection", provider: "broker" });
     expect(cardOf(result)).toMatchObject({
       kind: "connection",
-      provider: "pipedream",
+      provider: "broker",
       providerConnect: "link",
       answerable: false,
       hosts: ["gmail.googleapis.com", "www.googleapis.com"],
     });
   });
 
-  it("mints Pipedream's link for the agent's own ask with the build choice, both return URIs on this server with from=card, and leaves the ask open", async () => {
+  it("mints the provider's link for the agent's own ask with the build choice, both return URIs on this server with from=card, and leaves the ask open", async () => {
     const claude = await connect(TOKEN_CLAUDE);
     const card = cardOf(await claude.call("request_connection", GMAIL));
     const result = await claude.call(START_LINK, {
@@ -922,12 +923,12 @@ describe("start_link and ask_status", () => {
     });
     expect(result.isError).toBeFalsy();
     const started = text(result);
-    expect(started).toMatchObject({ provider: "pipedream", url: expect.any(String) });
+    expect(started).toMatchObject({ provider: "broker", url: expect.any(String) });
     expect(new URL(started.url as string).searchParams.get("app")).toBe("gmail");
     expect(new Date(started.expiresAt as string).getTime()).toBeGreaterThan(clock.getTime());
 
-    const minted = pipedream.tokens.at(-1);
-    expect(minted).toMatchObject({ externalUserId: `graft-person-${PERSON}`, app: "gmail" });
+    const minted = broker.minted.at(-1);
+    expect(minted).toMatchObject({ personId: PERSON, target: "gmail" });
     for (const [uri, outcome] of [
       [minted?.success, "success"],
       [minted?.error, "error"],
@@ -955,7 +956,7 @@ describe("start_link and ask_status", () => {
     );
     expect(await status(claude, card.pendingActionId)).toMatchObject({
       state: "answered",
-      sentence: expect.stringContaining("Connected through pipedream. Gmail (gmail)"),
+      sentence: expect.stringContaining("Connected through broker. Gmail (gmail)"),
     });
   });
 
@@ -1011,7 +1012,7 @@ describe("start_link and ask_status", () => {
     expect(
       await startLink(claude, { pendingActionId: keyless.pendingActionId, approveBuild: "yes" }),
     ).toMatchObject({ reason: "input_invalid" });
-    expect(pipedream.tokens).toHaveLength(0);
+    expect(broker.minted).toHaveLength(0);
 
     // A server with no public URL cannot say where the return lands.
     deps.authUrl = undefined;

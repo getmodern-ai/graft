@@ -28,9 +28,9 @@ export const LINK_STATE_PARAM = "state";
 
 /**
  * How long a link may take from the button to the return before its state is refused — and how
- * long the console waits for it. The connect token `@graft/pipedream` mints is held to the same
- * window (`CONNECT_TOKEN_TTL_SECONDS` there), so a link the person follows late fails at Pipedream
- * and at Graft alike rather than connecting an account no return can claim.
+ * long the console waits for it. A link provider holds the link it mints to the same window (the
+ * hosted form's broker client reads this constant), so a link the person follows late fails at the
+ * provider and at Graft alike rather than connecting an account no return can claim.
  */
 export const LINK_STATE_TTL_MS = 15 * 60_000;
 

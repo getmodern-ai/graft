@@ -69,9 +69,9 @@ describe("what the card may answer", () => {
     expect(connectionAskAnswerable(proposal({ scheme: "api_key_header" }))).toBe(false);
     expect(connectionAskAnswerable(proposal({ scheme: "bearer" }))).toBe(false);
     expect(connectionAskAnswerable(proposal({ scheme: "oauth_authorization_code" }))).toBe(false);
-    expect(
-      connectionAskAnswerable(proposal({ providerConnect: "link", provider: "pipedream" })),
-    ).toBe(false);
+    expect(connectionAskAnswerable(proposal({ providerConnect: "link", provider: "broker" }))).toBe(
+      false,
+    );
   });
 
   it("marks a build ask and a tool ask answerable, and a credential ask or a link provider's never", () => {
@@ -145,9 +145,9 @@ describe("what the card may answer", () => {
         action: { ...action, kind: "connection" },
         agentName: "Claude",
         url,
-        payload: proposal({ providerConnect: "link", provider: "pipedream" }),
+        payload: proposal({ providerConnect: "link", provider: "broker" }),
       }),
-    ).toMatchObject({ providerConnect: "link", provider: "pipedream", answerable: false });
+    ).toMatchObject({ providerConnect: "link", provider: "broker", answerable: false });
   });
 
   it("marks a scope ask answerable, with the row's facts and the provider when it is not the keyring (GRA-104)", () => {
@@ -156,10 +156,10 @@ describe("what the card may answer", () => {
       connectionId: "conn_gmail",
       vendor: "gmail",
       displayName: "Gmail",
-      provider: "pipedream",
+      provider: "broker",
       primaryHost: "https://gmail.googleapis.com",
       hosts: ["gmail.googleapis.com"],
-      scheme: "pipedream_connect_proxy",
+      scheme: "relay",
       docsUrl: "https://developers.google.com/gmail/api",
     };
     expect(
@@ -172,13 +172,13 @@ describe("what the card may answer", () => {
       displayName: "Gmail",
       primaryHost: "https://gmail.googleapis.com",
       hosts: ["gmail.googleapis.com"],
-      scheme: "pipedream_connect_proxy",
+      scheme: "relay",
       takesCredential: false,
       docsUrl: "https://developers.google.com/gmail/api",
       expiresAt: action.expiresAt.toISOString(),
       url,
       answerable: true,
-      provider: "pipedream",
+      provider: "broker",
     });
     expect(
       scopeAskCard({

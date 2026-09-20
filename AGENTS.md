@@ -41,8 +41,8 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
 - **No vendor in the open repository** (ADR 0002 as amended 2026-09-19): no vendor's client
   library, configuration variable or id. Define the seam here, with the open form's backing or a
   no-op, and put the vendor's backing in graft-cloud's private package. Before adding a package or
-  a `GRAFT_*` variable, ask whether it is a vendor's; if it is, it goes there. The Pipedream
-  provider is the one exception left, and GRA-103 moves it.
+  a `GRAFT_*` variable, ask whether it is a vendor's; if it is, it goes there. The last exception,
+  the hosted form's link provider, moved there under GRA-103.
 
 ## Lineage
 
@@ -205,23 +205,37 @@ imports it by a name held in a variable, so the type program never resolves it �
 the package absent rather than optional.
 
 **A connection comes from a provider, and the providers ride the same selector** (ADR 0019,
-GRA-57). `Backings.providers` is an ordered list — under `open` the keyring alone, under `cloud`
-whatever the private package answers with the keyring appended last, and the boot line names them
-(`providers keyring`). A provider (`packages/core/src/connection/provider.ts`) decides how a vendor
-gets connected (`form` over the proxy's schemes, `link`, or `none`), how a call resolves (`inject`
-the row's credential, or `relay` through an upstream that holds it), and what to release on revoke;
-`request_connection` routes a proposal to the first provider that covers it, and the proxy's
-connection read (`apps/server/src/connections.ts`) asks the row's provider how the call resolves.
-The relay engine is `packages/proxy/src/relay.ts`: a relay plugin rewrites the resolved vendor
-request into the upstream's under `RelayHeaderRules` as data, and `relay.test.ts` drives it through
-an in-process upstream. `RELAYS` holds the `gateway` plugin (`gateway-relay.ts`, GRA-58) and
-Pipedream's (`pipedream-relay.ts`, GRA-59), and `RELAY_SCHEMES` names both. A row of a relay
-provider records its relay scheme in the `scheme` column, and the enum pin in `packages/core` covers
-both lists — so `connectionScheme` now carries `gateway` and `pipedream_connect_proxy`, which no
-form, proposal or credential entry accepts (`connection.rules.ts` refuses a relay scheme with a
-sentence). With the keyring alone nothing observable changed. With both providers configured the
-gateway is routed to first: an operator's explicit host list wins over Pipedream's app table
-(`environmentProviders` in `apps/server/src/backings.ts`).
+GRA-57). `Backings.providers` is an ordered list — under `open` the keyring alone (the gateway ahead
+of it when configured), under `cloud` the gateway when configured, then whatever the private package
+answers, with the keyring appended last — and the boot line names them (`providers keyring`). A
+provider (`packages/core/src/connection/provider.ts`) decides how a vendor gets connected (`form`
+over the proxy's schemes, `link`, or `none`), how a call resolves (`inject` the row's credential, or
+`relay` through an upstream that holds it), and what to release on revoke; `request_connection`
+routes a proposal to the first provider that covers it, and the proxy's connection read
+(`apps/server/src/connections.ts`) asks the row's provider how the call resolves. **Coverage is
+async** (GRA-126): `covers(vendor, hosts)` and a link's `target` answer a promise, because a hosted
+provider decides coverage by asking its vendor's catalogue — which vendors it connects and at which
+hosts — and caches the answer; the keyring and the gateway resolve at once, and `providerFor` awaits
+the providers in order, asking nobody after a yes. The relay engine is `packages/proxy/src/relay.ts`:
+a relay plugin rewrites the resolved vendor request into the upstream's under `RelayHeaderRules` as
+data, and `relay.test.ts` drives it through an in-process upstream. There is no catalogue of
+plugins: the proxy takes the plugin from the connection's resolution (`ProxyRelay.plugin`), the
+gateway's from `gateway-relay.ts` (GRA-58) and a hosted provider's from beside itself in the private
+package. `RELAY_SCHEMES` names two: `gateway`, and the generic `relay` every other relay provider's
+rows carry (GRA-103; migration 0010 moved the rows the first hosted relay provider wrote under its
+own name onto it). A row of a relay provider records its relay scheme in the `scheme` column, and the
+enum pin in `packages/core` covers both lists — so `connectionScheme` carries `gateway` and `relay`,
+which no form, proposal or credential entry accepts (`connection.rules.ts` refuses a relay scheme
+with a sentence). With the keyring alone nothing observable changed. The gateway is routed to
+first: an operator's explicit host list wins over a broker's catalogue (`environmentProviders` in
+`apps/server/src/backings.ts`). **A hosted provider comes from the private package whole** — its
+client, its relay plugin, its provider, its variables and its fakes (ADR 0002 as amended
+2026-09-19; GRA-103) — and the open suites that exercise a link's two ends, the card, the relay rung
+and the revoke's release drive `packages/core/src/connection/testing/fake-link-provider.ts`
+instead: a `ConnectionProvider` of kind `link` whose coverage is the test's function, whose rows
+carry `relay`, whose `start` mints a link on a fake origin, whose `complete` answers the next account
+the test connected (`connectAccount`), and whose `resolve` relays to an in-process upstream. The
+copy the card and the console draw names a provider by its `name`, never a vendor.
 
 **The gateway provider is the environment's** (ADR 0019 as amended 2026-09-17, GRA-58): the
 `GRAFT_GATEWAY_*` group — covered hosts, upstream URL, the identity header's name and value, an
@@ -240,48 +254,6 @@ Reconnect (`POST /api/connections/:id/reconnect`), the one row kind with nothing
 gateway on a loopback port stands in for a company's in `packages/proxy/src/gateway-relay.test.ts`
 and `apps/server/src/app.test.ts`; on a laptop, `GRAFT_GATEWAY_UPSTREAM_URL` may be plain `http`
 (refused in production).
-
-**The Pipedream provider is open code switched on by configuration** (ADR 0019, its 2026-09-17
-bullet; GRA-59). With the all-or-nothing group `GRAFT_PIPEDREAM_PROJECT_ID` (`proj_…`),
-`GRAFT_PIPEDREAM_ENVIRONMENT` (`development` or `production`), `GRAFT_PIPEDREAM_CLIENT_ID` and
-`GRAFT_PIPEDREAM_CLIENT_SECRET` set, `apps/server/src/backings.ts` (`environmentProviders`) puts
-`pipedream` on the list ahead of the keyring in either form, after the gateway when that is
-configured too, and the boot line reads `providers pipedream, keyring`; absent — the default —
-nothing changes, and a partial group or a client secret still holding `PLACEHOLDER` refuses the
-boot. Three homes, one per boundary: `packages/pipedream` is
-the Connect client (`createPipedreamClient`: client-credentials access token with a minute of skew
-and single-flight refresh, `createConnectToken`, `listAccounts`, `relayFields`, `deleteAccount`; it
-never sets `include_credentials`), with an in-memory fake at `@graft/pipedream/fake` and Pipedream
-on a loopback port at `@graft/pipedream/testing/fake-pipedream`; `packages/proxy/src/pipedream-relay.ts`
-is the relay plugin (the vendor URL base64url'd into `/v1/connect/<project>/proxy/`,
-`external_user_id` and `account_id` in the query, `Authorization: Bearer <Graft's Connect token>` and
-`x-pd-environment`, every caller header under `x-pd-proxy-` with `content-type`/`accept` through and
-Pipedream's restricted list plus `user-agent` dropped); `packages/core/src/connection/pipedream-provider.ts`
-is the provider, and **`PIPEDREAM_APPS` there is the vendor table** — `gmail` at
-`gmail.googleapis.com` and `www.googleapis.com` → Pipedream app `gmail` — where a vendor is added as
-one row with Pipedream's own app slug (their catalogue is the source, ADR 0001); `covers` demands
-every proposed host be in the entry's set, because the relay injects the account's token into
-whatever vendor URL it is handed. The person is `graft-person-<personId>` at Pipedream
-(`externalUserIdFor`). **The link**: `request_connection` records `providerConnect: "link"` and
-`providerTarget` (the app slug) on the ask's payload and names the provider in the awaiting answer;
-the console's card (`apps/web/src/components/pending/provider-link-ask-card.tsx`) posts
-`POST /api/pending-actions/:id/link`, which mints Pipedream's Connect Link with both redirect URIs
-pointing at `GET /api/providers/link/callback?state=…&outcome=success|error` — the state signed
-under `GRAFT_HANDOFF_SECRET` for fifteen minutes (`packages/core/src/connection/link-state.ts`), the
-connect token held to the same window — and opens it in a popup; the return
-(`apps/server/src/provider-link.ts`, no session) never trusts the redirect's word but asks Pipedream
-which account the person now holds under the app, minus the ids the person's other rows already
-name, then in one transaction makes the row (`connectThroughProvider`: `provider_ref` = the account
-id, `scheme` = `pipedream_connect_proxy`, `credential_ciphertext` null for life; a released row of
-the same provider and vendor is reconnected in place whatever primary host and hosts the proposal
-names within the coverage — its id, primary host and name kept, its hosts widened to the union,
-the most recently revoked when several qualify, GRA-122), adds it to the requesting agent's scope
-(a no-op for an agent on `all`, GRA-105), answers the ask, and redirects to the console's
-`/link/callback` (`link.rules.ts` writes and reads the query). A revoke calls Pipedream's `DELETE …/accounts/{id}`; the revoke keeps `provider_ref` until
-that succeeds, and a failure is stamped on `provider_release_failed_at` (migration 0007), which the
-connection card shows with **Retry release** (`POST /api/connections/:id/release`).
-`apps/server/src/scripts/pipedream-proof.ts` boots the whole server against the fake Pipedream for
-a laptop proof; `apps/server/src/provider-link.test.ts` is the same flow as a suite.
 
 **In the image the package arrives built** (GRA-38). The bundled server runs where there is Node and
 `node_modules` and nothing else — no TypeScript, no workspace — so a linked package ships a `build`

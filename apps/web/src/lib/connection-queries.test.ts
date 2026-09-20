@@ -40,7 +40,7 @@ describe("a connection's provider on the console", () => {
     expect(isKeyringConnection(gateway)).toBe(false);
     expect(isGatewayConnection(gateway)).toBe(true);
     expect(providerLabel(gateway)).toBe("Through your API gateway");
-    expect(providerLabel({ provider: "pipedream" })).toBe("via pipedream");
+    expect(providerLabel({ provider: "broker" })).toBe("via broker");
   });
 
   it("reads a gateway connection as connected with no credential set, and revoked when revoked", () => {

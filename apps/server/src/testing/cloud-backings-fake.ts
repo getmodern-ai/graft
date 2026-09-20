@@ -15,12 +15,12 @@ export const fakeCloudProvider: ConnectionProvider = {
   name: "fake-broker",
   connect: {
     kind: "link",
-    scheme: "pipedream_connect_proxy",
-    target: (vendor) => (vendor === "gmail" ? "gmail" : null),
+    scheme: "relay",
+    target: async (vendor) => (vendor === "gmail" ? "gmail" : null),
     start: async () => ({ url: "https://fake-broker.example/link", expiresAt: new Date(0) }),
     complete: async () => ({ ok: true, ref: "acct_fake", label: null }),
   },
-  covers: (vendor) => vendor === "gmail",
+  covers: async (vendor) => vendor === "gmail",
   resolve: () => ({ mode: "inject", scheme: null, schemeConfig: {}, credentialCiphertext: null }),
   revoke: async () => undefined,
 };

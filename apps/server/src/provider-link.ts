@@ -49,7 +49,7 @@ import { Hono } from "hono";
  * What the return trusts is narrower than the redirect. The provider chose which of the two URIs
  * to send the browser to, and that word (`outcome`) is read only to phrase a failure; a success is
  * never taken from it. The connection is made only once the provider has been *asked* what the
- * person connected (`ProviderLink.complete` — for Pipedream, its accounts list for this person and
+ * person connected (`ProviderLink.complete` — for a broker, its accounts list for this person and
  * app, minus every account a connection of theirs already names) and answered a reference. Then,
  * in one transaction: the row (`connectThroughProvider`, which reconnects a revoked row of the same
  * vendor in place), the requesting agent's scope, and the ask's answer `{ connectionId }` so the

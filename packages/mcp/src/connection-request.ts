@@ -79,7 +79,7 @@ import { executeToolName } from "./tool-names";
  * covers the vendor at these hosts decides how the person connects it. The keyring covers every
  * vendor and is always last, so with it alone every proposal takes the form below and the ask,
  * the answer and the card are exactly what they were before providers existed. A provider that
- * connects with a **link** (GRA-59; Pipedream) takes the same ask with a different card: the
+ * connects with a **link** (GRA-59; the hosted form's broker) takes the same ask with a different card: the
  * payload names the provider and what it calls the vendor, the person presses one button, the
  * provider's page runs the vendor's sign-in, and the server's return route — not a submit — makes
  * the connection and answers the ask once the provider has confirmed the account
@@ -158,7 +158,7 @@ export type ConnectionProposalPayload = {
    * the keyring's form.
    */
   providerConnect?: "form" | "link" | "none";
-  /** What a link provider calls the vendor on its side — Pipedream's app slug — for the card; null otherwise. */
+  /** What a link provider calls the vendor on its side — a broker's app slug — for the card; null otherwise. */
   providerTarget?: string | null;
   vendor: string;
   displayName: string;
@@ -198,7 +198,7 @@ export type ScopeAskPayload = {
   connectionId: string;
   vendor: string;
   displayName: string;
-  /** Where the row comes from (ADR 0019), so the card can say "via pipedream". */
+  /** Where the row comes from (ADR 0019), so the card can say "via <provider>". */
   provider: string;
   primaryHost: string;
   hosts: string[];
@@ -696,7 +696,7 @@ async function routeProposal(
   deps: McpDeps,
   notifier?: ToolListChangedNotifier,
 ): Promise<ConnectionRequestOutcome> {
-  const provider = providerFor(deps.connection.providers, proposal.vendor, proposal.hosts);
+  const provider = await providerFor(deps.connection.providers, proposal.vendor, proposal.hosts);
   if (provider.connect.kind === "none") {
     return connectWithoutPersonStep(ctx, scope, provider, proposal, deps, notifier);
   }
@@ -704,7 +704,7 @@ async function routeProposal(
   const payload: ConnectionProposalPayload = {
     provider: provider.name,
     providerConnect: provider.connect.kind,
-    providerTarget: link?.target(proposal.vendor, proposal.hosts) ?? null,
+    providerTarget: link ? await link.target(proposal.vendor, proposal.hosts) : null,
     ...proposal,
     ...(link ? { note: LINK_PROVENANCE_NOTE } : {}),
   };

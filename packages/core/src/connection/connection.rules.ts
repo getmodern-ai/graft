@@ -163,9 +163,9 @@ export type SignInHostsVerdict =
  * the endpoints, and the proxy pins every call to the row's hosts. So a sign-in host listed under
  * `hosts` is set aside before the proposal reaches a provider, and never recorded on the row: the
  * scheme's well-known ones (`SIGN_IN_HOSTS`) and the hosts of the proposal's own `authorizeUrl` and
- * `tokenUrl`. Left in, they made the Pipedream provider decline Gmail, since its `covers` demands
- * every host be one of the vendor's own, and the person got the client-registration form instead
- * of the one-click link.
+ * `tokenUrl`. Left in, they made the hosted form's link provider decline Gmail, since its `covers`
+ * demands every host be one of the vendor's own, and the person got the client-registration form
+ * instead of the one-click link.
  *
  * The primary host is never set aside, and its hostname is never a sign-in host here: some vendors
  * serve the token endpoint on the API's own host (Notion, Slack, HubSpot, Dropbox), and the primary
