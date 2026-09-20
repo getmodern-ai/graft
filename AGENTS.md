@@ -584,7 +584,9 @@ that opens Connection details, also available in its actions menu. This label is
 not a live connectivity check: static tokens carry no harness identity. The dialog shares creation's
 MCP instructions but cannot retrieve the token; the shell command uses a saved-token placeholder
 (ADR 0007). OAuth agents get the URL and consent instructions. Agent names remain plain text and
-the detail drawer is deferred; existing `/agents/:agentId` links redirect to the table.
+the detail drawer is deferred. Every row's menu has View agent, including archived rows, opening
+the standalone `/agents/:agentId` page. That page keeps scope and limit editors, the working set,
+approvals, history and standalone revocation reachable; revoked and archived records are read-only.
 `GET /api/agents` includes `workingSetCount`, counted against each person-scoped agent in the same
 statement; the table shows count/cap with Cando's status dot. The dev-only `preview-agent-multiple`
 row previews three harness badges and a populated count; the API still records one OAuth origin.

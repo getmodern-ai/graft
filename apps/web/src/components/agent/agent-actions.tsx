@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 
 import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
@@ -27,22 +28,28 @@ export function AgentActions({ agent }: { agent: Agent }) {
           ref={trigger}
           render={<Button variant="ghost" size="icon-sm" />}
           aria-label={`Actions for ${agent.name}`}
-          disabled={agent.archivedAt !== null}
         >
           <MoreHorizIcon />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-max min-w-44 whitespace-nowrap">
+          <DropdownMenuItem render={<Link to="/agents/$agentId" params={{ agentId: agent.id }} />}>
+            View agent
+          </DropdownMenuItem>
           {active ? (
             <DropdownMenuItem onClick={() => setConnecting(true)}>
               Connection details
             </DropdownMenuItem>
           ) : null}
-          <DropdownMenuItem disabled={agent.revokedAt !== null} onClick={() => setEditing(true)}>
-            Edit
-          </DropdownMenuItem>
-          <DropdownMenuItem variant="destructive" onClick={() => setArchiving(true)}>
-            Archive
-          </DropdownMenuItem>
+          {!agent.archivedAt ? (
+            <>
+              <DropdownMenuItem disabled={!active} onClick={() => setEditing(true)}>
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem variant="destructive" onClick={() => setArchiving(true)}>
+                Archive
+              </DropdownMenuItem>
+            </>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
       {connecting && active ? (

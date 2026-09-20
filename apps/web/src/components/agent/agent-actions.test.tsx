@@ -1,5 +1,11 @@
 // @vitest-environment happy-dom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,8 +64,8 @@ async function click(label: string) {
 }
 
 async function mount(value = agent, table = false) {
-  await act(async () =>
-    root.render(
+  const route = createRootRoute({
+    component: () => (
       <QueryClientProvider client={client}>
         {table ? (
           <AgentsTable
@@ -73,9 +79,17 @@ async function mount(value = agent, table = false) {
         ) : (
           <AgentActions agent={value} />
         )}
-      </QueryClientProvider>,
+      </QueryClientProvider>
     ),
-  );
+  });
+  const router = createRouter({
+    routeTree: route,
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+  await act(async () => {
+    await router.load();
+    root.render(<RouterProvider router={router} />);
+  });
 }
 
 async function openEdit() {
@@ -229,15 +243,15 @@ describe("agent actions", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["agents"] });
   });
 
-  it("leaves archived agents without an actionable dropdown", async () => {
+  it("keeps View agent available for archived rows without mutation actions", async () => {
     await mount({
       ...agent,
       revokedAt: "2026-09-20T00:00:00Z",
       archivedAt: "2026-09-20T00:00:00Z",
     });
-    expect((control("Actions for Laptop") as HTMLButtonElement).disabled).toBe(true);
     await click("Actions for Laptop");
-    expect(document.querySelector("[role=menu]")).toBeNull();
+    expect(control("View agent").getAttribute("href")).toBe("/agents/agent_1");
+    expect(document.querySelectorAll("[role=menuitem]")).toHaveLength(1);
   });
 
   it("opens with saved values, cancels without saving, restores focus and discards the draft", async () => {
