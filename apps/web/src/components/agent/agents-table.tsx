@@ -31,9 +31,8 @@ const COLUMNS = 7;
  * status from `status-chips.ts`. Its Token cell says "OAuth" when it holds no static token: the
  * client holds the tokens, and there is no prefix to show.
  *
- * Loading, failed and empty are the body's own rows (`table-body-states.tsx`); the screen-level
- * empty — no agents at all — is the route's `Empty`, because it carries the one action that
- * changes it.
+ * Loading, failed and empty are the body's own rows (`table-body-states.tsx`), following
+ * Cando's `connections-table.tsx` BodyNote. The header and the page's New agent action stay put.
  */
 export function AgentsTable({
   agents,
@@ -83,6 +82,10 @@ export function AgentsTable({
               onRetry={onRetry}
               retrying={retrying}
             />
+          </TableBodyNote>
+        ) : agents.length === 0 ? (
+          <TableBodyNote colSpan={COLUMNS}>
+            No agents yet. Create one to connect your harness.
           </TableBodyNote>
         ) : (
           groups.map((group) =>

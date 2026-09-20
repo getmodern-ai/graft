@@ -114,9 +114,10 @@ GRA-133 adds **Archive** to the console's agents list, beside GRA-132's **Edit**
 an earlier revocation timestamp. A repeated archive returns the first result. Every write and the
 read on a retry take the person's id, as every agent operation does.
 
-An archived agent leaves the console's default list; **Show archived** includes it again. Its
-row, scope, working set, approvals and history remain the person's records, and its detail page
-remains readable. Archive does not delete connections or tools and does not offer a way to revive
-access: reconnecting a harness creates another agent. Revocation alone remains distinct and keeps
-the agent in the default list. As with revocation, subsequent authentication is refused; archiving
+An archived agent moves to the console's **Archived** section, shown whenever archived agents
+exist. The console always requests `includeArchived=true`; the API's default list still excludes
+archived agents. Its row, scope, working set, approvals and history remain the person's records,
+and its detail page remains readable. Archive does not delete connections or tools and does not
+offer a way to revive access: reconnecting a harness creates another agent. Revocation alone remains distinct and keeps
+the agent in the Revoked section. As with revocation, subsequent authentication is refused; archiving
 does not cancel a run already in flight or invalidate a capability token already minted for it.

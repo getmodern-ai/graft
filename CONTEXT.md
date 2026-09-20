@@ -22,9 +22,9 @@ has two agents and one toolbox; a person who connects Claude has a third.
 _Avoid_: harness (that is the software), client, bot, session, assistant
 
 **Archive an agent**:
-Retiring an agent from the default console list and revoking its access, while keeping its working
-set and history readable under Show archived. Revocation alone stops access but keeps the agent in
-the default list. Archiving deletes no connection or tool and does not restore access later.
+Retiring an agent to the console's Archived section and revoking its access, while keeping its
+working set and history readable. Revocation alone stops access without archiving the agent.
+Archiving deletes no connection or tool and does not restore access later.
 _Avoid_: delete an agent, remove an agent (when the record remains)
 
 **Harness**:

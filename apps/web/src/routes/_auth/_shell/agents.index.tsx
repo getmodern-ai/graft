@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { AgentsTable } from "@/components/agent/agents-table";
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
-import { AddIcon, SmartToyIcon } from "@/components/icons";
+import { AddIcon } from "@/components/icons";
 import { PageContainer } from "@/components/page/page-container";
 import {
   PageHeader,
@@ -15,17 +15,10 @@ import {
 } from "@/components/page/page-header";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
-import { Field, FieldLabel } from "@/components/ui/field";
-import { agentListQuery, agentsQuery } from "@/lib/agent-queries";
+import { agentListQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
+
+const agentsQuery = agentListQuery(true);
 
 /**
  * The loader *starts* both reads and awaits neither, so the screen paints at once — header, table
@@ -48,8 +41,7 @@ function AgentsRoute() {
   // `useQuery`, not the suspense form: the table draws its own pending and failed rows, and a
   // refetch that fails has to reach it as state rather than as a throw the route boundary would
   // swallow the whole screen for.
-  const [showArchived, setShowArchived] = useState(false);
-  const agents = useQuery(agentListQuery(showArchived));
+  const agents = useQuery(agentsQuery);
   const connections = useQuery(connectionsQuery);
   const [creating, setCreating] = useState(false);
   const rows = agents.data?.agents ?? [];
@@ -69,49 +61,21 @@ function AgentsRoute() {
           </PageHeaderDescription>
         </PageHeaderContent>
         <PageHeaderActions>
-          <Field orientation="horizontal">
-            <Checkbox
-              id="show-archived-agents"
-              checked={showArchived}
-              onCheckedChange={setShowArchived}
-            />
-            <FieldLabel htmlFor="show-archived-agents">Show archived</FieldLabel>
-          </Field>
-          <Button onClick={() => setCreating(true)}>
+          <Button id="new-agent" onClick={() => setCreating(true)}>
             <AddIcon />
             New agent
           </Button>
         </PageHeaderActions>
       </PageHeader>
 
-      {agents.isSuccess && rows.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <SmartToyIcon />
-            </EmptyMedia>
-            <EmptyTitle>No agents to show</EmptyTitle>
-            <EmptyDescription>
-              {showArchived
-                ? "Create one to connect your harness — a name is all it takes."
-                : "Create an agent or turn on Show archived to view past agents."}
-            </EmptyDescription>
-          </EmptyHeader>
-          <Button onClick={() => setCreating(true)}>
-            <AddIcon />
-            New agent
-          </Button>
-        </Empty>
-      ) : (
-        <AgentsTable
-          agents={rows}
-          isPending={agents.isPending}
-          isError={agents.isError}
-          error={agents.error}
-          retrying={agents.isFetching}
-          onRetry={() => void agents.refetch()}
-        />
-      )}
+      <AgentsTable
+        agents={rows}
+        isPending={agents.isPending}
+        isError={agents.isError}
+        error={agents.error}
+        retrying={agents.isFetching}
+        onRetry={() => void agents.refetch()}
+      />
 
       <CreateAgentDialog
         open={creating}

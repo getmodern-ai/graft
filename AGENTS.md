@@ -573,8 +573,10 @@ sentence case, like every label in the console, and its colocated test pins both
 edit dialog or the archive confirmation. `POST /api/agents/:id/archive` stamps `archived_at` and
 revokes static and OAuth access in one transaction; the row and its history remain readable
 (ADR 0007's archive amendment). `GET /api/agents` hides archived rows unless `includeArchived=true`,
-which the console's **Show archived** choice sends. Revocation alone keeps the row in the default
-list. Migration 0011 adds the nullable timestamp; existing agents remain unarchived.
+which the console's agents page always sends. The table groups Active, Revoked and Archived rows,
+omitting empty sections. Revocation alone keeps the row unarchived. Migration 0011 adds the nullable
+timestamp; existing agents remain unarchived. An empty agents table keeps its headers and a muted
+full-width sentence, following Cando's connections table.
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left

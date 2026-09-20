@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { RefObject } from "react";
+import { type RefObject, useRef } from "react";
 import { toast } from "sonner";
 
 import {
@@ -26,13 +26,15 @@ export function ArchiveAgentDialog({
   returnFocus: RefObject<HTMLButtonElement | null>;
 }) {
   const queryClient = useQueryClient();
+  const archived = useRef(false);
   const archive = useMutation({
     mutationFn: () => archiveAgent(agent.id),
     onSuccess: () => {
+      archived.current = true;
       onOpenChange(false);
       void queryClient.invalidateQueries({ queryKey: agentKeys.all });
       toast.success(`${agent.name} is archived`, {
-        description: "Use Show archived to view its working set and history.",
+        description: "Its working set and history are available in the Archived section.",
       });
     },
   });
@@ -46,17 +48,17 @@ export function ArchiveAgentDialog({
     >
       <AlertDialogContent
         finalFocus={() =>
-          returnFocus.current?.isConnected && !returnFocus.current.disabled
+          !archived.current && returnFocus.current?.isConnected && !returnFocus.current.disabled
             ? returnFocus.current
-            : document.getElementById("show-archived-agents")
+            : document.getElementById("new-agent")
         }
       >
         <AlertDialogHeader>
           <AlertDialogTitle>Archive {agent.name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            This agent will be hidden from the default list and its tokens will stop working. Its
-            working set and history stay available under Show archived. To connect the harness
-            again, create a new agent.
+            This agent will move to the Archived section and its tokens will stop working. Its
+            working set and history stay available. To connect the harness again, create a new
+            agent.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
