@@ -1,0 +1,54 @@
+name: DCO
+
+# Every commit in a pull request carries a `Signed-off-by` line: the Developer Certificate of
+# Origin replaced the CLA on 2026-09-21, and ADR 0022 is why. `CONTRIBUTING.md` is what a
+# contributor reads; this file is the check.
+#
+# `pull_request`, not the `pull_request_target` the CLA workflow needed. That trigger existed
+# because the CLA bot had to write a signature file with a write token, and a fork's
+# `pull_request` run holds a read-only one. A sign-off is already in the commit, so this job only
+# reads. It never checks out or executes the pull request's code, and it asks for no write
+# permission. Keep it that way.
+on:
+  pull_request:
+
+jobs:
+  dco:
+    # Not a required status check in the ruleset as this lands; the one required check is
+    # `Typecheck, Lint & Test` (`ci.yml`). Making this one required is a change to the ruleset.
+    name: DCO
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      # `gh` and `jq` are on the runner, so there is no action to trust and nothing to install.
+      # The pull request's own commits rather than a diff against the base: that is the set a
+      # contributor signs, and the API answers it the same way for a fork.
+      - name: Every commit carries a Signed-off-by line
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          commits=$(gh api \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits" \
+            --paginate --slurp)
+          # Two kinds of commit are passed over. A bot's, by the `[bot]` suffix on its author's
+          # login, because a bot holds no copyright and can certify nothing; Dependabot's are the
+          # ones this repository sees. And a merge commit, by its second parent, because a
+          # contributor who merges `main` into their branch wrote none of what it carries.
+          missing=$(jq -r '
+            .[]
+            | .[]
+            | select((.parents | length) < 2)
+            | select(((.author.login // "") | endswith("[bot]")) | not)
+            | select((.commit.message | test("(^|\n)Signed-off-by: [^\n]+<[^\n>]+>")) | not)
+            | "\(.sha) \(.commit.message | split("\n")[0])"
+          ' <<<"$commits")
+          if [ -n "$missing" ]; then
+            echo "::error::these commits carry no Signed-off-by line. CONTRIBUTING.md says how; \`git commit -s\` signs one, \`git rebase --signoff\` fixes a branch."
+            printf '%s\n' "$missing"
+            exit 1
+          fi
+          echo "Every commit is signed off."

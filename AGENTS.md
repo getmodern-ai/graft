@@ -20,6 +20,10 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
 - **`main` is protected.** Branch, push, open a PR. Merging needs one approving review, a green
   `Typecheck, Lint & Test` check, and a clean Greptile review; Greptile reviews every PR and edits
   its comment in place, so check the SHA it says it reviewed.
+- **Every commit is signed off.** `git commit -s` writes the `Signed-off-by` line the `DCO`
+  workflow looks for, and `git rebase --signoff origin/main` adds it to a branch already written.
+  A Developer Certificate of Origin replaced the CLA on 2026-09-21 (ADR 0022); the core is
+  Apache-2.0 and `CONTRIBUTING.md` is what an outside contributor reads.
 - **A comment states the local consequence and points at the ADR for the argument.** Do not
   restate an ADR in a comment; it will rot. A comment that asserts the state of code elsewhere is
   a claim with a date on it, so name the file or the ticket a reader can check in one step.

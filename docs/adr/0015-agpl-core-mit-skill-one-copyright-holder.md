@@ -1,5 +1,5 @@
 ---
-status: accepted, provisional
+status: superseded by ADR 0022
 ---
 
 # AGPL core, MIT skill, one copyright holder
@@ -36,3 +36,15 @@ is watched for in the first months.
 - **Cando is a proprietary service depending on an AGPL core.** Covered by the internal commercial
   grant that single ownership makes ordinary. The contributor agreement is what keeps that grant
   clean.
+
+## Amendment 2026-09-21: superseded by ADR 0022, the core is Apache-2.0 and the CLA is a DCO
+
+**Decided by Aleks on 2026-09-21**, before the repository was made public. The review this record
+asked for has happened, and it went against the record. Section 13 of the AGPL obliges an operator
+who *modifies* the program to publish those modifications; a competitor running the image as it is,
+with their own backings behind ADR 0002's seams, modifies nothing and publishes nothing. So the
+copyleft was protecting the server code, which the second paragraph above already says is not the
+moat, and the moat it does name is private by absence. The CLA went with it: Cando's dependency
+(ADR 0011) needs no commercial grant from a permissive core, and the CLA was the part of this
+arrangement the audience objected to. **ADR 0022 is the decision from here**; the body above stays
+as the record of what was decided on the evidence of the time.

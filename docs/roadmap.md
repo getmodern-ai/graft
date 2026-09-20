@@ -59,7 +59,7 @@ step and run in parallel where their blockers allow.
 | A CLI wrapper that opens the console and catches an OAuth callback | ADR 0006 | Self-hosters asking for it | [GRA-16](https://linear.app/get-modern/issue/GRA-16) |
 | Billing and the subscription, a spec before public launch | ADR 0014 | The alpha ending and a public launch scheduled | [GRA-17](https://linear.app/get-modern/issue/GRA-17) |
 | Pricing revisit | ADR 0014 | The first hundred acquisitions counted | [GRA-12](https://linear.app/get-modern/issue/GRA-12) |
-| Licence review | ADR 0015 | Community reaction in the first months | [GRA-13](https://linear.app/get-modern/issue/GRA-13) |
+| Licence review | ADR 0015, then ADR 0022 | Done on 2026-09-21, before the repository was made public: the core is Apache-2.0, the skill and any harness plugin stay MIT, and a DCO replaces the CLA (ADR 0022). Reopens only on a decision to sell licence exceptions | [GRA-13](https://linear.app/get-modern/issue/GRA-13), [GRA-137](https://linear.app/get-modern/issue/GRA-137) |
 | Cando adopts Graft as a dependency | ADR 0011 | Graft's core API stable | [GRA-14](https://linear.app/get-modern/issue/GRA-14) |
 | Org tier UI and sharing | ADR 0007 | A customer asks | [GRA-15](https://linear.app/get-modern/issue/GRA-15) |
 
