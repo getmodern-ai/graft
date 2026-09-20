@@ -819,18 +819,24 @@ class AcquireLoop {
         `The toolbox store found nothing at ${args.draftPath} for attempt ${attempt.number}, though the check read it; writing the draft through the store and publishing again.`,
         { attempt: attempt.number },
       );
+      let written = false;
       try {
         await store.writeTree(args.toolboxId, args.draftPath, attempt.draft.files);
-        outcome = await publish(args);
-        if (outcome.ok || !isStoreMiss(outcome)) return outcome;
+        written = true;
       } catch (error) {
         // The write is one more way to reach the store, not the job's last: a refused write
-        // leaves the waits below to do their work (Greptile on #114).
+        // leaves the waits below to do their work (Greptile on #114). Only the write is caught:
+        // a publish that throws keeps the caller's handling, where a BAD_REQUEST is the
+        // definition's refusal.
         await this.trace(
           "publish",
           `Writing the draft through the store failed (${errorMessage(error)}); waiting for the store instead.`,
           { attempt: attempt.number },
         );
+      }
+      if (written) {
+        outcome = await publish(args);
+        if (outcome.ok || !isStoreMiss(outcome)) return outcome;
       }
     } else {
       await this.trace(
