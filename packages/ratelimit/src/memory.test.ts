@@ -123,6 +123,21 @@ describe("createMemoryRateLimiter", () => {
     expect((await limiter.check({ bucket: "api", key: "a", now: AT(3) })).allowed).toBe(true);
   });
 
+  it("keeps the key it saw most recently, refusals included, and forgives the one it did not", async () => {
+    const limiter = createMemoryRateLimiter(policy({ api: { limit: 1, windowSeconds: 600 } }), {
+      maxKeys: 2,
+    });
+    const check = (key: string, at: number) => limiter.check({ bucket: "api", key, now: AT(at) });
+    await check("a", 0);
+    await check("b", 1);
+    // A refusal is still a sighting: `a` moves to the back of the order, so `b` is now the oldest
+    // and `b` is what `c` costs. Were the order the one keys were first inserted in, `a` would have
+    // gone here and its spend would have been forgiven with it.
+    expect((await check("a", 2)).allowed).toBe(false);
+    expect((await check("c", 3)).allowed).toBe(true);
+    expect((await check("a", 4)).allowed).toBe(false);
+  });
+
   it("names the buckets it limits, for the boot line", async () => {
     const limiter = createMemoryRateLimiter(
       policy({ sign_in: { limit: 20, windowSeconds: 60 }, mcp: { limit: 600, windowSeconds: 60 } }),

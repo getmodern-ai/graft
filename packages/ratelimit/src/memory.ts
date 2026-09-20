@@ -83,7 +83,7 @@ export function createMemoryRateLimiter(
       if (tokens < 1) {
         // Nothing is spent on a refusal: a caller that keeps knocking waits the same time it would
         // have waited had it stopped, rather than pushing its own recovery further out.
-        keys.set(key, { tokens, updatedAtMs: nowMs });
+        touch(keys, key, { tokens, updatedAtMs: nowMs });
         return {
           allowed: false,
           retryAfterSeconds: Math.max(1, Math.ceil((1 - tokens) / perMs / 1000)),
@@ -91,17 +91,29 @@ export function createMemoryRateLimiter(
       }
 
       if (!held) evictIfFull(keys, maxKeys, nowMs, rule);
-      keys.set(key, { tokens: tokens - 1, updatedAtMs: nowMs });
+      touch(keys, key, { tokens: tokens - 1, updatedAtMs: nowMs });
       return { allowed: true };
     },
   };
 }
 
 /**
+ * Write a key's state, deleted first so it lands at the back. A `Map` iterates in insertion order
+ * and `set` on a key it already holds does not move it, so this one delete is what makes the
+ * iteration order least-recently-seen first, which is what lets the eviction below cost what it
+ * evicts rather than a walk of the whole map on every new key under a flood.
+ */
+function touch(keys: Map<string, Bucket>, key: string, state: Bucket): void {
+  keys.delete(key);
+  keys.set(key, state);
+}
+
+/**
  * Make room for one more key. First the expired: a bucket that has had a whole window to refill is
  * full, and a full bucket is indistinguishable from one that was never there, so dropping it loses
- * nothing at all. Only if that was not enough does the least recently seen key go, which is the
- * forgiving eviction the cap's comment describes.
+ * nothing at all. They are a prefix of the least-recently-seen order `touch` keeps, so the walk
+ * stops at the first key that is not expired. Only if that was not enough does the front of the
+ * same order go, which is the forgiving eviction the cap's comment describes.
  */
 function evictIfFull(
   keys: Map<string, Bucket>,
@@ -112,17 +124,11 @@ function evictIfFull(
   if (keys.size < maxKeys) return;
   const windowMs = rule.windowSeconds * 1000;
   for (const [key, held] of keys) {
-    if (nowMs - held.updatedAtMs >= windowMs) keys.delete(key);
+    if (nowMs - held.updatedAtMs < windowMs) break;
+    keys.delete(key);
   }
   while (keys.size >= maxKeys) {
-    let oldest: string | undefined;
-    let oldestAt = Number.POSITIVE_INFINITY;
-    for (const [key, held] of keys) {
-      if (held.updatedAtMs < oldestAt) {
-        oldest = key;
-        oldestAt = held.updatedAtMs;
-      }
-    }
+    const oldest = keys.keys().next().value;
     if (oldest === undefined) return;
     keys.delete(oldest);
   }
