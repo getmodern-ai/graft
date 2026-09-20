@@ -110,6 +110,7 @@ describe("systemPrompt", () => {
     expect(prose).toContain(
       "`proofReads` the GET paths that prove the credential and the shape: one for every distinct path the module reads, not the first alone",
     );
+    expect(prose).toContain("not the first alone, up to 5 —");
     expect(prose).toContain("a path built from another's answer (a record's id from a list)");
   });
 });

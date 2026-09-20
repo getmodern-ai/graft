@@ -744,6 +744,52 @@ describe("a job that fails and tries again", () => {
     }
   }, 30_000);
 
+  /** Greptile on #114: a store write that fails is traced and the waits still run; the job does not end on it. */
+  it("goes on to the waits when writing the draft through the store fails", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000, storeMissRetryDelaysMs: [5, 5] };
+    const publishBefore = deps.publishTool;
+    const toolboxBefore = deps.toolbox;
+    if (!toolboxBefore) throw new Error("no toolbox store in this suite");
+    deps.toolbox = {
+      readTree: (...a) => toolboxBefore.readTree(...a),
+      writeTree: async () => {
+        throw new Error("the drive is read-only from here");
+      },
+    };
+    let calls = 0;
+    deps.publishTool = async (args) => {
+      calls += 1;
+      if (calls === 1) return storeMiss(args.draftPath);
+      if (!publishBefore) throw new Error("no publish in this suite");
+      return publishBefore(args);
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+      // The miss, then the first wait's ask — the failed write asked nothing.
+      expect(calls).toBe(2);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
+      expect(
+        traces.some(
+          (row) =>
+            row.kind === "publish" &&
+            row.text.includes("Writing the draft through the store failed (the drive is read-only"),
+        ),
+      ).toBe(true);
+    } finally {
+      deps.publishTool = publishBefore;
+      deps.toolbox = toolboxBefore;
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
   /** GRA-141: the floor. A store that never answers reaches the model as `publish_refused`, as before. */
   it("shows the model the draft-missing refusal only once the store write and every wait have missed", async () => {
     deps.model = createScriptedModel([

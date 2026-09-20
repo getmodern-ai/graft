@@ -31,6 +31,7 @@ import {
   type DocPage,
   type DryRunSummary,
   isValidUsage,
+  MAX_PROOF_READS,
   type ModelAnswer,
   type ModelConversation,
   type ModelDiagnostic,
@@ -126,9 +127,10 @@ export function turnBudgetFor(maxAttempts: number): number {
   return maxAttempts * 6 + 6;
 }
 
-/** How many pages one `read_docs` answer may name, and how many proof reads one draft may ask for. */
+/** How many pages one `read_docs` answer may name. */
 export const MAX_DOCS_PER_TURN = 5;
-export const MAX_PROOF_READS = 5;
+/** The proof-read cap is `@graft/model`'s, so the protocol and the answer's validator name the number the job runs. */
+export { MAX_PROOF_READS };
 
 /** How much of a proof read's body the model is shown; enough to see a shape, not a catalogue. */
 export const PROOF_BODY_CHARS = 4_000;
@@ -817,9 +819,19 @@ class AcquireLoop {
         `The toolbox store found nothing at ${args.draftPath} for attempt ${attempt.number}, though the check read it; writing the draft through the store and publishing again.`,
         { attempt: attempt.number },
       );
-      await store.writeTree(args.toolboxId, args.draftPath, attempt.draft.files);
-      outcome = await publish(args);
-      if (outcome.ok || !isStoreMiss(outcome)) return outcome;
+      try {
+        await store.writeTree(args.toolboxId, args.draftPath, attempt.draft.files);
+        outcome = await publish(args);
+        if (outcome.ok || !isStoreMiss(outcome)) return outcome;
+      } catch (error) {
+        // The write is one more way to reach the store, not the job's last: a refused write
+        // leaves the waits below to do their work (Greptile on #114).
+        await this.trace(
+          "publish",
+          `Writing the draft through the store failed (${errorMessage(error)}); waiting for the store instead.`,
+          { attempt: attempt.number },
+        );
+      }
     } else {
       await this.trace(
         "publish",

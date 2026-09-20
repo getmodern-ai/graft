@@ -1,3 +1,4 @@
+import { MAX_PROOF_READS } from "./answer";
 import type {
   DocPage,
   DryRunSummary,
@@ -55,9 +56,9 @@ The draft: \`name\` kebab-case; \`description\` for the person, plain language, 
 \`async (input: Input, ctx: Context) => …\`, erasable syntax only — plus a \`package.json\` only when
 you declare a package; \`testInputJson\` an input the dry run uses, as JSON text; \`proofReads\` the GET paths that
 prove the credential and the shape: one for every distinct path the module reads, not the first
-alone — a path built from another's answer (a record's id from a list) is proven with an id you
-have seen, or named in \`note\` as the read that could not be proven — or empty when the module
-reads nothing.
+alone, up to ${MAX_PROOF_READS} — a path built from another's answer (a record's id from a list) is
+proven with an id you have seen, or named in \`note\` as the read that could not be proven — or
+empty when the module reads nothing.
 
 Rules that hold whatever the docs say: the module reaches the vendor through \`ctx.fetch\` with a
 vendor-relative path, or through an SDK bound to \`ctx.proxyKey\` and \`ctx.proxyBase(...)\`, and
