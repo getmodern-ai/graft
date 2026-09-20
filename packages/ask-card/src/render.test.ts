@@ -4,8 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildChoiceLabel,
   type CardHandlers,
+  factsOf,
   MODEL_WORDS_NOTE,
   renderAsk,
+  schemeLabel,
   titleOf,
   WAITING_SENTENCE,
 } from "./render";
@@ -495,6 +497,22 @@ describe("an ask with a secret in it", () => {
  * with the build choice, opens it, and polls until the link's return has answered the ask.
  */
 describe("a connection a link provider covers", () => {
+  /** GRA-128: the proposal's scheme is the keyring path the model read; this ask registers nothing. */
+  it("names how the provider connects in the Scheme row, never the keyring label the proposal carries", () => {
+    const scheme = factsOf(LINK).find((fact) => fact.label === "Scheme");
+    expect(scheme?.value).toBe(
+      "Sign-in at the vendor through broker; no client to register, nothing typed in Graft",
+    );
+    expect(scheme?.value).not.toContain("a client you register");
+    // The same proposal on the keyring keeps the keyring label.
+    const keyring: AskCard = { ...LINK, providerConnect: "form", provider: undefined };
+    expect(factsOf(keyring).find((fact) => fact.label === "Scheme")?.value).toBe(
+      "OAuth consent (a client you register)",
+    );
+    // A scope ask about a relay provider's row names the relay scheme in the person's words.
+    expect(schemeLabel("relay")).toBe("Relayed through the provider (no credential in Graft)");
+  });
+
   it("asks to connect through the provider, names it, offers a checked build choice, Decline and Connect through broker", () => {
     const root = renderAsk(LINK, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "connection", answerable: "false" });

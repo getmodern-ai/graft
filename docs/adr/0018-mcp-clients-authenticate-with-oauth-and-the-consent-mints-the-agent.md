@@ -125,3 +125,30 @@ the string is stored and echoed).
 - **The docs page for the products is written ahead of verification.** Connecting the real
   Claude.ai and ChatGPT accounts is Aleks's step once the server is deployed, and the page says
   where a step could not be checked.
+
+## Amendment 2026-09-20: a session the process no longer holds is re-opened for a chat product's client
+
+The MCP specification's answer to a request carrying a session id the server does not know is 404,
+and the client starts over with `initialize`. Hermes, OpenClaw and ChatGPT's client do. Claude.ai's
+card frame does not: it keeps the session id it had before a deploy ended the process, is refused,
+and draws "Unable to reach Graft" where the card goes — on every open chat, after every deploy, and
+the hosted form deploys several times a day (GRA-124 recorded the shape from the request log;
+GRA-129 is the change). A session id carries no authority here — the bearer token is checked on
+every request before any session is looked up, and a session is bound to the agent whose token
+opened it — so re-opening one under the id a client presents gives nothing away.
+
+**The rule.** For a request carrying an access token (`grfta_`, the token a product holds after a
+consent under this ADR): an unknown `Mcp-Session-Id` opens a fresh session *under that id*; a
+request with no session id that is not an `initialize` — the SDK's 400 — opens one under a new id,
+carried on the response. Either is primed by a synthetic `initialize` that declares no client
+capabilities, so the card gate's client half falls back to the registered redirect URI (ADR 0006 as
+amended 2026-09-18) and no elicitation is offered, which no chat product renders anyway. A
+static-token agent keeps the specification's 404 and 400: a harness re-initialises, and the
+capabilities its own `initialize` declares are the ones Graft must act on. `packages/mcp/src/http.ts`
+is the implementation; `apps/server/src/mcp.test.ts` pins both halves.
+
+**Accepted.** A re-opened session knows nothing the client said at its real `initialize` — its name,
+its version, its protocol version beyond the header it sends — and the trace names it
+`graft-reopened-session`. A client that presents an id it invented is given a session under it; that
+is the same as initialising one, under the same token.
+

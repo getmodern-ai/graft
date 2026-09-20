@@ -291,7 +291,13 @@ thirty seconds it is a replay that revokes the grant; revoking the agent revokes
 same transaction. No variable is added: the issuer is `GRAFT_AUTH_URL`'s origin and the
 consent page is under `GRAFT_CONSOLE_URL`. The rules and the service are `packages/core/src/mcp-oauth/`;
 the two suites are `packages/core/src/mcp-oauth/mcp-oauth.service.test.ts` over fakes and
-`apps/server/src/mcp-oauth.integration.test.ts` over Postgres with the SDK's own client. Under `open`,
+`apps/server/src/mcp-oauth.integration.test.ts` over Postgres with the SDK's own client. **A session
+this process no longer holds is re-opened for a chat product's client** (GRA-129; ADR 0018 as
+amended 2026-09-20): a `grfta_` request with an unknown session id, or with none and no
+`initialize`, gets a session under that id (or a new one, on the response), primed by a synthetic
+`initialize` with no client capabilities — Claude's card frame keeps its pre-deploy id and drew
+"Unable to reach Graft" on the spec's 404; a static-token agent still gets the 404 and 400
+(`packages/mcp/src/http.ts`, pinned in `apps/server/src/mcp.test.ts`). Under `open`,
 authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names:
 `docker` by default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and,
 unset, leaves the server up with every run refusing for want of a sandbox; or `fake`, a temporary
@@ -700,7 +706,9 @@ by `GRAFT_ACQUIRE_MAX_ATTEMPTS` (default 4 — every draft is an attempt, a chec
 `GRAFT_ACQUIRE_TOKEN_CEILING` (default 400000 tokens across every model turn); a job that hits either
 ends with a result naming it. Every attempt is an `acquire_attempt` row, every step an `acquire_trace`
 line, redacted on the way in (`@graft/core`'s `redaction.ts`; the proxy redacts an echoed credential
-by value before that, ADR 0010 amended).
+by value before that, ADR 0010 amended). A publish refused only as `draft-missing` — nothing at a draft the check just
+read — is the toolbox store's miss, not the module's (GRA-123: the hosted store's view of a path
+another sandbox wrote can lag), so `job.ts` asks the store once more before the model is shown it.
 
 Which model answers is `GRAFT_MODEL_BACKEND` (`apps/server/src/model.ts` chooses at boot). Unset, the
 server boots with no model and `acquire` refuses `acquire_unconfigured`. `scripted` plays a JSON file

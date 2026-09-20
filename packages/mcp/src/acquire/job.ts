@@ -813,7 +813,7 @@ class AcquireLoop {
     await this.step(`publishing ${wire}`);
     let outcome: PublishOutcome;
     try {
-      outcome = await publish({
+      const args = {
         personId: this.scope.personId,
         agentId: this.scope.agentId,
         jobId: this.job.id,
@@ -827,7 +827,19 @@ class AcquireLoop {
         // The version is written and nothing else moves: the pointer names only a version that
         // passed its dry run (ADR 0012, L0 as amended 2026-09-17), so it moves below, on the pass.
         activate: false,
-      });
+      };
+      outcome = await publish(args);
+      if (!outcome.ok && isStoreMiss(outcome)) {
+        // The store did not find the draft the check just read (GRA-123): the toolbox's view of
+        // a path written by another sandbox can lag, and the refusal is the store's, not the
+        // module's. Asked once more before the model is shown a diagnostic it cannot act on.
+        await this.trace(
+          "publish",
+          `The toolbox store found nothing at ${attempt.row.draftPath} for attempt ${attempt.number}, though the check read it; asking the store again once.`,
+          { attempt: attempt.number },
+        );
+        outcome = await publish(args);
+      }
     } catch (error) {
       // A bad name or description is the publish's refusal before it reads anything; the model
       // fixes the definition as it would a diagnostic.
@@ -1244,6 +1256,14 @@ function describeRunFailure(failure: Record<string, unknown>): string {
     return `${failure.reason}: ${failure.message}`;
   }
   return typeof failure.error === "string" ? failure.error : JSON.stringify(failure);
+}
+
+/** A publish refused only because nothing was at the draft path — the store's miss, not a fault in the module (GRA-123). */
+function isStoreMiss(outcome: Extract<PublishOutcome, { ok: false }>): boolean {
+  return (
+    outcome.refusals.length > 0 &&
+    outcome.refusals.every((refusal) => refusal.rule === "draft-missing")
+  );
 }
 
 function toModelDiagnostic(diagnostic: {

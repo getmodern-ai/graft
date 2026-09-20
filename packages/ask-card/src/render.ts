@@ -71,10 +71,24 @@ const SCHEME_LABELS: Record<string, string> = {
   unleashed_hmac: "Unleashed HMAC (API id and key)",
   snowflake_keypair_jwt: "Snowflake key-pair JWT",
   none: "No credential (public API)",
+  // The two relay schemes a row of a relay provider carries (ADR 0019): a scope ask about such a
+  // row names them, and neither holds a credential in Graft.
+  relay: "Relayed through the provider (no credential in Graft)",
+  gateway: "Relayed through your API gateway (no credential in Graft)",
 };
 
 export function schemeLabel(scheme: string | null): string {
   return scheme === null ? "" : (SCHEME_LABELS[scheme] ?? scheme);
+}
+
+/**
+ * The Scheme row of a link provider's ask (GRA-128). The proposal's `scheme` is the keyring path
+ * the model read in the vendor's documentation — `oauth_authorization_code`, whose label says "a
+ * client you register" — and this ask registers nothing: the person signs in at the vendor on the
+ * provider's page and the provider holds the token. The row says that, and never the keyring label.
+ */
+export function linkSchemeLabel(card: AskCard): string {
+  return `Sign-in at the vendor through ${card.provider ?? "the provider"}; no client to register, nothing typed in Graft`;
 }
 
 /** The person's own words for the pending-action kind — the eyebrow above the title. */
@@ -181,7 +195,10 @@ export function factsOf(card: AskCard): Array<{ label: string; value: string; mo
   if (card.primaryHost) facts.push({ label: "Primary host", value: card.primaryHost, mono: true });
   facts.push({ label: "Hosts", value: card.hosts.join(", "), mono: true });
   if (card.kind === "connection" || card.kind === "credential" || card.kind === "scope") {
-    facts.push({ label: "Scheme", value: schemeLabel(card.scheme) });
+    facts.push({
+      label: "Scheme",
+      value: isLinkAsk(card) ? linkSchemeLabel(card) : schemeLabel(card.scheme),
+    });
   }
   if (card.provider && card.provider !== "keyring") {
     facts.push({ label: "Provider", value: card.provider });
