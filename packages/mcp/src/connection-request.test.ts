@@ -7,7 +7,6 @@ import {
   type ConnectionProvider,
   connectThroughProvider,
   createGatewayProvider,
-  createPipedreamProvider,
   grantBuildApproval,
   keyringProvider,
   registerConnectionWithCredential,
@@ -15,6 +14,7 @@ import {
   setConnectionCredential,
   toProxyConnection,
 } from "@graft/core";
+import { createFakeLinkProvider } from "@graft/core/connection/testing/fake-link-provider";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import { createScriptedModel } from "@graft/model";
 import { loadSkills, runnerFiles } from "@graft/runner";
@@ -1003,7 +1003,7 @@ describe("request_connection with the OAuth shape", () => {
 describe("request_connection routes a proposal to the provider that covers it", () => {
   const fakeRelay = {
     kind: "relay" as const,
-    scheme: "pipedream_connect_proxy",
+    scheme: "relay",
     rules: { prefix: null, passThrough: [], refuse: [], refusePrefixes: [] },
     relay: () => undefined,
     headerNames: () => [],
@@ -1013,8 +1013,8 @@ describe("request_connection routes a proposal to the provider that covers it", 
     name: "broker",
     connect: {
       kind: "link",
-      scheme: "pipedream_connect_proxy",
-      target: (vendor) => (vendor === "acme" ? "acme_app" : null),
+      scheme: "relay",
+      target: async (vendor) => (vendor === "acme" ? "acme_app" : null),
       start: async (input) => {
         started.push(input.returnTo.success);
         return {
@@ -1024,7 +1024,7 @@ describe("request_connection routes a proposal to the provider that covers it", 
       },
       complete: async () => ({ ok: true, ref: "acct_1", label: "ops@acme.example" }),
     },
-    covers: (vendor) => vendor === "acme",
+    covers: async (vendor) => vendor === "acme",
     resolve: (row) => ({
       mode: "relay",
       relay: { plugin: fakeRelay, obtain: async () => ({ accountId: row.providerRef ?? "" }) },
@@ -1113,7 +1113,7 @@ describe("request_connection routes a proposal to the provider that covers it", 
       expect(connection).toMatchObject({
         provider: "broker",
         vendor: "acme",
-        scheme: "pipedream_connect_proxy",
+        scheme: "relay",
         credentialSetAt: null,
         revokedAt: null,
       });
@@ -1169,13 +1169,12 @@ describe("request_connection routes a proposal to the provider that covers it", 
   it("refuses a proposal naming a relay scheme — a provider's, never the agent's to propose", async () => {
     const a = await connect(TOKEN_B);
     try {
-      const said = await a.call("request_connection", {
-        ...PROPOSAL,
-        scheme: "pipedream_connect_proxy",
-      });
-      expect(said.isError).toBe(true);
-      expect(body(said)).toMatchObject({ reason: "input_invalid", field: "scheme" });
-      expect(describeSchemes()).not.toContain("pipedream_connect_proxy");
+      for (const scheme of ["relay", "gateway"]) {
+        const said = await a.call("request_connection", { ...PROPOSAL, scheme });
+        expect(said.isError).toBe(true);
+        expect(body(said)).toMatchObject({ reason: "input_invalid", field: "scheme" });
+        expect(describeSchemes()).not.toContain(scheme);
+      }
     } finally {
       await a.close();
     }
@@ -2093,12 +2092,13 @@ describe("request_connection asks to use a connection the person holds but this 
 
 /**
  * Sign-in endpoints are not hosts (ADR 0019, consequence of 2026-09-18; GRA-89). During GRA-35
- * Hermes listed Google's sign-in hosts under `hosts` beside the API host, the Pipedream provider's
- * `covers` declined the proposal, and the person got the client-registration form instead of the
- * one-click link. The real Pipedream provider is on the list here, over a client the suite never
- * reaches: the console's button mints the link, and the return is played by the same core call
- * the server's route makes (`connectThroughProvider`), which checks the row's hosts against the
- * provider's coverage, so a set-aside host that reached the payload would fail it.
+ * Hermes listed Google's sign-in hosts under `hosts` beside the API host, the hosted form's link
+ * provider's `covers` declined the proposal, and the person got the client-registration form
+ * instead of the one-click link. A link provider covering Gmail at Google's two API hosts and no
+ * other — the fake's coverage rule is the broker's, every proposed host in the vendor's own set —
+ * is on the list here: the console's button mints the link, and the return is played by the same
+ * core call the server's route makes (`connectThroughProvider`), which checks the row's hosts
+ * against the provider's coverage, so a set-aside host that reached the payload would fail it.
  */
 describe("an agent on all connections reaches the person's rows without an ask (GRA-105)", () => {
   const AGENT_C = "agent_c";
@@ -2264,17 +2264,10 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
   };
   const SIGN_IN = ["oauth2.googleapis.com", "accounts.google.com"];
 
-  const unreached = () => Promise.reject(new Error("Pipedream is not reached in this suite"));
-  const pipedream = createPipedreamProvider({
-    client: {
-      createConnectToken: unreached,
-      listAccounts: unreached,
-      relayFields: unreached,
-      deleteAccount: unreached,
-      apiOrigin: "https://api.pipedream.test",
-      projectId: "proj_test",
-      environment: "development",
-    },
+  const GMAIL_HOSTS = new Set(["gmail.googleapis.com", "www.googleapis.com"]);
+  const broker = createFakeLinkProvider({
+    name: "broker",
+    covers: (vendor, hosts) => vendor === "gmail" && hosts.every((host) => GMAIL_HOSTS.has(host)),
   });
 
   /**
@@ -2289,7 +2282,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
         store.connections.delete(id);
       }
     }
-    deps.connection = { ...deps.connection, providers: [pipedream, keyringProvider] };
+    deps.connection = { ...deps.connection, providers: [broker, keyringProvider] };
   });
 
   afterEach(() => {
@@ -2312,22 +2305,22 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
   const gmailAsks = () =>
     actionsOf(AGENT_B, CONNECTION_ASK_KIND).filter((row) => row.payload.vendor === "gmail");
 
-  it("the proposal Hermes made takes the Pipedream link: the sign-in hosts are set aside and named, and the row reaches gmail.googleapis.com alone", async () => {
+  it("the proposal Hermes made takes the link provider's link: the sign-in hosts are set aside and named, and the row reaches gmail.googleapis.com alone", async () => {
     const b = await connect(TOKEN_B);
     try {
       const first = await b.call("request_connection", HERMES_GMAIL);
       const { answer, action } = awaiting(first, "awaiting_connection");
-      expect(answer.provider).toBe("pipedream");
+      expect(answer.provider).toBe("broker");
       expect(answer.redirectUri).toBeUndefined();
       expect(answer.hostsSetAside).toEqual(SIGN_IN);
       const message = String(answer.message);
-      expect(message).toContain("through pipedream");
+      expect(message).toContain("through broker");
       expect(message).toContain(
         "oauth2.googleapis.com, accounts.google.com are sign-in endpoints and were set aside, not recorded on the connection",
       );
       expect(message).toContain("here gmail.googleapis.com.");
       expect(action.payload).toMatchObject({
-        provider: "pipedream",
+        provider: "broker",
         providerConnect: "link",
         providerTarget: "gmail",
         scheme: "oauth_authorization_code",
@@ -2342,7 +2335,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
         ctx(),
         principal,
         {
-          provider: pipedream,
+          provider: broker,
           vendor: payload.vendor,
           displayName: payload.displayName,
           primaryHost: payload.primaryHost,
@@ -2360,8 +2353,8 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
         deps.pendingAction,
       );
       expect(connection).toMatchObject({
-        provider: "pipedream",
-        scheme: "pipedream_connect_proxy",
+        provider: "broker",
+        scheme: "relay",
         hosts: ["gmail.googleapis.com"],
       });
       expect(connection.hosts).not.toContain("accounts.google.com");
@@ -2373,7 +2366,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
       expect(body(done)).toMatchObject({
         status: "connected",
         connectionId: connection.id,
-        provider: "pipedream",
+        provider: "broker",
         hostsSetAside: SIGN_IN,
         message: expect.stringContaining("were set aside"),
       });
@@ -2382,7 +2375,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
     }
   });
 
-  it("a host outside the vendor's own is still the keyring's: Pipedream declines example.com and the form asks, the sign-in host set aside all the same", async () => {
+  it("a host outside the vendor's own is still the keyring's: the link provider declines example.com and the form asks, the sign-in host set aside all the same", async () => {
     const b = await connect(TOKEN_B);
     try {
       const said = await b.call("request_connection", {

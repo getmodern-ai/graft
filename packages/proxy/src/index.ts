@@ -19,9 +19,10 @@
  * vocabulary, and `/public-host`, `/credential-fields`, `/scheme-parameters` and `/cause-chain` for
  * the tables a host — or the console's bundle — takes without the Hono app.
  *
- * The relay (ADR 0019; `relay.ts`) is exported for the two hands that build one: a provider in
- * `@graft/core` picks a plugin from `RELAYS` and hands it to the proxy on the connection, and a new
- * relay plugin applies `relayHeaders` under its rules rather than writing the loop again.
+ * The relay (ADR 0019; `relay.ts`) is exported for the two hands that build one: a provider hands
+ * the proxy a plugin on the connection's resolution — the gateway's from here, a hosted provider's
+ * from beside itself (GRA-103) — and a new relay plugin applies `relayHeaders` under its rules
+ * rather than writing the loop again.
  */
 export { createProxyApp, DEFAULT_PROXY_OPTIONS, HOST_SEGMENT_MARKER, proxyPathFor } from "./app";
 export {
@@ -59,19 +60,7 @@ export {
   tokenExpiresAt,
 } from "./oauth";
 export {
-  decodePipedreamProxySegment,
-  PIPEDREAM_API_ORIGIN,
-  PIPEDREAM_CONNECT_PROXY_SCHEME,
-  PIPEDREAM_RELAY_FIELDS,
-  PIPEDREAM_RELAY_HEADER_PREFIX,
-  PIPEDREAM_RELAY_ORIGIN_FIELD,
-  PIPEDREAM_RELAY_RULES,
-  pipedreamConnectProxyRelay,
-  pipedreamProxyUrl,
-} from "./pipedream-relay";
-export {
   PASSTHROUGH_RELAY_RULES,
-  RELAYS,
   relayHeaders,
   relayPassesThrough,
   relayRefuses,
@@ -107,5 +96,5 @@ export type {
   UpstreamFetch,
   UpstreamRequest,
 } from "./types";
-export { AUTH_SCHEMES, isAuthScheme, isRelayScheme, RELAY_SCHEMES } from "./types";
+export { AUTH_SCHEMES, isAuthScheme, isRelayScheme, RELAY_SCHEME, RELAY_SCHEMES } from "./types";
 export { createUpstreamFetch, type UpstreamFetchOptions } from "./upstream";

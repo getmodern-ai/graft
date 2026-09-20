@@ -13,16 +13,22 @@ import {
  * hard-wire — how the person connects the vendor, and what happens to a vendor request at call
  * time. The keyring provider below is today's behaviour, whole: a secret entered in the console,
  * held in the vault, injected by the proxy under the scheme the connection names. A relay provider
- * — a company's API gateway (GRA-58), Pipedream's Connect proxy (GRA-59) — connects the vendor its
- * own way and hands the proxy a relay instead of a credential, and nothing above the credential
- * rung changes for it: not the tool, the sandbox, the capability token, the dry run or the host
- * rules.
+ * — a company's API gateway (GRA-58), a broker's Connect proxy in the hosted form — connects the
+ * vendor its own way and hands the proxy a relay instead of a credential, and nothing above the
+ * credential rung changes for it: not the tool, the sandbox, the capability token, the dry run or
+ * the host rules.
  *
  * Providers are the fourth seam beside the sandbox, the keyring and the toolbox store (ADR 0002),
  * selected by the same backings mechanism (`apps/server/src/backings.ts`): the open form enables
- * the keyring alone, and the hosted form may enable more, in an order, with the keyring always
- * present and last. A provider's *code* is open — every plugin lives in this repository — while its
- * *configuration* may be hosted, which is what "hidden by absence" means for a provider.
+ * the keyring and, when configured, the gateway; the hosted form's private package answers the
+ * rest, in an order, with the keyring always present and last. A hosted provider's code lives
+ * beside its configuration in that package (ADR 0002 as amended 2026-09-19; GRA-103) — this
+ * repository carries the seam, the keyring and the gateway, and no vendor's.
+ *
+ * **Coverage is a question the provider answers, and it may have to ask** (GRA-126): a broker's
+ * catalogue says which vendors it connects and at which hosts, so `covers` and a link's `target`
+ * are async — a provider that answers from configuration resolves at once, one that answers from
+ * a catalogue reads it (and caches). `providerFor` awaits each provider in order.
  *
  * **Browser-safe on purpose**, like `connection.rules.ts`: the console reads a provider's `connect`
  * shape to decide what a card shows, so this file imports the proxy's import-free `types.ts` and
@@ -48,7 +54,7 @@ export type ProviderConnect =
   | { kind: "form"; schemes: readonly [AuthScheme, ...AuthScheme[]] }
   /**
    * The person opens a link the provider mints and consents there; nothing is typed in the console
-   * (GRA-59). The three functions are the link's flow as the server runs it (`apps/server`'s
+   * (GRA-59; the hosted form's broker). The three functions are the link's flow as the server runs it (`apps/server`'s
    * `provider-link.ts`): `target` names the vendor on the provider's side for the card, `start`
    * mints the link the console opens, `complete` confirms what the person connected once the
    * provider sends the browser back. `scheme` is the relay scheme such a connection's row records.
@@ -69,14 +75,15 @@ export type ProviderConnect =
  * runs; the console reads the `kind` and the ask's payload alone (`describeProviders`).
  */
 export type ProviderLink = {
-  /** The relay scheme this provider's rows record — a `RELAY_SCHEMES` entry the proxy implements. */
+  /** The relay scheme this provider's rows record — a `RELAY_SCHEMES` entry; the generic `relay` for a hosted provider. */
   readonly scheme: RelayScheme;
   /**
-   * The provider's own name for the vendor — Pipedream's app slug — or null when the provider does
+   * The provider's own name for the vendor — a broker's app slug — or null when the provider does
    * not cover the vendor at these hosts. What the ask's card shows beside the vendor, and what the
-   * link preselects, so `request_connection` records it on the payload at proposal time.
+   * link preselects, so `request_connection` records it on the payload at proposal time. Async for
+   * the reason `covers` is: the answer may come from the provider's catalogue.
    */
-  target(vendor: string, hosts: readonly string[]): string | null;
+  target(vendor: string, hosts: readonly string[]): Promise<string | null>;
   /**
    * Mint the link the person opens. `returnTo` is where the provider sends the browser afterwards
    * — Graft's return route with its signed state already in the query, one URI for a success and
@@ -170,9 +177,10 @@ export type ConnectionProvider = {
   /**
    * Whether this provider can connect the vendor at these hosts. A proposal is routed to the first
    * provider in the deployment's order that covers it, so a provider that covers everything — the
-   * keyring — goes last (`providerFor`).
+   * keyring — goes last (`providerFor`). Async because the answer may be the provider's catalogue's
+   * (GRA-126); the keyring and the gateway answer from what they hold.
    */
-  covers(vendor: string, hosts: readonly string[]): boolean;
+  covers(vendor: string, hosts: readonly string[]): Promise<boolean>;
   /**
    * What the proxy needs at call time for one of this provider's connections. Synchronous and
    * cheap: it runs inside the proxy's connection read, before the token is compared against the
@@ -196,7 +204,7 @@ export type ConnectionProvider = {
 export const keyringProvider: ConnectionProvider = {
   name: KEYRING_PROVIDER,
   connect: { kind: "form", schemes: AUTH_SCHEMES },
-  covers: () => true,
+  covers: async () => true,
   resolve: (row) => ({
     mode: "inject",
     // A row carrying a relay scheme's name is not one the keyring can sign for; the proxy reads a
@@ -221,19 +229,19 @@ export function providerNamed(
 
 /**
  * The provider a proposal is routed to: the first in the deployment's order that covers the vendor
- * at these hosts. Never null in a well-formed deployment, because the keyring covers everything and
- * is last; the throw is for a list assembled some other way.
+ * at these hosts, each asked in turn and awaited — a later provider is never asked once an earlier
+ * one has said yes. Never null in a well-formed deployment, because the keyring covers everything
+ * and is last; the throw is for a list assembled some other way.
  */
-export function providerFor(
+export async function providerFor(
   providers: readonly ConnectionProvider[],
   vendor: string,
   hosts: readonly string[],
-): ConnectionProvider {
-  const found = providers.find((provider) => provider.covers(vendor, hosts));
-  if (!found) {
-    throw new Error(`No connection provider covers ${vendor}: the keyring should always be last`);
+): Promise<ConnectionProvider> {
+  for (const provider of providers) {
+    if (await provider.covers(vendor, hosts)) return provider;
   }
-  return found;
+  throw new Error(`No connection provider covers ${vendor}: the keyring should always be last`);
 }
 
 /**

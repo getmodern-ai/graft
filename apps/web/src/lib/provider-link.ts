@@ -10,7 +10,7 @@ import { api } from "./api";
 
 /**
  * A provider's **link** as the console runs it (ADR 0019; GRA-59) — the one-click connect of a
- * vendor a provider such as Pipedream covers. The shape is the OAuth consent's (`oauth-consent.ts`,
+ * vendor a link provider covers. The shape is the OAuth consent's (`oauth-consent.ts`,
  * GRA-30/48), with the thing waited on changed: a link answers a **pending action**, and the
  * connection exists only once the server's return route has confirmed the account, so the wait is
  * on the ask rather than on a connection. Three signals, any one enough, and the poll is the one

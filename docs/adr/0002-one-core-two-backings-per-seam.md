@@ -80,8 +80,9 @@ empty under `open`, and the boot line names each. The variables that configure t
 `@graft/env`'s.
 
 **Consequences.** A self-host phones nowhere by construction, not by leaving a variable unset. The
-one open exception that remains is the Pipedream provider, recorded as an oversight and scheduled to
-move behind `Backings.providers` under [GRA-103](https://linear.app/get-modern/issue/GRA-103); the
+one open exception that remained was the Pipedream provider, recorded as an oversight; it moved
+behind `Backings.providers` under [GRA-103](https://linear.app/get-modern/issue/GRA-103) on
+2026-09-20 (ADR 0019's bullet of that date), and there is no exception left. The
 gateway provider (GRA-58) stays, because a company's own API gateway is not a vendor of Graft's. The
 mail seam's SMTP backing (ADR 0021 as amended for GRA-92) stays too: a relay is a protocol, not a
 vendor. The private package grows a dependency for each vendor it backs, which is where those

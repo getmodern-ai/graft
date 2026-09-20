@@ -20,7 +20,7 @@ const MESSAGE = {
   status: "connected" as const,
   pendingActionId: "pa_1",
   connectionId: "conn_1",
-  message: "Gmail is connected through pipedream — the console updates on its own.",
+  message: "Gmail is connected through broker — the console updates on its own.",
 };
 
 describe("readLinkMessage", () => {

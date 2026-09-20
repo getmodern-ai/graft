@@ -477,7 +477,7 @@ const requestConnectionTool: MetaTool = {
       "Takes a proposal (hosts, auth scheme and its parameters, documentation URL) and answers a handoff url: the person checks the proposal in the console and completes it there. " +
       "Hosts are public https hosts; sign-in endpoints (the hosts of authorizeUrl and tokenUrl, and Google's) are set aside and named in the answer. " +
       "A public API that documents no auth is scheme none: the person confirms it. For oauth_authorization_code the proposal carries authorizeUrl, tokenUrl and scopes, and the person completes the consent from the console (redirectUri in the awaiting answer). " +
-      "A vendor a provider such as Pipedream covers is connected by a sign-in at the vendor, from the card or the console. " +
+      "A vendor a link provider covers is connected by a sign-in at the vendor on the provider's page, from the card or the console. " +
       "The call waits a short while for the person, then answers awaiting_connection with a url, the same url until they have finished, then connected; the same proposal, repeated, picks the ask up. " +
       "Connected, the connection is in the agent's scope with its execute__<connectionId> tool in the list; the page also offers to allow building against it, on by default, so acquire against the connection starts without a second link. " +
       "A connection the person already has for the same vendor and hosts is not made twice: in the agent's scope, connected at once; made for another of their agents, awaiting_scope with a url, answered by the person in the console (no new connection, nothing entered), then connected on the repeated call; otherwise connection_exists names it and the next step. " +
@@ -510,7 +510,7 @@ const requestConnectionTool: MetaTool = {
           type: "string",
           enum: [...AUTH_SCHEMES],
           description:
-            "The auth scheme the vendor documents, as the proxy names them. A vendor a provider such as Pipedream covers is connected by that provider under the scheme the vendor documents.",
+            "The auth scheme the vendor documents, as the proxy names them. A vendor a link provider covers is connected by that provider under the scheme the vendor documents.",
         },
         schemeConfig: {
           type: "object",

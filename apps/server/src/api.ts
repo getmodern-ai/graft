@@ -115,8 +115,8 @@ import { createProviderLinkRoutes, startProviderLink } from "./provider-link";
  * are the consent's two ends.
  *
  * **A link provider's ask has a button rather than a form** (GRA-59; ADR 0019). `POST
- * /pending-actions/:id/link` mints the provider's link for the ask — Pipedream's Connect Link, for
- * the person's external user id — and the console opens it in a popup; `GET /providers/link/callback`
+ * /pending-actions/:id/link` mints the provider's link for the ask — a broker's Connect Link, for
+ * the person's id at the broker — and the console opens it in a popup; `GET /providers/link/callback`
  * is where the provider sends the browser back, with no session and a signed state, and is what
  * makes the connection and answers the ask once the provider has confirmed the account
  * (`provider-link.ts`). No secret is entered anywhere in that flow, and none is stored.

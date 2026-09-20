@@ -14,9 +14,9 @@ import type { MetaTool } from "./meta";
 
 /**
  * `start_link` — the tool the ask card calls to start a link provider's connect from the chat
- * (GRA-117; ADR 0006 as amended 2026-09-19). A vendor a provider such as Pipedream covers is
- * connected by a sign-in on the provider's page, which until now only the console could open: it
- * minted the Connect Link with the person's session (`POST /api/pending-actions/:id/link`) and
+ * (GRA-117; ADR 0006 as amended 2026-09-19). A vendor a link provider covers is connected by a
+ * sign-in on the provider's page, which until now only the console could open: it minted the
+ * provider's link with the person's session (`POST /api/pending-actions/:id/link`) and
  * opened a popup. The card has no session — only the agent's — so this app-only tool mints the
  * same link through the same function (`../provider-link.ts`'s `mintProviderLink`) under the card
  * gate (`./card-gate.ts`: an OAuth agent of a chat product known to hide app-only tools, its own
@@ -38,7 +38,7 @@ export const startLink: MetaTool = {
     description:
       "Called by Graft's ask card on a chat product that renders it: mints a connection provider's sign-in link for one of this agent's open connection asks and answers { url, expiresAt, provider }, which the card opens in a popup. " +
       "Takes pendingActionId, the ask the awaiting result named, and approveBuild, whether the asking agent may build tools against the connection once it is made. " +
-      "Serves only an ask routed to a provider that connects with a link, such as Pipedream; the link's return makes the connection and answers the ask. App-only (_meta.ui.visibility app), so a host hides it from the model. " +
+      "Serves only an ask routed to a provider that connects with a link; the link's return makes the connection and answers the ask. App-only (_meta.ui.visibility app), so a host hides it from the model. " +
       "Refuses card_not_available for a static-token agent or an ask another provider serves, ask_not_found for another agent's ask, answered or expired for a closed one.",
     inputSchema: {
       type: "object",

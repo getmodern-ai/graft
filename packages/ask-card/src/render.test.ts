@@ -70,7 +70,7 @@ const SECRET: AskCard = {
   answerable: false,
 };
 
-/** A connection the person holds through Pipedream, made for another agent (GRA-104). */
+/** A connection the person holds through a link provider, made for another agent (GRA-104). */
 const SCOPE: AskCard = {
   ...BUILD,
   pendingActionId: "pa_7",
@@ -79,10 +79,10 @@ const SCOPE: AskCard = {
   displayName: "Gmail",
   primaryHost: "https://gmail.googleapis.com",
   hosts: ["gmail.googleapis.com", "www.googleapis.com"],
-  scheme: "pipedream_connect_proxy",
+  scheme: "relay",
   takesCredential: false,
   docsUrl: "https://developers.google.com/gmail/api",
-  provider: "pipedream",
+  provider: "broker",
 };
 
 /** A write's first-use approval (GRA-116), with the tool's facts as the console's card has them. */
@@ -99,7 +99,7 @@ const TOOL: AskCard = {
   },
 };
 
-/** Gmail through Pipedream (GRA-117): started from the card, answered by the link's return. */
+/** Gmail through a link provider (GRA-117): started from the card, answered by the link's return. */
 const LINK: AskCard = {
   ...SECRET,
   pendingActionId: "pa_4",
@@ -109,7 +109,7 @@ const LINK: AskCard = {
   hosts: ["gmail.googleapis.com", "www.googleapis.com"],
   scheme: "oauth_authorization_code",
   providerConnect: "link",
-  provider: "pipedream",
+  provider: "broker",
 };
 
 const CREDENTIAL: AskCard = { ...SECRET, pendingActionId: "pa_5", kind: "credential" };
@@ -141,9 +141,9 @@ function handlers(outcomes: Outcomes = {}) {
       async (): Promise<StartLinkOutcome> =>
         outcomes.startLink ?? {
           ok: true,
-          url: "https://pipedream.fake/connect/ctok_1",
+          url: "https://broker.fake/connect/ltok_1",
           expiresAt: "2026-09-19T10:15:00.000Z",
-          provider: "pipedream",
+          provider: "broker",
         },
     ),
     status: vi.fn(async (_id: string) => {
@@ -357,7 +357,7 @@ describe("a scope ask: a connection the person holds that this agent was not giv
     const root = renderAsk(SCOPE, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "scope", answerable: "true" });
     expect(root.querySelector("h1")?.textContent).toBe("Let Claude use Gmail (gmail)?");
-    expect(root.textContent).toContain("via pipedream");
+    expect(root.textContent).toContain("via broker");
     expect(root.textContent).toContain("made for another of your agents");
     expect(root.textContent).toContain("nothing entered");
     expect(root.textContent).toContain("gmail.googleapis.com, www.googleapis.com");
@@ -495,16 +495,16 @@ describe("an ask with a secret in it", () => {
  * with the build choice, opens it, and polls until the link's return has answered the ask.
  */
 describe("a connection a link provider covers", () => {
-  it("asks to connect through the provider, names it, offers a checked build choice, Decline and Connect through pipedream", () => {
+  it("asks to connect through the provider, names it, offers a checked build choice, Decline and Connect through broker", () => {
     const root = renderAsk(LINK, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "connection", answerable: "false" });
-    expect(root.querySelector("h1")?.textContent).toBe("Connect Gmail (gmail) through pipedream?");
-    expect(root.textContent).toContain("sign in at the vendor on pipedream's page");
+    expect(root.querySelector("h1")?.textContent).toBe("Connect Gmail (gmail) through broker?");
+    expect(root.textContent).toContain("sign in at the vendor on broker's page");
     expect(root.textContent).toContain("nothing is typed here");
     const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
     expect(box.checked).toBe(true);
     expect(root.textContent).toContain(buildChoiceLabel(LINK));
-    expect(buttons(root)).toEqual(["Decline", "Connect through pipedream"]);
+    expect(buttons(root)).toEqual(["Decline", "Connect through broker"]);
   });
 
   it("mints the link with the box as the person left it, opens it, and settles on the return's sentence", async () => {
@@ -514,7 +514,7 @@ describe("a connection a link provider covers", () => {
         {
           ok: true,
           state: "answered",
-          sentence: "Connected through pipedream. Gmail (gmail) is in Claude's scope.",
+          sentence: "Connected through broker. Gmail (gmail) is in Claude's scope.",
         },
       ],
     });
@@ -522,16 +522,16 @@ describe("a connection a link provider covers", () => {
     const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
     box.checked = false;
     [...root.querySelectorAll("button")]
-      .find((b) => b.textContent === "Connect through pipedream")
+      .find((b) => b.textContent === "Connect through broker")
       ?.click();
     await flush();
     expect(h.startLink).toHaveBeenCalledWith({ pendingActionId: "pa_4", approveBuild: false });
-    expect(h.openLink).toHaveBeenCalledWith(withFromCard("https://pipedream.fake/connect/ctok_1"));
+    expect(h.openLink).toHaveBeenCalledWith(withFromCard("https://broker.fake/connect/ltok_1"));
     expect(h.answer).not.toHaveBeenCalled();
     expect(box.disabled).toBe(true);
     await until(() => status(root)?.dataset.tone === "answered");
     expect(status(root)?.textContent).toBe(
-      "Connected through pipedream. Gmail (gmail) is in Claude's scope.",
+      "Connected through broker. Gmail (gmail) is in Claude's scope.",
     );
     expect(root.querySelectorAll("button")).toHaveLength(0);
     h.stop();
@@ -554,7 +554,7 @@ describe("a connection a link provider covers", () => {
     };
     const root = renderAsk(LINK, refusedOpen, document);
     [...root.querySelectorAll("button")]
-      .find((b) => b.textContent === "Connect through pipedream")
+      .find((b) => b.textContent === "Connect through broker")
       ?.click();
     await flush();
     expect(buttons(root)).toEqual(["Decline", "Open in the console"]);
@@ -570,7 +570,7 @@ describe("a connection a link provider covers", () => {
     });
     const second = renderAsk(LINK, notAvailable, document);
     [...second.querySelectorAll("button")]
-      .find((b) => b.textContent === "Connect through pipedream")
+      .find((b) => b.textContent === "Connect through broker")
       ?.click();
     await flush();
     expect(status(second)?.dataset.tone).toBe("refused");
@@ -584,7 +584,7 @@ describe("a connection a link provider covers", () => {
     });
     const root = renderAsk(LINK, h, document);
     [...root.querySelectorAll("button")]
-      .find((b) => b.textContent === "Connect through pipedream")
+      .find((b) => b.textContent === "Connect through broker")
       ?.click();
     await flush();
     expect(status(root)?.textContent).toBe("This action has expired");

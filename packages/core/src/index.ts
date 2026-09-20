@@ -205,15 +205,6 @@ export {
   verifyOAuthState,
 } from "./connection/oauth-consent";
 export {
-  createPipedreamProvider,
-  newestUnclaimedAccount,
-  PIPEDREAM_APPS,
-  PIPEDREAM_PROVIDER,
-  type PipedreamApp,
-  type PipedreamProviderDeps,
-  pipedreamAppFor,
-} from "./connection/pipedream-provider";
-export {
   type ConnectionProvider,
   DEFAULT_PROVIDERS,
   describeProviders,
