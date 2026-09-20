@@ -426,6 +426,15 @@ describe("the door", () => {
 
       const bad = await a.call("acquire", { connectionId: CONN_DEMO, goal: "" });
       expect(body(bad)).toMatchObject({ error: "refused", reason: "input_invalid" });
+      expect(String(body(bad).message)).toContain("goal is required");
+
+      // A wrong field name is named back with the accepted set, not silently dropped (GRA-130).
+      const wrongField = await a.call("acquire", { connectionId: CONN_DEMO, task: "Ping" });
+      expect(body(wrongField)).toMatchObject({ error: "refused", reason: "input_invalid" });
+      expect(String(body(wrongField).message)).toContain("goal is required");
+      expect(String(body(wrongField).message)).toContain(
+        "task is not an acquire argument; it takes connectionId, goal, hints",
+      );
 
       const unknown = await a.call("acquire_status", { jobId: "job_nobody" });
       expect(body(unknown)).toMatchObject({ error: "refused", reason: "job_not_found" });
