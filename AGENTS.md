@@ -598,10 +598,11 @@ carrying the key's behaviour as rows. A failed **query** toasts once with a work
 (`lib/query-error-retry.ts`, keyed to the query hash so a second failure replaces rather than
 stacks, dismissed on the next success) beside the mutation toast; a read that fails before a screen
 draws toasts *and* shows the route boundary, as Cando's does. A screen-level empty is the `Empty`
-primitive without a frame of its own, in Cando's voice — sentence-case title without a full stop,
-one sentence whose clause after the dash is reassurance — and an in-card empty is one muted
-sentence. `PageContainer` gaps: `gap-4` under the header of a list screen, `gap-6` on a detail or
-settings screen with several regions, as Cando's connections and settings screens pass them.
+primitive without a frame of its own, with a sentence-case title without a full stop and short,
+concrete supporting copy; an in-card empty is one muted sentence. **Console copy has no em dashes.**
+Text-input placeholders use sentence case and a clear prompt; examples belong in helper text.
+`PageContainer` gaps: `gap-4` under the header of a list screen, `gap-6` on a detail or settings screen
+with several regions, as Cando's connections and settings screens pass them.
 
 **Same-origin with the API, in both forms.** `pnpm --filter @graft/web dev` (or `pnpm run dev`, which
 starts the server too) serves the app on `:3001` with Vite proxying `/api` and `/mcp` to
