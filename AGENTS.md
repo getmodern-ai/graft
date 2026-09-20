@@ -392,7 +392,8 @@ link ask, *Enter the secret in Graft* on a scheme with a credential or a credent
 in the console* under a `card_not_available` refusal or where the host refused `ui/open-link`. The
 console reads the flag through `@graft/core`'s browser-safe `connection/card.rules.ts`
 (`openedFromCard`, `askAnsweredMessage`, `FROM_CARD_CLOSE_MS`): `/pending/:id?from=card` posts
-`graft:ask` to its opener and closes itself 1.5 s after a successful submit, `/link/callback?from=card`
+`graft:ask` to its opener and closes itself 1.5 s after a successful submit (since GRA-144 every
+link visit closes itself, the card's alone announces first — `lib/handoff-page.ts`), `/link/callback?from=card`
 closes on a success and stays on a failure (the ask is still open, and the card is where the person
 tries again), and neither behaves differently without it. `@graft/ask-card/shape` spells
 `from=card` a second time, import-free, and `ask-card.test.ts` pins the two spellings together.
@@ -629,7 +630,11 @@ goes to `/login?redirect=<same-origin path>` and returns there, which is how a h
 fresh browser); `routes/_auth/_shell/` is the chrome; a screen's file placement decides both. Three
 screens sit outside both — the two doors, and `routes/oauth.callback.tsx`, where the server's OAuth
 callback sends the popup (GRA-48): it has no session to wait on, no chrome to wear, and everything
-it shows is in its query. `routes/_auth/_shell/consent.tsx` is the other consent — an MCP client's
+it shows is in its query. **The handoff page sits under the guard but outside the shell**
+(`routes/_auth/pending.$id.tsx`; GRA-144, ADR 0006 as amended 2026-09-21): the link an agent relays
+opens one ask under the mark and closes itself once answered — `lib/handoff-page.ts` decides how,
+tested — while `/pending` (the list, in the shell) stays the console's inbox and answers every ask
+inline. `routes/_auth/_shell/consent.tsx` is the other consent — an MCP client's
 (ADR 0018) — and sits under both: the guard, so a chat product's "connect" reaches a person with no
 session by way of sign-in and back, and the shell, because it is a screen of the console like any
 other; `components/agent/consent-card.tsx` is its form, composed from the create-agent dialog's.
