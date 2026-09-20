@@ -3,7 +3,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { ApprovalsCard } from "@/components/agent/approvals-card";
-import { ConnectedHarnesses } from "@/components/agent/connected-harnesses";
 import { HarnessSnippet } from "@/components/agent/harness-snippet";
 import { LimitsForm } from "@/components/agent/limits-form";
 import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
@@ -56,7 +55,7 @@ function AgentRoute() {
   const { data } = useSuspenseQuery(agentQuery(agentId));
   const { data: connectionData } = useSuspenseQuery(connectionsQuery);
   const [revoking, setRevoking] = useState(false);
-  const { agent, connectionIds, connectedHarnesses } = data;
+  const { agent, connectionIds } = data;
 
   // The breadcrumb's parent half is the way back to the list; the on-page `PageHeaderTitle` below
   // repeats the name at every width, as the page's own heading rather than as this breadcrumb.
@@ -75,7 +74,8 @@ function AgentRoute() {
             <StatusChip chip={agentStatusChip(agent)} />
           </PageHeaderTitle>
           <PageHeaderDescription>
-            {/* The first OAuth client is the agent's origin (ADR 0018); current access is below. */}
+            {/* Which credential this agent is reached by (ADR 0018): the static token's prefix,
+                the MCP client that connected it, or both. */}
             {agent.tokenPrefix ? (
               <>
                 Token <code className="font-mono">{agent.tokenPrefix}…</code>
@@ -83,7 +83,7 @@ function AgentRoute() {
             ) : null}
             {agent.connectedVia ? (
               <>
-                {agent.tokenPrefix ? " · first connected" : "First connected"} from{" "}
+                {agent.tokenPrefix ? " · connected" : "Connected"} from{" "}
                 {agent.connectedVia.clientName}
               </>
             ) : null}{" "}
@@ -99,7 +99,7 @@ function AgentRoute() {
         {agent.revokedAt ? null : (
           <PageHeaderActions>
             <Button variant="destructive" onClick={() => setRevoking(true)}>
-              {agent.tokenPrefix && !agent.connectedVia ? "Revoke token" : "Revoke agent"}
+              {agent.tokenPrefix === null ? "Revoke agent" : "Revoke token"}
             </Button>
           </PageHeaderActions>
         )}
@@ -112,7 +112,6 @@ function AgentRoute() {
           what lets the track shrink and the `<pre>` scroll inside it. */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="flex min-w-0 flex-col gap-6">
-          <ConnectedHarnesses agent={agent} harnesses={connectedHarnesses} />
           {agent.revokedAt ? null : <HarnessSnippet agent={agent} />}
           <ScopeEditor
             key={`${agent.scopeMode}:${connectionIds.join(",")}`}

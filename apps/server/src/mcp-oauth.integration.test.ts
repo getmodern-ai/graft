@@ -14,7 +14,6 @@ import {
 } from "@graft/core";
 import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
-import { listConnectedHarnesses } from "@graft/db/repo/mcp-oauth";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { createMcpDeps } from "@graft/mcp";
 import { createFakeSandboxBackend } from "@graft/sandbox";
@@ -37,7 +36,7 @@ import type {
 import { sql } from "drizzle-orm";
 import { initLogger } from "evlog";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { AgentDetailOutput } from "./api";
+
 import { createServer } from "./app";
 import { createDatabaseConnections } from "./connections";
 
@@ -391,124 +390,6 @@ describe.skipIf(!adminUrl)("a chat product connects over MCP OAuth (ADR 0018)", 
     } finally {
       await client.close().catch(() => {});
     }
-  }, 60_000);
-
-  it("lists Claude and Hermes on one agent from current grants, isolated by person and agent", async () => {
-    const info = await discoverOAuthServerInfo(`${AUTH_URL}/mcp`, { fetchFn });
-    const metadata = info.authorizationServerMetadata;
-    if (!metadata) throw new Error("no authorization server metadata");
-
-    async function authorize(provider: ProductProvider, agentId?: string) {
-      const registered =
-        provider.clientInfo ??
-        (await registerClient(AUTH_URL, {
-          metadata,
-          clientMetadata: provider.clientMetadata,
-          fetchFn,
-        }));
-      provider.saveClientInformation(registered);
-      const { authorizationUrl, codeVerifier } = await startAuthorization(AUTH_URL, {
-        metadata,
-        clientInformation: registered,
-        redirectUrl: REDIRECT,
-        resource: new URL(`${AUTH_URL}/mcp`),
-      });
-      const consent = await consentAs(
-        authorizationUrl,
-        agentId
-          ? { kind: "existing", agentId }
-          : { kind: "new", name: "Shared agent", connectionIds: [] },
-      );
-      const tokens = await exchangeAuthorization(AUTH_URL, {
-        metadata,
-        clientInformation: registered,
-        authorizationCode: consent.code,
-        codeVerifier,
-        redirectUri: REDIRECT,
-        resource: new URL(`${AUTH_URL}/mcp`),
-        fetchFn,
-      });
-      provider.saveTokens(tokens);
-      return consent.agentId;
-    }
-
-    async function detail(agentId: string): Promise<AgentDetailOutput> {
-      const response = await app.request(`${AUTH_URL}/api/agents/${agentId}`, {
-        headers: { cookie },
-      });
-      expect(response.status).toBe(200);
-      return (await response.json()) as AgentDetailOutput;
-    }
-
-    async function revoke(provider: ProductProvider, refreshToken: string) {
-      const response = await app.request(`${AUTH_URL}/mcp/oauth/revoke`, {
-        method: "POST",
-        body: new URLSearchParams({
-          client_id: provider.clientInfo?.client_id ?? "",
-          token: refreshToken,
-        }),
-      });
-      expect(response.status).toBe(200);
-    }
-
-    const claude = new ProductProvider("Claude", "none");
-    const hermes = new ProductProvider("Hermes", "none");
-    const agentId = await authorize(claude);
-    await authorize(hermes, agentId);
-    const expected = [
-      { clientId: claude.clientInfo?.client_id, clientName: "Claude" },
-      { clientId: hermes.clientInfo?.client_id, clientName: "Hermes" },
-    ];
-    expect((await detail(agentId)).connectedHarnesses).toEqual(expected);
-
-    // A second grant to the same registration is still one harness; ending one leaves the other.
-    const firstHermesRefresh = hermes.issued?.refresh_token ?? "";
-    await authorize(hermes, agentId);
-    expect((await detail(agentId)).connectedHarnesses).toEqual(expected);
-    await revoke(hermes, firstHermesRefresh);
-    expect((await detail(agentId)).connectedHarnesses).toEqual(expected);
-
-    const refresh = await app.request(`${AUTH_URL}/mcp/oauth/token`, {
-      method: "POST",
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        client_id: hermes.clientInfo?.client_id ?? "",
-        refresh_token: hermes.issued?.refresh_token ?? "",
-      }),
-    });
-    expect(refresh.status).toBe(200);
-    hermes.saveTokens((await refresh.json()) as OAuthTokens);
-    // Access tokens expiring between calls do not disconnect a harness whose refresh still works.
-    await db.execute(
-      sql`update mcp_token set expires_at = now() - interval '1 minute' where agent_id = ${agentId} and kind = 'access'`,
-    );
-    expect((await detail(agentId)).connectedHarnesses).toEqual(expected);
-
-    expect(await listConnectedHarnesses(db, { personId: "another_person", agentId })).toEqual([]);
-    expect(await listConnectedHarnesses(db, { personId, agentId: "another_agent" })).toEqual([]);
-
-    await revoke(claude, claude.issued?.refresh_token ?? "");
-    const onlyHermes = await detail(agentId);
-    expect(onlyHermes.connectedHarnesses).toEqual([expected[1]]);
-    expect(onlyHermes.agent.connectedVia?.clientName).toBe("Claude");
-    await revoke(hermes, hermes.issued?.refresh_token ?? "");
-    expect((await detail(agentId)).connectedHarnesses).toEqual([]);
-
-    await authorize(hermes, agentId);
-    const revoked = await app.request(`${AUTH_URL}/api/agents/${agentId}/revoke`, {
-      method: "POST",
-      headers: { cookie },
-    });
-    expect(revoked.status).toBe(200);
-    expect((await detail(agentId)).connectedHarnesses).toEqual([]);
-
-    const staticAgent = await app.request(`${AUTH_URL}/api/agents`, {
-      method: "POST",
-      headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ name: "Static token only" }),
-    });
-    const { agent: made } = (await staticAgent.json()) as { agent: { id: string } };
-    expect((await detail(made.id)).connectedHarnesses).toEqual([]);
   }, 60_000);
 
   it("admits a confidential client through the SDK's Basic authentication, and binds the grant to an existing agent", async () => {

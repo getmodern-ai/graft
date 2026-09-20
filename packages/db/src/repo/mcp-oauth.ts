@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent } from "../schema/agent";
@@ -25,34 +25,6 @@ import type { AgentScope } from "./scope";
 export type McpClientRow = typeof mcpClient.$inferSelect;
 export type McpAuthorizationCodeRow = typeof mcpAuthorizationCode.$inferSelect;
 export type McpTokenRow = typeof mcpToken.$inferSelect;
-
-export type ConnectedHarnessRow = { clientId: string; clientName: string };
-
-/**
- * A current refresh token keeps a harness authorized between calls (ADR 0018). Read each client
- * once, under both ids of the scope (ADR 0007), without exposing any token fields.
- */
-export async function listConnectedHarnesses(
-  db: DbOrTx,
-  scope: AgentScope,
-): Promise<ConnectedHarnessRow[]> {
-  return db
-    .selectDistinct({ clientId: mcpClient.id, clientName: mcpClient.name })
-    .from(mcpToken)
-    .innerJoin(mcpClient, eq(mcpClient.id, mcpToken.clientId))
-    .innerJoin(agent, eq(agent.id, mcpToken.agentId))
-    .where(
-      and(
-        eq(agent.id, scope.agentId),
-        eq(agent.personId, scope.personId),
-        isNull(agent.revokedAt),
-        eq(mcpToken.kind, "refresh"),
-        isNull(mcpToken.revokedAt),
-        isNull(mcpToken.rotatedAt),
-      ),
-    )
-    .orderBy(asc(mcpClient.name), asc(mcpClient.id));
-}
 
 export async function insertMcpClient(db: DbOrTx, input: NewMcpClient): Promise<McpClientRow> {
   const [row] = await db.insert(mcpClient).values(input).returning();

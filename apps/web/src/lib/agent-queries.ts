@@ -1,6 +1,5 @@
 import type { AgentOutput, AgentScopeMode } from "@graft/core";
 import type {
-  AgentDetailOutput,
   ScopeBody,
   ToolOutput,
   WorkingSetChangeOutput,
@@ -19,7 +18,6 @@ import { api, type Jsonified } from "./api";
  */
 
 export type Agent = Jsonified<AgentOutput>;
-export type ConnectedHarness = Jsonified<AgentDetailOutput>["connectedHarnesses"][number];
 export type Tool = Jsonified<ToolOutput>;
 export type WorkingSetEntry = Jsonified<WorkingSetEntryOutput>;
 export type WorkingSetChange = Jsonified<WorkingSetChangeOutput>;
@@ -39,7 +37,8 @@ export const agentsQuery = queryOptions({
 export const agentQuery = (agentId: string) =>
   queryOptions({
     queryKey: agentKeys.one(agentId),
-    queryFn: () => api<Jsonified<AgentDetailOutput>>(`/agents/${encodeURIComponent(agentId)}`),
+    queryFn: () =>
+      api<{ agent: Agent; connectionIds: string[] }>(`/agents/${encodeURIComponent(agentId)}`),
   });
 
 export const workingSetQuery = (agentId: string) =>

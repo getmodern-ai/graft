@@ -1,10 +1,8 @@
 import type { SocialProviderName } from "@graft/auth";
 import {
   type AgentDeps,
-  type AgentOutput,
   type ApprovalDeps,
   answerPendingAction,
-  type ConnectedHarnessOutput,
   type ConnectionDeps,
   createAgent,
   deletePersonModelKey,
@@ -17,7 +15,6 @@ import {
   type LedgerDeps,
   listAgents,
   listApprovals,
-  listConnectedHarnesses,
   listConnections,
   listOpenPendingActions,
   listTools,
@@ -261,12 +258,6 @@ const scopeBody = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("listed"), connectionIds: z.array(z.string()).optional() }),
 ]);
 export type ScopeBody = z.input<typeof scopeBody>;
-
-export type AgentDetailOutput = {
-  agent: AgentOutput;
-  connectionIds: string[];
-  connectedHarnesses: ConnectedHarnessOutput[];
-};
 
 /** The scheme's secret fields as the console posts them; the service holds them to the scheme's table. */
 const credentialFields = z.record(z.string(), z.unknown());
@@ -670,13 +661,12 @@ export function createApi(options: ApiOptions): Hono {
     const principal = await principalOf(c.req.raw.headers);
     const agentId = c.req.param("id");
     const agent = orNotFound(await getAgent(ctx, principal, agentId, agentDeps), "Agent not found");
-    const scope = { personId: principal.personId, agentId: agent.id };
-    const [connectionIds, connectedHarnesses] = await Promise.all([
-      getAgentScope(ctx, scope, agentDeps),
-      listConnectedHarnesses(ctx, scope, agentDeps),
-    ]);
-    const result: AgentDetailOutput = { agent, connectionIds, connectedHarnesses };
-    return c.json(result);
+    const connectionIds = await getAgentScope(
+      ctx,
+      { personId: principal.personId, agentId: agent.id },
+      agentDeps,
+    );
+    return c.json({ agent, connectionIds });
   });
 
   api.patch("/agents/:id", async (c) => {

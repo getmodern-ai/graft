@@ -37,7 +37,6 @@ import {
   revokeConnection,
   setConnectionProviderRef,
 } from "./connection";
-import { listConnectedHarnesses } from "./mcp-oauth";
 import {
   answerPendingAction,
   consumePendingAction,
@@ -97,21 +96,6 @@ const only = () => {
 };
 
 describe("agent-scoped reads take both ids of the scope in the statement", () => {
-  it("connected harnesses select only client identity from current grants under the person and agent", async () => {
-    await listConnectedHarnesses(db, SCOPE);
-    const s = only();
-    expect(s.sql).toMatch(/^select distinct "mcp_client"\."id", "mcp_client"\."name" from/);
-    expect(s.sql).toContain('"agent"."id" = $1');
-    expect(s.sql).toContain('"agent"."person_id" = $2');
-    expect(s.sql).toContain('"agent"."revoked_at" is null');
-    expect(s.sql).toContain('"mcp_token"."kind" = $3');
-    expect(s.sql).toContain('"mcp_token"."revoked_at" is null');
-    expect(s.sql).toContain('"mcp_token"."rotated_at" is null');
-    expect(s.params).toEqual(["agent_1", "person_1", "refresh"]);
-    expect(s.sql).not.toContain("token_hash");
-    expect(s.sql).not.toContain("rotation_replay");
-  });
-
   it("the working set", async () => {
     await listWorkingSet(db, SCOPE);
     const s = only();

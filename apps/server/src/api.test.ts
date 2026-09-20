@@ -177,7 +177,6 @@ function agentDeps(): AgentDeps {
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...agentRow, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
-    listConnectedHarnesses: vi.fn(async () => []),
     setAgentConnectedVia: vi.fn(async () => agentRow),
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),
@@ -621,25 +620,15 @@ describe("agents", () => {
     expect(notJson.status).toBe(400);
   });
 
-  it("answers the agent with its scope and connected harnesses, and 404 for one that is not the person's", async () => {
+  it("answers the agent with its scope, and 404 for one that is not the person's", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    const connectedHarnesses = [
-      { clientId: "client_claude", clientName: "Claude" },
-      { clientId: "client_hermes", clientName: "Hermes" },
-    ];
-    vi.mocked(deps.agent.listConnectedHarnesses).mockResolvedValueOnce(connectedHarnesses);
     const found = await app.request("/api/agents/agent_1");
     expect(await found.json()).toMatchObject({
       agent: { id: "agent_1", scopeMode: "listed" },
       connectionIds: ["conn_1"],
-      connectedHarnesses,
     });
     // The ids are the scope as it resolves for the agent's mode, in one statement (ADR 0007 as amended 2026-09-19).
     expect(deps.agent.listScopeConnectionIds).toHaveBeenCalledWith(fakeDb, {
-      personId: "person_1",
-      agentId: "agent_1",
-    });
-    expect(deps.agent.listConnectedHarnesses).toHaveBeenCalledWith(fakeDb, {
       personId: "person_1",
       agentId: "agent_1",
     });
@@ -648,7 +637,6 @@ describe("agents", () => {
     const missing = await app.request("/api/agents/agent_x");
     expect(missing.status).toBe(404);
     expect(await missing.json()).toMatchObject({ error: "NOT_FOUND", message: "Agent not found" });
-    expect(deps.agent.listConnectedHarnesses).toHaveBeenCalledTimes(1);
   });
 
   it("sets the scope to a list, to all connections, and refuses the old shape; and revokes", async () => {
