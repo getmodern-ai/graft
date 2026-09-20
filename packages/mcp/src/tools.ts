@@ -125,7 +125,7 @@ async function answer(
 
 /** The call as `McpDeps.onToolCall` is told it (`deps.ts`): the answer's `isError` and refusal shape read back. */
 export function toolCallEvent(
-  session: Pick<SessionContext, "scope">,
+  session: Pick<SessionContext, "scope" | "uiExtensionDeclared">,
   name: string,
   result: CallToolResult,
   latencyMs: number,
@@ -145,6 +145,8 @@ export function toolCallEvent(
     outcome: result.isError === true ? (refused ? "refused" : "error") : "ok",
     ...(refused && typeof body?.reason === "string" ? { reason: body.reason } : {}),
     latencyMs,
+    // Observed, never trusted: the gate reads the client's callback host (GRA-150, `deps.ts`).
+    uiExtensionDeclared: session.uiExtensionDeclared(),
   };
 }
 

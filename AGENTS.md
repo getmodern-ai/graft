@@ -172,7 +172,8 @@ tool call waits for a person to answer a handoff before returning
 handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default
 24) how long that action stays answerable (ADR 0006, ADR 0008). `GRAFT_CARD_HOSTS` (default
 `claude.ai,chatgpt.com`) names the chat products whose OAuth clients may answer the ask card, by the
-host of their registered redirect URIs (GRA-84; the paragraph on the card below). `packages/env/src/schema.ts` is the
+host of their registered redirect URIs, and is the whole of that rule (GRA-84, GRA-150; the
+paragraph on the card below). `packages/env/src/schema.ts` is the
 rules as code.
 
 **An OAuth consent (ADR 0005) adds no variable, two server routes and one console route.**
@@ -358,8 +359,11 @@ carry the card's data under `structuredContent.card` beside GRA-55's unchanged `
 `reason` (`result.ts`'s `withCard`). **For a client the server knows renders the card, the awaiting
 `message` takes its card form and `cardShown: true` rides beside `url`** (GRA-120; ADR 0006 as
 amended 2026-09-20): `packages/mcp/src/card-client.ts`'s `clientRendersCards` is the card gate's
-client half — an OAuth agent whose session declared the MCP Apps extension or whose client is
-registered on a `GRAFT_CARD_HOSTS` host — held once per session, and its `toolAskResult` is where
+client half — an OAuth agent whose client registered every one of its redirect URIs on a
+`GRAFT_CARD_HOSTS` host, which is the whole rule since GRA-150 (ADR 0006 as amended 2026-09-21: a
+client writes its own `initialize`, so its declaration of the MCP Apps extension admits nobody and
+is only observed, on each tool call's wide event) — held once per session, and its
+`toolAskResult` is where
 every awaiting result goes onto the wire (`tools/meta.ts`, `tools/execute.ts`, `tools.ts`); each
 ask flow writes both forms through `handoff-message.ts`, so the console form a static-token agent
 or an unvouched client reads is byte for byte what it was, and `url` never changes.
@@ -370,13 +374,17 @@ answer returns through `result.ts`'s `toolAwaiting` with `isError: false` and th
 a host renders no view for an error result (ext-apps issue 694) — refusals and failures stay
 `isError: true`. The card answers by calling `answer_ask` (`tools/answer-ask.ts`), declared
 `_meta.ui.visibility: ["app"]` so the host hides it from the model; the tool refuses a static-token
-agent, an OAuth client whose hiding is not established (neither every registered redirect URI on a
-`GRAFT_CARD_HOSTS` host nor the MCP Apps extension declared in `initialize`), another agent's ask,
+agent, an OAuth client whose hiding is not established (not every registered redirect URI on a
+`GRAFT_CARD_HOSTS` host), another agent's ask,
 a closed or expired ask, and every ask but the build approval, the tool's first-use approval
 (GRA-116), the keyless connection confirmation, the scope ask and a link provider's decline, and
 records the rest through `ask-answer.ts` — the same functions the console's
 `POST /pending-actions/:id/answer` and `/connection` call, with `via: "card"` on the answer. The
-gate is `tools/card-gate.ts`, shared with the two other app-only tools. `packages/mcp/src/answer-ask.test.ts`
+gate is `tools/card-gate.ts`, shared with the two other app-only tools. The consent page says
+which way a client will go before the person connects: `GET /api/mcp-oauth/request` answers
+`rendersCards`, read from the same function over the same parsed list
+(`apps/server/src/mcp-oauth.ts`), and `components/agent/consent-card.tsx` shows one sentence when
+it is true. `packages/mcp/src/answer-ask.test.ts`
 is the suite; `pnpm --filter @graft/ask-card build` before `pnpm --filter @graft/mcp test` on a
 fresh checkout, or let `pnpm run test` order it.
 
