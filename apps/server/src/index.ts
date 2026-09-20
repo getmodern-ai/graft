@@ -281,6 +281,10 @@ const mcp = createMcpDeps({
    * `POST /mcp` says which tool, for which agent, with what outcome — and onto the person's
    * analytics profile as `tool_called`. Both carry the same fields and neither carries the input.
    */
+  /** A refused `/mcp` request, with the transport's or the door's reason (GRA-131): the same line, under `mcpRefusal`. */
+  onTransportRefusal: (event) => {
+    useLogger().set({ mcpRefusal: event });
+  },
   onToolCall: (event) => {
     useLogger().set({ mcp: event });
     backings.analytics.capture({

@@ -179,6 +179,27 @@ export type McpDeps = {
    * there is one, the latency. Absent, a call is exactly what it was.
    */
   onToolCall?: (event: ToolCallEvent) => void;
+  /**
+   * Fired once for every `/mcp` request the door or the transport refuses before any tool runs
+   * (GRA-131): Graft's own 401, 404 and 400 in `http.ts`, and the SDK transport's 4xx — an
+   * `initialize` under a live session, an unsupported protocol version, a parse error, a missing
+   * session header. The reading of a 400 in the request log was a guess without it (GRA-124,
+   * GRA-129). Carries the status and the JSON-RPC error, never the body. Absent, nothing changes.
+   */
+  onTransportRefusal?: (event: TransportRefusalEvent) => void;
+};
+
+/** One refused `/mcp` request as `McpDeps.onTransportRefusal` sees it. */
+export type TransportRefusalEvent = {
+  status: number;
+  /** The JSON-RPC error code the answer carries, when it is JSON-RPC; Graft's 401 carries none. */
+  code?: number;
+  /** The answer's own sentence: the SDK's (`Bad Request: Server already initialized`) or Graft's reason word. */
+  message: string;
+  method: string;
+  /** Whether the request named a session, and — for a request Graft answered — which. */
+  hasSessionHeader: boolean;
+  sessionId?: string;
 };
 
 /**

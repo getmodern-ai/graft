@@ -16,7 +16,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { Hono } from "hono";
 
-import type { McpDeps } from "./deps";
+import type { McpDeps, TransportRefusalEvent } from "./deps";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { type AgentSession, createAgentSession } from "./session";
 
@@ -125,6 +125,36 @@ function jsonRpcError(status: 400 | 404, code: number, message: string): Respons
 }
 
 /**
+ * The transport's refusal read off its answer (GRA-131): a 4xx whose body is a JSON-RPC error is
+ * reported with the error's code and message; anything else with the status alone. The body is
+ * read from a clone, so the answer goes to the client as it was.
+ */
+async function reportTransportRefusal(
+  response: Response,
+  request: Request,
+  onRefusal: McpDeps["onTransportRefusal"],
+): Promise<Response> {
+  if (!onRefusal || response.status < 400) return response;
+  let code: number | undefined;
+  let message = response.statusText || `HTTP ${response.status}`;
+  try {
+    const body = (await response.clone().json()) as { error?: { code?: number; message?: string } };
+    if (typeof body?.error?.code === "number") code = body.error.code;
+    if (typeof body?.error?.message === "string") message = body.error.message;
+  } catch {
+    // Not JSON: the status is the whole story.
+  }
+  onRefusal({
+    status: response.status,
+    ...(code === undefined ? {} : { code }),
+    message,
+    method: request.method,
+    hasSessionHeader: request.headers.has("mcp-session-id"),
+  });
+  return response;
+}
+
+/**
  * The challenge a 401 carries: the resource metadata's URL always, and the RFC 6750 error only
  * when a token was presented and refused. `session_mismatch` is a refused token too — the wrong
  * agent's — so it carries the error as well. The description is cut to the characters RFC 6750
@@ -189,12 +219,32 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
   app.all("/", async (c) => {
     const request = c.req.raw;
     const token = bearerTokenFrom(request.headers);
+    const requestSessionId = request.headers.get("mcp-session-id") ?? undefined;
+    /** Graft's own refusal, told to the hook with its reason word before it is answered. */
+    const refused = (response: Response, message: string, code?: number): Response => {
+      deps.onTransportRefusal?.({
+        status: response.status,
+        ...(code === undefined ? {} : { code }),
+        message,
+        method: request.method,
+        hasSessionHeader: requestSessionId !== undefined,
+        ...(requestSessionId === undefined ? {} : { sessionId: requestSessionId }),
+      } satisfies TransportRefusalEvent);
+      return response;
+    };
+    /** The transport's answer, its refusal reported when it is one. */
+    const answered = (response: Response | Promise<Response>): Promise<Response> =>
+      Promise.resolve(response).then((r) =>
+        reportTransportRefusal(r, request, deps.onTransportRefusal),
+      );
+
     let scope: AgentScope;
     try {
       scope = await requireAgent(ctx, token, deps.agent);
     } catch (error) {
       if (error instanceof ServiceError && error.code === "UNAUTHORIZED") {
-        return unauthorized(refusalReasonOf(error), error.message);
+        const reason = refusalReasonOf(error);
+        return refused(unauthorized(reason, error.message), reason);
       }
       throw error;
     }
@@ -247,23 +297,30 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
     const reopens = token?.startsWith(MCP_ACCESS_TOKEN_PREFIX) === true;
 
     /** The session's request, once the session is known to be this agent's — never another's. */
-    const handleAs = (live: LiveSession, req: Request): Response | Promise<Response> =>
+    const handleAs = (live: LiveSession, req: Request): Promise<Response> =>
       live.session.scope.agentId === scope.agentId
-        ? live.transport.handleRequest(req)
-        : unauthorized("session_mismatch", "This session was opened by another agent");
+        ? answered(live.transport.handleRequest(req))
+        : Promise.resolve(
+            refused(
+              unauthorized("session_mismatch", "This session was opened by another agent"),
+              "session_mismatch",
+            ),
+          );
 
     const sessionId = request.headers.get("mcp-session-id");
     if (sessionId) {
       const live = sessions.get(sessionId);
       if (live) return handleAs(live, request);
-      if (!reopens) return jsonRpcError(404, -32001, "Session not found");
+      if (!reopens)
+        return refused(jsonRpcError(404, -32001, "Session not found"), "Session not found", -32001);
       // Two agents presenting one unknown id at once share the one re-open, and the second finds
       // a session that is not its own: the same refusal as on a session it never opened.
       return handleAs(await reopen(sessionId), request);
     }
 
     if (request.method !== "POST") {
-      return jsonRpcError(400, -32000, "Bad Request: Mcp-Session-Id header is required");
+      const message = "Bad Request: Mcp-Session-Id header is required";
+      return refused(jsonRpcError(400, -32000, message), message, -32000);
     }
 
     if (reopens && !(await carriesInitialize(request))) {
@@ -276,7 +333,7 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
     // No session yet: this must be an `initialize`. The transport says so if it is not, in which
     // case nothing below registers a session and the pair is closed once the answer is written.
     const { transport, session } = await open();
-    const response = await transport.handleRequest(request);
+    const response = await answered(transport.handleRequest(request));
     if (transport.sessionId === undefined) {
       // Not an `initialize` after all — the transport answered 400 and no session exists to keep.
       await session.close();

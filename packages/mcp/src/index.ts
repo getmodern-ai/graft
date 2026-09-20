@@ -125,6 +125,7 @@ export {
   type PublishTool,
   type ToolboxReader,
   type ToolCallEvent,
+  type TransportRefusalEvent,
 } from "./deps";
 export {
   HANDOFF_PATH,
