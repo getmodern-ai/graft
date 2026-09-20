@@ -23,7 +23,7 @@ import type { Connection } from "@/lib/connection-queries";
  * scope — `All connections` by default, or `Selected connections` with the picker (ADR 0007 as amended
  * 2026-09-19; `scope-mode-field.tsx`). The answer carries the token, and this dialog is where it is
  * shown — once. Closing the dialog is the end of it; `AgentConnectionDialog` reopens the
- * instructions with the prefix and a placeholder, never the token (ADR 0007).
+ * instructions with a placeholder, never the token (ADR 0007).
  *
  * The connections arrive from a read the agents route starts without awaiting (`agents.index.tsx`),
  * so the dialog can open before they have: `connections` is `undefined` until then and, under

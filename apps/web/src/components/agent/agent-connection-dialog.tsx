@@ -2,8 +2,6 @@ import { type RefObject, useState } from "react";
 
 import { HarnessSetup } from "@/components/agent/harness-setup";
 import { CodeBlock } from "@/components/code-block";
-import { KeyIcon } from "@/components/icons";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -45,20 +43,7 @@ export function AgentConnectionDialog({
         </DialogHeader>
         <div className="flex min-w-0 flex-col gap-4">
           {agent.tokenPrefix ? (
-            <>
-              <Alert>
-                <KeyIcon />
-                <AlertTitle>Use your saved token</AlertTitle>
-                <AlertDescription>
-                  <p>
-                    The token starting with <code className="font-mono">{agent.tokenPrefix}…</code>{" "}
-                    was shown when you created this agent. It cannot be shown again.
-                  </p>
-                  <p>If you no longer have it, archive this agent and create a new one.</p>
-                </AlertDescription>
-              </Alert>
-              <HarnessSetup />
-            </>
+            <HarnessSetup />
           ) : (
             <>
               <CodeBlock

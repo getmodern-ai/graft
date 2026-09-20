@@ -127,9 +127,6 @@ describe("agent actions", () => {
     await click("Actions for Laptop");
     await click("Connection details");
     const dialog = document.querySelector("[role=dialog]");
-    expect(dialog?.textContent).toContain("Use your saved token");
-    expect(dialog?.textContent).toContain("grft_abc…");
-    expect(dialog?.textContent).toContain("It cannot be shown again.");
     expect(dialog?.textContent).toContain("YOUR_AGENT_TOKEN");
     expect(dialog?.textContent).not.toContain("—");
     await click("Copy URL");
