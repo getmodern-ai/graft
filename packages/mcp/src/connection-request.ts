@@ -353,6 +353,17 @@ export function readScopeAnswer(answer: Record<string, unknown> | null | undefin
  * (vendor, hosts, scheme parameters) are `normaliseProposal`'s, so an agent reads one sentence
  * about the first thing to fix.
  */
+/** The arguments request_connection reads — its inputSchema's properties (`tools/meta.ts`); an argument outside this set is named back to the caller (GRA-130). */
+const PROPOSAL_ARGS = new Set([
+  "vendor",
+  "displayName",
+  "primaryHost",
+  "hosts",
+  "scheme",
+  "schemeConfig",
+  "docsUrl",
+]);
+
 export function readConnectionProposal(
   args: Record<string, unknown>,
 ): ConnectionProposalInput | { error: string } {
@@ -391,7 +402,29 @@ export function readConnectionProposal(
       schemeConfig = args.schemeConfig;
     }
   }
+  // An argument the tool does not read is named back, so a model that spelled a field wrong is
+  // told which (GRA-130: a call carrying an unknown key gets no silent drop). The accepted set is
+  // request_connection's inputSchema; the answer lists it so the retry is right the first time.
+  const unrecognised = Object.keys(args).filter((key) => !PROPOSAL_ARGS.has(key));
+  if (unrecognised.length > 0) {
+    problems.push(
+      `${unrecognised.join(", ")} ${unrecognised.length === 1 ? "is" : "are"} not a request_connection argument (it takes ${[...PROPOSAL_ARGS].join(", ")})`,
+    );
+  }
+  // Only the required fields actually absent, so a model that supplied `vendor` is not told vendor
+  // is missing (GRA-130). The proposal is read from the vendor's own documentation, which the
+  // message says, so the next call carries the base URL and the auth scheme.
+  const missing: string[] = [];
+  if (!vendor) missing.push("vendor");
+  if (!primaryHost) missing.push("primaryHost");
+  if (!scheme) missing.push("scheme");
+  if (missing.length > 0) {
+    problems.push(
+      `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} required and ${missing.length === 1 ? "was" : "were"} not supplied — read the vendor's documentation for its base URL (primaryHost) and auth scheme, then call again`,
+    );
+  }
   if (problems.length > 0) return { error: problems.join("; ") };
+  // The missing branch above returned when any of the three was absent; this narrows their types.
   if (!vendor || !primaryHost || !scheme) {
     return { error: "vendor, primaryHost and scheme are required" };
   }

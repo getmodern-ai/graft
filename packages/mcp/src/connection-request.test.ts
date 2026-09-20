@@ -348,9 +348,19 @@ describe("the proposal's rules, before any record exists", () => {
   });
 
   it("reads the tool's arguments by shape and says what is wrong", () => {
-    expect(readConnectionProposal({ vendor: "acme", scheme: "bearer" })).toEqual({
-      error: "vendor, primaryHost and scheme are required",
+    // Only the fields actually absent are named, and the vendor supplied is not called missing (GRA-130).
+    const missing = readConnectionProposal({ vendor: "acme", scheme: "bearer" });
+    expect(missing).toMatchObject({
+      error: expect.stringContaining("primaryHost is required and was not supplied"),
     });
+    expect((missing as { error: string }).error).not.toMatch(/vendor (is|and)/);
+    expect((missing as { error: string }).error).toContain("read the vendor's documentation");
+    // An argument the tool does not take is named back with the accepted set (GRA-130: `task` for `goal`).
+    const unknown = readConnectionProposal({ ...PROPOSAL, task: "fetch a uuid" });
+    expect(unknown).toMatchObject({
+      error: expect.stringContaining("task is not a request_connection argument"),
+    });
+    expect((unknown as { error: string }).error).toContain("vendor, displayName, primaryHost");
     expect(readConnectionProposal({ ...PROPOSAL, hosts: "files.acme.example" })).toMatchObject({
       error: expect.stringContaining("hosts must be an array"),
     });
