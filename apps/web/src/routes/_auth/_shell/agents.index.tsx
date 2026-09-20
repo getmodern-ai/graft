@@ -49,9 +49,7 @@ function AgentsRoute() {
   useScreenTitle("Agents");
 
   return (
-    // `large`: the table is the screen, and a table wants the column. `gap-4` between the header
-    // and a list, as Cando's connections screen passes; the detail screens keep `gap-6`.
-    <PageContainer size="large" className="gap-4">
+    <PageContainer size="full" className="gap-4">
       <PageHeader>
         <PageHeaderContent>
           <PageHeaderTitle>Agents</PageHeaderTitle>
