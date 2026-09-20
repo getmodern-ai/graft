@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { AgentDetailsSection } from "@/components/agent/agent-details-section";
 
 import { RetryNotice } from "@/components/retry-notice";
 import { StatusChip } from "@/components/status-chip";
@@ -7,7 +8,6 @@ import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states"
 import { Time } from "@/components/time";
 import { ToolAnnotations } from "@/components/tool-annotations";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, DataTableRow } from "@/components/ui/data-table";
 import { Switch } from "@/components/ui/switch";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -76,108 +76,104 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
   const rows: readonly Approval[] = approvals.data?.approvals ?? [];
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Approvals</CardTitle>
-        <CardDescription>
+    <AgentDetailsSection
+      title="Approvals"
+      description={
+        <>
           Your standing answers for this agent, per tool. Reads never ask; any other tool asks once
           and the answer holds, unless you set it to ask every time here or on the ask itself.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="@container">
-        <DataTable layout="grid" className="min-w-96">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Tool</TableHead>
-              <TableHead className="@2xl:w-24 w-20">Answer</TableHead>
-              <TableHead className="@2xl:table-cell hidden @2xl:w-36">Decided</TableHead>
-              <TableHead className="@2xl:w-36 w-24">Asks every time</TableHead>
-              <TableHead className="@2xl:w-28 w-22">
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isPending ? (
-              <TableLoadingRows colSpan={COLUMNS} />
-            ) : isError ? (
-              <TableBodyNote colSpan={COLUMNS}>
-                <RetryNotice
-                  error={approvals.error ?? toolbox.error}
-                  message="Could not load the approvals."
-                  onRetry={() => {
-                    void approvals.refetch();
-                    void toolbox.refetch();
-                  }}
-                  retrying={approvals.isFetching || toolbox.isFetching}
-                />
-              </TableBodyNote>
-            ) : rows.length === 0 ? (
-              <TableBodyNote colSpan={COLUMNS}>
-                Nothing answered yet. The first tool this agent runs that is not read-only will ask.
-              </TableBodyNote>
-            ) : (
-              rows.map((approval) => {
-                const tool = toolsById.get(approval.toolId);
-                const name = tool ? `${tool.vendor}__${tool.name}` : approval.toolId;
-                return (
-                  <DataTableRow key={approval.toolId}>
-                    <TableCell className="truncate">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <code className="truncate font-mono text-xs" title={name}>
-                          {name}
-                        </code>
-                        {tool ? (
-                          <ToolAnnotations
-                            readOnly={tool.readOnly}
-                            destructive={tool.destructive}
-                          />
-                        ) : null}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <StatusChip chip={APPROVAL_DECISION_CHIP[approval.decision]} />
-                    </TableCell>
-                    <TableCell className="@2xl:table-cell hidden truncate text-muted-foreground">
-                      <Time iso={approval.decidedAt} />
-                    </TableCell>
-                    <TableCell>
-                      {tool?.readOnly ? (
-                        <span className="text-muted-foreground text-xs">Never</span>
-                      ) : (
-                        <span className="flex items-center gap-2">
-                          <Switch
-                            checked={approval.askEveryCall}
-                            disabled={busy || approval.decision !== "allow"}
-                            onCheckedChange={(on) =>
-                              askEveryCall.mutate({ toolId: approval.toolId, on })
-                            }
-                            aria-label={`Ask every time for ${name}`}
-                          />
-                          <span className="text-muted-foreground text-xs">
-                            {approval.askEveryCall ? "Yes" : "No"}
-                          </span>
+        </>
+      }
+    >
+      <DataTable layout="grid" className="min-w-96">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Tool</TableHead>
+            <TableHead className="@2xl:w-24 w-20">Answer</TableHead>
+            <TableHead className="@2xl:table-cell hidden @2xl:w-36">Decided</TableHead>
+            <TableHead className="@2xl:w-36 w-24">Asks every time</TableHead>
+            <TableHead className="@2xl:w-28 w-22">
+              <span className="sr-only">Actions</span>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isPending ? (
+            <TableLoadingRows colSpan={COLUMNS} />
+          ) : isError ? (
+            <TableBodyNote colSpan={COLUMNS}>
+              <RetryNotice
+                error={approvals.error ?? toolbox.error}
+                message="Could not load the approvals."
+                onRetry={() => {
+                  void approvals.refetch();
+                  void toolbox.refetch();
+                }}
+                retrying={approvals.isFetching || toolbox.isFetching}
+              />
+            </TableBodyNote>
+          ) : rows.length === 0 ? (
+            <TableBodyNote colSpan={COLUMNS}>
+              Nothing answered yet. The first tool this agent runs that is not read-only will ask.
+            </TableBodyNote>
+          ) : (
+            rows.map((approval) => {
+              const tool = toolsById.get(approval.toolId);
+              const name = tool ? `${tool.vendor}__${tool.name}` : approval.toolId;
+              return (
+                <DataTableRow key={approval.toolId}>
+                  <TableCell className="truncate">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <code className="truncate font-mono text-xs" title={name}>
+                        {name}
+                      </code>
+                      {tool ? (
+                        <ToolAnnotations readOnly={tool.readOnly} destructive={tool.destructive} />
+                      ) : null}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <StatusChip chip={APPROVAL_DECISION_CHIP[approval.decision]} />
+                  </TableCell>
+                  <TableCell className="@2xl:table-cell hidden truncate text-muted-foreground">
+                    <Time iso={approval.decidedAt} />
+                  </TableCell>
+                  <TableCell>
+                    {tool?.readOnly ? (
+                      <span className="text-muted-foreground text-xs">Never</span>
+                    ) : (
+                      <span className="flex items-center gap-2">
+                        <Switch
+                          checked={approval.askEveryCall}
+                          disabled={busy || approval.decision !== "allow"}
+                          onCheckedChange={(on) =>
+                            askEveryCall.mutate({ toolId: approval.toolId, on })
+                          }
+                          aria-label={`Ask every time for ${name}`}
+                        />
+                        <span className="text-muted-foreground text-xs">
+                          {approval.askEveryCall ? "Yes" : "No"}
                         </span>
-                      )}
-                    </TableCell>
-                    {/* `py-0`: a 28px button in `TableCell`'s `p-2` is 44px, past the row's 40. */}
-                    <TableCell className="py-0 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => withdraw.mutate(approval.toolId)}
-                      >
-                        Withdraw
-                      </Button>
-                    </TableCell>
-                  </DataTableRow>
-                );
-              })
-            )}
-          </TableBody>
-        </DataTable>
-      </CardContent>
-    </Card>
+                      </span>
+                    )}
+                  </TableCell>
+                  {/* `py-0`: a 28px button in `TableCell`'s `p-2` is 44px, past the row's 40. */}
+                  <TableCell className="py-0 text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => withdraw.mutate(approval.toolId)}
+                    >
+                      Withdraw
+                    </Button>
+                  </TableCell>
+                </DataTableRow>
+              );
+            })
+          )}
+        </TableBody>
+      </DataTable>
+    </AgentDetailsSection>
   );
 }

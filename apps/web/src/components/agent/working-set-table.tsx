@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 
+import { AgentDetailsSection } from "@/components/agent/agent-details-section";
 import { RetryNotice } from "@/components/retry-notice";
 import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states";
 import { Time } from "@/components/time";
 import { ToolAnnotations } from "@/components/tool-annotations";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, DataTableRow } from "@/components/ui/data-table";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { type Agent, type WorkingSetEntry, workingSetQuery } from "@/lib/agent-queries";
@@ -38,86 +38,87 @@ export function WorkingSetTable({ agent }: { agent: Agent }) {
   const entries = data?.workingSet ?? [];
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
+    <AgentDetailsSection
+      title={
+        <>
           Working set
           {data ? (
             <Badge variant="secondary">
               {entries.length} of {agent.workingSetCap}
             </Badge>
           ) : null}
-        </CardTitle>
-        <CardDescription>
+        </>
+      }
+      description={
+        <>
           The authored tools currently promoted for this agent in its MCP tool list, beside the
           meta-tools. Idle window {count(agent.idleWindowDays, "day")}.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="@container">
-        <DataTable layout="grid" className="min-w-96">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Tool</TableHead>
-              <TableHead className="@2xl:w-28 w-24">Asks</TableHead>
-              <TableHead className="@2xl:table-cell hidden @2xl:w-32">Promoted by</TableHead>
-              <TableHead className="@2xl:table-cell hidden @2xl:w-36">Promoted</TableHead>
-              <TableHead className="@2xl:w-36 w-26">Last used</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isPending ? (
-              <TableLoadingRows colSpan={COLUMNS} />
-            ) : isError ? (
-              <TableBodyNote colSpan={COLUMNS}>
-                <RetryNotice
-                  error={error}
-                  message="Could not load the working set."
-                  onRetry={() => void refetch()}
-                  retrying={isFetching}
-                />
-              </TableBodyNote>
-            ) : entries.length === 0 ? (
-              <TableBodyNote colSpan={COLUMNS}>
-                Nothing is promoted yet. A tool arrives here when the agent promotes one it found
-                with <code className="font-mono">find_tool</code>, or publishes one.
-              </TableBodyNote>
-            ) : (
-              entries.map((entry) => (
-                <DataTableRow key={entry.toolId}>
-                  <TableCell className="truncate">
-                    <span className="flex min-w-0 items-baseline gap-2">
-                      <code className="shrink-0 font-mono text-xs">
-                        {entry.tool.vendor}__{entry.tool.name}
-                      </code>
-                      <span
-                        className="truncate text-muted-foreground text-xs"
-                        title={entry.tool.description}
-                      >
-                        {entry.tool.description}
-                      </span>
+        </>
+      }
+    >
+      <DataTable layout="grid" className="min-w-96">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Tool</TableHead>
+            <TableHead className="@2xl:w-28 w-24">Asks</TableHead>
+            <TableHead className="@2xl:table-cell hidden @2xl:w-32">Promoted by</TableHead>
+            <TableHead className="@2xl:table-cell hidden @2xl:w-36">Promoted</TableHead>
+            <TableHead className="@2xl:w-36 w-26">Last used</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isPending ? (
+            <TableLoadingRows colSpan={COLUMNS} />
+          ) : isError ? (
+            <TableBodyNote colSpan={COLUMNS}>
+              <RetryNotice
+                error={error}
+                message="Could not load the working set."
+                onRetry={() => void refetch()}
+                retrying={isFetching}
+              />
+            </TableBodyNote>
+          ) : entries.length === 0 ? (
+            <TableBodyNote colSpan={COLUMNS}>
+              Nothing is promoted yet. A tool arrives here when the agent promotes one it found with{" "}
+              <code className="font-mono">find_tool</code>, or publishes one.
+            </TableBodyNote>
+          ) : (
+            entries.map((entry) => (
+              <DataTableRow key={entry.toolId}>
+                <TableCell className="truncate">
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <code className="shrink-0 font-mono text-xs">
+                      {entry.tool.vendor}__{entry.tool.name}
+                    </code>
+                    <span
+                      className="truncate text-muted-foreground text-xs"
+                      title={entry.tool.description}
+                    >
+                      {entry.tool.description}
                     </span>
-                  </TableCell>
-                  <TableCell>
-                    <ToolAnnotations
-                      readOnly={entry.tool.readOnly}
-                      destructive={entry.tool.destructive}
-                    />
-                  </TableCell>
-                  <TableCell className="@2xl:table-cell hidden">
-                    {PROMOTED_BY[entry.promotedBy]}
-                  </TableCell>
-                  <TableCell className="@2xl:table-cell hidden truncate text-muted-foreground">
-                    <Time iso={entry.promotedAt} />
-                  </TableCell>
-                  <TableCell className="truncate text-muted-foreground">
-                    {entry.lastUsedAt ? <Time iso={entry.lastUsedAt} /> : "Never"}
-                  </TableCell>
-                </DataTableRow>
-              ))
-            )}
-          </TableBody>
-        </DataTable>
-      </CardContent>
-    </Card>
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <ToolAnnotations
+                    readOnly={entry.tool.readOnly}
+                    destructive={entry.tool.destructive}
+                  />
+                </TableCell>
+                <TableCell className="@2xl:table-cell hidden">
+                  {PROMOTED_BY[entry.promotedBy]}
+                </TableCell>
+                <TableCell className="@2xl:table-cell hidden truncate text-muted-foreground">
+                  <Time iso={entry.promotedAt} />
+                </TableCell>
+                <TableCell className="truncate text-muted-foreground">
+                  {entry.lastUsedAt ? <Time iso={entry.lastUsedAt} /> : "Never"}
+                </TableCell>
+              </DataTableRow>
+            ))
+          )}
+        </TableBody>
+      </DataTable>
+    </AgentDetailsSection>
   );
 }

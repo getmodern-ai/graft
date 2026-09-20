@@ -586,6 +586,10 @@ The drawer retains scope, limits, working set, approvals, history and revocation
 connections shown under both scope modes. Archived and revoked agents remain read-only. Queries
 start without awaiting so the drawer owns loading and retry; each route id remounts its drafts.
 The drawer's tables use container widths because viewport breakpoints do not describe a sheet.
+Its panel matches Cando Figma node `404:601149`, read through the remote MCP at the person's
+explicit request: a 685px right panel, 24px horizontal gutters, a compact header, and headings
+outside settings cards. `AgentDetailsSection` composes the existing settings primitives. The
+scrollport holds an auto-height column so cards never flex-shrink and clip their contents.
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left

@@ -2,17 +2,10 @@ import type { AgentScopeMode } from "@graft/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
+import { AgentDetailsSection } from "@/components/agent/agent-details-section";
 
 import { ConnectionPicker } from "@/components/connection/connection-picker";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import {
   Select,
@@ -79,58 +72,59 @@ export function ScopeEditor({
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Connections</CardTitle>
-        <CardDescription>
+    <AgentDetailsSection
+      title="Connections"
+      description={
+        <>
           The connections this agent may use. An authored tool running for it cannot reach a
           connection outside them.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Field>
-          <FieldLabel htmlFor="scope-mode">Connections</FieldLabel>
-          <Select
-            value={mode}
-            items={SCOPE_MODE_ITEMS}
-            disabled={frozen || save.isPending}
-            onValueChange={(next) => {
-              const read = readScopeMode(next);
-              if (read) setMode(read);
-            }}
-          >
-            <SelectTrigger id="scope-mode" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SCOPE_MODE_ITEMS.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <FieldDescription>{SCOPE_MODE_DESCRIPTION[mode]}</FieldDescription>
-          <ConnectionPicker
-            connections={connections}
-            selected={
-              mode === "all" ? new Set(connections.map((connection) => connection.id)) : draft
-            }
-            onChange={setDraft}
-            disabled={mode === "all" || frozen || save.isPending}
-          />
-        </Field>
-      </CardContent>
-      {frozen ? null : (
-        <CardFooter className="justify-end gap-2">
-          <Button variant="outline" disabled={!dirty || save.isPending} onClick={reset}>
-            Reset
-          </Button>
-          <Button disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
-            {save.isPending ? "Saving…" : "Save scope"}
-          </Button>
-        </CardFooter>
-      )}
-    </Card>
+        </>
+      }
+      actions={
+        frozen ? null : (
+          <>
+            <Button variant="outline" disabled={!dirty || save.isPending} onClick={reset}>
+              Reset
+            </Button>
+            <Button disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? "Saving…" : "Save scope"}
+            </Button>
+          </>
+        )
+      }
+    >
+      <Field>
+        <FieldLabel htmlFor="scope-mode">Connections</FieldLabel>
+        <Select
+          value={mode}
+          items={SCOPE_MODE_ITEMS}
+          disabled={frozen || save.isPending}
+          onValueChange={(next) => {
+            const read = readScopeMode(next);
+            if (read) setMode(read);
+          }}
+        >
+          <SelectTrigger id="scope-mode" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SCOPE_MODE_ITEMS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <FieldDescription>{SCOPE_MODE_DESCRIPTION[mode]}</FieldDescription>
+        <ConnectionPicker
+          connections={connections}
+          selected={
+            mode === "all" ? new Set(connections.map((connection) => connection.id)) : draft
+          }
+          onChange={setDraft}
+          disabled={mode === "all" || frozen || save.isPending}
+        />
+      </Field>
+    </AgentDetailsSection>
   );
 }
