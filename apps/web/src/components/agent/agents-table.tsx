@@ -44,7 +44,7 @@ export function AgentsTable({
       <TableHeader>
         <TableRow>
           <TableHead>Agent</TableHead>
-          <TableHead className="hidden md:table-cell md:w-36">Harness</TableHead>
+          <TableHead className="hidden md:table-cell md:w-36">Harnesses</TableHead>
           <TableHead className="hidden xl:table-cell xl:w-36">Token</TableHead>
           <TableHead className="hidden lg:table-cell lg:w-24">Cap</TableHead>
           <TableHead className="hidden lg:table-cell lg:w-28">Idle window</TableHead>

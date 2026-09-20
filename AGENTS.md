@@ -578,7 +578,7 @@ omitting empty sections. Revocation alone keeps the row unarchived. Migration 00
 timestamp; existing agents remain unarchived. An empty agents table keeps its headers and a muted
 full-width sentence, following Cando's connections table.
 
-**Agent harnesses** (GRA-135): the Harness column names `connectedVia.clientName`, recorded at
+**Agent harnesses** (GRA-135): the Harnesses column names `connectedVia.clientName`, recorded at
 OAuth consent (ADR 0018); a static-token agent says "Not recorded", never a name inferred from
 its label or a live status. Agent names are plain text. The drawer is deferred; existing
 `/agents/:agentId` links redirect to the table. Editing and archiving stay in the row's menu.
