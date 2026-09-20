@@ -583,9 +583,9 @@ OAuth consent (ADR 0018). Without a recorded harness it says "Not connected"; fo
 that opens Connection details, also available in its actions menu. This label is a setup prompt,
 not a live connectivity check: static tokens carry no harness identity. The dialog shares creation's
 MCP instructions but cannot retrieve the token; the shell command uses a saved-token placeholder
-(ADR 0007). OAuth agents get the URL and consent instructions. Agent names remain plain text and
-the detail drawer is deferred. Every row's menu has View agent, including archived rows, opening
-the standalone `/agents/:agentId` page. That page keeps scope and limit editors, the working set,
+(ADR 0007). OAuth agents get the URL and consent instructions. Agent names are blue links to the
+standalone `/agents/:agentId` page. Every row's menu also has View agent, including archived rows;
+the detail drawer is deferred. That page keeps scope and limit editors, the working set,
 approvals, history and standalone revocation reachable; revoked and archived records are read-only.
 `GET /api/agents` includes `workingSetCount`, counted against each person-scoped agent in the same
 statement; the table shows count/cap with Cando's status dot. The dev-only `preview-agent-multiple`

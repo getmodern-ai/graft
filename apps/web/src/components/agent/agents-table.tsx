@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { Fragment, useRef, useState } from "react";
 
 import { AgentActions } from "@/components/agent/agent-actions";
@@ -89,7 +90,13 @@ export function AgentsTable({
                 {group.agents.map((agent) => (
                   <DataTableRow key={agent.id}>
                     <TableCell className="truncate">
-                      <span>{agent.name}</span>
+                      <Link
+                        to="/agents/$agentId"
+                        params={{ agentId: agent.id }}
+                        className="rounded-sm text-info underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                      >
+                        {agent.name}
+                      </Link>
                       <div className="mt-1 md:hidden">
                         <AgentHarnesses agent={agent} />
                       </div>

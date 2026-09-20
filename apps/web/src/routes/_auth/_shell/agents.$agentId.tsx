@@ -28,7 +28,7 @@ import { connectionsQuery, toolsQuery } from "@/lib/connection-queries";
 import { agentStatusChip } from "@/lib/status-chips";
 
 /**
- * The standalone management page stays reachable from the table's View agent action (GRA-135).
+ * The standalone management page opens from the agent name or View agent action (GRA-135).
  * Removing the drawer must not remove scope, approval and history access (ADR 0007, ADR 0008).
  *
  * The loader awaits the agent and the connections, which the header and the two editors need

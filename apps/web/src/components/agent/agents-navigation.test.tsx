@@ -195,7 +195,7 @@ async function waitFor(check: () => void) {
 
 function control(label: string, within: ParentNode = document): HTMLElement {
   const result = [
-    ...within.querySelectorAll<HTMLElement>("button, [role=menuitem], [role=switch]"),
+    ...within.querySelectorAll<HTMLElement>("a, button, [role=menuitem], [role=switch]"),
   ].find(
     (element) =>
       element.textContent?.trim() === label || element.getAttribute("aria-label") === label,
@@ -209,12 +209,11 @@ async function click(label: string, within: ParentNode = document) {
 }
 
 describe("standalone agent management", () => {
-  it("opens View agent from the table and supports browser back and forward without a drawer", async () => {
+  it("opens the agent name from the table and supports browser back and forward without a drawer", async () => {
     const router = await mount();
     await waitFor(() => expect(document.body.textContent).toContain("Laptop"));
-    await click("Actions for Laptop");
-    expect(control("View agent").getAttribute("href")).toBe("/agents/agent_1");
-    await click("View agent");
+    expect(control("Laptop").getAttribute("href")).toBe("/agents/agent_1");
+    await click("Laptop");
     await waitFor(() => expect(document.getElementById("limits-name")).not.toBeNull());
     expect(router.state.location.pathname).toBe("/agents/agent_1");
     for (const label of [
