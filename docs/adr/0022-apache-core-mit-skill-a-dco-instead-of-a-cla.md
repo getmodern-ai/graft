@@ -72,7 +72,7 @@ the company none it does not already have under section 5.
   The skills stay MIT, where the shortness is worth more than the clause.
 - **FSL or BSL, converting to a permissive licence after a delay.** ADR 0015 kept this as the
   fallback. Rejected: this audience does not count source-available as open source, and the cost is
-  visible. Superglue moved from GPL to FSL and its public repository now reads as abandoned.
+  visible.
 
 ## Consequences and accepted risks
 
