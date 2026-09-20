@@ -15,7 +15,6 @@ import {
 } from "./acquire-job";
 import {
   addAgentConnection,
-  archiveAgent,
   findAgentForUpdate,
   listAgentConnectionIds,
   listAgentIdsForConnection,
@@ -479,18 +478,6 @@ describe("person-scoped statements take the person", () => {
     const s = only();
     expect(s.sql).toContain('"agent"."person_id" = $');
     expect(s.sql).toContain('"agent"."revoked_at" is null');
-  });
-
-  it("archiving scopes the write, keeps the first archive and preserves an earlier revoke", async () => {
-    const at = new Date("2026-09-20T00:00:00Z");
-    await archiveAgent(db, "person_1", "agent_1", at);
-    const s = only();
-    expect(s.sql).toContain('"agent"."id" = $');
-    expect(s.sql).toContain('"agent"."person_id" = $');
-    expect(s.sql).toContain('"agent"."archived_at" is null');
-    expect(s.sql).toContain('"revoked_at" = coalesce("agent"."revoked_at",');
-    expect(s.sql).toContain('"archived_at" = $');
-    expect(s.params).toEqual(expect.arrayContaining(["person_1", "agent_1", at.toISOString()]));
   });
 
   it("answering a pending action refuses an answered or expired one in the predicate", async () => {

@@ -1,4 +1,4 @@
-import { and, asc, eq, exists, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, exists, getTableColumns, inArray, isNull, or } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent, agentConnection, type NewAgent } from "../schema/agent";
@@ -172,24 +172,6 @@ export async function revokeAgent(
     .update(agent)
     .set({ revokedAt: at })
     .where(and(eq(agent.id, agentId), eq(agent.personId, personId), isNull(agent.revokedAt)))
-    .returning();
-  return row ?? null;
-}
-
-/** Archive once, preserving an earlier revoke's timestamp (ADR 0007, GRA-133). */
-export async function archiveAgent(
-  db: DbOrTx,
-  personId: string,
-  agentId: string,
-  at: Date,
-): Promise<AgentRow | null> {
-  const [row] = await db
-    .update(agent)
-    .set({
-      archivedAt: at,
-      revokedAt: sql`coalesce(${agent.revokedAt}, ${at.toISOString()}::timestamp)`,
-    })
-    .where(and(eq(agent.id, agentId), eq(agent.personId, personId), isNull(agent.archivedAt)))
     .returning();
   return row ?? null;
 }

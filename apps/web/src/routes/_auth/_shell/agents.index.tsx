@@ -15,10 +15,8 @@ import {
 } from "@/components/page/page-header";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
-import { agentListQuery } from "@/lib/agent-queries";
+import { agentsQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
-
-const agentsQuery = agentListQuery(true);
 
 /**
  * The loader *starts* both reads and awaits neither, so the screen paints at once — header, table

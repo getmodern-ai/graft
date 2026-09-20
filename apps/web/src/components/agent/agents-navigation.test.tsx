@@ -41,7 +41,6 @@ const agent: Agent = {
   workingSetCap: 20,
   idleWindowDays: 21,
   revokedAt: null,
-  archivedAt: null,
   createdAt: at,
   updatedAt: at,
 };
@@ -112,7 +111,7 @@ beforeEach(() => {
       const method = options?.method ?? "GET";
       const body = options?.body ? JSON.parse(String(options.body)) : undefined;
       requests.push({ url, method, body });
-      if (url === "/api/agents?includeArchived=true") {
+      if (url === "/api/agents") {
         return Response.json({ agents: [{ ...current, workingSetCount: 1 }] });
       }
       if (url === "/api/connections") {
@@ -274,33 +273,30 @@ describe("standalone agent management", () => {
     expect(document.body.textContent).toContain("History");
   });
 
-  it.each(["revoked", "archived"])(
-    "keeps a %s agent's records reachable and read-only",
-    async (state) => {
-      current = { ...agent, revokedAt: at, archivedAt: state === "archived" ? at : null };
-      await mount();
-      await waitFor(() => expect(document.body.textContent).toContain("Laptop"));
-      await click("Actions for Laptop");
-      await click("View agent");
-      await waitFor(() => expect(document.getElementById("limits-name")).not.toBeNull());
-      expect(document.body.textContent).toContain("Work account");
-      expect(document.body.textContent).toContain("example__create-item");
-      expect(document.body.textContent).toContain("The agent asked");
-      for (const id of [
-        "limits-name",
-        "limits-cap",
-        "limits-idle",
-        "scope-mode",
-        "scope-conn_1",
-        "scope-conn_2",
-      ]) {
-        expect(document.getElementById(id)?.hasAttribute("disabled")).toBe(true);
-      }
-      expect((control("Withdraw") as HTMLButtonElement).disabled).toBe(true);
-      expect(document.body.textContent).not.toContain("Revoke token");
-      expect(document.body.textContent).not.toContain("Save scope");
-    },
-  );
+  it("keeps a revoked agent's records reachable and read-only", async () => {
+    current = { ...agent, revokedAt: at };
+    await mount();
+    await waitFor(() => expect(document.body.textContent).toContain("Laptop"));
+    await click("Actions for Laptop");
+    await click("View agent");
+    await waitFor(() => expect(document.getElementById("limits-name")).not.toBeNull());
+    expect(document.body.textContent).toContain("Work account");
+    expect(document.body.textContent).toContain("example__create-item");
+    expect(document.body.textContent).toContain("The agent asked");
+    for (const id of [
+      "limits-name",
+      "limits-cap",
+      "limits-idle",
+      "scope-mode",
+      "scope-conn_1",
+      "scope-conn_2",
+    ]) {
+      expect(document.getElementById(id)?.hasAttribute("disabled")).toBe(true);
+    }
+    expect((control("Withdraw") as HTMLButtonElement).disabled).toBe(true);
+    expect(document.body.textContent).not.toContain("Revoke token");
+    expect(document.body.textContent).not.toContain("Save scope");
+  });
 
   it("keeps a missing or foreign agent on its error page instead of redirecting to the table", async () => {
     const router = await mount("/agents/missing");

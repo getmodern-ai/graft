@@ -30,16 +30,10 @@ export const agentKeys = {
   changes: (agentId: string) => ["agents", agentId, "working-set", "changes"] as const,
 };
 
-export const agentListQuery = (includeArchived = false) =>
-  queryOptions({
-    queryKey: [...agentKeys.all, "list", includeArchived] as const,
-    queryFn: () =>
-      api<{ agents: AgentListItem[] }>(
-        includeArchived ? "/agents?includeArchived=true" : "/agents",
-      ),
-  });
-
-export const agentsQuery = agentListQuery();
+export const agentsQuery = queryOptions({
+  queryKey: agentKeys.all,
+  queryFn: () => api<{ agents: AgentListItem[] }>("/agents"),
+});
 
 export const agentQuery = (agentId: string) =>
   queryOptions({
@@ -100,12 +94,6 @@ export function updateAgentLimits(agentId: string, patch: AgentLimitsPatch) {
 
 export function revokeAgent(agentId: string) {
   return api<{ agent: Agent }>(`/agents/${encodeURIComponent(agentId)}/revoke`, {
-    method: "POST",
-  });
-}
-
-export function archiveAgent(agentId: string) {
-  return api<{ agent: Agent }>(`/agents/${encodeURIComponent(agentId)}/archive`, {
     method: "POST",
   });
 }

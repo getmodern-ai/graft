@@ -270,139 +270,127 @@ describe.skipIf(!adminUrl)("a chat product connects over MCP OAuth (ADR 0018)", 
     };
   }
 
-  it.each(["revoke", "archive"])(
-    "runs the SDK's OAuth flow, refresh and refusal after %s",
-    async (action) => {
-      const provider = new ProductProvider("Test Chat Product", "none");
-      const serverUrl = new URL(`${AUTH_URL}/mcp`);
+  it("runs the whole flow with the SDK's client: 401 → discovery → registration → consent → token → tools/list as the minted agent → refresh → refusal after revoke", async () => {
+    const provider = new ProductProvider("Test Chat Product", "none");
+    const serverUrl = new URL(`${AUTH_URL}/mcp`);
 
-      // 1. The first connection attempt: the 401's challenge starts discovery and registration, and
-      //    ends with the URL the product would open for the person.
-      const first = new StreamableHTTPClientTransport(serverUrl, {
-        authProvider: provider,
-        fetch: fetchFn,
+    // 1. The first connection attempt: the 401's challenge starts discovery and registration, and
+    //    ends with the URL the product would open for the person.
+    const first = new StreamableHTTPClientTransport(serverUrl, {
+      authProvider: provider,
+      fetch: fetchFn,
+    });
+    await expect(new Client({ name: "product", version: "0.0.0" }).connect(first)).rejects.toThrow(
+      UnauthorizedError,
+    );
+    expect(provider.clientInfo?.client_id).toBeDefined();
+    expect(provider.clientInfo).not.toHaveProperty("client_secret");
+    const authorizationUrl = provider.authorizationUrls[0];
+    if (!authorizationUrl) throw new Error("the product was not sent to authorize");
+    expect(authorizationUrl.origin + authorizationUrl.pathname).toBe(
+      `${AUTH_URL}/mcp/oauth/authorize`,
+    );
+    expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(authorizationUrl.searchParams.get("resource")).toBe(`${AUTH_URL}/mcp`);
+
+    // 2. The person, in the console: signed in, sees the client's name, consents as a new agent.
+    const { code, agentId } = await consentAs(authorizationUrl, {
+      kind: "new",
+      name: "Test Chat Product",
+      connectionIds: [],
+    });
+    expect(code).toMatch(/^grftc_/);
+
+    // 3. The product exchanges the code, then connects as the agent.
+    await first.finishAuth(code);
+    expect(provider.issued?.access_token).toMatch(/^grfta_/);
+    expect(provider.issued?.refresh_token).toMatch(/^grftr_/);
+
+    const transport = new StreamableHTTPClientTransport(serverUrl, {
+      authProvider: provider,
+      fetch: fetchFn,
+    });
+    const client = new Client({ name: "product", version: "0.0.0" });
+    await client.connect(transport);
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((tool) => tool.name)).toContain("find_tool");
+
+      // The agent the consent minted: named for the client, no static token, the client recorded.
+      const agents = await app.request(`${AUTH_URL}/api/agents/${agentId}`, {
+        headers: { cookie },
       });
-      await expect(
-        new Client({ name: "product", version: "0.0.0" }).connect(first),
-      ).rejects.toThrow(UnauthorizedError);
-      expect(provider.clientInfo?.client_id).toBeDefined();
-      expect(provider.clientInfo).not.toHaveProperty("client_secret");
-      const authorizationUrl = provider.authorizationUrls[0];
-      if (!authorizationUrl) throw new Error("the product was not sent to authorize");
-      expect(authorizationUrl.origin + authorizationUrl.pathname).toBe(
-        `${AUTH_URL}/mcp/oauth/authorize`,
-      );
-      expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
-      expect(authorizationUrl.searchParams.get("resource")).toBe(`${AUTH_URL}/mcp`);
-
-      // 2. The person, in the console: signed in, sees the client's name, consents as a new agent.
-      const { code, agentId } = await consentAs(authorizationUrl, {
-        kind: "new",
+      expect(agents.status).toBe(200);
+      const { agent } = (await agents.json()) as {
+        agent: { name: string; tokenPrefix: string | null; connectedVia: unknown; revokedAt: null };
+      };
+      expect(agent).toMatchObject({
         name: "Test Chat Product",
-        connectionIds: [],
+        tokenPrefix: null,
+        connectedVia: { clientId: provider.clientInfo?.client_id, clientName: "Test Chat Product" },
       });
-      expect(code).toMatch(/^grftc_/);
+      const stored = await db.execute<{ token_hash: string | null; person_id: string }>(
+        sql`select token_hash, person_id from agent where id = ${agentId}`,
+      );
+      expect(stored.rows[0]).toEqual({ token_hash: null, person_id: personId });
 
-      // 3. The product exchanges the code, then connects as the agent.
-      await first.finishAuth(code);
-      expect(provider.issued?.access_token).toMatch(/^grfta_/);
-      expect(provider.issued?.refresh_token).toMatch(/^grftr_/);
+      // Every token is a hash in the row and nowhere else.
+      const rows = await db.execute<{ kind: string; token_hash: string }>(
+        sql`select kind, token_hash from mcp_token where agent_id = ${agentId} order by kind`,
+      );
+      expect(rows.rows.map((row) => row.kind)).toEqual(["access", "refresh"]);
+      const dump = JSON.stringify(rows.rows);
+      expect(dump).not.toContain(provider.issued?.access_token ?? "!");
+      expect(dump).not.toContain(provider.issued?.refresh_token ?? "!");
 
-      const transport = new StreamableHTTPClientTransport(serverUrl, {
-        authProvider: provider,
-        fetch: fetchFn,
+      // 4. The access token runs out; the SDK refreshes on the 401 and the call goes through.
+      const before = provider.issued?.access_token;
+      await db.execute(
+        sql`update mcp_token set expires_at = now() - interval '1 minute' where agent_id = ${agentId} and kind = 'access'`,
+      );
+      const afterExpiry = await client.listTools();
+      expect(afterExpiry.tools.map((tool) => tool.name)).toContain("find_tool");
+      expect(provider.issued?.access_token).not.toBe(before);
+      const refreshRows = await db.execute<{ rotated_at: Date | null }>(
+        sql`select rotated_at from mcp_token where agent_id = ${agentId} and kind = 'refresh' order by created_at`,
+      );
+      expect(refreshRows.rows).toHaveLength(2);
+      expect(refreshRows.rows[0]?.rotated_at).not.toBeNull();
+      expect(refreshRows.rows[1]?.rotated_at).toBeNull();
+
+      // 5. The person revokes the agent in the console: the next call is refused, the refresh is
+      //    refused, and the product is sent to authorize again — which is how it asks the person
+      //    to reconnect.
+      const revoked = await app.request(`${AUTH_URL}/api/agents/${agentId}/revoke`, {
+        method: "POST",
+        headers: { cookie },
       });
-      const client = new Client({ name: "product", version: "0.0.0" });
-      await client.connect(transport);
-      try {
-        const { tools } = await client.listTools();
-        expect(tools.map((tool) => tool.name)).toContain("find_tool");
+      expect(revoked.status).toBe(200);
+      const direct = await app.request(`${AUTH_URL}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${provider.issued?.access_token}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-session-id": transport.sessionId ?? "",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/list", params: {} }),
+      });
+      expect(direct.status).toBe(401);
+      expect(await direct.json()).toMatchObject({ reason: "token_unknown" });
+      expect(direct.headers.get("www-authenticate")).toContain('error="invalid_token"');
 
-        // The agent the consent minted: named for the client, no static token, the client recorded.
-        const agents = await app.request(`${AUTH_URL}/api/agents/${agentId}`, {
-          headers: { cookie },
-        });
-        expect(agents.status).toBe(200);
-        const { agent } = (await agents.json()) as {
-          agent: {
-            name: string;
-            tokenPrefix: string | null;
-            connectedVia: unknown;
-            revokedAt: null;
-          };
-        };
-        expect(agent).toMatchObject({
-          name: "Test Chat Product",
-          tokenPrefix: null,
-          connectedVia: {
-            clientId: provider.clientInfo?.client_id,
-            clientName: "Test Chat Product",
-          },
-        });
-        const stored = await db.execute<{ token_hash: string | null; person_id: string }>(
-          sql`select token_hash, person_id from agent where id = ${agentId}`,
-        );
-        expect(stored.rows[0]).toEqual({ token_hash: null, person_id: personId });
-
-        // Every token is a hash in the row and nowhere else.
-        const rows = await db.execute<{ kind: string; token_hash: string }>(
-          sql`select kind, token_hash from mcp_token where agent_id = ${agentId} order by kind`,
-        );
-        expect(rows.rows.map((row) => row.kind)).toEqual(["access", "refresh"]);
-        const dump = JSON.stringify(rows.rows);
-        expect(dump).not.toContain(provider.issued?.access_token ?? "!");
-        expect(dump).not.toContain(provider.issued?.refresh_token ?? "!");
-
-        // 4. The access token runs out; the SDK refreshes on the 401 and the call goes through.
-        const before = provider.issued?.access_token;
-        await db.execute(
-          sql`update mcp_token set expires_at = now() - interval '1 minute' where agent_id = ${agentId} and kind = 'access'`,
-        );
-        const afterExpiry = await client.listTools();
-        expect(afterExpiry.tools.map((tool) => tool.name)).toContain("find_tool");
-        expect(provider.issued?.access_token).not.toBe(before);
-        const refreshRows = await db.execute<{ rotated_at: Date | null }>(
-          sql`select rotated_at from mcp_token where agent_id = ${agentId} and kind = 'refresh' order by created_at`,
-        );
-        expect(refreshRows.rows).toHaveLength(2);
-        expect(refreshRows.rows[0]?.rotated_at).not.toBeNull();
-        expect(refreshRows.rows[1]?.rotated_at).toBeNull();
-
-        // 5. The person revokes the agent in the console: the next call is refused, the refresh is
-        //    refused, and the product is sent to authorize again — which is how it asks the person
-        //    to reconnect.
-        const revoked = await app.request(`${AUTH_URL}/api/agents/${agentId}/${action}`, {
-          method: "POST",
-          headers: { cookie },
-        });
-        expect(revoked.status).toBe(200);
-        const direct = await app.request(`${AUTH_URL}/mcp`, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${provider.issued?.access_token}`,
-            "content-type": "application/json",
-            accept: "application/json, text/event-stream",
-            "mcp-session-id": transport.sessionId ?? "",
-          },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/list", params: {} }),
-        });
-        expect(direct.status).toBe(401);
-        expect(await direct.json()).toMatchObject({ reason: "token_unknown" });
-        expect(direct.headers.get("www-authenticate")).toContain('error="invalid_token"');
-
-        const urlsBefore = provider.authorizationUrls.length;
-        await expect(client.listTools()).rejects.toThrow(UnauthorizedError);
-        expect(provider.authorizationUrls.length).toBe(urlsBefore + 1);
-        const tokenRows = await db.execute<{ revoked_at: Date | null }>(
-          sql`select revoked_at from mcp_token where agent_id = ${agentId}`,
-        );
-        for (const row of tokenRows.rows) expect(row.revoked_at).not.toBeNull();
-      } finally {
-        await client.close().catch(() => {});
-      }
-    },
-    60_000,
-  );
+      const urlsBefore = provider.authorizationUrls.length;
+      await expect(client.listTools()).rejects.toThrow(UnauthorizedError);
+      expect(provider.authorizationUrls.length).toBe(urlsBefore + 1);
+      const tokenRows = await db.execute<{ revoked_at: Date | null }>(
+        sql`select revoked_at from mcp_token where agent_id = ${agentId}`,
+      );
+      for (const row of tokenRows.rows) expect(row.revoked_at).not.toBeNull();
+    } finally {
+      await client.close().catch(() => {});
+    }
+  }, 60_000);
 
   it("admits a confidential client through the SDK's Basic authentication, and binds the grant to an existing agent", async () => {
     const provider = new ProductProvider("Confidential Product", "client_secret_basic");

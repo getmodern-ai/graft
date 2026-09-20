@@ -1,1 +1,0 @@
-ALTER TABLE "agent" ADD COLUMN "archived_at" timestamp;

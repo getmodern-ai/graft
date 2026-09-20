@@ -21,12 +21,6 @@ working set and nothing else of its own. A person with OpenClaw on a server and 
 has two agents and one toolbox; a person who connects Claude has a third.
 _Avoid_: harness (that is the software), client, bot, session, assistant
 
-**Archive an agent**:
-Retiring an agent to the console's Archived section and revoking its access, while keeping its
-working set and history readable. Revocation alone stops access without archiving the agent.
-Archiving deletes no connection or tool and does not restore access later.
-_Avoid_: delete an agent, remove an agent (when the record remains)
-
 **Harness**:
 The agent software a person runs, OpenClaw or Hermes today, or a chat product such as Claude or
 ChatGPT, that Graft extends. Graft is a server the harness connects to over MCP, never a component

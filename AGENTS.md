@@ -569,14 +569,11 @@ re-consent`), `outline` for waiting on something (a credential, a consent, a rec
 `secondary` for the neutral rest; `ToolAnnotations` reads its three from the same file. Labels are
 sentence case, like every label in the console, and its colocated test pins both.
 
-**Agent actions** (GRA-132, GRA-133): the agents table's dropdown opens the name/cap/idle-window
-edit dialog or the archive confirmation. `POST /api/agents/:id/archive` stamps `archived_at` and
-revokes static and OAuth access in one transaction; the row and its history remain readable
-(ADR 0007's archive amendment). `GET /api/agents` hides archived rows unless `includeArchived=true`,
-which the console's agents page always sends. The table groups Active, Revoked and Archived rows,
-omitting empty sections. Revocation alone keeps the row unarchived. Migration 0011 adds the nullable
-timestamp; existing agents remain unarchived. An empty agents table keeps its headers and a muted
-full-width sentence, following Cando's connections table.
+**Agent actions** (GRA-132, GRA-135): the agents table's dropdown opens the name/cap/idle-window
+edit dialog. The table groups Active and Revoked rows, omitting empty sections. An empty agents
+table keeps its headers and a centered, muted full-width sentence, following Cando's connections
+table. Archiving is excluded from this branch; the detail page retains standalone revocation
+(ADR 0007, ADR 0018).
 
 **Agent harnesses** (GRA-135): the Harnesses column names `connectedVia.clientName`, recorded at
 OAuth consent (ADR 0018). Without a recorded harness it says "Not connected"; for an active agent
@@ -584,9 +581,9 @@ that opens Connection details, also available in its actions menu. This label is
 not a live connectivity check: static tokens carry no harness identity. The dialog shares creation's
 MCP instructions but cannot retrieve the token; the shell command uses a saved-token placeholder
 (ADR 0007). OAuth agents get the URL and consent instructions. Agent names are blue links to the
-standalone `/agents/:agentId` page. Every row's menu also has View agent, including archived rows;
+standalone `/agents/:agentId` page. Every row's menu also has View agent, including revoked rows;
 the detail drawer is deferred. That page keeps scope and limit editors, the working set,
-approvals, history and standalone revocation reachable; revoked and archived records are read-only.
+approvals, history and standalone revocation reachable; revoked records are read-only.
 `GET /api/agents` includes `workingSetCount`, counted against each person-scoped agent in the same
 statement; the table shows count/cap with Cando's status dot. The dev-only `preview-agent-multiple`
 row previews three harness badges and a populated count; the API still records one OAuth origin.

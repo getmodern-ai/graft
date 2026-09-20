@@ -69,8 +69,6 @@ export const agent = pgTable(
      * lines are the person's records (ADR 0012) — but its token resolves to nothing from then on.
      */
     revokedAt: timestamp("revoked_at"),
-    /** Hidden from the default console list; archiving also revokes access (GRA-133, ADR 0007). */
-    archivedAt: timestamp("archived_at"),
     ...owned(),
   },
   (table) => [

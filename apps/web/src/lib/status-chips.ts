@@ -26,11 +26,9 @@ export type StatusChip = {
 export const AGENT_STATUS_CHIP = {
   active: { variant: "success", label: "Active" },
   revoked: { variant: "destructive", label: "Revoked" },
-  archived: { variant: "secondary", label: "Archived" },
-} as const satisfies Record<"active" | "revoked" | "archived", StatusChip>;
+} as const satisfies Record<"active" | "revoked", StatusChip>;
 
-export function agentStatusChip(agent: Pick<Agent, "revokedAt" | "archivedAt">): StatusChip {
-  if (agent.archivedAt) return AGENT_STATUS_CHIP.archived;
+export function agentStatusChip(agent: Pick<Agent, "revokedAt">): StatusChip {
   return agent.revokedAt ? AGENT_STATUS_CHIP.revoked : AGENT_STATUS_CHIP.active;
 }
 

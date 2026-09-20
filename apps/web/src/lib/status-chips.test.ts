@@ -81,17 +81,10 @@ describe("status chips", () => {
   });
 
   it("reads an agent's status off its revocation", () => {
-    expect(agentStatusChip({ revokedAt: null, archivedAt: null })).toBe(AGENT_STATUS_CHIP.active);
-    expect(agentStatusChip({ revokedAt: "2026-09-11T00:00:00.000Z", archivedAt: null })).toBe(
+    expect(agentStatusChip({ revokedAt: null })).toBe(AGENT_STATUS_CHIP.active);
+    expect(agentStatusChip({ revokedAt: "2026-09-11T00:00:00.000Z" })).toBe(
       AGENT_STATUS_CHIP.revoked,
     );
-    expect(
-      agentStatusChip({
-        revokedAt: "2026-09-11T00:00:00.000Z",
-        archivedAt: "2026-09-20T00:00:00.000Z",
-      }),
-    ).toBe(AGENT_STATUS_CHIP.archived);
-    expect(AGENT_STATUS_CHIP.archived.variant).toBe("secondary");
   });
 
   it("gives a revoked connection its way back as a second chip", () => {

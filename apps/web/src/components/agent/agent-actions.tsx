@@ -2,7 +2,6 @@ import { Link } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 
 import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
-import { ArchiveAgentDialog } from "@/components/agent/archive-agent-dialog";
 import { EditAgentDialog } from "@/components/agent/edit-agent-dialog";
 import { MoreHorizIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
@@ -17,9 +16,8 @@ import type { Agent } from "@/lib/agent-queries";
 export function AgentActions({ agent }: { agent: Agent }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [editing, setEditing] = useState(false);
-  const [archiving, setArchiving] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const active = !agent.revokedAt && !agent.archivedAt;
+  const active = !agent.revokedAt;
 
   return (
     <>
@@ -40,16 +38,9 @@ export function AgentActions({ agent }: { agent: Agent }) {
               Connection details
             </DropdownMenuItem>
           ) : null}
-          {!agent.archivedAt ? (
-            <>
-              <DropdownMenuItem disabled={!active} onClick={() => setEditing(true)}>
-                Edit
-              </DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" onClick={() => setArchiving(true)}>
-                Archive
-              </DropdownMenuItem>
-            </>
-          ) : null}
+          <DropdownMenuItem disabled={!active} onClick={() => setEditing(true)}>
+            Edit
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       {connecting && active ? (
@@ -62,12 +53,6 @@ export function AgentActions({ agent }: { agent: Agent }) {
       {editing ? (
         <EditAgentDialog agent={agent} onClose={() => setEditing(false)} returnFocus={trigger} />
       ) : null}
-      <ArchiveAgentDialog
-        agent={agent}
-        open={archiving}
-        onOpenChange={setArchiving}
-        returnFocus={trigger}
-      />
     </>
   );
 }

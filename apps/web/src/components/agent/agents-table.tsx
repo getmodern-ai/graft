@@ -41,9 +41,8 @@ export function AgentsTable({
   onRetry: () => void;
 }) {
   const groups = [
-    { label: "Active", agents: agents.filter((agent) => !agent.archivedAt && !agent.revokedAt) },
-    { label: "Revoked", agents: agents.filter((agent) => !agent.archivedAt && agent.revokedAt) },
-    { label: "Archived", agents: agents.filter((agent) => agent.archivedAt) },
+    { label: "Active", agents: agents.filter((agent) => !agent.revokedAt) },
+    { label: "Revoked", agents: agents.filter((agent) => agent.revokedAt) },
   ];
 
   return (
@@ -120,11 +119,7 @@ export function AgentsTable({
                           aria-hidden="true"
                           className={cn(
                             "size-2 shrink-0 rounded-full",
-                            agent.archivedAt
-                              ? "bg-muted-foreground"
-                              : agent.revokedAt
-                                ? "bg-destructive"
-                                : "bg-success",
+                            agent.revokedAt ? "bg-destructive" : "bg-success",
                           )}
                         />
                         <span className="tabular-nums">
@@ -164,7 +159,7 @@ export function AgentsTable({
 function AgentHarnesses({ agent }: { agent: AgentTableRow }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [connecting, setConnecting] = useState(false);
-  const active = !agent.revokedAt && !agent.archivedAt;
+  const active = !agent.revokedAt;
   const names = agent.harnessNames ?? (agent.connectedVia ? [agent.connectedVia.clientName] : []);
   if (names.length === 0) {
     if (!active) return <span className="text-muted-foreground">Not connected</span>;

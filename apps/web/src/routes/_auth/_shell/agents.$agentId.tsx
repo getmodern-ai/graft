@@ -96,12 +96,6 @@ function AgentRoute() {
                 · revoked <Time iso={agent.revokedAt} />
               </>
             ) : null}
-            {agent.archivedAt ? (
-              <>
-                {" "}
-                · archived <Time iso={agent.archivedAt} />
-              </>
-            ) : null}
           </PageHeaderDescription>
         </PageHeaderContent>
         {agent.revokedAt ? null : (

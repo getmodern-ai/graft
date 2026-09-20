@@ -20,7 +20,7 @@ export function TokenOnce({ token }: { token: string }) {
         <KeyIcon />
         <AlertTitle>This token is shown once</AlertTitle>
         <AlertDescription>
-          Copy and save it now. If you lose it, archive this agent and create a new one.
+          Copy and save it now. If you lose it, revoke this token and create a new agent.
         </AlertDescription>
       </Alert>
 
