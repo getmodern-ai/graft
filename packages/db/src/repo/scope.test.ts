@@ -14,9 +14,12 @@ import {
   updateAcquireAttempt,
 } from "./acquire-job";
 import {
+  addAgentConnection,
+  findAgentForUpdate,
   listAgentConnectionIds,
   listAgentIdsForConnection,
   listAllActiveAgents,
+  listScopeConnectionIds,
   replaceAgentConnections,
   revokeAgent,
 } from "./agent";
@@ -27,10 +30,12 @@ import {
   updateAskEveryCall,
 } from "./approval";
 import {
+  addConnectionHosts,
   findConnection,
   findConnectionByIdUnscoped,
   findConnectionForUpdate,
   revokeConnection,
+  setConnectionProviderRef,
 } from "./connection";
 import {
   answerPendingAction,
@@ -38,6 +43,7 @@ import {
   expirePendingActionsForConnection,
   findPendingAction,
   listPendingActionsByKind,
+  lockPendingActionKey,
   settleAnsweredToolActions,
 } from "./pending-action";
 import { countPersons, markPersonEmailVerified } from "./person";
@@ -97,9 +103,30 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     expect(s.params).toEqual(["agent_1", "person_1"]);
   });
 
-  it("the agent's scope", async () => {
+  it("the agent's list", async () => {
     await listAgentConnectionIds(db, SCOPE);
     expect(only().sql).toMatch(SCOPED_AGENT);
+  });
+
+  /**
+   * The scope resolved (ADR 0007 as amended 2026-09-19): one statement under the person over the
+   * connection table, whose `all` branch is an `exists` on the agent row taking both ids and the
+   * mode, and whose `listed` branch is the list under the pair. Neither branch reaches a row of
+   * another person, and an agent of another person satisfies neither.
+   */
+  it("the agent's scope, resolved for either mode, takes the person and both ids on each branch", async () => {
+    await listScopeConnectionIds(db, SCOPE);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select "id" from "connection" where \("connection"\."person_id" = \$1 and/,
+    );
+    expect(s.sql).toContain(
+      'exists (select "id" from "agent" where ("agent"."id" = $2 and "agent"."person_id" = $3 and "agent"."scope_mode" = $4))',
+    );
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.sql).toContain('"connection"."id" in (select "connection_id" from "agent_connection"');
+    expect(s.sql).toMatch(/order by "connection"\."id" asc$/);
+    expect(s.params).toEqual(["person_1", "agent_1", "person_1", "all", "agent_1", "person_1"]);
   });
 
   it("an approval", async () => {
@@ -235,6 +262,23 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(statements[1]?.sql).toMatch(/^insert into "agent_connection"/);
     expect(statements[1]?.params).toEqual(["agent_1", "conn_1", "agent_1", "conn_2"]);
   });
+
+  /** The one-connection grant (GRA-104, Greptile on #87): one insert, idempotent on the primary key, no read and no delete. */
+  it("adding one connection to the scope is a single insert that does nothing on conflict", async () => {
+    await addAgentConnection(db, SCOPE, "conn_2");
+    const s = only();
+    expect(s.sql).toMatch(/^insert into "agent_connection"/);
+    expect(s.sql).toMatch(/ on conflict do nothing$/);
+    expect(s.params).toEqual(["agent_1", "conn_2"]);
+  });
+
+  /** The find-or-make of a scope ask is serialised on a transaction-scoped advisory lock keyed by the pair and the connection. */
+  it("locking a pending-action key takes a transaction-scoped advisory lock on the hash of agent, kind and key", async () => {
+    await lockPendingActionKey(db, SCOPE, "scope", "conn_2");
+    const s = only();
+    expect(s.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
+    expect(s.params).toEqual(["agent_1:scope:conn_2"]);
+  });
 });
 
 describe("person-scoped statements take the person", () => {
@@ -265,6 +309,16 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('"connection"."person_id" = $');
     expect(s.sql).toMatch(/ for update$/);
     expect(s.params).toEqual(["conn_1", "person_1", 1]);
+  });
+
+  /** A scope write's first read (GRA-105, Greptile on #88): the agent row under the person, locked, so two scope writes serialise. */
+  it("an agent read for update takes the person and locks the row", async () => {
+    await findAgentForUpdate(db, "person_1", "agent_1");
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select .* from "agent" where \("agent"\."id" = \$1 and "agent"\."person_id" = \$2\) limit \$3 for update$/,
+    );
+    expect(s.params).toEqual(["agent_1", "person_1", 1]);
   });
 
   /** A person's model key (ADR 0014): the scope and the key are one column, on every statement. */
@@ -380,6 +434,34 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain('"connection"."person_id" = $');
   });
 
+  /**
+   * The two statements a link's return reconnects a released row with (GRA-122): the reference
+   * written and the stamp cleared, then the host set grown to the union — each under the person.
+   */
+  it("a link's reconnection writes the reference and widens the hosts under the person", async () => {
+    await setConnectionProviderRef(db, "person_1", "conn_1", "acct_1");
+    const reference = only();
+    expect(reference.sql).toMatch(/^update "connection" set/);
+    for (const column of ["provider_ref", "revoked_at", "provider_release_failed_at"]) {
+      expect(reference.sql).toContain(`"${column}" = `);
+    }
+    expect(reference.sql).toContain('"connection"."id" = $');
+    expect(reference.sql).toContain('"connection"."person_id" = $');
+    expect(reference.params).toEqual(expect.arrayContaining(["acct_1", "conn_1", "person_1"]));
+
+    statements = [];
+    await addConnectionHosts(db, "person_1", "conn_1", ["www.googleapis.com"]);
+    const hosts = only();
+    expect(hosts.sql).toMatch(
+      /^update "connection" set "hosts" = "connection"\."hosts" \|\| ARRAY\(SELECT h FROM unnest\(ARRAY\[\$\d+\]::text\[\]\) AS h WHERE NOT \(h = ANY\("connection"\."hosts"\)\)\)/,
+    );
+    expect(hosts.sql).toContain('"connection"."id" = $');
+    expect(hosts.sql).toContain('"connection"."person_id" = $');
+    expect(hosts.params).toEqual(
+      expect.arrayContaining(["www.googleapis.com", "conn_1", "person_1"]),
+    );
+  });
+
   it("revoking an agent is guarded on it not being revoked already", async () => {
     await revokeAgent(db, "person_1", "agent_1", new Date());
     const s = only();
@@ -440,16 +522,20 @@ describe("person-scoped statements take the person", () => {
     expect(s.params).toEqual(["person_1", "conn_1"]);
   });
 
-  /** The agents a revoke announces to (GRA-69): those whose scope names the connection, under the person. */
-  it("the agents whose scope names a connection are read under the person", async () => {
+  /**
+   * The agents a revoke announces to (GRA-69): those whose scope reaches the connection, under the
+   * person — every agent on `all` and every agent whose list names it (ADR 0007 as amended
+   * 2026-09-19), in one statement over the agent table.
+   */
+  it("the agents whose scope reaches a connection are read under the person, on either mode", async () => {
     await listAgentIdsForConnection(db, "person_1", "conn_1");
     const s = only();
-    expect(s.sql).toMatch(/^select "agent_id" from "agent_connection" where/);
-    expect(s.sql).toContain('"agent_connection"."connection_id" = $1');
+    expect(s.sql).toMatch(/^select "id" from "agent" where \("agent"\."person_id" = \$1 and/);
+    expect(s.sql).toContain('"agent"."scope_mode" = $2');
     expect(s.sql).toContain(
-      '"agent_connection"."agent_id" in (select "id" from "agent" where "agent"."person_id" = $2)',
+      '"agent"."id" in (select "agent_id" from "agent_connection" where "agent_connection"."connection_id" = $3)',
     );
-    expect(s.params).toEqual(["conn_1", "person_1"]);
+    expect(s.params).toEqual(["person_1", "all", "conn_1"]);
   });
 });
 

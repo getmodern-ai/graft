@@ -1,13 +1,19 @@
+import {
+  askAnsweredMessage,
+  FROM_CARD_CLOSE_MS,
+  openedFromCard,
+} from "@graft/core/connection/card.rules";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type * as React from "react";
 
-import { DangerousIcon } from "@/components/icons";
+import { DangerousIcon, InfoIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { PageContainer } from "@/components/page/page-container";
 import { PageNavBreadcrumb } from "@/components/page/page-nav-breadcrumb";
 import { PendingActionCard } from "@/components/pending/pending-action-card";
 import { useScreenTitle } from "@/components/shell/screen-title";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -17,6 +23,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { ApiError } from "@/lib/api";
+import { announceConsent } from "@/lib/oauth-consent";
 import { pendingActionQuery, pendingActionsQuery } from "@/lib/pending-action-queries";
 
 /**
@@ -25,10 +32,17 @@ import { pendingActionQuery, pendingActionsQuery } from "@/lib/pending-action-qu
  * owner; a tampered, expired or already-used link is a refusal page that answers nothing, and the
  * action is shown only when the link is the one Graft issued for it. Without a token — the list
  * links here too — the action is read from the person's open list instead.
+ *
+ * With `from=card` (GRA-118; `card.rules.ts`) the ask card in a chat opened this page as a popup
+ * for the one thing it may not take, a secret (ADR 0004). Once the submit succeeds the page tells
+ * the window that opened it, at its own origin, and closes itself after a moment — the card polls
+ * Graft and settles on its own — where a visit from the console goes back to the list.
  */
 export const Route = createFileRoute("/_auth/_shell/pending/$id")({
-  validateSearch: (search: Record<string, unknown>): { t?: string } =>
-    typeof search.t === "string" && search.t.length > 0 ? { t: search.t } : {},
+  validateSearch: (search: Record<string, unknown>): { t?: string; from?: "card" } => ({
+    ...(typeof search.t === "string" && search.t.length > 0 ? { t: search.t } : {}),
+    ...(openedFromCard(search) ? { from: "card" as const } : {}),
+  }),
   component: PendingActionRoute,
 });
 
@@ -56,7 +70,8 @@ function handoffRefusal(error: unknown): { title: string; message: string } {
 
 function PendingActionRoute() {
   const { id } = Route.useParams();
-  const { t } = Route.useSearch();
+  const { t, from } = Route.useSearch();
+  const fromCard = from === "card";
   const navigate = useNavigate();
 
   const byLink = useQuery({ ...pendingActionQuery(id, t ?? ""), enabled: t !== undefined });
@@ -79,7 +94,21 @@ function PendingActionRoute() {
     ),
   );
 
-  const onAnswered = () => navigate({ to: "/pending" });
+  // Answered under `from=card`: the opener is told at this origin — a console tab that opened the
+  // page hears it; the card cannot, and polls — and the popup closes itself. The card stays on
+  // screen meanwhile and re-reads as settled, so the person sees the sentence before it goes.
+  const onAnswered = () => {
+    if (!fromCard) {
+      void navigate({ to: "/pending" });
+      return;
+    }
+    announceConsent(askAnsweredMessage(id), {
+      opener: window.opener,
+      origin: window.location.origin,
+      channel: null,
+    });
+    setTimeout(() => window.close(), FROM_CARD_CLOSE_MS);
+  };
 
   let content: React.ReactNode;
   if (t !== undefined) {
@@ -103,7 +132,21 @@ function PendingActionRoute() {
     content = <PendingActionCard action={action} onAnswered={onAnswered} />;
   }
 
-  return <PageContainer size="medium">{content}</PageContainer>;
+  return (
+    <PageContainer size="medium">
+      {fromCard && action ? (
+        <Alert>
+          <InfoIcon />
+          <AlertTitle>Opened from the card in your chat</AlertTitle>
+          <AlertDescription>
+            Nothing typed here reaches the chat. Once you have answered, this window closes itself
+            and the card updates on its own.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {content}
+    </PageContainer>
+  );
 }
 
 /**

@@ -7,7 +7,6 @@ import {
   type ConnectionProvider,
   connectThroughProvider,
   createGatewayProvider,
-  createPipedreamProvider,
   grantBuildApproval,
   keyringProvider,
   registerConnectionWithCredential,
@@ -15,6 +14,7 @@ import {
   setConnectionCredential,
   toProxyConnection,
 } from "@graft/core";
+import { createFakeLinkProvider } from "@graft/core/connection/testing/fake-link-provider";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import { createScriptedModel } from "@graft/model";
 import { loadSkills, runnerFiles } from "@graft/runner";
@@ -25,6 +25,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { recordApprovalAnswer } from "./ask-answer";
+import { notifyAgentsReachingConnection } from "./connected";
 import {
   BUILD_APPROVAL_ON_THE_PAGE,
   CONNECTION_ASK_KIND,
@@ -36,10 +38,12 @@ import {
   normaliseProposal,
   readConnectionAnswer,
   readConnectionProposal,
+  readScopeAnswer,
+  SCOPE_ASK_KIND,
 } from "./connection-request";
 import type { McpDeps } from "./deps";
 import { HANDOFF_TOKEN_PARAM, verifyHandoff } from "./handoff";
-import { createToolListChangedNotifier } from "./notifier";
+import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
@@ -104,8 +108,20 @@ beforeAll(async () => {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "index.ts"), MODULE);
 
-  store.addAgent({ id: AGENT_A, personId: PERSON, token: TOKEN_A, name: "laptop Hermes" });
-  store.addAgent({ id: AGENT_B, personId: PERSON, token: TOKEN_B, name: "server OpenClaw" });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_A,
+    personId: PERSON,
+    token: TOKEN_A,
+    name: "laptop Hermes",
+  });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_B,
+    personId: PERSON,
+    token: TOKEN_B,
+    name: "server OpenClaw",
+  });
 
   const fake = createFakeDeps(store);
   deps = {
@@ -143,8 +159,13 @@ afterEach(() => {
   deps.handoff.ttlMs = 60_000;
 });
 
-async function connect(token: string) {
-  const notifier = createToolListChangedNotifier({ windowMs: 50 });
+/**
+ * A harness over the in-memory pair, counting `tools/list_changed`. Two harnesses handed one
+ * `shared` notifier stand for two agents of one process, which is how a change announced to one
+ * agent is shown to reach — or not reach — the other (as `server.test.ts`'s harness does).
+ */
+async function connect(token: string, shared?: ToolListChangedNotifier) {
+  const notifier = shared ?? createToolListChangedNotifier({ windowMs: 50 });
   const session = await openAgentSession(deps, token, notifier);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await session.server.connect(serverTransport);
@@ -160,6 +181,7 @@ async function connect(token: string) {
   await client.connect(clientTransport);
   return {
     client,
+    notifier,
     listChanged: () => listChanged,
     call: async (name: string, args: Record<string, unknown> = {}) =>
       (await client.callTool({ name, arguments: args })) as CallToolResult,
@@ -167,7 +189,7 @@ async function connect(token: string) {
     close: async () => {
       await client.close();
       await session.close();
-      notifier.close();
+      if (!shared) notifier.close();
     },
   };
 }
@@ -188,12 +210,15 @@ const principal = { personId: PERSON };
 
 /**
  * What the console's submit route does for a `connection` ask: create, add to the agent's scope,
- * grant the build approval when the person left the control on (GRA-75), record.
+ * grant the build approval when the person left the control on (GRA-75), record — and, given the
+ * process's notifier, announce the row to every session whose scope reaches it, as the route does
+ * after its transaction (`connected.ts`); the settle that follows announces nothing.
  */
 async function submitConnection(
   actionId: string,
   credential: Record<string, string>,
   choices: { approveBuild?: boolean } = {},
+  notifier?: ToolListChangedNotifier,
 ) {
   const action = store.pendingActions.get(actionId);
   if (!action) throw new Error(`no action ${actionId}`);
@@ -228,6 +253,8 @@ async function submitConnection(
     { connectionId: connection.id },
     deps.pendingAction,
   );
+  if (notifier)
+    await notifyAgentsReachingConnection(ctx(), principal, connection.id, deps, notifier);
   return connection;
 }
 
@@ -243,9 +270,12 @@ async function submitCredential(actionId: string, credential: Record<string, str
 const actionsOf = (agentId: string, kind: string) =>
   [...store.pendingActions.values()].filter((row) => row.agentId === agentId && row.kind === kind);
 
-/** The awaiting answer as the agent reads it, with the row it names. */
-function awaiting(result: CallToolResult, error: "awaiting_connection" | "awaiting_credential") {
-  expect(result.isError).toBe(true);
+/** The awaiting answer as the agent reads it, with the row it names — a result, not an error (GRA-112). */
+function awaiting(
+  result: CallToolResult,
+  error: "awaiting_connection" | "awaiting_credential" | "awaiting_scope",
+) {
+  expect(result.isError).toBe(false);
   const said = body(result);
   expect(said).toMatchObject({
     error,
@@ -330,20 +360,32 @@ describe("the proposal's rules, before any record exists", () => {
     expect(readConnectionProposal(PROPOSAL)).toEqual(PROPOSAL);
   });
 
-  it("describes every scheme with its parameters and the fields the person enters, from the tables", () => {
+  /**
+   * The parameters a proposal carries, per scheme, and nothing of what the person types: the
+   * secret fields and the OAuth client id (ADR 0005) are the console form's, and a schema that
+   * named them was what ChatGPT's classifier badged (GRA-121).
+   */
+  it("describes every scheme with the parameters a proposal carries, and none of the fields the person enters", () => {
     const text = describeSchemes();
+    expect(text).toContain("api_key_header: headerName, optional prefix");
+    expect(text).toContain("basic: none");
+    expect(text).toContain("none: none");
     expect(text).toContain(
-      "api_key_header (parameters: headerName, optional prefix; the person enters: apiKey)",
+      "oauth2_client_credentials: tokenUrl, optional scopes, optional clientAuth",
     );
-    expect(text).toContain("basic (parameters: none; the person enters: username, password)");
-    expect(text).toContain("none (parameters: none; the person enters: nothing)");
     expect(text).toContain(
-      "oauth2_client_credentials (parameters: tokenUrl, optional scopes, optional clientAuth; the person enters: clientId, clientSecret)",
+      "oauth_authorization_code: authorizeUrl, tokenUrl, optional scopes, optional clientAuth",
     );
-    // The client id is the person's to enter, not the agent's to propose (ADR 0005).
-    expect(text).toContain(
-      "oauth_authorization_code (parameters: authorizeUrl, tokenUrl, optional scopes, optional clientAuth; the person enters: clientId, clientSecret)",
-    );
+    for (const typed of [
+      "apiKey",
+      "clientSecret",
+      "clientId",
+      "password",
+      "privateKey",
+      "enters",
+    ]) {
+      expect(text, typed).not.toContain(typed);
+    }
   });
 
   /** ADR 0005: the agent proposes the endpoints and scopes; the client id it cannot know. */
@@ -425,6 +467,20 @@ describe("the proposal's rules, before any record exists", () => {
     expect(readConnectionAnswer({ connectionId: "" })).toBeNull();
     expect(readConnectionAnswer(null)).toBeNull();
   });
+
+  it("reads a scope ask's answer as a yes or no with the build choice, anything else as a no (GRA-104)", () => {
+    expect(readScopeAnswer({ allow: true, approveBuild: true, via: "card" })).toEqual({
+      allow: true,
+      approveBuild: true,
+    });
+    expect(readScopeAnswer({ allow: true })).toEqual({ allow: true });
+    expect(readScopeAnswer({ allow: false, approveBuild: true })).toEqual({
+      allow: false,
+      approveBuild: true,
+    });
+    expect(readScopeAnswer({ connectionId: "conn_1" })).toEqual({ allow: false });
+    expect(readScopeAnswer(null)).toEqual({ allow: false });
+  });
 });
 
 describe("request_connection through a harness", () => {
@@ -502,7 +558,12 @@ describe("request_connection through a harness", () => {
 
       // The person opens the link and enters the key; the console creates the connection.
       const before = await a.toolNames();
-      const connection = await submitConnection(action.id, { apiKey: "sk_live_acme_1" });
+      const connection = await submitConnection(
+        action.id,
+        { apiKey: "sk_live_acme_1" },
+        {},
+        a.notifier,
+      );
       expect(connection.credentialSetAt).not.toBeNull();
       expect(JSON.stringify(connection)).not.toContain("sk_live_acme_1");
 
@@ -696,7 +757,7 @@ describe("the connection confirmation and the build approval (GRA-75)", () => {
         status: "connected",
       });
       const asked = await a.call("acquire", { connectionId: other.id, goal: "List things" });
-      expect(asked.isError).toBe(true);
+      expect(asked.isError).toBe(false);
       expect(body(asked)).toMatchObject({
         error: "awaiting_approval",
         pendingActionId: expect.any(String),
@@ -942,7 +1003,7 @@ describe("request_connection with the OAuth shape", () => {
 describe("request_connection routes a proposal to the provider that covers it", () => {
   const fakeRelay = {
     kind: "relay" as const,
-    scheme: "pipedream_connect_proxy",
+    scheme: "relay",
     rules: { prefix: null, passThrough: [], refuse: [], refusePrefixes: [] },
     relay: () => undefined,
     headerNames: () => [],
@@ -952,8 +1013,8 @@ describe("request_connection routes a proposal to the provider that covers it", 
     name: "broker",
     connect: {
       kind: "link",
-      scheme: "pipedream_connect_proxy",
-      target: (vendor) => (vendor === "acme" ? "acme_app" : null),
+      scheme: "relay",
+      target: async (vendor) => (vendor === "acme" ? "acme_app" : null),
       start: async (input) => {
         started.push(input.returnTo.success);
         return {
@@ -963,7 +1024,7 @@ describe("request_connection routes a proposal to the provider that covers it", 
       },
       complete: async () => ({ ok: true, ref: "acct_1", label: "ops@acme.example" }),
     },
-    covers: (vendor) => vendor === "acme",
+    covers: async (vendor) => vendor === "acme",
     resolve: (row) => ({
       mode: "relay",
       relay: { plugin: fakeRelay, obtain: async () => ({ accountId: row.providerRef ?? "" }) },
@@ -1052,7 +1113,7 @@ describe("request_connection routes a proposal to the provider that covers it", 
       expect(connection).toMatchObject({
         provider: "broker",
         vendor: "acme",
-        scheme: "pipedream_connect_proxy",
+        scheme: "relay",
         credentialSetAt: null,
         revokedAt: null,
       });
@@ -1108,13 +1169,12 @@ describe("request_connection routes a proposal to the provider that covers it", 
   it("refuses a proposal naming a relay scheme — a provider's, never the agent's to propose", async () => {
     const a = await connect(TOKEN_B);
     try {
-      const said = await a.call("request_connection", {
-        ...PROPOSAL,
-        scheme: "pipedream_connect_proxy",
-      });
-      expect(said.isError).toBe(true);
-      expect(body(said)).toMatchObject({ reason: "input_invalid", field: "scheme" });
-      expect(describeSchemes()).not.toContain("pipedream_connect_proxy");
+      for (const scheme of ["relay", "gateway"]) {
+        const said = await a.call("request_connection", { ...PROPOSAL, scheme });
+        expect(said.isError).toBe(true);
+        expect(body(said)).toMatchObject({ reason: "input_invalid", field: "scheme" });
+        expect(describeSchemes()).not.toContain(scheme);
+      }
     } finally {
       await a.close();
     }
@@ -1375,6 +1435,52 @@ describe("request_connection through the gateway provider (GRA-58)", () => {
       await b.close();
     }
   }, 60_000);
+
+  /** ADR 0007 as amended 2026-09-19: the grant after a no-person-step connect writes no list row for an agent on `all`. */
+  it("connects for an agent on all connections with no list row written, and a second all agent finds the row in scope at once", async () => {
+    const OPEN_1 = "agent_open_1";
+    const OPEN_2 = "agent_open_2";
+    const TOKEN_OPEN_1 = "grft_connection_token_o1_0000000000000000000000000";
+    const TOKEN_OPEN_2 = "grft_connection_token_o2_0000000000000000000000000";
+    store.addAgent({ scopeMode: "all", id: OPEN_1, personId: PERSON, token: TOKEN_OPEN_1 });
+    store.addAgent({ scopeMode: "all", id: OPEN_2, personId: PERSON, token: TOKEN_OPEN_2 });
+    // One notifier for the process: what `one` connects, `two` must hear about (Greptile on #88).
+    const shared = createToolListChangedNotifier({ windowMs: 50 });
+    const one = await connect(TOKEN_OPEN_1, shared);
+    const two = await connect(TOKEN_OPEN_2, shared);
+    const listed = await connect(TOKEN_B, shared);
+    try {
+      const said = body(await one.call("request_connection", COVERED));
+      expect(said).toMatchObject({ status: "connected", provider: "gateway" });
+      const id = said.connectionId as string;
+      made.push(id);
+      expect(store.agentConnections.get(OPEN_1)?.size ?? 0).toBe(0);
+      await until(() => one.listChanged() > 0);
+      expect(await one.toolNames()).toContain(executeToolName(id));
+      // The row entered `two`'s scope the moment it existed, so its session is told and its list
+      // carries the execute tool without a call of its own; B, on a list without the row, hears
+      // nothing and lists nothing new.
+      await until(() => two.listChanged() > 0);
+      expect(await two.toolNames()).toContain(executeToolName(id));
+      expect(listed.listChanged()).toBe(0);
+      expect(await listed.toolNames()).not.toContain(executeToolName(id));
+
+      // The other `all` agent: in scope already, connected with no refusal and no widening.
+      const other = body(await two.call("request_connection", COVERED));
+      expect(other).toMatchObject({ status: "connected", connectionId: id, provider: "gateway" });
+      expect(other.message).toContain("already connected");
+      expect(rowsFor("unleashed")).toHaveLength(1);
+    } finally {
+      await one.close();
+      await two.close();
+      await listed.close();
+      shared.close();
+      store.agents.delete(OPEN_1);
+      store.agents.delete(OPEN_2);
+      store.agentConnections.delete(OPEN_1);
+      store.agentConnections.delete(OPEN_2);
+    }
+  });
 
   it("refuses to grow another agent's scope by itself, and to undo a revoke: both name the console step", async () => {
     const a = await connect(TOKEN_A);
@@ -1650,8 +1756,8 @@ describe("request_connection finds the connection the person already has (GRA-76
     }
   });
 
-  it("a live usable row this agent was not given is connection_exists pointing at the scope picker, and grows no scope", async () => {
-    const row = deltaRow("conn_delta_theirs");
+  it("a live row this agent was not given whose credential is missing is connection_exists naming both steps, and grows no scope", async () => {
+    const row = deltaRow("conn_delta_bare_theirs", { credentialSetAt: null });
     store.agentConnections.get(AGENT_A)?.add(row.id);
     const b = await connect(TOKEN_B);
     try {
@@ -1663,10 +1769,12 @@ describe("request_connection finds the connection the person already has (GRA-76
         revoked: false,
         inScope: false,
       });
+      expect(String(body(said).message)).toContain("entering its credential");
       expect(String(body(said).message)).toContain("under Scope");
       expect(String(body(said).message)).toContain("not proposed here");
       expect(store.agentConnections.get(AGENT_B)?.has(row.id)).toBe(false);
       expect(asksFor("delta")).toHaveLength(0);
+      expect(actionsOf(AGENT_B, SCOPE_ASK_KIND)).toHaveLength(0);
       expect(await b.toolNames()).not.toContain(executeToolName(row.id));
     } finally {
       await b.close();
@@ -1692,14 +1800,454 @@ describe("request_connection finds the connection the person already has (GRA-76
 });
 
 /**
- * Sign-in endpoints are not hosts (ADR 0019, consequence of 2026-09-18; GRA-89). During GRA-35
- * Hermes listed Google's sign-in hosts under `hosts` beside the API host, the Pipedream provider's
- * `covers` declined the proposal, and the person got the client-registration form instead of the
- * one-click link. The real Pipedream provider is on the list here, over a client the suite never
- * reaches: the console's button mints the link, and the return is played by the same core call
- * the server's route makes (`connectThroughProvider`), which checks the row's hosts against the
- * provider's coverage, so a set-aside host that reached the payload would fail it.
+ * A usable connection the person holds but this agent was not given is an ask, not a refusal
+ * (GRA-104; ADR 0006): `awaiting_scope` with a handoff link and a card, the person's Allow in the
+ * console — played here by the same `recordApprovalAnswer` the server's answer route calls — grows
+ * this agent's scope and, with GRA-75's choice on, records the build approval, and the next call
+ * answers `connected` with the execute tool named. A decline is `scope_declined` and the next call
+ * asks afresh; one open ask per agent and connection; the other agent's scope never moves.
  */
+describe("request_connection asks to use a connection the person holds but this agent was not given (GRA-104)", () => {
+  const DELTA = {
+    vendor: "delta",
+    displayName: "Delta Books",
+    primaryHost: "https://api.delta.example/v1",
+    hosts: ["files.delta.example"],
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "x-delta-key" },
+    docsUrl: "https://developer.delta.example/docs",
+  };
+  const made: string[] = [];
+
+  /** Agent A's live Delta row, as the console made it, which agent B was never given. */
+  function theirs(id: string): ConnectionRow {
+    const row = store.addConnection({
+      id,
+      personId: PERSON,
+      vendor: "delta",
+      displayName: "Delta Books",
+      primaryHost: "https://api.delta.example/v1",
+      hosts: ["files.delta.example"],
+      schemeConfig: { headerName: "x-delta-key" },
+    });
+    store.agentConnections.get(AGENT_A)?.add(id);
+    made.push(id);
+    return row;
+  }
+
+  /** The console's Allow or Decline on the scope ask: the server's answer route, by the same function. */
+  const answerInConsole = (actionId: string, said: { allow: boolean; approveBuild?: boolean }) =>
+    recordApprovalAnswer(ctx(), principal, actionId, said, {
+      approval: deps.approval,
+      pendingAction: deps.pendingAction,
+      connection: deps.connection,
+      agent: deps.agent,
+    });
+
+  afterEach(() => {
+    deps.model = null;
+    for (const id of made) {
+      store.connections.delete(id);
+      for (const scope of store.agentConnections.values()) scope.delete(id);
+      store.buildApprovals.delete(`${AGENT_B} ${id}`);
+    }
+    made.length = 0;
+    for (const [id, pending] of store.pendingActions) {
+      if (pending.kind === SCOPE_ASK_KIND || pending.kind === "build") {
+        store.pendingActions.delete(id);
+      }
+    }
+  });
+
+  it("answers awaiting_scope with the link, a scope ask stamped with the row, and an answerable card; the same ask comes back until answered, and no scope moves", async () => {
+    const row = theirs("conn_delta_a");
+    // The find-or-make is serialised on the advisory lock for (agent, kind, connection), taken
+    // before the lookup (Greptile on #87); the fake records the key it would lock.
+    const locks: string[] = [];
+    const lock = deps.lockPendingActionKey;
+    deps.lockPendingActionKey = async (db, scope, kind, key) => {
+      locks.push(`${scope.agentId}:${kind}:${key}`);
+      await lock(db, scope, kind, key);
+    };
+    const b = await connect(TOKEN_B);
+    try {
+      const result = await b.call("request_connection", DELTA);
+      const { answer, action } = awaiting(result, "awaiting_scope");
+      expect(locks).toEqual([`${AGENT_B}:${SCOPE_ASK_KIND}:${row.id}`]);
+      expect(answer).toMatchObject({ connectionId: row.id, provider: "keyring" });
+      expect(String(answer.message)).toContain("allow you to use it");
+      expect(String(answer.message)).toContain("no new connection, nothing entered");
+      expect(String(answer.message)).toContain(BUILD_APPROVAL_ON_THE_PAGE);
+      expect(String(answer.message)).toContain("Call request_connection again");
+      expect(action).toMatchObject({
+        kind: SCOPE_ASK_KIND,
+        agentId: AGENT_B,
+        connectionId: row.id,
+        payload: {
+          connectionId: row.id,
+          vendor: "delta",
+          displayName: "Delta Books",
+          provider: "keyring",
+          primaryHost: "https://api.delta.example/v1",
+          hosts: ["api.delta.example", "files.delta.example"],
+          scheme: "api_key_header",
+          docsUrl: "https://developer.delta.example/docs",
+        },
+      });
+      // The card a chat product renders (GRA-84): answerable, since nothing is entered.
+      expect((result.structuredContent as Record<string, unknown>).card).toMatchObject({
+        kind: "scope",
+        answerable: true,
+        agentName: "server OpenClaw",
+        displayName: "Delta Books",
+        vendor: "delta",
+        docsUrl: "https://developer.delta.example/docs",
+        url: answer.url,
+      });
+      // Nothing moved: not in B's scope, no execute tool, A's scope untouched.
+      expect(store.agentConnections.get(AGENT_B)?.has(row.id)).toBe(false);
+      expect(store.agentConnections.get(AGENT_A)?.has(row.id)).toBe(true);
+      expect(await b.toolNames()).not.toContain(executeToolName(row.id));
+
+      // One open ask per agent and connection: a re-proposal, narrower too, re-uses it.
+      const again = awaiting(await b.call("request_connection", DELTA), "awaiting_scope");
+      expect(again.action.id).toBe(action.id);
+      const narrower = awaiting(
+        await b.call("request_connection", { ...DELTA, hosts: [] }),
+        "awaiting_scope",
+      );
+      expect(narrower.action.id).toBe(action.id);
+      expect(actionsOf(AGENT_B, SCOPE_ASK_KIND)).toHaveLength(1);
+      expect(
+        actionsOf(AGENT_B, CONNECTION_ASK_KIND).filter((r) => r.payload.vendor === "delta"),
+      ).toHaveLength(0);
+      // Every find-or-make took the lock for the same key; the answered re-read (a read alone) none.
+      expect(locks).toHaveLength(3);
+      expect(new Set(locks).size).toBe(1);
+    } finally {
+      deps.lockPendingActionKey = lock;
+      await b.close();
+    }
+  });
+
+  it("Allow with the build choice on: the next call answers connected naming the execute tool, the row is in this agent's scope too, and acquire starts without asking", async () => {
+    deps.model = createScriptedModel([]);
+    const row = theirs("conn_delta_b");
+    const a = await connect(TOKEN_A);
+    const b = await connect(TOKEN_B);
+    try {
+      const { action } = awaiting(await b.call("request_connection", DELTA), "awaiting_scope");
+      const recorded = await answerInConsole(action.id, { allow: true, approveBuild: true });
+      expect(recorded.connectionIds).toContain(row.id);
+      expect(recorded.buildApproval).toMatchObject({ agentId: AGENT_B, connectionId: row.id });
+      // The answer is left for the agent's call to take, as the connection ask's is.
+      expect(store.pendingActions.get(action.id)?.consumedAt).toBeNull();
+
+      const next = await b.call("request_connection", DELTA);
+      expect(next.isError).toBeFalsy();
+      expect(body(next)).toEqual({
+        status: "connected",
+        connectionId: row.id,
+        provider: "keyring",
+        executeTool: executeToolName(row.id),
+        message: expect.stringContaining("Allowed"),
+      });
+      expect(String(body(next).message)).toContain(executeToolName(row.id));
+      expect(store.pendingActions.get(action.id)?.consumedAt).not.toBeNull();
+      expect(store.agentConnections.get(AGENT_B)?.has(row.id)).toBe(true);
+      expect(store.agentConnections.get(AGENT_A)?.has(row.id)).toBe(true);
+      await until(() => b.listChanged() > 0);
+      expect(await b.toolNames()).toContain(executeToolName(row.id));
+      expect(a.listChanged()).toBe(0);
+
+      // A third call: connected, and no second ask.
+      expect(body(await b.call("request_connection", DELTA))).toMatchObject({
+        status: "connected",
+        connectionId: row.id,
+        message: expect.stringContaining("already connected"),
+      });
+      expect(actionsOf(AGENT_B, SCOPE_ASK_KIND)).toHaveLength(1);
+
+      // The build approval given on the page stands: acquire asks nothing (GRA-75).
+      const started = await b.call("acquire", { connectionId: row.id, goal: "List books" });
+      expect(started.isError).toBeFalsy();
+      expect(body(started)).toMatchObject({ jobId: expect.any(String) });
+      expect(actionsOf(AGENT_B, "build")).toEqual([]);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it("Allow with the build choice off: connected, and acquire then asks", async () => {
+    deps.model = createScriptedModel([]);
+    const row = theirs("conn_delta_c");
+    const b = await connect(TOKEN_B);
+    try {
+      const { action } = awaiting(await b.call("request_connection", DELTA), "awaiting_scope");
+      const recorded = await answerInConsole(action.id, { allow: true });
+      expect(recorded.buildApproval).toBeUndefined();
+      expect(body(await b.call("request_connection", DELTA))).toMatchObject({
+        status: "connected",
+        connectionId: row.id,
+      });
+      expect(store.buildApprovals.get(`${AGENT_B} ${row.id}`)).toBeUndefined();
+      const asked = await b.call("acquire", { connectionId: row.id, goal: "List books" });
+      expect(asked.isError).toBe(false);
+      expect(body(asked)).toMatchObject({ error: "awaiting_approval" });
+    } finally {
+      await b.close();
+    }
+  });
+
+  it("Decline is scope_declined naming the row, nothing moves, and the next call asks afresh", async () => {
+    const row = theirs("conn_delta_d");
+    const b = await connect(TOKEN_B);
+    try {
+      const { action } = awaiting(await b.call("request_connection", DELTA), "awaiting_scope");
+      await answerInConsole(action.id, { allow: false });
+      const said = await b.call("request_connection", DELTA);
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({
+        error: "refused",
+        reason: "scope_declined",
+        pendingActionId: action.id,
+        connectionId: row.id,
+        message: expect.stringContaining("declined to let you use Delta Books (delta)"),
+      });
+      expect(store.agentConnections.get(AGENT_B)?.has(row.id)).toBe(false);
+      expect(store.buildApprovals.get(`${AGENT_B} ${row.id}`)).toBeUndefined();
+      expect(await b.toolNames()).not.toContain(executeToolName(row.id));
+
+      const fresh = awaiting(await b.call("request_connection", DELTA), "awaiting_scope");
+      expect(fresh.action.id).not.toBe(action.id);
+    } finally {
+      await b.close();
+    }
+  });
+
+  it("an answer inside the wait resumes the call that is waiting", async () => {
+    const row = theirs("conn_delta_e");
+    deps.handoff.waitMs = 2_000;
+    const b = await connect(TOKEN_B);
+    try {
+      const pending = b.call("request_connection", DELTA);
+      await until(() => actionsOf(AGENT_B, SCOPE_ASK_KIND).length === 1);
+      const [action] = actionsOf(AGENT_B, SCOPE_ASK_KIND);
+      if (!action) throw new Error("no scope ask");
+      await answerInConsole(action.id, { allow: true, approveBuild: false });
+      const result = await pending;
+      expect(result.isError).toBeFalsy();
+      expect(body(result)).toMatchObject({ status: "connected", connectionId: row.id });
+    } finally {
+      await b.close();
+    }
+  });
+
+  it("a yes the person withdrew before the agent called again is not honoured: the scope as it stands decides", async () => {
+    const row = theirs("conn_delta_f");
+    const b = await connect(TOKEN_B);
+    try {
+      const { action } = awaiting(await b.call("request_connection", DELTA), "awaiting_scope");
+      await answerInConsole(action.id, { allow: true });
+      // The person changes their mind on the agent's page before the agent reads the answer.
+      store.agentConnections.get(AGENT_B)?.delete(row.id);
+      const said = await b.call("request_connection", DELTA);
+      expect(said.isError).toBe(true);
+      expect(body(said)).toMatchObject({
+        reason: "connection_not_in_scope",
+        connectionId: row.id,
+        message: expect.stringContaining("not in your scope now"),
+      });
+      expect(store.pendingActions.get(action.id)?.consumedAt).not.toBeNull();
+      expect(await b.toolNames()).not.toContain(executeToolName(row.id));
+    } finally {
+      await b.close();
+    }
+  });
+
+  it("a revoke closes the open scope ask, and the row then takes GRA-76's answer", async () => {
+    const row = theirs("conn_delta_g");
+    const b = await connect(TOKEN_B);
+    try {
+      const { action } = awaiting(await b.call("request_connection", DELTA), "awaiting_scope");
+      await revokeConnection(ctx(), principal, row.id, deps.connection);
+      expect(store.pendingActions.get(action.id)?.expiresAt.getTime()).toBeLessThanOrEqual(
+        Date.now(),
+      );
+      expect(body(await b.call("request_connection", DELTA))).toMatchObject({
+        reason: CONNECTION_EXISTS,
+        connectionId: row.id,
+        revoked: true,
+        inScope: false,
+      });
+      expect(actionsOf(AGENT_B, SCOPE_ASK_KIND).filter((r) => r.expiresAt > new Date())).toEqual(
+        [],
+      );
+    } finally {
+      await b.close();
+    }
+  });
+});
+
+/**
+ * Sign-in endpoints are not hosts (ADR 0019, consequence of 2026-09-18; GRA-89). During GRA-35
+ * Hermes listed Google's sign-in hosts under `hosts` beside the API host, the hosted form's link
+ * provider's `covers` declined the proposal, and the person got the client-registration form
+ * instead of the one-click link. A link provider covering Gmail at Google's two API hosts and no
+ * other — the fake's coverage rule is the broker's, every proposed host in the vendor's own set —
+ * is on the list here: the console's button mints the link, and the return is played by the same
+ * core call the server's route makes (`connectThroughProvider`), which checks the row's hosts
+ * against the provider's coverage, so a set-aside host that reached the payload would fail it.
+ */
+describe("an agent on all connections reaches the person's rows without an ask (GRA-105)", () => {
+  const AGENT_C = "agent_c";
+  const TOKEN_C = "grft_connection_token_c_00000000000000000000000000";
+  const DELTA = {
+    vendor: "delta",
+    displayName: "Delta Books",
+    primaryHost: "https://api.delta.example/v1",
+    hosts: ["files.delta.example"],
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "x-delta-key" },
+    docsUrl: "https://developer.delta.example/docs",
+  };
+  const made: string[] = [];
+
+  /** Agent A's live Delta row, as the console made it, which no other agent was given a list row for. */
+  function theirs(id: string): ConnectionRow {
+    const row = store.addConnection({
+      id,
+      personId: PERSON,
+      vendor: "delta",
+      displayName: "Delta Books",
+      primaryHost: "https://api.delta.example/v1",
+      hosts: ["files.delta.example"],
+      schemeConfig: { headerName: "x-delta-key" },
+    });
+    store.agentConnections.get(AGENT_A)?.add(id);
+    made.push(id);
+    return row;
+  }
+
+  beforeEach(() => {
+    // The amendment's default for a new agent: `all`, no list — a third agent of the same person.
+    store.addAgent({
+      scopeMode: "all",
+      id: AGENT_C,
+      personId: PERSON,
+      token: TOKEN_C,
+      name: "Claude",
+    });
+  });
+
+  afterEach(() => {
+    store.agents.delete(AGENT_C);
+    store.agentConnections.delete(AGENT_C);
+    for (const id of made) {
+      store.connections.delete(id);
+      for (const scope of store.agentConnections.values()) scope.delete(id);
+    }
+    made.length = 0;
+    for (const [id, pending] of store.pendingActions) {
+      if (pending.agentId === AGENT_C) store.pendingActions.delete(id);
+    }
+  });
+
+  it("answers connected at once for a connection another agent's ask made — no scope ask, no list row — and lists its execute tool; the listed agent beside it still gets the ask", async () => {
+    const row = theirs("conn_delta_open");
+    const c = await connect(TOKEN_C);
+    const b = await connect(TOKEN_B);
+    try {
+      // The row is in C's list at once: the person's connection is every `all` agent's.
+      expect(await c.toolNames()).toContain(executeToolName(row.id));
+
+      const said = await c.call("request_connection", DELTA);
+      expect(said.isError, JSON.stringify(body(said))).toBeFalsy();
+      expect(body(said)).toMatchObject({
+        status: "connected",
+        connectionId: row.id,
+        provider: "keyring",
+        executeTool: executeToolName(row.id),
+        message: expect.stringContaining("already connected"),
+      });
+      expect(actionsOf(AGENT_C, SCOPE_ASK_KIND)).toEqual([]);
+      expect(actionsOf(AGENT_C, CONNECTION_ASK_KIND)).toEqual([]);
+      // Nothing was written to the list: `all` holds none (ADR 0007 as amended 2026-09-19).
+      expect(store.agentConnections.get(AGENT_C)?.size ?? 0).toBe(0);
+
+      // The narrowed agent's path is unchanged: B, on a list without the row, is asked.
+      const { action } = awaiting(await b.call("request_connection", DELTA), "awaiting_scope");
+      expect(action.agentId).toBe(AGENT_B);
+      store.pendingActions.delete(action.id);
+    } finally {
+      await c.close();
+      await b.close();
+    }
+  });
+
+  it("hears tools/list_changed when another agent's proposal is connected in the console, and lists the execute tool without a call of its own", async () => {
+    const EPSILON = {
+      vendor: "epsilon",
+      displayName: "Epsilon",
+      primaryHost: "https://api.epsilon.example",
+      scheme: "api_key_header",
+      schemeConfig: { headerName: "x-epsilon-key" },
+    };
+    const shared = createToolListChangedNotifier({ windowMs: 50 });
+    const b = await connect(TOKEN_B, shared);
+    const c = await connect(TOKEN_C, shared);
+    try {
+      const { action } = awaiting(
+        await b.call("request_connection", EPSILON),
+        "awaiting_connection",
+      );
+      // The console's submit announces the row once, to every session whose scope reaches it —
+      // B's, on its list, and C's, on `all` (Greptile on #88) — before either agent calls again.
+      const connection = await submitConnection(action.id, { apiKey: "eps_1" }, {}, shared);
+      made.push(connection.id);
+      await until(() => b.listChanged() > 0 && c.listChanged() > 0);
+      expect(await c.toolNames()).toContain(executeToolName(connection.id));
+      expect(store.agentConnections.get(AGENT_C)?.size ?? 0).toBe(0);
+      // Past the notifier's window, so a second event would be delivered rather than coalesced.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const heard = { b: b.listChanged(), c: c.listChanged() };
+
+      // B's next call takes the recorded answer and says connected — and announces nothing: the
+      // list changed when the row was made, and a second event would only make both re-fetch.
+      const next = await b.call("request_connection", EPSILON);
+      expect(body(next)).toMatchObject({ status: "connected", connectionId: connection.id });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect({ b: b.listChanged(), c: c.listChanged() }).toEqual(heard);
+    } finally {
+      await b.close();
+      await c.close();
+      shared.close();
+      for (const [id, pending] of store.pendingActions) {
+        if (pending.agentId === AGENT_B && pending.payload.vendor === "epsilon") {
+          store.pendingActions.delete(id);
+        }
+      }
+    }
+  });
+
+  it("request_credential on a connection it was never listed for is in scope, since every connection of the person's is", async () => {
+    const row = theirs("conn_delta_open_2");
+    const c = await connect(TOKEN_C);
+    try {
+      const result = await c.call("request_credential", {
+        connectionId: row.id,
+        reason: "401 from the vendor",
+      });
+      const { action } = awaiting(result, "awaiting_credential");
+      expect(action).toMatchObject({ kind: CREDENTIAL_ASK_KIND, agentId: AGENT_C });
+      store.pendingActions.delete(action.id);
+    } finally {
+      await c.close();
+    }
+  });
+});
+
 describe("sign-in endpoints are not hosts (GRA-89)", () => {
   /** The proposal Hermes made, sign-in hosts and all. */
   const HERMES_GMAIL = {
@@ -1716,17 +2264,10 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
   };
   const SIGN_IN = ["oauth2.googleapis.com", "accounts.google.com"];
 
-  const unreached = () => Promise.reject(new Error("Pipedream is not reached in this suite"));
-  const pipedream = createPipedreamProvider({
-    client: {
-      createConnectToken: unreached,
-      listAccounts: unreached,
-      relayFields: unreached,
-      deleteAccount: unreached,
-      apiOrigin: "https://api.pipedream.test",
-      projectId: "proj_test",
-      environment: "development",
-    },
+  const GMAIL_HOSTS = new Set(["gmail.googleapis.com", "www.googleapis.com"]);
+  const broker = createFakeLinkProvider({
+    name: "broker",
+    covers: (vendor, hosts) => vendor === "gmail" && hosts.every((host) => GMAIL_HOSTS.has(host)),
   });
 
   /**
@@ -1741,7 +2282,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
         store.connections.delete(id);
       }
     }
-    deps.connection = { ...deps.connection, providers: [pipedream, keyringProvider] };
+    deps.connection = { ...deps.connection, providers: [broker, keyringProvider] };
   });
 
   afterEach(() => {
@@ -1764,22 +2305,22 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
   const gmailAsks = () =>
     actionsOf(AGENT_B, CONNECTION_ASK_KIND).filter((row) => row.payload.vendor === "gmail");
 
-  it("the proposal Hermes made takes the Pipedream link: the sign-in hosts are set aside and named, and the row reaches gmail.googleapis.com alone", async () => {
+  it("the proposal Hermes made takes the link provider's link: the sign-in hosts are set aside and named, and the row reaches gmail.googleapis.com alone", async () => {
     const b = await connect(TOKEN_B);
     try {
       const first = await b.call("request_connection", HERMES_GMAIL);
       const { answer, action } = awaiting(first, "awaiting_connection");
-      expect(answer.provider).toBe("pipedream");
+      expect(answer.provider).toBe("broker");
       expect(answer.redirectUri).toBeUndefined();
       expect(answer.hostsSetAside).toEqual(SIGN_IN);
       const message = String(answer.message);
-      expect(message).toContain("through pipedream");
+      expect(message).toContain("through broker");
       expect(message).toContain(
         "oauth2.googleapis.com, accounts.google.com are sign-in endpoints and were set aside, not recorded on the connection",
       );
       expect(message).toContain("here gmail.googleapis.com.");
       expect(action.payload).toMatchObject({
-        provider: "pipedream",
+        provider: "broker",
         providerConnect: "link",
         providerTarget: "gmail",
         scheme: "oauth_authorization_code",
@@ -1794,7 +2335,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
         ctx(),
         principal,
         {
-          provider: pipedream,
+          provider: broker,
           vendor: payload.vendor,
           displayName: payload.displayName,
           primaryHost: payload.primaryHost,
@@ -1812,8 +2353,8 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
         deps.pendingAction,
       );
       expect(connection).toMatchObject({
-        provider: "pipedream",
-        scheme: "pipedream_connect_proxy",
+        provider: "broker",
+        scheme: "relay",
         hosts: ["gmail.googleapis.com"],
       });
       expect(connection.hosts).not.toContain("accounts.google.com");
@@ -1825,7 +2366,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
       expect(body(done)).toMatchObject({
         status: "connected",
         connectionId: connection.id,
-        provider: "pipedream",
+        provider: "broker",
         hostsSetAside: SIGN_IN,
         message: expect.stringContaining("were set aside"),
       });
@@ -1834,7 +2375,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
     }
   });
 
-  it("a host outside the vendor's own is still the keyring's: Pipedream declines example.com and the form asks, the sign-in host set aside all the same", async () => {
+  it("a host outside the vendor's own is still the keyring's: the link provider declines example.com and the form asks, the sign-in host set aside all the same", async () => {
     const b = await connect(TOKEN_B);
     try {
       const said = await b.call("request_connection", {

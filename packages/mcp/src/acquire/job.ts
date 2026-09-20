@@ -813,7 +813,7 @@ class AcquireLoop {
     await this.step(`publishing ${wire}`);
     let outcome: PublishOutcome;
     try {
-      outcome = await publish({
+      const args = {
         personId: this.scope.personId,
         agentId: this.scope.agentId,
         jobId: this.job.id,
@@ -827,7 +827,19 @@ class AcquireLoop {
         // The version is written and nothing else moves: the pointer names only a version that
         // passed its dry run (ADR 0012, L0 as amended 2026-09-17), so it moves below, on the pass.
         activate: false,
-      });
+      };
+      outcome = await publish(args);
+      if (!outcome.ok && isStoreMiss(outcome)) {
+        // The store did not find the draft the check just read (GRA-123): the toolbox's view of
+        // a path written by another sandbox can lag, and the refusal is the store's, not the
+        // module's. Asked once more before the model is shown a diagnostic it cannot act on.
+        await this.trace(
+          "publish",
+          `The toolbox store found nothing at ${attempt.row.draftPath} for attempt ${attempt.number}, though the check read it; asking the store again once.`,
+          { attempt: attempt.number },
+        );
+        outcome = await publish(args);
+      }
     } catch (error) {
       // A bad name or description is the publish's refusal before it reads anything; the model
       // fixes the definition as it would a diagnostic.
@@ -904,6 +916,10 @@ class AcquireLoop {
       vendor,
       name: draft.name,
       versionId: version.id,
+      // The job's connection, not the tool row's default (GRA-122): a republish onto an existing
+      // tool leaves the default where the pass will move it, and a default the person revoked
+      // since would refuse the dry run of every version this job publishes.
+      connectionId,
       input: draft.testInput,
       mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true },
       channel: NO_ELICITATION,
@@ -913,7 +929,7 @@ class AcquireLoop {
       : readDryRunReport((dry.answer as { dryRun?: unknown }).dryRun);
     if (!report) {
       const failure = dry.isError ? dry.answer : { error: "The run produced no dry-run report." };
-      const line = typeof failure.error === "string" ? failure.error : JSON.stringify(failure);
+      const line = describeRunFailure(failure);
       const didNotRun = `The dry run of ${wire} v${version.versionNumber} did not run: ${line}`;
       await this.trace("dry_run", didNotRun, {
         attempt: attempt.number,
@@ -1223,6 +1239,31 @@ class AcquireLoop {
   private end(kind: AcquireFailureKind, message: string, lastDiagnostics: unknown): JobEnded {
     return new JobEnded(this.failure(kind, message, lastDiagnostics));
   }
+}
+
+/**
+ * A dry run that did not run, in one line for the progress and the attempt's summary. A refusal
+ * carries its reason and message (`result.ts`), and both are the line (GRA-122): `refused` alone,
+ * which is all `error` says of one, hid `connection_revoked` and its sentence from the job's
+ * `tried` on 2026-09-20. Anything else is the runner's sentence, or the whole failure as JSON.
+ */
+function describeRunFailure(failure: Record<string, unknown>): string {
+  if (
+    failure.error === "refused" &&
+    typeof failure.reason === "string" &&
+    typeof failure.message === "string"
+  ) {
+    return `${failure.reason}: ${failure.message}`;
+  }
+  return typeof failure.error === "string" ? failure.error : JSON.stringify(failure);
+}
+
+/** A publish refused only because nothing was at the draft path — the store's miss, not a fault in the module (GRA-123). */
+function isStoreMiss(outcome: Extract<PublishOutcome, { ok: false }>): boolean {
+  return (
+    outcome.refusals.length > 0 &&
+    outcome.refusals.every((refusal) => refusal.rule === "draft-missing")
+  );
 }
 
 function toModelDiagnostic(diagnostic: {

@@ -79,6 +79,7 @@ beforeAll(async () => {
     primaryHost: "https://api.demo.example",
   });
   store.addAgent({
+    scopeMode: "listed",
     id: AGENT,
     personId: PERSON,
     token: TOKEN,
@@ -193,7 +194,7 @@ describe("an ask over MCP, answered over HTTP", () => {
     const a = await connect();
     try {
       const first = await a.call("demo__create-item");
-      expect(first.isError).toBe(true);
+      expect(first.isError).toBe(false);
       const said = body(first);
       expect(said).toMatchObject({
         error: "awaiting_approval",
@@ -404,6 +405,7 @@ describe("an answer after the connection was revoked (GRA-69)", () => {
   it("is refused 409 connection_revoked, the ask is closed as the sweep would have closed it, and nothing is recorded", async () => {
     const TOKEN_R = "grft_approvals_server_test_token_r_00000000000000";
     store.addAgent({
+      scopeMode: "listed",
       id: "agent_r",
       personId: PERSON,
       token: TOKEN_R,

@@ -54,9 +54,12 @@ const AGENT_B = "agent_b";
 const TOKEN_A = "grft_acquire_token_a_00000000000000000000000000";
 const TOKEN_B = "grft_acquire_token_b_00000000000000000000000000";
 const CONN_DEMO = "conn_demo";
+/** A second Demo account of the person's, in A's scope — what a tool follows once the first is revoked (GRA-122). */
+const CONN_DEMO_2 = "conn_demo_2";
 const CONN_OTHER = "conn_other";
 /** The planted credential: shaped like nothing the job's own redaction recognises by name alone. */
 const API_KEY = "zq8Wv2pLm9Kd4Xr7Tn1Bs6Yc3Hf5Jg0A";
+const API_KEY_2 = "Kd4Xr7Tn1Bs6Yc3Hf5Jg0Azq8Wv2pLm9";
 const DOCS_URL = "https://docs.demo.example/items";
 const LIST_ITEMS = authoredToolName("demo", "list-items");
 const VENDOR_BODY = { items: [{ id: "itm_1", name: "Widget" }], vendor: "demo" };
@@ -143,6 +146,13 @@ beforeAll(async () => {
         hosts: ["files.demo.example"],
         credential: { apiKey: API_KEY },
       },
+      {
+        id: CONN_DEMO_2,
+        personId: PERSON,
+        primaryHost: "https://api.demo.example/v2",
+        hosts: ["files.demo.example"],
+        credential: { apiKey: API_KEY_2 },
+      },
     ],
     respond: (request) => {
       const url = new URL(request.url);
@@ -204,21 +214,37 @@ beforeAll(async () => {
     hosts: ["files.demo.example"],
   });
   store.addConnection({
+    id: CONN_DEMO_2,
+    personId: PERSON,
+    vendor: "demo",
+    displayName: "Demo Orders (second account)",
+    primaryHost: "https://api.demo.example/v2",
+    hosts: ["files.demo.example"],
+  });
+  store.addConnection({
     id: CONN_OTHER,
     personId: PERSON,
     vendor: "other",
     primaryHost: "https://api.other.example",
   });
   store.addAgent({
+    scopeMode: "listed",
     id: AGENT_A,
     personId: PERSON,
     token: TOKEN_A,
     name: "laptop Hermes",
+    connectionIds: [CONN_DEMO, CONN_DEMO_2],
+  });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_B,
+    personId: PERSON,
+    token: TOKEN_B,
     connectionIds: [CONN_DEMO],
   });
-  store.addAgent({ id: AGENT_B, personId: PERSON, token: TOKEN_B, connectionIds: [CONN_DEMO] });
   // A has the build approval (ADR 0008); B does not, and is what the ask is asserted on.
   store.grantBuild(AGENT_A, CONN_DEMO);
+  store.grantBuild(AGENT_A, CONN_DEMO_2);
 
   const fakeCheck: ModuleCheck = async (input) => ({
     entry: input.entry,
@@ -370,7 +396,7 @@ describe("the door", () => {
     const jobsBefore = store.acquireJobs.size;
     try {
       const result = await b.call("acquire", { connectionId: CONN_DEMO, goal: "List items" });
-      expect(result.isError).toBe(true);
+      expect(result.isError).toBe(false);
       expect(body(result)).toMatchObject({
         error: "awaiting_approval",
         reason: "awaiting_approval",
@@ -461,10 +487,12 @@ describe("a job that passes first time", () => {
           hints: "GET /items",
         }),
       );
+      // acquire_status's shape (GRA-125), and with the suite's wait at 0, unfinished: no result yet.
       expect(started).toEqual({
         jobId: expect.any(String),
         status: expect.stringMatching(/^(queued|running)$/),
         progress: [FIRST_PROGRESS_LINE],
+        attempts: 0,
       });
       const jobId = started.jobId as string;
 
@@ -586,6 +614,162 @@ describe("a job that passes first time", () => {
 });
 
 describe("a job that fails and tries again", () => {
+  /**
+   * GRA-125: a chat model polled `acquire_status` seven times in twelve seconds, then ran its own
+   * code through `execute__` while the job it started went on to succeed unused. So `acquire` holds
+   * its call for the approvals' wait and answers the settled job when it finishes in time, and
+   * `acquire_status` holds its call until there is news. The suite's wait is 0 elsewhere, so every
+   * other test sees the old shape; here the wait is long enough for the scripted job.
+   */
+  /** GRA-123: a `draft-missing` refusal is the store's miss, and the job asks once more before the model sees it. */
+  it("asks the toolbox store a second time when the publish finds nothing at a draft the check read, and publishes on that answer", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    const publishBefore = deps.publishTool;
+    let calls = 0;
+    deps.publishTool = async (args) => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: false,
+          refusals: [
+            {
+              rule: "draft-missing",
+              file: "index.ts",
+              line: 1,
+              column: 1,
+              text: "",
+              message: `Nothing is at ${args.draftPath} in the toolbox`,
+              hint: "Write the draft first.",
+            },
+          ],
+          advice: [],
+          annotations: { readOnly: false, destructive: true },
+        } as never;
+      }
+      if (!publishBefore) throw new Error("no publish in this suite");
+      return publishBefore(args);
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+      expect((status.result as AcquireSuccess).tool).toBe(LIST_ITEMS);
+      expect(calls).toBe(2);
+      const { attempts, traces } = rowsOf(jobId);
+      // One attempt, passed: the miss cost the model nothing and was never shown to it.
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
+      expect(
+        traces.some(
+          (row) => row.kind === "publish" && row.text.includes("asking the store again once"),
+        ),
+      ).toBe(true);
+      const model = deps.model as ReturnType<typeof createScriptedModel>;
+      expect(model.conversations[0]?.situations.map((situation) => situation.kind)).not.toContain(
+        "publish_refused",
+      );
+    } finally {
+      deps.publishTool = publishBefore;
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  it("acquire waits for the job and answers the result when it settles in time; acquire_status waits for news", async () => {
+    const scripted = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    deps.model = scripted;
+    const waitBefore = deps.handoff.waitMs;
+    deps.handoff = { ...deps.handoff, waitMs: 20_000, pollMs: 25 };
+    const a = await connect(TOKEN_A);
+    try {
+      const settled = body<AcquireStatus>(
+        await a.call("acquire", { connectionId: CONN_DEMO, goal: "List the items" }),
+      );
+      // The job finished inside the wait: the answer is acquire_status's, result included.
+      expect(settled.status).toBe("succeeded");
+      expect((settled.result as AcquireSuccess).tool).toBe(LIST_ITEMS);
+      expect(settled.progress.length).toBeGreaterThan(1);
+
+      // A settled job answers at once, whatever `after` says.
+      const t0 = Date.now();
+      const again = body<AcquireStatus>(
+        await a.call("acquire_status", { jobId: settled.jobId, after: 1000 }),
+      );
+      expect(again.status).toBe("succeeded");
+      expect(Date.now() - t0).toBeLessThan(2_000);
+
+      // `after` must be a count.
+      const bad = await a.call("acquire_status", { jobId: settled.jobId, after: -1 });
+      expect(bad.isError).toBe(true);
+      expect(body(bad).reason).toBe("input_invalid");
+    } finally {
+      deps.handoff = { ...deps.handoff, waitMs: waitBefore, pollMs: undefined };
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  it("acquire_status holds its call until a progress line newer than the caller's arrives", async () => {
+    // A model turn that waits to be released: the job sits in its first turn until `release`.
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const scripted = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    deps.model = {
+      name: scripted.name,
+      open: (context) => {
+        const conversation = scripted.open(context);
+        let first = true;
+        return {
+          turn: async (situation) => {
+            if (first) {
+              first = false;
+              await gate;
+            }
+            return conversation.turn(situation);
+          },
+        };
+      },
+    };
+    const waitBefore = deps.handoff.waitMs;
+    deps.handoff = { ...deps.handoff, waitMs: 0, pollMs: 25 };
+    const a = await connect(TOKEN_A);
+    try {
+      const started = body<AcquireStatus>(
+        await a.call("acquire", { connectionId: CONN_DEMO, goal: "List the items" }),
+      );
+      expect(["queued", "running"]).toContain(started.status);
+
+      // With the wait at 0 the status answers at once, news or none.
+      const immediate = body<AcquireStatus>(
+        await a.call("acquire_status", { jobId: started.jobId, after: 1000 }),
+      );
+      expect(["queued", "running"]).toContain(immediate.status);
+
+      // With a wait, the call holds until the job moves: release the model turn while it waits.
+      deps.handoff = { ...deps.handoff, waitMs: 20_000, pollMs: 25 };
+      const seen = immediate.progress.length;
+      const pending = a.call("acquire_status", { jobId: started.jobId, after: seen });
+      setTimeout(() => release(), 200);
+      const news = body<AcquireStatus>(await pending);
+      expect(news.progress.length).toBeGreaterThan(seen);
+    } finally {
+      release();
+      deps.handoff = { ...deps.handoff, waitMs: waitBefore, pollMs: undefined };
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
   it("records a first attempt whose dry run failed and a second that passed, each with its diagnosis", async () => {
     deps.model = createScriptedModel([
       write(
@@ -1065,6 +1249,125 @@ describe("a job that fails and tries again", () => {
       await a.close();
     }
   }, 60_000);
+
+  /**
+   * GRA-122's live case: the person revoked the connection a tool was authored against and
+   * connected the vendor again under another row; a job against the new row publishes v2 of the
+   * same tool. The dry run must run against the job's connection, not the row's revoked default,
+   * and the row must follow — at publish, before the pass — so the job spends no attempt on a
+   * refusal the model cannot fix.
+   */
+  it("dry-runs a republished version against the job's connection, not the tool row's revoked default, and rebinds the row at publish (GRA-122)", async () => {
+    const CONN_GONE = "conn_demo_gone";
+    const gone = store.addConnection({
+      id: CONN_GONE,
+      personId: PERSON,
+      vendor: "demo",
+      displayName: "Demo Orders (revoked)",
+      primaryHost: "https://api.demo.example/v2",
+    });
+    store.connections.set(CONN_GONE, {
+      ...gone,
+      revokedAt: new Date(),
+      credentialCiphertext: null,
+      credentialSetAt: null,
+    });
+    store.agentConnections.get(AGENT_A)?.add(CONN_GONE);
+    const rebound = authoredToolName("demo", "list-rebound");
+    // Every patch to a tool row, so the publish's rebind is told apart from the pass's definition.
+    const patches: Record<string, unknown>[] = [];
+    const update = deps.tool.updateAuthoredTool;
+    deps.tool.updateAuthoredTool = async (db, personId, toolId, patch) => {
+      patches.push(patch);
+      return update(db, personId, toolId, patch);
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      deps.model = createScriptedModel([
+        write("goal", draft({ name: "list-rebound" }), "Read the documentation: /items."),
+      ]);
+      const first = await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List, rebound" });
+      expect(first.status.status).toBe("succeeded");
+      const toolId = (first.status.result as AcquireSuccess).toolId;
+      const tool = store.tools.get(toolId);
+      if (!tool) throw new Error("the first job left no tool row");
+      // The row bound to the connection the person has since revoked.
+      store.tools.set(toolId, { ...tool, defaultConnectionId: CONN_GONE });
+      patches.length = 0;
+
+      deps.model = createScriptedModel([
+        write(
+          "goal",
+          draft({ name: "list-rebound", description: "Lists items from Demo Orders, again." }),
+          "The documented path, again.",
+        ),
+      ]);
+      const requestsBefore = vendor.requests.length;
+      const second = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO_2,
+        goal: "List, rebound, from the second account",
+      });
+      expect(second.status.status).toBe("succeeded");
+      expect(second.status.attempts).toBe(1);
+      expect(second.status.result).toMatchObject({ tool: rebound, toolId, version: 2 });
+      expect(second.status.progress.join("\n")).not.toContain("did not run");
+      // The publish rebound the row before the dry run; the pass then applied the definition.
+      expect(patches[0]).toEqual({ defaultConnectionId: CONN_DEMO_2 });
+      expect(store.tools.get(toolId)).toMatchObject({
+        defaultConnectionId: CONN_DEMO_2,
+        description: "Lists items from Demo Orders, again.",
+      });
+      // The dry run's read left under the second account's key, and nothing under the first's.
+      const reads = vendor.requests.slice(requestsBefore);
+      expect(reads.length).toBeGreaterThan(0);
+      for (const request of reads) {
+        expect(request.headers.get("x-demo-key")).toBe(API_KEY_2);
+      }
+    } finally {
+      deps.tool.updateAuthoredTool = update;
+      store.agentConnections.get(AGENT_A)?.delete(CONN_GONE);
+      await a.close();
+    }
+  }, 60_000);
+
+  it("names a refused dry run by its reason and message in the progress line and the attempt's summary, not by the word refused (GRA-122)", async () => {
+    deps.acquire = { maxAttempts: 2, tokenCeiling: 400_000 };
+    // A test input the tool's own schema refuses: the run is refused `input_invalid` before
+    // anything reaches the sandbox — a refusal, as `connection_revoked` was live. Twice, so the
+    // job ends on the attempt budget with both attempts in `tried`.
+    const badInput = draft({ name: "list-badly", testInput: { limit: 0 } });
+    deps.model = createScriptedModel([
+      write("goal", badInput, "A test input the schema refuses."),
+      write("dry_run_failed", badInput, "The same input again."),
+      write("dry_run_failed", badInput, "A third draft, never made: the budget is spent."),
+    ]);
+    const a = await connect(TOKEN_A);
+    try {
+      const { status } = await acquireAndFinish(a, { connectionId: CONN_DEMO, goal: "List badly" });
+      expect(status.status).toBe("failed");
+      const failure = status.result as AcquireFailure;
+      expect(failure.failure).toBe("attempt_budget");
+      const badly = authoredToolName("demo", "list-badly");
+      const didNotRun = (version: number) =>
+        expect.stringMatching(
+          new RegExp(`^The dry run of ${badly} v${version} did not run: input_invalid: .*limit`),
+        );
+      expect(failure.tried).toEqual([
+        {
+          attempt: 1,
+          outcome: "run_failed",
+          summary: didNotRun(1),
+          note: "A test input the schema refuses.",
+        },
+        { attempt: 2, outcome: "run_failed", summary: didNotRun(2), note: "The same input again." },
+      ]);
+      const line = status.progress.find((entry) => entry.includes("did not run"));
+      expect(line).toContain(`the dry run of ${badly} did not run (input_invalid: `);
+      expect(status.progress.join("\n")).not.toContain("(refused)");
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
 
   it("ends on the token ceiling with a result naming it", async () => {
     deps.acquire = { maxAttempts: 4, tokenCeiling: 1_000 };

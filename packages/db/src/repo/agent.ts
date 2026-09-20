@@ -1,7 +1,8 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, exists, inArray, isNull, or } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent, agentConnection, type NewAgent } from "../schema/agent";
+import { connection } from "../schema/connection";
 import type { AgentScope } from "./scope";
 
 /**
@@ -11,7 +12,9 @@ import type { AgentScope } from "./scope";
  */
 
 export type AgentRow = typeof agent.$inferSelect;
-export type AgentPatch = Partial<Pick<AgentRow, "name" | "workingSetCap" | "idleWindowDays">>;
+export type AgentPatch = Partial<
+  Pick<AgentRow, "name" | "workingSetCap" | "idleWindowDays" | "scopeMode">
+>;
 
 /** The MCP client an agent was connected from (ADR 0018) — written once, at the consent that bound them. */
 export type AgentConnectedVia = { clientId: string; clientName: string };
@@ -64,6 +67,27 @@ export async function findAgent(
     .from(agent)
     .where(and(eq(agent.id, agentId), eq(agent.personId, personId)))
     .limit(1);
+  return row ?? null;
+}
+
+/**
+ * `findAgent` with the row locked (`SELECT … FOR UPDATE`): what a scope write reads first, so two
+ * writes on one agent's scope serialise on the row — a narrowing that materialises the resolved
+ * scope and a grant that decides "no list row, the agent is on `all`" cannot interleave, and the
+ * list a narrowing writes is the scope as it stands when it commits (Greptile on #88). Only
+ * meaningful inside a transaction; outside one the lock is released as the statement ends.
+ */
+export async function findAgentForUpdate(
+  db: DbOrTx,
+  personId: string,
+  agentId: string,
+): Promise<AgentRow | null> {
+  const [row] = await db
+    .select()
+    .from(agent)
+    .where(and(eq(agent.id, agentId), eq(agent.personId, personId)))
+    .limit(1)
+    .for("update");
   return row ?? null;
 }
 
@@ -146,7 +170,11 @@ export async function revokeAgent(
   return row ?? null;
 }
 
-/** The connection ids in an agent's scope. */
+/**
+ * The rows in `agent_connection` for an agent — its **list**, which is its whole scope under
+ * `listed` and nothing under `all` (ADR 0007 as amended 2026-09-19). The scope as a caller should
+ * read it is `listScopeConnectionIds`; this is what the service edits when a list is set or grown.
+ */
 export async function listAgentConnectionIds(db: DbOrTx, scope: AgentScope): Promise<string[]> {
   const rows = await db
     .select({ connectionId: agentConnection.connectionId })
@@ -157,9 +185,54 @@ export async function listAgentConnectionIds(db: DbOrTx, scope: AgentScope): Pro
 }
 
 /**
- * The person's agents whose scope names a connection: the lists a revoke of it changes, since each
- * loses the connection's execute tool (GRA-69). Under the person through the agent, so a grant to
- * another person's agent, which the service never writes, would not be answered either.
+ * The **scope** resolved to connection ids, in one statement under the person, whatever the mode
+ * (ADR 0007 as amended 2026-09-19): every connection of the person's when the agent named by the
+ * pair is on `all`, and the connections its list names when it is on `listed`. Both branches take
+ * the pair — the `all` branch as an `exists` over the agent row, the `listed` branch as
+ * `scopedAgentIds` — so an agent that is not the person's answers nothing under either. Revoked
+ * rows are in the set on both branches: a listed grant survives a revoke on purpose (GRA-69, so a
+ * reconnection needs no second step), and `all` says "every connection of theirs"; each caller
+ * that must not use a revoked row already checks `revoked_at` on the row it holds.
+ */
+export async function listScopeConnectionIds(db: DbOrTx, scope: AgentScope): Promise<string[]> {
+  const rows = await db
+    .select({ id: connection.id })
+    .from(connection)
+    .where(
+      and(
+        eq(connection.personId, scope.personId),
+        or(
+          exists(
+            db
+              .select({ id: agent.id })
+              .from(agent)
+              .where(
+                and(
+                  eq(agent.id, scope.agentId),
+                  eq(agent.personId, scope.personId),
+                  eq(agent.scopeMode, "all"),
+                ),
+              ),
+          ),
+          inArray(
+            connection.id,
+            db
+              .select({ connectionId: agentConnection.connectionId })
+              .from(agentConnection)
+              .where(inArray(agentConnection.agentId, scopedAgentIds(db, scope))),
+          ),
+        ),
+      ),
+    )
+    .orderBy(asc(connection.id));
+  return rows.map((row) => row.id);
+}
+
+/**
+ * The person's agents whose scope reaches a connection: the lists a revoke of it changes, since
+ * each loses the connection's execute tool (GRA-69) — every agent on `all`, and every agent whose
+ * list names the row (ADR 0007 as amended 2026-09-19). Under the person in the statement, so a
+ * grant to another person's agent, which the service never writes, would not be answered either.
  */
 export async function listAgentIdsForConnection(
   db: DbOrTx,
@@ -167,19 +240,44 @@ export async function listAgentIdsForConnection(
   connectionId: string,
 ): Promise<string[]> {
   const rows = await db
-    .select({ agentId: agentConnection.agentId })
-    .from(agentConnection)
+    .select({ id: agent.id })
+    .from(agent)
     .where(
       and(
-        eq(agentConnection.connectionId, connectionId),
-        inArray(
-          agentConnection.agentId,
-          db.select({ id: agent.id }).from(agent).where(eq(agent.personId, personId)),
+        eq(agent.personId, personId),
+        or(
+          eq(agent.scopeMode, "all"),
+          inArray(
+            agent.id,
+            db
+              .select({ agentId: agentConnection.agentId })
+              .from(agentConnection)
+              .where(eq(agentConnection.connectionId, connectionId)),
+          ),
         ),
       ),
     )
-    .orderBy(asc(agentConnection.agentId));
-  return rows.map((row) => row.agentId);
+    .orderBy(asc(agent.id));
+  return rows.map((row) => row.id);
+}
+
+/**
+ * Add one connection to the scope, idempotently: `INSERT … ON CONFLICT DO NOTHING` on the table's
+ * `(agent_id, connection_id)` primary key, so two grants of the same connection leave one row and a
+ * grant beside another agent-page edit loses nothing — never a read of the list and a rewrite of the
+ * whole (Greptile on #87, GRA-104). One statement on `scope.agentId` alone, like the insert half of
+ * `replaceAgentConnections`: the service has verified the agent is the person's and the connection
+ * theirs before calling this.
+ */
+export async function addAgentConnection(
+  db: DbOrTx,
+  scope: AgentScope,
+  connectionId: string,
+): Promise<void> {
+  await db
+    .insert(agentConnection)
+    .values({ agentId: scope.agentId, connectionId })
+    .onConflictDoNothing();
 }
 
 /**

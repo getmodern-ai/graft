@@ -77,18 +77,18 @@ describe("which hosts the gateway covers", () => {
 describe("the gateway provider", () => {
   const provider = createGatewayProvider(CONFIG);
 
-  it("connects with no person step under the gateway scheme, covers by its hosts, and routes ahead of the keyring", () => {
+  it("connects with no person step under the gateway scheme, covers by its hosts, and routes ahead of the keyring", async () => {
     expect(provider.name).toBe("gateway");
     expect(provider.connect).toEqual({ kind: "none", scheme: "gateway" });
-    expect(provider.covers("unleashed", ["api.unleashedsoftware.com"])).toBe(true);
-    expect(provider.covers("acme", ["api.acme.example"])).toBe(false);
+    expect(await provider.covers("unleashed", ["api.unleashedsoftware.com"])).toBe(true);
+    expect(await provider.covers("acme", ["api.acme.example"])).toBe(false);
     const providers = [provider, keyringProvider];
     expect(providerListProblem(providers)).toBeNull();
-    expect(providerFor(providers, "unleashed", ["api.unleashedsoftware.com"])).toBe(provider);
-    expect(providerFor(providers, "acme", ["api.acme.example"])).toBe(keyringProvider);
+    expect(await providerFor(providers, "unleashed", ["api.unleashedsoftware.com"])).toBe(provider);
+    expect(await providerFor(providers, "acme", ["api.acme.example"])).toBe(keyringProvider);
   });
 
-  it("resolves every row to the same relay: the catalogued plugin, the three fields, the identity header named for the dry run, and no rule override", async () => {
+  it("resolves every row to the same relay: the gateway plugin, the three fields, the identity header named for the dry run, and no rule override", async () => {
     const resolution = provider.resolve(row);
     expect(resolution.mode).toBe("relay");
     if (resolution.mode !== "relay") throw new Error("expected a relay");

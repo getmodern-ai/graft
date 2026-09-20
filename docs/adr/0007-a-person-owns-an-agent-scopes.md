@@ -39,3 +39,70 @@ clients that speak it; Hermes does, OpenClaw has it as an open feature request.
   (ADR 0008); approval is per agent, per tool.
 - **Bearer tokens in a config file are the weakest link.** They are per agent so one leak
   revokes one agent, and OAuth 2.1 replaces them wherever the client allows.
+
+## Amendment 2026-09-19: a person's connections reach every agent of theirs unless the person narrows one
+
+Decided by Aleks (GRA-105), after his Claude.ai test of 2026-09-19 hit GRA-104: "I am not sure how
+many people will have multiple agents, but I can see how a person that has done a connection to
+Gmail and authored a tool, say in ChatGPT, will expect it to just be available everywhere." Until
+this amendment a connection was in the scope of the agent that proposed it and of whichever agents
+the person ticked, and an agent minted later by another product saw nothing until the person
+visited its page — while every tool in the toolbox was already the person's and appeared in
+`find_tool` for every agent (ADR 0003), so an agent could find a tool it could not run.
+
+**An agent's scope has a mode.** `all`: every connection of the person's, present and future — the
+default for a new agent, whichever door minted it (the console's create, an MCP client's consent).
+`listed`: the connections the person ticked or the agent's own proposals added — every agent's
+scope as it was before this amendment, and what a person chooses on the agent's page when they
+deliberately separate agents: a bot on a shared server from a laptop harness, a work account from a
+personal one. Every agent that existed when the amendment landed keeps its list (migration 0009
+writes `listed` on the rows it finds), so nothing widened silently for anyone; new rows take the
+column's default, `all`.
+
+**What is kept.** The property this ADR states is kept by construction: the scope is resolved to a
+set of connection ids before any capability token is minted (`getAgentScope`, one statement under
+the person for either mode), and the token still names those ids and no others. A grant into the
+scope after a connect — the console's submit, a link's return, the gateway's no-person-step connect,
+the `scope` ask's yes — is a no-op for an agent on `all`, since the row is the person's and
+therefore already that agent's. Approvals do not move (ADR 0008): the build approval and the first
+use of a tool that is not read-only still ask once per agent per connection, which is the step that
+protects a person from a new agent acting through an old connection. Revoking a connection still
+reaches every agent at once; the agents whose tool list a revoke changes now include every agent on
+`all`.
+
+**Why default open and not the two alternatives.** Keeping per-agent scope and making the ask
+painless (GRA-104) is one click — on every new agent, for every connection. Defaulting open only for
+agents a chat product's consent minted, and listed for static-token agents, is a heuristic on how
+the agent was made, which is not what the person is deciding. The person is the boundary
+(CONTEXT.md, *Person*); the agent is a harness of theirs; separation is theirs to ask for, on the
+agent's page, and visible there. GRA-104's `scope` ask stays worth having for a narrowed agent and
+stops being the everyday path.
+
+## Amendment 2026-09-20: a tool follows its vendor's reconnected connection
+
+Decided under GRA-122, from a live check of 2026-09-20: both Gmail rows revoked, Gmail connected
+again from a chat through a link provider, and every Gmail tool dead — `run_tool` answered
+`connection_revoked`, and `acquire`'s job burned two attempts dry-running new versions against the
+revoked default. The consequence above, "every tool bound to that connection's vendor stays
+published and re-asks after reconnection", held only when the reconnection kept the row's id, and a
+link provider's reconnect-in-place demanded the same primary host and the exact host set, so a
+second proposal spelling `…/gmail/v1` with one more host made a new row beside the released one.
+
+**The connection's identity survives a revoke and a reconnect of the vendor through the same
+provider, whatever hosts the second proposal names within the provider's coverage**: the released
+row is the match, its hosts grow to the union, its primary host and name stay (the proxy prepends
+the primary host's path to every module path, so moving it would break the tools kept), and the
+most recently revoked row is chosen when several qualify. **And a tool's binding follows the
+vendor, per agent,** where the reconnection made a new row anyway: the tool row is the person's and
+the scopes are per agent, so a run resolves its connection for the agent making it — the row's
+default when that agent holds it live, otherwise the one live, usable connection of the tool's
+vendor in that agent's scope; with several such connections the refusal names them and the choice
+is the person's. The row's default is rebound only when it is revoked, dead for every agent; a live
+default another agent holds stays, and the agent that was never given it resolves to its own row
+each call. A caller that names the connection — `acquire`'s dry run names the job's — is never
+followed, and the job's publish rebinds an existing tool row to the job's connection before the dry
+run only when the row's default is revoked, so a failed job leaves a working tool where it was (ADR
+0012, L0 as amended). The scope is read before the choice, so the property this ADR states is kept:
+an authored tool running for one agent still reaches no connection that agent was never given. The
+approval grain does not move (ADR 0008): the tool re-asks on the connection it now runs against, as
+it did after any reconnection.

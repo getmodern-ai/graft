@@ -1,7 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createPipedreamProvider, keyringProvider, toProxyConnection } from "@graft/core";
+import { keyringProvider, toProxyConnection } from "@graft/core";
+import {
+  createFakeLinkProvider,
+  decodeFakeRelaySegment,
+  type FakeLinkProvider,
+  FakeLinkProviderError,
+} from "@graft/core/connection/testing/fake-link-provider";
 import {
   createMcpDeps,
   createToolListChangedNotifier,
@@ -10,30 +16,29 @@ import {
 } from "@graft/mcp";
 import { createFakeDeps, createFakeStore, type FakeStore } from "@graft/mcp/testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "@graft/mcp/testing/fake-vendor";
-import { PipedreamError } from "@graft/pipedream";
-import { createFakePipedreamClient, type FakePipedreamClient } from "@graft/pipedream/fake";
-import { decodePipedreamProxySegment } from "@graft/proxy/pipedream-relay";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { sandboxPath } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { initLogger } from "evlog";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "./app";
 import { fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
- * GRA-59 at the seam where the two doors meet (`connection-handoff.test.ts`'s shape): an agent's
- * MCP session proposes Gmail, the console's button asks the server to mint Pipedream's link for the
- * ask, the person's return — the browser arriving from Pipedream's page with the signed state —
- * makes the connection once the fake Pipedream lists the account, and what is asserted is what each
- * side then sees: the tool's `connected`, the connection in the person's list with the provider and
- * no credential, the requesting agent's scope, and the execute tool's call leaving for Pipedream's
- * proxy path with the vendor URL encoded in it rather than for Google. Then the failure paths — the
- * provider's error redirect, a state that is not Graft's, a landing repeated — and the revoke that
- * releases the account at Pipedream, records a release that failed, and retries it from the card.
+ * GRA-59 at the seam where the two doors meet (`connection-handoff.test.ts`'s shape), over
+ * `@graft/core`'s fake link provider since the hosted form's broker left for the private package
+ * (GRA-103): an agent's MCP session proposes Gmail, the console's button asks the server to mint
+ * the provider's link for the ask, the person's return — the browser arriving from the provider's
+ * page with the signed state — makes the connection once the provider lists the account, and what
+ * is asserted is what each side then sees: the tool's `connected`, the connection in the person's
+ * list with the provider and no credential, the requesting agent's scope, and the execute tool's
+ * call leaving for the provider's upstream with the vendor URL encoded in its path rather than for
+ * Google. Then the failure paths — the provider's error redirect, a state that is not Graft's, a
+ * landing repeated — and the revoke that releases the account at the provider, records a release
+ * that failed, and retries it from the card.
  */
 
 initLogger({ silent: true });
@@ -46,7 +51,8 @@ const TOKEN_B = "grft_link_server_test_token_b_000000000000000000000";
 const SESSION = { user: { id: PERSON } };
 const AUTH_URL = "http://graft.test";
 const CONSOLE_URL = "http://console.graft.test";
-const EXTERNAL_USER = `graft-person-${PERSON}`;
+const UPSTREAM_TOKEN = "fake-broker-upstream-token";
+const GMAIL_HOSTS = new Set(["gmail.googleapis.com", "www.googleapis.com"]);
 
 const PROPOSAL = {
   vendor: "gmail",
@@ -73,18 +79,25 @@ const RUN_LIST = `echo '{}' | node /graft/runner.mjs ${sandboxPath("tools/gmail/
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
-let pipedream: FakePipedreamClient;
+let broker: FakeLinkProvider;
 let app: ReturnType<typeof createServer>;
 let mcp: ReturnType<typeof createMcpDeps>;
+/** The process's notifier as the API's routes see it: what the link's return announces to. */
+const apiNotifier = { changed: vi.fn() };
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
   store = createFakeStore();
-  pipedream = createFakePipedreamClient({
-    projectId: "proj_test",
-    apiOrigin: "https://pipedream.fake",
+  // The broker's coverage rule, as the hosted provider applies it from its catalogue: every
+  // proposed host in the vendor's own set, since the relay injects the account's token into
+  // whatever vendor URL it is handed.
+  broker = createFakeLinkProvider({
+    name: "broker",
+    covers: (vendor, hosts) => vendor === "gmail" && hosts.every((host) => GMAIL_HOSTS.has(host)),
+    upstreamUrl: "https://broker.fake/proxy",
+    upstreamToken: UPSTREAM_TOKEN,
   });
-  const providers = [createPipedreamProvider({ client: pipedream }), keyringProvider];
+  const providers = [broker, keyringProvider];
   vendor = await startFakeVendor({
     keys,
     connections: [],
@@ -101,8 +114,20 @@ beforeAll(async () => {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "index.ts"), MODULE);
 
-  store.addAgent({ id: AGENT_A, personId: PERSON, token: TOKEN_A, name: "laptop Hermes" });
-  store.addAgent({ id: AGENT_B, personId: PERSON, token: TOKEN_B, name: "server OpenClaw" });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_A,
+    personId: PERSON,
+    token: TOKEN_A,
+    name: "laptop Hermes",
+  });
+  store.addAgent({
+    scopeMode: "listed",
+    id: AGENT_B,
+    personId: PERSON,
+    token: TOKEN_B,
+    name: "server OpenClaw",
+  });
 
   const fake = createFakeDeps(store);
   const connection = { ...fake.connection, providers };
@@ -143,6 +168,7 @@ beforeAll(async () => {
       corsOrigins: [],
       handoff,
       authUrl: AUTH_URL,
+      notifier: apiNotifier,
     },
     mcp,
   });
@@ -216,50 +242,50 @@ const consoleOutcome = (response: Response) => {
   return Object.fromEntries(new URL(location).searchParams);
 };
 
-describe("a Gmail connection through Pipedream: the ask, the button, the return, the relay", () => {
+describe("a Gmail connection through a link provider: the ask, the button, the return, the relay", () => {
   let actionId = "";
   let connectionId = "";
 
-  it("the agent's proposal is routed to Pipedream: a link ask with the app named, no redirect URI, and nothing minted yet", async () => {
+  it("the agent's proposal is routed to the link provider: a link ask with the target named, no redirect URI, and nothing minted yet", async () => {
     const a = await connect(TOKEN_A);
     try {
       const said = body(await a.call("request_connection", PROPOSAL));
       expect(said).toMatchObject({
         error: "awaiting_connection",
-        provider: "pipedream",
+        provider: "broker",
         url: expect.stringContaining(`${CONSOLE_URL}/pending/`),
       });
       expect(said.redirectUri).toBeUndefined();
-      expect(said.message).toContain("through pipedream");
+      expect(said.message).toContain("through broker");
       actionId = said.pendingActionId as string;
       expect(store.pendingActions.get(actionId)?.payload).toMatchObject({
-        provider: "pipedream",
+        provider: "broker",
         providerConnect: "link",
         providerTarget: "gmail",
         vendor: "gmail",
         primaryHost: "https://gmail.googleapis.com/gmail/v1",
         hosts: ["gmail.googleapis.com", "www.googleapis.com"],
       });
-      expect(pipedream.tokens).toHaveLength(0);
+      expect(broker.minted).toHaveLength(0);
       expect(await listConnections()).toEqual([]);
     } finally {
       await a.close();
     }
   });
 
-  it("the console's button mints Pipedream's link for the person, with this server's return route as both redirect URIs", async () => {
+  it("the console's button mints the provider's link for the person, with this server's return route as both redirect URIs", async () => {
     const res = await app.request(`/api/pending-actions/${actionId}/link`, { method: "POST" });
     expect(res.status).toBe(200);
     const started = (await res.json()) as { url: string; expiresAt: string; provider: string };
-    expect(started.provider).toBe("pipedream");
+    expect(started.provider).toBe("broker");
     const link = new URL(started.url);
     expect(link.searchParams.get("app")).toBe("gmail");
-    expect(link.searchParams.get("token")).toMatch(/^ctok_/);
+    expect(link.searchParams.get("token")).toMatch(/^ltok_/);
     expect(new Date(started.expiresAt).getTime()).toBeGreaterThan(Date.now());
 
-    const minted = pipedream.tokens.at(-1);
-    expect(minted?.externalUserId).toBe(EXTERNAL_USER);
-    expect(minted?.app).toBe("gmail");
+    const minted = broker.minted.at(-1);
+    expect(minted?.personId).toBe(PERSON);
+    expect(minted?.target).toBe("gmail");
     for (const [uri, outcome] of [
       [minted?.success, "success"],
       [minted?.error, "error"],
@@ -274,7 +300,7 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
   });
 
   it("the provider's error redirect leaves the ask open with the reason, and a return before any account was connected does too", async () => {
-    const minted = pipedream.tokens.at(-1);
+    const minted = broker.minted.at(-1);
     const errored = consoleOutcome(await landing(minted?.error ?? ""));
     expect(errored).toMatchObject({
       status: "failed",
@@ -291,6 +317,17 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     });
     expect(store.pendingActions.get(actionId)?.answeredAt).toBeNull();
     expect(await listConnections()).toEqual([]);
+    // The console's link carries no `from`, so its landing page stays up for the person.
+    expect(errored.from).toBeUndefined();
+  });
+
+  it("a return whose link the ask card minted carries from=card through to the console's page (GRA-117), read from the query alone", async () => {
+    const minted = broker.minted.at(-1);
+    const fromCard = consoleOutcome(await landing(`${minted?.error ?? ""}&from=card`));
+    expect(fromCard).toMatchObject({ status: "failed", pendingActionId: actionId, from: "card" });
+    // Another word is not the card's, and is not copied.
+    const other = consoleOutcome(await landing(`${minted?.error ?? ""}&from=elsewhere`));
+    expect(other.from).toBeUndefined();
   });
 
   it("a state that is not Graft's is refused before anything is read, naming no ask", async () => {
@@ -299,32 +336,32 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     );
     expect(forged).toMatchObject({ status: "failed" });
     expect(forged.pendingActionId).toBeUndefined();
-    expect(pipedream.accounts).toHaveLength(0);
+    expect(broker.accounts).toHaveLength(0);
   });
 
-  it("the return confirms the account Pipedream now holds, makes the connection with the account id and no credential, gives it to the requesting agent, and answers the ask", async () => {
-    // The person signed in at Google on Pipedream's page: Pipedream now holds the account.
-    const account = pipedream.connect({
-      externalUserId: EXTERNAL_USER,
-      app: "gmail",
-      name: "aleks@example.com",
+  it("the return confirms the account the provider now holds, makes the connection with the account id and no credential, gives it to the requesting agent, and answers the ask", async () => {
+    // The person signed in at Google on the provider's page: the provider now holds the account.
+    const account = broker.connectAccount({
+      personId: PERSON,
+      target: "gmail",
+      label: "aleks@example.com",
     });
-    const minted = pipedream.tokens.at(-1);
+    const minted = broker.minted.at(-1);
     const outcome = consoleOutcome(await landing(minted?.success ?? ""));
     expect(outcome).toMatchObject({
       status: "connected",
       pendingActionId: actionId,
       connectionId: expect.any(String),
-      message: expect.stringContaining("connected through pipedream as aleks@example.com"),
+      message: expect.stringContaining("connected through broker as aleks@example.com"),
     });
     connectionId = outcome.connectionId as string;
 
     const [connection] = await listConnections();
     expect(connection).toMatchObject({
       id: connectionId,
-      provider: "pipedream",
+      provider: "broker",
       vendor: "gmail",
-      scheme: "pipedream_connect_proxy",
+      scheme: "relay",
       displayName: "Gmail",
       primaryHost: "https://gmail.googleapis.com/gmail/v1",
       hosts: ["gmail.googleapis.com", "www.googleapis.com"],
@@ -341,6 +378,10 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     expect(await scopeOf(AGENT_A)).toEqual([connectionId]);
     expect(await scopeOf(AGENT_B)).toEqual([]);
     expect(store.pendingActions.get(actionId)?.answer).toEqual({ connectionId });
+    // The return announces the row to every session whose scope reaches it (Greptile on #88):
+    // A's, on its list; B, on a list without it, is not told.
+    expect(apiNotifier.changed.mock.calls.map(([agentId]) => agentId)).toEqual([AGENT_A]);
+    apiNotifier.changed.mockClear();
 
     // The browser landing twice — a refresh — says connected and makes nothing more.
     const again = consoleOutcome(await landing(minted?.success ?? ""));
@@ -348,7 +389,7 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     expect(await listConnections()).toHaveLength(1);
   });
 
-  it("the agent's next call answers connected, and its execute tool's call leaves for Pipedream's proxy with the vendor URL in the path — never for Google", async () => {
+  it("the agent's next call answers connected, and its execute tool's call leaves for the provider's upstream with the vendor URL in the path — never for Google", async () => {
     const a = await connect(TOKEN_A);
     try {
       const said = body(await a.call("request_connection", PROPOSAL));
@@ -371,32 +412,32 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
       const [left] = vendor.requests;
       if (!left) throw new Error("nothing left the proxy");
       const url = new URL(left.url);
-      expect(url.origin).toBe("https://pipedream.fake");
+      expect(url.origin).toBe("https://broker.fake");
       const segments = url.pathname.split("/");
-      expect(segments.slice(0, 5)).toEqual(["", "v1", "connect", "proj_test", "proxy"]);
-      expect(decodePipedreamProxySegment(segments[5] ?? "")?.href).toBe(
+      expect(segments.slice(0, 3)).toEqual(["", "proxy", "relay"]);
+      expect(decodeFakeRelaySegment(segments[3] ?? "")?.href).toBe(
         "https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=5",
       );
-      expect(url.searchParams.get("external_user_id")).toBe(EXTERNAL_USER);
-      expect(url.searchParams.get("account_id")).toBe(
-        store.connections.get(connectionId)?.providerRef,
-      );
-      expect(left.headers.get("authorization")).toBe("Bearer fake-connect-access-token");
-      expect(left.headers.get("x-pd-environment")).toBe("development");
+      const ref = store.connections.get(connectionId)?.providerRef;
+      expect(url.searchParams.get("account")).toBe(ref);
+      expect(left.headers.get("authorization")).toBe(`Bearer ${UPSTREAM_TOKEN}`);
+      expect(left.headers.get("x-up-account")).toBe(ref);
       expect(left.headers.get("x-graft-token")).toBeNull();
+      // The event names the vendor host the call was for and the relay that carried it — the
+      // generic scheme, since that is what this provider's plugin calls itself (GRA-103).
       expect(vendor.events.at(-1)).toMatchObject({
         outcome: "forwarded",
         host: "gmail.googleapis.com",
-        relay: "pipedream_connect_proxy",
+        relay: "relay",
       });
     } finally {
       await a.close();
     }
   }, 60_000);
 
-  it("revoke asks Pipedream to delete the account and forgets its id; a release that fails is on the row, and Retry release clears it", async () => {
-    // Pipedream down: the revoke stands, the failure is recorded, the id is kept for the retry.
-    pipedream.failNext(new PipedreamError("Pipedream is unreachable (fake)", null));
+  it("revoke asks the provider to delete the account and forgets its id; a release that fails is on the row, and Retry release clears it", async () => {
+    // The provider down: the revoke stands, the failure is recorded, the id is kept for the retry.
+    broker.failNext(new FakeLinkProviderError("the broker is unreachable (fake)"));
     const revoked = await app.request(`/api/connections/${connectionId}/revoke`, {
       method: "POST",
     });
@@ -406,19 +447,19 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
       providerRelease: { provider: string; released: boolean; failure?: string };
     };
     expect(result.providerRelease).toEqual({
-      provider: "pipedream",
+      provider: "broker",
       released: false,
-      failure: "PipedreamError",
+      failure: "FakeLinkProviderError",
     });
     expect(result.connection.revokedAt).toEqual(expect.any(String));
     expect(result.connection.providerReleaseFailedAt).toEqual(expect.any(String));
-    expect(store.connections.get(connectionId)?.providerRef).toMatch(/^apn_/);
-    expect(pipedream.accounts).toHaveLength(1);
+    expect(store.connections.get(connectionId)?.providerRef).toMatch(/^acct_/);
+    expect(broker.accounts).toHaveLength(1);
 
     // The connection stays in the agent's scope awaiting reconnection (ADR 0007), but its execute
     // tool leaves the list (GRA-69), and a client that still names it from a snapshot is refused
     // as connection_revoked before the build approval or the proxy is reached: nothing relays,
-    // whatever Pipedream still holds, and no build approval is needed to see the refusal. The
+    // whatever the provider still holds, and no build approval is needed to see the refusal. The
     // proxy answers the same word for a token minted before the revoke (GRA-68); that half is
     // `app.test.ts`, where the binding carries the row's stamp through to the proxy directly.
     const eventsBefore = vendor.events.length;
@@ -437,18 +478,18 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
       await a.close();
     }
 
-    // Retry from the card: the same release, the mark cleared, the account gone at Pipedream.
+    // Retry from the card: the same release, the mark cleared, the account gone at the provider.
     const retried = await app.request(`/api/connections/${connectionId}/release`, {
       method: "POST",
     });
     expect(retried.status).toBe(200);
     expect(await retried.json()).toMatchObject({
-      providerRelease: { provider: "pipedream", released: true },
+      providerRelease: { provider: "broker", released: true },
       connection: { providerReleaseFailedAt: null, revokedAt: expect.any(String) },
     });
     expect(store.connections.get(connectionId)?.providerRef).toBeNull();
-    expect(pipedream.deleted).toHaveLength(1);
-    expect(pipedream.accounts).toHaveLength(0);
+    expect(broker.deleted).toHaveLength(1);
+    expect(broker.accounts).toHaveLength(0);
 
     // Nothing outstanding now: a second retry is refused, not re-run.
     const nothing = await app.request(`/api/connections/${connectionId}/release`, {
@@ -461,15 +502,15 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
     const a = await connect(TOKEN_A);
     try {
       const said = body(await a.call("request_connection", PROPOSAL));
-      expect(said).toMatchObject({ error: "awaiting_connection", provider: "pipedream" });
+      expect(said).toMatchObject({ error: "awaiting_connection", provider: "broker" });
       const newAsk = said.pendingActionId as string;
       expect(newAsk).not.toBe(actionId);
       const started = (await (
         await app.request(`/api/pending-actions/${newAsk}/link`, { method: "POST" })
       ).json()) as { url: string };
       expect(started.url).toContain("app=gmail");
-      pipedream.connect({ externalUserId: EXTERNAL_USER, app: "gmail", name: "aleks@example.com" });
-      const outcome = consoleOutcome(await landing(pipedream.tokens.at(-1)?.success ?? ""));
+      broker.connectAccount({ personId: PERSON, target: "gmail", label: "aleks@example.com" });
+      const outcome = consoleOutcome(await landing(broker.minted.at(-1)?.success ?? ""));
       expect(outcome).toMatchObject({ status: "connected", connectionId });
       const connections = await listConnections();
       expect(connections).toHaveLength(1);
@@ -485,8 +526,20 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
 
   /** GRA-75: the card's build choice rides the signed state and is recorded with the connection the return makes. */
   it("a link started with approveBuild records the asking agent's build approval with the connection it makes; one started bare records none", async () => {
-    store.addAgent({ id: "agent_d", personId: PERSON, token: `${TOKEN_B}d`, name: "fourth" });
-    store.addAgent({ id: "agent_e", personId: PERSON, token: `${TOKEN_B}e`, name: "fifth" });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_d",
+      personId: PERSON,
+      token: `${TOKEN_B}d`,
+      name: "fourth",
+    });
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_e",
+      personId: PERSON,
+      token: `${TOKEN_B}e`,
+      name: "fifth",
+    });
     const ticked = await connect(`${TOKEN_B}d`);
     const bare = await connect(`${TOKEN_B}e`);
     // Since GRA-76 a live Gmail row of the person's outside the asking agent's scope is a
@@ -509,8 +562,8 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
         body: JSON.stringify({ approveBuild: true }),
       });
       expect(started.status).toBe(200);
-      const mintedD = pipedream.tokens.at(-1);
-      pipedream.connect({ externalUserId: EXTERNAL_USER, app: "gmail", name: "d@example.com" });
+      const mintedD = broker.minted.at(-1);
+      broker.connectAccount({ personId: PERSON, target: "gmail", label: "d@example.com" });
       const outcomeD = consoleOutcome(await landing(mintedD?.success ?? ""));
       expect(outcomeD).toMatchObject({ status: "connected", pendingActionId: askD });
       const connectionD = outcomeD.connectionId as string;
@@ -525,8 +578,8 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
       expect(
         (await app.request(`/api/pending-actions/${askE}/link`, { method: "POST" })).status,
       ).toBe(200);
-      const mintedE = pipedream.tokens.at(-1);
-      pipedream.connect({ externalUserId: EXTERNAL_USER, app: "gmail", name: "e@example.com" });
+      const mintedE = broker.minted.at(-1);
+      broker.connectAccount({ personId: PERSON, target: "gmail", label: "e@example.com" });
       const outcomeE = consoleOutcome(await landing(mintedE?.success ?? ""));
       expect(outcomeE).toMatchObject({ status: "connected", pendingActionId: askE });
       expect([...store.buildApprovals.values()].some((row) => row.agentId === "agent_e")).toBe(
@@ -541,29 +594,38 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
 
   it("two landings of one link at once make one connection — the database refuses the second claim and it reads the ask the first answered", async () => {
     // A fresh agent, so the ask is new. The person's existing Gmail connection is not in its scope,
-    // which since GRA-76 is a refusal naming the row and the scope step — a relay provider's row
-    // counts as the connection the person already has — so the row is set aside for the landing.
-    store.addAgent({ id: "agent_c", personId: PERSON, token: `${TOKEN_B}c`, name: "third" });
+    // which since GRA-104 is the scope ask — a relay provider's row counts as the connection the
+    // person already has (GRA-76), and this is Aleks's Claude.ai case of 2026-09-19 — so the row is
+    // set aside for the landing this test is about.
+    store.addAgent({
+      scopeMode: "listed",
+      id: "agent_c",
+      personId: PERSON,
+      token: `${TOKEN_B}c`,
+      name: "third",
+    });
     const a = await connect(`${TOKEN_B}c`);
     const setAside = [...store.connections.values()].filter((row) => row.vendor === "gmail");
     try {
-      const refused = body(await a.call("request_connection", PROPOSAL));
-      expect(refused).toMatchObject({
-        error: "refused",
-        reason: "connection_exists",
+      const asked = body(await a.call("request_connection", PROPOSAL));
+      expect(asked).toMatchObject({
+        error: "awaiting_scope",
+        reason: "awaiting_scope",
         connectionId: setAside[0]?.id,
-        provider: "pipedream",
-        inScope: false,
-        message: expect.stringContaining("under Scope"),
+        provider: "broker",
+        url: expect.stringContaining("/pending/"),
+        message: expect.stringContaining("via broker"),
       });
+      expect(String(asked.message)).toContain("allow you to use it");
+      expect(String(asked.message)).not.toContain("under Scope");
       for (const row of setAside) store.connections.delete(row.id);
 
       const said = body(await a.call("request_connection", PROPOSAL));
-      expect(said).toMatchObject({ error: "awaiting_connection", provider: "pipedream" });
+      expect(said).toMatchObject({ error: "awaiting_connection", provider: "broker" });
       const askId = said.pendingActionId as string;
       await app.request(`/api/pending-actions/${askId}/link`, { method: "POST" });
-      const minted = pipedream.tokens.at(-1);
-      pipedream.connect({ externalUserId: EXTERNAL_USER, app: "gmail", name: "aleks@example.com" });
+      const minted = broker.minted.at(-1);
+      broker.connectAccount({ personId: PERSON, target: "gmail", label: "aleks@example.com" });
       const before = (await listConnections()).length;
 
       const [first, second] = await Promise.all([
@@ -585,7 +647,7 @@ describe("a Gmail connection through Pipedream: the ask, the button, the return,
   it("an ask of another kind, a keyring ask and an unknown ask refuse the button with the answer route's codes", async () => {
     const a = await connect(TOKEN_B);
     try {
-      // The keyring's ask: a vendor Pipedream does not cover takes the form, and the button says so.
+      // The keyring's ask: a vendor the link provider does not cover takes the form, and the button says so.
       const said = body(
         await a.call("request_connection", {
           ...PROPOSAL,

@@ -47,6 +47,7 @@ import {
 import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
+import { agentScopeMode } from "@graft/db/schema/agent";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
@@ -56,6 +57,7 @@ import {
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
   handoffUrl,
+  notifyAgentsReachingConnection,
   openAskOfKind,
   recordApprovalAnswer,
   refuseUnlessOpen,
@@ -89,9 +91,10 @@ import { createProviderLinkRoutes, startProviderLink } from "./provider-link";
  *
  * **Pending actions and approvals** (GRA-23; ADR 0006, ADR 0008) are the routes the console's
  * approval pages call: the open actions across the person's agents, one action by its signed
- * handoff link, the answer — which also writes the approval the ask was for, so the agent's next
- * call proceeds whether or not it is still waiting — and the standing approvals per agent, to set a
- * tool to ask every call or back, or to withdraw an answer.
+ * handoff link, the answer — which also writes the record the ask was for, the approval or, for a
+ * `scope` ask (GRA-104), the scope grant, so the agent's next call proceeds whether or not it is
+ * still waiting — and the standing approvals per agent, to set a tool to ask every call or back,
+ * or to withdraw an answer.
  *
  * **The connection handoff's submits** (GRA-28; ADR 0006) are two more routes on a pending action,
  * apart from the generic answer because their bodies carry a secret and their work is one
@@ -112,8 +115,8 @@ import { createProviderLinkRoutes, startProviderLink } from "./provider-link";
  * are the consent's two ends.
  *
  * **A link provider's ask has a button rather than a form** (GRA-59; ADR 0019). `POST
- * /pending-actions/:id/link` mints the provider's link for the ask — Pipedream's Connect Link, for
- * the person's external user id — and the console opens it in a popup; `GET /providers/link/callback`
+ * /pending-actions/:id/link` mints the provider's link for the ask — a broker's Connect Link, for
+ * the person's id at the broker — and the console opens it in a popup; `GET /providers/link/callback`
  * is where the provider sends the browser back, with no session and a signed state, and is what
  * makes the connection and answers the ask once the provider has confirmed the account
  * (`provider-link.ts`). No secret is entered anywhere in that flow, and none is stored.
@@ -194,8 +197,8 @@ export type ApiOptions = {
 
 /**
  * A pending action as the console shows it (ADR 0006): the requesting agent named, the payload the
- * ask wrote (`@graft/mcp`'s `ToolAskPayload`, `BuildAskPayload`, `ConnectionProposalPayload` or
- * `CredentialAskPayload`), its clocks, and the signed link.
+ * ask wrote (`@graft/mcp`'s `ToolAskPayload`, `BuildAskPayload`, `ConnectionProposalPayload`,
+ * `CredentialAskPayload` or `ScopeAskPayload`), its clocks, and the signed link.
  */
 export type PendingActionCard = {
   id: string;
@@ -211,8 +214,21 @@ export type PendingActionCard = {
   url: string;
 };
 
-const answerBody = z.object({ allow: z.boolean(), askEveryCall: z.boolean().optional() });
+/**
+ * The person's answer to a `tool`, `build` or `scope` ask: `allow`; for a tool ask, whether it
+ * should ask every call from now on (ADR 0008 as amended 2026-09-15); for a scope ask, whether the
+ * agent may also build against the connection (GRA-75's choice, GRA-104's card). Absent fields
+ * leave the setting where it stands and grant nothing.
+ */
+const answerBody = z.object({
+  allow: z.boolean(),
+  askEveryCall: z.boolean().optional(),
+  approveBuild: z.boolean().optional(),
+});
 const askEveryCallBody = z.object({ on: z.boolean() });
+
+/** The answer's wire shape, as the console posts it — the console imports this rather than writing it again. */
+export type AnswerBody = z.input<typeof answerBody>;
 
 /** How a handoff verdict lands on the wire: the reason word rides in `details`. */
 const HANDOFF_REFUSAL_CODE: Record<"tampered" | "expired" | "consumed", ServiceErrorCode> = {
@@ -225,12 +241,23 @@ const agentBody = z.object({
   name: z.string(),
   workingSetCap: z.number().int().optional(),
   idleWindowDays: z.number().int().optional(),
+  /** `all` when absent (ADR 0007 as amended 2026-09-19); `listed` takes `connectionIds`. */
+  scopeMode: z.enum(agentScopeMode).optional(),
   connectionIds: z.array(z.string()).optional(),
 });
 
-const agentPatch = agentBody.omit({ connectionIds: true }).partial();
+const agentPatch = agentBody.omit({ connectionIds: true, scopeMode: true }).partial();
 
-const scopeBody = z.object({ connectionIds: z.array(z.string()) });
+/**
+ * `PUT /agents/:id/scope`: every connection, or a list — `SetAgentScopeInput` in `@graft/core`
+ * says what a `listed` write with no list does. The console imports `ScopeBody` rather than
+ * writing the shape again.
+ */
+const scopeBody = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }),
+  z.object({ mode: z.literal("listed"), connectionIds: z.array(z.string()).optional() }),
+]);
+export type ScopeBody = z.input<typeof scopeBody>;
 
 /** The scheme's secret fields as the console posts them; the service holds them to the scheme's table. */
 const credentialFields = z.record(z.string(), z.unknown());
@@ -538,6 +565,7 @@ export function createApi(options: ApiOptions): Hono {
         getSession: options.auth.getSession,
         handoff,
         oauth: options.oauth,
+        notifier: options.notifier,
       }),
     );
   }
@@ -558,6 +586,7 @@ export function createApi(options: ApiOptions): Hono {
       approval: approvalDeps,
       handoff,
       authUrl: options.authUrl,
+      notifier: options.notifier,
     };
   };
 
@@ -728,9 +757,7 @@ export function createApi(options: ApiOptions): Hono {
   api.put("/agents/:id/scope", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, scopeBody);
-    return c.json(
-      await setAgentScope(ctx, principal, c.req.param("id"), body.connectionIds, agentDeps),
-    );
+    return c.json(await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps));
   });
 
   /** The person's toolbox, demoted tools included — what a connection's tools are read from (ADR 0007). */
@@ -750,11 +777,28 @@ export function createApi(options: ApiOptions): Hono {
    * one transaction (GRA-28: the console's Add connection, the same form as an agent's proposal with
    * no pending action behind it); without, the row waits for `PUT /connections/:id/credential`.
    */
+  /**
+   * A row made or reconnected is announced to every live session whose scope reaches it — every
+   * agent on `all`, and every agent whose list names it (ADR 0007 as amended 2026-09-19) — through
+   * `@graft/mcp`'s `notifyAgentsReachingConnection`, as the revoke route announces the row leaving.
+   * After the transaction that makes the row, so a session re-fetching on the notification reads
+   * the committed row.
+   */
+  const announceConnection = (principal: Principal, connectionId: string) =>
+    notifyAgentsReachingConnection(
+      ctx,
+      principal,
+      connectionId,
+      { connection: connectionDeps },
+      options.notifier,
+    );
+
   api.post("/connections", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const { credential, ...registration } = await parseBody(c.req.raw, connectionBody);
     if (!credential) {
       const connection = await registerConnection(ctx, principal, registration, connectionDeps);
+      await announceConnection(principal, connection.id);
       return c.json({ connection }, 201);
     }
     // With a credential: the row, its ciphertext and — for an authorization-code connection — the
@@ -772,6 +816,7 @@ export function createApi(options: ApiOptions): Hono {
         ? { connection: consent.connection, authorizeUrl: consent.authorizeUrl }
         : { connection };
     });
+    await announceConnection(principal, result.connection.id);
     return c.json(result, 201);
   });
 
@@ -873,13 +918,19 @@ export function createApi(options: ApiOptions): Hono {
   api.put("/connections/:id/credential", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, credentialBody);
+    const id = c.req.param("id");
+    // A re-entry on a revoked row is its reconnection (ADR 0007): the execute tool comes back to
+    // every list whose scope reaches it, so those sessions are told; a rotation on a live row
+    // changes no list and tells nobody.
+    const before = await getConnection(ctx, principal, id, connectionDeps);
     const connection = await setConnectionCredential(
       ctx,
       principal,
-      c.req.param("id"),
+      id,
       body.fields,
       connectionDeps,
     );
+    if (before?.revokedAt) await announceConnection(principal, connection.id);
     return c.json({ connection });
   });
 
@@ -920,6 +971,7 @@ export function createApi(options: ApiOptions): Hono {
   api.post("/connections/:id/reconnect", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     const connection = await reconnectConnection(ctx, principal, c.req.param("id"), connectionDeps);
+    await announceConnection(principal, connection.id);
     return c.json({ connection });
   });
 
@@ -978,16 +1030,20 @@ export function createApi(options: ApiOptions): Hono {
    * row (`allow` or `deny` — a no holds too, ADR 0008), and `askEveryCall` with an allow sets the
    * tool's per-call opt-in on or off, absent leaving it as it stands (ADR 0008, amendment of
    * 2026-09-15); for a `build` ask an `allow` grants the build approval and a decline writes nothing,
-   * so the next `acquire` asks again.
+   * so the next `acquire` asks again; for a `scope` ask (GRA-104) an `allow` adds the connection
+   * the person already holds to the asking agent's scope — the write `PUT /agents/:id/scope`
+   * makes, one connection at a time — and, with `approveBuild`, grants the build approval for it
+   * (GRA-75), in the answer's transaction, while a decline writes nothing.
    *
    * **An answer the standing row now carries in full is consumed here.** Otherwise it would outlive
    * the row: a yes left answered-but-unconsumed would still be found and honoured by a call made
-   * after the approval was withdrawn, which is exactly what withdrawing is meant to prevent. The two
+   * after the approval was withdrawn, which is exactly what withdrawing is meant to prevent. The
    * answers the agent's next call must read for itself stay unconsumed — a yes on a tool set to ask
-   * every call (the row says allow and the rule still says ask, so this call's yes is the action's)
-   * and a build decline (no row records it). A call that is waiting sees the consumed action as
-   * `CONFLICT` and reads the rule again (`@graft/mcp`'s `approval.ts`), which is how it proceeds on
-   * a yes and refuses on a no.
+   * every call (the row says allow and the rule still says ask, so this call's yes is the action's),
+   * a build decline (no row records it), and a scope ask's answer either way (the waiting
+   * `request_connection` reads it to answer connected or declined). A call that is waiting sees a
+   * consumed action as `CONFLICT` and reads the rule again (`@graft/mcp`'s `approval.ts`), which is
+   * how it proceeds on a yes and refuses on a no.
    */
   api.post("/pending-actions/:id/answer", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -1001,8 +1057,14 @@ export function createApi(options: ApiOptions): Hono {
       {
         allow: body.allow,
         ...(body.askEveryCall === undefined ? {} : { askEveryCall: body.askEveryCall }),
+        ...(body.approveBuild === undefined ? {} : { approveBuild: body.approveBuild }),
       },
-      { approval: approvalDeps, pendingAction: pendingActionDeps, connection: connectionDeps },
+      {
+        approval: approvalDeps,
+        pendingAction: pendingActionDeps,
+        connection: connectionDeps,
+        agent: agentDeps,
+      },
     );
     return c.json(result);
   });
@@ -1059,6 +1121,7 @@ export function createApi(options: ApiOptions): Hono {
       },
       { consent: consentFor },
     );
+    await announceConnection(principal, result.connection.id);
     return c.json(result, 201);
   });
 
@@ -1104,6 +1167,8 @@ export function createApi(options: ApiOptions): Hono {
       if (typeof connectionId !== "string") {
         throw new ServiceError("BAD_REQUEST", "This credential ask names no connection");
       }
+      // Whether this re-entry is a reconnection (the route above says why it matters).
+      const before = await getConnection(scoped, principal, connectionId, connectionDeps);
       const connection = await setConnectionCredential(
         scoped,
         principal,
@@ -1133,9 +1198,11 @@ export function createApi(options: ApiOptions): Hono {
         { connectionId },
         pendingActionDeps,
       );
-      return { connection, pendingAction };
+      return { connection, pendingAction, reconnected: before?.revokedAt !== null };
     });
-    return c.json(result);
+    const { reconnected, ...answer } = result;
+    if (reconnected) await announceConnection(principal, answer.connection.id);
+    return c.json(answer);
   });
 
   /** One agent's standing approvals — what the console lists to set how a tool asks, or withdraw. */

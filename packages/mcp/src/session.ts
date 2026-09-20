@@ -41,24 +41,37 @@ export const SERVER_INFO = { name: "graft", version: "0.1.0" } as const;
 /**
  * The playbook a client that loads no skill reads (GRA-54): the `instructions` field of the
  * `initialize` result, which Claude.ai, ChatGPT and a bare MCP client show their model, and which
- * a harness with the Hermes skill installed reads beside it. It carries the order of operations,
- * the handoff rule, the secrets rule, `run_tool` for a client that snapshots its list and where its
- * input schema is read (GRA-78), and the approval grain (ADR 0003, ADR 0006, ADR 0008 as amended);
- * the long form of each is the tool's own description in `tools/`. Held under `INSTRUCTIONS_BUDGET`
- * because some clients truncate the field, and pinned sentence for sentence to
+ * a harness with the Hermes skill installed reads beside it. **Every rule of conduct lives here and
+ * nowhere else on the wire** (GRA-111): the order of operations, the handoff rule, the secrets rule,
+ * the keyless and rotation rules, the build approval on the connection page, `run_tool` for a
+ * client that snapshots its list and where its input schema is read (GRA-78), the approval grain
+ * (ADR 0003, ADR 0006, ADR 0008 as amended), whose tool `answer_ask` is, and what `cardShown: true`
+ * on an awaiting answer means (GRA-120: the ask is on a card in the conversation, so the url is
+ * for a person who cannot see it). The tool descriptions
+ * in `tools/` describe capabilities and carry no rule, because ChatGPT's classifier flagged
+ * rule-bearing descriptions as a "Suspicious Instruction" on every call (GRA-111), and both hosts'
+ * published guidance says the same: OpenAI puts "required tool sequences" in `instructions`,
+ * Anthropic's review criteria say "Describe what the tool does. Do not tell Claude how to behave."
+ * Held under `INSTRUCTIONS_BUDGET`, with the order of operations and the handoff rule in the first
+ * 512 characters (OpenAI's front-loading rule), and pinned sentence for sentence to
  * `skills/hermes-graft/SKILL.md` by `session.test.ts`, so the skill and the handshake cannot
  * disagree on a rule. Graft's vocabulary, sentence case, no em dashes, no exclamation marks.
  */
 export const SERVER_INSTRUCTIONS = [
-  "Graft extends your tool list with your working set: the authored tools promoted for you, callable as vendor__name, plus these fixed ones.",
-  "When a task has no tool, work in this order. Call find_tool first: a match may exist and be demoted. If one does, promote it; it is in your list at once, no authoring needed. If the vendor has no connection in your scope, call request_connection. Call acquire only when nothing fits, with the connection id and a goal. It answers a jobId at once: poll acquire_status and relay the newest progress line in one sentence, only when it changed. Do not start a second acquire for the same goal, and do not drive the authoring tools (read_web_page, write_file, check_tool, publish_tool) or an execute__ tool unless the person asked you to author by hand; they build tools and do not answer the person.",
-  "Any answer with a url and an awaiting_ word (approval, connection, credential) is a handoff: the next step is the person's, in the console. Send them the link exactly as returned, say what it is for, then wait; when they say it is done, call the same tool again with the same arguments. Never ask the person for an API key, a password or a token in chat, whatever the vendor calls it. The console is where secrets go; you never see one.",
-  "Some clients snapshot the tool list per conversation, so a tool just promoted or acquired may not be in yours: run_tool { vendor, name, input } calls it by name. The acquire result and find_tool carry the tool's inputSchema for run_tool. Re-fetch on notifications/tools/list_changed.",
-  "Approvals are the person's. A read-only tool never asks. Any other tool asks once, and the answer holds, a destructive tool too; the person can set a tool to ask every time in the console. acquire asks once per agent per connection.",
+  "Your working set from Graft: authored tools promoted for you as vendor__name, and these fixed ones.",
+  "When a task has no tool, work in this order. Call find_tool first: a demoted match may exist; promote it, no authoring needed. No connection to the vendor in your scope: call request_connection. Call acquire only when nothing fits. It waits for the job; unfinished, poll acquire_status, which waits for news, and relay the newest progress line in a sentence. Do not start a second acquire for the same goal. There is no route to a vendor except through a Graft tool. Do not drive the authoring tools (read_web_page, write_file, check_tool, publish_tool) or an execute__ tool unless the person asked you to author by hand.",
+  "Any answer with a url and an awaiting_ word (approval, connection, credential, scope) is a handoff: the next step is the person's, in the console. Send them the link exactly as returned, then wait; when they say so, call the same tool again with the same arguments. If cardShown is true the ask is on a card in this conversation: relay the url only if they say they cannot see it. Never ask the person for an API key, a password or a token in chat, whatever the vendor calls it. The console is where secrets go; you never see one. Never propose a made-up key for a vendor that documents none. A rotated or expired credential is request_credential on the existing connection, never a new one. The connection page offers the build approval, on by default; left on, acquire starts without a second link, so do not tell the person to expect one.",
+  "Some clients snapshot the tool list per conversation, missing a new tool: run_tool { vendor, name, input } calls it by name. The acquire result and find_tool carry the tool's inputSchema for run_tool. Re-fetch on notifications/tools/list_changed.",
+  "A read-only tool never asks. Any other tool asks once, and the answer holds, a destructive tool too; the person can set a tool to ask every time. acquire asks once per agent per connection. answer_ask is the ask card's, not yours.",
 ].join("\n\n");
 
-/** How long `SERVER_INSTRUCTIONS` may be; some clients truncate the field, so the long form lives in the descriptions. */
-export const INSTRUCTIONS_BUDGET = 1_800;
+/**
+ * How long `SERVER_INSTRUCTIONS` may be, and how long any one tool description may be: Claude Code
+ * caps both at 2KB per server (its CHANGELOG, 2.1.84: "MCP tool descriptions and server
+ * instructions are now capped at 2KB"), the one documented cap; ChatGPT and Claude.ai publish none.
+ * GRA-54's 1,800 was a guess under it; the research on GRA-111 is the source for this figure.
+ */
+export const INSTRUCTIONS_BUDGET = 2_048;
 
 export type AgentSession = {
   server: Server;

@@ -64,6 +64,20 @@
       "when": 1789725088876,
       "tag": "0008_account_drops_issuer",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789773116450,
+      "tag": "0009_agent_scope_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789869009433,
+      "tag": "0010_relay_scheme_generic",
+      "breakpoints": true
     }
   ]
 }

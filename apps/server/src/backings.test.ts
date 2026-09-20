@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { keyringProvider } from "@graft/core";
-import { createFakePipedreamClient } from "@graft/pipedream/fake";
 import { LOCAL_KEYRING_ID } from "@graft/vault";
 import { describe, expect, it } from "vitest";
 
@@ -137,8 +136,8 @@ describe("the gateway provider from the environment (ADR 0019, GRA-58)", () => {
     const provider = gatewayProviderFrom({ ...base, ...gateway });
     expect(provider?.name).toBe("gateway");
     expect(provider?.connect).toEqual({ kind: "none", scheme: "gateway" });
-    expect(provider?.covers("unleashed", ["api.unleashedsoftware.com"])).toBe(true);
-    expect(provider?.covers("acme", ["api.acme.example"])).toBe(false);
+    expect(await provider?.covers("unleashed", ["api.unleashedsoftware.com"])).toBe(true);
+    expect(await provider?.covers("acme", ["api.acme.example"])).toBe(false);
     const prefixed = gatewayProviderFrom({
       ...base,
       ...gateway,
@@ -170,43 +169,28 @@ describe("the gateway provider from the environment (ADR 0019, GRA-58)", () => {
   });
 });
 
-describe("the providers the environment configures, together (ADR 0019)", () => {
+describe("the providers the environment configures (ADR 0019)", () => {
   const gateway: Partial<BackingsEnv> = {
     GRAFT_GATEWAY_HOSTS: ["api.unleashedsoftware.com"],
     GRAFT_GATEWAY_UPSTREAM_URL: "https://gateway.corp.example/graft",
     GRAFT_GATEWAY_HEADER_NAME: "X-Deployment-Token",
     GRAFT_GATEWAY_HEADER_VALUE: "deployment-identity-secret-value",
   };
-  const pipedream: Partial<BackingsEnv> = {
-    GRAFT_PIPEDREAM_PROJECT_ID: "proj_test",
-    GRAFT_PIPEDREAM_ENVIRONMENT: "development",
-    GRAFT_PIPEDREAM_CLIENT_ID: "pd_client",
-    GRAFT_PIPEDREAM_CLIENT_SECRET: "pd_secret",
-  };
 
-  it("puts the gateway ahead of Pipedream and both ahead of the keyring, in either form", async () => {
-    const pipedreamClient = createFakePipedreamClient();
+  it("is the gateway alone, and nothing without it: every other provider is the private package's (GRA-103)", async () => {
     const names = (providers: readonly { name: string }[]) => providers.map((p) => p.name);
     expect(names(environmentProviders(base))).toEqual([]);
-    expect(names(environmentProviders({ ...base, ...pipedream }, { pipedreamClient }))).toEqual([
-      "pipedream",
-    ]);
-    const open = await selectBackings({ ...base, ...gateway, ...pipedream }, { pipedreamClient });
-    expect(names(open.providers)).toEqual(["gateway", "pipedream", "keyring"]);
-    expect(open.providers[2]).toBe(keyringProvider);
-    // Under `cloud` the hosted providers sit between the two: the gateway ahead of any broker the
-    // private package answers with (GRA-58), the configured Pipedream provider after them (GRA-59).
+    expect(names(environmentProviders({ ...base, ...gateway }))).toEqual(["gateway"]);
+    const open = await selectBackings({ ...base, ...gateway });
+    expect(names(open.providers)).toEqual(["gateway", "keyring"]);
+    expect(open.providers[1]).toBe(keyringProvider);
+    // Under `cloud` the hosted providers sit between the gateway and the keyring, in the order the
+    // private package answers them.
     const cloud = await selectBackings(
-      {
-        ...base,
-        ...gateway,
-        ...pipedream,
-        GRAFT_BACKINGS: "cloud",
-        GRAFT_KEYRING_SECRET: undefined,
-      },
-      { cloudModule: fixture("fake"), pipedreamClient },
+      { ...base, ...gateway, GRAFT_BACKINGS: "cloud", GRAFT_KEYRING_SECRET: undefined },
+      { cloudModule: fixture("fake") },
     );
-    expect(names(cloud.providers)).toEqual(["gateway", "fake-broker", "pipedream", "keyring"]);
+    expect(names(cloud.providers)).toEqual(["gateway", "fake-broker", "keyring"]);
   });
 });
 
@@ -319,7 +303,7 @@ describe("assertCloudBackings", () => {
 
   const link = {
     kind: "link",
-    scheme: "pipedream_connect_proxy",
+    scheme: "relay",
     target() {},
     start() {},
     complete() {},
@@ -378,17 +362,17 @@ describe("assertCloudBackings", () => {
     // No person step (GRA-58): the relay scheme every row records, one the proxy implements. A
     // package built against the older `{ kind: "none" }` is refused at the seam, naming the provider.
     expect(withConnect({ kind: "none", scheme: "gateway" })).not.toThrow();
-    expect(withConnect({ kind: "none", scheme: "pipedream_connect_proxy" })).not.toThrow();
+    expect(withConnect({ kind: "none", scheme: "relay" })).not.toThrow();
     expect(withConnect({ kind: "none" })).toThrow(
       /provider gw, which connects with no person step, with no relay scheme/,
     );
     expect(withConnect({ kind: "none", scheme: "magic" })).toThrow(
-      /provider gw, which connects with no person step, with relay scheme magic, which is not one of gateway, pipedream_connect_proxy/,
+      /provider gw, which connects with no person step, with relay scheme magic, which is not one of gateway, relay/,
     );
     // A link's scheme is held to the same list, not only to being a string: a signing scheme's name
     // is not a relay scheme (`RELAY_SCHEMES` and `AUTH_SCHEMES` are kept apart in `@graft/proxy`).
     expect(withConnect({ ...link, scheme: "bearer" })).toThrow(
-      /provider gw, which connects with a link, with relay scheme bearer, which is not one of gateway, pipedream_connect_proxy/,
+      /provider gw, which connects with a link, with relay scheme bearer, which is not one of gateway, relay/,
     );
     // A form is the scheme picker over the proxy's signing schemes: at least one, and no stranger.
     expect(withConnect({ kind: "form", schemes: ["bearer", "none"] })).not.toThrow();

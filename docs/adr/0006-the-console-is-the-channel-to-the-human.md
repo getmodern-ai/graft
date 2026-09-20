@@ -153,25 +153,31 @@ and `chatgpt.com`, the two products' callbacks), or the session's client declare
 extension in `initialize`, which binds it to the specification's host rules; ADR 0018 registers
 any client dynamically, so the OAuth grant alone would admit a naive client that lists the tool to
 its model — only for **that agent's own ask**, only while it is **open and in time**, and only for
-**two asks**: the build approval, and the connection confirmation for a
-proposal whose scheme takes no credential and whose provider connects through the form. The record
+**three asks**: the build approval; the connection confirmation for a proposal whose scheme takes
+no credential and whose provider connects through the form; and, since 2026-09-19 (GRA-104, the
+paragraph below), the scope ask. The record
 is the console's record — the same `build_approval` row, the same connection row in the same
 agent's scope, the same answer on the action, through the same functions
 (`packages/mcp/src/ask-answer.ts`) — with `via: "card"` on the answer to say which door it came
 through. The tool's result is GRA-55's shape unchanged: `awaiting_*`, the URL and the message stay
 in the text the model reads, and the card's data rides beside them in `structuredContent` alone, so
-a host that renders nothing shows exactly what it showed before.
+a host that renders nothing shows exactly what it showed before. An awaiting result is **not an MCP
+error** (`isError: false`; added 2026-09-19, GRA-112, after the live ChatGPT test mounted the frame
+blank): the person's step is the tool's answer, and a host renders no view for an error result —
+ChatGPT unmounts the frame and Claude never mounts it (ext-apps issue 694) — so the card could not
+render for the very results it exists for; refusals and failures stay errors.
 
 **The handoff URL is the floor.** Every ask still returns it, the card shows it as *Open in the
 console* wherever it may not answer, and a card that never mounts (Claude.ai's open rendering
 defect, anthropics/claude-ai-mcp#61) costs the person nothing they had.
 
-**What keeps the session.** A write's first-use approval, a credential re-entry, a link provider's
-ask and every scheme with a secret are not the card's to answer: the card shows the proposal and the
-one console button. Secrets are entered in the console, never through a tool argument or a chat
-(ADR 0004), and this amendment moves none of that; a person's identity is not available inside the
-card — only the agent's session is (GRA-83) — so a write's ask, which the person may set to ask
-every time, keeps the page where that setting lives.
+**What keeps the session.** A credential re-entry and every scheme with a secret are not the card's
+to answer: the card shows the proposal and the one console button. Secrets are entered in the
+console, never through a tool argument or a chat (ADR 0004), and this amendment moves none of that;
+a person's identity is not available inside the card — only the agent's session is (GRA-83). As
+first written this paragraph kept a write's first-use approval and a link provider's ask on the
+console too; the paragraph of 2026-09-19 below moves both into the card, and narrows what stays to
+the secret alone.
 
 **Why a hidden tool and not a route.** The ticket weighed a token-bound post to Graft's origin, with
 the handoff token as the whole authority, against an app-only tool. The tool was chosen because it
@@ -187,7 +193,86 @@ client's model out too, since a client can register itself but cannot register a
 confirm that neither lists `answer_ask` to its model; a host that does is a host the card is
 withdrawn from, by taking it off the list.
 
+**The third card: a connection the person holds but this agent was not given** (added 2026-09-19,
+GRA-104; decided by Aleks after his Claude.ai test of 2026-09-19). A proposal that matches a live,
+usable connection of the person's made for another of their agents used to be the one person step
+with no handoff: `request_connection` refused `connection_exists` with `inScope: false` and a
+sentence telling the person to find the agent's page and its Scope picker, so the model relayed a
+warning-shaped tool call and no link, and the card had nothing to render. It is now an **ask** of its
+own kind, `scope` — a pending action stamped with the connection, a signed handoff URL, the same wait
+and poll as the connection ask, and `awaiting_scope` in GRA-55's shape — whose page says "<agent>
+asks to use <connection> (<vendor>, via <provider>)" with Allow, Decline and GRA-75's build choice on
+by default. Allow is the scope change the agent page's picker makes and, ticked, the build approval,
+in one transaction on the generic answer route (`{ allow: true, approveBuild? }`); the next call
+answers `connected` with the execute tool named. The card renders it as answerable and `answer_ask`
+admits `{ allow, approveBuild? }` for it under the same gate, because it is a yes or no on a
+connection the person already made, with nothing to enter — the same standing as the build approval.
+A revoked row and a live row in scope keep GRA-76's answers; a live row outside the scope whose
+credential is missing keeps its refusal, since allowing it would give the agent nothing to call
+through. Since ADR 0007's amendment of 2026-09-19 (GRA-105) a new agent reaches every connection
+of the person's, so this ask is reached only for an agent the person limited to a list; the ask
+itself does not move.
+
+**The fourth card, and the two asks the card starts without answering** (added 2026-09-19,
+GRA-116, GRA-117, GRA-118; decided by Aleks after the live card tests of 2026-09-19: every person
+step except the one-time OAuth consent should stay in the chat). **A write's first-use approval is
+the fourth card.** The `tool` ask (ADR 0008) renders "Allow <agent> to run <vendor__name>?" with
+the tool's description marked as the model's words, its read-only and destructive hints, the
+connection and the agent, Allow and Deny; `answer_ask { allow }` records it through
+`recordApprovalAnswer` exactly as the console's answer route does — an allow that holds, a deny
+that holds — under the same gate. The ask-every-call setting is not the card's: it stays on the
+agent's page, the card says when it is on, and a yes on such a tool is for the one waiting call, as
+the console's is. **A link provider's connection starts from the card.** The card mints the
+provider's link itself through a second app-only tool, `start_link { pendingActionId,
+approveBuild }` → `{ url, expiresAt, provider }`, the same `mintProviderLink` the console's button
+calls (`packages/mcp/src/provider-link.ts`), and opens it with `ui/open-link`; the return leg is the
+server's route unchanged — it makes the row and answers the ask — so the card answers nothing for
+it and may only decline it. **The console remains where a secret is typed, opened from the card
+as a popup that closes itself.** For a scheme with a credential and a credential re-entry the
+card's button reads *Enter the secret in Graft* and opens the handoff URL with `from=card`; the
+pending page closes itself 1.5 s after a successful submit and tells its opener at its own origin
+(`graft:ask`), and the link's return page does the same when its link carried the flag. The card
+cannot hear either page — it is a frame on the host's origin — so it polls a third app-only read,
+`ask_status { pendingActionId }` → `{ state: open | answered | declined | expired, sentence }`,
+every three seconds until the ask is settled, and shows the sentence; the two new tools are gated
+as `answer_ask` is (`packages/mcp/src/tools/card-gate.ts`), and `ask_status` records nothing. A
+host that refuses `ui/open-link` leaves the card with the console button it always had.
+
+**The awaiting answer says where the ask is** (added 2026-09-20, GRA-120; decided by Aleks after
+the live ChatGPT and Claude.ai tests of 2026-09-19 and 2026-09-20). With the card rendered, the
+model still pasted the console link beneath it and said "once you approve it, I can call X again",
+because `SERVER_INSTRUCTIONS` said "send them the link exactly as returned" of every awaiting
+answer and the answer's `message` said the same; under a card the link is a second door to the
+same ask and the sentence is noise. The server already knows, per session, whether the client
+renders the card and hides its tools — the gate's client half above — so the same verdict now
+shapes the answer: for such a session the awaiting `message` takes its **card form** — the ask is
+shown as a card in this conversation and the person answers it from there; the url opens the same
+ask in the console for a person who cannot see the card — and `cardShown: true` rides beside
+`url`, in the text the model reads and in `structuredContent` alike (`packages/mcp/src/card-client.ts`,
+`handoff-message.ts`). The instructions gain one clause, that a `cardShown` answer is answered on
+the card and the url is relayed only to a person who says they cannot see it; the descriptions
+gain nothing (GRA-111). **The handoff URL stays the floor**: it is on every answer in both forms,
+unchanged, and a card that never mounts (anthropics/claude-ai-mcp#61) costs the person one
+sentence — "I cannot see a card" — before the model relays it, which is the accepted risk of
+reading the client's word for its rendering. A static-token agent's answer, an unvouched OAuth
+client's and every refusal are byte for byte what they were; Hermes renders no card, so its skill
+does not name `cardShown` and `session.test.ts` says why.
+
+**A card that fails to mount once after a deploy is the host's** (noted 2026-09-20, GRA-124). Twice
+on Claude.ai, a few minutes after a deploy of the hosted form, the first card-bearing result in an
+open chat drew Claude's "Unable to reach Graft" banner where the card goes, and the repeated call
+rendered it. The server's request log shows the shape: Claude's frame made no request at all for
+that first result; on the next it sent two requests with no session id and not an `initialize`,
+was answered 400 by the SDK's transport, then initialised and read the resource. ChatGPT's client
+over the same deploy got 404 for its old session ids and re-initialised silently, the spec's path.
+Graft's sessions are in-memory transports and a deploy ends them; the answers are the spec's
+(`packages/mcp/src/http.ts`); nothing here changes, and the fallback sentence above is what the
+person gets. *Superseded 2026-09-20 (GRA-129):* the banner came back on every open Claude chat after
+every deploy, so the transport now re-opens a session it no longer holds for a chat product's
+client — ADR 0018 as amended 2026-09-20 has the rule; the fallback sentence stays for the rest.
+
 **Unchanged.** ADR 0004 and ADR 0008. Elicitation keeps its place before the handoff for the clients
 that show a form. `acquire` still asks once per agent per connection; the connection confirmation
 still offers the build approval on by default (ADR 0008 as amended 2026-09-18, GRA-75), on the card as
-on the page. Hermes renders no apps, and its skill is untouched.
+on the page. Hermes renders no apps; its skill names `awaiting_scope` beside the other handoffs and
+is otherwise untouched.

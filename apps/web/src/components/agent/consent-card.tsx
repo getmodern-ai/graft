@@ -1,8 +1,8 @@
-import type { AuthorizationRequestParams } from "@graft/core";
+import type { AgentScopeMode, AuthorizationRequestParams } from "@graft/core";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { ConnectionPicker } from "@/components/connection/connection-picker";
+import { ScopeModeField } from "@/components/agent/scope-mode-field";
 import { RetryNotice } from "@/components/retry-notice";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import type { Agent } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
 import { type ConsentRequest, decideConsent } from "@/lib/mcp-oauth-queries";
@@ -33,16 +32,18 @@ const NEW_AGENT = "new";
 /**
  * The consent (ADR 0006: the console is where a consent happens; ADR 0018: the consent mints the
  * agent). One card: who is asking, by the name it registered, and where it will be sent back; then
- * the agent the connection will *be* — a new one, prefilled with the client's name and given a
- * scope from the person's connections, or one the person already has. Connect binds a code to that
- * agent and sends the browser back to the client; Cancel sends it back with `access_denied`. Either
- * way the browser leaves this page, so the card has no settled state of its own.
+ * the agent the connection will *be* — a new one, prefilled with the client's name, on every
+ * connection of the person's unless they limit it to a list (ADR 0007 as amended 2026-09-19), or
+ * one the person already has. Connect binds a code to that agent and sends the browser back to the
+ * client; Cancel sends it back with `access_denied`. Either way the browser leaves this page, so
+ * the card has no settled state of its own.
  *
  * Composed from the create-agent dialog's form (`create-agent-dialog.tsx`) — the same name field,
- * the same picker with the same skeleton while connections load — inside a `Card` rather than a
- * `Dialog`, because this screen is the page: the browser arrived here from another product and
- * has nowhere else to be. The choice between a new agent and an existing one is the `Select`
- * primitive with `items` on the root, as every fixed choice in the console is (AGENTS.md).
+ * the same scope field (`scope-mode-field.tsx`) with the same skeleton while connections load —
+ * inside a `Card` rather than a `Dialog`, because this screen is the page: the browser arrived
+ * here from another product and has nowhere else to be. The choice between a new agent and an
+ * existing one is the `Select` primitive with `items` on the root, as every fixed choice in the
+ * console is (AGENTS.md).
  */
 export function ConsentCard({
   request,
@@ -65,6 +66,7 @@ export function ConsentCard({
   const client = request.client.name;
   const [as, setAs] = useState<string>(NEW_AGENT);
   const [name, setName] = useState(client);
+  const [scopeMode, setScopeMode] = useState<AgentScopeMode>("all");
   const [scope, setScope] = useState<Set<string>>(new Set());
   const [leaving, setLeaving] = useState(false);
 
@@ -85,13 +87,15 @@ export function ConsentCard({
 
   const minting = as === NEW_AGENT;
   const busy = decide.isPending || leaving;
-  // Connect waits for both reads: a scope chosen from a list that has not arrived would be an
-  // empty one nobody chose, and a choice offered from an agent list that has not arrived would
-  // hide the agents the person already has (the create dialog holds Create the same way).
+  // Connect waits for the agents read, and under `Limit to these` for the connections too: a scope
+  // chosen from a list that has not arrived would be an empty one nobody chose, and a choice
+  // offered from an agent list that has not arrived would hide the agents the person already has
+  // (the create dialog holds Create the same way). Under `All connections` nothing is chosen from
+  // the list.
   const canConnect =
     !busy &&
     agents !== undefined &&
-    (minting ? name.trim().length > 0 && connections !== undefined : true);
+    (minting ? name.trim().length > 0 && (scopeMode === "all" || connections !== undefined) : true);
 
   return (
     <Card>
@@ -114,7 +118,12 @@ export function ConsentCard({
               request: params,
               decision: "allow",
               agent: minting
-                ? { kind: "new", name: name.trim(), connectionIds: [...scope] }
+                ? {
+                    kind: "new",
+                    name: name.trim(),
+                    scopeMode,
+                    ...(scopeMode === "listed" ? { connectionIds: [...scope] } : {}),
+                  }
                 : { kind: "existing", agentId: as },
             });
           }}
@@ -177,36 +186,16 @@ export function ConsentCard({
                     from.
                   </FieldDescription>
                 </Field>
-                <Field>
-                  <FieldLabel>Scope</FieldLabel>
-                  <FieldDescription>
-                    The connections this agent may use. Its tools cannot reach a connection outside
-                    the scope; you can change it any time.
-                  </FieldDescription>
-                  {connections ? (
-                    <ConnectionPicker
-                      connections={connections}
-                      selected={scope}
-                      onChange={setScope}
-                      disabled={busy}
-                    />
-                  ) : connectionsFailed ? (
-                    <p className="text-muted-foreground text-sm">
-                      <RetryNotice
-                        error={connectionsFailed.error}
-                        message="Could not load your connections."
-                        onRetry={connectionsFailed.onRetry}
-                        retrying={connectionsFailed.retrying}
-                      />
-                    </p>
-                  ) : (
-                    <div className="flex flex-col gap-2.5" aria-busy="true">
-                      {[0, 1].map((row) => (
-                        <Skeleton key={row} className="h-14 w-full rounded-lg" />
-                      ))}
-                    </div>
-                  )}
-                </Field>
+                <ScopeModeField
+                  id="consent-scope"
+                  mode={scopeMode}
+                  onModeChange={setScopeMode}
+                  selected={scope}
+                  onSelectedChange={setScope}
+                  connections={connections}
+                  connectionsFailed={connectionsFailed}
+                  disabled={busy}
+                />
               </>
             ) : null}
 

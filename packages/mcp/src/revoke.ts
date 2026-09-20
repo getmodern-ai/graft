@@ -22,12 +22,35 @@ import { type Refusal, refusal } from "./result";
  * snapshots its list, and an ask left open across the revoke (`approval.ts`) can still reach it,
  * and the next step is never an approval on a revoked connection nor the proxy's 409: it is the
  * person's reconnection, and this says so.
+ *
+ * `alternatives` are the live connections of the same vendor in the agent's scope when there are
+ * several (GRA-122): a tool follows one such connection only when it is the only one (`run.ts`), so
+ * with two or more the refusal names them and the step is the person's — reconnect the revoked
+ * row, or say which of the others the tool is for. They ride on the body as `alternatives` too.
  */
-export function revokedConnectionRefusal(connection: ConnectionOutput): Refusal {
+export function revokedConnectionRefusal(
+  connection: ConnectionOutput,
+  alternatives: readonly Pick<ConnectionOutput, "id" | "displayName">[] = [],
+): Refusal {
+  const revoked = `${connection.displayName} (${connection.vendor}) was revoked by the person, so nothing can run against it.`;
+  if (alternatives.length === 0) {
+    return refusal(
+      "connection_revoked",
+      `${revoked} Ask them to reconnect it in the console (Connections, then Re-enter or Reconnect on the connection). A tool bound to it runs again once they have; promote brings a demoted one back into your list.`,
+      { connectionId: connection.id },
+    );
+  }
+  const named = alternatives.map((other) => `${other.displayName} (${other.id})`).join(", ");
   return refusal(
     "connection_revoked",
-    `${connection.displayName} (${connection.vendor}) was revoked by the person, so nothing can run against it. Ask them to reconnect it in the console (Connections, then Re-enter or Reconnect on the connection). A tool bound to it runs again once they have; promote brings a demoted one back into your list.`,
-    { connectionId: connection.id },
+    `${revoked} ${alternatives.length} other live ${connection.vendor} connections are in this agent's scope — ${named} — so the tool cannot follow one on its own; it does when there is exactly one. Ask the person either to reconnect ${connection.displayName} in the console (Connections, then Re-enter or Reconnect on the connection), or to say which of the others to use, and acquire against that one authors the tool there.`,
+    {
+      connectionId: connection.id,
+      alternatives: alternatives.map((other) => ({
+        connectionId: other.id,
+        displayName: other.displayName,
+      })),
+    },
   );
 }
 

@@ -30,8 +30,8 @@ import {
 
 /**
  * An agent's proposal for a connection a **link** provider covers (ADR 0019; GRA-59): the vendor,
- * the hosts, and the provider that connects it — Pipedream, and what it calls the vendor — with
- * one button and no form. Connect asks the server to mint the provider's link for this ask
+ * the hosts, and the provider that connects it — named by the ask, with what it calls the vendor —
+ * with one button and no form. Connect asks the server to mint the provider's link for this ask
  * (`POST /api/pending-actions/:id/link`), opens it in a popup where the person signs in at the
  * vendor on the provider's page, and waits — for the console's `/link/callback` route to post the
  * outcome, or for the ask to read as answered — while the server's return route makes the

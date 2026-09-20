@@ -1,12 +1,20 @@
-import type { AgentOutput } from "@graft/core";
-import type { ToolOutput, WorkingSetChangeOutput, WorkingSetEntryOutput } from "@graft/server/api";
+import type { AgentOutput, AgentScopeMode } from "@graft/core";
+import type {
+  ScopeBody,
+  ToolOutput,
+  WorkingSetChangeOutput,
+  WorkingSetEntryOutput,
+} from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
 
 /**
  * Agents, as the console reads and edits them (ADR 0007: an agent holds a scope and a working set
- * and nothing else of its own). The shapes are the server's, jsonified — see `api.ts`.
+ * and nothing else of its own). The shapes are the server's, jsonified — see `api.ts`. The scope
+ * has a mode since ADR 0007's amendment of 2026-09-19 — `all` or `listed`, on `Agent.scopeMode` —
+ * and `GET /agents/:id`'s `connectionIds` are the scope as it resolves under it, so the page's
+ * picker is pre-filled either way.
  */
 
 export type Agent = Jsonified<AgentOutput>;
@@ -54,6 +62,8 @@ export type CreateAgentInput = {
   name: string;
   workingSetCap?: number;
   idleWindowDays?: number;
+  /** `all` when absent; `listed` takes `connectionIds`, which the server refuses beside `all`. */
+  scopeMode?: AgentScopeMode;
   connectionIds?: string[];
 };
 
@@ -87,9 +97,10 @@ export function revokeAgent(agentId: string) {
   });
 }
 
-export function setAgentScope(agentId: string, connectionIds: string[]) {
+/** The body is the server's own shape (`ScopeBody`); `lib/scope-mode.ts`'s `scopeBodyFor` builds it. */
+export function setAgentScope(agentId: string, body: ScopeBody) {
   return api<{ agent: Agent; connectionIds: string[] }>(
     `/agents/${encodeURIComponent(agentId)}/scope`,
-    { method: "PUT", body: { connectionIds } },
+    { method: "PUT", body },
   );
 }

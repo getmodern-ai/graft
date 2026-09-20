@@ -19,7 +19,7 @@ import {
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import { findMcpClient } from "@graft/db/repo/mcp-oauth";
-import { listPendingActionsByKind } from "@graft/db/repo/pending-action";
+import { listPendingActionsByKind, lockPendingActionKey } from "@graft/db/repo/pending-action";
 import type { ModelAdapter } from "@graft/model";
 import {
   type PublishArgs,
@@ -119,6 +119,12 @@ export type McpDeps = {
   pendingAction: PendingActionDeps;
   /** The one read the ask flow needs that the pending-action seam does not carry — `approval.ts` says why. */
   listPendingActionsByKind: typeof listPendingActionsByKind;
+  /**
+   * The advisory lock that serialises "find the open ask or make one" for a key, inside the
+   * transaction that does both (`connection-request.ts`'s scope ask, GRA-104). The fake is a
+   * no-op: an in-memory store has no concurrent transactions to serialise.
+   */
+  lockPendingActionKey: typeof lockPendingActionKey;
   /** The handoff's configuration — the console's URL, the signing secret, the wait and the TTL (`handoff.ts`). */
   handoff: HandoffConfig;
   /**
@@ -129,6 +135,14 @@ export type McpDeps = {
    * points the person at the form instead.
    */
   oauthRedirectUri?: string;
+  /**
+   * `GRAFT_AUTH_URL` — the server's own origin, on which a link provider's return route answers
+   * (ADR 0019; `apps/server/src/provider-link.ts`), so the ask card's `start_link` can mint a
+   * link whose return lands there (`provider-link.ts`, GRA-117). Optional so a harness with no
+   * link provider needs nothing; `apps/server` always binds it, and without it `start_link`
+   * refuses with a sentence saying the console is the place.
+   */
+  authUrl?: string;
   /**
    * The `tools/list_changed` notifier, one per process, shared by the endpoint's sessions and the
    * sweep (`sweep.ts`) so a demotion the rule makes reaches the harness exactly as one the agent made
@@ -165,6 +179,27 @@ export type McpDeps = {
    * there is one, the latency. Absent, a call is exactly what it was.
    */
   onToolCall?: (event: ToolCallEvent) => void;
+  /**
+   * Fired once for every `/mcp` request the door or the transport refuses before any tool runs
+   * (GRA-131): Graft's own 401, 404 and 400 in `http.ts`, and the SDK transport's 4xx — an
+   * `initialize` under a live session, an unsupported protocol version, a parse error, a missing
+   * session header. The reading of a 400 in the request log was a guess without it (GRA-124,
+   * GRA-129). Carries the status and the JSON-RPC error, never the body. Absent, nothing changes.
+   */
+  onTransportRefusal?: (event: TransportRefusalEvent) => void;
+};
+
+/** One refused `/mcp` request as `McpDeps.onTransportRefusal` sees it. */
+export type TransportRefusalEvent = {
+  status: number;
+  /** The JSON-RPC error code the answer carries, when it is JSON-RPC; Graft's 401 carries none. */
+  code?: number;
+  /** The answer's own sentence: the SDK's (`Bad Request: Server already initialized`) or Graft's reason word. */
+  message: string;
+  method: string;
+  /** Whether the request named a session, and — for a request Graft answered — which. */
+  hasSessionHeader: boolean;
+  sessionId?: string;
 };
 
 /**
@@ -172,7 +207,8 @@ export type McpDeps = {
  * (ADR 0003): a fixed meta-tool, a connection's execute tool, or an authored tool in the working
  * set — an unknown name is reported as `authored`, since that is the list it would have been in.
  * `outcome` is MCP's `isError` read back: `refused` when the answer is Graft's own refusal shape
- * (`result.ts`), `error` for a run's failure or an internal one, `ok` otherwise.
+ * (`result.ts`), `error` for a run's failure or an internal one, `ok` otherwise — an awaiting
+ * answer included, since it is a result and not an error (GRA-112, `result.ts`'s `toolAwaiting`).
  */
 export type ToolCallEvent = {
   tool: string;
@@ -180,7 +216,7 @@ export type ToolCallEvent = {
   agentId: string;
   personId: string;
   outcome: "ok" | "refused" | "error";
-  /** The refusal's `reason` — `connection_not_in_scope`, `awaiting_approval`, … — when `outcome` is `refused`. */
+  /** The refusal's `reason` — `connection_not_in_scope`, `approval_declined`, … — when `outcome` is `refused`. */
   reason?: string;
   latencyMs: number;
 };
@@ -214,6 +250,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     pendingAction: defaultPendingActionDeps,
     acquireJob: defaultAcquireJobDeps,
     listPendingActionsByKind,
+    lockPendingActionKey,
     findMcpClient,
     checkModule,
     runnerFiles,

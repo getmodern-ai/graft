@@ -21,7 +21,7 @@ const SECRET = "link-state-test-secret-that-is-long-enough-32";
 const PAYLOAD = {
   pendingActionId: "pa_1",
   personId: "person_1",
-  provider: "pipedream",
+  provider: "broker",
   expiresAt: NOW.getTime() + LINK_STATE_TTL_MS,
   nonce: "n1",
 };

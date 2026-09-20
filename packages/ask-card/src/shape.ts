@@ -10,16 +10,75 @@
 /** The wire name of the tool the card calls with the person's click; `packages/mcp/src/tools/answer-ask.ts` answers it. */
 export const ANSWER_ASK_TOOL = "answer_ask";
 
-/** The pending-action kinds a card can be about (`pending_action.kind`); the two it can answer are `build` and `connection`. */
-export type AskCardKind = "build" | "connection" | "credential" | "tool";
+/**
+ * The wire name of the tool the card calls to mint a link provider's Connect Link for its own
+ * ask (GRA-117); `packages/mcp/src/tools/start-link.ts` answers it. App-only, like `answer_ask`.
+ */
+export const START_LINK_TOOL = "start_link";
+
+/**
+ * The wire name of the read the card polls after it has sent the person to the console or to a
+ * provider's page (GRA-117, GRA-118); `packages/mcp/src/tools/ask-status.ts` answers it. App-only.
+ */
+export const ASK_STATUS_TOOL = "ask_status";
+
+/**
+ * How often the card polls `ask_status` once the person has been sent elsewhere (GRA-118): three
+ * seconds is quick enough that a settled ask reads settled before the person looks back at the
+ * chat, and slow enough that a ten-minute sign-in is two hundred reads, not thousands.
+ */
+export const ASK_STATUS_POLL_MS = 3000;
+
+/**
+ * The query the card adds to every URL it opens in the person's browser — the handoff URL, and
+ * the link's return through the server (GRA-117, GRA-118): `from=card`. The console page that
+ * lands on it closes itself once its work is done, because the card is where the person is and
+ * settles on its own. The console's reader is `@graft/core`'s `connection/card.rules.ts`, which
+ * spells the same two words; this file is import-free, so they are written twice and pinned
+ * against each other in `packages/mcp/src/ask-card.test.ts`.
+ */
+export const FROM_CARD_PARAM = "from";
+export const FROM_CARD = "card";
+
+/** `url` with `from=card` added to its query; a URL that does not parse is returned as it was. */
+export function withFromCard(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set(FROM_CARD_PARAM, FROM_CARD);
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+/** The pending-action kinds a card can be about (`pending_action.kind`); it can answer `build`, `tool`, `connection` and `scope`. */
+export type AskCardKind = "build" | "connection" | "credential" | "tool" | "scope";
+
+/**
+ * The facts of the tool a `tool` ask is about (GRA-116), as the console's card shows them: the
+ * description in the agent's model's own words — the card says so — the two hints a harness gates
+ * on (ADR 0008), and whether the person has set this tool to ask on every call, in which case a
+ * yes is for this call alone.
+ */
+export type AskCardTool = {
+  /** The agent's model's words, marked as such where they are shown. */
+  description: string;
+  readOnly: boolean;
+  destructive: boolean;
+  askEveryCall: boolean;
+};
 
 /**
  * What the card draws: the non-secret facts of one ask, as the console's handoff page shows them,
  * on the awaiting result's `structuredContent.card` beside GRA-55's `url`, `message` and `reason`.
  * `answerable` is the server's word on whether the card may answer in place — true for the build
- * approval and for a connection proposal whose scheme takes no credential; false for every ask
- * with a secret in it, a link provider's, a credential re-entry and a tool's first use, where the
- * card shows the one button that opens the handoff URL in the console.
+ * approval, for a tool's first-use approval (GRA-116), for a connection proposal whose scheme
+ * takes no credential, and for the scope ask (a connection the person already holds, asked for by
+ * an agent that was not given it; GRA-104); false for every ask with a secret in it and for a
+ * credential re-entry, where the card opens the handoff URL in the console as a popup and polls
+ * `ask_status` until the page has done its work (GRA-118). A link provider's ask is not
+ * answerable either, but is *started* from the card: `start_link` mints the provider's link and
+ * the card opens it (GRA-117).
  */
 export type AskCard = {
   pendingActionId: string;
@@ -41,21 +100,26 @@ export type AskCard = {
   /** The handoff URL, exactly as the result's `url`: what the console button opens. */
   url: string;
   answerable: boolean;
-  /** For a connection ask a provider other than the keyring covers (ADR 0019): the provider's name. */
+  /** For a connection or scope ask a provider other than the keyring covers (ADR 0019): the provider's name. */
   provider?: string;
   /** How the provider connects, when the ask names one: a link provider's ask is a button, never a form. */
   providerConnect?: "form" | "link";
   /** For a tool ask: the wire name, `<vendor>__<name>`. */
   toolName?: string;
+  /** For a tool ask: the tool's facts (GRA-116). */
+  tool?: AskCardTool;
 };
 
 /**
- * What the card sends `answer_ask`. The build approval's yes or no; the keyless connection's
- * confirm, carrying the build choice GRA-75 put on the console's page (on by default there and
- * here); or the connection's decline. Nothing else is accepted, and no field is a secret.
+ * What the card sends `answer_ask`. The build approval's yes or no; the tool ask's yes or no
+ * (GRA-116), which never carries the ask-every-call setting — that is the console's; the scope
+ * ask's yes or no, carrying the build choice GRA-75 put on the console's page (GRA-104); the
+ * keyless connection's confirm, carrying the same choice (on by default there and here); or a
+ * connection's decline — a link provider's included. Nothing else is accepted, and no field is a
+ * secret.
  */
 export type AnswerAskAnswer =
-  | { allow: boolean }
+  | { allow: boolean; approveBuild?: boolean }
   | { connect: true; approveBuild: boolean }
   | { decline: true };
 
@@ -72,7 +136,26 @@ export type AnswerAskRefusalReason =
   | "expired"
   | "input_invalid";
 
-const KINDS: readonly AskCardKind[] = ["build", "connection", "credential", "tool"];
+/** What the card sends `start_link` (GRA-117): its ask, and the build choice the return records. */
+export type StartLinkInput = { pendingActionId: string; approveBuild: boolean };
+
+/** What `start_link` answers: the provider's link to open, and until when it is honoured. */
+export type StartLinkResult = { url: string; expiresAt: string; provider: string };
+
+export type AskStatusInput = { pendingActionId: string };
+
+/**
+ * Where an ask stands, as `ask_status` reads it off the row (GRA-117): `open` while nobody has
+ * answered and the ask is in time; `answered` for a yes — an approval granted, a connection made;
+ * `declined` for the person's no; `expired` once its time passed unanswered, or a revoke closed it.
+ */
+export type AskStatusState = "open" | "answered" | "declined" | "expired";
+
+/** What `ask_status` answers: the state and the sentence the card shows for it. */
+export type AskStatusResult = { state: AskStatusState; sentence: string };
+
+const KINDS: readonly AskCardKind[] = ["build", "connection", "credential", "tool", "scope"];
+const STATES: readonly AskStatusState[] = ["open", "answered", "declined", "expired"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -125,7 +208,18 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
       ? { providerConnect: card.providerConnect }
       : {}),
     ...(typeof card.toolName === "string" ? { toolName: card.toolName } : {}),
+    ...(isAskCardTool(card.tool) ? { tool: card.tool } : {}),
   };
+}
+
+function isAskCardTool(value: unknown): value is AskCardTool {
+  return (
+    isRecord(value) &&
+    typeof value.description === "string" &&
+    typeof value.readOnly === "boolean" &&
+    typeof value.destructive === "boolean" &&
+    typeof value.askEveryCall === "boolean"
+  );
 }
 
 /** `answer_ask`'s answer, or its refusal, off the call's `structuredContent`; anything else is a failure with no sentence. */
@@ -138,25 +232,73 @@ export function readAnswerOutcome(structuredContent: unknown): AnswerOutcome {
     if (structuredContent.answered === true && typeof structuredContent.sentence === "string") {
       return { ok: true, sentence: structuredContent.sentence };
     }
-    if (typeof structuredContent.message === "string") {
-      const reason = structuredContent.reason;
-      return {
-        ok: false,
-        reason:
-          reason === "card_not_available" ||
-          reason === "ask_not_found" ||
-          reason === "answered" ||
-          reason === "expired" ||
-          reason === "input_invalid"
-            ? reason
-            : "failed",
-        message: structuredContent.message,
-      };
-    }
+    const refused = readRefusal(structuredContent);
+    if (refused) return { ok: false, ...refused };
   }
+  return NO_ANSWER;
+}
+
+/** The refusal a call's `structuredContent` carries — Graft's `{ reason, message }` — or null when it is not one. */
+function readRefusal(
+  structuredContent: unknown,
+): { reason: AnswerAskRefusalReason | "failed"; message: string } | null {
+  if (!isRecord(structuredContent) || typeof structuredContent.message !== "string") return null;
+  const reason = structuredContent.reason;
   return {
-    ok: false,
-    reason: "failed",
-    message: "Graft did not answer. The link in the chat opens the same ask in the console.",
+    reason:
+      reason === "card_not_available" ||
+      reason === "ask_not_found" ||
+      reason === "answered" ||
+      reason === "expired" ||
+      reason === "input_invalid"
+        ? reason
+        : "failed",
+    message: structuredContent.message,
   };
+}
+
+/** What a call that answered nothing usable reads as: a failure, and the link in the chat as the floor. */
+const NO_ANSWER = {
+  ok: false,
+  reason: "failed",
+  message: "Graft did not answer. The link in the chat opens the same ask in the console.",
+} as const;
+
+/** `start_link`'s link, or its refusal, off the call's `structuredContent` (GRA-117). */
+export type StartLinkOutcome =
+  | { ok: true; url: string; expiresAt: string; provider: string }
+  | { ok: false; reason: AnswerAskRefusalReason | "failed"; message: string };
+
+export function readStartLinkOutcome(structuredContent: unknown): StartLinkOutcome {
+  if (isRecord(structuredContent) && typeof structuredContent.url === "string") {
+    return {
+      ok: true,
+      url: structuredContent.url,
+      expiresAt: typeof structuredContent.expiresAt === "string" ? structuredContent.expiresAt : "",
+      provider: typeof structuredContent.provider === "string" ? structuredContent.provider : "",
+    };
+  }
+  const refused = readRefusal(structuredContent);
+  return refused ? { ok: false, ...refused } : NO_ANSWER;
+}
+
+/** `ask_status`'s state, or its refusal, off the call's `structuredContent` (GRA-117). */
+export type AskStatusOutcome =
+  | { ok: true; state: AskStatusState; sentence: string }
+  | { ok: false; reason: AnswerAskRefusalReason | "failed"; message: string };
+
+export function readAskStatusOutcome(structuredContent: unknown): AskStatusOutcome {
+  if (
+    isRecord(structuredContent) &&
+    STATES.includes(structuredContent.state as AskStatusState) &&
+    typeof structuredContent.sentence === "string"
+  ) {
+    return {
+      ok: true,
+      state: structuredContent.state as AskStatusState,
+      sentence: structuredContent.sentence,
+    };
+  }
+  const refused = readRefusal(structuredContent);
+  return refused ? { ok: false, ...refused } : NO_ANSWER;
 }

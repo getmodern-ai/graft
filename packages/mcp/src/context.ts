@@ -22,8 +22,9 @@ export type SessionContext = {
   /**
    * Whether the session's client declared the MCP Apps extension in `initialize` — a client that
    * has, hides `app`-only tools from its model by specification, which is one of the two signals
-   * `answer_ask` admits a call on (`tools/answer-ask.ts`, GRA-84). A thunk for the reason
-   * `channel` is one: the capabilities arrive after the session is built.
+   * the card gate admits a call on and an awaiting answer takes its card form on
+   * (`card-client.ts`, GRA-84, GRA-120). A thunk for the reason `channel` is one: the
+   * capabilities arrive after the session is built.
    */
   uiExtensionDeclared: () => boolean;
 };

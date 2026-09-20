@@ -1,4 +1,10 @@
 import { readAskCardHtml } from "@graft/ask-card";
+import { FROM_CARD, FROM_CARD_PARAM, withFromCard } from "@graft/ask-card/shape";
+import {
+  FROM_CARD as CORE_FROM_CARD,
+  FROM_CARD_PARAM as CORE_FROM_CARD_PARAM,
+  openedFromCard,
+} from "@graft/core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +16,7 @@ import {
   connectionAskAnswerable,
   connectionAskCard,
   credentialAskCard,
+  scopeAskCard,
 } from "./ask-card";
 import type { ConnectionProposalPayload } from "./connection-request";
 import { createMcpDeps } from "./deps";
@@ -62,12 +69,12 @@ describe("what the card may answer", () => {
     expect(connectionAskAnswerable(proposal({ scheme: "api_key_header" }))).toBe(false);
     expect(connectionAskAnswerable(proposal({ scheme: "bearer" }))).toBe(false);
     expect(connectionAskAnswerable(proposal({ scheme: "oauth_authorization_code" }))).toBe(false);
-    expect(
-      connectionAskAnswerable(proposal({ providerConnect: "link", provider: "pipedream" })),
-    ).toBe(false);
+    expect(connectionAskAnswerable(proposal({ providerConnect: "link", provider: "broker" }))).toBe(
+      false,
+    );
   });
 
-  it("marks a build ask answerable, and a tool's or a credential ask never", () => {
+  it("marks a build ask and a tool ask answerable, and a credential ask or a link provider's never", () => {
     const store = createFakeStore();
     const row = store.addConnection({
       id: "conn_1",
@@ -99,6 +106,13 @@ describe("what the card may answer", () => {
       url,
       answerable: true,
     });
+    // A tool's first use is answerable since GRA-116, with the tool's facts beside its name.
+    const tool = {
+      description: "Creates a sales order at Demo.",
+      readOnly: false,
+      destructive: true,
+      askEveryCall: true,
+    };
     expect(
       approvalAskCard({
         action: { ...action, kind: "tool" },
@@ -107,8 +121,9 @@ describe("what the card may answer", () => {
         connection,
         url,
         toolName: "demo__create-order",
+        tool,
       }),
-    ).toMatchObject({ kind: "tool", answerable: false, toolName: "demo__create-order" });
+    ).toMatchObject({ kind: "tool", answerable: true, toolName: "demo__create-order", tool });
     expect(
       credentialAskCard({
         action: { ...action, kind: "credential" },
@@ -130,22 +145,86 @@ describe("what the card may answer", () => {
         action: { ...action, kind: "connection" },
         agentName: "Claude",
         url,
-        payload: proposal({ providerConnect: "link", provider: "pipedream" }),
+        payload: proposal({ providerConnect: "link", provider: "broker" }),
       }),
-    ).toMatchObject({ providerConnect: "link", provider: "pipedream", answerable: false });
+    ).toMatchObject({ providerConnect: "link", provider: "broker", answerable: false });
+  });
+
+  it("marks a scope ask answerable, with the row's facts and the provider when it is not the keyring (GRA-104)", () => {
+    const url = "http://console.graft.test/pending/pa_1?t=x";
+    const payload = {
+      connectionId: "conn_gmail",
+      vendor: "gmail",
+      displayName: "Gmail",
+      provider: "broker",
+      primaryHost: "https://gmail.googleapis.com",
+      hosts: ["gmail.googleapis.com"],
+      scheme: "relay",
+      docsUrl: "https://developers.google.com/gmail/api",
+    };
+    expect(
+      scopeAskCard({ action: { ...action, kind: "scope" }, agentName: "Claude", url, payload }),
+    ).toEqual({
+      pendingActionId: "pa_1",
+      kind: "scope",
+      agentName: "Claude",
+      vendor: "gmail",
+      displayName: "Gmail",
+      primaryHost: "https://gmail.googleapis.com",
+      hosts: ["gmail.googleapis.com"],
+      scheme: "relay",
+      takesCredential: false,
+      docsUrl: "https://developers.google.com/gmail/api",
+      expiresAt: action.expiresAt.toISOString(),
+      url,
+      answerable: true,
+      provider: "broker",
+    });
+    expect(
+      scopeAskCard({
+        action: { ...action, kind: "scope" },
+        agentName: "Claude",
+        url,
+        payload: { ...payload, provider: "keyring", scheme: "api_key_header", docsUrl: null },
+      }),
+    ).not.toHaveProperty("provider");
+  });
+});
+
+/**
+ * `from=card` is written in two import-free places (GRA-117, GRA-118): `@graft/ask-card`'s shape,
+ * which the card's bundle reads, and `@graft/core`'s `card.rules.ts`, which the console's routes
+ * read. Neither may import the other, so this is where they are held to one another.
+ */
+describe("the from=card query", () => {
+  it("is spelled the same by the card and by the console's rules", () => {
+    expect(FROM_CARD_PARAM).toBe(CORE_FROM_CARD_PARAM);
+    expect(FROM_CARD).toBe(CORE_FROM_CARD);
+    const opened = new URL(withFromCard("http://console.graft.test/pending/pa_1?t=abc"));
+    expect(openedFromCard(Object.fromEntries(opened.searchParams))).toBe(true);
+    expect(openedFromCard({ t: "abc" })).toBe(false);
   });
 });
 
 describe("the resource and the tool metadata", () => {
-  it("name one resource with the app MIME type and no CSP, and the two _meta shapes the extension defines", () => {
+  it("name one resource with the app MIME type, an empty CSP and ChatGPT's aliases, and the two _meta shapes the extension defines", () => {
     expect(ASK_CARD_RESOURCE).toEqual({
       uri: ASK_CARD_RESOURCE_URI,
       name: "graft-ask",
       title: "Graft ask card",
       description: expect.any(String),
       mimeType: "text/html;profile=mcp-app",
+      _meta: {
+        ui: { csp: { connectDomains: [], resourceDomains: [] }, prefersBorder: true },
+        "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
+        "openai/widgetPrefersBorder": true,
+        "openai/widgetDescription": expect.stringContaining("Graft's ask card"),
+      },
     });
-    expect(ASK_CARD_TOOL_META).toEqual({ ui: { resourceUri: "ui://graft/ask" } });
+    expect(ASK_CARD_TOOL_META).toEqual({
+      ui: { resourceUri: "ui://graft/ask" },
+      "openai/outputTemplate": "ui://graft/ask",
+    });
     expect(APP_ONLY_TOOL_META).toEqual({ ui: { visibility: ["app"] } });
   });
 

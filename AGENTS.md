@@ -41,8 +41,8 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
 - **No vendor in the open repository** (ADR 0002 as amended 2026-09-19): no vendor's client
   library, configuration variable or id. Define the seam here, with the open form's backing or a
   no-op, and put the vendor's backing in graft-cloud's private package. Before adding a package or
-  a `GRAFT_*` variable, ask whether it is a vendor's; if it is, it goes there. The Pipedream
-  provider is the one exception left, and GRA-103 moves it.
+  a `GRAFT_*` variable, ask whether it is a vendor's; if it is, it goes there. The last exception,
+  the hosted form's link provider, moved there under GRA-103.
 
 ## Lineage
 
@@ -120,7 +120,12 @@ skips without `TEST_DATABASE_URL` and refuses to skip under `CI`, where the work
 `TEST_DATABASE_URL=postgresql://postgres:password@localhost:5432/graft pnpm --filter @graft/server test`.
 Every other suite runs with fakes and no database — `packages/core/src/agent/agent.service.test.ts`
 is the reference shape — and `packages/db`'s suites pin the *rendered* SQL, which is where the rule
-that every agent-scoped read takes the scope in the statement (ADR 0007) is asserted.
+that every agent-scoped read takes the scope in the statement (ADR 0007) is asserted. The scope
+itself is one such statement since ADR 0007's amendment of 2026-09-19 (GRA-105):
+`listScopeConnectionIds` in `packages/db/src/repo/agent.ts` resolves an agent's `scope_mode` — `all`,
+every connection of the person's, or `listed`, the rows in `agent_connection` — under the person and
+both ids on each branch, and `getAgentScope` is that read; every mint of a capability token goes
+through it, so the token names ids under either mode.
 
 ### Running the server locally
 
@@ -200,23 +205,37 @@ imports it by a name held in a variable, so the type program never resolves it �
 the package absent rather than optional.
 
 **A connection comes from a provider, and the providers ride the same selector** (ADR 0019,
-GRA-57). `Backings.providers` is an ordered list — under `open` the keyring alone, under `cloud`
-whatever the private package answers with the keyring appended last, and the boot line names them
-(`providers keyring`). A provider (`packages/core/src/connection/provider.ts`) decides how a vendor
-gets connected (`form` over the proxy's schemes, `link`, or `none`), how a call resolves (`inject`
-the row's credential, or `relay` through an upstream that holds it), and what to release on revoke;
-`request_connection` routes a proposal to the first provider that covers it, and the proxy's
-connection read (`apps/server/src/connections.ts`) asks the row's provider how the call resolves.
-The relay engine is `packages/proxy/src/relay.ts`: a relay plugin rewrites the resolved vendor
-request into the upstream's under `RelayHeaderRules` as data, and `relay.test.ts` drives it through
-an in-process upstream. `RELAYS` holds the `gateway` plugin (`gateway-relay.ts`, GRA-58) and
-Pipedream's (`pipedream-relay.ts`, GRA-59), and `RELAY_SCHEMES` names both. A row of a relay
-provider records its relay scheme in the `scheme` column, and the enum pin in `packages/core` covers
-both lists — so `connectionScheme` now carries `gateway` and `pipedream_connect_proxy`, which no
-form, proposal or credential entry accepts (`connection.rules.ts` refuses a relay scheme with a
-sentence). With the keyring alone nothing observable changed. With both providers configured the
-gateway is routed to first: an operator's explicit host list wins over Pipedream's app table
-(`environmentProviders` in `apps/server/src/backings.ts`).
+GRA-57). `Backings.providers` is an ordered list — under `open` the keyring alone (the gateway ahead
+of it when configured), under `cloud` the gateway when configured, then whatever the private package
+answers, with the keyring appended last — and the boot line names them (`providers keyring`). A
+provider (`packages/core/src/connection/provider.ts`) decides how a vendor gets connected (`form`
+over the proxy's schemes, `link`, or `none`), how a call resolves (`inject` the row's credential, or
+`relay` through an upstream that holds it), and what to release on revoke; `request_connection`
+routes a proposal to the first provider that covers it, and the proxy's connection read
+(`apps/server/src/connections.ts`) asks the row's provider how the call resolves. **Coverage is
+async** (GRA-126): `covers(vendor, hosts)` and a link's `target` answer a promise, because a hosted
+provider decides coverage by asking its vendor's catalogue — which vendors it connects and at which
+hosts — and caches the answer; the keyring and the gateway resolve at once, and `providerFor` awaits
+the providers in order, asking nobody after a yes. The relay engine is `packages/proxy/src/relay.ts`:
+a relay plugin rewrites the resolved vendor request into the upstream's under `RelayHeaderRules` as
+data, and `relay.test.ts` drives it through an in-process upstream. There is no catalogue of
+plugins: the proxy takes the plugin from the connection's resolution (`ProxyRelay.plugin`), the
+gateway's from `gateway-relay.ts` (GRA-58) and a hosted provider's from beside itself in the private
+package. `RELAY_SCHEMES` names two: `gateway`, and the generic `relay` every other relay provider's
+rows carry (GRA-103; migration 0010 moved the rows the first hosted relay provider wrote under its
+own name onto it). A row of a relay provider records its relay scheme in the `scheme` column, and the
+enum pin in `packages/core` covers both lists — so `connectionScheme` carries `gateway` and `relay`,
+which no form, proposal or credential entry accepts (`connection.rules.ts` refuses a relay scheme
+with a sentence). With the keyring alone nothing observable changed. The gateway is routed to
+first: an operator's explicit host list wins over a broker's catalogue (`environmentProviders` in
+`apps/server/src/backings.ts`). **A hosted provider comes from the private package whole** — its
+client, its relay plugin, its provider, its variables and its fakes (ADR 0002 as amended
+2026-09-19; GRA-103) — and the open suites that exercise a link's two ends, the card, the relay rung
+and the revoke's release drive `packages/core/src/connection/testing/fake-link-provider.ts`
+instead: a `ConnectionProvider` of kind `link` whose coverage is the test's function, whose rows
+carry `relay`, whose `start` mints a link on a fake origin, whose `complete` answers the next account
+the test connected (`connectAccount`), and whose `resolve` relays to an in-process upstream. The
+copy the card and the console draw names a provider by its `name`, never a vendor.
 
 **The gateway provider is the environment's** (ADR 0019 as amended 2026-09-17, GRA-58): the
 `GRAFT_GATEWAY_*` group — covered hosts, upstream URL, the identity header's name and value, an
@@ -224,8 +243,8 @@ optional caller-header prefix — all-or-nothing and off by default, read by `ga
 `apps/server/src/backings.ts`, which puts the provider first in either form's order. A proposal every
 host of which it covers connects with **no person step**: `request_connection` makes the row
 (`registerProviderConnection`, scheme `gateway`, no credential) and grows the asking agent's scope in
-one transaction; a row the person revoked or has not given this agent is refused with the console
-step that would grant it, and a narrower in-scope gateway row is widened to a later proposal's
+one transaction (a no-op for an agent on `all`, GRA-105); a row the person revoked or has not given
+this agent is refused with the console step that would grant it, and a narrower in-scope gateway row is widened to a later proposal's
 hosts within the coverage. The relay carries the vendor URL in the path, `<upstream>/<host>/<path>`,
 and the provider brings the relay leg its own fetch with the gateway's hostname exempt from the
 resolver's private-address rule (`createUpstreamFetch({ unguardedHosts })`, on `ProxyRelay.
@@ -235,46 +254,6 @@ Reconnect (`POST /api/connections/:id/reconnect`), the one row kind with nothing
 gateway on a loopback port stands in for a company's in `packages/proxy/src/gateway-relay.test.ts`
 and `apps/server/src/app.test.ts`; on a laptop, `GRAFT_GATEWAY_UPSTREAM_URL` may be plain `http`
 (refused in production).
-
-**The Pipedream provider is open code switched on by configuration** (ADR 0019, its 2026-09-17
-bullet; GRA-59). With the all-or-nothing group `GRAFT_PIPEDREAM_PROJECT_ID` (`proj_…`),
-`GRAFT_PIPEDREAM_ENVIRONMENT` (`development` or `production`), `GRAFT_PIPEDREAM_CLIENT_ID` and
-`GRAFT_PIPEDREAM_CLIENT_SECRET` set, `apps/server/src/backings.ts` (`environmentProviders`) puts
-`pipedream` on the list ahead of the keyring in either form, after the gateway when that is
-configured too, and the boot line reads `providers pipedream, keyring`; absent — the default —
-nothing changes, and a partial group or a client secret still holding `PLACEHOLDER` refuses the
-boot. Three homes, one per boundary: `packages/pipedream` is
-the Connect client (`createPipedreamClient`: client-credentials access token with a minute of skew
-and single-flight refresh, `createConnectToken`, `listAccounts`, `relayFields`, `deleteAccount`; it
-never sets `include_credentials`), with an in-memory fake at `@graft/pipedream/fake` and Pipedream
-on a loopback port at `@graft/pipedream/testing/fake-pipedream`; `packages/proxy/src/pipedream-relay.ts`
-is the relay plugin (the vendor URL base64url'd into `/v1/connect/<project>/proxy/`,
-`external_user_id` and `account_id` in the query, `Authorization: Bearer <Graft's Connect token>` and
-`x-pd-environment`, every caller header under `x-pd-proxy-` with `content-type`/`accept` through and
-Pipedream's restricted list plus `user-agent` dropped); `packages/core/src/connection/pipedream-provider.ts`
-is the provider, and **`PIPEDREAM_APPS` there is the vendor table** — `gmail` at
-`gmail.googleapis.com` and `www.googleapis.com` → Pipedream app `gmail` — where a vendor is added as
-one row with Pipedream's own app slug (their catalogue is the source, ADR 0001); `covers` demands
-every proposed host be in the entry's set, because the relay injects the account's token into
-whatever vendor URL it is handed. The person is `graft-person-<personId>` at Pipedream
-(`externalUserIdFor`). **The link**: `request_connection` records `providerConnect: "link"` and
-`providerTarget` (the app slug) on the ask's payload and names the provider in the awaiting answer;
-the console's card (`apps/web/src/components/pending/provider-link-ask-card.tsx`) posts
-`POST /api/pending-actions/:id/link`, which mints Pipedream's Connect Link with both redirect URIs
-pointing at `GET /api/providers/link/callback?state=…&outcome=success|error` — the state signed
-under `GRAFT_HANDOFF_SECRET` for fifteen minutes (`packages/core/src/connection/link-state.ts`), the
-connect token held to the same window — and opens it in a popup; the return
-(`apps/server/src/provider-link.ts`, no session) never trusts the redirect's word but asks Pipedream
-which account the person now holds under the app, minus the ids the person's other rows already
-name, then in one transaction makes the row (`connectThroughProvider`: `provider_ref` = the account
-id, `scheme` = `pipedream_connect_proxy`, `credential_ciphertext` null for life, a revoked row of
-the same vendor and hosts reconnected in place), adds it to the requesting agent's scope, answers
-the ask, and redirects to the console's `/link/callback` (`link.rules.ts` writes and reads the
-query). A revoke calls Pipedream's `DELETE …/accounts/{id}`; the revoke keeps `provider_ref` until
-that succeeds, and a failure is stamped on `provider_release_failed_at` (migration 0007), which the
-connection card shows with **Retry release** (`POST /api/connections/:id/release`).
-`apps/server/src/scripts/pipedream-proof.ts` boots the whole server against the fake Pipedream for
-a laptop proof; `apps/server/src/provider-link.test.ts` is the same flow as a suite.
 
 **In the image the package arrives built** (GRA-38). The bundled server runs where there is Node and
 `node_modules` and nothing else — no TypeScript, no workspace — so a linked package ships a `build`
@@ -300,8 +279,9 @@ authorization endpoint judges the request and sends the browser to the console's
 the request as its query — a client or a redirect URI in doubt lands there as a refusal rather than
 being redirected anywhere — and the console's `GET`/`POST /api/mcp-oauth/{request,consent}` describe
 and decide it with the person's session. The decision mints the agent (`createAgentForClient`: no
-static token, `connected_via_client_id`/`_name` recorded) or names an existing one and binds an
-authorization code to it. Tokens are opaque and hashed in `mcp_token` (`@graft/db/repo/mcp-oauth`);
+static token, `connected_via_client_id`/`_name` recorded, on every connection of the person's
+unless the consent's `scopeMode: "listed"` limits it to `connectionIds` — ADR 0007 as amended
+2026-09-19) or names an existing one and binds an authorization code to it. Tokens are opaque and hashed in `mcp_token` (`@graft/db/repo/mcp-oauth`);
 `requireAgent` dispatches on the prefix — `grft_` static, `grfta_` access token — and both resolve to
 one agent, so nothing past the door knows which arrived. Access tokens live an hour; refresh tokens
 rotate — one successor per predecessor, the claim and the pair one transaction — and live with the
@@ -311,7 +291,13 @@ thirty seconds it is a replay that revokes the grant; revoking the agent revokes
 same transaction. No variable is added: the issuer is `GRAFT_AUTH_URL`'s origin and the
 consent page is under `GRAFT_CONSOLE_URL`. The rules and the service are `packages/core/src/mcp-oauth/`;
 the two suites are `packages/core/src/mcp-oauth/mcp-oauth.service.test.ts` over fakes and
-`apps/server/src/mcp-oauth.integration.test.ts` over Postgres with the SDK's own client. Under `open`,
+`apps/server/src/mcp-oauth.integration.test.ts` over Postgres with the SDK's own client. **A session
+this process no longer holds is re-opened for a chat product's client** (GRA-129; ADR 0018 as
+amended 2026-09-20): a `grfta_` request with an unknown session id, or with none and no
+`initialize`, gets a session under that id (or a new one, on the response), primed by a synthetic
+`initialize` with no client capabilities — Claude's card frame keeps its pre-deploy id and drew
+"Unable to reach Graft" on the spec's 404; a static-token agent still gets the 404 and 400
+(`packages/mcp/src/http.ts`, pinned in `apps/server/src/mcp.test.ts`). Under `open`,
 authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names:
 `docker` by default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and,
 unset, leaves the server up with every run refusing for want of a sandbox; or `fake`, a temporary
@@ -319,15 +305,32 @@ directory on the server's own disk for a laptop without a daemon — the toolbox
 directory too, for as long as the process does — which is not a sandbox, and `@graft/env` refuses it
 in production and beside `cloud`.
 
-**The `initialize` result carries the playbook** (GRA-54). `SERVER_INSTRUCTIONS` in
-`packages/mcp/src/session.ts` is what a client that loads no skill — Claude.ai, ChatGPT, a bare MCP
-client — shows its model: the order of operations, the handoff and secrets rules, `run_tool` for a
-client that snapshots its list, and the approval grain. It is held under `INSTRUCTIONS_BUDGET`
-because some clients truncate the field; the long form of each rule is the tool's own description,
-opening with when to call it (`tools/meta.ts`, `tools/authoring.ts`, `tools/execute.ts`).
-`packages/mcp/src/session.test.ts` pins the shared sentences to `skills/hermes-graft/SKILL.md` and
-each description to its "when" sentence, so a rule changed in one place fails until the other says
-the same. Edit both, and re-run the live check the ticket records if the order of operations moves.
+**A chat product's agent lists no authoring tool and no `execute__` tool** (GRA-125; ADR 0004 as
+amended 2026-09-20). `packages/mcp/src/by-hand.ts` judges the agent once per session by its
+`connected_via_client_id`: a static-token agent (Hermes, OpenClaw) lists the whole set; an agent a
+chat product holds over OAuth lists the meta-tools and its promoted tools, and a call to a hidden tool
+is refused `advanced_tools_hidden`. `find_tool` answers `connections` — every live connection in the
+agent's scope with the `connectionId` `acquire` takes — which is where such an agent learns one.
+
+**The `initialize` result carries the playbook, and the descriptions carry none of it** (GRA-54,
+GRA-111). `SERVER_INSTRUCTIONS` in `packages/mcp/src/session.ts` is what a client that loads no skill
+— Claude.ai, ChatGPT, a bare MCP client — shows its model, and the one place on the wire a rule of
+conduct lives: the order of operations, the handoff and secrets rules, the keyless and rotation
+rules, the build approval on the connection page, `run_tool` for a client that snapshots its list,
+the approval grain, and whose tool `answer_ask` is. Every tool description (`tools/meta.ts`,
+`tools/authoring.ts`, `tools/execute.ts`, `tools/answer-ask.ts`) is a capability statement in the
+third person — what the tool does, its arguments, its answer shapes, the `awaiting_*` shapes and
+their `url` included — opening with when it is used, stated as a fact and not as an instruction:
+ChatGPT's classifier badged GRA-54's rule-bearing descriptions "Suspicious Instruction" on every
+call, and both hosts' published guidance puts behaviour in `instructions` (the research comment on
+GRA-111 has the sources). `INSTRUCTIONS_BUDGET` is 2,048, Claude Code's documented per-server cap
+on both fields (its CHANGELOG, 2.1.84), and the order of operations sits in the first 512 characters,
+OpenAI's front-loading rule. `packages/mcp/src/session.test.ts` pins the shared sentences to
+`skills/hermes-graft/SKILL.md`, each description to its opening sentence, every fixed tool's whole
+definition against a denylist of conduct markers (`never`, `do not`, `always`, `you`), and every
+description to the same 2,048. A rule belongs in the instructions and the skill; a fact about what a
+tool answers belongs in its description; re-run the live check the ticket records if the order of
+operations moves.
 
 **The ask card is an MCP App a chat product renders in place of the handoff link** (GRA-84; ADR 0006
 as amended 2026-09-18). `packages/ask-card` (`@graft/ask-card`) is one HTML page — plain TypeScript
@@ -336,22 +339,120 @@ over `@modelcontextprotocol/ext-apps`'s `app-with-deps`, no React — that `vite
 so nothing may be linked. Its stylesheet carries a copy of the console's `cando:tokens` block and
 `src/bundle.test.ts` fails on a colour literal outside the `:root`/`.dark` rules (ADR 0017 over one
 file). The MCP server (`packages/mcp/src/ask-card.ts`, `session.ts`) declares `resources`, lists the
-one resource `ui://graft/ask` (`text/html;profile=mcp-app`, no `_meta.ui.csp`: the card fetches
-nothing) and serves the page from `@graft/ask-card`'s `ASK_CARD_HTML_PATH`, which resolves to
+one resource `ui://graft/ask` (`text/html;profile=mcp-app`, an empty `_meta.ui.csp` said outright:
+the card fetches nothing) and serves the page from `@graft/ask-card`'s `ASK_CARD_HTML_PATH`, which resolves to
 `packages/ask-card/dist/ask.html` in a checkout and to `dist/ask.html` beside the server's bundle,
 where `apps/server/tsdown.config.ts` copies it and the Dockerfile's `build` stage builds it first.
-`acquire`, `request_connection` and `request_credential` carry `_meta.ui.resourceUri` unconditionally
-(Claude.ai declares no extension), and their awaiting results carry the card's data under
-`structuredContent.card` beside GRA-55's unchanged `url`, `message` and `reason` (`result.ts`'s
-`withCard`). The card answers by calling `answer_ask` (`tools/answer-ask.ts`), declared
+Every tool that can ask carries `_meta.ui.resourceUri` unconditionally (Claude.ai declares no
+extension): `acquire`, `request_connection`, `request_credential`, and — since a host renders a card
+only for a tool whose definition names the resource (GRA-116's live check, 2026-09-20) — `run_tool`,
+every `execute__<id>` and every authored tool in the list, whose first write answers the tool ask;
+ChatGPT's alias `openai/outputTemplate` rides beside it, and the
+resource carries the `openai/widget*` aliases of its `ui` keys (GRA-112); their awaiting results
+carry the card's data under `structuredContent.card` beside GRA-55's unchanged `url`, `message` and
+`reason` (`result.ts`'s `withCard`). **For a client the server knows renders the card, the awaiting
+`message` takes its card form and `cardShown: true` rides beside `url`** (GRA-120; ADR 0006 as
+amended 2026-09-20): `packages/mcp/src/card-client.ts`'s `clientRendersCards` is the card gate's
+client half — an OAuth agent whose session declared the MCP Apps extension or whose client is
+registered on a `GRAFT_CARD_HOSTS` host — held once per session, and its `toolAskResult` is where
+every awaiting result goes onto the wire (`tools/meta.ts`, `tools/execute.ts`, `tools.ts`); each
+ask flow writes both forms through `handoff-message.ts`, so the console form a static-token agent
+or an unvouched client reads is byte for byte what it was, and `url` never changes.
+`SERVER_INSTRUCTIONS` carries the one clause on what `cardShown` means; the Hermes skill does not,
+since a Hermes agent never receives it, and `session.test.ts` records that. **An awaiting result
+is not an MCP error**: every `awaiting_*`
+answer returns through `result.ts`'s `toolAwaiting` with `isError: false` and the same JSON, because
+a host renders no view for an error result (ext-apps issue 694) — refusals and failures stay
+`isError: true`. The card answers by calling `answer_ask` (`tools/answer-ask.ts`), declared
 `_meta.ui.visibility: ["app"]` so the host hides it from the model; the tool refuses a static-token
 agent, an OAuth client whose hiding is not established (neither every registered redirect URI on a
 `GRAFT_CARD_HOSTS` host nor the MCP Apps extension declared in `initialize`), another agent's ask,
-a closed or expired ask, and every ask but the build approval and the
-keyless connection confirmation, and records the rest through `ask-answer.ts` — the same functions
-the console's `POST /pending-actions/:id/answer` and `/connection` call, with `via: "card"` on the
-answer. `packages/mcp/src/answer-ask.test.ts` is the suite; `pnpm --filter @graft/ask-card build`
-before `pnpm --filter @graft/mcp test` on a fresh checkout, or let `pnpm run test` order it.
+a closed or expired ask, and every ask but the build approval, the tool's first-use approval
+(GRA-116), the keyless connection confirmation, the scope ask and a link provider's decline, and
+records the rest through `ask-answer.ts` — the same functions the console's
+`POST /pending-actions/:id/answer` and `/connection` call, with `via: "card"` on the answer. The
+gate is `tools/card-gate.ts`, shared with the two other app-only tools. `packages/mcp/src/answer-ask.test.ts`
+is the suite; `pnpm --filter @graft/ask-card build` before `pnpm --filter @graft/mcp test` on a
+fresh checkout, or let `pnpm run test` order it.
+
+**Every ask settles in the card; the console is a popup for the secret alone** (GRA-116, GRA-117,
+GRA-118; ADR 0006 as amended 2026-09-19). Three more tools and one query. `start_link
+{ pendingActionId, approveBuild }` → `{ url, expiresAt, provider }` (`tools/start-link.ts`, app-only,
+the card gate) mints a link provider's Connect Link for the agent's own open connection ask through
+`packages/mcp/src/provider-link.ts`'s `mintProviderLink` — the function `POST /api/pending-actions/:id/link`
+now calls too, so the two doors issue one link — with the build choice signed into the state and
+`from=card` on the return URIs, which `apps/server/src/provider-link.ts`'s return route copies onto
+its console redirect; `McpDeps.authUrl` is `GRAFT_AUTH_URL` for it. `ask_status { pendingActionId }`
+→ `{ state, sentence }` (`tools/ask-status.ts`, app-only, read-only, the gate less the open check)
+reads where the ask stands off the row — `open`, `answered`, `declined`, `expired` — with the
+console's settled sentence for the kind. The card (`packages/ask-card/src/render.ts`) opens every
+page it sends the person to with `from=card` (`withFromCard`; `ASK_STATUS_POLL_MS` is 3 s) and polls
+`ask_status` until the ask is settled or the render is abandoned: *Connect through <provider>* on a
+link ask, *Enter the secret in Graft* on a scheme with a credential or a credential re-entry, *Open
+in the console* under a `card_not_available` refusal or where the host refused `ui/open-link`. The
+console reads the flag through `@graft/core`'s browser-safe `connection/card.rules.ts`
+(`openedFromCard`, `askAnsweredMessage`, `FROM_CARD_CLOSE_MS`): `/pending/:id?from=card` posts
+`graft:ask` to its opener and closes itself 1.5 s after a successful submit, `/link/callback?from=card`
+closes on a success and stays on a failure (the ask is still open, and the card is where the person
+tries again), and neither behaves differently without it. `@graft/ask-card/shape` spells
+`from=card` a second time, import-free, and `ask-card.test.ts` pins the two spellings together.
+
+**A connection the person holds but this agent was not given is the `scope` ask** (GRA-104; ADR
+0006 as amended 2026-09-19). `request_connection`'s match against the person's rows
+(`existingConnectionFor` in `packages/mcp/src/connection-request.ts`, GRA-76) answers `connected`
+for a usable row in scope and `connection_exists` for a revoked row or one whose credential is
+missing; a live, usable row made for another agent is a pending action of kind `scope` — payload
+`connectionId`, `vendor`, `displayName`, `provider`, `primaryHost`, `hosts`, `scheme`, `docsUrl`;
+the `connection_id` column set, so a revoke closes it — and the call waits and polls as the
+connection ask does, answering `awaiting_scope` with `url`, `message`, `pendingActionId`,
+`expiresAt`, `connectionId` and `provider`. One open ask per agent and connection. The console's
+card is `apps/web/src/components/pending/scope-ask-card.tsx` — Allow, Decline and GRA-75's build
+choice, pre-ticked — and posts the generic `POST /api/pending-actions/:id/answer` with
+`{ allow, approveBuild? }` (`AnswerBody`, exported from `apps/server/src/api.ts` for the console);
+`recordApprovalAnswer` in `ask-answer.ts` grows the scope (`addConnectionToAgentScope`) and grants
+the build approval in the answer's transaction, and leaves the answer for the agent's next call,
+which answers `connected` naming the execute tool, or `scope_declined`. The ask card renders
+`card.kind: "scope"` as answerable, and `answer_ask` admits `{ allow, approveBuild? }` for it under
+the same gate. `SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts`
+pins the word across the description and the Hermes skill.
+
+**A person's connections reach every agent of theirs by default; scope is a narrowing the person
+opts into** (GRA-105; ADR 0007 as amended 2026-09-19). `agent.scope_mode` is `all` or `listed`
+(`agentScopeMode` in `packages/db/src/schema/agent.ts`; migration 0009 added the column as `listed`
+for every existing row and moved the default to `all`). `AgentOutput.scopeMode` is on the wire;
+`GET /api/agents/:id` answers `connectionIds` as the scope resolves under the mode; `POST /api/agents`
+and the consent's `agent: { kind: "new" }` take `scopeMode` (default `all`) and refuse
+`connectionIds` beside `all`; `PUT /api/agents/:id/scope` takes `{ mode: "all" }` or
+`{ mode: "listed", connectionIds? }` (`ScopeBody`, exported for the console), a `listed` write with
+no list materialising the scope as it stood. In `@graft/core`, `addConnectionToAgentScope` is a
+no-op for an agent on `all`, which is what makes every grant-on-connect path right without reading
+the mode, and `listAgentIdsForConnection` — the agents a revoke announces to — takes every agent on
+`all`. An agent on `all` never reaches the `scope` ask above: `existingConnectionFor` finds every
+usable row in scope and answers `connected`. The console draws the mode as a `Select` — `All
+connections` first, `Limit to these` revealing the picker — through `components/agent/scope-mode-field.tsx`
+in the create dialog and the consent card, and in the agent page's Scope section
+(`scope-editor.tsx`); the labels and the write's body are `src/lib/scope-mode.ts`, tested.
+
+**A tool follows its vendor's reconnected connection** (GRA-122; ADR 0007 as amended 2026-09-20).
+`authored_tool.default_connection_id` is the row the tool was authored against, and a run resolves
+the connection **per agent** (`packages/mcp/src/run.ts`): the default when this agent holds it
+live; otherwise — revoked, or a live row another agent of the person's holds and this one was never
+given — the **one** live, usable connection of the tool's vendor in this agent's scope. The row is
+rebound only when its default is revoked, dead for every agent, through `@graft/core`'s
+`rebindToolIfConnectionDead`, which reads the default's row locked (`ToolDeps.findConnectionForUpdate`)
+and writes only if it is still dead, so a reconnection landing meanwhile wins; a live default
+outside the scope is another agent's and stays. With no such connection the
+`connection_revoked` or `connection_not_in_scope` refusal stands as before, and with several it
+names them under `alternatives` and says the step is the person's (`revoke.ts`'s
+`revokedConnectionRefusal`, `run.ts`'s `notInScopeRefusal`). A caller that names the connection
+(`AuthoredRunArgs.connectionId`) is never followed: `acquire`'s dry run passes the job's connection,
+so a version published onto an existing tool row is proved against the connection the job authored
+it for; a publish onto an existing tool under `activate: false` rebinds the row to
+`defaultConnectionId` through the same function, in the publish's transaction, only when the row's
+default is missing or revoked — a live default waits for the pass, so a failed job leaves the tool
+where it was (`packages/publish`, step 8). The job's "did not run" progress line and `tried[].summary` carry a
+refusal's `reason: message` rather than the word `refused`. `packages/mcp/src/server.test.ts` (the
+GRA-122 describe), `acquire.test.ts` and `publish.service.test.ts` are the suites.
 
 ### The self-hosted image
 
@@ -595,14 +696,19 @@ proves with reads, publishes, dry-runs, retries, promotes. **A job's publish mov
 `@graft/core`'s `activateToolVersion` — definition and pointer, one transaction — before promoting,
 so `authored_tool.current_version_id` names only a version that passed its dry run (ADR 0012, L0 as
 amended 2026-09-17); a job that never passes leaves a tool with no current version, which `find_tool`
-omits and `promote` and a run refuse as `tool_has_no_version`. The runner is the second plain scheduler
+omits and `promote` and a run refuse as `tool_has_no_version`. The dry run runs the version against the
+job's connection, never the tool row's default, and the publish rebinds an existing row to it when
+the row's default is revoked (GRA-122; the paragraph *A tool follows its vendor's reconnected
+connection* above). The runner is the second plain scheduler
 beside the sweep: `GRAFT_ACQUIRE_CONCURRENCY` (default 2) jobs at once, kicked by the meta-tool and
 polling for what a previous process left queued or running with a stale heartbeat. Each job is bounded
 by `GRAFT_ACQUIRE_MAX_ATTEMPTS` (default 4 — every draft is an attempt, a check refusal included) and
 `GRAFT_ACQUIRE_TOKEN_CEILING` (default 400000 tokens across every model turn); a job that hits either
 ends with a result naming it. Every attempt is an `acquire_attempt` row, every step an `acquire_trace`
 line, redacted on the way in (`@graft/core`'s `redaction.ts`; the proxy redacts an echoed credential
-by value before that, ADR 0010 amended).
+by value before that, ADR 0010 amended). A publish refused only as `draft-missing` — nothing at a draft the check just
+read — is the toolbox store's miss, not the module's (GRA-123: the hosted store's view of a path
+another sandbox wrote can lag), so `job.ts` asks the store once more before the model is shown it.
 
 Which model answers is `GRAFT_MODEL_BACKEND` (`apps/server/src/model.ts` chooses at boot). Unset, the
 server boots with no model and `acquire` refuses `acquire_unconfigured`. `scripted` plays a JSON file
@@ -641,7 +747,10 @@ in `events.ts`: `noun_verbed`, counts and kinds, never content) and **model tele
 `Backings` carries the three and the boot line names each: `logs stdout, analytics off, model
 telemetry off` on every self-host. Every `POST /mcp` event carries the tool call under `mcp` — the
 tool, its kind, the agent, the person, the outcome, the refusal's reason, the latency — from
-`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point; the runner's
+`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point; a `/mcp`
+request the door or the SDK's transport refuses before any tool runs carries the refusal under
+`mcpRefusal` — status, JSON-RPC code, the answer's own sentence, whether a session was named — from
+`McpDeps.onTransportRefusal` (GRA-131: a bare 400 in the log was a guess); the runner's
 and the sweep's lines ride under `acquire` and `sweep`. Product events are captured server-side at
 two chokepoints and nowhere in the console: the API's mutation routes
 (`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
@@ -660,9 +769,13 @@ ENV
 A script for a public API the proxy can reach without a real key — the connection still needs *a*
 credential entered, since the scheme injects one — is the shortest by-hand proof: `goal` →
 `write_module` with a `ctx.fetch` of a documented `GET`, `proofReads` naming the same path, and a
-`testInput`. `acquire { connectionId, goal }` over MCP answers `{ jobId, status, progress }`;
-`acquire_status { jobId }` answers the progress lines and, at the end, `result` — the tool's wire name,
-version and annotations, or `{ failure, message, lastDiagnostics, tried }`.
+`testInput`. `acquire { connectionId, goal }` over MCP waits `GRAFT_APPROVAL_WAIT_SECONDS` for the
+job and answers `acquire_status`'s shape — settled with `result` when the job finished in time, else
+`{ jobId, status, progress, attempts }`; `acquire_status { jobId, after? }` waits up to twenty seconds
+for a progress line past `after` (the count already seen) or the end, then answers the progress lines
+and, at the end, `result` — the tool's wire name, version and annotations, or `{ failure, message,
+lastDiagnostics, tried }` (GRA-125: a chat model that got the same lines back seven times in twelve
+seconds abandoned the job and ran its own code through `execute__`).
 
 ### The evals
 

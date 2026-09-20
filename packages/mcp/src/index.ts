@@ -82,6 +82,7 @@ export {
   credentialAskCard,
   DEFAULT_CARD_HOSTS,
   redirectsOnCardHosts,
+  scopeAskCard,
   UI_EXTENSION_ID,
 } from "./ask-card";
 export {
@@ -91,6 +92,7 @@ export {
   MAX_COMMAND_TIMEOUT_SECONDS,
   MAX_DETACHED_TIMEOUT_SECONDS,
 } from "./bounds";
+export { notifyAgentsReachingConnection } from "./connected";
 export {
   type AwaitingHandoff,
   CONNECTION_ASK_KIND,
@@ -108,8 +110,12 @@ export {
   type ProposalVerdict,
   readConnectionAnswer,
   readConnectionProposal,
+  readScopeAnswer,
   requestConnection,
   requestCredential,
+  SCOPE_ASK_KIND,
+  type ScopeAnswer,
+  type ScopeAskPayload,
 } from "./connection-request";
 export type { SessionContext } from "./context";
 export {
@@ -119,6 +125,7 @@ export {
   type PublishTool,
   type ToolboxReader,
   type ToolCallEvent,
+  type TransportRefusalEvent,
 } from "./deps";
 export {
   HANDOFF_PATH,
@@ -145,6 +152,13 @@ export {
   type ToolListChangedNotifier,
 } from "./notifier";
 export { promotePublished } from "./promote";
+export {
+  mintProviderLink,
+  type ProviderLinkChoices,
+  type ProviderLinkMintDeps,
+  proposalOfLinkAsk,
+  type StartedProviderLink,
+} from "./provider-link";
 export { type Refusal, refusal, withCard } from "./result";
 export { revokeConnectionAndNotify } from "./revoke";
 export {
@@ -194,4 +208,6 @@ export {
 } from "./tool-names";
 export { authoredToolDefinition, META_TOOL_NAMES } from "./tools";
 export { ANSWER_ASK, CARD_NOT_AVAILABLE, readAnswerAskInput } from "./tools/answer-ask";
+export { ASK_STATUS, askState, askStateSentence } from "./tools/ask-status";
+export { START_LINK } from "./tools/start-link";
 export { type ReadWebPage, readWebPage, type WebPageResult } from "./web-page";
