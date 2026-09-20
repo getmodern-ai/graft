@@ -4,7 +4,7 @@ import type { BetterAuthOptions } from "better-auth";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createAuth } from "./index";
+import { createAuth, sessionCookieAttributes } from "./index";
 
 /**
  * The configuration, as Better Auth reads it back — no database is opened, because drizzle's pool
@@ -12,7 +12,7 @@ import { createAuth } from "./index";
  * to a person run against a real Postgres in `apps/server/src/database.integration.test.ts`; what is
  * pinned here is the shape of the account: email and password only, no verification gate for the
  * registering verified first (GRA-94), a social provider only when a client is handed in (GRA-81),
- * no organization plugin (ADR 0007), and the cross-origin cookie.
+ * no organization plugin (ADR 0007), and the session cookie the deployment's origins imply.
  */
 const base = {
   db: drizzle("postgresql://unused@localhost:5432/unused") as unknown as Database,
@@ -70,11 +70,70 @@ describe("createAuth", () => {
     expect(auth.options.baseURL).toBe("http://localhost:3000");
   });
 
-  it("sets the session cookie for a cross-origin console", () => {
-    expect(auth.options.advanced?.defaultCookieAttributes).toEqual({
-      sameSite: "none",
-      secure: true,
-      httpOnly: true,
+  /**
+   * The rule, not a pinned value (GRA-148): `lax` for the form every self-host and Graft Cloud
+   * run, one origin serving the console and the API, and `none` only where the console answers
+   * somewhere else and nothing but a cross-site cookie would reach it.
+   */
+  describe("the session cookie follows the deployment", () => {
+    it("is lax on one origin, and secure only where the scheme is https", () => {
+      expect(sessionCookieAttributes({ authUrl: "https://app.getgraft.ai" })).toEqual({
+        sameSite: "lax",
+        secure: true,
+        httpOnly: true,
+      });
+      expect(
+        sessionCookieAttributes({
+          authUrl: "http://192.168.1.5:3000",
+          consoleUrl: "http://192.168.1.5:3000",
+          corsOrigins: [],
+        }),
+      ).toEqual({ sameSite: "lax", secure: false, httpOnly: true });
+    });
+
+    it("is none and secure for a console on another origin, however it was named", () => {
+      const crossSite = { sameSite: "none", secure: true, httpOnly: true };
+      expect(
+        sessionCookieAttributes({
+          authUrl: "http://localhost:3000",
+          consoleUrl: "http://localhost:3001",
+        }),
+      ).toEqual(crossSite);
+      expect(
+        sessionCookieAttributes({
+          authUrl: "https://api.example.com",
+          consoleUrl: "https://api.example.com",
+          corsOrigins: ["https://console.example.com"],
+        }),
+      ).toEqual(crossSite);
+    });
+
+    it("treats an absent console URL as this origin's own", () => {
+      expect(sessionCookieAttributes({ authUrl: "http://localhost:3000" })).toEqual({
+        sameSite: "lax",
+        secure: false,
+        httpOnly: true,
+      });
+    });
+
+    /** The two-port loop `base` spells: a console on :3001 in front of an API on :3000. */
+    it("is what createAuth hands Better Auth", () => {
+      expect(auth.options.advanced?.defaultCookieAttributes).toEqual({
+        sameSite: "none",
+        secure: true,
+        httpOnly: true,
+      });
+      const sameOrigin = createAuth({
+        ...base,
+        trustedOrigins: [],
+        consoleUrl: "https://app.getgraft.ai",
+        baseURL: "https://app.getgraft.ai",
+      });
+      expect(sameOrigin.options.advanced?.defaultCookieAttributes).toEqual({
+        sameSite: "lax",
+        secure: true,
+        httpOnly: true,
+      });
     });
   });
 

@@ -10,7 +10,9 @@ export type ServiceErrorCode =
   | "NOT_FOUND"
   | "BAD_REQUEST"
   | "CONFLICT"
-  | "GONE";
+  | "GONE"
+  /** A body that did not declare itself JSON; the API's `parseBody` alone raises it (GRA-148). */
+  | "UNSUPPORTED_MEDIA_TYPE";
 
 export const HTTP_STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -19,6 +21,7 @@ export const HTTP_STATUS_BY_CODE: Record<ServiceErrorCode, number> = {
   BAD_REQUEST: 400,
   CONFLICT: 409,
   GONE: 410,
+  UNSUPPORTED_MEDIA_TYPE: 415,
 };
 
 export class ServiceError extends Error {

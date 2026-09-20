@@ -251,9 +251,11 @@ describe.skipIf(!adminUrl)("a chat product connects over MCP OAuth (ADR 0018)", 
     );
     expect(described.status).toBe(200);
 
+    // The person decides this in the console, so the submit names the console's origin; the
+    // origin check on `/api` refuses one that does not (GRA-148, `origin-guard.ts`).
     const decided = await app.request(`${AUTH_URL}/api/mcp-oauth/consent`, {
       method: "POST",
-      headers: { cookie, "content-type": "application/json" },
+      headers: { cookie, "content-type": "application/json", origin: CONSOLE_URL },
       body: JSON.stringify({ request, decision: "allow", agent }),
     });
     expect(decided.status).toBe(200);
@@ -363,7 +365,7 @@ describe.skipIf(!adminUrl)("a chat product connects over MCP OAuth (ADR 0018)", 
       //    to reconnect.
       const revoked = await app.request(`${AUTH_URL}/api/agents/${agentId}/revoke`, {
         method: "POST",
-        headers: { cookie },
+        headers: { cookie, origin: CONSOLE_URL },
       });
       expect(revoked.status).toBe(200);
       const direct = await app.request(`${AUTH_URL}/mcp`, {
@@ -421,7 +423,7 @@ describe.skipIf(!adminUrl)("a chat product connects over MCP OAuth (ADR 0018)", 
     // The person names an agent they already have — one made in the console with a static token.
     const existing = await app.request(`${AUTH_URL}/api/agents`, {
       method: "POST",
-      headers: { cookie, "content-type": "application/json" },
+      headers: { cookie, "content-type": "application/json", origin: CONSOLE_URL },
       body: JSON.stringify({ name: "laptop Hermes" }),
     });
     const { agent: made } = (await existing.json()) as { agent: { id: string } };

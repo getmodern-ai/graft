@@ -647,6 +647,24 @@ elsewhere. A server whose console directory holds no build boots and answers eve
 a JSON 404 saying where it looked. `GRAFT_CONSOLE_URL` is a different setting: where handoff URLs
 point (GRA-23), which in development is the Vite origin.
 
+**Nothing but the console calls `/api` with a session, and three rules hold it to that** (GRA-148).
+*The session cookie follows the deployment*: `@graft/auth`'s `sessionCookieAttributes` derives it
+from `GRAFT_AUTH_URL`, `GRAFT_CONSOLE_URL` and `GRAFT_CORS_ORIGIN`: `sameSite: "lax"` where the
+console and the API answer on one origin, `"none"` only where the console is elsewhere, and
+`secure` from the scheme, so a self-host on a plain `http` LAN address can sign in at all. A
+console elsewhere over plain non-loopback http is refused at boot, because the browser drops that
+cookie. *An origin check on `/api`*: `apps/server/src/origin-guard.ts` refuses every non-`GET`
+request whose `Origin`, then `Referer`, then `Sec-Fetch-Site: same-origin`, is not the auth
+origin or one of `GRAFT_CORS_ORIGIN`, with a 403 in the API's own refusal shape. Four kinds of
+route are exempt and the file says why beside each: `/api/proxy/*` (a capability token from a
+sandbox, no cookie), `/api/auth/*` (Better Auth runs the same check against its own
+`trustedOrigins`), `/api/health`, and reads. Nothing else under `/api` authenticates by bearer
+token: the MCP endpoint and the OAuth protocol endpoints are outside the mount. *A JSON body is
+declared*: `parseBody` answers 415 unless the content type is `application/json` or a `+json`
+suffix, which takes every route that reads a body out of CORS's simple-request set, so the browser
+preflights it; the rule is on the body, so a bare `POST` with nothing to declare still reaches the
+`emptyIs` path. The console's `src/lib/api.ts` satisfies all three without doing anything special.
+
 **The shell is Cando's, less the agent rail** (GRA-46). `src/components/shell/app-shell.tsx` mounts
 the `Sidebar` primitive off canvas at its own 16rem — the `sidebar_state` cookie it writes is read
 back by `src/lib/sidebar-state.ts`, ⌘B toggles it, and below `md` it is the drawer, closed on the

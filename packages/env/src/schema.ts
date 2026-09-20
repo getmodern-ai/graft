@@ -738,6 +738,23 @@ function urlProtocolOf(value: string): string | null {
 }
 
 /**
+ * A host a browser treats as a secure context over plain `http`, and therefore one a `Secure`
+ * cookie survives: the loopback names and addresses (Chrome's "potentially trustworthy origin",
+ * and Better Auth's own `isLoopbackHost` reads the same set). The two-port development loop is
+ * every one of these, which is why the rule below exempts them.
+ */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "::1" ||
+    host === "[::1]" ||
+    /^127\.\d+\.\d+\.\d+$/.test(host)
+  );
+}
+
+/**
  * A group of settings that only makes sense complete. Factored so a second hand-written copy of
  * this comparison is not where two groups drift — one of them getting the `present.length === 0`
  * case wrong and reporting every unconfigured deploy as broken.
@@ -925,6 +942,43 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
     smtpKeys,
   );
   if (partialSmtp) issues.push(partialSmtp);
+
+  /**
+   * A console answering somewhere other than the API needs the session cookie to cross sites, and
+   * a cross-site cookie must be `Secure` or the browser drops it. Over https it is; on a loopback
+   * host, which the two-port development loop is, the browser treats plain http as a secure
+   * context and keeps it. Anywhere else over plain http the cookie never lands and every sign-in fails with
+   * nothing on either side to say why, so the deployment is refused here instead (GRA-148). The
+   * attributes themselves are `@graft/auth`'s `sessionCookieAttributes`.
+   */
+  const cookieAuthUrl = typeof value.GRAFT_AUTH_URL === "string" ? value.GRAFT_AUTH_URL : null;
+  const cookieConsoleUrl =
+    typeof value.GRAFT_CONSOLE_URL === "string" ? value.GRAFT_CONSOLE_URL : null;
+  if (cookieAuthUrl !== null) {
+    const api = (() => {
+      try {
+        return new URL(cookieAuthUrl);
+      } catch {
+        return null;
+      }
+    })();
+    const consoleOrigin = (() => {
+      if (cookieConsoleUrl === null) return api?.origin ?? null;
+      try {
+        return new URL(cookieConsoleUrl).origin;
+      } catch {
+        return null;
+      }
+    })();
+    const elsewhere =
+      (consoleOrigin !== null && api !== null && consoleOrigin !== api.origin) ||
+      (Array.isArray(value.GRAFT_CORS_ORIGIN) && value.GRAFT_CORS_ORIGIN.length > 0);
+    if (api !== null && elsewhere && api.protocol === "http:" && !isLoopbackHost(api.hostname)) {
+      issues.push(
+        "A console on another origin than GRAFT_AUTH_URL needs a cross-site session cookie, which a browser keeps only over https or on a loopback host; serve GRAFT_AUTH_URL over https, or serve the console from the same origin and leave GRAFT_CORS_ORIGIN unset.",
+      );
+    }
+  }
 
   // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
   // package brings the sandbox, and a `fake` set beside it would be two answers to one question.

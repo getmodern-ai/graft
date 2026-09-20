@@ -991,6 +991,53 @@ describe("the bootstrapped admin (GRA-33)", () => {
   });
 });
 
+/**
+ * The deployment `@graft/auth`'s `sessionCookieAttributes` cannot produce a working cookie for
+ * (GRA-148): a console on another origin over plain http that no browser treats as secure.
+ */
+describe("a console on another origin over plain http", () => {
+  const refusal = /cross-site session cookie/;
+
+  it("is refused when the API's own origin is plain http and not loopback", () => {
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        GRAFT_AUTH_URL: "http://192.168.1.5:3000",
+        GRAFT_CONSOLE_URL: "http://192.168.1.9:3001",
+      }),
+    ).toEqual([expect.stringMatching(refusal)]);
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        GRAFT_AUTH_URL: "http://graft.corp.example",
+        GRAFT_CONSOLE_URL: "http://graft.corp.example",
+        GRAFT_CORS_ORIGIN: ["http://console.corp.example"],
+      }),
+    ).toEqual([expect.stringMatching(refusal)]);
+  });
+
+  it("passes on https, on one origin, and on the loopback hosts the two-port loop uses", () => {
+    for (const value of [
+      {
+        GRAFT_AUTH_URL: "https://app.getgraft.ai",
+        GRAFT_CONSOLE_URL: "https://console.getgraft.ai",
+      },
+      { GRAFT_AUTH_URL: "http://192.168.1.5:3000", GRAFT_CONSOLE_URL: "http://192.168.1.5:3000" },
+      { GRAFT_AUTH_URL: "http://localhost:3000", GRAFT_CONSOLE_URL: "http://localhost:3001" },
+      { GRAFT_AUTH_URL: "http://127.0.0.1:3000", GRAFT_CONSOLE_URL: "http://127.0.0.1:3001" },
+      { GRAFT_AUTH_URL: "http://localhost:3000", GRAFT_CORS_ORIGIN: ["http://localhost:3001"] },
+    ]) {
+      expect(serverEnvIssues({ ...SECRET, ...value })).toEqual([]);
+    }
+  });
+
+  it("says nothing about a URL that never parsed, which the field's own refusal covers", () => {
+    expect(
+      serverEnvIssues({ ...SECRET, GRAFT_AUTH_URL: "not a url", GRAFT_CONSOLE_URL: "nor this" }),
+    ).toEqual([]);
+  });
+});
+
 describe("GRAFT_MIGRATE_ON_START", () => {
   it("is on unless said otherwise, and reads a stringbool", () => {
     expect(migrateOnStart.parse(undefined)).toBe(true);

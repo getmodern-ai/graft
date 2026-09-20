@@ -148,6 +148,9 @@ const auth = createAuth({
   secret: env.GRAFT_AUTH_SECRET,
   baseURL: env.GRAFT_AUTH_URL,
   trustedOrigins: env.GRAFT_CORS_ORIGIN,
+  // Where the console answers, for the session cookie's attributes alone (GRA-148): same-origin
+  // with the API is `lax`, a console elsewhere is `none`. `@graft/auth`'s rule, not this file's.
+  consoleUrl: env.GRAFT_CONSOLE_URL,
   socialProviders: signInProviders,
   // The mail seam's backing (ADR 0021): the console transport under `open`, the private package's
   // under `cloud` — the selector chose it with the other four seams.
