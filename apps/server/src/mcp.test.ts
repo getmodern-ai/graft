@@ -361,6 +361,51 @@ describe("the MCP endpoint", () => {
       ]);
     });
 
+    it("never lets a hook that throws replace the client's answer", async () => {
+      const refusals: TransportRefusalEvent[] = [];
+      // A second harness whose hook throws: the 401 still carries its challenge.
+      const store = createFakeStore();
+      store.addAgent({ scopeMode: "listed", id: "agent_a", personId: "person_1", token: TOKEN_A });
+      const sandbox = createFakeSandboxBackend();
+      sandboxes.push(sandbox);
+      const throwing = createServer({
+        keys: null,
+        vault: { decrypt: async () => ({}) },
+        connections: { get: async () => null },
+        followRedirects: false,
+        mcp: {
+          ...createFakeDeps(store),
+          sandbox,
+          keys: null,
+          onTransportRefusal: (event) => {
+            refusals.push(event);
+            throw new Error("the drain is down");
+          },
+          proxyPublicUrl: "http://localhost:3000/api/proxy",
+          resourceMetadataUrl: "http://graft.test/.well-known/oauth-protected-resource/mcp",
+          checkModule: async () => ({
+            entry: null,
+            refusals: [],
+            advice: [],
+            annotations: { readOnly: true, destructive: false },
+          }),
+          runnerFiles: async () => [],
+          skills: async () => [],
+          readWebPage: async ({ url }) => ({ ok: false, url, error: "no network in this suite" }),
+          handoff: {
+            consoleUrl: "http://console.graft.test",
+            secret: "graft-server-test-handoff-secret-long-enough-32",
+            waitMs: 0,
+            ttlMs: 60_000,
+          },
+        },
+      });
+      const response = await throwing.request(MCP_MOUNT_PATH, post({}));
+      expect(response.status).toBe(401);
+      expect(response.headers.get("www-authenticate")).toContain("resource_metadata=");
+      expect(refusals).toHaveLength(1);
+    });
+
     it("tells the hook the SDK's sentence for a request the transport refuses, and nothing for one it answers", async () => {
       const { app, refusals } = harness();
       const opened = await app.request(
