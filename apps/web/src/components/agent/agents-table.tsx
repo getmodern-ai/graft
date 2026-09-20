@@ -65,8 +65,8 @@ export function AgentsTable({
           <TableHead className="hidden md:table-cell md:w-28">Idle window</TableHead>
           <TableHead className="w-26 md:w-36">Created</TableHead>
           <TableHead className="w-20 md:w-24">Status</TableHead>
-          <TableHead className="w-12 md:w-20">
-            <span className="sr-only md:not-sr-only">Actions</span>
+          <TableHead className="w-12">
+            <span className="sr-only">Actions</span>
           </TableHead>
         </TableRow>
       </TableHeader>
@@ -130,8 +130,10 @@ export function AgentsTable({
                     <TableCell>
                       <StatusChip chip={agentStatusChip(agent)} />
                     </TableCell>
-                    <TableCell className="py-1">
-                      <AgentActions agent={agent} />
+                    <TableCell className="p-0">
+                      <div className="flex justify-end px-2">
+                        <AgentActions agent={agent} />
+                      </div>
                     </TableCell>
                   </DataTableRow>
                 ))}
