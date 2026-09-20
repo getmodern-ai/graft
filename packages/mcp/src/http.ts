@@ -246,18 +246,20 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
     };
     const reopens = token?.startsWith(MCP_ACCESS_TOKEN_PREFIX) === true;
 
+    /** The session's request, once the session is known to be this agent's — never another's. */
+    const handleAs = (live: LiveSession, req: Request): Response | Promise<Response> =>
+      live.session.scope.agentId === scope.agentId
+        ? live.transport.handleRequest(req)
+        : unauthorized("session_mismatch", "This session was opened by another agent");
+
     const sessionId = request.headers.get("mcp-session-id");
     if (sessionId) {
       const live = sessions.get(sessionId);
-      if (live) {
-        if (live.session.scope.agentId !== scope.agentId) {
-          return unauthorized("session_mismatch", "This session was opened by another agent");
-        }
-        return live.transport.handleRequest(request);
-      }
+      if (live) return handleAs(live, request);
       if (!reopens) return jsonRpcError(404, -32001, "Session not found");
-      const reopened = await reopen(sessionId);
-      return reopened.transport.handleRequest(request);
+      // Two agents presenting one unknown id at once share the one re-open, and the second finds
+      // a session that is not its own: the same refusal as on a session it never opened.
+      return handleAs(await reopen(sessionId), request);
     }
 
     if (request.method !== "POST") {
@@ -268,8 +270,7 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
       // A chat product's client asking without a session: a session is opened for it and the
       // answer carries the id, so a client that adopts it continues.
       const id = generateSessionId();
-      const reopened = await reopen(id);
-      return reopened.transport.handleRequest(withSessionId(request, id));
+      return handleAs(await reopen(id), withSessionId(request, id));
     }
 
     // No session yet: this must be an `initialize`. The transport says so if it is not, in which
