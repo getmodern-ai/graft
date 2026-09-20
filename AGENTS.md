@@ -579,9 +579,15 @@ timestamp; existing agents remain unarchived. An empty agents table keeps its he
 full-width sentence, following Cando's connections table.
 
 **Agent harnesses** (GRA-135): the Harnesses column names `connectedVia.clientName`, recorded at
-OAuth consent (ADR 0018); a static-token agent says "Not recorded", never a name inferred from
-its label or a live status. Agent names are plain text. The drawer is deferred; existing
-`/agents/:agentId` links redirect to the table. Editing and archiving stay in the row's menu.
+OAuth consent (ADR 0018). Without a recorded harness it says "Not configured"; for an active agent
+that opens Connection details, also available in its actions menu. This label is a setup prompt,
+not a live connectivity check: static tokens carry no harness identity. The dialog shares creation's
+MCP instructions but cannot retrieve the token; it shows the prefix and a saved-token placeholder
+(ADR 0007). OAuth agents get the URL and consent instructions. Agent names remain plain text and
+the detail drawer is deferred; existing `/agents/:agentId` links redirect to the table.
+`GET /api/agents` includes `workingSetCount`, counted against each person-scoped agent in the same
+statement; the table shows count/cap with Cando's status dot. The dev-only `preview-agent-multiple`
+row previews three harness badges and a populated count; the API still records one OAuth origin.
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left

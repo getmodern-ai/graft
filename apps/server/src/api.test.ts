@@ -174,7 +174,7 @@ function agentDeps(): AgentDeps {
     findAgentForUpdate: vi.fn(async () => agentRow),
     findAgentByTokenHash: vi.fn(async () => agentRow),
     findAgentByMcpAccessTokenHash: vi.fn(async () => null),
-    listAgents: vi.fn(async () => [agentRow]),
+    listAgents: vi.fn(async () => [{ ...agentRow, workingSetCount: 0 }]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...agentRow, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
     archiveAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW, archivedAt: NOW })),
@@ -563,18 +563,19 @@ describe("agents", () => {
   it("hides archived agents by default, includes them on request, and keeps revoked agents visible", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
     vi.mocked(deps.agent.listAgents).mockResolvedValue([
-      agentRow,
-      { ...agentRow, id: "revoked", revokedAt: NOW },
-      { ...agentRow, id: "archived", revokedAt: NOW, archivedAt: NOW },
+      { ...agentRow, workingSetCount: 3 },
+      { ...agentRow, id: "revoked", revokedAt: NOW, workingSetCount: 1 },
+      { ...agentRow, id: "archived", revokedAt: NOW, archivedAt: NOW, workingSetCount: 0 },
     ]);
     const normal = (await (await app.request("/api/agents")).json()) as {
-      agents: { id: string }[];
+      agents: { id: string; workingSetCount: number }[];
     };
     expect(normal.agents.map((agent) => agent.id)).toEqual([agentRow.id, "revoked"]);
     const all = (await (await app.request("/api/agents?includeArchived=true")).json()) as {
-      agents: { id: string }[];
+      agents: { id: string; workingSetCount: number }[];
     };
     expect(all.agents.map((agent) => agent.id)).toEqual([agentRow.id, "revoked", "archived"]);
+    expect(all.agents.map((agent) => agent.workingSetCount)).toEqual([3, 1, 0]);
     expect(deps.agent.listAgents).toHaveBeenCalledWith(fakeDb, "person_1");
   });
 

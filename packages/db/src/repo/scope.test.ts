@@ -19,6 +19,7 @@ import {
   findAgentForUpdate,
   listAgentConnectionIds,
   listAgentIdsForConnection,
+  listAgents,
   listAllActiveAgents,
   listScopeConnectionIds,
   replaceAgentConnections,
@@ -97,6 +98,16 @@ const only = () => {
 };
 
 describe("agent-scoped reads take both ids of the scope in the statement", () => {
+  it("counts each agent's working set in the person's list statement", async () => {
+    await listAgents(db, "person_1");
+    const s = only();
+    expect(s.sql).toContain(
+      '(select count(*) from "working_set" where "working_set"."agent_id" = "agent"."id")',
+    );
+    expect(s.sql).toContain('where "agent"."person_id" = $1');
+    expect(s.params).toEqual(["person_1"]);
+  });
+
   it("the working set", async () => {
     await listWorkingSet(db, SCOPE);
     const s = only();

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Agent } from "@/lib/agent-queries";
 import { AgentActions } from "./agent-actions";
+import { AgentsTable } from "./agents-table";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -56,11 +57,22 @@ async function click(label: string) {
   await act(async () => control(label).click());
 }
 
-async function mount(value = agent) {
+async function mount(value = agent, table = false) {
   await act(async () =>
     root.render(
       <QueryClientProvider client={client}>
-        <AgentActions agent={value} />
+        {table ? (
+          <AgentsTable
+            agents={[{ ...value, workingSetCount: 5 }]}
+            isPending={false}
+            isError={false}
+            error={null}
+            retrying={false}
+            onRetry={() => {}}
+          />
+        ) : (
+          <AgentActions agent={value} />
+        )}
       </QueryClientProvider>,
     ),
   );
@@ -106,6 +118,79 @@ async function waitFor(check: () => void) {
 }
 
 describe("agent actions", () => {
+  it("reopens setup from the menu, copies configuration without a token and restores focus", async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    await mount();
+    const trigger = control("Actions for Laptop");
+    await click("Actions for Laptop");
+    await click("Connection details");
+    const dialog = document.querySelector("[role=dialog]");
+    expect(dialog?.textContent).toContain("Use your saved token");
+    expect(dialog?.textContent).toContain("grft_abc…");
+    expect(dialog?.textContent).toContain("It cannot be shown again.");
+    expect(dialog?.textContent).toContain("YOUR_AGENT_TOKEN");
+    expect(dialog?.textContent).not.toContain("—");
+    await click("Copy URL");
+    expect(copy).toHaveBeenLastCalledWith(`${window.location.origin}/mcp`);
+    await click("Copy configuration");
+    expect(JSON.parse(copy.mock.calls.at(-1)?.[0] ?? "{}")).toEqual({
+      mcpServers: {
+        graft: {
+          type: "http",
+          url: `${window.location.origin}/mcp`,
+          headers: { Authorization: expect.stringMatching(/^Bearer \$\{GRAFT_TOKEN\}$/) },
+        },
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    await click("Done");
+    await waitFor(() => expect(document.querySelector("[role=dialog]")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it.each([0, 1])("opens the same setup from Not configured in table layout %s", async (index) => {
+    await mount(agent, true);
+    expect(document.body.textContent).not.toContain("Not recorded");
+    const trigger = document.querySelectorAll<HTMLButtonElement>(
+      'button[aria-label="Not configured: connection details for Laptop"]',
+    )[index];
+    if (!trigger) throw new Error("Missing harness setup trigger");
+    await act(async () => {
+      trigger.focus();
+      trigger.click();
+    });
+    expect(document.querySelectorAll("[role=dialog]")).toHaveLength(1);
+    expect(document.querySelector("[role=dialog]")?.textContent).toContain("MCP configuration");
+    await click("Done");
+    await waitFor(() => expect(document.querySelector("[role=dialog]")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("shows OAuth connection instructions without a static-token placeholder", async () => {
+    await mount({
+      ...agent,
+      tokenPrefix: null,
+      connectedVia: { clientId: "claude", clientName: "Claude" },
+    });
+    await click("Actions for Laptop");
+    await click("Connection details");
+    const dialog = document.querySelector("[role=dialog]");
+    expect(dialog?.textContent).toContain("MCP server URL");
+    expect(dialog?.textContent).toContain("choose Laptop");
+    expect(dialog?.textContent).toContain("OAuth manages the token for you.");
+    expect(dialog?.textContent).not.toContain("YOUR_AGENT_TOKEN");
+    expect(dialog?.textContent).not.toContain("GRAFT_TOKEN");
+  });
+
+  it("offers no connection setup for a revoked agent", async () => {
+    await mount({ ...agent, revokedAt: "2026-09-20T00:00:00Z" }, true);
+    expect(document.querySelector('button[aria-label^="Not configured:"]')).toBeNull();
+    await click("Actions for Laptop");
+    expect(document.querySelector("[role=menu]")?.textContent).not.toContain("Connection details");
+  });
+
   it("cancels archiving without a request, then keeps a failed confirmation available to retry", async () => {
     let rejectArchive: (error: Error) => void = () => {};
     const pending = new Promise<Response>((_resolve, reject) => {

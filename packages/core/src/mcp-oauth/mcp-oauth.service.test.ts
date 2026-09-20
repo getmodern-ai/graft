@@ -239,7 +239,9 @@ function harness(overrides: { clock?: Date } = {}) {
     }),
     findAgentByTokenHash: vi.fn(async () => null),
     findAgentByMcpAccessTokenHash: deps.findAgentByMcpAccessTokenHash,
-    listAgents: vi.fn(async () => [...store.agents.values()]),
+    listAgents: vi.fn(async () =>
+      [...store.agents.values()].map((row) => ({ ...row, workingSetCount: 0 })),
+    ),
     updateAgent: vi.fn(async () => null),
     revokeAgent: vi.fn(async () => null),
     archiveAgent: vi.fn(async () => null),

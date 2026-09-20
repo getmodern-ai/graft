@@ -1,17 +1,23 @@
-import { Fragment } from "react";
+import { Fragment, useRef, useState } from "react";
 
 import { AgentActions } from "@/components/agent/agent-actions";
+import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
 import { RetryNotice } from "@/components/retry-notice";
 import { StatusChip } from "@/components/status-chip";
 import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states";
 import { Time } from "@/components/time";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { DataTable, DataTableRow, DataTableSubHeader } from "@/components/ui/data-table";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { Agent } from "@/lib/agent-queries";
+import type { AgentListItem } from "@/lib/agent-queries";
 import { count } from "@/lib/format";
 import { agentStatusChip } from "@/lib/status-chips";
+import { cn } from "@/lib/utils";
 
 const COLUMNS = 8;
+
+export type AgentTableRow = AgentListItem & { harnessNames?: readonly string[] };
 
 /**
  * The recorded OAuth client names the harness (ADR 0018); static tokens record no client.
@@ -26,7 +32,7 @@ export function AgentsTable({
   retrying,
   onRetry,
 }: {
-  agents: readonly Agent[];
+  agents: readonly AgentTableRow[];
   isPending: boolean;
   isError: boolean;
   error: unknown;
@@ -44,9 +50,9 @@ export function AgentsTable({
       <TableHeader>
         <TableRow>
           <TableHead>Agent</TableHead>
-          <TableHead className="hidden md:table-cell md:w-36">Harnesses</TableHead>
+          <TableHead className="hidden md:table-cell md:w-36 xl:w-60">Harnesses</TableHead>
           <TableHead className="hidden xl:table-cell xl:w-36">Token</TableHead>
-          <TableHead className="hidden lg:table-cell lg:w-24">Cap</TableHead>
+          <TableHead className="hidden lg:table-cell lg:w-32">Working set</TableHead>
           <TableHead className="hidden lg:table-cell lg:w-28">Idle window</TableHead>
           <TableHead className="w-26 md:w-36">Created</TableHead>
           <TableHead className="w-20 md:w-24">Status</TableHead>
@@ -84,17 +90,12 @@ export function AgentsTable({
                   <DataTableRow key={agent.id}>
                     <TableCell className="truncate">
                       <span>{agent.name}</span>
-                      <span className="block truncate text-muted-foreground text-xs md:hidden">
-                        {agent.connectedVia?.clientName ?? "Not recorded"}
-                      </span>
+                      <div className="mt-1 md:hidden">
+                        <AgentHarnesses agent={agent} />
+                      </div>
                     </TableCell>
-                    <TableCell
-                      className="hidden truncate md:table-cell"
-                      title={agent.connectedVia?.clientName}
-                    >
-                      {agent.connectedVia?.clientName ?? (
-                        <span className="text-muted-foreground">Not recorded</span>
-                      )}
+                    <TableCell className="hidden md:table-cell">
+                      <AgentHarnesses agent={agent} />
                     </TableCell>
                     <TableCell className="hidden xl:table-cell">
                       {agent.tokenPrefix ? (
@@ -104,7 +105,29 @@ export function AgentsTable({
                       )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
-                      {count(agent.workingSetCap, "tool")}
+                      <span
+                        className="flex items-center gap-2"
+                        title={`${agentStatusChip(agent).label} · ${agent.workingSetCount} tools in working set, cap ${agent.workingSetCap}`}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "size-2 shrink-0 rounded-full",
+                            agent.archivedAt
+                              ? "bg-muted-foreground"
+                              : agent.revokedAt
+                                ? "bg-destructive"
+                                : "bg-success",
+                          )}
+                        />
+                        <span className="tabular-nums">
+                          <span className="sr-only">Working set: </span>
+                          {agent.workingSetCount}
+                          <span aria-hidden="true">/</span>
+                          <span className="sr-only"> tools, cap </span>
+                          {agent.workingSetCap}
+                        </span>
+                      </span>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {count(agent.idleWindowDays, "day")}
@@ -128,5 +151,45 @@ export function AgentsTable({
         )}
       </TableBody>
     </DataTable>
+  );
+}
+
+function AgentHarnesses({ agent }: { agent: AgentTableRow }) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [connecting, setConnecting] = useState(false);
+  const active = !agent.revokedAt && !agent.archivedAt;
+  const names = agent.harnessNames ?? (agent.connectedVia ? [agent.connectedVia.clientName] : []);
+  if (names.length === 0) {
+    if (!active) return <span className="text-muted-foreground">Not configured</span>;
+    return (
+      <>
+        <Button
+          ref={trigger}
+          variant="link"
+          className="h-auto p-0 text-muted-foreground"
+          aria-label={`Not configured: connection details for ${agent.name}`}
+          onClick={() => setConnecting(true)}
+        >
+          Not configured
+        </Button>
+        {connecting ? (
+          <AgentConnectionDialog
+            agent={agent}
+            onClose={() => setConnecting(false)}
+            returnFocus={trigger}
+          />
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {names.map((name) => (
+        <Badge key={name} variant="outline">
+          {name}
+        </Badge>
+      ))}
+    </div>
   );
 }

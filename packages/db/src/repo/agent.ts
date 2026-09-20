@@ -1,8 +1,9 @@
-import { and, asc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, exists, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent, agentConnection, type NewAgent } from "../schema/agent";
 import { connection } from "../schema/connection";
+import { workingSet } from "../schema/working-set";
 import type { AgentScope } from "./scope";
 
 /**
@@ -12,6 +13,7 @@ import type { AgentScope } from "./scope";
  */
 
 export type AgentRow = typeof agent.$inferSelect;
+export type AgentListRow = AgentRow & { workingSetCount: number };
 export type AgentPatch = Partial<
   Pick<AgentRow, "name" | "workingSetCap" | "idleWindowDays" | "scopeMode">
 >;
@@ -92,9 +94,13 @@ export async function findAgentForUpdate(
 }
 
 /** Every agent of a person, revoked ones included, oldest first. */
-export async function listAgents(db: DbOrTx, personId: string): Promise<AgentRow[]> {
+export async function listAgents(db: DbOrTx, personId: string): Promise<AgentListRow[]> {
   return db
-    .select()
+    .select({
+      ...getTableColumns(agent),
+      // The count follows the person-scoped agent in this statement (ADR 0007).
+      workingSetCount: db.$count(workingSet, eq(workingSet.agentId, agent.id)),
+    })
     .from(agent)
     .where(eq(agent.personId, personId))
     .orderBy(asc(agent.createdAt), asc(agent.id));
