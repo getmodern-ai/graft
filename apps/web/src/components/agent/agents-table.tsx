@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { Fragment } from "react";
 
 import { AgentActions } from "@/components/agent/agent-actions";
 import { RetryNotice } from "@/components/retry-notice";
@@ -6,7 +7,7 @@ import { StatusChip } from "@/components/status-chip";
 import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
-import { DataTable, DataTableRow } from "@/components/ui/data-table";
+import { DataTable, DataTableRow, DataTableSubHeader } from "@/components/ui/data-table";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Agent } from "@/lib/agent-queries";
 import { count } from "@/lib/format";
@@ -49,6 +50,12 @@ export function AgentsTable({
   retrying: boolean;
   onRetry: () => void;
 }) {
+  const groups = [
+    { label: "Active", agents: agents.filter((agent) => !agent.archivedAt && !agent.revokedAt) },
+    { label: "Revoked", agents: agents.filter((agent) => !agent.archivedAt && agent.revokedAt) },
+    { label: "Archived", agents: agents.filter((agent) => agent.archivedAt) },
+  ];
+
   return (
     <DataTable layout="grid">
       <TableHeader>
@@ -78,46 +85,56 @@ export function AgentsTable({
             />
           </TableBodyNote>
         ) : (
-          agents.map((agent) => (
-            <DataTableRow key={agent.id}>
-              <TableCell className="truncate">
-                <Link
-                  to="/agents/$agentId"
-                  params={{ agentId: agent.id }}
-                  className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                >
-                  {agent.name}
-                </Link>
-                {agent.connectedVia ? (
-                  <Badge variant="outline" className="ml-2 align-middle">
-                    {agent.connectedVia.clientName}
-                  </Badge>
-                ) : null}
-              </TableCell>
-              <TableCell className="hidden md:table-cell">
-                {agent.tokenPrefix ? (
-                  <code className="font-mono text-xs">{agent.tokenPrefix}…</code>
-                ) : (
-                  <span className="text-muted-foreground">OAuth</span>
-                )}
-              </TableCell>
-              <TableCell className="hidden md:table-cell">
-                {count(agent.workingSetCap, "tool")}
-              </TableCell>
-              <TableCell className="hidden md:table-cell">
-                {count(agent.idleWindowDays, "day")}
-              </TableCell>
-              <TableCell className="truncate text-muted-foreground">
-                <Time iso={agent.createdAt} />
-              </TableCell>
-              <TableCell>
-                <StatusChip chip={agentStatusChip(agent)} />
-              </TableCell>
-              <TableCell className="py-1">
-                <AgentActions agent={agent} />
-              </TableCell>
-            </DataTableRow>
-          ))
+          groups.map((group) =>
+            group.agents.length > 0 ? (
+              <Fragment key={group.label}>
+                {/* Cando's members-panel.tsx BandRow: a full-width child left-aligns the label. */}
+                <DataTableSubHeader colSpan={COLUMNS}>
+                  <span className="w-full font-medium">{group.label}</span>
+                </DataTableSubHeader>
+                {group.agents.map((agent) => (
+                  <DataTableRow key={agent.id}>
+                    <TableCell className="truncate">
+                      <Link
+                        to="/agents/$agentId"
+                        params={{ agentId: agent.id }}
+                        className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                      >
+                        {agent.name}
+                      </Link>
+                      {agent.connectedVia ? (
+                        <Badge variant="outline" className="ml-2 align-middle">
+                          {agent.connectedVia.clientName}
+                        </Badge>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {agent.tokenPrefix ? (
+                        <code className="font-mono text-xs">{agent.tokenPrefix}…</code>
+                      ) : (
+                        <span className="text-muted-foreground">OAuth</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {count(agent.workingSetCap, "tool")}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {count(agent.idleWindowDays, "day")}
+                    </TableCell>
+                    <TableCell className="truncate text-muted-foreground">
+                      <Time iso={agent.createdAt} />
+                    </TableCell>
+                    <TableCell>
+                      <StatusChip chip={agentStatusChip(agent)} />
+                    </TableCell>
+                    <TableCell className="py-1">
+                      <AgentActions agent={agent} />
+                    </TableCell>
+                  </DataTableRow>
+                ))}
+              </Fragment>
+            ) : null,
+          )
         )}
       </TableBody>
     </DataTable>
