@@ -231,6 +231,26 @@ describe("the MCP endpoint", () => {
       expect(await hijack.json()).toMatchObject({ reason: "session_mismatch" });
     });
 
+    it("re-opens once for concurrent requests under one stale id, and the session survives them", async () => {
+      const { app } = harness();
+      const stale = "one-stale-id-two-requests";
+      const request = () =>
+        app.request(
+          MCP_MOUNT_PATH,
+          post({ authorization: `Bearer ${TOKEN_A_OAUTH}`, "mcp-session-id": stale }, listTools),
+        );
+      const [first, second] = await Promise.all([request(), request()]);
+      expect([first.status, second.status]).toEqual([200, 200]);
+      expect(first.headers.get("mcp-session-id")).toBe(stale);
+      expect(second.headers.get("mcp-session-id")).toBe(stale);
+      // A third request finds the one session both were answered from.
+      const third = await request();
+      expect(third.status).toBe(200);
+      expect((await readText(third)).result?.tools?.map((tool) => tool.name)).toContain(
+        "find_tool",
+      );
+    });
+
     it("answers a session-less request that is not an initialize, carrying the id it opened", async () => {
       const { app } = harness();
       const response = await app.request(

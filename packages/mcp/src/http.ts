@@ -161,6 +161,11 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
     deps.notifier ??
     createToolListChangedNotifier({ windowMs: deps.listChangedWindowMs });
   const sessions = new Map<string, LiveSession>();
+  /**
+   * Re-opens in flight, by session id: a client's frame sends its requests under one stale id
+   * back to back, and two must not each open a session under it, with one overwriting the other.
+   */
+  const reopening = new Map<string, Promise<LiveSession>>();
   const ctx = { db: deps.db };
   const app = new Hono();
 
@@ -198,14 +203,17 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
     /** A session and its transport, registered under the id the transport settles on. */
     const open = async (sessionId?: string): Promise<LiveSession> => {
       const session = createAgentSession(deps, scope, notifier);
+      // A closing transport removes the map's entry only while the entry is its own: a session
+      // re-opened under the same id meanwhile is not its to remove.
+      const forget = (id: string) => {
+        if (sessions.get(id)?.transport === transport) sessions.delete(id);
+      };
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: sessionId === undefined ? generateSessionId : () => sessionId,
         onsessioninitialized: (id) => {
           sessions.set(id, { transport, session });
         },
-        onsessionclosed: (id) => {
-          sessions.delete(id);
-        },
+        onsessionclosed: forget,
       });
       await session.server.connect(transport);
       // `connect` installed its own `transport.onclose`, which calls this; the session's own
@@ -213,17 +221,28 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
       const detach = session.server.onclose;
       session.server.onclose = () => {
         detach?.();
-        if (transport.sessionId) sessions.delete(transport.sessionId);
+        if (transport.sessionId) forget(transport.sessionId);
       };
       return { transport, session };
     };
-    /** A session opened under `sessionId` and primed as if its client had initialised it (the header's paragraph on re-opening). */
-    const reopen = async (sessionId: string): Promise<LiveSession> => {
-      const live = await open(sessionId);
-      const primed = await live.transport.handleRequest(syntheticInitialize(request));
-      // The transport marked itself initialised before answering; the answer itself is nobody's.
-      await primed.body?.cancel();
-      return live;
+    /**
+     * A session opened under `sessionId` and primed as if its client had initialised it (the
+     * header's paragraph on re-opening); concurrent requests under one id share the one re-open.
+     */
+    const reopen = (sessionId: string): Promise<LiveSession> => {
+      const inFlight = reopening.get(sessionId);
+      if (inFlight) return inFlight;
+      const opening = (async () => {
+        const live = await open(sessionId);
+        const primed = await live.transport.handleRequest(syntheticInitialize(request));
+        // The transport marked itself initialised before answering; the answer itself is nobody's.
+        await primed.body?.cancel();
+        return live;
+      })().finally(() => {
+        reopening.delete(sessionId);
+      });
+      reopening.set(sessionId, opening);
+      return opening;
     };
     const reopens = token?.startsWith(MCP_ACCESS_TOKEN_PREFIX) === true;
 
