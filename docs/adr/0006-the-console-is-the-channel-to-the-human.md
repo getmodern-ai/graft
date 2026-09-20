@@ -276,3 +276,27 @@ that show a form. `acquire` still asks once per agent per connection; the connec
 still offers the build approval on by default (ADR 0008 as amended 2026-09-18, GRA-75), on the card as
 on the page. Hermes renders no apps; its skill names `awaiting_scope` beside the other handoffs and
 is otherwise untouched.
+
+## Amendment 2026-09-21: the handoff link opens a focused page, not the console
+
+The console is still the channel to the human, and a handoff URL is still `/pending/<id>?t=<token>`
+on every answer, checked by the server against the row and by the guard against the session. What
+changes is the page the link opens (GRA-144). It was the console: the pending action inside the
+shell, sidebar and nav around one card. A person driving Graft from a terminal — Hermes for a
+connection or a secret, OpenClaw for every ask, since it elicits nothing — was in a terminal a
+moment ago, and the whole console is a heavy page for one button. Aleks, 2026-09-21: "we don't have
+to go down the path of cards for them, but small popups (instead of full console) will suffice."
+
+**The rule.** The pending-action detail route sits under the guard alone, outside the shell: the
+mark, the one ask's card, a link to the console, nothing else. Once answered, a link visit closes
+itself — the card popup tells its opener first, as the 2026-09-18 amendment's contract says — and a
+tab the browser will not close shows an answered state instead. A visit without a token goes back
+to the list. **Pending actions in the console is unchanged**: it renders every open ask inline with
+the chrome and remains the place to browse and answer later. The URL, the card contract
+(`card.rules.ts`), the handoff builder and the server routes do not change, so nothing an agent, a
+skill or a card relays moves.
+
+**Unchanged.** ADR 0004: the secret is still typed on Graft's own page and nowhere else; the page
+lost its chrome, not its guard or its token check. Elicitation keeps its place before the handoff
+for the clients that show a form; this is the surface for the steps that must be a link.
+
