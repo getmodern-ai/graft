@@ -5,6 +5,11 @@ import type { ServiceContext } from "../context";
 import { orNotFound, ServiceError } from "../errors";
 import { type AgentScope, mintAgentToken, type Principal } from "../tenancy";
 import type { AgentDeps } from "./agent.deps";
+import {
+  AGENT_NAME_MAX_LENGTH,
+  IDLE_WINDOW_DAYS_RANGE,
+  WORKING_SET_CAP_RANGE,
+} from "./agent.rules";
 
 /**
  * Agents (CONTEXT.md; ADR 0007): create with a token shown once, list, revoke, tune the cap and
@@ -30,9 +35,7 @@ import type { AgentDeps } from "./agent.deps";
 export type { AgentScopeMode };
 
 /** Bounds the console form and the API share — the schema's columns are unbounded on purpose. */
-export const AGENT_NAME_MAX_LENGTH = 100;
-export const WORKING_SET_CAP_RANGE = { min: 1, max: 500 } as const;
-export const IDLE_WINDOW_DAYS_RANGE = { min: 1, max: 3650 } as const;
+export { AGENT_NAME_MAX_LENGTH, IDLE_WINDOW_DAYS_RANGE, WORKING_SET_CAP_RANGE };
 
 /** The MCP client an agent was connected from, as the wire sees it (ADR 0018); null for a console-made agent. */
 export type AgentConnectedViaOutput = { clientId: string; clientName: string };
