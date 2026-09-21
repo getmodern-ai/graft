@@ -122,6 +122,7 @@ USER graft
 WORKDIR /app/apps/server
 EXPOSE 3000
 
-# `dist/keys.mjs` beside it mints the secrets a `.env` needs:
+# `dist/keys.mjs` beside it mints every secret a `.env` needs, the bootstrapped admin's password
+# included (GRA-148), so no default for one lives in the compose file:
 #   docker compose run --rm --no-deps graft node dist/keys.mjs
 CMD ["node", "dist/index.mjs"]

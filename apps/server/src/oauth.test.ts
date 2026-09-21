@@ -189,6 +189,8 @@ beforeAll(async () => {
         modelKey: fakeModelKeyDeps(),
       },
       corsOrigins: [],
+      // The origin the console submits from, which the origin check reads (GRA-148).
+      authUrl: AUTH_URL,
       handoff,
       notifier: apiNotifier,
       oauth: {
@@ -233,11 +235,19 @@ function body(result: CallToolResult): Record<string, unknown> {
   return JSON.parse(first.text);
 }
 
+/**
+ * Every state-changing request under `/api` names an origin this deployment serves the console on
+ * (GRA-148, `origin-guard.ts`); here that is the server's own, as it is wherever the console is
+ * served same-origin (`console.ts`).
+ */
 const json = (value: unknown, method = "POST") => ({
   method,
-  headers: { "content-type": "application/json" },
+  headers: { "content-type": "application/json", origin: AUTH_URL },
   body: JSON.stringify(value),
 });
+
+/** A mutation with no body, a revoke, from the same origin. */
+const from = (method: "POST" | "PUT" | "DELETE") => ({ method, headers: { origin: AUTH_URL } });
 
 type ConnectionWire = {
   id: string;
@@ -690,9 +700,7 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
       updatedAt: new Date(),
     });
 
-    const revoked = await app.request(`/api/connections/${connectionId}/revoke`, {
-      method: "POST",
-    });
+    const revoked = await app.request(`/api/connections/${connectionId}/revoke`, from("POST"));
     expect(revoked.status).toBe(200);
     expect(await revoked.json()).toMatchObject({
       connection: { id: connectionId, credentialSetAt: null, revokedAt: expect.any(String) },

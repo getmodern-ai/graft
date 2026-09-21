@@ -36,6 +36,7 @@ first real call. That is the gap.
   without public documentation are out of reach, deliberately.
 - **Dropping the broker drops brokered OAuth.** Authorization-code OAuth becomes Graft's problem;
   ADR 0005 answers it.
-- **Executor.sh's own history is the warning.** Its custom-tools plugin, the nearest thing to this
-  loop, was merged in July 2026 and deleted three weeks later as "coming back better". The loop is
-  hard to get right; the rest of this record is how.
+- **The loop is the hard part.** Reading a vendor's documentation, writing a module that reaches it
+  only through the proxy, proving it with reads, stopping its writes until a person has said yes and
+  promoting it into a working set that later contracts is the whole product, and every one of those
+  steps can fail quietly. The rest of this record is how each is made to fail loudly or not at all.
