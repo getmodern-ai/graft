@@ -83,6 +83,13 @@ import {
   isProviderLinkFallback,
   startProviderLink,
 } from "./provider-link";
+import {
+  apiDoorKey,
+  NO_RATE_LIMITING,
+  type RateLimiting,
+  rateLimit,
+  signInDoorKey,
+} from "./rate-limit";
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -199,6 +206,12 @@ export type ApiOptions = {
    * `index.ts` binds `mcp.notifier`, and without it a revoke changes the list silently.
    */
   notifier?: Pick<ToolListChangedNotifier, "changed">;
+  /**
+   * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two doors under `/api`:
+   * `sign_in` over Better Auth's writes and `api` over this app's mutations. `createServer` hands
+   * it down; absent, `NO_RATE_LIMITING` and every door open, which is the default in both forms.
+   */
+  rateLimit?: RateLimiting;
 };
 
 /**
@@ -511,6 +524,18 @@ export function createApi(options: ApiOptions): Hono {
       corsOrigins: options.corsOrigins,
     }),
   );
+
+  /**
+   * The two rate-limited doors under `/api` (GRA-149), below the origin guard so a refused origin
+   * counts nothing, and above every route of this app because Hono
+   * runs middleware in registration order: Better Auth's writes keyed by the caller's address,
+   * and this app's own mutations keyed by the person whose session made them. Unlimited by
+   * default in both forms, in which case neither reads a header or resolves a session
+   * (`rate-limit.ts`).
+   */
+  const rateLimiting = options.rateLimit ?? NO_RATE_LIMITING;
+  api.use("/auth/*", rateLimit(rateLimiting.limiter, "sign_in", signInDoorKey(rateLimiting)));
+  api.use("*", rateLimit(rateLimiting.limiter, "api", apiDoorKey(options.auth.getSession)));
 
   /**
    * The console's product events, one chokepoint (GRA-100): after a tracked mutation has answered

@@ -627,6 +627,62 @@ export const adminKeys = ["GRAFT_ADMIN_EMAIL", "GRAFT_ADMIN_PASSWORD"] as const;
 export const migrateOnStart = z.stringbool().default(true);
 
 /**
+ * A rate-limit bucket's setting (GRA-149; `@graft/ratelimit`): `<limit>/<windowSeconds>`, so
+ * `20/60` is twenty requests a minute. One variable per bucket, each independently optional and
+ * **off by default in both forms**: the decision is that a self-host is unlimited unless its
+ * operator says otherwise, and the hosted form brings its own numbers from the private backings
+ * package. Not a group, because the buckets guard different doors and an operator who wants a
+ * limit on registration alone should not have to invent five others; a variable that is set is
+ * read on its own, and setting none leaves `UNLIMITED` behind the seam.
+ *
+ * Both halves are whole numbers of at least 1. A limit of 0 is not "no requests" but a variable
+ * nobody meant to write, and a window of 0 has no rate in it at all.
+ */
+export function rateLimitWindow(name: string) {
+  return z
+    .string()
+    .transform((raw, ctx) => {
+      const match = /^(\d+)\s*\/\s*(\d+)$/.exec(raw.trim());
+      const limit = Number(match?.[1]);
+      const windowSeconds = Number(match?.[2]);
+      if (!match || !Number.isInteger(limit) || !Number.isInteger(windowSeconds)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} must be <limit>/<windowSeconds>, both whole numbers — 20/60 is twenty requests a minute`,
+        });
+        return z.NEVER;
+      }
+      if (limit < 1 || windowSeconds < 1) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} must be <limit>/<windowSeconds>, both at least 1 — unset the variable to leave this door unlimited`,
+        });
+        return z.NEVER;
+      }
+      return { limit, windowSeconds };
+    })
+    .optional();
+}
+
+/**
+ * How many proxies sit between a caller and this process, for the buckets keyed on a client
+ * address (GRA-149). Unset, the default: the address is the socket's peer, which nobody but the
+ * network can choose. Set to `n`, the address is the `n`-th entry counting from the right of
+ * `X-Forwarded-For`, which is the caller's own address when exactly `n` trusted proxies appended
+ * one each.
+ *
+ * Never trusted by default, and this is the whole reason the variable exists: anyone may send
+ * `X-Forwarded-For`, so a server that read it unasked would key its limits on a value the caller
+ * picks, and one address could spend every other address's allowance or none of its own. Only an
+ * operator knows how many hops are really in front, so only an operator may say.
+ */
+export const trustedProxyHops = z.coerce
+  .number()
+  .int("GRAFT_TRUSTED_PROXY_HOPS must be a whole number of proxies in front of this server")
+  .min(0, "GRAFT_TRUSTED_PROXY_HOPS must be 0 or more; 0 means X-Forwarded-For is never read")
+  .default(0);
+
+/**
  * The gateway provider (ADR 0019, GRA-58): a company's API gateway fronts the vendors it covers and
  * holds their credentials, and a vendor whose hosts it covers connects with no person step and
  * relays every call through it. Four settings, all-or-nothing (`gatewayKeys`) and off by default —
@@ -1137,6 +1193,21 @@ export const serverSchema = {
 
   /** Whether the boot applies the committed migrations — see `migrateOnStart`. */
   GRAFT_MIGRATE_ON_START: migrateOnStart,
+
+  /**
+   * One rate-limit bucket per door, each `<limit>/<windowSeconds>`, each independently optional
+   * and every one of them off by default — see `rateLimitWindow` (GRA-149, `@graft/ratelimit`).
+   * Set none and the seam is `UNLIMITED`; set any and the in-process backing counts those alone.
+   */
+  GRAFT_RATE_LIMIT_SIGN_IN: rateLimitWindow("GRAFT_RATE_LIMIT_SIGN_IN"),
+  GRAFT_RATE_LIMIT_OAUTH_REGISTER: rateLimitWindow("GRAFT_RATE_LIMIT_OAUTH_REGISTER"),
+  GRAFT_RATE_LIMIT_OAUTH_TOKEN: rateLimitWindow("GRAFT_RATE_LIMIT_OAUTH_TOKEN"),
+  GRAFT_RATE_LIMIT_MCP: rateLimitWindow("GRAFT_RATE_LIMIT_MCP"),
+  GRAFT_RATE_LIMIT_PROXY: rateLimitWindow("GRAFT_RATE_LIMIT_PROXY"),
+  GRAFT_RATE_LIMIT_API: rateLimitWindow("GRAFT_RATE_LIMIT_API"),
+
+  /** How far right in `X-Forwarded-For` the client's address is, 0 meaning never read it — see `trustedProxyHops`. */
+  GRAFT_TRUSTED_PROXY_HOPS: trustedProxyHops,
 };
 
 /**

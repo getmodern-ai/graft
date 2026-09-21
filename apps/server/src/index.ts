@@ -372,6 +372,16 @@ const app = createServer({
   keys,
   vault,
   connections,
+  /**
+   * The rate limit at each door (GRA-149; ADR 0018's "a rate limit at the edge"). `UNLIMITED`
+   * unless a `GRAFT_RATE_LIMIT_*` variable said otherwise, which is the decision: a self-host is
+   * unlimited by default and the hosted form brings its own numbers. The hops are how far right in
+   * `X-Forwarded-For` a caller's address is, and 0 means the header is never read.
+   */
+  rateLimit: {
+    limiter: backings.rateLimiter,
+    trustedProxyHops: env.GRAFT_TRUSTED_PROXY_HOPS,
+  },
   // An authorization-code token the proxy refreshes goes back into the row it came from (ADR 0005).
   credentialRotation: createDatabaseCredentialRotation(db, connectionDeps),
   followRedirects: env.GRAFT_PROXY_FOLLOW_REDIRECTS,
@@ -454,6 +464,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
       modelSetup.summary +
       `, ${describeObservability(backings)}` +
+      `, rate limit ${backings.rateLimiter.name}` +
       `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );
