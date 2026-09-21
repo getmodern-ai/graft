@@ -7,11 +7,14 @@
  * and rotating the token is one `export` rather than an edit.
  *
  * Each harness has its own shape (GRA-152): Hermes reads YAML under `mcp_servers` in
- * `~/.hermes/config.yaml` and resolves `${GRAFT_TOKEN}` from `~/.hermes/.env`; OpenClaw and every
- * other MCP client take the JSON `mcpServers` block and the variable from their environment. On
- * 2026-09-21 the console showed the JSON alone and a Hermes person rewrote it as YAML by hand. The
- * docs site's harness pages are the source of each shape, and what this file renders is what they
- * show, byte for byte, with the deployment's origin in place of `https://app.getgraft.ai`.
+ * `~/.hermes/config.yaml` and resolves `${GRAFT_TOKEN}` from `~/.hermes/.env`; OpenClaw reads its
+ * own JSON under `mcp.servers` in `~/.openclaw/openclaw.json`, the transport named outright, and
+ * the variable from `~/.openclaw/.env` on the Gateway host (GRA-161 — until 2026-09-22 the console
+ * handed OpenClaw the generic block, which its loader does not read); every other MCP client takes
+ * the generic JSON `mcpServers` block and the variable from its environment. On 2026-09-21 the
+ * console showed the JSON alone and a Hermes person rewrote it as YAML by hand. The docs site's
+ * harness pages are the source of each shape, and what this file renders is what they show, byte
+ * for byte, with the deployment's origin in place of `https://app.getgraft.ai`.
  */
 
 export const TOKEN_ENV_VAR = "GRAFT_TOKEN";
@@ -69,6 +72,26 @@ export function hermesEnvLine(token = "YOUR_AGENT_TOKEN"): string {
   return `${TOKEN_ENV_VAR}=${token}`;
 }
 
+/**
+ * OpenClaw's entry for `~/.openclaw/openclaw.json` (GRA-161): its native `mcp.servers` schema
+ * with the transport said outright — docs.openclaw.ai/tools/mcp — and the token as `${GRAFT_TOKEN}`,
+ * which its config loader expands from the Gateway host's `~/.openclaw/.env`.
+ */
+export function openclawConfigSnippet(origin: string): string {
+  const block = {
+    mcp: {
+      servers: {
+        graft: {
+          url: mcpEndpointUrl(origin),
+          transport: "streamable-http",
+          headers: { Authorization: `Bearer \${${TOKEN_ENV_VAR}}` },
+        },
+      },
+    },
+  };
+  return JSON.stringify(block, null, 2);
+}
+
 export type SetupBlock = { label: string; code: string; copyLabel: string; hint: string };
 
 /**
@@ -98,6 +121,22 @@ export function harnessSetup(
       },
     };
   }
+  if (harness === "openclaw") {
+    return {
+      token: {
+        label: "Add your token to ~/.openclaw/.env",
+        code: hermesEnvLine(token),
+        copyLabel: "Copy line",
+        hint: `${replace}The Gateway host's .env is where OpenClaw expands \${${TOKEN_ENV_VAR}} from; a token exported in an unrelated terminal never reaches a running Gateway.`,
+      },
+      config: {
+        label: "Add to ~/.openclaw/openclaw.json",
+        code: openclawConfigSnippet(origin),
+        copyLabel: "Copy configuration",
+        hint: "Merge the graft entry under mcp.servers, keeping any servers already there, then restart the Gateway that owns your conversations (openclaw mcp reload refreshes a running runtime after a config-only change).",
+      },
+    };
+  }
   return {
     token: {
       label: "Set your token",
@@ -109,10 +148,7 @@ export function harnessSetup(
       label: "MCP configuration",
       code: mcpServersSnippet(origin),
       copyLabel: "Copy configuration",
-      hint:
-        harness === "openclaw"
-          ? `Add this to OpenClaw's mcpServers block. OpenClaw expands \${${TOKEN_ENV_VAR}} from its environment.`
-          : `Add this to your client's MCP configuration. It reads your token from ${TOKEN_ENV_VAR}.`,
+      hint: `Add this to your client's MCP configuration. It reads your token from ${TOKEN_ENV_VAR}.`,
     },
   };
 }
