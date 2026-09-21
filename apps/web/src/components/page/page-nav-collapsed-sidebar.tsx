@@ -29,9 +29,10 @@ export function PageNavCollapsedSidebar({ separator = true }: { separator?: bool
   return (
     <div data-slot="page-nav-collapsed-sidebar" className="flex h-8 w-14 items-center gap-2">
       <SidebarToggle className="size-8" />
-      {/* An explicit height wins over the base `self-stretch`, keeping the rule at 24px inside
-          this 32px row. */}
-      {separator ? <Separator orientation="vertical" className="h-6" /> : null}
+      {/* Override the separator's stretch alignment to center the 24px rule in this 32px row. */}
+      {separator ? (
+        <Separator orientation="vertical" className="h-6 data-vertical:self-center" />
+      ) : null}
     </div>
   );
 }
