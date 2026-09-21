@@ -3,6 +3,9 @@
 Graft's core is Apache-2.0 (`LICENSE`) and everything under `skills/` is MIT (`skills/LICENSE`).
 ADR 0022 under `docs/adr/` is why.
 
+Everyone taking part in this repository, in issues, pull requests and review, is asked to follow
+the code of conduct in `CODE_OF_CONDUCT.md`, the Contributor Covenant 2.1.
+
 ## Running it
 
 `AGENTS.md` is the guide for anyone working in this repository. Its **Commands** section has the
