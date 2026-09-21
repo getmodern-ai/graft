@@ -109,7 +109,11 @@ describe("similarTools", () => {
         listThenDelete,
       ),
     ).toEqual([]);
-    // "reply" is a noun as often as a verb: a goal about mail to reply to still reads.
+    // A verb with a noun sense counts when it leads the goal and not otherwise: "Mark the message
+    // read" and "Reply to the latest email" write; a goal about mail to reply to reads.
+    expect(goalWrites("Mark the message read")).toBe(true);
+    expect(goalWrites("Add a label to the newest message")).toBe(true);
+    expect(goalWrites("Reply to the latest email in the thread")).toBe(true);
     expect(goalWrites(GOALS.unreplied)).toBe(false);
     // With no annotation the words alone decide.
     expect(

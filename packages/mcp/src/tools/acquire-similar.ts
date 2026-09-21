@@ -108,8 +108,10 @@ const STOPWORDS = new Set([
 
 /**
  * A goal that carries one of these anywhere asks for a write, and a read-only tool is not it —
- * "list items and then delete the selected one" writes (Greptile on #122). Words with an everyday
- * noun sense (reply, draft, label, mark, post, set) are left out: "emails I need to reply to" reads.
+ * "list items and then delete the selected one" writes (Greptile on #122). The verbs with an
+ * everyday noun sense are `LEADING_WRITE_VERBS`: they count only as the goal's first content word,
+ * so "Mark the message read" and "Reply to the latest email" write while "emails I need to reply
+ * to" reads.
  */
 const WRITE_VERBS = new Set([
   "create",
@@ -139,9 +141,30 @@ const WRITE_VERBS = new Set([
   "modifies",
 ]);
 
-/** Whether the goal asks for a write: one of `WRITE_VERBS` among its content words. */
+const LEADING_WRITE_VERBS = new Set([
+  "add",
+  "reply",
+  "mark",
+  "set",
+  "label",
+  "post",
+  "draft",
+  "star",
+  "flag",
+  "assign",
+  "close",
+  "open",
+  "schedule",
+  "book",
+]);
+
+/**
+ * Whether the goal asks for a write: one of `WRITE_VERBS` among its content words, or one of
+ * `LEADING_WRITE_VERBS` as the first.
+ */
 export function goalWrites(goal: string): boolean {
-  return contentWords(goal).some((word) => WRITE_VERBS.has(word));
+  const words = contentWords(goal);
+  return words.some((word) => WRITE_VERBS.has(word)) || LEADING_WRITE_VERBS.has(words[0] ?? "");
 }
 
 /** The words that carry a text's meaning: `find_tool`'s words less the stopwords. */
