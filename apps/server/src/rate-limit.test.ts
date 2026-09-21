@@ -1,7 +1,8 @@
 import type { AgentDeps, McpOAuthDeps, SessionLike } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
+import type { McpDeps } from "@graft/mcp";
 import type { RateLimitBucket, RateLimitCheck, RateLimiter } from "@graft/ratelimit";
-import { UNLIMITED } from "@graft/ratelimit";
+import { createMemoryRateLimiter, UNLIMITED } from "@graft/ratelimit";
 import { initLogger } from "evlog";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
@@ -10,7 +11,6 @@ import { createServer, type ServerDeps } from "./app";
 import {
   addressKey,
   apiDoorKey,
-  bearerKey,
   clientAddressOf,
   identifiedKey,
   mcpDoorKey,
@@ -152,12 +152,6 @@ describe("the keys a door counts on", () => {
     expect(addressKey("203.0.113.7").logged).toBe(key.logged);
     expect(addressKey("203.0.113.8").logged).not.toBe(key.logged);
   });
-
-  it("counts a bearer token by digest, so no credential sits in a map for a window", () => {
-    const key = bearerKey("grft_the_agents_token");
-    expect(key.key).not.toContain("grft_");
-    expect(key).toEqual({ key: expect.stringMatching(/^agent:[0-9a-f]{12}$/), logged: key.key });
-  });
 });
 
 describe("clientAddressOf", () => {
@@ -242,17 +236,18 @@ describe("each door's key", () => {
     ).toBeNull();
   });
 
-  it("mcp: the bearer's digest when one is presented, the address when none is", async () => {
+  it("mcp: the caller's address, and the same key whatever bearer is presented", async () => {
     const door = mcpDoorKey(limiting);
-    expect(
-      await keyFor(door, "/mcp", {
+    const at = (authorization?: string) =>
+      keyFor(door, "/mcp", {
         method: "POST",
-        headers: { ...ADDRESS, authorization: "Bearer grft_abc" },
-      }),
-    ).toEqual(bearerKey("grft_abc"));
-    expect(await keyFor(door, "/mcp", { method: "POST", headers: ADDRESS })).toEqual(
-      addressKey("203.0.113.7"),
-    );
+        headers: authorization ? { ...ADDRESS, authorization } : ADDRESS,
+      });
+    expect(await at()).toEqual(addressKey("203.0.113.7"));
+    // A key derived from the token would be a key the caller picks: two invented bearers must not
+    // be two allowances, since each still costs `requireAgent` a read (GRA-149, Greptile on #116).
+    expect(await at("Bearer grft_one")).toEqual(addressKey("203.0.113.7"));
+    expect(await at("Bearer grfta_two")).toEqual(addressKey("203.0.113.7"));
   });
 
   it("proxy: the connection the path names, and nothing for the JWKS", async () => {
@@ -264,6 +259,16 @@ describe("each door's key", () => {
       identifiedKey("connection", "conn_1"),
     );
     expect(await keyFor(door, "/api/proxy/.well-known/jwks.json")).toBeNull();
+  });
+
+  it("proxy: a segment that does not percent-decode is the key as it was spelled, never a throw", async () => {
+    const door = proxyDoorKey();
+    expect(await keyFor(door, "/api/proxy/c/%E0%A4%A/items")).toEqual(
+      identifiedKey("connection", "%E0%A4%A"),
+    );
+    expect(await keyFor(door, "/api/proxy/c/conn%5F1")).toEqual(
+      identifiedKey("connection", "conn_1"),
+    );
   });
 
   it("api: a mutation with a session, keyed by the person; nothing for a read, /auth or no session", async () => {
@@ -352,7 +357,20 @@ describe("the doors the server mounts", () => {
     );
   });
 
-  it("counts /mcp per bearer", async () => {
+  /**
+   * A malformed percent escape in the connection id is the proxy's to refuse, and its refusal is
+   * what the caller must see: the key is taken from the segment as it was spelled rather than
+   * from a `decodeURIComponent` that would throw (Greptile on #116).
+   */
+  it("hands a connection id that does not decode to the proxy, which refuses it as it always did", async () => {
+    const { limiter, checks } = recorder();
+    const res = await server(limiter).request("/api/proxy/c/%E0%A4%A/items", { headers: ADDRESS });
+    expect(checks[0]).toMatchObject({ bucket: "proxy", key: "connection:%E0%A4%A" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ reason: "bad_connection_id" });
+  });
+
+  it("counts /mcp per address, whatever bearer is presented", async () => {
     expect(
       await door("/mcp", {
         method: "POST",
@@ -360,10 +378,59 @@ describe("the doors the server mounts", () => {
       }),
     ).toEqual({
       bucket: "mcp",
-      key: bearerKey("grft_abc").key,
+      key: "addr:203.0.113.7",
       status: 429,
       retryAfter: "5",
     });
+  });
+
+  /**
+   * The bypass the address key exists to close (Greptile on #116): a caller inventing a bearer per
+   * request would get an allowance per request if the key came from the token, and each of those
+   * requests would still reach `requireAgent`'s database read, which is what the door rations.
+   */
+  it("stops a caller rotating invented bearers, and the refused one never reaches requireAgent", async () => {
+    const lookups = { count: 0 };
+    const mcp = {
+      db: {} as DbOrTx,
+      agent: {
+        findAgentByTokenHash: async () => {
+          lookups.count += 1;
+          return null;
+        },
+        findAgentByMcpAccessTokenHash: async () => {
+          lookups.count += 1;
+          return null;
+        },
+        now: () => new Date(),
+      },
+    } as unknown as McpDeps;
+    const limiter = createMemoryRateLimiter(
+      {
+        sign_in: null,
+        oauth_register: null,
+        oauth_token: null,
+        mcp: { limit: 2, windowSeconds: 60 },
+        proxy: null,
+        api: null,
+      },
+      {},
+    );
+    const app = server(limiter, { mcp });
+    const knock = (n: number) =>
+      app.request("/mcp", {
+        method: "POST",
+        headers: { ...ADDRESS, authorization: `Bearer grft_invented_${n}` },
+      });
+
+    expect((await knock(1)).status).toBe(401);
+    expect((await knock(2)).status).toBe(401);
+    expect(lookups.count).toBe(2);
+
+    const refused = await knock(3);
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("retry-after")).not.toBeNull();
+    expect(lookups.count).toBe(2);
   });
 
   it("counts /mcp/oauth/register and /mcp/oauth/token per address, and refuses in the protocol's shape", async () => {

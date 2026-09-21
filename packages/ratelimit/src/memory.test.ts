@@ -68,6 +68,19 @@ describe("createMemoryRateLimiter", () => {
     expect(last).toEqual(first);
   });
 
+  it("credits no interval twice when the clock steps back and then forward again", async () => {
+    const limiter = createMemoryRateLimiter(policy({ api: { limit: 2, windowSeconds: 10 } }));
+    const check = (at: number) => limiter.check({ bucket: "api", key: "a", now: AT(at) });
+    expect((await check(100)).allowed).toBe(true);
+    // An NTP correction puts the clock ten seconds back. Nothing refilled while it was there, and
+    // the key keeps its later stamp, so the same ten seconds are not handed back on the way up.
+    expect((await check(90)).allowed).toBe(true);
+    expect((await check(100)).allowed).toBe(false);
+    // The refill resumes from the high-water mark: half a window past it is one token.
+    expect((await check(105)).allowed).toBe(true);
+    expect((await check(105)).allowed).toBe(false);
+  });
+
   it("counts each key on its own", async () => {
     const limiter = createMemoryRateLimiter(policy({ proxy: { limit: 1, windowSeconds: 60 } }));
     expect((await limiter.check({ bucket: "proxy", key: "conn_1", now: AT(0) })).allowed).toBe(

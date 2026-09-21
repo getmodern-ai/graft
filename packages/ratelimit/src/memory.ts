@@ -76,14 +76,19 @@ export function createMemoryRateLimiter(
       const nowMs = now.getTime();
       const perMs = rule.limit / (rule.windowSeconds * 1000);
       const held = keys.get(key);
-      // A clock that went backwards refills nothing rather than draining the bucket.
+      // A clock that went backwards refills nothing rather than draining the bucket, and the
+      // stamp written back is the *later* of the two, never the earlier one: a bucket stamped at
+      // the rolled-back time would be credited the same interval a second time the moment the
+      // clock caught up, which is a caller handed a free window by an NTP correction. The
+      // high-water mark costs a rollback nothing it was owed, because nothing refilled during it.
       const elapsed = held ? Math.max(0, nowMs - held.updatedAtMs) : 0;
       const tokens = held ? Math.min(rule.limit, held.tokens + elapsed * perMs) : rule.limit;
+      const stampMs = held ? Math.max(held.updatedAtMs, nowMs) : nowMs;
 
       if (tokens < 1) {
         // Nothing is spent on a refusal: a caller that keeps knocking waits the same time it would
         // have waited had it stopped, rather than pushing its own recovery further out.
-        touch(keys, key, { tokens, updatedAtMs: nowMs });
+        touch(keys, key, { tokens, updatedAtMs: stampMs });
         return {
           allowed: false,
           retryAfterSeconds: Math.max(1, Math.ceil((1 - tokens) / perMs / 1000)),
@@ -91,7 +96,7 @@ export function createMemoryRateLimiter(
       }
 
       if (!held) evictIfFull(keys, maxKeys, nowMs, rule);
-      touch(keys, key, { tokens: tokens - 1, updatedAtMs: nowMs });
+      touch(keys, key, { tokens: tokens - 1, updatedAtMs: stampMs });
       return { allowed: true };
     },
   };

@@ -47,15 +47,6 @@ export function addressKey(address: string): RateLimitKey {
   return { key: `addr:${address}`, logged: `addr:${digest(address)}` };
 }
 
-/**
- * A bearer token, as the agent it stands for. The token is never the key: its digest is, so
- * nothing on this path holds a credential in a map for the length of a window.
- */
-export function bearerKey(token: string): RateLimitKey {
-  const short = digest(token);
-  return { key: `agent:${short}`, logged: `agent:${short}` };
-}
-
 /** Twelve hex characters of SHA-256: enough to tell callers apart, not enough to walk back. */
 function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
@@ -227,24 +218,23 @@ export function addressDoorKey(limiting: RateLimiting) {
 }
 
 /**
- * The `mcp` door: the agent that presented the bearer token, or the caller's address when there is
- * none to present.
+ * The `mcp` door, keyed by the caller's address, presented bearer or not.
  *
- * Keyed on the token's digest rather than on the agent id `requireAgent` would resolve, because
- * the resolution is a database read and this refusal exists to be cheaper than the request it
- * refuses; a bearer resolves to exactly one agent, so the digest names an agent as surely as its
- * id does. The one consequence is that an OAuth access token, which rotates hourly (ADR 0018),
- * starts a fresh count when it rotates, which at any sane limit for a whole conversation is not a
- * hole worth a read per request.
+ * **Never by the bearer.** This check runs before `requireAgent`, which is the point of it: an
+ * unknown `grft_` or `grfta_` value still costs a database read, and that read is what the door
+ * is here to ration. A key derived from the token would be a key the caller picks, so a caller
+ * sending a different invented bearer each time would get a fresh allowance per request and pay
+ * for none of them, while every one of those requests still reached the read. The address is the
+ * one thing about a pre-authentication request the caller does not choose (`clientAddressOf`).
+ *
+ * The consequence, and an operator's to weigh: every agent behind one address shares one
+ * allowance, so a chat product whose egress is a handful of addresses counts all of its people
+ * together. A per-agent count would have to sit *after* `requireAgent`, inside `@graft/mcp`,
+ * where it no longer saves the read; the bucket that pays for itself is this one. Unlimited
+ * remains the default.
  */
 export function mcpDoorKey(limiting: RateLimiting) {
-  return (c: Context): RateLimitKey | null => {
-    const authorization = c.req.header("authorization");
-    const bearer = authorization?.replace(/^Bearer\s+/i, "").trim();
-    if (bearer) return bearerKey(bearer);
-    const address = clientAddressOf(c, limiting.trustedProxyHops);
-    return address ? addressKey(address) : null;
-  };
+  return addressDoorKey(limiting);
 }
 
 /**
@@ -256,9 +246,24 @@ const PROXY_CONNECTION = /^\/api\/proxy\/c\/([^/]+)/;
 /** The `proxy` door: a connection's own allowance, since a sandbox's calls are a connection's calls. */
 export function proxyDoorKey() {
   return (c: Context): RateLimitKey | null => {
-    const connectionId = PROXY_CONNECTION.exec(c.req.path)?.[1];
-    return connectionId ? identifiedKey("connection", decodeURIComponent(connectionId)) : null;
+    const segment = PROXY_CONNECTION.exec(c.req.path)?.[1];
+    return segment ? identifiedKey("connection", decodedSegment(segment)) : null;
   };
+}
+
+/**
+ * A path segment percent-decoded, or as it was spelled when it does not decode. The fallback is
+ * not cosmetic: `decodeURIComponent` throws on a lone or truncated escape (`%E0%A4%A`), and a
+ * throw here would replace the proxy's own `bad_connection_id` refusal with a 500 from a
+ * middleware the caller never addressed. `decodeHostSegment` in `packages/proxy/src/app.ts` is
+ * the same rule for the same reason, one rung further in.
+ */
+function decodedSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 /**

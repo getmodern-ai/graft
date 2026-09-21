@@ -811,10 +811,14 @@ sign_in 20/60`). `apps/server/src/rate-limit.ts` is the server's half: one Hono 
 in that door's own body shape (the API's `{ error, message }`, the proxy's and `/mcp`'s
 `{ error, reason, message }`, the OAuth endpoints' `{ error, error_description }`) and puts
 `rateLimited: { bucket, key }` on the wide event, the key a digest when it is an address. Keys are
-the person, the agent (the bearer's digest, so no database read stands in front of a refusal), or
-the connection where the request is authenticated, and the client's address before it: the socket's
-peer unless `GRAFT_TRUSTED_PROXY_HOPS=<n>` says how many hops are in front, because anyone may send
-`X-Forwarded-For`. A refusal happens before the handler, so it is never an approval, a tool call or
+the person for `api` and the connection for `proxy`, where the request names one, and the client's
+address for every door that runs before anyone is authenticated, `mcp` included: the socket's peer
+unless `GRAFT_TRUSTED_PROXY_HOPS=<n>` says how many hops are in front, because anyone may send
+`X-Forwarded-For`. **Never a key taken from a bearer token**, which is why `mcp` is the address
+even when one is presented: an unknown `grft_` costs `requireAgent` a database read, which is the
+cost the door rations, and a caller inventing a bearer per request would otherwise buy a fresh
+allowance each time. A per-agent count would have to sit after `requireAgent`, where it no longer
+saves the read. A refusal happens before the handler, so it is never an approval, a tool call or
 a vendor call. `Backings.rateLimiter` is the seam beside `logs`, `analytics` and `model telemetry`;
 the hosted form's limits and any store behind them are graft-cloud's, in its private package.
 
