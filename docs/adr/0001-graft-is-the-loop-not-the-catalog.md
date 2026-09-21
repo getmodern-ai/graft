@@ -36,6 +36,5 @@ first real call. That is the gap.
   without public documentation are out of reach, deliberately.
 - **Dropping the broker drops brokered OAuth.** Authorization-code OAuth becomes Graft's problem;
   ADR 0005 answers it.
-- **Executor.sh's own history is the warning.** Its custom-tools plugin, the nearest thing to this
-  loop, was merged in July 2026 and deleted three weeks later as "coming back better". The loop is
-  hard to get right; the rest of this record is how.
+- **The loop is the hard part.** Model-authored tools have been shipped and withdrawn by others in
+  this space within weeks of landing. The loop is hard to get right; the rest of this record is how.

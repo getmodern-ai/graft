@@ -31,9 +31,9 @@ catches an OAuth callback on localhost for people at a terminal.
   the self-hosted form too, where the image bootstraps a single admin the way executor.sh's does.
   This is what pulled the tenancy decision (ADR 0007) forward.
 - **An approval can be answered later.** A pending action is a durable record with a URL, so the
-  agent's turn can end and the person can answer from the console hours after. Cando's cards and
-  executor.sh's resume URL both behave this way; executor.sh's own bug history shows why the
-  record must be durable rather than held in one process's memory.
+  agent's turn can end and the person can answer from the console hours after. Cando's cards
+  behave this way, and a record held in one process's memory dies with the process, so the
+  record must be durable.
 - **The handoff URL is a phishing-shaped artefact.** It is signed, short-lived, bound to the
   agent that requested it, and displays the requesting agent and the vendor host on the page.
 - **An elicitation's `accept` is the yes, whatever the client put in the form.** Hermes 0.21.1
