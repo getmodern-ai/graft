@@ -230,7 +230,8 @@ answers, with the keyring appended last — and the boot line names them (`provi
 provider (`packages/core/src/connection/provider.ts`) decides how a vendor gets connected (`form`
 over the proxy's schemes, `link`, or `none`), how a call resolves (`inject` the row's credential, or
 `relay` through an upstream that holds it), and what to release on revoke; `request_connection`
-routes a proposal to the first provider that covers it, and the proxy's connection read
+routes a proposal to the first provider that covers it — a `none`-scheme proposal past every link
+provider, to the keyring's keyless confirmation (GRA-166) — and the proxy's connection read
 (`apps/server/src/connections.ts`) asks the row's provider how the call resolves. **Coverage is
 async** (GRA-126): `covers(vendor, hosts)` and a link's `target` answer a promise, because a hosted
 provider decides coverage by asking its vendor's catalogue — which vendors it connects and at which

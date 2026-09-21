@@ -244,3 +244,15 @@ private knowledge:
   for, "another way" is registering an OAuth client and the seven-day Testing-mode expiry, a worse
   path than the popup, and a visible choice on a one-click card is friction every person pays for.
 
+- **A keyless proposal is the keyring's, whatever a link provider covers** (2026-09-22; GRA-166).
+  Live, "the current bitcoin price" became a proposal for `coinbase` at `api.coinbase.com` with
+  scheme `none` — the public prices endpoint — and Pipedream's catalogue, which has an OAuth app
+  for Coinbase, claimed it: the person was sent to sign in at Coinbase for a price that needs no
+  account, and Decline was the only other exit. GRA-146 judged the *app*; this judges the
+  *proposal*. `providerFor` takes the proposed scheme, and for `none` passes every `link` provider
+  by without asking it, so the ask is the keyring's keyless confirmation: one click, no vendor
+  account. A `none`-connect provider — the gateway — is still asked first, because an operator's
+  egress rule is about the host and not the credential. A model wrong about `none` costs what it
+  did before: the keyless connection's proof reads fail at the dry run with the vendor's refusal,
+  and the job's diagnostics say so.
+

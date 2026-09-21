@@ -151,6 +151,45 @@ describe("the provider list", () => {
     expect(asked).toEqual(["first:gmail", "first:acme", "second:acme"]);
   });
 
+  it("passes a link provider by for a keyless proposal, and still asks a none-connect provider (GRA-166)", async () => {
+    const asked: string[] = [];
+    const { provider } = linkProvider();
+    const link: ConnectionProvider = {
+      ...provider,
+      covers: async (vendor) => {
+        asked.push(`link:${vendor}`);
+        return vendor === "gmail";
+      },
+    };
+    const gateway: ConnectionProvider = {
+      ...keyringProvider,
+      name: "gateway",
+      connect: { kind: "none", scheme: "gateway" },
+      covers: async (vendor) => {
+        asked.push(`gateway:${vendor}`);
+        return vendor === "coinbase";
+      },
+    };
+    // The link provider covers gmail, but a `none` proposal is a public API: the keyring's.
+    expect(
+      await providerFor([link, keyringProvider], "gmail", ["gmail.googleapis.com"], "none"),
+    ).toBe(keyringProvider);
+    expect(asked).toEqual([]);
+    // Any signing scheme routes as before.
+    expect(
+      await providerFor(
+        [link, keyringProvider],
+        "gmail",
+        ["gmail.googleapis.com"],
+        "oauth2_bearer",
+      ),
+    ).toBe(link);
+    // An operator's gateway is about the host, so it is asked whatever the scheme.
+    expect(
+      await providerFor([gateway, link, keyringProvider], "coinbase", ["api.coinbase.com"], "none"),
+    ).toBe(gateway);
+  });
+
   it("throws for a list nothing in which covers the vendor — a list assembled without the keyring", async () => {
     const { provider } = linkProvider();
     await expect(providerFor([provider], "unleashed", [])).rejects.toThrow(

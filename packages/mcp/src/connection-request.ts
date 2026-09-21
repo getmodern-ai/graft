@@ -729,7 +729,14 @@ async function routeProposal(
   deps: McpDeps,
   notifier?: ToolListChangedNotifier,
 ): Promise<ConnectionRequestOutcome> {
-  const provider = await providerFor(deps.connection.providers, proposal.vendor, proposal.hosts);
+  // A keyless proposal passes every link provider by (GRA-166): the keyring's one-click confirmation
+  // beats a vendor sign-in the calls never need.
+  const provider = await providerFor(
+    deps.connection.providers,
+    proposal.vendor,
+    proposal.hosts,
+    proposal.scheme,
+  );
   if (provider.connect.kind === "none") {
     return connectWithoutPersonStep(ctx, scope, provider, proposal, deps, notifier);
   }
