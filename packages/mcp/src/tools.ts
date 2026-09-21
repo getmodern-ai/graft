@@ -99,7 +99,7 @@ export async function callToolFor(
   const startedAt = Date.now();
   const result = await answer(session, name, args);
   // The hook sees every answer, an unknown tool's `McpError` excepted — that one never reached a tool.
-  session.deps.onToolCall?.(toolCallEvent(session, name, result, Date.now() - startedAt));
+  session.deps.onToolCall?.(toolCallEvent(session, name, result, Date.now() - startedAt, args));
   return result;
 }
 
@@ -123,12 +123,16 @@ async function answer(
   }
 }
 
-/** The call as `McpDeps.onToolCall` is told it (`deps.ts`): the answer's `isError` and refusal shape read back. */
+/**
+ * The call as `McpDeps.onToolCall` is told it (`deps.ts`): the answer's `isError` and refusal shape
+ * read back, and for the tools `eventDetail` names, what the call was about.
+ */
 export function toolCallEvent(
   session: Pick<SessionContext, "scope">,
   name: string,
   result: CallToolResult,
   latencyMs: number,
+  args: Record<string, unknown> = {},
 ): ToolCallEvent {
   const kind = FIXED_BY_NAME.has(name)
     ? "meta"
@@ -137,6 +141,7 @@ export function toolCallEvent(
       : "authored";
   const body = result.structuredContent;
   const refused = result.isError === true && body?.error === "refused";
+  const detail = eventDetail(name, args, body ?? {});
   return {
     tool: name,
     kind,
@@ -145,7 +150,54 @@ export function toolCallEvent(
     outcome: result.isError === true ? (refused ? "refused" : "error") : "ok",
     ...(refused && typeof body?.reason === "string" ? { reason: body.reason } : {}),
     latencyMs,
+    ...(detail ? { detail } : {}),
   };
+}
+
+type EventDetail = NonNullable<ToolCallEvent["detail"]>;
+
+/**
+ * Per tool, what the wide event may say of the call beyond its outcome (GRA-155) — read from the
+ * arguments and the answer, never the person's data: `find_tool`'s query is the agent's own words
+ * and the one free string admitted, everything else is a count, an id or a name. A `find_tool`
+ * that answered `ok` with no hit and an `acquire` that built a copy were the same line in the log
+ * until this.
+ */
+export function eventDetail(
+  name: string,
+  args: Record<string, unknown>,
+  body: Record<string, unknown>,
+): EventDetail | undefined {
+  const str = (value: unknown): string | undefined =>
+    typeof value === "string" && value.length > 0 ? value : undefined;
+  switch (name) {
+    case "find_tool": {
+      const query = str(args.query);
+      const hits = Array.isArray(body.tools) ? body.tools.length : undefined;
+      return { ...(query ? { query } : {}), ...(hits !== undefined ? { hits } : {}) };
+    }
+    case "acquire": {
+      const goal = str(args.goal);
+      const jobId = str(body.jobId);
+      return {
+        ...(goal ? { goalLength: goal.length } : {}),
+        similarOffered: body.reason === "similar_tools_exist",
+        ...(jobId ? { jobId } : {}),
+      };
+    }
+    case "acquire_status": {
+      const jobId = str(args.jobId) ?? str(body.jobId);
+      const status = str(body.status);
+      return { ...(jobId ? { jobId } : {}), ...(status ? { status } : {}) };
+    }
+    case "run_tool": {
+      const vendor = str(args.vendor);
+      const tool = str(args.name);
+      return vendor && tool ? { tool: authoredToolName(vendor, tool) } : undefined;
+    }
+    default:
+      return undefined;
+  }
 }
 
 async function dispatch(

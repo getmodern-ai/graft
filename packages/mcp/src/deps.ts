@@ -220,6 +220,13 @@ export type ToolCallEvent = {
   /** The refusal's `reason` — `connection_not_in_scope`, `approval_declined`, … — when `outcome` is `refused`. */
   reason?: string;
   latencyMs: number;
+  /**
+   * What the call was about, per tool, in counts and names and never content (GRA-155): `find_tool`'s
+   * `query` and `hits`; `acquire`'s `goalLength`, `similarOffered` and the `jobId` it opened;
+   * `acquire_status`'s `jobId` and `status`; `run_tool`'s `tool`. `tools.ts`'s `eventDetail` is the
+   * table. Absent for a tool the table does not name.
+   */
+  detail?: Record<string, string | number | boolean>;
 };
 
 export type CreateMcpDepsInput = Pick<
