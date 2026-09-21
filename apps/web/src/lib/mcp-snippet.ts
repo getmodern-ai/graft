@@ -94,7 +94,7 @@ export function harnessSetup(
         label: "Add to ~/.hermes/config.yaml",
         code: hermesConfigSnippet(origin),
         copyLabel: "Copy configuration",
-        hint: "Under mcp_servers, beside any other server. Reload with /reload-mcp in a session, or restart Hermes.",
+        hint: "Paste it whole when config.yaml has no mcp_servers yet; if it already has one, add only the graft entry under it, since YAML takes one mcp_servers key. Reload with /reload-mcp in a session, or restart Hermes.",
       },
     };
   }
