@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   draftProblems,
+  MAX_PROOF_READS,
   readWireAnswer,
   TOOL_DESCRIPTION_MAX_LENGTH,
   WIRE_ANSWER_SCHEMA,
@@ -151,6 +152,27 @@ describe("readWireAnswer", () => {
 });
 
 describe("the wire schema and the round trip", () => {
+  /** Greptile on graft #114: the protocol asks for every path, so a list over the cap is repaired, not cut. */
+  it("refuses more proof reads than the job runs, naming both numbers", () => {
+    const many = readWireAnswer(
+      {
+        ...draft,
+        draft: {
+          ...draft.draft,
+          proofReads: ["/a", "/b", "/c", "/d", "/e", "/f"],
+        } as NonNullable<WireAnswer["draft"]>,
+      },
+      "goal",
+    );
+    expect(MAX_PROOF_READS).toBe(5);
+    expect(many).toEqual({
+      ok: false,
+      problems: [
+        "proofReads names 6 paths and the job runs at most 5; keep the ones whose answers the module parses",
+      ],
+    });
+  });
+
   it("is what structured output can hold: every property present, the free-form values as text", () => {
     const parsed = WIRE_ANSWER_SCHEMA.safeParse(draft);
     expect(parsed.success).toBe(true);

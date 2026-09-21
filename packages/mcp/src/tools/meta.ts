@@ -62,6 +62,8 @@ export const PROMOTE = "promote";
 export const DEMOTE = "demote";
 export const RUN_TOOL = "run_tool";
 export const ACQUIRE = "acquire";
+/** The arguments acquire reads — its inputSchema's properties; an argument outside this set is named back (GRA-130). */
+const ACQUIRE_ARGS = new Set(["connectionId", "goal", "hints"]);
 export const ACQUIRE_STATUS = "acquire_status";
 export const REQUEST_CONNECTION = "request_connection";
 export const REQUEST_CREDENTIAL = "request_credential";
@@ -359,11 +361,26 @@ const acquire: MetaTool = {
    * the loop is minutes long and a tool call is not (ADR 0004's client-compatibility risk).
    */
   handle: async (args, session) => {
+    // An argument acquire does not read is named back, so `task` for `goal` is a fixable refusal,
+    // not a silent drop (GRA-130); the answer lists the accepted set.
+    const unrecognised = Object.keys(args).filter((key) => !ACQUIRE_ARGS.has(key));
+    const alsoUnrecognised =
+      unrecognised.length > 0
+        ? ` (${unrecognised.join(", ")} ${unrecognised.length === 1 ? "is" : "are"} not an acquire argument; it takes ${[...ACQUIRE_ARGS].join(", ")})`
+        : "";
     const connectionId = typeof args.connectionId === "string" ? args.connectionId.trim() : "";
-    if (!connectionId) return toolRefusal("input_invalid", "connectionId must be a string");
+    if (!connectionId) {
+      return toolRefusal(
+        "input_invalid",
+        `connectionId is required, a connection in the agent's scope${alsoUnrecognised}`,
+      );
+    }
     const goal = typeof args.goal === "string" ? args.goal.trim() : "";
     if (!goal || goal.length > GOAL_MAX_LENGTH) {
-      return toolRefusal("input_invalid", `goal must be 1 to ${GOAL_MAX_LENGTH} characters`);
+      return toolRefusal(
+        "input_invalid",
+        `goal is required, a sentence or two on what the tool must do (1 to ${GOAL_MAX_LENGTH} characters)${alsoUnrecognised}`,
+      );
     }
     if (args.hints !== undefined && typeof args.hints !== "string") {
       return toolRefusal("input_invalid", "hints must be a string");

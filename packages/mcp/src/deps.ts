@@ -53,12 +53,13 @@ import { type ReadWebPage, readWebPage } from "./web-page";
  */
 
 /**
- * The one read of the toolbox the MCP server makes through the store rather than through a sandbox
- * — `read_tool_source`, which has no reason to provision one. A run never reads through it: the
- * sandbox sees the mounted volume (ADR 0002's seam), and `@graft/toolbox`'s README says how the
- * store's tree and the mount are one.
+ * The toolbox as the MCP server touches it through the store rather than through a sandbox: the one
+ * read, `read_tool_source`, which has no reason to provision one; and the one write, an acquire job
+ * putting its draft where the publish reads when the store's view of the sandbox's write lags
+ * (`acquire/job.ts`, GRA-141). A run never reads through it: the sandbox sees the mounted volume
+ * (ADR 0002's seam), and `@graft/toolbox`'s README says how the store's tree and the mount are one.
  */
-export type ToolboxReader = Pick<ToolboxStore, "readTree">;
+export type ToolboxReader = Pick<ToolboxStore, "readTree" | "writeTree">;
 
 /** `publish_tool`'s publish — `@graft/publish`'s `publishToolVersion` with its deps bound. */
 export type PublishTool = (args: PublishArgs) => Promise<PublishOutcome>;
