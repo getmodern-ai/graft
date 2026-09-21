@@ -3,12 +3,16 @@ name: graft
 # The self-hosted form, and the repository's development environment (GRA-33; ADR 0002, ADR 0013,
 # ADR 0014). `docker compose up` brings up Postgres and Graft — server, proxy, MCP endpoint and
 # console in one image — and builds the sandbox image sandboxes run from. `pnpm run db:start`
-# still brings up Postgres alone, for a server run from source on the host.
+# still brings up Postgres alone, for a server run from source on the host, through
+# `docker-compose.dev.yml` beside this file. That overlay is the only thing that publishes the
+# database on the host, and it publishes it on loopback alone (GRA-148).
 #
 # Values come from `.env` beside this file (`cp .env.example .env`; README, "Self-hosting"): the
 # secrets Graft refuses to start without, the model key ADR 0014 requires of a self-host, and the
-# admin opened on first start. Everything in that file also reaches the `graft` container, so a
-# server setting not named below (`GRAFT_PACKAGE_ALLOWLIST`, say) goes in `.env` and nowhere else.
+# admin opened on first start. Nothing below supplies a secret of its own: a default here would
+# be a credential in a public repository, which is what GRA-148 took out. Everything in that file
+# also reaches the `graft` container, so a server setting not named below
+# (`GRAFT_PACKAGE_ALLOWLIST`, say) goes in `.env` and nowhere else.
 #
 # No `container_name` on purpose: the project name prefixes every container, network and volume,
 # so `docker compose -p <name> up` runs a second copy beside the first — two checkouts on one
@@ -21,11 +25,10 @@ services:
       POSTGRES_DB: graft
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-    ports:
-      # Overridable because a laptop often already runs a Postgres on 5432 for another project; the
-      # matching `GRAFT_DATABASE_URL` for a server on the host goes in `apps/server/.env`. The
-      # `graft` service below reaches Postgres by name and never through this port.
-      - "${GRAFT_POSTGRES_PORT:-5432}:5432"
+    # No `ports` here on purpose (GRA-148): the `graft` service reaches Postgres by name on the
+    # project's own network, so a self-host has no reason to publish the database, and publishing
+    # it put a default password on every interface of the host. `docker-compose.dev.yml` publishes
+    # it on loopback for a server run from source, and `pnpm run db:start` passes both files.
     volumes:
       - graft_postgres_data:/var/lib/postgresql
     healthcheck:
@@ -71,10 +74,10 @@ services:
       # name, and the backing refuses a name the daemon does not have rather than letting Docker
       # create a second, empty volume under it.
       GRAFT_TOOLBOX_VOLUME: ${COMPOSE_PROJECT_NAME:-graft}_toolboxes
-      # The admin opened on first start, into an empty database only. Development defaults —
-      # change both in `.env` before the console is reachable from anywhere but this machine.
-      GRAFT_ADMIN_EMAIL: ${GRAFT_ADMIN_EMAIL:-admin@example.com}
-      GRAFT_ADMIN_PASSWORD: ${GRAFT_ADMIN_PASSWORD:-change-me-before-exposing-this}
+      # The admin opened on first start (`GRAFT_ADMIN_EMAIL` and `GRAFT_ADMIN_PASSWORD`) is not
+      # named here: it reaches the container through `.env` like every other setting, and a
+      # default in this file would be a password anyone who has read the repository knows
+      # (GRA-148). The keys script mints the password; the boot refuses a short or retired one.
     volumes:
       # Arrangement 1 of `packages/sandbox-docker/README.md`: the server creates sandboxes as
       # siblings on this daemon. Root-equivalent access to the host, the surface ADR 0002 accepts.

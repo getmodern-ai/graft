@@ -14,6 +14,14 @@ import {
   type McpOAuthServerOptions,
   WELL_KNOWN_PATH,
 } from "./mcp-oauth";
+import {
+  mcpDoorKey,
+  NO_RATE_LIMITING,
+  proxyDoorKey,
+  proxyRefusalBody,
+  type RateLimiting,
+  rateLimit,
+} from "./rate-limit";
 
 /**
  * The server, as a function of what it is handed — so `app.test.ts` drives the same app `index.ts`
@@ -77,6 +85,12 @@ export type ServerDeps = {
    * `/api` take the same options through `api.mcpOAuth`.
    */
   mcpOAuth?: McpOAuthServerOptions;
+  /**
+   * The rate-limit seam's backing and how to read a client's address (GRA-149; `rate-limit.ts`),
+   * handed down to every door this file mounts and to the two sub-apps that mount their own.
+   * Absent, `NO_RATE_LIMITING`: every door open, which is the default in both forms.
+   */
+  rateLimit?: RateLimiting;
 };
 
 /** Where the proxy answers — the path `GRAFT_PROXY_PUBLIC_URL` defaults to ends in this. */
@@ -94,6 +108,31 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
   // One wide event per request; `useLogger()` below is the handle on it from inside the proxy, so
   // the proxy's event lands on this request's line under `proxy` rather than as a second line.
   app.use(evlog());
+
+  /**
+   * The rate limit at each door (GRA-149; ADR 0018's "a rate limit at the edge"). Registered above
+   * the app it guards, because Hono runs middleware in the order it was added and a middleware
+   * added after a route never sees that route's requests; and below `evlog()`, so a refusal lands
+   * on the same wide event the request would have had. Unlimited by default in both forms, in
+   * which case each of these returns before it reads anything (`rate-limit.ts`).
+   */
+  const rateLimiting = deps.rateLimit ?? NO_RATE_LIMITING;
+  const { limiter } = rateLimiting;
+  // A sandbox's vendor calls, per connection; the proxy's own refusal body, since its callers are
+  // authored code reading `{ error, reason, message }`.
+  app.use(
+    `${PROXY_MOUNT_PATH}/*`,
+    rateLimit(limiter, "proxy", proxyDoorKey(), {
+      body: proxyRefusalBody,
+    }),
+  );
+  // The MCP endpoint answers on exactly this path, and its own refusals share the proxy's shape.
+  app.use(
+    MCP_MOUNT_PATH,
+    rateLimit(limiter, "mcp", mcpDoorKey(rateLimiting), {
+      body: proxyRefusalBody,
+    }),
+  );
 
   /**
    * The credential-injecting reverse proxy: `ALL /api/proxy/c/:connectionId/*`, the explicit host
@@ -128,7 +167,10 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
    */
   if (deps.mcpOAuth) {
     app.route("/", createWellKnownApp(deps.mcpOAuth));
-    app.route(MCP_OAUTH_MOUNT_PATH, createMcpOAuthApp(deps.mcpOAuth));
+    app.route(
+      MCP_OAUTH_MOUNT_PATH,
+      createMcpOAuthApp({ ...deps.mcpOAuth, rateLimit: rateLimiting }),
+    );
   }
 
   /**
@@ -141,7 +183,7 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
   }
 
   if (deps.api) {
-    app.route(API_MOUNT_PATH, createApi(deps.api));
+    app.route(API_MOUNT_PATH, createApi({ ...deps.api, rateLimit: rateLimiting }));
   }
 
   /**

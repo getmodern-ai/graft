@@ -51,6 +51,22 @@ const TOKEN_B = "grft_link_server_test_token_b_000000000000000000000";
 const SESSION = { user: { id: PERSON } };
 const AUTH_URL = "http://graft.test";
 const CONSOLE_URL = "http://console.graft.test";
+
+/**
+ * The console's two shapes of request under `/api`, both naming an origin this deployment serves
+ * the console on, which here is the server's own, as it is wherever the console is served
+ * same-origin (`console.ts`). Without one the origin check refuses the call (GRA-148,
+ * `origin-guard.ts`), and `POST /pending-actions/:id/link` reads a JSON body besides, so a bare
+ * `POST` is not what the console sends it.
+ */
+const linkPost = (body: Record<string, unknown> = {}) => ({
+  method: "POST",
+  headers: { "content-type": "application/json", origin: AUTH_URL },
+  body: JSON.stringify(body),
+});
+
+/** A mutation with no body, a revoke or a release, from the same origin. */
+const from = (method: "POST" | "PUT" | "DELETE") => ({ method, headers: { origin: AUTH_URL } });
 const UPSTREAM_TOKEN = "fake-broker-upstream-token";
 const GMAIL_HOSTS = new Set(["gmail.googleapis.com", "www.googleapis.com"]);
 
@@ -286,7 +302,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
   });
 
   it("the console's button mints the provider's link for the person, with this server's return route as both redirect URIs", async () => {
-    const res = await app.request(`/api/pending-actions/${actionId}/link`, { method: "POST" });
+    const res = await app.request(`/api/pending-actions/${actionId}/link`, linkPost());
     expect(res.status).toBe(200);
     const started = (await res.json()) as { url: string; expiresAt: string; provider: string };
     expect(started.provider).toBe("broker");
@@ -328,7 +344,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       const id = asked.pendingActionId as string;
 
       broker.failNext(new FakeLinkProviderError("the broker refused to mint (fake)"));
-      const res = await app.request(`/api/pending-actions/${id}/link`, { method: "POST" });
+      const res = await app.request(`/api/pending-actions/${id}/link`, from("POST"));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
         fallback: "form",
@@ -358,7 +374,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       expect(answer.provider).toBeUndefined();
 
       // A second press finds a keyring ask and is refused as the form's: the fallback is once.
-      const pressed = await app.request(`/api/pending-actions/${id}/link`, { method: "POST" });
+      const pressed = await app.request(`/api/pending-actions/${id}/link`, from("POST"));
       expect(pressed.status).toBe(400);
       expect(String(((await pressed.json()) as { message: string }).message)).toContain("keyring");
     } finally {
@@ -370,7 +386,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
     const captured: { event: string; properties?: Record<string, unknown> }[] = [];
     analyticsSpy = (event) => captured.push(event);
     // A second press on the suite's ask: a fresh link, which the next test's return then uses.
-    const res = await app.request(`/api/pending-actions/${actionId}/link`, { method: "POST" });
+    const res = await app.request(`/api/pending-actions/${actionId}/link`, from("POST"));
     expect(res.status).toBe(200);
     const minted = broker.minted.at(-1);
     // A minted link is said on the row, so a start from the other door that fails a moment later
@@ -524,9 +540,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
   it("revoke asks the provider to delete the account and forgets its id; a release that fails is on the row, and Retry release clears it", async () => {
     // The provider down: the revoke stands, the failure is recorded, the id is kept for the retry.
     broker.failNext(new FakeLinkProviderError("the broker is unreachable (fake)"));
-    const revoked = await app.request(`/api/connections/${connectionId}/revoke`, {
-      method: "POST",
-    });
+    const revoked = await app.request(`/api/connections/${connectionId}/revoke`, from("POST"));
     expect(revoked.status).toBe(200);
     const result = (await revoked.json()) as {
       connection: ConnectionWire;
@@ -565,9 +579,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
     }
 
     // Retry from the card: the same release, the mark cleared, the account gone at the provider.
-    const retried = await app.request(`/api/connections/${connectionId}/release`, {
-      method: "POST",
-    });
+    const retried = await app.request(`/api/connections/${connectionId}/release`, from("POST"));
     expect(retried.status).toBe(200);
     expect(await retried.json()).toMatchObject({
       providerRelease: { provider: "broker", released: true },
@@ -578,9 +590,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
     expect(broker.accounts).toHaveLength(0);
 
     // Nothing outstanding now: a second retry is refused, not re-run.
-    const nothing = await app.request(`/api/connections/${connectionId}/release`, {
-      method: "POST",
-    });
+    const nothing = await app.request(`/api/connections/${connectionId}/release`, from("POST"));
     expect(nothing.status).toBe(409);
   });
 
@@ -592,7 +602,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       const newAsk = said.pendingActionId as string;
       expect(newAsk).not.toBe(actionId);
       const started = (await (
-        await app.request(`/api/pending-actions/${newAsk}/link`, { method: "POST" })
+        await app.request(`/api/pending-actions/${newAsk}/link`, linkPost())
       ).json()) as { url: string };
       expect(started.url).toContain("app=gmail");
       broker.connectAccount({ personId: PERSON, target: "gmail", label: "aleks@example.com" });
@@ -642,11 +652,10 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       setGmailAside();
       const askD = body(await ticked.call("request_connection", PROPOSAL))
         .pendingActionId as string;
-      const started = await app.request(`/api/pending-actions/${askD}/link`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ approveBuild: true }),
-      });
+      const started = await app.request(
+        `/api/pending-actions/${askD}/link`,
+        linkPost({ approveBuild: true }),
+      );
       expect(started.status).toBe(200);
       const mintedD = broker.minted.at(-1);
       broker.connectAccount({ personId: PERSON, target: "gmail", label: "d@example.com" });
@@ -661,9 +670,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       // row would cover E's proposal too, so it is set aside with the rest.
       setGmailAside();
       const askE = body(await bare.call("request_connection", PROPOSAL)).pendingActionId as string;
-      expect(
-        (await app.request(`/api/pending-actions/${askE}/link`, { method: "POST" })).status,
-      ).toBe(200);
+      expect((await app.request(`/api/pending-actions/${askE}/link`, linkPost())).status).toBe(200);
       const mintedE = broker.minted.at(-1);
       broker.connectAccount({ personId: PERSON, target: "gmail", label: "e@example.com" });
       const outcomeE = consoleOutcome(await landing(mintedE?.success ?? ""));
@@ -711,7 +718,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       const said = body(await a.call("request_connection", PROPOSAL));
       expect(said).toMatchObject({ error: "awaiting_connection", provider: "broker" });
       const askId = said.pendingActionId as string;
-      await app.request(`/api/pending-actions/${askId}/link`, { method: "POST" });
+      await app.request(`/api/pending-actions/${askId}/link`, linkPost());
       const minted = broker.minted.at(-1);
       broker.connectAccount({ personId: PERSON, target: "gmail", label: "aleks@example.com" });
       const before = (await listConnections()).length;
@@ -754,19 +761,18 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       );
       expect(said).toMatchObject({ error: "awaiting_connection" });
       expect(said.provider).toBeUndefined();
-      const form = await app.request(`/api/pending-actions/${said.pendingActionId}/link`, {
-        method: "POST",
-      });
+      const form = await app.request(
+        `/api/pending-actions/${said.pendingActionId}/link`,
+        linkPost(),
+      );
       expect(form.status).toBe(400);
       expect(await form.json()).toMatchObject({
         message: expect.stringContaining("keyring provider connects a vendor with a credential"),
       });
-      const missing = await app.request("/api/pending-actions/pa_nope/link", { method: "POST" });
+      const missing = await app.request("/api/pending-actions/pa_nope/link", linkPost());
       expect(missing.status).toBe(404);
       // An ask already answered is 409, as for the submits.
-      const answered = await app.request(`/api/pending-actions/${actionId}/link`, {
-        method: "POST",
-      });
+      const answered = await app.request(`/api/pending-actions/${actionId}/link`, linkPost());
       expect(answered.status).toBe(409);
     } finally {
       await a.close();
@@ -789,7 +795,14 @@ describe("a server with no public URL", () => {
         handoff: { consoleUrl: CONSOLE_URL, secret: "x".repeat(32) },
       },
     });
-    const started = await bare.request("/api/pending-actions/pa_1/link", { method: "POST" });
+    // Two things at once (GRA-148). No `authUrl` and no CORS origin, so nothing is trusted by
+    // name: `Sec-Fetch-Site` is the browser's own word that the submit is same-origin, and the
+    // origin check takes it. And the submit is the bare `POST` a console cached before GRA-75
+    // sends, with no body and so no content type to declare, which `emptyIs` still reads as `{}`.
+    const started = await bare.request("/api/pending-actions/pa_1/link", {
+      method: "POST",
+      headers: { "sec-fetch-site": "same-origin" },
+    });
     expect(started.status).toBe(400);
     expect(await started.json()).toMatchObject({
       message: expect.stringContaining("no public URL"),

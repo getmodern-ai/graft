@@ -55,8 +55,8 @@ import { describeObservability, flushObservability } from "./observability";
  *
  * To run it on a laptop:
  *
- *   pnpm run db:start                                        # Postgres 18 in Docker, port 5432
- *   pnpm --filter @graft/server keys >> apps/server/.env     # a key pair, a keyring, an auth and a handoff secret
+ *   pnpm run db:start                                        # Postgres 18 in Docker, on 127.0.0.1:5432
+ *   pnpm --filter @graft/server keys >> apps/server/.env     # a key pair, a keyring, an auth and a handoff secret, and the admin's password
  *   cat >> apps/server/.env <<'EOF'
  *   GRAFT_DATABASE_URL=postgresql://postgres:password@localhost:5432/graft
  *   GRAFT_AUTH_URL=http://localhost:3000
@@ -148,6 +148,9 @@ const auth = createAuth({
   secret: env.GRAFT_AUTH_SECRET,
   baseURL: env.GRAFT_AUTH_URL,
   trustedOrigins: env.GRAFT_CORS_ORIGIN,
+  // Where the console answers, for the session cookie's attributes alone (GRA-148): same-origin
+  // with the API is `lax`, a console elsewhere is `none`. `@graft/auth`'s rule, not this file's.
+  consoleUrl: env.GRAFT_CONSOLE_URL,
   socialProviders: signInProviders,
   // The mail seam's backing (ADR 0021): the console transport under `open`, the private package's
   // under `cloud` — the selector chose it with the other four seams.
@@ -372,6 +375,16 @@ const app = createServer({
   keys,
   vault,
   connections,
+  /**
+   * The rate limit at each door (GRA-149; ADR 0018's "a rate limit at the edge"). `UNLIMITED`
+   * unless a `GRAFT_RATE_LIMIT_*` variable said otherwise, which is the decision: a self-host is
+   * unlimited by default and the hosted form brings its own numbers. The hops are how far right in
+   * `X-Forwarded-For` a caller's address is, and 0 means the header is never read.
+   */
+  rateLimit: {
+    limiter: backings.rateLimiter,
+    trustedProxyHops: env.GRAFT_TRUSTED_PROXY_HOPS,
+  },
   // An authorization-code token the proxy refreshes goes back into the row it came from (ADR 0005).
   credentialRotation: createDatabaseCredentialRotation(db, connectionDeps),
   followRedirects: env.GRAFT_PROXY_FOLLOW_REDIRECTS,
@@ -454,6 +467,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       `working-set sweep every ${env.GRAFT_SWEEP_INTERVAL_SECONDS}s, ` +
       modelSetup.summary +
       `, ${describeObservability(backings)}` +
+      `, rate limit ${backings.rateLimiter.name}` +
       `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );

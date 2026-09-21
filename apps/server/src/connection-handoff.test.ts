@@ -149,6 +149,8 @@ beforeAll(async () => {
         modelKey: fakeModelKeyDeps(),
       },
       corsOrigins: [],
+      // The origin the console submits from, which the origin check reads (GRA-148).
+      authUrl: CONSOLE_ORIGIN,
       handoff,
     },
     mcp,
@@ -185,10 +187,24 @@ function body(result: CallToolResult): Record<string, unknown> {
   return JSON.parse(first.text);
 }
 
+/**
+ * The origin the console submits from: this server's own, since `app.request` builds a relative
+ * path against it and the console is served same-origin (`console.ts`). A state-changing request
+ * under `/api` has to name an origin this deployment serves the console on (GRA-148,
+ * `origin-guard.ts`), so every helper below puts it on as a browser would.
+ */
+const CONSOLE_ORIGIN = "http://localhost";
+
 const json = (value: unknown, method = "POST") => ({
   method,
-  headers: { "content-type": "application/json" },
+  headers: { "content-type": "application/json", origin: CONSOLE_ORIGIN },
   body: JSON.stringify(value),
+});
+
+/** A mutation with no body, a revoke, from the console's origin. */
+const from = (method: "POST" | "PUT" | "DELETE") => ({
+  method,
+  headers: { origin: CONSOLE_ORIGIN },
 });
 
 type ConnectionWire = {
@@ -470,9 +486,7 @@ describe("a connection proposed over MCP and entered over HTTP", () => {
       });
       expect(store.buildApprovals.size).toBe(1);
 
-      const revoked = await app.request(`/api/connections/${connectionId}/revoke`, {
-        method: "POST",
-      });
+      const revoked = await app.request(`/api/connections/${connectionId}/revoke`, from("POST"));
       expect(revoked.status).toBe(200);
       expect(await revoked.json()).toMatchObject({
         connection: { id: connectionId, credentialSetAt: null, revokedAt: expect.any(String) },

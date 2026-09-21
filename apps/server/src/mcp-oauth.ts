@@ -33,6 +33,14 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
+import {
+  addressDoorKey,
+  NO_RATE_LIMITING,
+  oauthRefusalBody,
+  type RateLimiting,
+  rateLimit,
+} from "./rate-limit";
+
 /**
  * The HTTP face of Graft's authorization server (ADR 0018), in three Hono apps for three mounts:
  *
@@ -68,6 +76,14 @@ export type McpOAuthServerOptions = {
    * `DEFAULT_CARD_HOSTS` when absent, as the MCP server's own fallback is.
    */
   cardHosts?: readonly string[];
+
+  /**
+   * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two open doors here:
+   * registration, which ADR 0018 calls out as the unauthenticated write whose mitigation is a
+   * rate limit at the edge, and the token endpoint. `createServer` hands it down; absent,
+   * `NO_RATE_LIMITING` and both doors open, which is the default in both forms.
+   */
+  rateLimit?: RateLimiting;
 };
 
 /** Where `createMcpOAuthApp` is mounted; the endpoints in `MCP_OAUTH_PATHS` sit under it. */
@@ -196,6 +212,23 @@ export function createMcpOAuthApp(options: McpOAuthServerOptions): Hono {
   const { deps } = options;
 
   app.use("*", openCors);
+
+  /**
+   * The two open doors, each keyed by the caller's address because nobody has been named yet
+   * (GRA-149). Registration is the one ADR 0018 names: it is an unauthenticated write by protocol,
+   * bounded in size already, and "the remaining risk is volume". The token endpoint is here beside
+   * it because a grant is a credential check and a guessing caller is what it costs most against.
+   * The authorization endpoint is not: it writes nothing and a limit on it would fall on a person
+   * arriving in a browser. Revocation is not either: refusing to let a client retire a token is
+   * the wrong way to fail.
+   */
+  const rateLimiting = options.rateLimit ?? NO_RATE_LIMITING;
+  const openDoor = (bucket: "oauth_register" | "oauth_token") =>
+    rateLimit(rateLimiting.limiter, bucket, addressDoorKey(rateLimiting), {
+      body: oauthRefusalBody,
+    });
+  app.use(under(MCP_OAUTH_PATHS.register), openDoor("oauth_register"));
+  app.use(under(MCP_OAUTH_PATHS.token), openDoor("oauth_token"));
 
   app.onError((error, c) => {
     if (error instanceof OAuthProtocolError) {
