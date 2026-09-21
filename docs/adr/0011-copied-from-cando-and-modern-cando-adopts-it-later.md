@@ -35,3 +35,12 @@ also the moment Cando's own spec's "spin-out boundary" gets tested for real.
 - **Licensing follows** (ADR 0015): the copy is made under the company's ownership of both
   codebases, and Cando's later dependency on an AGPL core is covered by an internal commercial
   grant.
+
+## Amendment 2026-09-21: Cando's dependency needs no commercial grant
+
+**Decided by Aleks on 2026-09-21** (ADR 0022). The core is Apache-2.0 now, so the second half of
+the last bullet above no longer holds: there is no copyleft for an internal commercial licence to
+work around, and Cando adopts Graft as an ordinary dependency when the API is stable. The first
+half stands, since the copy was still made under the company's ownership of both codebases. The
+contributor agreement that kept the grant clean is a sign-off now, and nothing a contributor sends
+has to be relicensable for Cando's sake.
