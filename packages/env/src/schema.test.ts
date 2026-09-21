@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ADMIN_PASSWORD_MIN_LENGTH,
   acquireConcurrency,
   acquireMaxAttempts,
   acquireTokenCeiling,
@@ -34,6 +35,8 @@ import {
   packageMinWeeklyDownloads,
   pendingActionTtlHours,
   port,
+  RETIRED_ADMIN_PASSWORD,
+  rateLimitWindow,
   sandboxBackend,
   serverEnvIssues,
   serverSchema,
@@ -42,6 +45,7 @@ import {
   sweepIntervalSeconds,
   toolboxRoot,
   toolboxVolume,
+  trustedProxyHops,
   withDerivedDefaults,
 } from "./schema";
 
@@ -369,6 +373,8 @@ describe("finalServerSchema", () => {
       GRAFT_CARD_HOSTS: ["claude.ai", "chatgpt.com"],
       GRAFT_SWEEP_INTERVAL_SECONDS: 300,
       GRAFT_MIGRATE_ON_START: true,
+      // Every rate-limit bucket is absent here, which is the seam's default: unlimited.
+      GRAFT_TRUSTED_PROXY_HOPS: 0,
       GRAFT_ACQUIRE_MAX_ATTEMPTS: 4,
       GRAFT_ACQUIRE_TOKEN_CEILING: 400_000,
       GRAFT_ACQUIRE_CONCURRENCY: 2,
@@ -942,13 +948,33 @@ describe("GRAFT_CONSOLE_DIR", () => {
 });
 
 describe("the bootstrapped admin (GRA-33)", () => {
-  it("takes an email address and a password of Better Auth's minimum, and is optional", () => {
+  it("takes an email address, and is optional", () => {
     expect(adminEmail.parse(undefined)).toBeUndefined();
     expect(adminEmail.parse("admin@example.com")).toBe("admin@example.com");
     expect(adminEmail.safeParse("admin").error?.issues[0]?.message).toContain("GRAFT_ADMIN_EMAIL");
-    expect(adminPassword.parse("eight-ch")).toBe("eight-ch");
-    expect(adminPassword.safeParse("seven77").error?.issues[0]?.message).toContain(
-      "GRAFT_ADMIN_PASSWORD",
+    expect(adminPassword.parse(undefined)).toBeUndefined();
+  });
+
+  /**
+   * The floor and the denylist are GRA-148's: the keys script mints this password now, and a
+   * `.env` copied before that change still carries the one the compose file supplied.
+   */
+  it("refuses a short password, the retired one and a placeholder, naming the variable", () => {
+    const minted = "x".repeat(ADMIN_PASSWORD_MIN_LENGTH);
+    expect(adminPassword.parse(minted)).toBe(minted);
+
+    for (const value of [
+      "eight-ch",
+      "x".repeat(ADMIN_PASSWORD_MIN_LENGTH - 1),
+      RETIRED_ADMIN_PASSWORD,
+      "PLACEHOLDER_admin_password",
+    ]) {
+      const result = adminPassword.safeParse(value);
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_ADMIN_PASSWORD");
+    }
+    expect(adminPassword.safeParse(RETIRED_ADMIN_PASSWORD).error?.issues[0]?.message).toContain(
+      "GRA-148",
     );
   });
 
@@ -956,15 +982,62 @@ describe("the bootstrapped admin (GRA-33)", () => {
     expect(serverEnvIssues({ ...SECRET, GRAFT_ADMIN_EMAIL: "admin@example.com" })).toEqual([
       expect.stringMatching(/admin is partially configured.*Missing: GRAFT_ADMIN_PASSWORD/),
     ]);
-    expect(serverEnvIssues({ ...SECRET, GRAFT_ADMIN_PASSWORD: "change-me-please" })).toEqual([
-      expect.stringMatching(/Missing: GRAFT_ADMIN_EMAIL/),
-    ]);
+    expect(
+      serverEnvIssues({ ...SECRET, GRAFT_ADMIN_PASSWORD: "a-minted-password-32-characters-x" }),
+    ).toEqual([expect.stringMatching(/Missing: GRAFT_ADMIN_EMAIL/)]);
     expect(
       serverEnvIssues({
         ...SECRET,
         GRAFT_ADMIN_EMAIL: "admin@example.com",
-        GRAFT_ADMIN_PASSWORD: "change-me-please",
+        GRAFT_ADMIN_PASSWORD: "a-minted-password-32-characters-x",
       }),
+    ).toEqual([]);
+  });
+});
+
+/**
+ * The deployment `@graft/auth`'s `sessionCookieAttributes` cannot produce a working cookie for
+ * (GRA-148): a console on another origin over plain http that no browser treats as secure.
+ */
+describe("a console on another origin over plain http", () => {
+  const refusal = /cross-site session cookie/;
+
+  it("is refused when the API's own origin is plain http and not loopback", () => {
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        GRAFT_AUTH_URL: "http://192.168.1.5:3000",
+        GRAFT_CONSOLE_URL: "http://192.168.1.9:3001",
+      }),
+    ).toEqual([expect.stringMatching(refusal)]);
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        GRAFT_AUTH_URL: "http://graft.corp.example",
+        GRAFT_CONSOLE_URL: "http://graft.corp.example",
+        GRAFT_CORS_ORIGIN: ["http://console.corp.example"],
+      }),
+    ).toEqual([expect.stringMatching(refusal)]);
+  });
+
+  it("passes on https, on one origin, and on the loopback hosts the two-port loop uses", () => {
+    for (const value of [
+      {
+        GRAFT_AUTH_URL: "https://app.getgraft.ai",
+        GRAFT_CONSOLE_URL: "https://console.getgraft.ai",
+      },
+      { GRAFT_AUTH_URL: "http://192.168.1.5:3000", GRAFT_CONSOLE_URL: "http://192.168.1.5:3000" },
+      { GRAFT_AUTH_URL: "http://localhost:3000", GRAFT_CONSOLE_URL: "http://localhost:3001" },
+      { GRAFT_AUTH_URL: "http://127.0.0.1:3000", GRAFT_CONSOLE_URL: "http://127.0.0.1:3001" },
+      { GRAFT_AUTH_URL: "http://localhost:3000", GRAFT_CORS_ORIGIN: ["http://localhost:3001"] },
+    ]) {
+      expect(serverEnvIssues({ ...SECRET, ...value })).toEqual([]);
+    }
+  });
+
+  it("says nothing about a URL that never parsed, which the field's own refusal covers", () => {
+    expect(
+      serverEnvIssues({ ...SECRET, GRAFT_AUTH_URL: "not a url", GRAFT_CONSOLE_URL: "nor this" }),
     ).toEqual([]);
   });
 });
@@ -975,6 +1048,69 @@ describe("GRAFT_MIGRATE_ON_START", () => {
     expect(migrateOnStart.parse("false")).toBe(false);
     expect(migrateOnStart.parse("0")).toBe(false);
     expect(migrateOnStart.safeParse("later").success).toBe(false);
+  });
+});
+
+describe("the GRAFT_RATE_LIMIT_* group", () => {
+  const signIn = rateLimitWindow("GRAFT_RATE_LIMIT_SIGN_IN");
+
+  it("is absent by default, which is the decision: a self-host is unlimited unless it says otherwise", () => {
+    expect(signIn.parse(undefined)).toBeUndefined();
+    // And no production rule asks for one: every bucket is optional in every form.
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        ...MODEL,
+        NODE_ENV: "production",
+        GRAFT_BACKINGS: "open",
+      }),
+    ).toEqual([]);
+  });
+
+  it("reads <limit>/<windowSeconds>, spaces around the slash included", () => {
+    expect(signIn.parse("20/60")).toEqual({ limit: 20, windowSeconds: 60 });
+    expect(signIn.parse(" 5 / 1 ")).toEqual({ limit: 5, windowSeconds: 1 });
+  });
+
+  it("refuses a malformed value with one sentence naming the variable", () => {
+    for (const bad of ["20", "20/", "/60", "twenty/60", "20/60/1", "20.5/60", "-1/60"]) {
+      const parsed = signIn.safeParse(bad);
+      expect(parsed.success, bad).toBe(false);
+      expect(parsed.error?.issues[0]?.message).toContain("GRAFT_RATE_LIMIT_SIGN_IN");
+    }
+  });
+
+  it("refuses a zero on either side, which is a typo and not a door nailed shut", () => {
+    expect(signIn.safeParse("0/60").success).toBe(false);
+    expect(signIn.safeParse("20/0").success).toBe(false);
+    expect(signIn.safeParse("1/1").success).toBe(true);
+  });
+
+  it("names every bucket in the schema, so a door cannot be left unconfigurable", () => {
+    const buckets = Object.keys(serverSchema).filter((name) =>
+      name.startsWith("GRAFT_RATE_LIMIT_"),
+    );
+    expect(buckets.sort()).toEqual([
+      "GRAFT_RATE_LIMIT_API",
+      "GRAFT_RATE_LIMIT_MCP",
+      "GRAFT_RATE_LIMIT_OAUTH_REGISTER",
+      "GRAFT_RATE_LIMIT_OAUTH_TOKEN",
+      "GRAFT_RATE_LIMIT_PROXY",
+      "GRAFT_RATE_LIMIT_SIGN_IN",
+    ]);
+  });
+});
+
+describe("GRAFT_TRUSTED_PROXY_HOPS", () => {
+  it("is zero unless set, so X-Forwarded-For is never read on a caller's say-so", () => {
+    expect(trustedProxyHops.parse(undefined)).toBe(0);
+  });
+
+  it("takes a whole number of hops and refuses anything else", () => {
+    expect(trustedProxyHops.parse("2")).toBe(2);
+    expect(trustedProxyHops.safeParse("-1").success).toBe(false);
+    expect(trustedProxyHops.safeParse("1.5").success).toBe(false);
+    expect(trustedProxyHops.safeParse("one").success).toBe(false);
   });
 });
 

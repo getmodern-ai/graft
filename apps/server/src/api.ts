@@ -77,11 +77,19 @@ import { z } from "zod";
 import { routeEvent } from "./analytics-routes";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
+import { createOriginGuard } from "./origin-guard";
 import {
   createProviderLinkRoutes,
   isProviderLinkFallback,
   startProviderLink,
 } from "./provider-link";
+import {
+  apiDoorKey,
+  NO_RATE_LIMITING,
+  type RateLimiting,
+  rateLimit,
+  signInDoorKey,
+} from "./rate-limit";
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -186,8 +194,9 @@ export type ApiOptions = {
   mcpOAuth?: McpOAuthServerOptions;
   /**
    * `GRAFT_AUTH_URL` — the server's own origin, on which a link provider's return route answers
-   * (`provider-link.ts`; ADR 0019). Optional so a harness with no link provider binds nothing;
-   * `index.ts` always binds it, and the link routes are mounted only with it.
+   * (`provider-link.ts`; ADR 0019) and which the origin check treats as the console's in the
+   * one-origin form (`origin-guard.ts`, GRA-148). Optional so a harness with no link provider
+   * binds nothing; `index.ts` always binds it, and the link routes are mounted only with it.
    */
   authUrl?: string;
   /**
@@ -197,6 +206,12 @@ export type ApiOptions = {
    * `index.ts` binds `mcp.notifier`, and without it a revoke changes the list silently.
    */
   notifier?: Pick<ToolListChangedNotifier, "changed">;
+  /**
+   * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two doors under `/api`:
+   * `sign_in` over Better Auth's writes and `api` over this app's mutations. `createServer` hands
+   * it down; absent, `NO_RATE_LIMITING` and every door open, which is the default in both forms.
+   */
+  rateLimit?: RateLimiting;
 };
 
 /**
@@ -424,18 +439,51 @@ const callsQuery = z.object({
 });
 
 /**
+ * Whether a `content-type` declares JSON: `application/json`, or any type whose subtype carries
+ * RFC 6839's `+json` structured-syntax suffix. Parameters after the first `;` (a charset, a
+ * boundary) are not part of the media type and are dropped before the comparison.
+ */
+export function declaresJson(contentType: string | null): boolean {
+  if (contentType === null) return false;
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  return mediaType === "application/json" || /^[a-z0-9.+-]+\/[a-z0-9.-]+\+json$/.test(mediaType);
+}
+
+/**
  * The body against the route's schema. A route that once took no body (`emptyIs`) reads an empty
  * one as the value given, so an older console's bare `POST` still means what it meant.
+ *
+ * **A body has to declare itself JSON**, and is 415 otherwise (GRA-148). Not pedantry: a `POST`
+ * with `text/plain`, `application/x-www-form-urlencoded` or `multipart/form-data` is a CORS
+ * *simple request*, which a browser sends cross-site with the cookie and no preflight. Demanding
+ * JSON puts every route that reads a body behind a preflight the browser will only pass for an
+ * origin `cors()` names. That is the second half of what `origin-guard.ts` does, and the half
+ * that works in the browser rather than in this process. The console always declares it
+ * (`apps/web/src/lib/api.ts` sets the header whenever it sends a body), and Better Auth's own
+ * router admits `application/json` alone for the same reason.
+ *
+ * The rule is on the body and not on the request, so the bare `POST` above keeps working: a
+ * request with no body carries nothing to declare, and a content type would describe nothing.
+ * That leaves one shape the rule does not reach, a bodyless cross-site `POST` to a route with
+ * `emptyIs`, which today is `POST /pending-actions/:id/link` alone; the origin check refuses it,
+ * and refusing it here too would break the one caller the `emptyIs` path exists for.
  */
 async function parseBody<T extends z.ZodType>(
   request: Request,
   schema: T,
   options: { emptyIs?: unknown } = {},
 ): Promise<z.infer<T>> {
+  const text = await request.text();
+  const empty = text.trim().length === 0;
+  if (!empty && !declaresJson(request.headers.get("content-type"))) {
+    throw new ServiceError(
+      "UNSUPPORTED_MEDIA_TYPE",
+      "This route reads a JSON body, so the request must carry `content-type: application/json`",
+    );
+  }
   let json: unknown;
   try {
-    const text = await request.text();
-    json = text.trim().length === 0 && "emptyIs" in options ? options.emptyIs : JSON.parse(text);
+    json = empty && "emptyIs" in options ? options.emptyIs : JSON.parse(text);
   } catch {
     throw new ServiceError("BAD_REQUEST", "The body is not JSON");
   }
@@ -462,6 +510,32 @@ export function createApi(options: ApiOptions): Hono {
   if (options.corsOrigins.length > 0) {
     api.use("*", cors({ origin: [...options.corsOrigins], credentials: true }));
   }
+
+  /**
+   * Every state-changing request under `/api` names the console's origin or is refused
+   * (`origin-guard.ts`, GRA-148). Above the analytics chokepoint and every route, so a refused
+   * request resolves no session and counts nothing; below `cors()`, so the refusal still carries
+   * the headers a listed console needs to read it.
+   */
+  api.use(
+    "*",
+    createOriginGuard({
+      ...(options.authUrl === undefined ? {} : { authUrl: options.authUrl }),
+      corsOrigins: options.corsOrigins,
+    }),
+  );
+
+  /**
+   * The two rate-limited doors under `/api` (GRA-149), below the origin guard so a refused origin
+   * counts nothing, and above every route of this app because Hono
+   * runs middleware in registration order: Better Auth's writes keyed by the caller's address,
+   * and this app's own mutations keyed by the person whose session made them. Unlimited by
+   * default in both forms, in which case neither reads a header or resolves a session
+   * (`rate-limit.ts`).
+   */
+  const rateLimiting = options.rateLimit ?? NO_RATE_LIMITING;
+  api.use("/auth/*", rateLimit(rateLimiting.limiter, "sign_in", signInDoorKey(rateLimiting)));
+  api.use("*", rateLimit(rateLimiting.limiter, "api", apiDoorKey(options.auth.getSession)));
 
   /**
    * The console's product events, one chokepoint (GRA-100): after a tracked mutation has answered

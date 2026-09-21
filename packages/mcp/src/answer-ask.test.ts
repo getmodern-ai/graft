@@ -35,8 +35,8 @@ import { START_LINK } from "./tools/start-link";
  * registered on `claude.ai`, and so the one the card answers for; `other`, ChatGPT's, whose asks
  * are its own; `hermes`, a static-token agent whose harness renders no card and whose call can
  * only be its model's; and two OAuth agents whose clients are not known to hide the tool — one
- * registered on an unknown host, one with a second redirect off the list — which the gate refuses
- * unless their session declared the MCP Apps extension.
+ * registered on an unknown host, one with a second redirect off the list — which the gate
+ * refuses, whatever their session declared (GRA-150).
  */
 
 const PERSON = "person_1";
@@ -50,7 +50,11 @@ const UNKNOWN = "agent_unknown";
 const MIXED = "agent_mixed";
 const TOKEN_UNKNOWN = "grft_answer_ask_unknown_00000000000000000000000";
 const TOKEN_MIXED = "grft_answer_ask_mixed_000000000000000000000000000";
-/** The extension a client that implements MCP Apps declares in `initialize` — ChatGPT does, Claude.ai web does not. */
+/**
+ * The extension a client that implements MCP Apps declares in `initialize` — ChatGPT does,
+ * Claude.ai web does not. Observed and never admitted on (GRA-150), so every test that sets it
+ * asserts the verdict is the registration's either way.
+ */
 const UI_EXTENSION = { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } };
 const CONN = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
@@ -778,21 +782,33 @@ describe("answer_ask on a scope ask", () => {
 /**
  * Guard 1's second half (Greptile on #71): the OAuth grant alone admits any dynamically registered
  * client, so the card's tool answers only for a client whose hiding of app-only tools is
- * established — every registered redirect on a card host, or the extension declared in
- * `initialize`. The signals are the registration and the handshake, neither of which the model
- * can write to.
+ * established — every registered redirect on a card host (`GRAFT_CARD_HOSTS`), and nothing else.
+ * The client's own `initialize` was a second signal until ADR 0006's amendment of 2026-09-21
+ * (GRA-150) and is none now: a client writes that handshake itself, so it admitted exactly the
+ * clients nobody vouched for. The registration is not the client's to write: finishing Graft's
+ * OAuth flow means controlling the callback it named.
  */
 describe("the card-host gate", () => {
   const ask = async (agent: Awaited<ReturnType<typeof connect>>) =>
     cardOf(await agent.call("acquire", { connectionId: CONN, goal: "list orders" }));
 
-  it("admits a client registered on claude.ai, and one on chatgpt.com", async () => {
+  it("admits a client registered on claude.ai, and one on chatgpt.com, declaring nothing", async () => {
+    // Claude.ai's shape: it renders the card and declares no extension in `initialize`.
     for (const token of [TOKEN_CLAUDE, TOKEN_OTHER]) {
       const agent = await connect(token);
       const card = await ask(agent);
       const { body } = await answer(agent, card.pendingActionId, { allow: true });
       expect(body, token).toMatchObject({ answered: true });
     }
+  });
+
+  it("admits an on-list client whose session declared the extension too", async () => {
+    // ChatGPT's shape. The declaration moves nothing either way; the registration is the rule.
+    const chatgpt = await connect(TOKEN_OTHER, { declaresExtension: true });
+    const card = await ask(chatgpt);
+    expect((await answer(chatgpt, card.pendingActionId, { allow: true })).body).toMatchObject({
+      answered: true,
+    });
   });
 
   it("refuses a client registered on an unknown host, and one with a second redirect off the list", async () => {
@@ -810,12 +826,17 @@ describe("the card-host gate", () => {
     }
   });
 
-  it("admits an off-list client whose session declared the MCP Apps extension", async () => {
+  it("refuses an off-list client whose session declared the MCP Apps extension: the client writes its own initialize", async () => {
     const agent = await connect(TOKEN_UNKNOWN, { declaresExtension: true });
     const card = await ask(agent);
     const { body } = await answer(agent, card.pendingActionId, { allow: true });
-    expect(body).toMatchObject({ answered: true });
-    expect(store.buildApprovals.get(`${UNKNOWN} ${CONN}`)).toBeDefined();
+    expect(body).toMatchObject({
+      error: "refused",
+      reason: CARD_NOT_AVAILABLE,
+      message: expect.stringContaining("GRAFT_CARD_HOSTS"),
+    });
+    expect(store.pendingActions.get(card.pendingActionId)?.answeredAt).toBeNull();
+    expect(store.buildApprovals.get(`${UNKNOWN} ${CONN}`)).toBeUndefined();
   });
 
   it("still refuses a static-token agent, even one whose session declared the extension", async () => {
@@ -1209,15 +1230,18 @@ describe("the awaiting message under a rendered card", () => {
     expect(card).not.toHaveProperty("cardShown");
   });
 
-  it("an OAuth client nothing vouches for reads the console form, and the same client the card form once its session declared the extension", async () => {
+  it("an OAuth client nothing vouches for reads the console form, its own declaration of the extension included", async () => {
     const unknown = await connect(TOKEN_UNKNOWN);
     expectConsoleForm(text(await unknown.call("acquire", { connectionId: CONN, goal: "list" })));
 
+    // The same verdict shapes the gate and the message (GRA-120), so an off-list client that
+    // declares the extension reads the console form too, and is told the truth: no card is shown
+    // to it (GRA-150).
     const declared = await connect(TOKEN_UNKNOWN, { declaresExtension: true });
-    expectCardForm(text(await declared.call("acquire", { connectionId: CONN, goal: "list" })));
+    expectConsoleForm(text(await declared.call("acquire", { connectionId: CONN, goal: "list" })));
 
-    // A static-token agent's session declaring the extension changes nothing: the harness holds
-    // the token, and the card renders for a chat product's agent alone.
+    // A static-token agent's session declaring the extension changes nothing either: the harness
+    // holds the token, and the card renders for a chat product's agent alone.
     const hermes = await connect(TOKEN_HERMES, { declaresExtension: true });
     expectConsoleForm(text(await hermes.call("acquire", { connectionId: CONN, goal: "list" })));
   });

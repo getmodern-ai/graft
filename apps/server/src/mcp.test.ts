@@ -197,6 +197,21 @@ describe("the MCP endpoint", () => {
   });
 
   /**
+   * The origin check GRA-148 put over `/api` does not reach here, and must not: a harness is a
+   * server-side client presenting a bearer token, and the origin it names, if it names one at
+   * all, is nothing this deployment serves a console on.
+   */
+  it("is outside the origin check on /api: a bearer token from any origin is answered", async () => {
+    const { app } = harness();
+    const res = await app.request(
+      MCP_MOUNT_PATH,
+      post({ authorization: `Bearer ${TOKEN_A}`, origin: "https://somewhere.example" }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("mcp-session-id")).toBeTruthy();
+  });
+
+  /**
    * GRA-129 (ADR 0018 as amended 2026-09-20): a chat product's client keeps its session id across a
    * deploy and its card frame draws a banner on the 404, so for an access token the session is
    * re-opened under the id it presents; a static-token harness keeps the specification's answers.

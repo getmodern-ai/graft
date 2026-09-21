@@ -103,8 +103,10 @@ function elicitFormOf(server: Server): ElicitForm | null {
 /**
  * Whether the client's `initialize` declared the MCP Apps extension (`extensions` is the SDK's
  * open record of extension ids). ChatGPT declares it; Claude.ai web renders apps without
- * declaring it, which is why the card's tool pointers are unconditional and why this is one
- * signal of two rather than the gate (`tools/answer-ask.ts`).
+ * declaring it, which is why the card's tool pointers are unconditional. **An observation, not a
+ * signal**: it rides every tool call's wide event so an operator can see which clients declare it
+ * (`ToolCallEvent.uiExtensionDeclared`), and the card gate admits nobody on it, because a client
+ * writes its own handshake (ADR 0006 as amended 2026-09-21, GRA-150; `card-client.ts`).
  */
 function uiExtensionDeclared(server: Server): boolean {
   const extensions = server.getClientCapabilities()?.extensions;
