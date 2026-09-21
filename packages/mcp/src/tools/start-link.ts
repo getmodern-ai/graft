@@ -2,7 +2,7 @@ import { START_LINK_TOOL, type StartLinkResult } from "@graft/ask-card/shape";
 import { ServiceError } from "@graft/core";
 
 import { APP_ONLY_TOOL_META } from "../ask-card";
-import { mintProviderLink, proposalOfLinkAsk } from "../provider-link";
+import { isProviderLinkFallback, mintProviderLink, proposalOfLinkAsk } from "../provider-link";
 import { toolRefusal, toolResult } from "../result";
 import {
   admitCardCall,
@@ -95,6 +95,7 @@ export const startLink: MetaTool = {
         principal,
         admitted.row,
         {
+          db: deps.db,
           connection: deps.connection,
           pendingAction: deps.pendingAction,
           handoff: deps.handoff,
@@ -107,6 +108,14 @@ export const startLink: MetaTool = {
         return toolRefusal(CARD_NOT_AVAILABLE, `${error.message}. ${CONSOLE_IS_THE_PLACE}`);
       }
       throw error;
+    }
+    if (isProviderLinkFallback(started)) {
+      // The provider stepped aside and the ask is the keyring's form now (GRA-147): the card's
+      // console button lands on that form, so the refusal is the one the card answers with it.
+      return toolRefusal(
+        CARD_NOT_AVAILABLE,
+        `${started.provider} could not start its sign-in (${started.message}), so this connection is made on Graft's own page instead. ${CONSOLE_IS_THE_PLACE}`,
+      );
     }
     const result: StartLinkResult = {
       url: started.url,
