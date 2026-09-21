@@ -232,13 +232,21 @@ export function providerNamed(
  * at these hosts, each asked in turn and awaited — a later provider is never asked once an earlier
  * one has said yes. Never null in a well-formed deployment, because the keyring covers everything
  * and is last; the throw is for a list assembled some other way.
+ *
+ * A proposal whose scheme is `none` names a public API, and a `link` provider is passed over
+ * without being asked (GRA-166): its one click is a sign-in at the vendor for an account the calls
+ * never need, and the keyring's keyless confirmation is the shorter route. A `none`-connect
+ * provider — the gateway — is still asked, since an operator's egress rule is about the host, not
+ * the credential. ADR 0019, the bullet of 2026-09-22.
  */
 export async function providerFor(
   providers: readonly ConnectionProvider[],
   vendor: string,
   hosts: readonly string[],
+  scheme?: string,
 ): Promise<ConnectionProvider> {
   for (const provider of providers) {
+    if (scheme === "none" && provider.connect.kind === "link") continue;
     if (await provider.covers(vendor, hosts)) return provider;
   }
   throw new Error(`No connection provider covers ${vendor}: the keyring should always be last`);

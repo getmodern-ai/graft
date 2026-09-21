@@ -1093,6 +1093,31 @@ describe("request_connection routes a proposal to the provider that covers it", 
     return connection;
   }
 
+  it("a keyless proposal for a vendor a link provider covers is the keyring's ask, the provider never asked (GRA-166)", async () => {
+    deps.connection = { ...deps.connection, providers: [broker, keyringProvider] };
+    const a = await connect(TOKEN_B);
+    try {
+      const first = await a.call("request_connection", {
+        ...PROPOSAL,
+        scheme: "none",
+        schemeConfig: {},
+      });
+      const { answer, action } = awaiting(first, "awaiting_connection");
+      expect(answer.provider).toBeUndefined();
+      expect(answer.message).not.toContain("through broker");
+      expect(action.payload).toMatchObject({
+        provider: "keyring",
+        providerConnect: "form",
+        providerTarget: null,
+        vendor: "acme",
+        scheme: "none",
+      });
+      expect(started).toEqual([]);
+    } finally {
+      await a.close();
+    }
+  });
+
   it("a proposal a link provider covers is an ask with the link's payload and the provider named in the answer — no form, no redirect URI — and the return connects it for this agent", async () => {
     deps.connection = { ...deps.connection, providers: [broker, keyringProvider] };
     const a = await connect(TOKEN_B);
