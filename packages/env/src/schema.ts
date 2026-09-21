@@ -536,13 +536,16 @@ export const pendingActionTtlHours = z.coerce
 
 /**
  * The hosts whose MCP clients are known to render the ask card and hide its app-only tool from
- * the model (GRA-84; ADR 0006 as amended 2026-09-18): a comma-separated list of hostnames, each
+ * the model (GRA-84; ADR 0006 as amended 2026-09-21): a comma-separated list of hostnames, each
  * matched against an OAuth client's registered redirect URIs — equal, or a subdomain. Claude's
  * callback is on `claude.ai`, ChatGPT's on `chatgpt.com`, and those two are the default; a
- * self-hoster whose chat product answers on another host adds it here. A hostname and nothing
- * more: a scheme or a path would never match a URI's hostname and would admit nobody silently.
- * The consumer is `@graft/mcp`'s `answer_ask` (`tools/answer-ask.ts`), whose `DEFAULT_CARD_HOSTS`
- * repeats this default for a deployment built without the environment.
+ * self-hoster whose chat product answers on another host adds it here. **This is the whole rule**
+ * since GRA-150: a client not on the list is sent to the console, whatever it declares about
+ * itself in `initialize`, which it writes. A hostname and nothing more: a scheme or a path would
+ * never match a URI's hostname and would admit nobody silently.
+ * The consumers are `@graft/mcp`'s card gate (`card-client.ts`), whose `DEFAULT_CARD_HOSTS`
+ * repeats this default for a deployment built without the environment, and the console's consent
+ * page, which says which way a client will go before the person connects.
  */
 export const cardHosts = z
   .string()
@@ -572,6 +575,10 @@ export const cardHosts = z
  * all-or-nothing (`adminKeys`), because an email with no password would present as a console nobody
  * can enter. Read once, by `apps/server/src/boot.ts`, and only while the database holds no person;
  * a later change to either variable changes nothing, and the boot line says so.
+ *
+ * The operator types the address and the keys script mints the password (GRA-148): neither the
+ * compose file nor `.env.example` carries a default any more, so the documented walkthrough cannot
+ * leave an account behind whose password is in this repository.
  */
 export const adminEmail = z
   .email({
@@ -579,12 +586,35 @@ export const adminEmail = z
   })
   .optional();
 
-/** Eight characters is Better Auth's own floor; a shorter value would fail the sign-up, not the boot. */
+/**
+ * The value the compose file and `.env.example` carried until GRA-148, when the admin's password
+ * moved to `apps/server/src/scripts/generate-keys.ts`. Kept here as a denylist entry, because a
+ * `.env` copied before that change still holds it and the account it opens is sign-in-able by
+ * anyone who has read this repository.
+ */
+export const RETIRED_ADMIN_PASSWORD = "change-me-before-exposing-this";
+
+/**
+ * Sixteen characters, not Better Auth's floor of eight: the keys script mints a 32-character one
+ * and this account faces whatever network the console faces, so the floor is set where a typed
+ * password is worth having rather than where the library stops refusing (GRA-148). Held to the
+ * placeholder rule for the reason `secretValue` gives, and to the retired value above.
+ */
+export const ADMIN_PASSWORD_MIN_LENGTH = 16;
+
 export const adminPassword = z
   .string()
   .min(
-    8,
-    "GRAFT_ADMIN_PASSWORD must be at least 8 characters — Better Auth refuses a shorter password",
+    ADMIN_PASSWORD_MIN_LENGTH,
+    `GRAFT_ADMIN_PASSWORD must be at least ${ADMIN_PASSWORD_MIN_LENGTH} characters; mint one with \`node dist/keys.mjs\` (from a checkout, \`pnpm --filter @graft/server keys\`)`,
+  )
+  .refine(
+    (value) => value !== RETIRED_ADMIN_PASSWORD,
+    "GRAFT_ADMIN_PASSWORD still holds the value this repository shipped until GRA-148, which anyone who has read it knows; mint one with `node dist/keys.mjs` (from a checkout, `pnpm --filter @graft/server keys`)",
+  )
+  .refine(
+    (value) => !value.startsWith("PLACEHOLDER"),
+    "GRAFT_ADMIN_PASSWORD still holds the secret store's placeholder; populate it or unset it",
   )
   .optional();
 
@@ -598,6 +628,62 @@ export const adminKeys = ["GRAFT_ADMIN_EMAIL", "GRAFT_ADMIN_PASSWORD"] as const;
  * would try to create tables that exist and refuse to start. `apps/server/src/boot.ts` runs it.
  */
 export const migrateOnStart = z.stringbool().default(true);
+
+/**
+ * A rate-limit bucket's setting (GRA-149; `@graft/ratelimit`): `<limit>/<windowSeconds>`, so
+ * `20/60` is twenty requests a minute. One variable per bucket, each independently optional and
+ * **off by default in both forms**: the decision is that a self-host is unlimited unless its
+ * operator says otherwise, and the hosted form brings its own numbers from the private backings
+ * package. Not a group, because the buckets guard different doors and an operator who wants a
+ * limit on registration alone should not have to invent five others; a variable that is set is
+ * read on its own, and setting none leaves `UNLIMITED` behind the seam.
+ *
+ * Both halves are whole numbers of at least 1. A limit of 0 is not "no requests" but a variable
+ * nobody meant to write, and a window of 0 has no rate in it at all.
+ */
+export function rateLimitWindow(name: string) {
+  return z
+    .string()
+    .transform((raw, ctx) => {
+      const match = /^(\d+)\s*\/\s*(\d+)$/.exec(raw.trim());
+      const limit = Number(match?.[1]);
+      const windowSeconds = Number(match?.[2]);
+      if (!match || !Number.isInteger(limit) || !Number.isInteger(windowSeconds)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} must be <limit>/<windowSeconds>, both whole numbers — 20/60 is twenty requests a minute`,
+        });
+        return z.NEVER;
+      }
+      if (limit < 1 || windowSeconds < 1) {
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} must be <limit>/<windowSeconds>, both at least 1 — unset the variable to leave this door unlimited`,
+        });
+        return z.NEVER;
+      }
+      return { limit, windowSeconds };
+    })
+    .optional();
+}
+
+/**
+ * How many proxies sit between a caller and this process, for the buckets keyed on a client
+ * address (GRA-149). Unset, the default: the address is the socket's peer, which nobody but the
+ * network can choose. Set to `n`, the address is the `n`-th entry counting from the right of
+ * `X-Forwarded-For`, which is the caller's own address when exactly `n` trusted proxies appended
+ * one each.
+ *
+ * Never trusted by default, and this is the whole reason the variable exists: anyone may send
+ * `X-Forwarded-For`, so a server that read it unasked would key its limits on a value the caller
+ * picks, and one address could spend every other address's allowance or none of its own. Only an
+ * operator knows how many hops are really in front, so only an operator may say.
+ */
+export const trustedProxyHops = z.coerce
+  .number()
+  .int("GRAFT_TRUSTED_PROXY_HOPS must be a whole number of proxies in front of this server")
+  .min(0, "GRAFT_TRUSTED_PROXY_HOPS must be 0 or more; 0 means X-Forwarded-For is never read")
+  .default(0);
 
 /**
  * The gateway provider (ADR 0019, GRA-58): a company's API gateway fronts the vendors it covers and
@@ -708,6 +794,23 @@ function urlProtocolOf(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A host a browser treats as a secure context over plain `http`, and therefore one a `Secure`
+ * cookie survives: the loopback names and addresses (Chrome's "potentially trustworthy origin",
+ * and Better Auth's own `isLoopbackHost` reads the same set). The two-port development loop is
+ * every one of these, which is why the rule below exempts them.
+ */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "::1" ||
+    host === "[::1]" ||
+    /^127\.\d+\.\d+\.\d+$/.test(host)
+  );
 }
 
 /**
@@ -899,6 +1002,43 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
   );
   if (partialSmtp) issues.push(partialSmtp);
 
+  /**
+   * A console answering somewhere other than the API needs the session cookie to cross sites, and
+   * a cross-site cookie must be `Secure` or the browser drops it. Over https it is; on a loopback
+   * host, which the two-port development loop is, the browser treats plain http as a secure
+   * context and keeps it. Anywhere else over plain http the cookie never lands and every sign-in fails with
+   * nothing on either side to say why, so the deployment is refused here instead (GRA-148). The
+   * attributes themselves are `@graft/auth`'s `sessionCookieAttributes`.
+   */
+  const cookieAuthUrl = typeof value.GRAFT_AUTH_URL === "string" ? value.GRAFT_AUTH_URL : null;
+  const cookieConsoleUrl =
+    typeof value.GRAFT_CONSOLE_URL === "string" ? value.GRAFT_CONSOLE_URL : null;
+  if (cookieAuthUrl !== null) {
+    const api = (() => {
+      try {
+        return new URL(cookieAuthUrl);
+      } catch {
+        return null;
+      }
+    })();
+    const consoleOrigin = (() => {
+      if (cookieConsoleUrl === null) return api?.origin ?? null;
+      try {
+        return new URL(cookieConsoleUrl).origin;
+      } catch {
+        return null;
+      }
+    })();
+    const elsewhere =
+      (consoleOrigin !== null && api !== null && consoleOrigin !== api.origin) ||
+      (Array.isArray(value.GRAFT_CORS_ORIGIN) && value.GRAFT_CORS_ORIGIN.length > 0);
+    if (api !== null && elsewhere && api.protocol === "http:" && !isLoopbackHost(api.hostname)) {
+      issues.push(
+        "A console on another origin than GRAFT_AUTH_URL needs a cross-site session cookie, which a browser keeps only over https or on a loopback host; serve GRAFT_AUTH_URL over https, or serve the console from the same origin and leave GRAFT_CORS_ORIGIN unset.",
+      );
+    }
+  }
+
   // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
   // package brings the sandbox, and a `fake` set beside it would be two answers to one question.
   if (value.GRAFT_BACKINGS === "cloud" && value.GRAFT_SANDBOX_BACKEND === "fake") {
@@ -1056,6 +1196,21 @@ export const serverSchema = {
 
   /** Whether the boot applies the committed migrations — see `migrateOnStart`. */
   GRAFT_MIGRATE_ON_START: migrateOnStart,
+
+  /**
+   * One rate-limit bucket per door, each `<limit>/<windowSeconds>`, each independently optional
+   * and every one of them off by default — see `rateLimitWindow` (GRA-149, `@graft/ratelimit`).
+   * Set none and the seam is `UNLIMITED`; set any and the in-process backing counts those alone.
+   */
+  GRAFT_RATE_LIMIT_SIGN_IN: rateLimitWindow("GRAFT_RATE_LIMIT_SIGN_IN"),
+  GRAFT_RATE_LIMIT_OAUTH_REGISTER: rateLimitWindow("GRAFT_RATE_LIMIT_OAUTH_REGISTER"),
+  GRAFT_RATE_LIMIT_OAUTH_TOKEN: rateLimitWindow("GRAFT_RATE_LIMIT_OAUTH_TOKEN"),
+  GRAFT_RATE_LIMIT_MCP: rateLimitWindow("GRAFT_RATE_LIMIT_MCP"),
+  GRAFT_RATE_LIMIT_PROXY: rateLimitWindow("GRAFT_RATE_LIMIT_PROXY"),
+  GRAFT_RATE_LIMIT_API: rateLimitWindow("GRAFT_RATE_LIMIT_API"),
+
+  /** How far right in `X-Forwarded-For` the client's address is, 0 meaning never read it — see `trustedProxyHops`. */
+  GRAFT_TRUSTED_PROXY_HOPS: trustedProxyHops,
 };
 
 /**

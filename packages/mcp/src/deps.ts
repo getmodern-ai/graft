@@ -220,6 +220,20 @@ export type ToolCallEvent = {
   /** The refusal's `reason` — `connection_not_in_scope`, `approval_declined`, … — when `outcome` is `refused`. */
   reason?: string;
   latencyMs: number;
+  /**
+   * What the call was about, per tool, in counts and names and never content (GRA-155): `find_tool`'s
+   * `queryWords` and `hits`; `acquire`'s `goalLength`, `similarOffered` and the `jobId` it opened;
+   * `acquire_status`'s `jobId` and `status`; `run_tool`'s `tool`. `tools.ts`'s `eventDetail` is the
+   * table. Absent for a tool the table does not name.
+   */
+  detail?: Record<string, string | number | boolean>;
+  /**
+   * Whether the session's client declared the MCP Apps extension in `initialize` (GRA-150). An
+   * observation and nothing else: the card gate reads the client's registered callback host and
+   * never this (ADR 0006 as amended 2026-09-21), and it is here so an operator can see which
+   * clients declare it against which the gate admits.
+   */
+  uiExtensionDeclared: boolean;
 };
 
 export type CreateMcpDepsInput = Pick<

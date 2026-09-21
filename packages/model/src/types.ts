@@ -173,12 +173,15 @@ export type ModelSituationKind = ModelSituation["kind"];
 /**
  * What the model may answer. `note` is one line the job records as the attempt's diagnosis and
  * relays as progress — what the model learned, what it changed. `write_module` always starts a new
- * attempt; `proceed` is only meaningful after a `proof` situation whose reads all passed; `give_up`
- * ends the job.
+ * attempt; `prove` adds reads to the current attempt without a new draft (GRA-153: a path built
+ * from what the first read returned, a record's id, is proven without spending an attempt);
+ * `proceed` is only meaningful after a `proof` situation whose reads all passed; `give_up` ends
+ * the job.
  */
 export type ModelAnswer =
   | { kind: "read_docs"; urls: string[]; note: string }
   | { kind: "write_module"; draft: ModuleDraft; note: string }
+  | { kind: "prove"; proofReads: string[]; note: string }
   | { kind: "proceed"; note: string }
   | { kind: "give_up"; reason: string };
 
@@ -202,7 +205,7 @@ export const ANSWERS_FOR: Record<ModelSituationKind, readonly ModelAnswerKind[]>
   goal: ["read_docs", "write_module", "give_up"],
   docs: ["read_docs", "write_module", "give_up"],
   check_refused: ["read_docs", "write_module", "give_up"],
-  proof: ["read_docs", "write_module", "proceed", "give_up"],
+  proof: ["read_docs", "write_module", "prove", "proceed", "give_up"],
   publish_refused: ["read_docs", "write_module", "give_up"],
   dry_run_failed: ["read_docs", "write_module", "give_up"],
 };

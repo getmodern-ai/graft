@@ -165,6 +165,14 @@ function parseAnswer(value: unknown, at: string): ModelAnswer {
       }
       return { kind: "write_module", draft: parseDraft(value.draft, at), note: value.note };
     }
+    case "prove": {
+      if (!isStringArray(value.proofReads) || typeof value.note !== "string") {
+        throw new Error(
+          `${at}: a prove answer carries "proofReads" (an array of paths) and a "note"`,
+        );
+      }
+      return { kind: "prove", proofReads: value.proofReads, note: value.note };
+    }
     case "proceed": {
       if (typeof value.note !== "string") {
         throw new Error(`${at}: a proceed answer carries a "note"`);
@@ -179,7 +187,7 @@ function parseAnswer(value: unknown, at: string): ModelAnswer {
     }
     default:
       throw new Error(
-        `${at}: answer kind "${value.kind}" is not one of read_docs, write_module, proceed, give_up`,
+        `${at}: answer kind "${value.kind}" is not one of read_docs, write_module, prove, proceed, give_up`,
       );
   }
 }

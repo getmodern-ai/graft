@@ -106,18 +106,22 @@ export const APP_ONLY_TOOL_META: NonNullable<Tool["_meta"]> = {
 };
 
 /**
- * The extension's id in a client's `initialize` capabilities. A client that declares it has
- * implemented the MCP Apps specification, whose host requirements include leaving an `app`-only
- * tool out of the model's list — the second of `answer_ask`'s two admission signals.
+ * The extension's id in a client's `initialize` capabilities. A client that declares it says it
+ * has implemented the MCP Apps specification, whose host requirements include leaving an
+ * `app`-only tool out of the model's list. **Observed, never trusted**: the client writes that
+ * handshake, and the specification gives a server nothing to check it against, so it admits
+ * nobody and only rides the call's wide event (`session.ts`; ADR 0006 as amended 2026-09-21,
+ * GRA-150).
  */
 export const UI_EXTENSION_ID = "io.modelcontextprotocol/ui";
 
 /**
  * The chat products known to render the card and hide its tool, by the host their OAuth callback
- * answers on — the first admission signal. Claude's is `claude.ai/api/mcp/auth_callback`,
- * ChatGPT's `chatgpt.com/connector_platform_oauth_redirect` (the GRA-84 research). The
- * deployment's list is `GRAFT_CARD_HOSTS` (`packages/env/src/schema.ts`, the same default), on
- * `McpDeps.cardHosts`; this is the fallback for a `McpDeps` built without one.
+ * answers on — the whole admission rule since GRA-150. Claude's is
+ * `claude.ai/api/mcp/auth_callback`, ChatGPT's `chatgpt.com/connector_platform_oauth_redirect`
+ * (the GRA-84 research). The deployment's list is `GRAFT_CARD_HOSTS`
+ * (`packages/env/src/schema.ts`, the same default), on `McpDeps.cardHosts`; this is the fallback
+ * for a `McpDeps` built without one.
  */
 export const DEFAULT_CARD_HOSTS: readonly string[] = ["claude.ai", "chatgpt.com"];
 

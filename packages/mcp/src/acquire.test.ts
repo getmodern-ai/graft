@@ -368,9 +368,12 @@ const until = async (predicate: () => boolean, ms = 5_000) => {
 /** Start a job through the meta-tool and run it to its end; answers the start and the final status. */
 async function acquireAndFinish(
   harness: Awaited<ReturnType<typeof connect>>,
+  // `ignoreExisting`: the suite publishes `demo__list-items` over and over, and from the second
+  // job on `acquire` would answer that it exists (GRA-154); the pre-check has its own describe.
   args: Record<string, unknown> = {
     connectionId: CONN_DEMO,
     goal: "List the items in Demo Orders",
+    ignoreExisting: true,
   },
 ) {
   const started = body(await harness.call("acquire", args));
@@ -494,6 +497,7 @@ describe("a job that passes first time", () => {
         await a.call("acquire", {
           connectionId: CONN_DEMO,
           goal: "List the items in Demo Orders",
+          ignoreExisting: true,
           hints: "GET /items",
         }),
       );
@@ -619,6 +623,135 @@ describe("a job that passes first time", () => {
       expect(sent.every((r) => r.headers.get("x-demo-key") === API_KEY)).toBe(true);
     } finally {
       await a.close();
+    }
+  }, 30_000);
+});
+
+describe("the toolbox first (GRA-154)", () => {
+  /** A goal a live tool of the vendor already covers is answered, not rebuilt; the agent may insist. */
+  it("answers similar_tools_exist with the tools and their schemas, opens no job, and builds with ignoreExisting", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    const a = await connect(TOKEN_A);
+    try {
+      // The suite's earlier jobs left `demo__list-items` published; here the goal names it.
+      const jobsBefore = store.acquireJobs.size;
+      const refused = await a.call("acquire", {
+        connectionId: CONN_DEMO,
+        goal: "List the items in Demo Orders",
+      });
+      expect(refused.isError).toBe(true);
+      const answer = body(refused);
+      expect(answer).toMatchObject({ error: "refused", reason: "similar_tools_exist" });
+      expect(answer.message).toContain("demo__list-items");
+      expect(answer.message).toContain("ignoreExisting: true");
+      expect(answer.tools).toEqual([
+        expect.objectContaining({
+          vendor: "demo",
+          name: "list-items",
+          tool: "demo__list-items",
+          inputSchema: LIST_ITEMS_SCHEMA,
+          annotations: { readOnlyHint: true, destructiveHint: false },
+        }),
+      ]);
+      expect(store.acquireJobs.size).toBe(jobsBefore);
+      // A goal the toolbox does not cover opens a job as before, no flag needed.
+      const other = body(
+        await a.call("acquire", {
+          connectionId: CONN_DEMO,
+          goal: "Cancel an order by its id and refund the payment",
+        }),
+      );
+      expect(other.jobId).toEqual(expect.any(String));
+      await runner.idle();
+      // And the agent may insist.
+      const { status } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+    } finally {
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+});
+
+describe("a proof-only answer (GRA-153)", () => {
+  /** The model proves the second path with the id the first read returned — a turn, not an attempt. */
+  it("runs the added reads against the same draft, shows every read so far, and publishes on proceed with one attempt", async () => {
+    const scripted = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      {
+        on: "proof",
+        answer: {
+          kind: "prove",
+          proofReads: ["/items?limit=2"],
+          note: "The list answered; one more page.",
+        },
+      },
+      { on: "proof", answer: { kind: "proceed", note: "Both reads answered as documented." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
+      const proofs = traces.filter((row) => row.kind === "proof").map((row) => row.text);
+      expect(proofs).toEqual([
+        "Proof read GET /items?limit=1: 200.",
+        "Proof read GET /items?limit=2: 200.",
+      ]);
+      // The second proof situation carries both reads, the draft's first.
+      const shown = scripted.conversations[0]?.situations.filter((s) => s.kind === "proof") ?? [];
+      expect(shown.map((s) => (s.kind === "proof" ? s.reads.map((r) => r.path) : []))).toEqual([
+        ["/items?limit=1"],
+        ["/items?limit=1", "/items?limit=2"],
+      ]);
+      expect(
+        traces.some(
+          (row) => row.kind === "model" && row.text.startsWith("Proving attempt 1 further:"),
+        ),
+      ).toBe(true);
+    } finally {
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  it("refuses a prove past the attempt's cap as a turn, naming the room left, and takes the proceed after", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({
+          proofReads: ["/items?limit=1", "/items?limit=2", "/items?limit=3", "/items?limit=4"],
+        }),
+        "Drafted list-items.",
+      ),
+      {
+        on: "proof",
+        answer: { kind: "prove", proofReads: ["/items/itm_1", "/items/itm_2"], note: "Two more." },
+      },
+      { on: "proof", answer: { kind: "proceed", note: "Enough was proven." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
+      expect(traces.filter((row) => row.kind === "proof")).toHaveLength(4);
+      const refused = scripted.conversations[0]?.situations.find(
+        (s) => s.kind === "proof" && s.refused !== null,
+      );
+      expect(refused && refused.kind === "proof" ? refused.refused : null).toContain(
+        "named 2 more read(s), and this attempt has 1 of 5 left",
+      );
+    } finally {
+      await a.close();
+      await runner.idle();
     }
   }, 30_000);
 });
@@ -841,7 +974,11 @@ describe("a job that fails and tries again", () => {
     const a = await connect(TOKEN_A);
     try {
       const settled = body<AcquireStatus>(
-        await a.call("acquire", { connectionId: CONN_DEMO, goal: "List the items" }),
+        await a.call("acquire", {
+          connectionId: CONN_DEMO,
+          goal: "List the items",
+          ignoreExisting: true,
+        }),
       );
       // The job finished inside the wait: the answer is acquire_status's, result included.
       expect(settled.status).toBe("succeeded");
@@ -898,7 +1035,11 @@ describe("a job that fails and tries again", () => {
     const a = await connect(TOKEN_A);
     try {
       const started = body<AcquireStatus>(
-        await a.call("acquire", { connectionId: CONN_DEMO, goal: "List the items" }),
+        await a.call("acquire", {
+          connectionId: CONN_DEMO,
+          goal: "List the items",
+          ignoreExisting: true,
+        }),
       );
       expect(["queued", "running"]).toContain(started.status);
 
@@ -951,6 +1092,7 @@ describe("a job that fails and tries again", () => {
       const { status, jobId } = await acquireAndFinish(a, {
         connectionId: CONN_DEMO,
         goal: "List the items in Demo Orders, second job",
+        ignoreExisting: true,
       });
       expect(status.status).toBe("succeeded");
       expect(status.attempts).toBe(2);

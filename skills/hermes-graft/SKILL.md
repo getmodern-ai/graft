@@ -50,7 +50,9 @@ their wiki, a report from their accounting app — and no tool in your list does
 
 `acquire` waits about half a minute for the job. A job that finishes in time answers `succeeded` or
 `failed` with `result`, as `acquire_status` does; otherwise it answers `{ jobId, status, progress }`
-and nothing is built yet.
+and nothing is built yet. A refusal `similar_tools_exist` means the toolbox already holds a tool
+that looks like the goal, named with its `inputSchema`: run it with `run_tool` (or `promote` it), and
+call `acquire` again with `ignoreExisting: true` only when none of the named tools fits.
 
 ## While the job runs: `acquire_status`
 

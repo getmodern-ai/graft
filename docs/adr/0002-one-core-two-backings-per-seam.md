@@ -23,9 +23,8 @@ in the open code that switch commercial behaviour on.
   two vendors' release schedules, and it offers no place for the hosted authoring model.
 - **Hosted only.** Rejected: the audience chose OpenClaw or Hermes partly to keep credentials on
   their own hardware, and the Docker form is nearly free once the seams exist.
-- **A general plugin system so third parties can add backings.** Rejected on executor.sh's own
-  evidence: its plugin registry, some 850 lines of optional hooks, never gained a fourth
-  implementation and its authors call it "a fiction" they are removing. Two implementations per
+- **A general plugin system so third parties can add backings.** Rejected: a registry of optional
+  hooks tends to gain no implementation beyond its author's own. Two implementations per
   interface is the honest shape.
 - **Feature flags in one codebase.** Rejected: flags advertise the shape of what is hidden and rot
   the same way a fake-open registry does.
@@ -35,9 +34,8 @@ in the open code that switch commercial behaviour on.
 - **Every seam is a plain interface with two tests**, and a change to the interface lands in both
   backings in the same PR.
 - **The Docker form needs the Docker socket or a sibling-container pattern** to launch sandboxes.
-  This is an operational surface executor.sh avoided by running model code in an in-process
-  QuickJS interpreter; Graft cannot, because authored tools need a filesystem and a route to the
-  proxy (ADR 0013).
+  This is an operational surface an in-process interpreter would avoid; Graft cannot take that
+  route, because authored tools need a filesystem and a route to the proxy (ADR 0013).
 - **The private package is a second repository to keep in step.** Accepted as the cost of an open
   core that is actually open.
 

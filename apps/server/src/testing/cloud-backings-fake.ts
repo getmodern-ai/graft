@@ -31,6 +31,9 @@ export function createCloudBackings(input: CloudBackingsInput): CloudBackings {
     providers: [fakeCloudProvider],
     // The hosted form's mail transport (ADR 0021): records nothing, answers the shared shape.
     mail: { name: "fake-mail", send: async () => ({ delivered: true, transport: "fake-mail" }) },
+    // The hosted form's rate limiter (GRA-149), which stands ahead of whatever the environment
+    // configured: the hosted tier sets its own numbers, high, and they are not this repository's.
+    rateLimiter: { name: "fake-limits", check: async () => ({ allowed: true }) },
     sandbox: createFakeSandboxBackend(),
     keyring: { ...keyring, id: "fake-cloud" },
     mirror: {

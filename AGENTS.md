@@ -25,6 +25,10 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
   `git rebase --signoff origin/main` adds it to a branch already written.
   A Developer Certificate of Origin replaced the CLA on 2026-09-21 (ADR 0022); the core is
   Apache-2.0 and `CONTRIBUTING.md` is what an outside contributor reads.
+- **`SECURITY.md` is what the outside is told.** Where to report a vulnerability, what is in
+  scope and where the design is written down; a change that moves one of those boundaries
+  (the proxy, the token, the vault, the sandbox, the asks, the MCP OAuth server, the console's
+  session) updates that file in the same pull request.
 - **A comment states the local consequence and points at the ADR for the argument.** Do not
   restate an ADR in a comment; it will rot. A comment that asserts the state of code elsewhere is
   a claim with a date on it, so name the file or the ticket a reader can check in one step.
@@ -69,7 +73,7 @@ pnpm run test          # turbo: vitest per package
 pnpm run build         # turbo: only packages that declare a build script
 pnpm run dev           # turbo: persistent, only packages that declare a dev script
 docker compose up -d   # the self-hosted form, whole: Postgres, Graft (server, proxy, MCP, console), the sandbox image
-pnpm run db:start      # postgres:18 alone, via the same compose file, port 5432 (GRAFT_POSTGRES_PORT overrides)
+pnpm run db:start      # postgres:18 alone, plus docker-compose.dev.yml, on 127.0.0.1:5432 (GRAFT_POSTGRES_PORT overrides)
 pnpm run db:push       # apply packages/db/src/schema/*.ts directly — the dev loop
 pnpm run db:generate   # write a migration under packages/db/drizzle from the schema
 pnpm run db:migrate    # apply the committed migrations
@@ -87,9 +91,16 @@ comments are the reference for each name. Two ways to use it while developing:
 
 - **Postgres alone** (`pnpm run db:start`) and the server from source on the host (`pnpm run dev`) —
   the inner loop, where `tsx watch` and Vite reload. `apps/server/.env` names the database for it.
+  The four `db:*` compose scripts pass `-f docker-compose.yml -f docker-compose.dev.yml`, because
+  that overlay is the only thing that publishes Postgres on the host, and on loopback alone
+  (GRA-148): `docker compose up -d` publishes no database, and the `graft` service reaches it by
+  name on the project's own network.
 - **Everything in containers** (`docker compose up -d --build`) — to see the image a self-hoster
   gets, or to run the loop end to end with Docker sandboxes and no host setup. `.env` at the root
-  (from `.env.example`) holds its secrets, model key and admin.
+  (from `.env.example`) holds its secrets, model key and admin. **No secret has a default**, in
+  that file or in the compose file: `node dist/keys.mjs` mints the five Graft refuses to start
+  without and `GRAFT_ADMIN_PASSWORD` with them (GRA-148), and the operator types
+  `GRAFT_ADMIN_EMAIL`.
 
 Use a distinct project name (`docker compose -p <name> …`) to run a second copy beside a colleague's:
 the sandbox network and the toolbox volume are named after the project, so two never share one.
@@ -136,7 +147,7 @@ through it, so the token names ids under either mode.
 
 ```bash
 pnpm run db:start
-pnpm --filter @graft/server keys >> apps/server/.env    # key pair, keyring, auth and handoff secrets
+pnpm --filter @graft/server keys >> apps/server/.env    # key pair, keyring, auth and handoff secrets, and the admin's password
 cat >> apps/server/.env <<'ENV'
 GRAFT_DATABASE_URL=postgresql://postgres:password@localhost:5432/graft
 GRAFT_AUTH_URL=http://localhost:3000
@@ -155,6 +166,9 @@ so set `GRAFT_MIGRATE_ON_START=false` while the schema is moving. Then, if `GRAF
 account through Better Auth's own sign-up and prints one line saying so; a database with anyone in it
 is never touched, and the line says that instead. Unset, nothing happens — a laptop registers at
 `/signup` and verifies the address from the link the console transport prints (ADR 0020, ADR 0021).
+The password is the keys script's, never a file's: `@graft/env` refuses one under 16 characters,
+one this repository once shipped and one still holding a secret store's placeholder, each with a
+sentence naming the variable (GRA-148).
 
 `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL`, `GRAFT_CONSOLE_URL` (where the
 console answers — the base of every handoff URL) and `GRAFT_HANDOFF_SECRET` (32+, signs those URLs)
@@ -172,8 +186,8 @@ tool call waits for a person to answer a handoff before returning
 handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTION_TTL_HOURS` (default
 24) how long that action stays answerable (ADR 0006, ADR 0008). `GRAFT_CARD_HOSTS` (default
 `claude.ai,chatgpt.com`) names the chat products whose OAuth clients may answer the ask card, by the
-host of their registered redirect URIs (GRA-84; the paragraph on the card below). `packages/env/src/schema.ts` is the
-rules as code.
+host of their registered redirect URIs, and is the whole of that rule (GRA-84, GRA-150; the
+paragraph on the card below). `packages/env/src/schema.ts` is the rules as code.
 
 **An OAuth consent (ADR 0005) adds no variable, two server routes and one console route.**
 `GET /api/oauth/redirect-uri` is `GRAFT_AUTH_URL` plus `/api/oauth/callback`, computed by one function
@@ -358,9 +372,12 @@ carry the card's data under `structuredContent.card` beside GRA-55's unchanged `
 `reason` (`result.ts`'s `withCard`). **For a client the server knows renders the card, the awaiting
 `message` takes its card form and `cardShown: true` rides beside `url`** (GRA-120; ADR 0006 as
 amended 2026-09-20): `packages/mcp/src/card-client.ts`'s `clientRendersCards` is the card gate's
-client half — an OAuth agent whose session declared the MCP Apps extension or whose client is
-registered on a `GRAFT_CARD_HOSTS` host — held once per session, and its `toolAskResult` is where
-every awaiting result goes onto the wire (`tools/meta.ts`, `tools/execute.ts`, `tools.ts`); each
+client half — an OAuth agent whose client registered every one of its redirect URIs on a
+`GRAFT_CARD_HOSTS` host, which is the whole rule since GRA-150 (ADR 0006 as amended 2026-09-21: a
+client writes its own `initialize`, so its declaration of the MCP Apps extension admits nobody and
+is only observed, on each tool call's wide event) — held once per session, and its
+`toolAskResult` is where every awaiting result goes onto the wire (`tools/meta.ts`,
+`tools/execute.ts`, `tools.ts`); each
 ask flow writes both forms through `handoff-message.ts`, so the console form a static-token agent
 or an unvouched client reads is byte for byte what it was, and `url` never changes.
 `SERVER_INSTRUCTIONS` carries the one clause on what `cardShown` means; the Hermes skill does not,
@@ -370,14 +387,18 @@ answer returns through `result.ts`'s `toolAwaiting` with `isError: false` and th
 a host renders no view for an error result (ext-apps issue 694) — refusals and failures stay
 `isError: true`. The card answers by calling `answer_ask` (`tools/answer-ask.ts`), declared
 `_meta.ui.visibility: ["app"]` so the host hides it from the model; the tool refuses a static-token
-agent, an OAuth client whose hiding is not established (neither every registered redirect URI on a
-`GRAFT_CARD_HOSTS` host nor the MCP Apps extension declared in `initialize`), another agent's ask,
-a closed or expired ask, and every ask but the build approval, the tool's first-use approval
+agent, an OAuth client whose hiding is not established (not every registered redirect URI on a
+`GRAFT_CARD_HOSTS` host), another agent's ask, a closed or expired ask, and every ask but the
+build approval, the tool's first-use approval
 (GRA-116), the keyless connection confirmation, the scope ask and a link provider's decline, and
 records the rest through `ask-answer.ts` — the same functions the console's
 `POST /pending-actions/:id/answer` and `/connection` call, with `via: "card"` on the answer. The
-gate is `tools/card-gate.ts`, shared with the two other app-only tools. `packages/mcp/src/answer-ask.test.ts`
-is the suite; `pnpm --filter @graft/ask-card build` before `pnpm --filter @graft/mcp test` on a
+gate is `tools/card-gate.ts`, shared with the two other app-only tools. The consent page says
+which way a client will go before the person connects: `GET /api/mcp-oauth/request` answers
+`rendersCards`, read from the same function over the same parsed list
+(`apps/server/src/mcp-oauth.ts`), and `components/agent/consent-card.tsx` shows one sentence when
+it is true. `packages/mcp/src/answer-ask.test.ts` is the suite;
+`pnpm --filter @graft/ask-card build` before `pnpm --filter @graft/mcp test` on a
 fresh checkout, or let `pnpm run test` order it.
 
 **Every ask settles in the card; the console is a popup for the secret alone** (GRA-116, GRA-117,
@@ -637,6 +658,24 @@ elsewhere. A server whose console directory holds no build boots and answers eve
 a JSON 404 saying where it looked. `GRAFT_CONSOLE_URL` is a different setting: where handoff URLs
 point (GRA-23), which in development is the Vite origin.
 
+**Nothing but the console calls `/api` with a session, and three rules hold it to that** (GRA-148).
+*The session cookie follows the deployment*: `@graft/auth`'s `sessionCookieAttributes` derives it
+from `GRAFT_AUTH_URL`, `GRAFT_CONSOLE_URL` and `GRAFT_CORS_ORIGIN`: `sameSite: "lax"` where the
+console and the API answer on one origin, `"none"` only where the console is elsewhere, and
+`secure` from the scheme, so a self-host on a plain `http` LAN address can sign in at all. A
+console elsewhere over plain non-loopback http is refused at boot, because the browser drops that
+cookie. *An origin check on `/api`*: `apps/server/src/origin-guard.ts` refuses every non-`GET`
+request whose `Origin`, then `Referer`, then `Sec-Fetch-Site: same-origin`, is not the auth
+origin or one of `GRAFT_CORS_ORIGIN`, with a 403 in the API's own refusal shape. Four kinds of
+route are exempt and the file says why beside each: `/api/proxy/*` (a capability token from a
+sandbox, no cookie), `/api/auth/*` (Better Auth runs the same check against its own
+`trustedOrigins`), `/api/health`, and reads. Nothing else under `/api` authenticates by bearer
+token: the MCP endpoint and the OAuth protocol endpoints are outside the mount. *A JSON body is
+declared*: `parseBody` answers 415 unless the content type is `application/json` or a `+json`
+suffix, which takes every route that reads a body out of CORS's simple-request set, so the browser
+preflights it; the rule is on the body, so a bare `POST` with nothing to declare still reaches the
+`emptyIs` path. The console's `src/lib/api.ts` satisfies all three without doing anything special.
+
 **The shell is Cando's, less the agent rail** (GRA-46). `src/components/shell/app-shell.tsx` mounts
 the `Sidebar` primitive off canvas at its own 16rem — the `sidebar_state` cookie it writes is read
 back by `src/lib/sidebar-state.ts`, ⌘B toggles it, and below `md` it is the drawer, closed on the
@@ -795,6 +834,32 @@ two chokepoints and nowhere in the console: the API's mutation routes
 does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
 `acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
 form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
+
+**Rate limiting is a seam, and the open form is unlimited by default** (GRA-149; ADR 0002 as
+amended 2026-09-19; ADR 0018's "a rate limit at the edge"; `@graft/ratelimit`). `RateLimiter` is
+one `check({ bucket, key, now })` answering allowed, or refused with the seconds to wait, over a
+fixed bucket per door: `sign_in` (Better Auth's writes under `/api/auth/*`), `oauth_register`
+(`POST /mcp/oauth/register`, the unauthenticated write ADR 0018 names), `oauth_token`, `mcp`,
+`proxy` and `api`. `UNLIMITED` is the no-op and **the default in both forms**, so a self-host
+refuses nobody until its operator says otherwise and the boot line reads `rate limit off`. The
+open backing is `createMemoryRateLimiter`, a token bucket per key held in this one process (two
+replicas hold two counts), switched on one bucket at a time by `GRAFT_RATE_LIMIT_<BUCKET>` of the
+shape `<limit>/<windowSeconds>`; set any and the boot line names them (`rate limit in-process
+sign_in 20/60`). `apps/server/src/rate-limit.ts` is the server's half: one Hono middleware
+`rateLimit(limiter, bucket, keyOf)` mounted above each door, which answers 429 with `Retry-After`
+in that door's own body shape (the API's `{ error, message }`, the proxy's and `/mcp`'s
+`{ error, reason, message }`, the OAuth endpoints' `{ error, error_description }`) and puts
+`rateLimited: { bucket, key }` on the wide event, the key a digest when it is an address. Keys are
+the person for `api` and the connection for `proxy`, where the request names one, and the client's
+address for every door that runs before anyone is authenticated, `mcp` included: the socket's peer
+unless `GRAFT_TRUSTED_PROXY_HOPS=<n>` says how many hops are in front, because anyone may send
+`X-Forwarded-For`. **Never a key taken from a bearer token**, which is why `mcp` is the address
+even when one is presented: an unknown `grft_` costs `requireAgent` a database read, which is the
+cost the door rations, and a caller inventing a bearer per request would otherwise buy a fresh
+allowance each time. A per-agent count would have to sit after `requireAgent`, where it no longer
+saves the read. A refusal happens before the handler, so it is never an approval, a tool call or
+a vendor call. `Backings.rateLimiter` is the seam beside `logs`, `analytics` and `model telemetry`;
+the hosted form's limits and any store behind them are graft-cloud's, in its private package.
 
 ```bash
 cat >> apps/server/.env <<'ENV'

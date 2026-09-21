@@ -14,7 +14,8 @@ import {
  * because that is what structured output can hold: a provider's strict JSON-schema mode wants every
  * property present and no free-form objects, so the four kinds share one shape with the fields the
  * other kinds leave empty, and the two values that *are* free-form — the input schema and the test
- * input — travel as JSON text the reader parses. What the model cannot get wrong is the shape; what
+ * input — travel as JSON text the reader parses. Five kinds share the shape since GRA-153 added
+ * `prove`, whose paths ride in `proofReads` as `read_docs`'s URLs ride in `urls`. What the model cannot get wrong is the shape; what
  * it can still get wrong — an answer the situation does not admit, a name that is not kebab-case, a
  * schema that is not an object — is reported as a list of sentences the adapter puts back to the
  * model for one repair turn (`./provider.ts`) before the job counts it as a model failure.
@@ -52,13 +53,18 @@ export const WIRE_DRAFT_SCHEMA = z.strictObject({
 export const MAX_PROOF_READS = 5;
 
 export const WIRE_ANSWER_SCHEMA = z.strictObject({
-  kind: z.enum(["read_docs", "write_module", "proceed", "give_up"]),
+  kind: z.enum(["read_docs", "write_module", "prove", "proceed", "give_up"]),
   note: z
     .string()
     .describe(
       "One line the agent relays: what you learned and what you changed. For give_up, why the tool cannot be built.",
     ),
   urls: z.array(z.string()).describe("For read_docs, the pages to read. Empty otherwise."),
+  proofReads: z
+    .array(z.string())
+    .describe(
+      "For prove, more vendor-relative GET paths to run against the current draft before deciding — built from what earlier reads returned. Empty otherwise.",
+    ),
   draft: WIRE_DRAFT_SCHEMA.nullable().describe("For write_module, the module. Null otherwise."),
 });
 
@@ -182,6 +188,23 @@ export function readWireAnswer(wire: WireAnswer, situation: ModelSituationKind):
         ? { ok: false, problems: [...new Set(problems)] }
         : { ok: true, answer: { kind: "write_module", draft, note: wire.note.trim() } };
     }
+    case "prove": {
+      const paths = wire.proofReads.map((path) => path.trim()).filter((p) => p.length > 0);
+      if (paths.length === 0) problems.push("prove names no path to read");
+      for (const path of paths) {
+        if (!path.startsWith("/"))
+          problems.push(`proof read "${path}" is not a vendor-relative path`);
+      }
+      if (paths.length > MAX_PROOF_READS) {
+        problems.push(
+          `prove names ${paths.length} paths and an attempt runs at most ${MAX_PROOF_READS} in all`,
+        );
+      }
+      if (wire.note.trim().length === 0) problems.push("note is empty");
+      return problems.length > 0
+        ? { ok: false, problems }
+        : { ok: true, answer: { kind: "prove", proofReads: paths, note: wire.note.trim() } };
+    }
     case "proceed": {
       if (wire.note.trim().length === 0) problems.push("note is empty");
       return problems.length > 0
@@ -201,12 +224,27 @@ export function readWireAnswer(wire: WireAnswer, situation: ModelSituationKind):
 export function wireOf(answer: ModelAnswer): WireAnswer {
   switch (answer.kind) {
     case "read_docs":
-      return { kind: "read_docs", note: answer.note, urls: answer.urls, draft: null };
+      return {
+        kind: "read_docs",
+        note: answer.note,
+        urls: answer.urls,
+        proofReads: [],
+        draft: null,
+      };
+    case "prove":
+      return {
+        kind: "prove",
+        note: answer.note,
+        urls: [],
+        proofReads: answer.proofReads,
+        draft: null,
+      };
     case "write_module":
       return {
         kind: "write_module",
         note: answer.note,
         urls: [],
+        proofReads: [],
         draft: {
           name: answer.draft.name,
           description: answer.draft.description,
@@ -217,9 +255,9 @@ export function wireOf(answer: ModelAnswer): WireAnswer {
         },
       };
     case "proceed":
-      return { kind: "proceed", note: answer.note, urls: [], draft: null };
+      return { kind: "proceed", note: answer.note, urls: [], proofReads: [], draft: null };
     case "give_up":
-      return { kind: "give_up", note: answer.reason, urls: [], draft: null };
+      return { kind: "give_up", note: answer.reason, urls: [], proofReads: [], draft: null };
   }
 }
 

@@ -39,16 +39,18 @@ and the job acts on it. Where the skill above says to call a tool, answer instea
 | --- | --- |
 | \`read_web_page\` a page | \`read_docs\` with the URLs; the pages come back as the next situation |
 | \`write_file\`, \`check_tool\`, \`publish_tool\` | \`write_module\` with the whole module; the job checks, proves, publishes and dry-runs it |
-| prove it with reads through \`execute__<connection>\` | \`proofReads\` on the draft: vendor-relative GET paths the job runs for you |
+| prove it with reads through \`execute__<connection>\` | \`proofReads\` on the draft: vendor-relative GET paths the job runs for you; then \`prove\` with more paths built from what those reads returned, run against the same draft |
 | the tool passed and is promoted | nothing — the job ends when the dry run passes |
 
 Situations you will be shown: \`goal\` (once, first), \`docs\` (the pages you asked for),
 \`check_refused\` (the check named refusals), \`proof\` (what the proof reads answered — answer
-\`proceed\` to publish this draft when every read passed, or \`write_module\` to change it first; a
-draft with a failed read is never published, and a read the vendor redirected names the host and
-what to do about it), \`publish_refused\`, \`dry_run_failed\` (the report, or how the run failed).
-Every \`write_module\` is a new attempt against the budget; \`give_up\` ends the job with your reason.
-\`proceed\` is admitted only after \`proof\`, and only when every read passed.
+\`proceed\` to publish this draft when every read passed, \`prove\` to run more reads against it
+first — the path whose fields the module parses, built from an id the first read returned — or
+\`write_module\` to change it; a draft with a failed read is never published, and a read the vendor
+redirected names the host and what to do about it), \`publish_refused\`, \`dry_run_failed\` (the
+report, or how the run failed). Every \`write_module\` is a new attempt against the budget; \`prove\`
+is not — it costs a turn and nothing else; \`give_up\` ends the job with your reason. \`prove\` and
+\`proceed\` are admitted only after \`proof\`, and \`proceed\` only when every read passed.
 
 The draft: \`name\` kebab-case; \`description\` for the person, plain language, under 500 characters;
 \`inputSchemaJson\` a JSON Schema object (type "object", properties, required) as JSON text;
@@ -57,8 +59,7 @@ The draft: \`name\` kebab-case; \`description\` for the person, plain language, 
 you declare a package; \`testInputJson\` an input the dry run uses, as JSON text; \`proofReads\` the GET paths that
 prove the credential and the shape: one for every distinct path the module reads, not the first
 alone, up to ${MAX_PROOF_READS} — a path built from another's answer (a record's id from a list) is
-proven with an id you have seen, or named in \`note\` as the read that could not be proven — or
-empty when the module reads nothing.
+added with \`prove\` once that read has answered — or empty when the module reads nothing.
 
 Rules that hold whatever the docs say: the module reaches the vendor through \`ctx.fetch\` with a
 vendor-relative path, or through an SDK bound to \`ctx.proxyKey\` and \`ctx.proxyBase(...)\`, and
@@ -179,6 +180,12 @@ export function renderProof(
   refused: string | null = null,
 ): string {
   const allPassed = reads.every((read) => read.ok);
+  const room = MAX_PROOF_READS - reads.length;
+  // GRA-153: more reads against this draft cost a turn, not an attempt — offered while there is room.
+  const prove =
+    room > 0
+      ? `\`prove\` to run up to ${room} more read(s) against it first (a path built from what these reads returned), `
+      : "";
   return [
     `## Proof reads for attempt ${attempt}`,
     "",
@@ -186,7 +193,7 @@ export function renderProof(
     "",
     ...(refused ? [refused, ""] : []),
     allPassed
-      ? "Compare each answer with what the documentation said. Answer `proceed` to publish and dry-run this draft as it stands, `write_module` to change it first, `read_docs` for a page, or `give_up`."
+      ? `Compare each answer with what the documentation said. Answer \`proceed\` to publish and dry-run this draft as it stands, ${prove}\`write_module\` to change it first, \`read_docs\` for a page, or \`give_up\`.`
       : "Compare each answer with what the documentation said. A read that failed keeps this draft unpublished: `proceed` is admitted only when every read passed. Answer `write_module` with the module or the proof reads changed, `read_docs` for a page, or `give_up`.",
     ...(reads.some((read) => read.redirectTo)
       ? [

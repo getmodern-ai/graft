@@ -27,6 +27,7 @@ const GOOD_DRAFT: WireAnswer = {
   kind: "write_module",
   note: "Drafted list-items: one GET through ctx.fetch.",
   urls: [],
+  proofReads: [],
   draft: {
     name: "list-items",
     description: "Lists the items in Demo Orders, up to a limit.",
@@ -57,6 +58,7 @@ const READ_DOCS: WireAnswer = {
   kind: "read_docs",
   note: "Reading the items page.",
   urls: [DOCS_URL],
+  proofReads: [],
   draft: null,
 };
 
@@ -64,7 +66,13 @@ const READ_DOCS: WireAnswer = {
 function wellBehaved(lastUser: string): WireAnswer {
   if (lastUser.startsWith("## Goal")) return READ_DOCS;
   if (lastUser.startsWith("## Proof reads")) {
-    return { kind: "proceed", note: "The read proved the shape.", urls: [], draft: null };
+    return {
+      kind: "proceed",
+      note: "The read proved the shape.",
+      urls: [],
+      proofReads: [],
+      draft: null,
+    };
   }
   return GOOD_DRAFT;
 }
@@ -127,7 +135,7 @@ describe("the repair turn", () => {
       authoring: () => {
         calls += 1;
         return calls === 1
-          ? { kind: "proceed", note: "Looks fine.", urls: [], draft: null }
+          ? { kind: "proceed", note: "Looks fine.", urls: [], proofReads: [], draft: null }
           : GOOD_DRAFT;
       },
     });
@@ -189,7 +197,7 @@ describe("the repair turn", () => {
 
   it("gives up after the second bad answer with every problem and both turns' usage on the error", async () => {
     const { model } = adapter({
-      authoring: () => ({ kind: "give_up", note: "", urls: [], draft: null }),
+      authoring: () => ({ kind: "give_up", note: "", urls: [], proofReads: [], draft: null }),
     });
     const error = await model
       .open(CONFORMANCE_CONTEXT)
