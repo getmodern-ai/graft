@@ -120,6 +120,24 @@ function withSessionId(request: Request, sessionId: string): Request {
   return new Request(request, { headers });
 }
 
+/**
+ * A fresh `initialize` without an `MCP-Protocol-Version` header the SDK does not speak (GRA-162).
+ * The transport checks that header against its supported list before it reads the body, and
+ * answers 400 — although on an `initialize` there is no negotiated version to hold the client to
+ * yet, and the body's `params.protocolVersion` is what negotiation reads: the spec's answer to a
+ * version the server lacks is the server's latest in the `initialize` result. Claude.ai has opened
+ * every session since 2026-09-20 announcing the 2026-07-28 revision, been refused, and re-sent
+ * with an older header; this lets the first request negotiate instead. A request that names a
+ * session is not touched — there the header must be the negotiated one, and the SDK's 400 is right.
+ */
+function withoutUnsupportedProtocolVersion(request: Request): Request {
+  const version = request.headers.get("mcp-protocol-version");
+  if (version === null || SUPPORTED_PROTOCOL_VERSIONS.includes(version)) return request;
+  const headers = new Headers(request.headers);
+  headers.delete("mcp-protocol-version");
+  return new Request(request, { headers });
+}
+
 function jsonRpcError(status: 400 | 404, code: number, message: string): Response {
   return Response.json({ jsonrpc: "2.0", error: { code, message }, id: null }, { status });
 }
@@ -146,6 +164,7 @@ async function reportTransportRefusal(
   response: Response,
   request: Request,
   onRefusal: McpDeps["onTransportRefusal"],
+  agentId: string | undefined,
 ): Promise<Response> {
   if (!onRefusal || response.status < 400 || response.status >= 500) return response;
   let code: number | undefined;
@@ -163,6 +182,7 @@ async function reportTransportRefusal(
     message,
     method: request.method,
     hasSessionHeader: request.headers.has("mcp-session-id"),
+    ...(agentId === undefined ? {} : { agentId }),
   });
   return response;
 }
@@ -233,6 +253,8 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
     const request = c.req.raw;
     const token = bearerTokenFrom(request.headers);
     const requestSessionId = request.headers.get("mcp-session-id") ?? undefined;
+    /** The agent the token resolved to, on every refusal event from then on (GRA-164). */
+    let agentId: string | undefined;
     /** Graft's own refusal, told to the hook with its reason word before it is answered. */
     const refused = (response: Response, message: string, code?: number): Response => {
       tell(deps.onTransportRefusal, {
@@ -242,18 +264,20 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
         method: request.method,
         hasSessionHeader: requestSessionId !== undefined,
         ...(requestSessionId === undefined ? {} : { sessionId: requestSessionId }),
+        ...(agentId === undefined ? {} : { agentId }),
       });
       return response;
     };
     /** The transport's answer, its refusal reported when it is one. */
     const answered = (response: Response | Promise<Response>): Promise<Response> =>
       Promise.resolve(response).then((r) =>
-        reportTransportRefusal(r, request, deps.onTransportRefusal),
+        reportTransportRefusal(r, request, deps.onTransportRefusal, agentId),
       );
 
     let scope: AgentScope;
     try {
       scope = await requireAgent(ctx, token, deps.agent);
+      agentId = scope.agentId;
     } catch (error) {
       if (error instanceof ServiceError && error.code === "UNAUTHORIZED") {
         const reason = refusalReasonOf(error);
@@ -345,8 +369,12 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
 
     // No session yet: this must be an `initialize`. The transport says so if it is not, in which
     // case nothing below registers a session and the pair is closed once the answer is written.
+    // A protocol version the SDK lacks is left to the body's negotiation (GRA-162, ADR 0018 as
+    // amended 2026-09-22), not refused on the header.
     const { transport, session } = await open();
-    const response = await answered(transport.handleRequest(request));
+    const response = await answered(
+      transport.handleRequest(withoutUnsupportedProtocolVersion(request)),
+    );
     if (transport.sessionId === undefined) {
       // Not an `initialize` after all — the transport answered 400 and no session exists to keep.
       await session.close();

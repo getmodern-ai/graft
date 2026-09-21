@@ -117,6 +117,12 @@ export const pendingActionQuery = (id: string, token: string) =>
       api<{ pendingAction: PendingAction }>(
         `/pending-actions/${encodeURIComponent(id)}?t=${encodeURIComponent(token)}`,
       ),
+    // A link is read once per visit: the server settles its answer on the first read, and a link
+    // it refused (consumed, expired, tampered) will not open on a later one. Left at the defaults,
+    // a settled tab re-read its link every time it regained focus — 210 refused reads from three
+    // tabs in one day (GRA-164). The page's own answer path updates the cache without a refetch.
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
 export function answerPendingAction(id: string, answer: PendingAnswer) {

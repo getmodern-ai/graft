@@ -558,6 +558,13 @@ export function createApi(options: ApiOptions): Hono {
 
   api.onError((error, c) => {
     if (error instanceof ServiceError) {
+      // A refusal the route meant — a consumed handoff link's 409, a tampered one's 403 — is the
+      // request's answer, not its failure. Hono has already put the throw on `c.error`, which is
+      // what evlog's middleware logs as the event's error, stack and all, at `error` level; clearing
+      // it leaves an `info` event at the status, with the refusal readable under `refusal` (GRA-164).
+      // An error that is not a `ServiceError` keeps the stack: that one is ours to read.
+      useLogger().set({ refusal: { code: error.code, message: error.message } });
+      c.error = undefined;
       return c.json(
         {
           error: error.code,

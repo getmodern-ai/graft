@@ -316,7 +316,12 @@ amended 2026-09-20): a `grfta_` request with an unknown session id, or with none
 `initialize`, gets a session under that id (or a new one, on the response), primed by a synthetic
 `initialize` with no client capabilities — Claude's card frame keeps its pre-deploy id and drew
 "Unable to reach Graft" on the spec's 404; a static-token agent still gets the 404 and 400
-(`packages/mcp/src/http.ts`, pinned in `apps/server/src/mcp.test.ts`). Under `open`,
+(`packages/mcp/src/http.ts`, pinned in `apps/server/src/mcp.test.ts`). **A fresh `initialize`
+announcing a protocol version the SDK lacks negotiates instead of being refused** (GRA-162; ADR 0018
+as amended 2026-09-22): the door drops the `MCP-Protocol-Version` header on a session-less
+`initialize` when the SDK does not speak it, so the body's version negotiates to Graft's latest —
+Claude.ai has announced `2026-07-28` on every session since 2026-09-20 — and a request that names a
+session keeps the SDK's 400. Under `open`,
 authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names:
 `docker` by default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and,
 unset, leaves the server up with every run refusing for want of a sandbox; or `fake`, a temporary
@@ -826,8 +831,12 @@ telemetry off` on every self-host. Every `POST /mcp` event carries the tool call
 tool, its kind, the agent, the person, the outcome, the refusal's reason, the latency — from
 `McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point; a `/mcp`
 request the door or the SDK's transport refuses before any tool runs carries the refusal under
-`mcpRefusal` — status, JSON-RPC code, the answer's own sentence, whether a session was named — from
-`McpDeps.onTransportRefusal` (GRA-131: a bare 400 in the log was a guess); the runner's
+`mcpRefusal` — status, JSON-RPC code, the answer's own sentence, whether a session was named, and the
+agent once the token resolved to one — from `McpDeps.onTransportRefusal` (GRA-131: a bare 400 in the
+log was a guess; GRA-164 added the agent). **A `ServiceError` the API answers is a refusal, not the
+request's error** (GRA-164): `api.onError` clears Hono's `c.error` for it and puts
+`refusal: { code, message }` on the event, so a consumed handoff link's 409 is an `info` line with
+no stack, and only a throw that is not a `ServiceError` is logged as the event's error; the runner's
 and the sweep's lines ride under `acquire` and `sweep`. Product events are captured server-side at
 two chokepoints and nowhere in the console: the API's mutation routes
 (`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
