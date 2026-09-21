@@ -24,6 +24,8 @@ describe("toolCallEvent", () => {
       personId: "person_1",
       outcome: "ok",
       latencyMs: 12,
+      // GRA-155: the hit count rides even when the arguments were not given.
+      detail: { hits: 0 },
       uiExtensionDeclared: false,
     });
   });
@@ -64,6 +66,53 @@ describe("toolCallEvent", () => {
       outcome: "refused",
       reason: "approval_declined",
     });
+  });
+
+  /** GRA-155: what the call was about, per tool, in counts and names — never the answer's content. */
+  it("carries find_tool's word and hit counts, acquire's goal length, similar offer and job, and run_tool's target", () => {
+    const found = toolResult({ tools: [{ name: "a" }, { name: "b" }], connections: [] });
+    // The query is counted, not copied: it may carry the person's names (Greptile on #122).
+    expect(toolCallEvent(session, "find_tool", found, 5, { query: "gmail inbox" }).detail).toEqual({
+      queryWords: 2,
+      hits: 2,
+    });
+    expect(
+      JSON.stringify(toolCallEvent(session, "find_tool", found, 5, { query: "acme invoices" })),
+    ).not.toContain("acme");
+    const opened = toolResult({ jobId: "acq_1", status: "running", progress: [], attempts: 0 });
+    expect(
+      toolCallEvent(session, "acquire", opened, 25, { goal: "List the items" }).detail,
+    ).toEqual({ goalLength: 14, similarOffered: false, jobId: "acq_1" });
+    const similar = toolRefusal("similar_tools_exist", "Already there.", { tools: [] });
+    expect(toolCallEvent(session, "acquire", similar, 3, { goal: "List the items" })).toMatchObject(
+      {
+        outcome: "refused",
+        reason: "similar_tools_exist",
+        detail: { goalLength: 14, similarOffered: true },
+      },
+    );
+    expect(
+      toolCallEvent(
+        session,
+        "acquire_status",
+        toolResult({ jobId: "acq_1", status: "succeeded" }),
+        2,
+        {
+          jobId: "acq_1",
+        },
+      ).detail,
+    ).toEqual({ jobId: "acq_1", status: "succeeded" });
+    expect(
+      toolCallEvent(session, "run_tool", toolResult({}), 2, { vendor: "demo", name: "list-items" })
+        .detail,
+    ).toEqual({ tool: "demo__list-items" });
+    // A tool the table does not name carries none, and an execute tool's arguments stay out.
+    expect(
+      toolCallEvent(session, "promote", toolResult({}), 1, { vendor: "demo" }),
+    ).not.toHaveProperty("detail");
+    expect(
+      toolCallEvent(session, executeToolName("conn_x"), toolResult({}), 1, { path: "/secret" }),
+    ).not.toHaveProperty("detail");
   });
 
   it("reads a run's failure as an error on an authored tool", () => {

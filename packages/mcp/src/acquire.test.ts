@@ -368,9 +368,12 @@ const until = async (predicate: () => boolean, ms = 5_000) => {
 /** Start a job through the meta-tool and run it to its end; answers the start and the final status. */
 async function acquireAndFinish(
   harness: Awaited<ReturnType<typeof connect>>,
+  // `ignoreExisting`: the suite publishes `demo__list-items` over and over, and from the second
+  // job on `acquire` would answer that it exists (GRA-154); the pre-check has its own describe.
   args: Record<string, unknown> = {
     connectionId: CONN_DEMO,
     goal: "List the items in Demo Orders",
+    ignoreExisting: true,
   },
 ) {
   const started = body(await harness.call("acquire", args));
@@ -494,6 +497,7 @@ describe("a job that passes first time", () => {
         await a.call("acquire", {
           connectionId: CONN_DEMO,
           goal: "List the items in Demo Orders",
+          ignoreExisting: true,
           hints: "GET /items",
         }),
       );
@@ -619,6 +623,55 @@ describe("a job that passes first time", () => {
       expect(sent.every((r) => r.headers.get("x-demo-key") === API_KEY)).toBe(true);
     } finally {
       await a.close();
+    }
+  }, 30_000);
+});
+
+describe("the toolbox first (GRA-154)", () => {
+  /** A goal a live tool of the vendor already covers is answered, not rebuilt; the agent may insist. */
+  it("answers similar_tools_exist with the tools and their schemas, opens no job, and builds with ignoreExisting", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    const a = await connect(TOKEN_A);
+    try {
+      // The suite's earlier jobs left `demo__list-items` published; here the goal names it.
+      const jobsBefore = store.acquireJobs.size;
+      const refused = await a.call("acquire", {
+        connectionId: CONN_DEMO,
+        goal: "List the items in Demo Orders",
+      });
+      expect(refused.isError).toBe(true);
+      const answer = body(refused);
+      expect(answer).toMatchObject({ error: "refused", reason: "similar_tools_exist" });
+      expect(answer.message).toContain("demo__list-items");
+      expect(answer.message).toContain("ignoreExisting: true");
+      expect(answer.tools).toEqual([
+        expect.objectContaining({
+          vendor: "demo",
+          name: "list-items",
+          tool: "demo__list-items",
+          inputSchema: LIST_ITEMS_SCHEMA,
+          annotations: { readOnlyHint: true, destructiveHint: false },
+        }),
+      ]);
+      expect(store.acquireJobs.size).toBe(jobsBefore);
+      // A goal the toolbox does not cover opens a job as before, no flag needed.
+      const other = body(
+        await a.call("acquire", {
+          connectionId: CONN_DEMO,
+          goal: "Cancel an order by its id and refund the payment",
+        }),
+      );
+      expect(other.jobId).toEqual(expect.any(String));
+      await runner.idle();
+      // And the agent may insist.
+      const { status } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+    } finally {
+      await a.close();
+      await runner.idle();
     }
   }, 30_000);
 });
@@ -921,7 +974,11 @@ describe("a job that fails and tries again", () => {
     const a = await connect(TOKEN_A);
     try {
       const settled = body<AcquireStatus>(
-        await a.call("acquire", { connectionId: CONN_DEMO, goal: "List the items" }),
+        await a.call("acquire", {
+          connectionId: CONN_DEMO,
+          goal: "List the items",
+          ignoreExisting: true,
+        }),
       );
       // The job finished inside the wait: the answer is acquire_status's, result included.
       expect(settled.status).toBe("succeeded");
@@ -978,7 +1035,11 @@ describe("a job that fails and tries again", () => {
     const a = await connect(TOKEN_A);
     try {
       const started = body<AcquireStatus>(
-        await a.call("acquire", { connectionId: CONN_DEMO, goal: "List the items" }),
+        await a.call("acquire", {
+          connectionId: CONN_DEMO,
+          goal: "List the items",
+          ignoreExisting: true,
+        }),
       );
       expect(["queued", "running"]).toContain(started.status);
 
@@ -1031,6 +1092,7 @@ describe("a job that fails and tries again", () => {
       const { status, jobId } = await acquireAndFinish(a, {
         connectionId: CONN_DEMO,
         goal: "List the items in Demo Orders, second job",
+        ignoreExisting: true,
       });
       expect(status.status).toBe("succeeded");
       expect(status.attempts).toBe(2);

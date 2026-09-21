@@ -5,6 +5,7 @@ import {
   GOAL_MAX_LENGTH,
   getAcquireJob,
   getAgentScope,
+  getConnection,
   getToolByName,
   HINTS_MAX_LENGTH,
   listConnections,
@@ -38,6 +39,7 @@ import type { SessionContext } from "../context";
 import { isPlainObject, toolRefusal, toolResult } from "../result";
 import { runAuthoredTool } from "../run";
 import { authoredToolName } from "../tool-names";
+import { similarTools } from "./acquire-similar";
 import { answerAsk } from "./answer-ask";
 import { askStatus } from "./ask-status";
 import { queryWords, rankTools } from "./find-tool.match";
@@ -63,7 +65,7 @@ export const DEMOTE = "demote";
 export const RUN_TOOL = "run_tool";
 export const ACQUIRE = "acquire";
 /** The arguments acquire reads — its inputSchema's properties; an argument outside this set is named back (GRA-130). */
-const ACQUIRE_ARGS = new Set(["connectionId", "goal", "hints"]);
+const ACQUIRE_ARGS = new Set(["connectionId", "goal", "hints", "ignoreExisting"]);
 export const ACQUIRE_STATUS = "acquire_status";
 export const REQUEST_CONNECTION = "request_connection";
 export const REQUEST_CREDENTIAL = "request_credential";
@@ -328,7 +330,8 @@ const acquire: MetaTool = {
     description:
       "Used when find_tool found nothing that covers the task and the vendor has a connection in the agent's scope: starts the job in which Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into the agent's working set. " +
       "Waits a short while for the job: a job that finishes in time answers with result, as acquire_status does; otherwise answers { jobId, status, progress } and acquire_status reads the job from then on, itself waiting for news. " +
-      "The first acquire against a connection may instead answer awaiting_approval with a url, unless the person granted the build approval when they confirmed the connection: a handoff whose next step is the person's, in the console or on the ask card; the same call with the same arguments, once they have answered, starts the job.",
+      "The first acquire against a connection may instead answer awaiting_approval with a url, unless the person granted the build approval when they confirmed the connection: a handoff whose next step is the person's, in the console or on the ask card; the same call with the same arguments, once they have answered, starts the job. " +
+      "When the toolbox already holds a tool of the vendor whose name and description cover the goal, answers similar_tools_exist naming those tools with the inputSchema run_tool takes, and starts no job; the same call with ignoreExisting: true starts one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -340,6 +343,11 @@ const acquire: MetaTool = {
         hints: {
           type: "string",
           description: "Anything already known: an endpoint, a documentation URL, a field name.",
+        },
+        ignoreExisting: {
+          type: "boolean",
+          description:
+            "Build even though similar_tools_exist named tools that look like the goal; false unless none of them fits.",
         },
       },
       required: ["connectionId", "goal"],
@@ -389,8 +397,11 @@ const acquire: MetaTool = {
     if (hints.length > HINTS_MAX_LENGTH) {
       return toolRefusal("input_invalid", `hints must be at most ${HINTS_MAX_LENGTH} characters`);
     }
+    if (args.ignoreExisting !== undefined && typeof args.ignoreExisting !== "boolean") {
+      return toolRefusal("input_invalid", "ignoreExisting must be a boolean when given");
+    }
 
-    const { ctx, scope, deps, channel } = session;
+    const { ctx, principal, scope, deps, channel } = session;
     const scopeIds = await getAgentScope(ctx, scope, deps.agent);
     if (!scopeIds.includes(connectionId)) {
       return toolRefusal(
@@ -403,6 +414,39 @@ const acquire: MetaTool = {
         "acquire_unconfigured",
         "This deployment has no model configured, so Graft cannot author a tool. Say so rather than retrying; the advanced tools (write_file, check_tool, publish_tool) still let you drive the loop yourself.",
       );
+    }
+    // The toolbox first (GRA-154): a tool of this vendor whose name and description cover the goal
+    // is answered, not rebuilt — on 2026-09-21 an agent built a third copy of a listing tool its
+    // toolbox held twice. `ignoreExisting: true` is the agent saying none of them fits.
+    if (args.ignoreExisting !== true) {
+      const connection = await getConnection(ctx, principal, connectionId, deps.connection);
+      const vendor = connection?.vendor;
+      if (vendor) {
+        const tools = await listTools(ctx, principal, deps.tool);
+        const similar = similarTools(
+          tools.filter((tool) => tool.vendor === vendor && tool.currentVersionId !== null),
+          goal,
+        );
+        if (similar.length > 0) {
+          const named = similar
+            .map((tool) => `${authoredToolName(tool.vendor, tool.name)} — ${tool.description}`)
+            .join("; ");
+          return toolRefusal(
+            "similar_tools_exist",
+            `The toolbox already holds ${similar.length === 1 ? "a tool" : `${similar.length} tools`} that look like this goal: ${named}. Run one with run_tool { vendor, name, input } (each carries its inputSchema below), or call acquire again with ignoreExisting: true if none of them fits.`,
+            {
+              tools: similar.map((tool) => ({
+                vendor: tool.vendor,
+                name: tool.name,
+                tool: authoredToolName(tool.vendor, tool.name),
+                description: tool.description,
+                inputSchema: tool.inputSchema,
+                annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
+              })),
+            },
+          );
+        }
+      }
     }
     // One deadline for the whole call: the build approval's wait and the job's wait share it, so
     // a call is never open for twice the configured limit (Greptile on #99).
