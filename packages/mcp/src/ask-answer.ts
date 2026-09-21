@@ -6,6 +6,7 @@ import {
   type ConnectionDeps,
   type ConnectionOutput,
   consumePendingAction,
+  getAgentScope,
   getPendingActionForPerson,
   grantBuildApproval,
   KEYRING_PROVIDER,
@@ -368,21 +369,38 @@ export async function confirmConnectionAsk(
     // A widening ask (GRA-167) is about a row the person already made: the yes grows that row's
     // host set to the union the ask carries and makes nothing new. The submitted proposal is not
     // read — the ask is not the person's to edit, only to confirm or decline.
-    const connection = widens
-      ? await widenKeylessConnectionHosts(
-          scoped,
-          principal,
-          widens.connectionId,
-          Array.isArray(action.payload.hosts) ? action.payload.hosts.map(String) : [],
-          deps.connection,
-        )
-      : await registerConnectionWithCredential(
-          scoped,
-          principal,
-          { ...registration, provider: routed },
-          deps.connection,
+    let connection: ConnectionOutput;
+    if (widens) {
+      // The row was this agent's when the ask was made; a person who has since taken it out of
+      // the agent's scope is not handed it back by a confirmation about hosts (Greptile on #131).
+      // The ask is refused rather than answered, so it stays open for them to decline.
+      const scopeIds = await getAgentScope(
+        scoped,
+        { personId: principal.personId, agentId: action.agentId },
+        deps.agent,
+      );
+      if (!scopeIds.includes(widens.connectionId)) {
+        throw new ServiceError(
+          "BAD_REQUEST",
+          "This connection was taken out of the agent's scope after the ask was made; decline the ask, or add the connection back on the agent's page first",
         );
-    await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, deps.agent);
+      }
+      connection = await widenKeylessConnectionHosts(
+        scoped,
+        principal,
+        widens.connectionId,
+        Array.isArray(action.payload.hosts) ? action.payload.hosts.map(String) : [],
+        deps.connection,
+      );
+    } else {
+      connection = await registerConnectionWithCredential(
+        scoped,
+        principal,
+        { ...registration, provider: routed },
+        deps.connection,
+      );
+      await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, deps.agent);
+    }
     const buildApproval = approveBuild
       ? await grantBuildApproval(
           scoped,

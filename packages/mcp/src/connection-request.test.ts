@@ -1929,6 +1929,35 @@ describe("a keyless proposal for a vendor the person already holds widens that r
       expect(again.action.id).toBe(action.id);
       expect(asksFor()).toHaveLength(1);
 
+      // A row taken out of this agent's scope meanwhile is not handed back by the confirmation
+      // (Greptile on #131): the ask is refused and stays open, and the row is untouched.
+      store.agentConnections.get(AGENT_A)?.delete(row.id);
+      await expect(
+        confirmConnectionAsk(
+          ctx(),
+          principal,
+          action.id,
+          {
+            vendor: "frank",
+            displayName: "Frankfurter",
+            scheme: "none",
+            schemeConfig: {},
+            primaryHost: "https://api.frank.example",
+            hosts: ["api.frank.example", "api.frank-sibling.example"],
+            credential: {},
+          },
+          {
+            connection: deps.connection,
+            agent: deps.agent,
+            approval: deps.approval,
+            pendingAction: deps.pendingAction,
+          },
+        ),
+      ).rejects.toThrow(/taken out of the agent's scope/);
+      expect(store.connections.get(row.id)?.hosts).toEqual(["api.frank.example"]);
+      expect(store.pendingActions.get(action.id)?.answeredAt).toBeNull();
+      store.agentConnections.get(AGENT_A)?.add(row.id);
+
       // The person's yes: the console's submit and the card's confirm share this function.
       const confirmed = await confirmConnectionAsk(
         ctx(),
