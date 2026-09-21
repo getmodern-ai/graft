@@ -834,6 +834,13 @@ two chokepoints and nowhere in the console: the API's mutation routes
 does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
 `acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
 form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
+**A sign-up is the one event the account raises itself** (GRA-157): `createAuth`'s
+`onPersonSignedUp` fires from Better Auth's own hooks when a person exists *and* is verified — the
+verification click for a password account, the creation for a social account its provider vouches
+for — and the server captures `person_signed_up` with `method` and, alone among events, a person
+property: the email, through `Capture.person`, so the profile the alpha's events land on has a
+name someone can act on. `distinctId` stays the id. The hooked-up Slack message is PostHog's own
+destination on that event in the hosted project, not code.
 
 **Rate limiting is a seam, and the open form is unlimited by default** (GRA-149; ADR 0002 as
 amended 2026-09-19; ADR 0018's "a rate limit at the edge"; `@graft/ratelimit`). `RateLimiter` is

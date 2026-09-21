@@ -14,6 +14,12 @@ export type Capture = {
   distinctId: string;
   event: AnalyticsEvent;
   properties?: AnalyticsProperties;
+  /**
+   * Properties to set on the person's profile rather than on the event (GRA-157) — PostHog's
+   * `$set`, in the backing's own spelling. Today the email, from `person_signed_up` alone
+   * (`events.ts` says why); every other event leaves the profile as it is. The no-op ignores it.
+   */
+  person?: AnalyticsProperties;
 };
 
 export type Analytics = {

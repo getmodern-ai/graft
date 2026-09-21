@@ -1,6 +1,6 @@
 import type { Database } from "@graft/db";
 import type { EmailTransport, SendRequest } from "@graft/email";
-import type { BetterAuthOptions } from "better-auth";
+import type { BetterAuthOptions, GenericEndpointContext } from "better-auth";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -140,7 +140,90 @@ describe("createAuth", () => {
   it("registers no mail hook without a transport, so a script that sends nothing builds no mail stack", () => {
     expect(options.emailAndPassword?.sendResetPassword).toBeUndefined();
     expect(options.emailAndPassword?.onExistingUserSignUp).toBeUndefined();
-    expect(options.emailVerification).toBeUndefined();
+    expect(options.emailVerification?.sendVerificationEmail).toBeUndefined();
+    expect(options.emailVerification?.sendOnSignIn).toBeUndefined();
+    // The sign-up hook is not mail and stays (GRA-157): the click lands whoever printed the link.
+    expect(options.emailVerification?.afterEmailVerification).toBeDefined();
+  });
+
+  /**
+   * GRA-157: a person is counted signed up when they exist and are verified, through the two hooks
+   * Better Auth runs at those moments — driven here as the options Better Auth reads, the way the
+   * mail hooks are, since the moments themselves need a Postgres.
+   */
+  describe("the sign-up hook", () => {
+    const person = { id: "person_1", email: "person@example.com" };
+    // The slice of Better Auth's endpoint context the hook reads: the route's params.
+    const ctx = (path: string, params: Record<string, string>) =>
+      ({ path, params }) as unknown as GenericEndpointContext;
+    const userRow = (emailVerified: boolean) =>
+      ({
+        ...person,
+        emailVerified,
+        name: "",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }) as Parameters<
+        NonNullable<NonNullable<BetterAuthOptions["emailVerification"]>["afterEmailVerification"]>
+      >[0];
+
+    it("counts a password account when its address is verified, as `email`", async () => {
+      const onPersonSignedUp = vi.fn();
+      const withHook: BetterAuthOptions = createAuth({ ...base, onPersonSignedUp }).options;
+      await withHook.emailVerification?.afterEmailVerification?.(userRow(true), undefined);
+      expect(onPersonSignedUp).toHaveBeenCalledExactlyOnceWith({ ...person, method: "email" });
+    });
+
+    it("does not count a password account at creation — it is not verified yet", async () => {
+      const onPersonSignedUp = vi.fn();
+      const withHook: BetterAuthOptions = createAuth({ ...base, onPersonSignedUp }).options;
+      await withHook.databaseHooks?.user?.create?.after?.(
+        userRow(false),
+        ctx("/sign-up/email", {}),
+      );
+      expect(onPersonSignedUp).not.toHaveBeenCalled();
+    });
+
+    it("counts a social account at creation, under its provider's name", async () => {
+      const onPersonSignedUp = vi.fn();
+      const withHook: BetterAuthOptions = createAuth({ ...base, onPersonSignedUp }).options;
+      await withHook.databaseHooks?.user?.create?.after?.(
+        userRow(true),
+        ctx("/callback/:id", { id: "google" }),
+      );
+      expect(onPersonSignedUp).toHaveBeenCalledExactlyOnceWith({ ...person, method: "google" });
+    });
+
+    it("names a provider this package does not list as `social`", async () => {
+      const onPersonSignedUp = vi.fn();
+      const withHook: BetterAuthOptions = createAuth({ ...base, onPersonSignedUp }).options;
+      await withHook.databaseHooks?.user?.create?.after?.(
+        userRow(true),
+        ctx("/callback/:id", { id: "okta" }),
+      );
+      expect(onPersonSignedUp).toHaveBeenCalledExactlyOnceWith({ ...person, method: "social" });
+    });
+
+    it("never fails the request that ran it: a rejected hook is logged with the person's id", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const withHook: BetterAuthOptions = createAuth({
+        ...base,
+        onPersonSignedUp: async () => {
+          throw new Error("analytics is down");
+        },
+      }).options;
+      await expect(
+        withHook.emailVerification?.afterEmailVerification?.(userRow(true), undefined),
+      ).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledOnce();
+      expect(error.mock.calls[0]?.[1]).toMatchObject({ personId: "person_1", method: "email" });
+    });
+
+    it("is a no-op when no hook is handed in", async () => {
+      await expect(
+        options.emailVerification?.afterEmailVerification?.(userRow(true), undefined),
+      ).resolves.toBeUndefined();
+    });
   });
 
   /**

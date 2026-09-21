@@ -17,6 +17,13 @@
  * email), so one profile carries the whole story.
  */
 export type AnalyticsEvent =
+  // The account, from Better Auth's own hooks rather than a route (GRA-157): a person is counted
+  // signed up the moment they exist *and* are verified — a password account when its address is
+  // verified, a social account when it is created verified — so a squatted or abandoned sign-up
+  // never counts. Property `method`: `email`, or the social provider's name. The one event that
+  // carries a person property (`Capture.person`): the email, so the profile the rest of the
+  // events land on has a name someone can act on while the alpha runs. `distinctId` stays the id.
+  | "person_signed_up"
   // The console, at the API's mutation routes
   | "agent_created"
   | "agent_revoked"

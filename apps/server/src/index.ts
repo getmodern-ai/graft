@@ -155,6 +155,19 @@ const auth = createAuth({
   // The mail seam's backing (ADR 0021): the console transport under `open`, the private package's
   // under `cloud` — the selector chose it with the other four seams.
   mail: { consoleUrl: env.GRAFT_CONSOLE_URL, transport: backings.mail },
+  /**
+   * The one product event the account raises itself rather than a route (GRA-157): a person exists
+   * and is verified. The email goes on the *profile*, not the event, and only here — the rest of
+   * the events find it there (`events.ts`); `distinctId` stays the id as everywhere.
+   */
+  onPersonSignedUp: (person) => {
+    backings.analytics.capture({
+      distinctId: person.id,
+      event: "person_signed_up",
+      properties: { method: person.method },
+      person: { email: person.email },
+    });
+  },
 });
 
 // The one admin a fresh self-hosted database opens with (`boot.ts`): through Better Auth's own

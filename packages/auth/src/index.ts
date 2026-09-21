@@ -69,7 +69,45 @@ export type CreateAuthOptions = {
    * nothing was configured to send.
    */
   mail?: { consoleUrl: string; transport: EmailTransport };
+  /**
+   * Called once per person, at the moment they exist *and* their address is verified (GRA-157) —
+   * which is when the server counts `person_signed_up`. Two of Better Auth's hooks reach it: the
+   * verification of a password account, and the creation of a social account that arrives verified;
+   * a squatted or abandoned sign-up reaches neither, and a social sign-in that links to an existing
+   * account creates nobody. Absent, nothing is counted. A rejection is caught and logged here, so
+   * the request that ran the hook — the person's verification click, their first sign-in — never
+   * fails for analytics.
+   */
+  onPersonSignedUp?: (person: SignedUpPerson) => void | Promise<void>;
 };
+
+/**
+ * What `onPersonSignedUp` is handed: the id analytics files the person under, the email for the
+ * profile, and how they arrived — `email`, a provider's name, or `social` for a provider this file
+ * does not name.
+ */
+export type SignedUpPerson = {
+  id: string;
+  email: string;
+  method: "email" | SocialProviderName | "social";
+};
+
+/**
+ * The provider a social sign-up came through. Better Auth hands a `create.after` hook the endpoint
+ * context of the request that ran it (`db/with-hooks.mjs`: `tryGetCurrentAuthEndpointContext()`),
+ * and a social account is created by the `/callback/:id` endpoint (`api/routes/callback.mjs`),
+ * which itself resolves the provider from `c.params.id` — so the same field is read here, at
+ * better-auth 1.7.5. A shape this does not recognise is `social`, never a throw: the sign-up is
+ * counted either way, and the fallback showing up in the analytics is what says the contract moved.
+ */
+function socialMethodOf(ctx: { params?: unknown } | null | undefined): SignedUpPerson["method"] {
+  const params = ctx?.params;
+  const id =
+    params && typeof params === "object" && "id" in params ? (params as { id?: unknown }).id : null;
+  return typeof id === "string" && (SOCIAL_PROVIDER_NAMES as readonly string[]).includes(id)
+    ? (id as SocialProviderName)
+    : "social";
+}
 
 /** Where the console and the API answer, as the three variables that decide it spell them. */
 export type DeploymentOrigins = {
@@ -122,6 +160,19 @@ export function createAuth(options: CreateAuthOptions) {
   const mail = options.mail ?? {
     consoleUrl: "",
     transport: { name: "none", send: async () => ({ delivered: false, transport: "none" }) },
+  };
+  // Total over the caller's hook, for the reason `onPersonSignedUp` gives: no request fails for it.
+  const signedUp = async (person: SignedUpPerson) => {
+    if (!options.onPersonSignedUp) return;
+    try {
+      await options.onPersonSignedUp(person);
+    } catch (error) {
+      console.error("Sign-up hook failed — the person was told nothing", {
+        personId: person.id,
+        method: person.method,
+        error,
+      });
+    }
   };
   return betterAuth({
     database: drizzleAdapter(options.db, { provider: "pg", schema }),
@@ -216,9 +267,35 @@ export function createAuth(options: CreateAuthOptions) {
           }
         : {}),
     },
-    ...(options.mail
-      ? {
-          emailVerification: {
+    /**
+     * A social account is created verified when its provider vouches for the address (Better
+     * Auth's `createOAuthUser`: `emailVerified: userInfo.emailVerified`), and that is its sign-up
+     * (GRA-157). A password account is created unverified and is counted below, when the address
+     * is; the admin the self-hosted boot opens is marked verified by a direct write and is counted
+     * by neither, which is right — the operator is not an alpha user.
+     */
+    databaseHooks: {
+      user: {
+        create: {
+          after: async (user, ctx) => {
+            if (!user.emailVerified) return;
+            await signedUp({ id: user.id, email: user.email, method: socialMethodOf(ctx) });
+          },
+        },
+      },
+    },
+    emailVerification: {
+      /**
+       * The verification click is a password account's sign-up (GRA-157), whether or not a
+       * transport carries the link — the console transport prints it, and the click still lands
+       * here. Better Auth also runs this hook after a verified *change* of address; that route is
+       * off (`user.changeEmail` is not enabled), so every call here is a first verification.
+       */
+      afterEmailVerification: async (user) => {
+        await signedUp({ id: user.id, email: user.email, method: "email" });
+      },
+      ...(options.mail
+        ? {
             /**
              * The verification email — a thin delegation to `@graft/email` (GRA-94; Cando's
              * CAN-476). Unlike the reset link, Better Auth's `url` is passed through whole: it
@@ -271,9 +348,9 @@ export function createAuth(options: CreateAuthOptions) {
             // 24 hours, not the one-hour default: someone who signs up on Friday evening must not
             // come back to a dead link.
             expiresIn: 60 * 60 * 24,
-          },
-        }
-      : {}),
+          }
+        : {}),
+    },
     /**
      * A provider key present is a provider advertised — `/api/auth/sign-in/social` accepts it and
      * the console lists it — so an unconfigured one is absent, not `undefined`.
