@@ -345,3 +345,28 @@ connected, ask the model to list every tool the Graft connector gives it, and co
 this repository, since none of their registered callbacks is recorded here; a connect from each and
 a read of the `mcp_client` row's redirect URIs would say whether they are on `claude.ai` and so
 already admitted.
+
+## Amendment 2026-09-22: a keyless proposal for a connection the person holds widens it
+
+GRA-167, from the clean Hermes run of 2026-09-22. "Convert 100 USD to EUR" became a keyless
+connection to Frankfurter at the host its documentation names; the person confirmed it; every read
+was answered with a redirect to a sibling host the row did not list, so the job stopped and the
+agent re-proposed the vendor at the sibling. The person confirmed a second time and the console held
+two live rows for one public API, the tool bound to the second.
+
+**The rule.** A `request_connection` whose scheme is `none`, for a vendor the person already holds
+as a live, usable keyring row on `none` in this agent's scope, at hosts that row does not all reach,
+is a **widening**: a `connection` ask about *that row* — its primary host and name, its hosts grown
+to the union, `widens` on the payload naming the row and the added hosts, the row stamped on the
+action so a revoke closes it. The yes grows the row's host set and makes nothing new
+(`widenKeylessConnectionHosts`); the agent's next call answers `connected` naming the row it already
+had. The card and the console's card draw the added hosts and no form, and the ask card answers it
+in place as it answers the keyless confirmation, since it is one.
+
+**What does not move.** The person still confirms: the host set is what they consented to and what
+the proxy relays to and nothing else, so a host is never added without them. A keyed row is not
+widened — its credential would go to a host it never went to, and no ask offers that yet — and a
+row outside this agent's scope is not, since the scope ask is about a row as it stands; both keep
+GRA-76's and GRA-104's answers. The person pays one confirmation for the correction instead of a
+second connection.
+
