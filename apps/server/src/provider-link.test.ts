@@ -333,7 +333,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       expect(await res.json()).toEqual({
         fallback: "form",
         provider: "broker",
-        message: expect.stringContaining("refused to mint"),
+        message: "broker could not start its sign-in",
       });
       const row = store.pendingActions.get(id);
       expect(row?.answeredAt).toBeNull();
@@ -343,8 +343,10 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
         providerTarget: null,
         vendor: "gmail",
         scheme: "oauth_authorization_code",
-        providerFallback: { from: "broker", message: expect.stringContaining("refused to mint") },
+        providerFallback: { from: "broker", at: expect.any(String) },
       });
+      // The provider's own words are not kept on the row nor returned (Greptile on #120).
+      expect(JSON.stringify(row?.payload)).not.toContain("refused to mint");
       expect(String(row?.payload.note)).toContain("broker could not start its sign-in");
       expect(captured.map((e) => e.event)).toEqual(["provider_link_fell_back"]);
 
@@ -371,6 +373,9 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
     const res = await app.request(`/api/pending-actions/${actionId}/link`, { method: "POST" });
     expect(res.status).toBe(200);
     const minted = broker.minted.at(-1);
+    // A minted link is said on the row, so a start from the other door that fails a moment later
+    // finds it written and leaves it the provider's.
+    expect(store.pendingActions.get(actionId)?.payload.linkStartedAt).toEqual(expect.any(String));
     // The provider's own error redirect: counted as a failed return, and the ask stays open.
     await app.request(minted?.error ?? "");
     expect(captured.map((e) => [e.event, e.properties?.provider, e.properties?.outcome])).toEqual([
@@ -674,6 +679,8 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
   });
 
   it("two landings of one link at once make one connection — the database refuses the second claim and it reads the ask the first answered", async () => {
+    const landed: { event: string; properties?: Record<string, unknown> }[] = [];
+    analyticsSpy = (event) => landed.push(event);
     // A fresh agent, so the ask is new. The person's existing Gmail connection is not in its scope,
     // which since GRA-104 is the scope ask — a relay provider's row counts as the connection the
     // person already has (GRA-76), and this is Aleks's Claude.ai case of 2026-09-19 — so the row is
@@ -715,6 +722,12 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       ]);
       const outcomes = [consoleOutcome(first), consoleOutcome(second)];
       expect(outcomes.map((o) => o.status)).toEqual(["connected", "connected"]);
+      // Both landings are counted as connected returns — the loser's read of the winner's answer too.
+      expect(
+        landed
+          .filter((e) => e.event === "provider_link_returned")
+          .map((e) => e.properties?.outcome),
+      ).toEqual(["connected", "connected"]);
       expect(new Set(outcomes.map((o) => o.connectionId)).size).toBe(1);
       expect((await listConnections()).length).toBe(before + 1);
       const refs = [...store.connections.values()].map((r) => r.providerRef).filter(Boolean);

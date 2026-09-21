@@ -77,7 +77,7 @@ export type ProviderLinkFallback = {
   fallback: "form";
   /** The provider that could not start — what the person is told stepped aside. */
   provider: string;
-  /** The provider's own sentence, for the log and the card's note; never a secret. */
+  /** One stable sentence — never the provider's own words, which could carry a signed URL or a diagnostic. */
   message: string;
 };
 
@@ -176,9 +176,13 @@ export async function mintProviderLink(
     // The provider cannot start (GRA-147): its API refused, is down, or holds nothing for this
     // app. A person shown that has Decline as their only exit, and asking again reaches the same
     // provider — so the ask moves onto the keyring here, once, and the person gets Graft's own
-    // form for the proposal the model made: same row, same link, same agent. A rewrite that finds
-    // the ask already answered or expired changes nothing and the provider's error stands.
-    const message = error instanceof Error ? error.message : String(error);
+    // form for the proposal the model made: same row, same link, same agent. The clock is read
+    // again for the write, since the provider may have taken a while to fail; the write lands only
+    // if the row is still this provider's and unwritten since it was read (a concurrent start
+    // from the other door that succeeded has marked it) — otherwise nothing changes here and the
+    // provider's error stands. The provider's own words are not kept: a stable sentence and when.
+    const at = deps.pendingAction.now();
+    const message = `${provider.name} could not start its sign-in`;
     const rewritten = await deps.pendingAction.updatePendingActionPayload(
       deps.db,
       principal.personId,
@@ -190,14 +194,22 @@ export async function mintProviderLink(
           providerConnect: "form",
           providerTarget: null,
           note: providerFallbackNote(provider.name),
-          providerFallback: { from: provider.name, message },
+          providerFallback: { from: provider.name, at: at.toISOString() },
         },
-        now,
+        now: at,
+        expect: { provider: provider.name, updatedAt: action.updatedAt },
       },
     );
     if (!rewritten) throw error;
     return { fallback: "form", provider: provider.name, message };
   }
+  // A link was minted: said on the row (best effort, under the same predicates), so a start from
+  // the other door that fails a moment later finds the row written and leaves it the provider's.
+  await deps.pendingAction.updatePendingActionPayload(deps.db, principal.personId, action.id, {
+    payload: { ...action.payload, linkStartedAt: deps.pendingAction.now().toISOString() },
+    now: deps.pendingAction.now(),
+    expect: { provider: provider.name, updatedAt: action.updatedAt },
+  });
   return {
     url: started.url,
     expiresAt: started.expiresAt.getTime() < expiresAt.getTime() ? started.expiresAt : expiresAt,

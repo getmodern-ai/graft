@@ -135,7 +135,17 @@ export async function updatePendingActionPayload(
   db: DbOrTx,
   personId: string,
   id: string,
-  args: { payload: Record<string, unknown>; now: Date },
+  args: {
+    payload: Record<string, unknown>;
+    now: Date;
+    /**
+     * Optimistic concurrency: the write lands only while the row still names this provider and has
+     * not been written since the caller read it — two doors starting the same ask at once (the
+     * console's button and the chat card) cannot have the failing one rewrite what the succeeding
+     * one just recorded. Null is "someone else wrote first".
+     */
+    expect: { provider: string; updatedAt: Date };
+  },
 ): Promise<PendingActionRow | null> {
   const [row] = await db
     .update(pendingAction)
@@ -146,6 +156,8 @@ export async function updatePendingActionPayload(
         inArray(pendingAction.agentId, personAgentIds(db, personId)),
         isNull(pendingAction.answeredAt),
         gt(pendingAction.expiresAt, args.now),
+        eq(pendingAction.updatedAt, args.expect.updatedAt),
+        sql`${pendingAction.payload} ->> 'provider' = ${args.expect.provider}`,
       ),
     )
     .returning();

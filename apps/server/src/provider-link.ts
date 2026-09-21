@@ -194,7 +194,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
     // The browser may land twice — a refresh, a second tab. An ask already answered by this link
     // is connected, and says so rather than making a second connection.
     if (row.answeredAt && typeof row.answer?.connectionId === "string") {
-      return land({
+      return counted({
         status: "connected",
         pendingActionId,
         connectionId: row.answer.connectionId,
@@ -327,7 +327,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
             options.pendingAction,
           );
           if (settled?.answeredAt && typeof settled.answer?.connectionId === "string") {
-            return land({
+            return counted({
               status: "connected",
               pendingActionId,
               connectionId: settled.answer.connectionId,
