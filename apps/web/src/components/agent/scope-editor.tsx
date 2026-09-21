@@ -34,12 +34,12 @@ import {
 /**
  * The agent's scope (CONTEXT.md, *Scope*; ADR 0007 as amended 2026-09-19): the mode as the
  * `Select` primitive — `All connections`, every connection the person has now and adds later, or
- * `Limit to these`, the picker — and under the latter the list, edited as a set. Saved whole: the
+ * `Selected connections`, the picker — and under the latter the list, edited as a set. Saved whole: the
  * server writes the mode and replaces the list in one transaction, and the change is in effect on
  * the agent's next MCP call, when the capability token minted for its next exec names exactly the
  * connections the scope resolves to.
  *
- * Switching to `Limit to these` starts the picker from the scope as it stands — `connectionIds`
+ * Switching to `Selected connections` starts the picker from the scope as it stands — `connectionIds`
  * from `GET /agents/:id` is the resolved set under either mode — so a person narrowing an agent
  * unticks what it should lose rather than re-ticking what it should keep; the parent remounts this
  * on a save (its `key`), which is how the draft follows the saved state.

@@ -49,8 +49,8 @@ export function WorkingSetTable({ agent }: { agent: Agent }) {
           ) : null}
         </CardTitle>
         <CardDescription>
-          The authored tools currently promoted for this agent — its MCP tool list, beside the
-          meta-tools. Idle window {count(agent.idleWindowDays, "day")}.
+          The authored tools currently promoted for this agent, listed beside its meta-tools. Idle
+          window {count(agent.idleWindowDays, "day")}.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -78,7 +78,7 @@ export function WorkingSetTable({ agent }: { agent: Agent }) {
               </TableBodyNote>
             ) : entries.length === 0 ? (
               <TableBodyNote colSpan={COLUMNS}>
-                Nothing is promoted yet — a tool arrives here when the agent promotes one it found
+                Nothing is promoted yet. A tool arrives here when the agent promotes one it found
                 with <code className="font-mono">find_tool</code>, or publishes one.
               </TableBodyNote>
             ) : (

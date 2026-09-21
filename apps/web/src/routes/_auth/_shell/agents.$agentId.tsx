@@ -1,9 +1,9 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import { AgentConnectionDialog } from "@/components/agent/agent-connection-dialog";
 import { ApprovalsCard } from "@/components/agent/approvals-card";
-import { HarnessSnippet } from "@/components/agent/harness-snippet";
 import { LimitsForm } from "@/components/agent/limits-form";
 import { RevokeAgentDialog } from "@/components/agent/revoke-agent-dialog";
 import { ScopeEditor } from "@/components/agent/scope-editor";
@@ -28,8 +28,8 @@ import { connectionsQuery, toolsQuery } from "@/lib/connection-queries";
 import { agentStatusChip } from "@/lib/status-chips";
 
 /**
- * One agent: how to connect it, what it may reach, how its working set contracts, and what is in
- * the set and how it got there. The token is not on this page — `HarnessSnippet` says why.
+ * The standalone management page opens from the agent name or View agent action (GRA-135).
+ * Removing the drawer must not remove scope, approval and history access (ADR 0007, ADR 0008).
  *
  * The loader awaits the agent and the connections, which the header and the two editors need
  * before anything can draw, and only *starts* the three table reads: each table owns its query
@@ -55,6 +55,8 @@ function AgentRoute() {
   const { data } = useSuspenseQuery(agentQuery(agentId));
   const { data: connectionData } = useSuspenseQuery(connectionsQuery);
   const [revoking, setRevoking] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const connectionTrigger = useRef<HTMLButtonElement>(null);
   const { agent, connectionIds } = data;
 
   // The breadcrumb's parent half is the way back to the list; the on-page `PageHeaderTitle` below
@@ -98,6 +100,9 @@ function AgentRoute() {
         </PageHeaderContent>
         {agent.revokedAt ? null : (
           <PageHeaderActions>
+            <Button ref={connectionTrigger} variant="outline" onClick={() => setConnecting(true)}>
+              Connection details
+            </Button>
             <Button variant="destructive" onClick={() => setRevoking(true)}>
               {agent.tokenPrefix === null ? "Revoke agent" : "Revoke token"}
             </Button>
@@ -105,14 +110,8 @@ function AgentRoute() {
         )}
       </PageHeader>
 
-      {/* `grid-cols-1` at every width, not only `lg:grid-cols-2`: an implicit grid track is `auto`,
-          sized to its content's max-content width, and below `lg` the harness snippet's `<pre>`
-          made the one track wider than a 390px viewport — the whole column overflowed, with
-          "Revoke token" off the right edge. `minmax(0, 1fr)`, which `grid-cols-1` expands to, is
-          what lets the track shrink and the `<pre>` scroll inside it. */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="flex min-w-0 flex-col gap-6">
-          {agent.revokedAt ? null : <HarnessSnippet agent={agent} />}
           <ScopeEditor
             key={`${agent.scopeMode}:${connectionIds.join(",")}`}
             agent={agent}
@@ -132,6 +131,13 @@ function AgentRoute() {
       <ApprovalsCard agent={agent} />
       <WorkingSetHistory agentId={agent.id} />
 
+      {connecting && !agent.revokedAt ? (
+        <AgentConnectionDialog
+          agent={agent}
+          onClose={() => setConnecting(false)}
+          returnFocus={connectionTrigger}
+        />
+      ) : null}
       <RevokeAgentDialog agent={agent} open={revoking} onOpenChange={setRevoking} />
     </PageContainer>
   );

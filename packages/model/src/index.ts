@@ -9,6 +9,7 @@
  */
 export {
   draftProblems,
+  MAX_PROOF_READS,
   ModelAnswerInvalidError,
   type ReadAnswer,
   readWireAnswer,

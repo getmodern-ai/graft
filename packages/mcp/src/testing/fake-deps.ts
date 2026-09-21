@@ -357,7 +357,14 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return updated;
     },
     listAgents: async (_db, personId) =>
-      [...store.agents.values()].filter((row) => row.personId === personId),
+      [...store.agents.values()]
+        .filter((row) => row.personId === personId)
+        .map((row) => ({
+          ...row,
+          workingSetCount: [...store.workingSet.values()].filter(
+            (entry) => entry.agentId === row.id,
+          ).length,
+        })),
     updateAgent: async (_db, personId, agentId, patch) => {
       const row = store.agents.get(agentId);
       if (!row || row.personId !== personId) return null;
@@ -949,6 +956,17 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       if (!ownsAgent(scope) || row?.agentId !== scope.agentId) return null;
       if (row.answeredAt === null || row.consumedAt !== null) return null;
       const updated = { ...row, consumedAt };
+      store.pendingActions.set(id, updated);
+      return updated;
+    },
+    updatePendingActionPayload: async (_db, personId, id, args) => {
+      const row = store.pendingActions.get(id);
+      if (!ownsAction(personId, row) || !row) return null;
+      if (row.answeredAt !== null || row.expiresAt <= args.now) return null;
+      // The repo's optimistic predicates: still this provider's, and unwritten since the read.
+      if (row.updatedAt.getTime() !== args.expect.updatedAt.getTime()) return null;
+      if ((row.payload as { provider?: unknown }).provider !== args.expect.provider) return null;
+      const updated = { ...row, payload: args.payload, updatedAt: args.now };
       store.pendingActions.set(id, updated);
       return updated;
     },

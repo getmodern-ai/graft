@@ -28,8 +28,10 @@ describe("the scope mode's labels", () => {
   /** ADR 0007 as amended 2026-09-19: the default is offered first, and its sentence says what it reaches and what still asks. */
   it("offers all connections first and says it reaches future connections while approvals still ask", () => {
     expect(SCOPE_MODE_ITEMS[0]?.value).toBe("all");
-    expect(SCOPE_MODE_DESCRIPTION.all).toContain("every one you add later");
-    expect(SCOPE_MODE_DESCRIPTION.all).toContain("Approvals still ask once per connection");
+    expect(SCOPE_MODE_DESCRIPTION.all).toContain("add later");
+    expect(SCOPE_MODE_DESCRIPTION.all).toContain(
+      "Creating tools and making changes still require approval",
+    );
   });
 
   it("reads a Select's value back as a mode and nothing else", () => {

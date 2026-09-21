@@ -17,6 +17,7 @@ import {
   getConnection,
   getPersonModelKey,
   getToolById,
+  listAgents,
   listConnections,
   listWorkingSet,
   listWorkingSetChanges,
@@ -508,6 +509,12 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       defaultWorkingSetDeps,
     );
     expect(own.map((entry) => entry.tool.name)).toEqual(["list-items"]);
+    const agents = await listAgents(ctx, { personId: alice }, defaultAgentDeps);
+    expect(agents.map(({ id, workingSetCount }) => ({ id, workingSetCount }))).toEqual([
+      { id: a1.agent.id, workingSetCount: 1 },
+      { id: a2.agent.id, workingSetCount: 0 },
+    ]);
+    expect(await listAgents(ctx, { personId: bob }, defaultAgentDeps)).toEqual([]);
     // The other agent of the same person: nothing.
     expect(
       await listWorkingSet(ctx, { personId: alice, agentId: a2.agent.id }, defaultWorkingSetDeps),

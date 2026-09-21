@@ -10,7 +10,7 @@ import type { ScopeBody } from "@graft/server/api";
  */
 export const SCOPE_MODE_LABEL: Record<AgentScopeMode, string> = {
   all: "All connections",
-  listed: "Limit to these",
+  listed: "Selected connections",
 };
 
 /** The `Select`'s `items`, in the order the choice is offered: the default first. */
@@ -20,14 +20,12 @@ export const SCOPE_MODE_ITEMS: readonly { value: AgentScopeMode; label: string }
 ];
 
 /**
- * The sentence under the choice. `all` says what "all" reaches — present and future — and what
- * it does not change: approvals still ask once per agent per connection (ADR 0008), which is the
- * step that protects a person from a new agent acting through an old connection.
+ * The sentence under the choice explains which connections are in scope. Selecting all does
+ * not answer the build or tool approvals (ADR 0008).
  */
 export const SCOPE_MODE_DESCRIPTION: Record<AgentScopeMode, string> = {
-  all: "Every connection you have now and every one you add later. Approvals still ask once per connection before this agent builds against it or its tools write.",
-  listed:
-    "Only the connections ticked below. Its tools cannot reach a connection outside the list; you can change it any time.",
+  all: "This agent can use every connection you have now or add later. Creating tools and making changes still require approval.",
+  listed: "This agent can only use the connections you select below. You can change this later.",
 };
 
 /** A string from a `Select` read back as a mode, or null for anything that is not one. */

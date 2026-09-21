@@ -83,7 +83,17 @@ export function ProviderLinkAskCard({
 
   const start = useMutation({
     mutationFn: () => startProviderLink(action.id, { approveBuild }),
-    onSuccess: async ({ url }) => {
+    onSuccess: async (started) => {
+      if ("fallback" in started) {
+        // The provider could not start its sign-in and the ask is the keyring's form now
+        // (GRA-147): re-read it, and this card gives way to the form in place.
+        toast.message(`${started.provider} could not start the sign-in`, {
+          description: `${payload.displayName} is connected on Graft's own page instead — the form is below.`,
+        });
+        await queryClient.invalidateQueries({ queryKey: pendingKeys.all });
+        return;
+      }
+      const { url } = started;
       const popup = openConsentPopup(url);
       if (!popup) {
         setState({ phase: "blocked", url });

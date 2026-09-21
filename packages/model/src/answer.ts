@@ -39,9 +39,17 @@ export const WIRE_DRAFT_SCHEMA = z.strictObject({
   proofReads: z
     .array(z.string())
     .describe(
-      "Vendor-relative GET paths that prove the credential and the request shape before publishing: /items?limit=1. Empty to skip.",
+      "Vendor-relative GET paths that prove the credential and the request shape before publishing, one per distinct path the module reads, at most five: /items?limit=1. Empty to skip.",
     ),
 });
+
+/**
+ * How many proof reads one draft may ask for. The job runs every one it accepts (`acquire/job.ts`
+ * in `@graft/mcp` reads this), the protocol names the number, and a draft over it is a problem the
+ * model repairs — never a list silently cut short of the paths it asked to prove (Greptile on
+ * graft #114).
+ */
+export const MAX_PROOF_READS = 5;
 
 export const WIRE_ANSWER_SCHEMA = z.strictObject({
   kind: z.enum(["read_docs", "write_module", "proceed", "give_up"]),
@@ -106,6 +114,11 @@ export function draftProblems(draft: ModuleDraft): string[] {
   if (!isRecord(draft.testInput)) problems.push("testInput is not an object");
   for (const path of draft.proofReads) {
     if (!path.startsWith("/")) problems.push(`proof read "${path}" is not a vendor-relative path`);
+  }
+  if (draft.proofReads.length > MAX_PROOF_READS) {
+    problems.push(
+      `proofReads names ${draft.proofReads.length} paths and the job runs at most ${MAX_PROOF_READS}; keep the ones whose answers the module parses`,
+    );
   }
   return problems;
 }
