@@ -31,9 +31,9 @@ catches an OAuth callback on localhost for people at a terminal.
   the self-hosted form too, where the image bootstraps a single admin the way executor.sh's does.
   This is what pulled the tenancy decision (ADR 0007) forward.
 - **An approval can be answered later.** A pending action is a durable record with a URL, so the
-  agent's turn can end and the person can answer from the console hours after. Cando's cards and
-  executor.sh's resume URL both behave this way; executor.sh's own bug history shows why the
-  record must be durable rather than held in one process's memory.
+  agent's turn can end and the person can answer from the console hours after. Cando's cards
+  behave this way, and a record held in one process's memory dies with the process, so the
+  record must be durable.
 - **The handoff URL is a phishing-shaped artefact.** It is signed, short-lived, bound to the
   agent that requested it, and displays the requesting agent and the vendor host on the page.
 - **An elicitation's `accept` is the yes, whatever the client put in the form.** Hermes 0.21.1
@@ -300,3 +300,48 @@ skill or a card relays moves.
 lost its chrome, not its guard or its token check. Elicitation keeps its place before the handoff
 for the clients that show a form; this is the surface for the steps that must be a link.
 
+
+## Amendment 2026-09-21: the card gate admits a client by its callback host alone
+
+Decided by Aleks (GRA-150). The amendment of 2026-09-18 admitted a chat product's `answer_ask`
+call on either of two signals: every redirect URI the client registered is on a card host
+(`GRAFT_CARD_HOSTS`), or the session's client declared the MCP Apps extension
+(`io.modelcontextprotocol/ui`) in `initialize`. **The second signal is withdrawn.**
+
+**Why it was wrong.** A client writes its own `initialize`. Nothing in the MCP Apps specification,
+in `@modelcontextprotocol/ext-apps` 1.7.5 or in either host's published guidance lets a server
+check the declaration against anything: ext-apps issue 746 says a server cannot enforce
+`visibility` and issue 738 says a future marker on a call from a view would not be an
+authorization primitive either. The sentence in the amendment of 2026-09-18, "a client can
+register itself but cannot register a redirect on `claude.ai` or forge the other side of its own
+`initialize`", is withdrawn in its second half. Because both products' callbacks are on the
+default list, the extension signal admitted no product and only clients nobody had vouched for:
+any dynamically registered client that wrote the string into its handshake and listed `answer_ask`
+to its model could have its model settle the build approval, a tool's first-use approval
+(destructive included), the keyless connection confirmation and the scope ask, and mint a
+provider's link through `start_link`. That is the loop answering for the person, which ADR 0004
+exists to prevent.
+
+**What still holds.** The callback host, because it is not the client's to claim: a client may
+register a redirect URI on `claude.ai`, but it can only finish Graft's OAuth flow if it controls
+what answers there, so a registration on a card host is a statement the product itself made. And
+the OAuth requirement, which is the first check and unchanged: a static-token agent's harness
+(Hermes, OpenClaw) renders no app, so a call from one can only be its model's, and no declaration
+moves it. Everything else in the amendments of 2026-09-18, 2026-09-19 and 2026-09-20 stands: the
+four cards and what each may answer, the handoff URL as the floor, the console for the secret, and
+`cardShown` on the awaiting answer, which is the same verdict and therefore narrows with it.
+
+**The consequence.** A chat product whose callback is not on the list reads the console form and
+answers in the console, which is what every agent had before the card and costs the person a
+click. A self-hoster whose own chat product renders apps adds its callback host to
+`GRAFT_CARD_HOSTS`, which is now the whole rule and says so. The declaration itself is still read,
+as an observation on each tool call's wide event, so an operator can see which clients make it.
+
+**The live check owed.** This ADR already says a host that lists `answer_ask` to its model is a
+host the card is withdrawn from, by taking it off the list. That check was recorded for ChatGPT
+(GRA-112) and never for Claude.ai. It is to be done on both and recorded on GRA-150: with Graft
+connected, ask the model to list every tool the Graft connector gives it, and confirm `answer_ask`,
+`start_link` and `ask_status` are absent. Claude Desktop, Claude mobile and Cowork are unknown to
+this repository, since none of their registered callbacks is recorded here; a connect from each and
+a read of the `mcp_client` row's redirect URIs would say whether they are on `claude.ai` and so
+already admitted.

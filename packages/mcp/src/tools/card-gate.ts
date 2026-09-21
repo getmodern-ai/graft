@@ -19,13 +19,15 @@ import { toolRefusal } from "../result";
  *      static-token agent's harness, Hermes or OpenClaw, renders no app, so a call from one can
  *      only be its model's — and that alone is not enough: ADR 0018 registers any client
  *      dynamically, and a naive one that lists app-only tools would let its model answer its own
- *      ask (Greptile on #71). So one of two signals the model cannot touch must hold: **the
- *      client's registered redirect URIs are all on a card host** (`GRAFT_CARD_HOSTS`, default
- *      `claude.ai` and `chatgpt.com` — the callbacks the two products register; `McpDeps.cardHosts`),
- *      or **the session's client declared the MCP Apps extension** in `initialize`, whose host
- *      requirements include hiding `visibility: ["app"]` tools (`SessionContext.uiExtensionDeclared`).
- *      Neither: `card_not_available`, the console is the place. The verdict is `card-client.ts`'s
- *      `clientRendersCards`, held per session, which the awaiting results read too (GRA-120).
+ *      ask (Greptile on #71). So the registration must vouch for it too: **every redirect URI the
+ *      client registered is on a card host** (`GRAFT_CARD_HOSTS`, default `claude.ai` and
+ *      `chatgpt.com` — the callbacks the two products register; `McpDeps.cardHosts`), which a
+ *      client cannot claim without controlling the callback its OAuth flow finishes on. Not that:
+ *      `card_not_available`, the console is the place. A client's own declaration of the MCP Apps
+ *      extension in `initialize` was a second signal until 2026-09-21 and is one no longer,
+ *      because a client writes its own handshake (ADR 0006 as amended 2026-09-21, GRA-150). The
+ *      verdict is `card-client.ts`'s `clientRendersCards`, held per session, which the awaiting
+ *      results read too (GRA-120).
  *   2. **The ask is this agent's** (the agent-scoped read answers nothing for another's) and,
  *      where the tool acts on it, **open** (unanswered, untaken — `answered`) **and in time**
  *      (`expired`), in the console's words. `ask_status` reads a closed ask on purpose and passes
@@ -67,14 +69,14 @@ export async function admitCardCall(
       ),
     };
   }
-  //    And only a client whose hiding of app-only tools is established — the header's two
-  //    signals, judged once per session (`card-client.ts`); an agent this far is an OAuth one, so
-  //    a no here is the client's.
+  //    And only a client whose hiding of app-only tools is established — the header's one signal,
+  //    judged once per session (`card-client.ts`); an agent this far is an OAuth one, so a no here
+  //    is the client's registration.
   if (!(await clientRendersCards(session))) {
     return {
       refused: cardRefusal(
         CARD_NOT_AVAILABLE,
-        `The ask card answers only for a chat product known to hide this tool from its model: ${agent.connectedVia.clientName} neither declared the MCP Apps extension nor is registered on a card host (GRAFT_CARD_HOSTS). ${CONSOLE_IS_THE_PLACE}`,
+        `The ask card answers only for a chat product known to hide this tool from its model: ${agent.connectedVia.clientName} registered its OAuth callback on a host that is not one of this deployment's card hosts (GRAFT_CARD_HOSTS). ${CONSOLE_IS_THE_PLACE}`,
       ),
     };
   }

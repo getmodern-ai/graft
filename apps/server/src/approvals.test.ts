@@ -143,6 +143,8 @@ beforeAll(async () => {
         modelKey: fakeModelKeyDeps(),
       },
       corsOrigins: [],
+      // The origin the console submits from, which the origin check reads (GRA-148).
+      authUrl: CONSOLE_ORIGIN,
       handoff,
     },
     mcp,
@@ -178,10 +180,24 @@ function body(result: CallToolResult): Record<string, unknown> {
   return JSON.parse(first.text);
 }
 
+/**
+ * The origin the console submits from: this server's own, since `app.request` builds a relative
+ * path against it and the console is served same-origin (`console.ts`). A state-changing request
+ * under `/api` has to name an origin this deployment serves the console on (GRA-148,
+ * `origin-guard.ts`), so every helper below puts it on as a browser would.
+ */
+const CONSOLE_ORIGIN = "http://localhost";
+
 const json = (value: unknown, method = "POST") => ({
   method,
-  headers: { "content-type": "application/json" },
+  headers: { "content-type": "application/json", origin: CONSOLE_ORIGIN },
   body: JSON.stringify(value),
+});
+
+/** A mutation with no body, a revoke, from the console's origin. */
+const from = (method: "POST" | "PUT" | "DELETE") => ({
+  method,
+  headers: { origin: CONSOLE_ORIGIN },
 });
 
 const until = async (predicate: () => boolean, ms = 5_000) => {
@@ -339,9 +355,10 @@ describe("an ask over MCP, answered over HTTP", () => {
       };
       expect(listed.approvals.map((r) => r.toolId).sort()).toEqual(["tool_create", "tool_delete"]);
 
-      const revoked = await app.request(`/api/approvals/tool_create?agentId=${AGENT}`, {
-        method: "DELETE",
-      });
+      const revoked = await app.request(
+        `/api/approvals/tool_create?agentId=${AGENT}`,
+        from("DELETE"),
+      );
       expect(revoked.status).toBe(200);
       const fresh = await a.call("demo__create-item");
       expect(body(fresh)).toMatchObject({ error: "awaiting_approval" });
@@ -368,9 +385,10 @@ describe("an ask over MCP, answered over HTTP", () => {
       expect(answered.status).toBe(200);
       // Answered and left for the agent — then withdrawn before the agent calls again.
       expect(store.pendingActions.get(actionId)?.consumedAt).toBeNull();
-      const withdrawn = await app.request(`/api/approvals/tool_delete?agentId=${AGENT}`, {
-        method: "DELETE",
-      });
+      const withdrawn = await app.request(
+        `/api/approvals/tool_delete?agentId=${AGENT}`,
+        from("DELETE"),
+      );
       expect(withdrawn.status).toBe(200);
       expect(store.pendingActions.get(actionId)?.consumedAt).toBeInstanceOf(Date);
 

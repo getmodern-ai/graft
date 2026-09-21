@@ -6,9 +6,14 @@ import { toolCallEvent } from "./tools";
 
 /**
  * What `McpDeps.onToolCall` is told (GRA-100): the answer read back into an outcome, the name
- * into a kind, the scope into who. Pure, so it is pinned here rather than through a session.
+ * into a kind, the scope into who, and whether the client declared the MCP Apps extension
+ * (GRA-150: an observation on the line, never an admission). Pure, so it is pinned here rather
+ * than through a session.
  */
-const session = { scope: { agentId: "agent_a", personId: "person_1" } };
+const session = {
+  scope: { agentId: "agent_a", personId: "person_1" },
+  uiExtensionDeclared: () => false,
+};
 
 describe("toolCallEvent", () => {
   it("reads a meta-tool's ok answer", () => {
@@ -21,6 +26,7 @@ describe("toolCallEvent", () => {
       latencyMs: 12,
       // GRA-155: the hit count rides even when the arguments were not given.
       detail: { hits: 0 },
+      uiExtensionDeclared: false,
     });
   });
 
@@ -34,6 +40,7 @@ describe("toolCallEvent", () => {
       outcome: "refused",
       reason: "connection_not_in_scope",
       latencyMs: 3,
+      uiExtensionDeclared: false,
     });
   });
 
@@ -119,5 +126,15 @@ describe("toolCallEvent", () => {
       latencyMs: 250,
     });
     expect(toolCallEvent(session, "demo__list-items", result, 250)).not.toHaveProperty("reason");
+  });
+
+  it("carries the client's MCP Apps declaration as an observation, whichever way it went", () => {
+    const declared = { ...session, uiExtensionDeclared: () => true };
+    expect(toolCallEvent(declared, "find_tool", toolResult({ tools: [] }), 1)).toMatchObject({
+      uiExtensionDeclared: true,
+    });
+    expect(toolCallEvent(session, "find_tool", toolResult({ tools: [] }), 1)).toMatchObject({
+      uiExtensionDeclared: false,
+    });
   });
 });

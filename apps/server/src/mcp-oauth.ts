@@ -28,9 +28,18 @@ import {
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import { agentScopeMode } from "@graft/db/schema/agent";
+import { DEFAULT_CARD_HOSTS, redirectsOnCardHosts } from "@graft/mcp";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
+
+import {
+  addressDoorKey,
+  NO_RATE_LIMITING,
+  oauthRefusalBody,
+  type RateLimiting,
+  rateLimit,
+} from "./rate-limit";
 
 /**
  * The HTTP face of Graft's authorization server (ADR 0018), in three Hono apps for three mounts:
@@ -61,6 +70,20 @@ export type McpOAuthServerOptions = {
   authUrl: string;
   /** `GRAFT_CONSOLE_URL` — where the authorization endpoint sends the browser to consent. */
   consoleUrl: string;
+  /**
+   * `GRAFT_CARD_HOSTS`, already parsed: the same list `McpDeps.cardHosts` carries (GRA-150), so
+   * the sentence the consent page shows and the gate the MCP server applies cannot disagree.
+   * `DEFAULT_CARD_HOSTS` when absent, as the MCP server's own fallback is.
+   */
+  cardHosts?: readonly string[];
+
+  /**
+   * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two open doors here:
+   * registration, which ADR 0018 calls out as the unauthenticated write whose mitigation is a
+   * rate limit at the edge, and the token endpoint. `createServer` hands it down; absent,
+   * `NO_RATE_LIMITING` and both doors open, which is the default in both forms.
+   */
+  rateLimit?: RateLimiting;
 };
 
 /** Where `createMcpOAuthApp` is mounted; the endpoints in `MCP_OAUTH_PATHS` sit under it. */
@@ -190,6 +213,23 @@ export function createMcpOAuthApp(options: McpOAuthServerOptions): Hono {
 
   app.use("*", openCors);
 
+  /**
+   * The two open doors, each keyed by the caller's address because nobody has been named yet
+   * (GRA-149). Registration is the one ADR 0018 names: it is an unauthenticated write by protocol,
+   * bounded in size already, and "the remaining risk is volume". The token endpoint is here beside
+   * it because a grant is a credential check and a guessing caller is what it costs most against.
+   * The authorization endpoint is not: it writes nothing and a limit on it would fall on a person
+   * arriving in a browser. Revocation is not either: refusing to let a client retire a token is
+   * the wrong way to fail.
+   */
+  const rateLimiting = options.rateLimit ?? NO_RATE_LIMITING;
+  const openDoor = (bucket: "oauth_register" | "oauth_token") =>
+    rateLimit(rateLimiting.limiter, bucket, addressDoorKey(rateLimiting), {
+      body: oauthRefusalBody,
+    });
+  app.use(under(MCP_OAUTH_PATHS.register), openDoor("oauth_register"));
+  app.use(under(MCP_OAUTH_PATHS.token), openDoor("oauth_token"));
+
   app.onError((error, c) => {
     if (error instanceof OAuthProtocolError) {
       const headers: Record<string, string> = { ...NO_STORE };
@@ -273,6 +313,13 @@ export type ConsentRequestDescription = {
   redirectTarget: string;
   scope: string | null;
   resource: string;
+  /**
+   * Whether this client will be admitted to the ask card once connected: every registered
+   * redirect URI on a card host, which is the whole rule since ADR 0006's amendment of
+   * 2026-09-21 (GRA-150). The page says so in one sentence, because it changes where the person
+   * answers every ask this client's agent makes.
+   */
+  rendersCards: boolean;
 };
 
 const consentRequestSchema = z.object({
@@ -342,6 +389,12 @@ export function createMcpConsentRoutes(
       redirectTarget: redirectTargetOf(verdict.request.redirectUri),
       scope: verdict.request.scope,
       resource: verdict.request.resource,
+      // The card gate's client half, read here from the same function and the same parsed list
+      // (`@graft/mcp`'s `card-client.ts`; GRA-150): one rule, two readers.
+      rendersCards: redirectsOnCardHosts(
+        verdict.client.redirectUris,
+        options.cardHosts ?? DEFAULT_CARD_HOSTS,
+      ),
     };
     return c.json(description);
   });

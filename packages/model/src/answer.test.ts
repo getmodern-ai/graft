@@ -20,6 +20,7 @@ const draft: WireAnswer = {
   kind: "write_module",
   note: "Drafted.",
   urls: [],
+  proofReads: [],
   draft: {
     name: "create-order",
     description: "Creates an order for one item and a quantity.",
@@ -59,7 +60,7 @@ describe("readWireAnswer", () => {
 
   it("refuses a kind the situation does not admit, naming the admitted ones", () => {
     const read = readWireAnswer(
-      { kind: "proceed", note: "ok", urls: [], draft: null },
+      { kind: "proceed", note: "ok", urls: [], proofReads: [], draft: null },
       "check_refused",
     );
     expect(read).toEqual({
@@ -68,9 +69,12 @@ describe("readWireAnswer", () => {
         '"proceed" does not answer a "check_refused" situation; answer with one of read_docs, write_module, give_up',
       ],
     });
-    expect(readWireAnswer({ kind: "proceed", note: "ok", urls: [], draft: null }, "proof")).toEqual(
-      { ok: true, answer: { kind: "proceed", note: "ok" } },
-    );
+    expect(
+      readWireAnswer(
+        { kind: "proceed", note: "ok", urls: [], proofReads: [], draft: null },
+        "proof",
+      ),
+    ).toEqual({ ok: true, answer: { kind: "proceed", note: "ok" } });
   });
 
   it("names every problem with a draft at once", () => {
@@ -106,26 +110,34 @@ describe("readWireAnswer", () => {
 
   it("refuses read_docs without a usable URL, and give_up without a reason", () => {
     expect(
-      readWireAnswer({ kind: "read_docs", note: "n", urls: [" "], draft: null }, "goal"),
+      readWireAnswer(
+        { kind: "read_docs", note: "n", urls: [" "], proofReads: [], draft: null },
+        "goal",
+      ),
     ).toEqual({
       ok: false,
       problems: ["read_docs names no URL to read"],
     });
     expect(
       readWireAnswer(
-        { kind: "read_docs", note: "n", urls: ["ftp://x", "docs"], draft: null },
+        { kind: "read_docs", note: "n", urls: ["ftp://x", "docs"], proofReads: [], draft: null },
         "goal",
       ),
     ).toEqual({
       ok: false,
       problems: ['"ftp://x" is not an http(s) URL', '"docs" is not an http(s) URL'],
     });
-    expect(readWireAnswer({ kind: "give_up", note: "", urls: [], draft: null }, "goal")).toEqual({
+    expect(
+      readWireAnswer({ kind: "give_up", note: "", urls: [], proofReads: [], draft: null }, "goal"),
+    ).toEqual({
       ok: false,
       problems: ["give_up carries no reason in note"],
     });
     expect(
-      readWireAnswer({ kind: "give_up", note: "No API.", urls: [], draft: null }, "goal"),
+      readWireAnswer(
+        { kind: "give_up", note: "No API.", urls: [], proofReads: [], draft: null },
+        "goal",
+      ),
     ).toEqual({ ok: true, answer: { kind: "give_up", reason: "No API." } });
   });
 
@@ -173,6 +185,35 @@ describe("the wire schema and the round trip", () => {
     });
   });
 
+  /** GRA-153: more reads against the current draft, a turn and not an attempt. */
+  it("reads a prove with its paths, and refuses one with none, one off the vendor, or more than an attempt runs", () => {
+    const prove = (proofReads: string[], note = "the id the list returned"): WireAnswer => ({
+      kind: "prove",
+      note,
+      urls: [],
+      proofReads,
+      draft: null,
+    });
+    expect(readWireAnswer(prove([" /items/itm_1 ", ""]), "proof")).toEqual({
+      ok: true,
+      answer: { kind: "prove", proofReads: ["/items/itm_1"], note: "the id the list returned" },
+    });
+    expect(readWireAnswer(prove([]), "proof")).toEqual({
+      ok: false,
+      problems: ["prove names no path to read"],
+    });
+    expect(readWireAnswer(prove(["https://api.demo.example/items"]), "proof")).toEqual({
+      ok: false,
+      problems: ['proof read "https://api.demo.example/items" is not a vendor-relative path'],
+    });
+    expect(readWireAnswer(prove(["/a", "/b", "/c", "/d", "/e", "/f"]), "proof")).toEqual({
+      ok: false,
+      problems: ["prove names 6 paths and an attempt runs at most 5 in all"],
+    });
+    // Only a proof result admits it.
+    expect(readWireAnswer(prove(["/items/itm_1"]), "goal")).toMatchObject({ ok: false });
+  });
+
   it("is what structured output can hold: every property present, the free-form values as text", () => {
     const parsed = WIRE_ANSWER_SCHEMA.safeParse(draft);
     expect(parsed.success).toBe(true);
@@ -183,6 +224,7 @@ describe("the wire schema and the round trip", () => {
   it("round-trips every answer kind through wireOf", () => {
     const answers: ModelAnswer[] = [
       { kind: "read_docs", urls: ["https://d.example/a"], note: "read" },
+      { kind: "prove", proofReads: ["/items/itm_1"], note: "the id the list returned" },
       { kind: "proceed", note: "go" },
       { kind: "give_up", reason: "no api" },
     ];

@@ -129,7 +129,7 @@ async function answer(
  * read back, and for the tools `eventDetail` names, what the call was about.
  */
 export function toolCallEvent(
-  session: Pick<SessionContext, "scope">,
+  session: Pick<SessionContext, "scope" | "uiExtensionDeclared">,
   name: string,
   result: CallToolResult,
   latencyMs: number,
@@ -152,6 +152,8 @@ export function toolCallEvent(
     ...(refused && typeof body?.reason === "string" ? { reason: body.reason } : {}),
     latencyMs,
     ...(detail ? { detail } : {}),
+    // Observed, never trusted: the gate reads the client's callback host (GRA-150, `deps.ts`).
+    uiExtensionDeclared: session.uiExtensionDeclared(),
   };
 }
 

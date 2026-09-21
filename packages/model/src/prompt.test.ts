@@ -54,6 +54,18 @@ describe("renderProof and the publish gate (GRA-72)", () => {
     reason: null,
   };
 
+  /** GRA-153: `prove` is offered while the attempt has room for more reads, and not once it has none. */
+  it("offers prove with the room left, and not at the cap", () => {
+    expect(renderProof(1, [answered])).toContain(
+      "`prove` to run up to 4 more read(s) against it first (a path built from what these reads returned), `write_module`",
+    );
+    const five = renderProof(1, [answered, answered, answered, answered, answered]);
+    expect(five).not.toContain("`prove`");
+    expect(five).toContain(
+      "Answer `proceed` to publish and dry-run this draft as it stands, `write_module`",
+    );
+  });
+
   it("offers proceed only when every read passed", () => {
     expect(renderProof(1, [answered])).toContain("Answer `proceed` to publish");
     const text = renderProof(1, [answered, failed]);
@@ -111,6 +123,11 @@ describe("systemPrompt", () => {
       "`proofReads` the GET paths that prove the credential and the shape: one for every distinct path the module reads, not the first alone",
     );
     expect(prose).toContain("not the first alone, up to 5 —");
-    expect(prose).toContain("a path built from another's answer (a record's id from a list)");
+    expect(prose).toContain(
+      "a path built from another's answer (a record's id from a list) is added with `prove` once that read has answered",
+    );
+    expect(prose).toContain(
+      "Every `write_module` is a new attempt against the budget; `prove` is not",
+    );
   });
 });
