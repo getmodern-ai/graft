@@ -216,9 +216,14 @@ const form = (fields: Record<string, string>, headers: Record<string, string> = 
   body: new URLSearchParams(fields).toString(),
 });
 
+/**
+ * `origin` is the console's, for the consent route: a state-changing request under `/api` names an
+ * origin this deployment serves the console on or is refused (GRA-148, `origin-guard.ts`). The
+ * protocol endpoints under `/mcp/oauth` are outside that mount and read it as nothing.
+ */
 const json = (body: unknown, headers: Record<string, string> = {}) => ({
   method: "POST",
-  headers: { "content-type": "application/json", ...headers },
+  headers: { "content-type": "application/json", origin: CONSOLE_URL, ...headers },
   body: JSON.stringify(body),
 });
 

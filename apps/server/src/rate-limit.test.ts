@@ -313,6 +313,8 @@ describe("the doors the server mounts", () => {
     // middleware, and the one allowed request is Better Auth's own handler above.
     deps: {} as ApiOptions["deps"],
     corsOrigins: [],
+    // The origin the guard admits a mutation from (GRA-148); the API mutation test names it.
+    authUrl: "http://localhost:3000",
     handoff: { consoleUrl: "http://console.example", secret: "s".repeat(32) },
   };
 
@@ -477,7 +479,10 @@ describe("the doors the server mounts", () => {
   });
 
   it("counts an API mutation per person, and leaves an API read uncounted", async () => {
-    expect(await door("/api/agents", { method: "POST", headers: ADDRESS }, { api })).toEqual({
+    // The origin guard sits above the limiter (GRA-148): a mutation names the console's origin
+    // or is refused before it is counted, so this one names it.
+    const fromConsole = { ...ADDRESS, origin: "http://localhost:3000" };
+    expect(await door("/api/agents", { method: "POST", headers: fromConsole }, { api })).toEqual({
       bucket: "api",
       key: "person:person_1",
       status: 429,

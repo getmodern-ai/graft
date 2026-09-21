@@ -25,6 +25,10 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
   `git rebase --signoff origin/main` adds it to a branch already written.
   A Developer Certificate of Origin replaced the CLA on 2026-09-21 (ADR 0022); the core is
   Apache-2.0 and `CONTRIBUTING.md` is what an outside contributor reads.
+- **`SECURITY.md` is what the outside is told.** Where to report a vulnerability, what is in
+  scope and where the design is written down; a change that moves one of those boundaries
+  (the proxy, the token, the vault, the sandbox, the asks, the MCP OAuth server, the console's
+  session) updates that file in the same pull request.
 - **A comment states the local consequence and points at the ADR for the argument.** Do not
   restate an ADR in a comment; it will rot. A comment that asserts the state of code elsewhere is
   a claim with a date on it, so name the file or the ticket a reader can check in one step.
@@ -69,7 +73,7 @@ pnpm run test          # turbo: vitest per package
 pnpm run build         # turbo: only packages that declare a build script
 pnpm run dev           # turbo: persistent, only packages that declare a dev script
 docker compose up -d   # the self-hosted form, whole: Postgres, Graft (server, proxy, MCP, console), the sandbox image
-pnpm run db:start      # postgres:18 alone, via the same compose file, port 5432 (GRAFT_POSTGRES_PORT overrides)
+pnpm run db:start      # postgres:18 alone, plus docker-compose.dev.yml, on 127.0.0.1:5432 (GRAFT_POSTGRES_PORT overrides)
 pnpm run db:push       # apply packages/db/src/schema/*.ts directly — the dev loop
 pnpm run db:generate   # write a migration under packages/db/drizzle from the schema
 pnpm run db:migrate    # apply the committed migrations
@@ -87,9 +91,16 @@ comments are the reference for each name. Two ways to use it while developing:
 
 - **Postgres alone** (`pnpm run db:start`) and the server from source on the host (`pnpm run dev`) —
   the inner loop, where `tsx watch` and Vite reload. `apps/server/.env` names the database for it.
+  The four `db:*` compose scripts pass `-f docker-compose.yml -f docker-compose.dev.yml`, because
+  that overlay is the only thing that publishes Postgres on the host, and on loopback alone
+  (GRA-148): `docker compose up -d` publishes no database, and the `graft` service reaches it by
+  name on the project's own network.
 - **Everything in containers** (`docker compose up -d --build`) — to see the image a self-hoster
   gets, or to run the loop end to end with Docker sandboxes and no host setup. `.env` at the root
-  (from `.env.example`) holds its secrets, model key and admin.
+  (from `.env.example`) holds its secrets, model key and admin. **No secret has a default**, in
+  that file or in the compose file: `node dist/keys.mjs` mints the five Graft refuses to start
+  without and `GRAFT_ADMIN_PASSWORD` with them (GRA-148), and the operator types
+  `GRAFT_ADMIN_EMAIL`.
 
 Use a distinct project name (`docker compose -p <name> …`) to run a second copy beside a colleague's:
 the sandbox network and the toolbox volume are named after the project, so two never share one.
@@ -136,7 +147,7 @@ through it, so the token names ids under either mode.
 
 ```bash
 pnpm run db:start
-pnpm --filter @graft/server keys >> apps/server/.env    # key pair, keyring, auth and handoff secrets
+pnpm --filter @graft/server keys >> apps/server/.env    # key pair, keyring, auth and handoff secrets, and the admin's password
 cat >> apps/server/.env <<'ENV'
 GRAFT_DATABASE_URL=postgresql://postgres:password@localhost:5432/graft
 GRAFT_AUTH_URL=http://localhost:3000
@@ -155,6 +166,9 @@ so set `GRAFT_MIGRATE_ON_START=false` while the schema is moving. Then, if `GRAF
 account through Better Auth's own sign-up and prints one line saying so; a database with anyone in it
 is never touched, and the line says that instead. Unset, nothing happens — a laptop registers at
 `/signup` and verifies the address from the link the console transport prints (ADR 0020, ADR 0021).
+The password is the keys script's, never a file's: `@graft/env` refuses one under 16 characters,
+one this repository once shipped and one still holding a secret store's placeholder, each with a
+sentence naming the variable (GRA-148).
 
 `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` (32+), `GRAFT_AUTH_URL`, `GRAFT_CONSOLE_URL` (where the
 console answers — the base of every handoff URL) and `GRAFT_HANDOFF_SECRET` (32+, signs those URLs)
@@ -636,6 +650,24 @@ cookie therefore never crosses an origin; `GRAFT_CORS_ORIGIN` remains for a cons
 elsewhere. A server whose console directory holds no build boots and answers every console path with
 a JSON 404 saying where it looked. `GRAFT_CONSOLE_URL` is a different setting: where handoff URLs
 point (GRA-23), which in development is the Vite origin.
+
+**Nothing but the console calls `/api` with a session, and three rules hold it to that** (GRA-148).
+*The session cookie follows the deployment*: `@graft/auth`'s `sessionCookieAttributes` derives it
+from `GRAFT_AUTH_URL`, `GRAFT_CONSOLE_URL` and `GRAFT_CORS_ORIGIN`: `sameSite: "lax"` where the
+console and the API answer on one origin, `"none"` only where the console is elsewhere, and
+`secure` from the scheme, so a self-host on a plain `http` LAN address can sign in at all. A
+console elsewhere over plain non-loopback http is refused at boot, because the browser drops that
+cookie. *An origin check on `/api`*: `apps/server/src/origin-guard.ts` refuses every non-`GET`
+request whose `Origin`, then `Referer`, then `Sec-Fetch-Site: same-origin`, is not the auth
+origin or one of `GRAFT_CORS_ORIGIN`, with a 403 in the API's own refusal shape. Four kinds of
+route are exempt and the file says why beside each: `/api/proxy/*` (a capability token from a
+sandbox, no cookie), `/api/auth/*` (Better Auth runs the same check against its own
+`trustedOrigins`), `/api/health`, and reads. Nothing else under `/api` authenticates by bearer
+token: the MCP endpoint and the OAuth protocol endpoints are outside the mount. *A JSON body is
+declared*: `parseBody` answers 415 unless the content type is `application/json` or a `+json`
+suffix, which takes every route that reads a body out of CORS's simple-request set, so the browser
+preflights it; the rule is on the body, so a bare `POST` with nothing to declare still reaches the
+`emptyIs` path. The console's `src/lib/api.ts` satisfies all three without doing anything special.
 
 **The shell is Cando's, less the agent rail** (GRA-46). `src/components/shell/app-shell.tsx` mounts
 the `Sidebar` primitive off canvas at its own 16rem — the `sidebar_state` cookie it writes is read

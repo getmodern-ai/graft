@@ -23,7 +23,9 @@ import type { Analytics, Capture } from "@graft/observability";
 import { initLogger } from "evlog";
 import { describe, expect, it, vi } from "vitest";
 
+import { declaresJson } from "./api";
 import { createServer } from "./app";
+import { ORIGIN_GUARD_EXEMPTIONS } from "./origin-guard";
 import { FAKE_MODEL_KEY_CIPHERTEXT, fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
@@ -444,10 +446,222 @@ function harness(
   return { app, deps, notifier };
 }
 
+/**
+ * The console's origin in the two-port form the harness configures. Every state-changing request
+ * under `/api` has to name it or one the deployment serves the console on (GRA-148,
+ * `origin-guard.ts`), so the two helpers below put it on, as a browser would.
+ */
+const CONSOLE_ORIGIN = "http://localhost:3001";
+
 const json = (body: unknown, method = "POST") => ({
   method,
-  headers: { "content-type": "application/json" },
+  headers: { "content-type": "application/json", origin: CONSOLE_ORIGIN },
   body: JSON.stringify(body),
+});
+
+/** A mutation with no body, a revoke or a delete, from the console's origin. */
+const from = (method: "POST" | "PUT" | "DELETE" | "PATCH") => ({
+  method,
+  headers: { origin: CONSOLE_ORIGIN },
+});
+
+/**
+ * The origin check and the content-type rule (GRA-148; `origin-guard.ts`, `parseBody`), driven at
+ * `PUT /api/me/model-key` because it is the worst of the routes they cover: it repoints the
+ * person's authoring model at any base URL, so a page that could post it would read every vendor
+ * document an `acquire` job fetches (ADR 0014).
+ */
+describe("a state-changing call to /api has to come from the console's origin", () => {
+  const MODEL_KEY = { provider: "openai", apiKey: "sk-attacker", baseUrl: "https://evil.example" };
+
+  /** What a page on another site can send with the cookie and no preflight: a CORS simple request. */
+  const simpleRequest = (origin: string) => ({
+    method: "PUT",
+    headers: { "content-type": "text/plain;charset=UTF-8", origin },
+    body: JSON.stringify(MODEL_KEY),
+  });
+
+  it("refuses the cross-site simple request, and writes no row", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/me/model-key", simpleRequest("https://evil.example"));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      error: "FORBIDDEN",
+      message: expect.stringContaining("https://evil.example"),
+    });
+    expect(deps.modelKey.rows.size).toBe(0);
+  });
+
+  it("takes the same call from an origin the console is served on", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/me/model-key", json(MODEL_KEY, "PUT"));
+    expect(res.status).toBe(200);
+    expect(deps.modelKey.rows.get("person_1")?.baseUrl).toBe("https://evil.example");
+  });
+
+  /**
+   * A browser sends `Origin` on every state-changing request, but a proxy may strip it; the fetch
+   * metadata is the browser's own word for the same fact and is taken when nothing else says.
+   */
+  it("takes a call that names no origin when Sec-Fetch-Site says same-origin", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/me/model-key", {
+      method: "PUT",
+      headers: { "content-type": "application/json", "sec-fetch-site": "same-origin" },
+      body: JSON.stringify(MODEL_KEY),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses a call that names no origin at all", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/me/model-key", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(MODEL_KEY),
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ message: expect.stringContaining("names no origin") });
+    expect(deps.modelKey.rows.size).toBe(0);
+  });
+
+  it("falls back to the Referer's origin, and judges a foreign one the same way", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    const referred = (referer: string) => ({
+      method: "PUT" as const,
+      headers: { "content-type": "application/json", referer },
+      body: JSON.stringify(MODEL_KEY),
+    });
+    expect(
+      (await app.request("/api/me/model-key", referred(`${CONSOLE_ORIGIN}/settings`))).status,
+    ).toBe(200);
+    expect(
+      (await app.request("/api/me/model-key", referred("https://evil.example/page"))).status,
+    ).toBe(403);
+  });
+
+  /** A cross-site read answers JSON the other page cannot parse without a CORS header it will not get. */
+  it("leaves reads alone", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/me", { headers: { origin: "https://evil.example" } });
+    expect(res.status).toBe(200);
+  });
+
+  /**
+   * The proxy's caller is a sandbox process with a capability token and no cookie (ADR 0010), so
+   * the check does not apply: what answers is the proxy's own refusal for a call with no
+   * capability token, rather than the guard's.
+   */
+  it("does not apply to the proxy, which authenticates by capability token", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/proxy/c/conn_1/items", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: "{}",
+    });
+    expect(res.status).not.toBe(403);
+    expect(await res.json()).toMatchObject({ error: "unauthorized" });
+  });
+
+  /**
+   * The exempt list is a contract, not an implementation detail: a route added under `/api` is
+   * checked unless it is put here with a reason, and the consent and the pending-action submits
+   * are deliberately absent.
+   */
+  it("exempts three prefixes and no more, each carrying its reason", () => {
+    expect(ORIGIN_GUARD_EXEMPTIONS.map((entry) => entry.prefix)).toEqual([
+      "/api/proxy",
+      "/api/auth",
+      "/api/health",
+    ]);
+    for (const entry of ORIGIN_GUARD_EXEMPTIONS) expect(entry.why.length).toBeGreaterThan(40);
+  });
+
+  /** Better Auth runs the same check against its own `trustedOrigins` (`origin-guard.ts` says where). */
+  it("does not apply to Better Auth's own routes", async () => {
+    const { app } = harness(null);
+    const res = await app.request("/api/auth/sign-in/email", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: "{}",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("auth");
+  });
+});
+
+/**
+ * The other half of taking those routes out of the simple-request set: a body has to declare
+ * itself JSON, so the browser preflights the call before it is ever sent (GRA-148).
+ */
+describe("a route that reads a JSON body demands a JSON content type", () => {
+  const withType = (contentType: string | null) => ({
+    method: "PUT" as const,
+    headers: {
+      origin: CONSOLE_ORIGIN,
+      ...(contentType === null ? {} : { "content-type": contentType }),
+    },
+    body: JSON.stringify({ provider: "openai", apiKey: "sk-test" }),
+  });
+
+  it("answers 415 for a type that is not JSON, and for none at all", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    for (const contentType of [
+      null,
+      "text/plain;charset=UTF-8",
+      "application/x-www-form-urlencoded",
+      "multipart/form-data; boundary=x",
+      "application/jsonish",
+    ]) {
+      const res = await app.request("/api/me/model-key", withType(contentType));
+      expect(res.status).toBe(415);
+      expect(await res.json()).toMatchObject({ error: "UNSUPPORTED_MEDIA_TYPE" });
+    }
+    expect(deps.modelKey.rows.size).toBe(0);
+  });
+
+  it("takes application/json with parameters, and RFC 6839's +json suffix", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    for (const contentType of [
+      "application/json",
+      "Application/JSON; charset=utf-8",
+      "application/merge-patch+json",
+    ]) {
+      expect((await app.request("/api/me/model-key", withType(contentType))).status).toBe(200);
+    }
+  });
+
+  /**
+   * The rule is on the body, not on the request: a bare `POST` carries nothing to declare, and
+   * `emptyIs` still reads it as the value the route was given. `POST /pending-actions/:id/link`
+   * is the one route with an `emptyIs`, and this harness binds no `authUrl`, so getting past
+   * `parseBody` shows as the link route's own refusal rather than a 415 (Greptile on #117).
+   */
+  it("lets a bodyless POST through to a route that says what an empty body means", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/pending-actions/pa_1/link", from("POST"));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ message: expect.stringContaining("no public URL") });
+  });
+
+  /** A route with no `emptyIs` still refuses an empty body, as it did before: 400, not 415. */
+  it("leaves an empty body on a route that needs one as the body-is-not-JSON refusal", async () => {
+    const { app } = harness({ user: { id: "person_1" } });
+    const res = await app.request("/api/me/model-key", from("PUT"));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ message: "The body is not JSON" });
+  });
+
+  /** `declaresJson` alone, for the shapes a route test would not reach. */
+  it("reads the media type and nothing after the semicolon", () => {
+    expect(declaresJson("application/json")).toBe(true);
+    expect(declaresJson("  APPLICATION/JSON ; charset=utf-8")).toBe(true);
+    expect(declaresJson("application/vnd.api+json")).toBe(true);
+    expect(declaresJson(null)).toBe(false);
+    expect(declaresJson("")).toBe(false);
+    expect(declaresJson("application/json-patch")).toBe(false);
+    expect(declaresJson("text/plain")).toBe(false);
+  });
 });
 
 describe("the analytics chokepoint (GRA-100)", () => {
@@ -493,7 +707,7 @@ describe("the session door", () => {
       ["/api/me", undefined],
       ["/api/me/model-key", undefined],
       ["/api/me/model-key", json({ provider: "openai", apiKey: "k" }, "PUT")],
-      ["/api/me/model-key", { method: "DELETE" }],
+      ["/api/me/model-key", from("DELETE")],
       ["/api/agents", undefined],
       ["/api/agents", json({ name: "x" })],
       ["/api/connections", undefined],
@@ -631,7 +845,11 @@ describe("agents", () => {
       details: { issues: expect.any(Array) },
     });
 
-    const notJson = await app.request("/api/agents", { method: "POST", body: "{" });
+    const notJson = await app.request("/api/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: CONSOLE_ORIGIN },
+      body: "{",
+    });
     expect(notJson.status).toBe(400);
   });
 
@@ -697,7 +915,7 @@ describe("agents", () => {
     );
     expect(bare.status).toBe(400);
 
-    const revoked = await app.request("/api/agents/agent_1/revoke", { method: "POST" });
+    const revoked = await app.request("/api/agents/agent_1/revoke", from("POST"));
     expect(await revoked.json()).toMatchObject({ agent: { revokedAt: NOW.toISOString() } });
   });
 });
@@ -968,7 +1186,7 @@ describe("connections", () => {
     deps.connection.deleteWorkingSetEntriesForConnection = vi.fn(async () => [
       { agentId: "agent_2", toolId: "tool_1" } as never,
     ]);
-    const res = await app.request("/api/connections/conn_1/revoke", { method: "POST" });
+    const res = await app.request("/api/connections/conn_1/revoke", from("POST"));
     expect(await res.json()).toMatchObject({
       connection: { revokedAt: NOW.toISOString() },
       approvalsDeleted: 0,
@@ -983,7 +1201,7 @@ describe("connections", () => {
   it("tells no session when the connection is not the person's", async () => {
     const { app, deps, notifier } = harness({ user: { id: "person_1" } });
     deps.connection.revokeConnection = vi.fn(async () => null);
-    const res = await app.request("/api/connections/conn_x/revoke", { method: "POST" });
+    const res = await app.request("/api/connections/conn_x/revoke", from("POST"));
     expect(res.status).toBe(404);
     expect(notifier.changed).not.toHaveBeenCalled();
   });
@@ -1011,7 +1229,7 @@ describe("connections", () => {
       ...gatewayRow,
       revokedAt: null,
     });
-    const res = await app.request("/api/connections/conn_g/reconnect", { method: "POST" });
+    const res = await app.request("/api/connections/conn_g/reconnect", from("POST"));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       connection: { id: "conn_g", provider: "gateway", revokedAt: null, credentialSetAt: null },
@@ -1032,7 +1250,7 @@ describe("connections", () => {
       ...connectionRow,
       revokedAt: NOW,
     });
-    const keyring = await app.request("/api/connections/conn_1/reconnect", { method: "POST" });
+    const keyring = await app.request("/api/connections/conn_1/reconnect", from("POST"));
     expect(keyring.status).toBe(400);
     expect(await keyring.json()).toMatchObject({
       error: "BAD_REQUEST",
@@ -1855,7 +2073,7 @@ describe("approvals", () => {
 
   it("withdraws an approval, answering the row it removed, and 404 when none stood", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
-    const gone = await app.request("/api/approvals/tool_1?agentId=agent_1", { method: "DELETE" });
+    const gone = await app.request("/api/approvals/tool_1?agentId=agent_1", from("DELETE"));
     expect(gone.status).toBe(200);
     expect(await gone.json()).toMatchObject({ approval: { toolId: "tool_1" } });
     expect(deps.approval.deleteApproval).toHaveBeenCalledWith(
@@ -1872,7 +2090,7 @@ describe("approvals", () => {
     );
 
     vi.mocked(deps.approval.deleteApproval).mockResolvedValueOnce(null);
-    const none = await app.request("/api/approvals/tool_1?agentId=agent_1", { method: "DELETE" });
+    const none = await app.request("/api/approvals/tool_1?agentId=agent_1", from("DELETE"));
     expect(none.status).toBe(404);
   });
 
@@ -1884,7 +2102,7 @@ describe("approvals", () => {
       ["/api/pending-actions/pa_1/answer", json({ allow: true })],
       ["/api/approvals?agentId=agent_1", undefined],
       ["/api/approvals/tool_1/ask-every-call?agentId=agent_1", json({ on: true }, "PUT")],
-      ["/api/approvals/tool_1?agentId=agent_1", { method: "DELETE" }],
+      ["/api/approvals/tool_1?agentId=agent_1", from("DELETE")],
     ] as const) {
       const res = await app.request(path, init);
       expect(res.status, path).toBe(401);
@@ -1934,9 +2152,9 @@ describe("the person's model key", () => {
     expect(JSON.parse(readText)).toMatchObject({ modelKey: { provider: "anthropic" } });
     expect(readText).not.toContain("sk-ant");
 
-    const gone = await app.request("/api/me/model-key", { method: "DELETE" });
+    const gone = await app.request("/api/me/model-key", from("DELETE"));
     expect(await gone.json()).toEqual({ deleted: true });
-    const again = await app.request("/api/me/model-key", { method: "DELETE" });
+    const again = await app.request("/api/me/model-key", from("DELETE"));
     expect(await again.json()).toEqual({ deleted: false });
   });
 

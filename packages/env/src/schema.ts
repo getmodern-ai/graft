@@ -572,6 +572,10 @@ export const cardHosts = z
  * all-or-nothing (`adminKeys`), because an email with no password would present as a console nobody
  * can enter. Read once, by `apps/server/src/boot.ts`, and only while the database holds no person;
  * a later change to either variable changes nothing, and the boot line says so.
+ *
+ * The operator types the address and the keys script mints the password (GRA-148): neither the
+ * compose file nor `.env.example` carries a default any more, so the documented walkthrough cannot
+ * leave an account behind whose password is in this repository.
  */
 export const adminEmail = z
   .email({
@@ -579,12 +583,35 @@ export const adminEmail = z
   })
   .optional();
 
-/** Eight characters is Better Auth's own floor; a shorter value would fail the sign-up, not the boot. */
+/**
+ * The value the compose file and `.env.example` carried until GRA-148, when the admin's password
+ * moved to `apps/server/src/scripts/generate-keys.ts`. Kept here as a denylist entry, because a
+ * `.env` copied before that change still holds it and the account it opens is sign-in-able by
+ * anyone who has read this repository.
+ */
+export const RETIRED_ADMIN_PASSWORD = "change-me-before-exposing-this";
+
+/**
+ * Sixteen characters, not Better Auth's floor of eight: the keys script mints a 32-character one
+ * and this account faces whatever network the console faces, so the floor is set where a typed
+ * password is worth having rather than where the library stops refusing (GRA-148). Held to the
+ * placeholder rule for the reason `secretValue` gives, and to the retired value above.
+ */
+export const ADMIN_PASSWORD_MIN_LENGTH = 16;
+
 export const adminPassword = z
   .string()
   .min(
-    8,
-    "GRAFT_ADMIN_PASSWORD must be at least 8 characters — Better Auth refuses a shorter password",
+    ADMIN_PASSWORD_MIN_LENGTH,
+    `GRAFT_ADMIN_PASSWORD must be at least ${ADMIN_PASSWORD_MIN_LENGTH} characters; mint one with \`node dist/keys.mjs\` (from a checkout, \`pnpm --filter @graft/server keys\`)`,
+  )
+  .refine(
+    (value) => value !== RETIRED_ADMIN_PASSWORD,
+    "GRAFT_ADMIN_PASSWORD still holds the value this repository shipped until GRA-148, which anyone who has read it knows; mint one with `node dist/keys.mjs` (from a checkout, `pnpm --filter @graft/server keys`)",
+  )
+  .refine(
+    (value) => !value.startsWith("PLACEHOLDER"),
+    "GRAFT_ADMIN_PASSWORD still holds the secret store's placeholder; populate it or unset it",
   )
   .optional();
 
@@ -764,6 +791,23 @@ function urlProtocolOf(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A host a browser treats as a secure context over plain `http`, and therefore one a `Secure`
+ * cookie survives: the loopback names and addresses (Chrome's "potentially trustworthy origin",
+ * and Better Auth's own `isLoopbackHost` reads the same set). The two-port development loop is
+ * every one of these, which is why the rule below exempts them.
+ */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "::1" ||
+    host === "[::1]" ||
+    /^127\.\d+\.\d+\.\d+$/.test(host)
+  );
 }
 
 /**
@@ -954,6 +998,43 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
     smtpKeys,
   );
   if (partialSmtp) issues.push(partialSmtp);
+
+  /**
+   * A console answering somewhere other than the API needs the session cookie to cross sites, and
+   * a cross-site cookie must be `Secure` or the browser drops it. Over https it is; on a loopback
+   * host, which the two-port development loop is, the browser treats plain http as a secure
+   * context and keeps it. Anywhere else over plain http the cookie never lands and every sign-in fails with
+   * nothing on either side to say why, so the deployment is refused here instead (GRA-148). The
+   * attributes themselves are `@graft/auth`'s `sessionCookieAttributes`.
+   */
+  const cookieAuthUrl = typeof value.GRAFT_AUTH_URL === "string" ? value.GRAFT_AUTH_URL : null;
+  const cookieConsoleUrl =
+    typeof value.GRAFT_CONSOLE_URL === "string" ? value.GRAFT_CONSOLE_URL : null;
+  if (cookieAuthUrl !== null) {
+    const api = (() => {
+      try {
+        return new URL(cookieAuthUrl);
+      } catch {
+        return null;
+      }
+    })();
+    const consoleOrigin = (() => {
+      if (cookieConsoleUrl === null) return api?.origin ?? null;
+      try {
+        return new URL(cookieConsoleUrl).origin;
+      } catch {
+        return null;
+      }
+    })();
+    const elsewhere =
+      (consoleOrigin !== null && api !== null && consoleOrigin !== api.origin) ||
+      (Array.isArray(value.GRAFT_CORS_ORIGIN) && value.GRAFT_CORS_ORIGIN.length > 0);
+    if (api !== null && elsewhere && api.protocol === "http:" && !isLoopbackHost(api.hostname)) {
+      issues.push(
+        "A console on another origin than GRAFT_AUTH_URL needs a cross-site session cookie, which a browser keeps only over https or on a loopback host; serve GRAFT_AUTH_URL over https, or serve the console from the same origin and leave GRAFT_CORS_ORIGIN unset.",
+      );
+    }
+  }
 
   // `GRAFT_SANDBOX_BACKEND` chooses among the open form's sandboxes; under `cloud` the private
   // package brings the sandbox, and a `fake` set beside it would be two answers to one question.

@@ -50,6 +50,12 @@ export type CreateAuthOptions = {
    */
   trustedOrigins?: readonly string[];
   /**
+   * `GRAFT_CONSOLE_URL`, where the console answers. Read for the session cookie's attributes
+   * alone (`sessionCookieAttributes`); absent means the console is this origin, which is what a
+   * script or a test that serves no console wants.
+   */
+  consoleUrl?: string;
+  /**
    * The sign-in providers this deployment has clients for, a key per configured provider and no key
    * for an absent one (`@graft/env`'s `signInProvidersFrom`). Each redirect URI is `baseURL` plus
    * `/api/auth/callback/<provider>`.
@@ -64,6 +70,51 @@ export type CreateAuthOptions = {
    */
   mail?: { consoleUrl: string; transport: EmailTransport };
 };
+
+/** Where the console and the API answer, as the three variables that decide it spell them. */
+export type DeploymentOrigins = {
+  /** `GRAFT_AUTH_URL`, the server's public origin. */
+  authUrl: string;
+  /** `GRAFT_CONSOLE_URL`; absent means the console is served from the API's own origin. */
+  consoleUrl?: string;
+  /** `GRAFT_CORS_ORIGIN`, a console answering somewhere else again. */
+  corsOrigins?: readonly string[];
+};
+
+/** The session cookie's attributes; `httpOnly` always, the other two follow the deployment. */
+export type SessionCookieAttributes = {
+  sameSite: "lax" | "none";
+  secure: boolean;
+  httpOnly: true;
+};
+
+/**
+ * The session cookie, as a function of where the console and the API answer (GRA-148).
+ *
+ * `sameSite: "none"` was unconditional until this function, for the two-port development setup,
+ * and it is the wrong default for the form every self-host and Graft Cloud run: the console is
+ * served by this server (`apps/server/src/console.ts`), so the cookie never crosses an origin and
+ * `lax` is what it should be. `none` stays for a console answering elsewhere, a second origin
+ * named by `GRAFT_CONSOLE_URL` or admitted by `GRAFT_CORS_ORIGIN`, because nothing else reaches
+ * it. Note that the cookie is not what stands between a cross-site request and this API: the
+ * origin check on `/api` is (`apps/server/src/origin-guard.ts`).
+ *
+ * `secure` follows the scheme rather than being always on. A self-host on a plain `http://` LAN
+ * address is a form ADR 0002 admits, and an always-`secure` cookie made its sign-in silently
+ * impossible: the browser accepts the response and stores nothing. Cross-origin is the one case
+ * that has no choice: a `sameSite: "none"` cookie must be `Secure` or the browser drops it, so
+ * that branch asks for it, and the deployment where it cannot work (a console on another origin
+ * over plain http that is not a loopback host) is refused at boot by `@graft/env`'s
+ * `serverEnvIssues` rather than failing in the browser.
+ */
+export function sessionCookieAttributes(origins: DeploymentOrigins): SessionCookieAttributes {
+  const apiUrl = new URL(origins.authUrl);
+  const consoleOrigin = origins.consoleUrl ? new URL(origins.consoleUrl).origin : apiUrl.origin;
+  const elsewhere = consoleOrigin !== apiUrl.origin || (origins.corsOrigins ?? []).length > 0;
+
+  if (elsewhere) return { sameSite: "none", secure: true, httpOnly: true };
+  return { sameSite: "lax", secure: apiUrl.protocol === "https:", httpOnly: true };
+}
 
 export function createAuth(options: CreateAuthOptions) {
   const { google, github } = options.socialProviders ?? {};
@@ -250,16 +301,15 @@ export function createAuth(options: CreateAuthOptions) {
     },
     advanced: {
       /**
-       * The console is a separate origin from the API in development (two ports), so the session
-       * cookie has to cross origins: `sameSite: "none"` requires `secure`, and `httpOnly` keeps it
-       * out of the console's scripts. `secure` cookies still work on `localhost`, which browsers
-       * treat as a secure context.
+       * Derived from where the console and the API answer, in one place, by the rule
+       * `sessionCookieAttributes` above states. `httpOnly` is unconditional either way: the
+       * console never reads the cookie, only sends it.
        */
-      defaultCookieAttributes: {
-        sameSite: "none",
-        secure: true,
-        httpOnly: true,
-      },
+      defaultCookieAttributes: sessionCookieAttributes({
+        authUrl: options.baseURL,
+        ...(options.consoleUrl === undefined ? {} : { consoleUrl: options.consoleUrl }),
+        corsOrigins: options.trustedOrigins ?? [],
+      }),
     },
   });
 }

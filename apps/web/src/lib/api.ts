@@ -10,6 +10,13 @@ import type { ServiceErrorCode } from "@graft/core";
  * `@graft/server/api` and `@graft/core` as types, never written a second time here. One transform
  * is applied on the way, `Jsonified<T>`: a `Date` on the server is a string on the wire, and a type
  * that said otherwise would be a lie every `new Date(value)` had to remember.
+ *
+ * Two things this sends are what the API checks for (GRA-148). Every state-changing request under
+ * `/api` has to name an origin the deployment serves the console on
+ * (`apps/server/src/origin-guard.ts`), and a browser puts `Origin` on every request but `GET` and
+ * `HEAD` by the Fetch standard, so nothing is set here for it. And a body has to declare itself
+ * JSON or the route answers 415, which the header below does for every call that sends one; a
+ * call with no body reaches no route that reads one.
  */
 
 export const API_BASE = "/api";

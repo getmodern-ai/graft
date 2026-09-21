@@ -1,0 +1,22 @@
+# The development overlay, applied on top of `docker-compose.yml` and never alone:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+#
+# which is what the root `db:start`, `db:watch`, `db:stop` and `db:down` scripts run (GRA-148).
+# It exists for one need, AGENTS.md's "Postgres alone": a server run from source on the host
+# (`pnpm run dev`) reaches the database through a published port, and nothing else does. The
+# `graft` service reaches Postgres by name on the project's own network, so the self-hosted form
+# publishes no database and the compose file it is described by carries no `ports` for one.
+#
+# The project name comes from the first file, so this overlay runs against the same containers,
+# volumes and networks `docker compose up` made; `docker compose -p <name>` still gives a second
+# copy its own.
+
+services:
+  postgres:
+    ports:
+      # Bound to loopback, not to every interface: the password is `POSTGRES_PASSWORD`'s default
+      # on a laptop and this port is a laptop's convenience, so it answers only to this machine.
+      # The port is overridable because a laptop often already runs a Postgres on 5432 for another
+      # project; the matching `GRAFT_DATABASE_URL` goes in `apps/server/.env`.
+      - "127.0.0.1:${GRAFT_POSTGRES_PORT:-5432}:5432"
