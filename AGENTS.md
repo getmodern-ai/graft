@@ -25,6 +25,10 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
   `git rebase --signoff origin/main` adds it to a branch already written.
   A Developer Certificate of Origin replaced the CLA on 2026-09-21 (ADR 0022); the core is
   Apache-2.0 and `CONTRIBUTING.md` is what an outside contributor reads.
+- **`SECURITY.md` is what the outside is told.** Where to report a vulnerability, what is in
+  scope and where the design is written down; a change that moves one of those boundaries
+  (the proxy, the token, the vault, the sandbox, the asks, the MCP OAuth server, the console's
+  session) updates that file in the same pull request.
 - **A comment states the local consequence and points at the ADR for the argument.** Do not
   restate an ADR in a comment; it will rot. A comment that asserts the state of code elsewhere is
   a claim with a date on it, so name the file or the ticket a reader can check in one step.
