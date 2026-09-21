@@ -24,6 +24,7 @@ import { runAuthoredTool } from "./run";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
 import { AUTHORING_TOOLS } from "./tools/authoring";
 import { callExecuteTool, executeToolDefinition } from "./tools/execute";
+import { queryWords } from "./tools/find-tool.match";
 import { META_TOOLS, type MetaTool } from "./tools/meta";
 
 /**
@@ -158,8 +159,8 @@ type EventDetail = NonNullable<ToolCallEvent["detail"]>;
 
 /**
  * Per tool, what the wide event may say of the call beyond its outcome (GRA-155) — read from the
- * arguments and the answer, never the person's data: `find_tool`'s query is the agent's own words
- * and the one free string admitted, everything else is a count, an id or a name. A `find_tool`
+ * arguments and the answer, never the person's data: `find_tool`'s query is counted in words and
+ * not copied, everything else is a count, an id or a name. A `find_tool`
  * that answered `ok` with no hit and an `acquire` that built a copy were the same line in the log
  * until this.
  */
@@ -172,9 +173,14 @@ export function eventDetail(
     typeof value === "string" && value.length > 0 ? value : undefined;
   switch (name) {
     case "find_tool": {
+      // The query's size, never its text: an agent's search words can carry the person's names
+      // and ids (Greptile on #122), and the wide event carries no person-typed content.
       const query = str(args.query);
       const hits = Array.isArray(body.tools) ? body.tools.length : undefined;
-      return { ...(query ? { query } : {}), ...(hits !== undefined ? { hits } : {}) };
+      return {
+        ...(query ? { queryWords: queryWords(query).length } : {}),
+        ...(hits !== undefined ? { hits } : {}),
+      };
     }
     case "acquire": {
       const goal = str(args.goal);

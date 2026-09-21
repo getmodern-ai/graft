@@ -93,6 +93,24 @@ describe("similarTools", () => {
     expect(goalWrites(GOALS.getDraft)).toBe(false);
     expect(similarTools([CREATE_DRAFT], GOALS.getDraft)).toEqual([]);
     expect(similarTools([GET_DRAFT], GOALS.createDraft)).toEqual([]);
+    // A write named later in the goal still makes it a write goal (Greptile on #122).
+    const listThenDelete = "List items from Demo Orders and then delete the selected item";
+    expect(goalWrites(listThenDelete)).toBe(true);
+    expect(
+      similarTools(
+        [
+          {
+            vendor: "demo",
+            name: "list-items",
+            description: "Lists items from Demo Orders.",
+            readOnly: true,
+          },
+        ],
+        listThenDelete,
+      ),
+    ).toEqual([]);
+    // "reply" is a noun as often as a verb: a goal about mail to reply to still reads.
+    expect(goalWrites(GOALS.unreplied)).toBe(false);
     // With no annotation the words alone decide.
     expect(
       similarTools(

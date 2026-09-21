@@ -62,12 +62,16 @@ describe("toolCallEvent", () => {
   });
 
   /** GRA-155: what the call was about, per tool, in counts and names — never the answer's content. */
-  it("carries find_tool's query and hit count, acquire's goal length, similar offer and job, and run_tool's target", () => {
+  it("carries find_tool's word and hit counts, acquire's goal length, similar offer and job, and run_tool's target", () => {
     const found = toolResult({ tools: [{ name: "a" }, { name: "b" }], connections: [] });
+    // The query is counted, not copied: it may carry the person's names (Greptile on #122).
     expect(toolCallEvent(session, "find_tool", found, 5, { query: "gmail inbox" }).detail).toEqual({
-      query: "gmail inbox",
+      queryWords: 2,
       hits: 2,
     });
+    expect(
+      JSON.stringify(toolCallEvent(session, "find_tool", found, 5, { query: "acme invoices" })),
+    ).not.toContain("acme");
     const opened = toolResult({ jobId: "acq_1", status: "running", progress: [], attempts: 0 });
     expect(
       toolCallEvent(session, "acquire", opened, 25, { goal: "List the items" }).detail,
