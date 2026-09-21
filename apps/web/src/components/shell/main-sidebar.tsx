@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { GraftMark } from "@/components/graft-mark";
+import { GraftWordmark } from "@/components/graft-wordmark";
 import { AccountMenu } from "@/components/shell/account-menu";
 import { SidebarToggle } from "@/components/shell/sidebar-toggle";
 import {
@@ -23,7 +23,7 @@ import { NAV_ITEMS } from "@/lib/main-sidebar-nav-items";
 import { pendingActionsQuery } from "@/lib/pending-action-queries";
 
 /**
- * The console's sidebar: the mark and the name, the four destinations, and the account menu.
+ * The console's sidebar: the wordmark, the four destinations, and the account menu.
  *
  * Cando's `apps/web/src/components/shell/main-sidebar.tsx` reduced to what Graft has. Left out,
  * each because there is no such thing here (ADR 0017): the agent rail and its `mobileLeading`
@@ -49,10 +49,9 @@ export function MainSidebar() {
         <div className="flex h-9 items-center justify-between rounded-md px-2">
           <Link
             to="/agents"
-            className="flex min-w-0 items-center gap-2 rounded-sm font-semibold text-sm outline-hidden ring-ring/50 focus-visible:ring-3"
+            className="flex min-w-0 items-center rounded-sm outline-hidden ring-ring/50 focus-visible:ring-3"
           >
-            <GraftMark className="size-6" />
-            <span className="truncate">Graft</span>
+            <GraftWordmark className="h-6" />
           </Link>
           <SidebarToggle />
         </div>
