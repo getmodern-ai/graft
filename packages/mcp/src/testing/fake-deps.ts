@@ -952,6 +952,14 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.pendingActions.set(id, updated);
       return updated;
     },
+    updatePendingActionPayload: async (_db, personId, id, args) => {
+      const row = store.pendingActions.get(id);
+      if (!ownsAction(personId, row) || !row) return null;
+      if (row.answeredAt !== null || row.expiresAt <= args.now) return null;
+      const updated = { ...row, payload: args.payload, updatedAt: args.now };
+      store.pendingActions.set(id, updated);
+      return updated;
+    },
     newId: () => `pa_${store.newId()}`,
     now: store.now,
   };

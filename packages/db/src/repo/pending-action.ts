@@ -126,6 +126,33 @@ export async function answerPendingAction(
 }
 
 /**
+ * The ask's payload rewritten while it is still open (GRA-147): the provider-link fallback moves a
+ * connection ask from a link provider onto the keyring when the provider could not start its link,
+ * so the same row — same id, same handoff URL, same agent — is answered by Graft's own form. Open
+ * and in time in the predicate, as an answer is; null is "nothing to rewrite".
+ */
+export async function updatePendingActionPayload(
+  db: DbOrTx,
+  personId: string,
+  id: string,
+  args: { payload: Record<string, unknown>; now: Date },
+): Promise<PendingActionRow | null> {
+  const [row] = await db
+    .update(pendingAction)
+    .set({ payload: args.payload, updatedAt: args.now })
+    .where(
+      and(
+        eq(pendingAction.id, id),
+        inArray(pendingAction.agentId, personAgentIds(db, personId)),
+        isNull(pendingAction.answeredAt),
+        gt(pendingAction.expiresAt, args.now),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
  * The waiting tool takes the answer, once: answered and not yet consumed, in the predicate, so two
  * pollers cannot both act on one yes. Null is "no answer to take yet", or already taken.
  */

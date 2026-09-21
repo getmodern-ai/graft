@@ -14,6 +14,7 @@ import {
   ServiceError,
   signLinkState,
 } from "@graft/core";
+import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 
 import { CONNECTION_ASK_KIND, type ConnectionProposalPayload } from "./connection-request";
@@ -42,6 +43,8 @@ import type { HandoffConfig } from "./handoff";
  */
 
 export type ProviderLinkMintDeps = {
+  /** The handle the fallback rewrites the ask's payload through (GRA-147). */
+  db: DbOrTx;
   connection: ConnectionDeps;
   pendingAction: PendingActionDeps;
   handoff: Pick<HandoffConfig, "secret">;
@@ -64,6 +67,32 @@ export type StartedProviderLink = {
   expiresAt: Date;
   provider: string;
 };
+
+/**
+ * The provider could not start its link, so the ask is now the keyring's form (GRA-147): same
+ * row, same handoff URL, same agent; the console's card re-reads it as the form, the chat card's
+ * console button lands on the form, and the agent's repeated call is worded for the form.
+ */
+export type ProviderLinkFallback = {
+  fallback: "form";
+  /** The provider that could not start — what the person is told stepped aside. */
+  provider: string;
+  /** The provider's own sentence, for the log and the card's note; never a secret. */
+  message: string;
+};
+
+export type ProviderLinkStartResult = StartedProviderLink | ProviderLinkFallback;
+
+export function isProviderLinkFallback(
+  result: ProviderLinkStartResult,
+): result is ProviderLinkFallback {
+  return "fallback" in result;
+}
+
+/** The note the form carries after a fallback, in the console and on the card. */
+export function providerFallbackNote(provider: string): string {
+  return `${provider} could not start its sign-in, so this connection is made on Graft's own page instead: check the hosts and connect it here.`;
+}
 
 /** The proposal on a connection ask, as `request_connection` recorded it. */
 export function proposalOfLinkAsk(action: PendingActionRow): ConnectionProposalPayload {
@@ -98,7 +127,7 @@ export async function mintProviderLink(
   action: PendingActionRow,
   deps: ProviderLinkMintDeps,
   choices: ProviderLinkChoices = {},
-): Promise<StartedProviderLink> {
+): Promise<ProviderLinkStartResult> {
   const proposal = proposalOfLinkAsk(action);
   const provider = providerNamed(deps.connection.providers, proposal.provider);
   if (!provider) {
@@ -135,12 +164,40 @@ export async function mintProviderLink(
     if (choices.fromCard) url.searchParams.set(FROM_CARD_PARAM, FROM_CARD);
     return url.toString();
   };
-  const started = await link.start({
-    personId: principal.personId,
-    vendor: proposal.vendor,
-    hosts: proposal.hosts,
-    returnTo: { success: returnTo("success"), error: returnTo("error") },
-  });
+  let started: Awaited<ReturnType<typeof link.start>>;
+  try {
+    started = await link.start({
+      personId: principal.personId,
+      vendor: proposal.vendor,
+      hosts: proposal.hosts,
+      returnTo: { success: returnTo("success"), error: returnTo("error") },
+    });
+  } catch (error) {
+    // The provider cannot start (GRA-147): its API refused, is down, or holds nothing for this
+    // app. A person shown that has Decline as their only exit, and asking again reaches the same
+    // provider — so the ask moves onto the keyring here, once, and the person gets Graft's own
+    // form for the proposal the model made: same row, same link, same agent. A rewrite that finds
+    // the ask already answered or expired changes nothing and the provider's error stands.
+    const message = error instanceof Error ? error.message : String(error);
+    const rewritten = await deps.pendingAction.updatePendingActionPayload(
+      deps.db,
+      principal.personId,
+      action.id,
+      {
+        payload: {
+          ...action.payload,
+          provider: KEYRING_PROVIDER,
+          providerConnect: "form",
+          providerTarget: null,
+          note: providerFallbackNote(provider.name),
+          providerFallback: { from: provider.name, message },
+        },
+        now,
+      },
+    );
+    if (!rewritten) throw error;
+    return { fallback: "form", provider: provider.name, message };
+  }
   return {
     url: started.url,
     expiresAt: started.expiresAt.getTime() < expiresAt.getTime() ? started.expiresAt : expiresAt,

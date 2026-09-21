@@ -82,6 +82,10 @@ let store: FakeStore;
 let broker: FakeLinkProvider;
 let app: ReturnType<typeof createServer>;
 let mcp: ReturnType<typeof createMcpDeps>;
+/** What the API's analytics seam was told, per test (GRA-147). */
+let analyticsSpy:
+  | ((event: { event: string; properties?: Record<string, unknown> }) => void)
+  | null = null;
 /** The process's notifier as the API's routes see it: what the link's return announces to. */
 const apiNotifier = { changed: vi.fn() };
 
@@ -169,6 +173,13 @@ beforeAll(async () => {
       handoff,
       authUrl: AUTH_URL,
       notifier: apiNotifier,
+      analytics: {
+        name: "spy",
+        shutdown: async () => {},
+        capture: (event) => {
+          analyticsSpy?.(event as { event: string; properties?: Record<string, unknown> });
+        },
+      },
     },
     mcp,
   });
@@ -180,6 +191,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
+  analyticsSpy = null;
   vendor.requests.length = 0;
 });
 
@@ -296,6 +308,75 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       expect(url.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     }
     // The ask is untouched: the return answers it, not the button.
+    expect(store.pendingActions.get(actionId)?.answeredAt).toBeNull();
+  });
+
+  /**
+   * GRA-147: a provider whose `start` fails is not a dead end. On an ask of its own — the suite's
+   * shared ask is a link ask to the end — the ask moves onto the keyring in place: same row, same
+   * link; the button answers the fallback, the agent's repeated call is worded for the form, and
+   * a second press finds a keyring ask.
+   */
+  it("a provider that cannot start its link steps aside: the ask becomes the keyring's form in place, the button says so, and the agent's repeated call is worded for the form", async () => {
+    const captured: { event: string; properties?: Record<string, unknown> }[] = [];
+    analyticsSpy = (event) => captured.push(event);
+    const proposal = { ...PROPOSAL, displayName: "Gmail (provider down)" };
+    const a = await connect(TOKEN_A);
+    try {
+      const asked = body(await a.call("request_connection", proposal));
+      expect(asked).toMatchObject({ error: "awaiting_connection", provider: "broker" });
+      const id = asked.pendingActionId as string;
+
+      broker.failNext(new FakeLinkProviderError("the broker refused to mint (fake)"));
+      const res = await app.request(`/api/pending-actions/${id}/link`, { method: "POST" });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        fallback: "form",
+        provider: "broker",
+        message: expect.stringContaining("refused to mint"),
+      });
+      const row = store.pendingActions.get(id);
+      expect(row?.answeredAt).toBeNull();
+      expect(row?.payload).toMatchObject({
+        provider: "keyring",
+        providerConnect: "form",
+        providerTarget: null,
+        vendor: "gmail",
+        scheme: "oauth_authorization_code",
+        providerFallback: { from: "broker", message: expect.stringContaining("refused to mint") },
+      });
+      expect(String(row?.payload.note)).toContain("broker could not start its sign-in");
+      expect(captured.map((e) => e.event)).toEqual(["provider_link_fell_back"]);
+
+      // The agent's repeated call reuses the same ask and is worded for the form, naming no broker.
+      const answer = body(await a.call("request_connection", proposal));
+      expect(answer).toMatchObject({ error: "awaiting_connection", pendingActionId: id });
+      expect(String(answer.message)).not.toContain("broker");
+      expect(String(answer.message)).toContain("OAuth client");
+      expect(answer.provider).toBeUndefined();
+
+      // A second press finds a keyring ask and is refused as the form's: the fallback is once.
+      const pressed = await app.request(`/api/pending-actions/${id}/link`, { method: "POST" });
+      expect(pressed.status).toBe(400);
+      expect(String(((await pressed.json()) as { message: string }).message)).toContain("keyring");
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("a minted link and a return are counted per provider and outcome", async () => {
+    const captured: { event: string; properties?: Record<string, unknown> }[] = [];
+    analyticsSpy = (event) => captured.push(event);
+    // A second press on the suite's ask: a fresh link, which the next test's return then uses.
+    const res = await app.request(`/api/pending-actions/${actionId}/link`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const minted = broker.minted.at(-1);
+    // The provider's own error redirect: counted as a failed return, and the ask stays open.
+    await app.request(minted?.error ?? "");
+    expect(captured.map((e) => [e.event, e.properties?.provider, e.properties?.outcome])).toEqual([
+      ["provider_link_started", "broker", undefined],
+      ["provider_link_returned", "broker", "failed"],
+    ]);
     expect(store.pendingActions.get(actionId)?.answeredAt).toBeNull();
   });
 

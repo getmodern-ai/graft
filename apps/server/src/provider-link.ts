@@ -27,13 +27,16 @@ import {
   CONNECTION_ASK_KIND,
   type ConnectionProposalPayload,
   type HandoffConfig,
+  isProviderLinkFallback,
   mintProviderLink,
   notifyAgentsReachingConnection,
   type ProviderLinkChoices,
+  type ProviderLinkStartResult,
   proposalOfLinkAsk,
   type StartedProviderLink,
   type ToolListChangedNotifier,
 } from "@graft/mcp";
+import type { Analytics } from "@graft/observability";
 import { Hono } from "hono";
 
 /**
@@ -84,9 +87,12 @@ export type ProviderLinkRouteOptions = {
    * sessions are told after the transaction, as `api.ts`'s connection routes tell them.
    */
   notifier?: Pick<ToolListChangedNotifier, "changed">;
+  /** GRA-147: how the person's return ended, per provider — `provider_link_returned`. */
+  analytics?: Analytics;
 };
 
-export type { ProviderLinkChoices, StartedProviderLink };
+export type { ProviderLinkChoices, ProviderLinkStartResult, StartedProviderLink };
+export { isProviderLinkFallback };
 
 /** The ask a link is for: the person's, a connection ask, still open — the submit routes' own rules. */
 function openConnectionAsk(
@@ -126,7 +132,7 @@ export async function startProviderLink(
   pendingActionId: string,
   options: ProviderLinkRouteOptions,
   choices: ProviderLinkChoices = {},
-): Promise<StartedProviderLink> {
+): Promise<ProviderLinkStartResult> {
   const action = openConnectionAsk(
     await getPendingActionForPerson(ctx, principal, pendingActionId, options.pendingAction),
     options.pendingAction.now(),
@@ -163,6 +169,18 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
     if (!verdict.ok) return failed(verdict.message);
     const { pendingActionId, personId } = verdict.payload;
     const principal: Principal = { personId };
+    // Every landing from here on is a fact about the provider (GRA-147): counted per outcome, so
+    // a provider whose returns keep failing is seen rather than quietly worked around.
+    const counted = (outcome: LinkCallbackOutcome) => {
+      options.analytics?.capture({
+        distinctId: personId,
+        event: "provider_link_returned",
+        properties: { provider: verdict.payload.provider, outcome: outcome.status },
+      });
+      return land(outcome);
+    };
+    const failedCounted = (message: string, status: LinkCallbackOutcome["status"] = "failed") =>
+      counted({ status, pendingActionId, connectionId: null, message });
 
     const row = await getPendingActionForPerson(
       ctx,
@@ -171,7 +189,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
       options.pendingAction,
     );
     if (!row || row.kind !== CONNECTION_ASK_KIND) {
-      return failed("The ask this link was for no longer exists.", pendingActionId);
+      return failedCounted("The ask this link was for no longer exists.");
     }
     // The browser may land twice — a refresh, a second tab. An ask already answered by this link
     // is connected, and says so rather than making a second connection.
@@ -184,15 +202,13 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
       });
     }
     if (row.answeredAt || row.consumedAt) {
-      return failed(
+      return failedCounted(
         "This ask was already answered in the console; nothing more was connected.",
-        pendingActionId,
       );
     }
     if (row.expiresAt.getTime() <= now.getTime()) {
-      return failed(
+      return failedCounted(
         "This ask has expired — the agent will ask again if it still needs to, and the new ask has a fresh link.",
-        pendingActionId,
       );
     }
 
@@ -200,29 +216,24 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
     try {
       proposal = proposalOfLinkAsk(row);
     } catch {
-      return failed("This connection ask carries no proposal.", pendingActionId);
+      return failedCounted("This connection ask carries no proposal.");
     }
     if (proposal.provider !== verdict.payload.provider) {
-      return failed(
-        "This link was minted for another provider than the ask names.",
-        pendingActionId,
-      );
+      return failedCounted("This link was minted for another provider than the ask names.");
     }
     const provider = providerNamed(options.connection.providers, proposal.provider);
     const link = provider ? providerLinkOf(provider) : null;
     if (!provider || !link) {
-      return failed(
+      return failedCounted(
         `The ${proposal.provider} provider is not enabled on this deployment, so nothing was connected.`,
-        pendingActionId,
       );
     }
 
     // The provider's own word for a failure — the person closed the sign-in, or the vendor refused
     // it. Read to phrase the sentence and for nothing else; the ask stays open for another try.
     if (query[LINK_OUTCOME_PARAM] === "error") {
-      return failed(
+      return failedCounted(
         `${provider.name} reported that the sign-in at ${proposal.vendor} did not complete — nothing was connected. Press Connect on the ask to try again.`,
-        pendingActionId,
       );
     }
 
@@ -241,12 +252,11 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
         takenRefs,
       });
     } catch {
-      return failed(
+      return failedCounted(
         `${provider.name} could not be asked which account was connected — nothing was connected. Press Connect on the ask to try again.`,
-        pendingActionId,
       );
     }
-    if (!outcome.ok) return failed(outcome.message, pendingActionId);
+    if (!outcome.ok) return failedCounted(outcome.message);
 
     let connectionId: string;
     try {
@@ -329,9 +339,8 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
       }
       const detail =
         error instanceof ServiceError ? error.message : "the connection could not be made";
-      return failed(
+      return failedCounted(
         `${proposal.displayName} was connected at ${provider.name} but not in Graft: ${detail}. Press Connect on the ask to try again.`,
-        pendingActionId,
       );
     }
 
@@ -343,7 +352,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
       { connection: options.connection },
       options.notifier,
     );
-    return land({
+    return counted({
       status: "connected",
       pendingActionId,
       connectionId,

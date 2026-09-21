@@ -396,6 +396,7 @@ function pendingActionDeps(): PendingActionDeps {
     findPendingAction: vi.fn(async () => openAction),
     findPendingActionForPerson: vi.fn(async () => openAction),
     listOpenPendingActions: vi.fn(async () => [openAction, buildAction]),
+    updatePendingActionPayload: vi.fn(async () => null),
     answerPendingAction: vi.fn(async (_db, _p, _id, args) => ({
       ...openAction,
       answer: args.answer,

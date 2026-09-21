@@ -376,7 +376,14 @@ is the suite; `pnpm --filter @graft/ask-card build` before `pnpm --filter @graft
 fresh checkout, or let `pnpm run test` order it.
 
 **Every ask settles in the card; the console is a popup for the secret alone** (GRA-116, GRA-117,
-GRA-118; ADR 0006 as amended 2026-09-19). Three more tools and one query. `start_link
+GRA-118; ADR 0006 as amended 2026-09-19). Three more tools and one query. **A provider that cannot
+start its link steps aside** (GRA-147; ADR 0019's bullet of 2026-09-21): `mintProviderLink` rewrites
+the open ask onto the keyring (`providerConnect: form`, a `note`, `providerFallback`) through
+`PendingActionDeps.updatePendingActionPayload`, the console's button answers `{ fallback: "form" }`
+and its card re-reads as the form, `start_link` answers `card_not_available` pointing at that form,
+and `routeProposal` words a repeated call for the ask as it stands (`asked`), not as it would route.
+The two link routes count `provider_link_started`, `provider_link_fell_back` and
+`provider_link_returned`. `start_link
 { pendingActionId, approveBuild }` → `{ url, expiresAt, provider }` (`tools/start-link.ts`, app-only,
 the card gate) mints a link provider's Connect Link for the agent's own open connection ask through
 `packages/mcp/src/provider-link.ts`'s `mintProviderLink` — the function `POST /api/pending-actions/:id/link`
