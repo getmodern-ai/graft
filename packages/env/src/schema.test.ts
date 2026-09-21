@@ -34,6 +34,7 @@ import {
   packageMinWeeklyDownloads,
   pendingActionTtlHours,
   port,
+  rateLimitWindow,
   sandboxBackend,
   serverEnvIssues,
   serverSchema,
@@ -42,6 +43,7 @@ import {
   sweepIntervalSeconds,
   toolboxRoot,
   toolboxVolume,
+  trustedProxyHops,
   withDerivedDefaults,
 } from "./schema";
 
@@ -369,6 +371,8 @@ describe("finalServerSchema", () => {
       GRAFT_CARD_HOSTS: ["claude.ai", "chatgpt.com"],
       GRAFT_SWEEP_INTERVAL_SECONDS: 300,
       GRAFT_MIGRATE_ON_START: true,
+      // Every rate-limit bucket is absent here, which is the seam's default: unlimited.
+      GRAFT_TRUSTED_PROXY_HOPS: 0,
       GRAFT_ACQUIRE_MAX_ATTEMPTS: 4,
       GRAFT_ACQUIRE_TOKEN_CEILING: 400_000,
       GRAFT_ACQUIRE_CONCURRENCY: 2,
@@ -975,6 +979,69 @@ describe("GRAFT_MIGRATE_ON_START", () => {
     expect(migrateOnStart.parse("false")).toBe(false);
     expect(migrateOnStart.parse("0")).toBe(false);
     expect(migrateOnStart.safeParse("later").success).toBe(false);
+  });
+});
+
+describe("the GRAFT_RATE_LIMIT_* group", () => {
+  const signIn = rateLimitWindow("GRAFT_RATE_LIMIT_SIGN_IN");
+
+  it("is absent by default, which is the decision: a self-host is unlimited unless it says otherwise", () => {
+    expect(signIn.parse(undefined)).toBeUndefined();
+    // And no production rule asks for one: every bucket is optional in every form.
+    expect(
+      serverEnvIssues({
+        ...SECRET,
+        ...MODEL,
+        NODE_ENV: "production",
+        GRAFT_BACKINGS: "open",
+      }),
+    ).toEqual([]);
+  });
+
+  it("reads <limit>/<windowSeconds>, spaces around the slash included", () => {
+    expect(signIn.parse("20/60")).toEqual({ limit: 20, windowSeconds: 60 });
+    expect(signIn.parse(" 5 / 1 ")).toEqual({ limit: 5, windowSeconds: 1 });
+  });
+
+  it("refuses a malformed value with one sentence naming the variable", () => {
+    for (const bad of ["20", "20/", "/60", "twenty/60", "20/60/1", "20.5/60", "-1/60"]) {
+      const parsed = signIn.safeParse(bad);
+      expect(parsed.success, bad).toBe(false);
+      expect(parsed.error?.issues[0]?.message).toContain("GRAFT_RATE_LIMIT_SIGN_IN");
+    }
+  });
+
+  it("refuses a zero on either side, which is a typo and not a door nailed shut", () => {
+    expect(signIn.safeParse("0/60").success).toBe(false);
+    expect(signIn.safeParse("20/0").success).toBe(false);
+    expect(signIn.safeParse("1/1").success).toBe(true);
+  });
+
+  it("names every bucket in the schema, so a door cannot be left unconfigurable", () => {
+    const buckets = Object.keys(serverSchema).filter((name) =>
+      name.startsWith("GRAFT_RATE_LIMIT_"),
+    );
+    expect(buckets.sort()).toEqual([
+      "GRAFT_RATE_LIMIT_API",
+      "GRAFT_RATE_LIMIT_MCP",
+      "GRAFT_RATE_LIMIT_OAUTH_REGISTER",
+      "GRAFT_RATE_LIMIT_OAUTH_TOKEN",
+      "GRAFT_RATE_LIMIT_PROXY",
+      "GRAFT_RATE_LIMIT_SIGN_IN",
+    ]);
+  });
+});
+
+describe("GRAFT_TRUSTED_PROXY_HOPS", () => {
+  it("is zero unless set, so X-Forwarded-For is never read on a caller's say-so", () => {
+    expect(trustedProxyHops.parse(undefined)).toBe(0);
+  });
+
+  it("takes a whole number of hops and refuses anything else", () => {
+    expect(trustedProxyHops.parse("2")).toBe(2);
+    expect(trustedProxyHops.safeParse("-1").success).toBe(false);
+    expect(trustedProxyHops.safeParse("1.5").success).toBe(false);
+    expect(trustedProxyHops.safeParse("one").success).toBe(false);
   });
 });
 

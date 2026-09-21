@@ -796,6 +796,32 @@ does there, and the MCP hook and the acquire runner for what happens over MCP (`
 `acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
 form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
 
+**Rate limiting is a seam, and the open form is unlimited by default** (GRA-149; ADR 0002 as
+amended 2026-09-19; ADR 0018's "a rate limit at the edge"; `@graft/ratelimit`). `RateLimiter` is
+one `check({ bucket, key, now })` answering allowed, or refused with the seconds to wait, over a
+fixed bucket per door: `sign_in` (Better Auth's writes under `/api/auth/*`), `oauth_register`
+(`POST /mcp/oauth/register`, the unauthenticated write ADR 0018 names), `oauth_token`, `mcp`,
+`proxy` and `api`. `UNLIMITED` is the no-op and **the default in both forms**, so a self-host
+refuses nobody until its operator says otherwise and the boot line reads `rate limit off`. The
+open backing is `createMemoryRateLimiter`, a token bucket per key held in this one process (two
+replicas hold two counts), switched on one bucket at a time by `GRAFT_RATE_LIMIT_<BUCKET>` of the
+shape `<limit>/<windowSeconds>`; set any and the boot line names them (`rate limit in-process
+sign_in 20/60`). `apps/server/src/rate-limit.ts` is the server's half: one Hono middleware
+`rateLimit(limiter, bucket, keyOf)` mounted above each door, which answers 429 with `Retry-After`
+in that door's own body shape (the API's `{ error, message }`, the proxy's and `/mcp`'s
+`{ error, reason, message }`, the OAuth endpoints' `{ error, error_description }`) and puts
+`rateLimited: { bucket, key }` on the wide event, the key a digest when it is an address. Keys are
+the person for `api` and the connection for `proxy`, where the request names one, and the client's
+address for every door that runs before anyone is authenticated, `mcp` included: the socket's peer
+unless `GRAFT_TRUSTED_PROXY_HOPS=<n>` says how many hops are in front, because anyone may send
+`X-Forwarded-For`. **Never a key taken from a bearer token**, which is why `mcp` is the address
+even when one is presented: an unknown `grft_` costs `requireAgent` a database read, which is the
+cost the door rations, and a caller inventing a bearer per request would otherwise buy a fresh
+allowance each time. A per-agent count would have to sit after `requireAgent`, where it no longer
+saves the read. A refusal happens before the handler, so it is never an approval, a tool call or
+a vendor call. `Backings.rateLimiter` is the seam beside `logs`, `analytics` and `model telemetry`;
+the hosted form's limits and any store behind them are graft-cloud's, in its private package.
+
 ```bash
 cat >> apps/server/.env <<'ENV'
 GRAFT_SANDBOX_BACKEND=fake

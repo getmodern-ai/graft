@@ -33,6 +33,7 @@
     "@graft/observability": "workspace:*",
     "@graft/proxy": "workspace:*",
     "@graft/publish": "workspace:*",
+    "@graft/ratelimit": "workspace:*",
     "@graft/sandbox": "workspace:*",
     "@graft/sandbox-docker": "workspace:*",
     "@graft/token": "workspace:*",

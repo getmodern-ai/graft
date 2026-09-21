@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { keyringProvider } from "@graft/core";
+import { UNLIMITED } from "@graft/ratelimit";
 import { LOCAL_KEYRING_ID } from "@graft/vault";
 import { describe, expect, it } from "vitest";
 
@@ -11,6 +12,7 @@ import {
   assertCloudBackings,
   type BackingsEnv,
   environmentProviders,
+  environmentRateLimiter,
   gatewayProviderFrom,
   selectBackings,
 } from "./backings";
@@ -120,6 +122,56 @@ describe("the mail relay from the environment (ADR 0021, GRA-92)", () => {
     expect((await selectBackings(cloud, { cloudModule: fixture("own-store") })).mail.name).toBe(
       "smtp",
     );
+  });
+});
+
+describe("the rate limiter from the environment (GRA-149)", () => {
+  it("is unlimited in the open form until a bucket is set, which is the decision", async () => {
+    const backings = await selectBackings(base);
+    expect(backings.rateLimiter).toBe(UNLIMITED);
+    expect(backings.rateLimiter.name).toBe("off");
+    expect(environmentRateLimiter(base)).toBeNull();
+  });
+
+  it("builds the in-process backing from the buckets that are set, and names them for the boot line", async () => {
+    const backings = await selectBackings({
+      ...base,
+      GRAFT_RATE_LIMIT_SIGN_IN: { limit: 20, windowSeconds: 60 },
+      GRAFT_RATE_LIMIT_OAUTH_REGISTER: { limit: 5, windowSeconds: 60 },
+    });
+    expect(backings.rateLimiter.name).toBe("in-process sign_in 20/60, oauth_register 5/60");
+    // The buckets nobody set stay unlimited, one variable at a time rather than as a group.
+    for (let i = 0; i < 50; i++) {
+      expect(
+        (await backings.rateLimiter.check({ bucket: "mcp", key: "a", now: new Date() })).allowed,
+      ).toBe(true);
+    }
+    const spend = async () =>
+      backings.rateLimiter.check({ bucket: "oauth_register", key: "a", now: new Date() });
+    for (let i = 0; i < 5; i++) expect((await spend()).allowed).toBe(true);
+    expect(await spend()).toEqual({ allowed: false, retryAfterSeconds: 12 });
+  });
+
+  it("yields to the hosted backing in the cloud form, and falls back to the environment and then to unlimited", async () => {
+    const cloud: BackingsEnv = {
+      ...base,
+      GRAFT_BACKINGS: "cloud",
+      GRAFT_KEYRING_SECRET: undefined,
+    };
+    expect((await selectBackings(cloud, { cloudModule: fixture("fake") })).rateLimiter.name).toBe(
+      "fake-limits",
+    );
+    expect((await selectBackings(cloud, { cloudModule: fixture("own-store") })).rateLimiter).toBe(
+      UNLIMITED,
+    );
+    expect(
+      (
+        await selectBackings(
+          { ...cloud, GRAFT_RATE_LIMIT_MCP: { limit: 600, windowSeconds: 60 } },
+          { cloudModule: fixture("own-store") },
+        )
+      ).rateLimiter.name,
+    ).toBe("in-process mcp 600/60");
   });
 });
 
