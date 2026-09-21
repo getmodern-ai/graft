@@ -623,6 +623,86 @@ describe("a job that passes first time", () => {
   }, 30_000);
 });
 
+describe("a proof-only answer (GRA-153)", () => {
+  /** The model proves the second path with the id the first read returned — a turn, not an attempt. */
+  it("runs the added reads against the same draft, shows every read so far, and publishes on proceed with one attempt", async () => {
+    const scripted = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      {
+        on: "proof",
+        answer: {
+          kind: "prove",
+          proofReads: ["/items?limit=2"],
+          note: "The list answered; one more page.",
+        },
+      },
+      { on: "proof", answer: { kind: "proceed", note: "Both reads answered as documented." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
+      const proofs = traces.filter((row) => row.kind === "proof").map((row) => row.text);
+      expect(proofs).toEqual([
+        "Proof read GET /items?limit=1: 200.",
+        "Proof read GET /items?limit=2: 200.",
+      ]);
+      // The second proof situation carries both reads, the draft's first.
+      const shown = scripted.conversations[0]?.situations.filter((s) => s.kind === "proof") ?? [];
+      expect(shown.map((s) => (s.kind === "proof" ? s.reads.map((r) => r.path) : []))).toEqual([
+        ["/items?limit=1"],
+        ["/items?limit=1", "/items?limit=2"],
+      ]);
+      expect(
+        traces.some(
+          (row) => row.kind === "model" && row.text.startsWith("Proving attempt 1 further:"),
+        ),
+      ).toBe(true);
+    } finally {
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  it("refuses a prove past the attempt's cap as a turn, naming the room left, and takes the proceed after", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({
+          proofReads: ["/items?limit=1", "/items?limit=2", "/items?limit=3", "/items?limit=4"],
+        }),
+        "Drafted list-items.",
+      ),
+      {
+        on: "proof",
+        answer: { kind: "prove", proofReads: ["/items/itm_1", "/items/itm_2"], note: "Two more." },
+      },
+      { on: "proof", answer: { kind: "proceed", note: "Enough was proven." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
+      expect(traces.filter((row) => row.kind === "proof")).toHaveLength(4);
+      const refused = scripted.conversations[0]?.situations.find(
+        (s) => s.kind === "proof" && s.refused !== null,
+      );
+      expect(refused && refused.kind === "proof" ? refused.refused : null).toContain(
+        "named 2 more read(s), and this attempt has 1 of 5 left",
+      );
+    } finally {
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+});
+
 describe("a job that fails and tries again", () => {
   /**
    * GRA-125: a chat model polled `acquire_status` seven times in twelve seconds, then ran its own

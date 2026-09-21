@@ -187,6 +187,8 @@ type OpenAttempt = {
   number: number;
   draft: ModuleDraft;
   usage: ModelUsage;
+  /** Every proof read run against this draft so far: the draft's own, then any a `prove` added (GRA-153). */
+  reads: ProofRead[];
   /** Whether a proof read failed — what an attempt the model then rewrote is closed as. */
   proofFailed: boolean;
   /** The failed reads in one line, once `proofFailed`: what a set-aside attempt's summary opens with. */
@@ -474,6 +476,48 @@ class AcquireLoop {
           situation = next.situation;
           continue;
         }
+        case "prove": {
+          // More reads against the draft as it stands (GRA-153): a turn, not an attempt — nothing is
+          // drafted, checked or published, and the model sees every read so far.
+          const attempt = this.open;
+          if (situation.kind !== "proof" || !attempt) {
+            throw this.end(
+              "model_failed",
+              `The model answered "prove" to ${situation.kind}, which only a proof result admits.`,
+              null,
+            );
+          }
+          const room = MAX_PROOF_READS - attempt.reads.length;
+          if (answer.proofReads.length > room) {
+            // Refused as a turn, with the count: the cap is per attempt, and the protocol says so.
+            await this.trace(
+              "model",
+              `Refused prove on attempt ${attempt.number}: ${answer.proofReads.length} more read(s) asked, ${room} of ${MAX_PROOF_READS} left.`,
+              { attempt: attempt.number, data: { paths: answer.proofReads } },
+            );
+            situation = {
+              kind: "proof",
+              attempt: attempt.number,
+              reads: [...attempt.reads],
+              refused: `Your \`prove\` named ${answer.proofReads.length} more read(s), and this attempt has ${room} of ${MAX_PROOF_READS} left. Answer \`proceed\`, ${room > 0 ? `\`prove\` with at most ${room}, ` : ""}\`write_module\` with the proof reads changed, \`read_docs\`, or \`give_up\`.`,
+            };
+            continue;
+          }
+          await this.trace("model", `Proving attempt ${attempt.number} further: ${answer.note}`, {
+            attempt: attempt.number,
+            data: { paths: answer.proofReads },
+          });
+          await this.progress(
+            `Attempt ${attempt.number}: ${answer.proofReads.length} more proof read(s) — ${answer.note}`,
+          );
+          situation = {
+            kind: "proof",
+            attempt: attempt.number,
+            reads: await this.prove(attempt, connection, answer.proofReads),
+            refused: null,
+          };
+          continue;
+        }
         case "write_module": {
           // The note is the new draft's, so it is not what closed the previous attempt (GRA-70):
           // that attempt ended because the model chose to draft again, after whatever it saw.
@@ -499,7 +543,7 @@ class AcquireLoop {
             situation = {
               kind: "proof",
               attempt: attempt.number,
-              reads: await this.prove(attempt, connection),
+              reads: await this.prove(attempt, connection, attempt.draft.proofReads),
               refused: null,
             };
             continue;
@@ -646,6 +690,7 @@ class AcquireLoop {
       number: row.attemptNumber,
       draft,
       usage: { inputTokens: 0, outputTokens: 0 },
+      reads: [],
       proofFailed: false,
       proofSummary: null,
       proceedRefused: false,
@@ -712,8 +757,17 @@ class AcquireLoop {
     };
   }
 
-  /** The proof reads, each through the execute path with the dry-run claim on. */
-  private async prove(attempt: OpenAttempt, connection: ProofConnection): Promise<ProofRead[]> {
+  /**
+   * The proof reads, each through the execute path with the dry-run claim on. `paths` are the
+   * draft's own on the first call and a `prove` answer's after (GRA-153); every read is appended to
+   * the attempt's, and the attempt's whole list is what the model is shown and what the summary
+   * counts.
+   */
+  private async prove(
+    attempt: OpenAttempt,
+    connection: ProofConnection,
+    paths: readonly string[],
+  ): Promise<ProofRead[]> {
     const connectionId = connection.id;
     const handle = await this.sandbox();
     if (!this.probeWritten) {
@@ -723,11 +777,13 @@ class AcquireLoop {
       );
       this.probeWritten = true;
     }
-    const reads: ProofRead[] = [];
+    const reads = attempt.reads;
     const mode = { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true };
-    const paths = attempt.draft.proofReads.slice(0, MAX_PROOF_READS);
-    for (const [index, path] of paths.entries()) {
-      await this.step(`proof read ${index + 1} of ${paths.length}: GET ${path}`);
+    const first = reads.length;
+    const runnable = paths.slice(0, Math.max(0, MAX_PROOF_READS - first));
+    const total = first + runnable.length;
+    for (const [index, path] of runnable.entries()) {
+      await this.step(`proof read ${first + index + 1} of ${total}: GET ${path}`);
       const outcome = await runWithCapability({
         deps: this.deps,
         scope: this.scope,
@@ -795,7 +851,9 @@ class AcquireLoop {
         ? `Attempt ${attempt.number}: ${failed.length} of ${reads.length} proof read(s) failed; asking the model what to change.`
         : `Attempt ${attempt.number}: ${reads.length} proof read(s) answered as the documentation said.`,
     );
-    return reads;
+    // A copy: the situation the model is shown is a record of that moment, and a later `prove`
+    // appends to the attempt's list, not to what an earlier situation said.
+    return [...reads];
   }
 
   /**
