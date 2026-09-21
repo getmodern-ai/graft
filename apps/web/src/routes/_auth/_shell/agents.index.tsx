@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { AgentsTable } from "@/components/agent/agents-table";
 import { CreateAgentDialog } from "@/components/agent/create-agent-dialog";
-import { AddIcon, SmartToyIcon } from "@/components/icons";
+import { AddIcon } from "@/components/icons";
 import { PageContainer } from "@/components/page/page-container";
 import {
   PageHeader,
@@ -15,13 +15,6 @@ import {
 } from "@/components/page/page-header";
 import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { agentsQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
 
@@ -49,14 +42,17 @@ function AgentsRoute() {
   const agents = useQuery(agentsQuery);
   const connections = useQuery(connectionsQuery);
   const [creating, setCreating] = useState(false);
-  const rows = agents.data?.agents ?? [];
+  const rows = (agents.data?.agents ?? []).map((agent) =>
+    // This local mock previews multiple harnesses and a populated working set (GRA-135).
+    import.meta.env.DEV && agent.id === "preview-agent-multiple"
+      ? { ...agent, harnessNames: ["Claude", "ChatGPT", "Hermes"], workingSetCount: 12 }
+      : agent,
+  );
 
   useScreenTitle("Agents");
 
   return (
-    // `large`: the table is the screen, and a table wants the column. `gap-4` between the header
-    // and a list, as Cando's connections screen passes; the detail screens keep `gap-6`.
-    <PageContainer size="large" className="gap-4">
+    <PageContainer size="full" className="gap-4">
       <PageHeader>
         <PageHeaderContent>
           <PageHeaderTitle>Agents</PageHeaderTitle>
@@ -66,40 +62,21 @@ function AgentsRoute() {
           </PageHeaderDescription>
         </PageHeaderContent>
         <PageHeaderActions>
-          <Button onClick={() => setCreating(true)}>
+          <Button id="new-agent" onClick={() => setCreating(true)}>
             <AddIcon />
             New agent
           </Button>
         </PageHeaderActions>
       </PageHeader>
 
-      {agents.isSuccess && rows.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <SmartToyIcon />
-            </EmptyMedia>
-            <EmptyTitle>No agents yet</EmptyTitle>
-            <EmptyDescription>
-              Create one to get a token and the block to paste into your harness's MCP configuration
-              — a name is all it takes.
-            </EmptyDescription>
-          </EmptyHeader>
-          <Button onClick={() => setCreating(true)}>
-            <AddIcon />
-            New agent
-          </Button>
-        </Empty>
-      ) : (
-        <AgentsTable
-          agents={rows}
-          isPending={agents.isPending}
-          isError={agents.isError}
-          error={agents.error}
-          retrying={agents.isFetching}
-          onRetry={() => void agents.refetch()}
-        />
-      )}
+      <AgentsTable
+        agents={rows}
+        isPending={agents.isPending}
+        isError={agents.isError}
+        error={agents.error}
+        retrying={agents.isFetching}
+        onRetry={() => void agents.refetch()}
+      />
 
       <CreateAgentDialog
         open={creating}

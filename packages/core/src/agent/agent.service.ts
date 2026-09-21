@@ -56,6 +56,8 @@ export type AgentOutput = {
   updatedAt: Date;
 };
 
+export type AgentListOutput = AgentOutput & { workingSetCount: number };
+
 export function toAgentOutput(row: AgentRow): AgentOutput {
   return {
     id: row.id,
@@ -304,9 +306,9 @@ export async function listAgents(
   ctx: ServiceContext,
   principal: Principal,
   deps: AgentDeps,
-): Promise<AgentOutput[]> {
+): Promise<AgentListOutput[]> {
   const rows = await deps.listAgents(ctx.db, principal.personId);
-  return rows.map(toAgentOutput);
+  return rows.map((row) => ({ ...toAgentOutput(row), workingSetCount: row.workingSetCount }));
 }
 
 export async function getAgent(

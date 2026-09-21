@@ -1,7 +1,7 @@
+import { HarnessSetup } from "@/components/agent/harness-setup";
 import { CodeBlock } from "@/components/code-block";
 import { KeyIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { exportTokenLine, mcpServersSnippet, TOKEN_ENV_VAR } from "@/lib/mcp-snippet";
 
 /**
  * The one view of an agent's token (ADR 0007: the row stores a hash and a prefix, so this is the
@@ -10,10 +10,6 @@ import { exportTokenLine, mcpServersSnippet, TOKEN_ENV_VAR } from "@/lib/mcp-sni
  * carries no secret (`mcp-snippet.ts`).
  */
 export function TokenOnce({ token }: { token: string }) {
-  const origin = window.location.origin;
-  const exportLine = exportTokenLine(token);
-  const snippet = mcpServersSnippet(origin);
-
   return (
     // `min-w-0`: this is a grid item of `DialogContent`, and a grid track's `auto` minimum takes the
     // widest unbreakable line inside it — the `export` line below is longer than the dialog — so
@@ -24,23 +20,12 @@ export function TokenOnce({ token }: { token: string }) {
         <KeyIcon />
         <AlertTitle>This token is shown once</AlertTitle>
         <AlertDescription>
-          Graft keeps only its hash. Copy it now; if it is lost, revoke this agent and create
-          another.
+          Copy and save it now. If you lose it, revoke this token and create a new agent.
         </AlertDescription>
       </Alert>
 
-      <CodeBlock
-        label="The agent's token"
-        code={token}
-        copyLabel="Copy token"
-        hint={`Put it in the harness's environment as ${TOKEN_ENV_VAR}:`}
-      />
-      <CodeBlock label="In the shell that starts your harness" code={exportLine} />
-      <CodeBlock
-        label="In your harness's MCP configuration"
-        code={snippet}
-        hint={`The harness expands \${${TOKEN_ENV_VAR}} from its environment, so this block holds no secret and can live in a config file you commit. Harness-specific variants are on the roadmap (GRA-27).`}
-      />
+      <CodeBlock label="The agent's token" code={token} copyLabel="Copy token" />
+      <HarnessSetup token={token} />
     </div>
   );
 }

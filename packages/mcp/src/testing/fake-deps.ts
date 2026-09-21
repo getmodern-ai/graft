@@ -357,7 +357,14 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return updated;
     },
     listAgents: async (_db, personId) =>
-      [...store.agents.values()].filter((row) => row.personId === personId),
+      [...store.agents.values()]
+        .filter((row) => row.personId === personId)
+        .map((row) => ({
+          ...row,
+          workingSetCount: [...store.workingSet.values()].filter(
+            (entry) => entry.agentId === row.id,
+          ).length,
+        })),
     updateAgent: async (_db, personId, agentId, patch) => {
       const row = store.agents.get(agentId);
       if (!row || row.personId !== personId) return null;

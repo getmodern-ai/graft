@@ -79,8 +79,7 @@ export function EditAgentDialog({
           <DialogHeader>
             <DialogTitle>Edit agent</DialogTitle>
             <DialogDescription>
-              Change the name and how the working set contracts. Saved limits take effect at the
-              next sweep.
+              Update this agent's name and tool limits. New limits apply at the next sweep.
             </DialogDescription>
           </DialogHeader>
           <FieldGroup>
@@ -88,6 +87,7 @@ export function EditAgentDialog({
               <FieldLabel htmlFor="edit-agent-name">Name</FieldLabel>
               <Input
                 id="edit-agent-name"
+                placeholder="Enter agent name"
                 autoFocus
                 required
                 maxLength={AGENT_NAME_MAX_LENGTH}
@@ -95,13 +95,15 @@ export function EditAgentDialog({
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
+              <FieldDescription>For example, Hermes on your laptop.</FieldDescription>
             </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field>
-                <FieldLabel htmlFor="edit-agent-cap">Working-set cap</FieldLabel>
+                <FieldLabel htmlFor="edit-agent-cap">Working set cap</FieldLabel>
                 <Input
                   id="edit-agent-cap"
                   type="number"
+                  placeholder="20"
                   {...WORKING_SET_CAP_RANGE}
                   step={1}
                   required
@@ -109,13 +111,14 @@ export function EditAgentDialog({
                   value={cap}
                   onChange={(event) => setCap(event.target.value)}
                 />
-                <FieldDescription>How many tools may be promoted at once.</FieldDescription>
+                <FieldDescription>Target number of tools in the working set.</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="edit-agent-idle">Idle window (days)</FieldLabel>
                 <Input
                   id="edit-agent-idle"
                   type="number"
+                  placeholder="21"
                   {...IDLE_WINDOW_DAYS_RANGE}
                   step={1}
                   required
@@ -123,7 +126,9 @@ export function EditAgentDialog({
                   value={idleDays}
                   onChange={(event) => setIdleDays(event.target.value)}
                 />
-                <FieldDescription>Unused this long, a tool is demoted.</FieldDescription>
+                <FieldDescription>
+                  Days without use before a tool leaves the working set.
+                </FieldDescription>
               </Field>
             </div>
           </FieldGroup>

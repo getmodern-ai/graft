@@ -20,14 +20,14 @@ import type { Connection } from "@/lib/connection-queries";
 
 /**
  * Create an agent: a name, the cap and the idle window (ADR 0009's two per-agent knobs), and the
- * scope — `All connections` by default, or `Limit to these` with the picker (ADR 0007 as amended
+ * scope — `All connections` by default, or `Selected connections` with the picker (ADR 0007 as amended
  * 2026-09-19; `scope-mode-field.tsx`). The answer carries the token, and this dialog is where it is
- * shown — once. Closing the dialog is the end of it; the agent's page shows the prefix and the
- * snippet, never the token.
+ * shown — once. Closing the dialog is the end of it; `AgentConnectionDialog` reopens the
+ * instructions with a placeholder, never the token (ADR 0007).
  *
  * The connections arrive from a read the agents route starts without awaiting (`agents.index.tsx`),
  * so the dialog can open before they have: `connections` is `undefined` until then and, under
- * `Limit to these`, the scope draws skeleton rows in the picker's place and Create waits — a scope
+ * `Selected connections`, the scope draws skeleton rows in the picker's place and Create waits — a scope
  * chosen from a list that has not arrived would be an empty one nobody chose (raised by Greptile on
  * #30). A read that failed shows the same Retry a table body does, and Create still waits. Under
  * `All connections` nothing is chosen from the list, so Create does not wait for it.
@@ -108,7 +108,7 @@ export function CreateAgentDialog({
             <DialogHeader>
               <DialogTitle>New agent</DialogTitle>
               <DialogDescription>
-                One harness connection to Graft — a token, a scope and a working set of its own.
+                Give this agent a name, then choose its tool limits and connections.
               </DialogDescription>
             </DialogHeader>
             <FieldGroup>
@@ -118,36 +118,42 @@ export function CreateAgentDialog({
                   id="agent-name"
                   required
                   autoFocus
-                  placeholder="laptop Hermes"
+                  placeholder="Enter agent name"
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                 />
-                <FieldDescription>Where the harness runs, and which one it is.</FieldDescription>
+                <FieldDescription>For example, Hermes on your laptop.</FieldDescription>
               </Field>
               <div className="grid grid-cols-2 gap-4">
                 <Field>
-                  <FieldLabel htmlFor="agent-cap">Working-set cap</FieldLabel>
+                  <FieldLabel htmlFor="agent-cap">Working set cap</FieldLabel>
                   <Input
                     id="agent-cap"
                     type="number"
+                    placeholder="20"
                     min={1}
                     step={1}
                     required
                     value={cap}
                     onChange={(event) => setCap(event.target.value)}
                   />
+                  <FieldDescription>Target number of tools in the working set.</FieldDescription>
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="agent-idle">Idle window (days)</FieldLabel>
                   <Input
                     id="agent-idle"
                     type="number"
+                    placeholder="21"
                     min={1}
                     step={1}
                     required
                     value={idleDays}
                     onChange={(event) => setIdleDays(event.target.value)}
                   />
+                  <FieldDescription>
+                    Days without use before a tool leaves the working set.
+                  </FieldDescription>
                 </Field>
               </div>
               <ScopeModeField

@@ -114,8 +114,7 @@ export function ApprovalsCard({ agent }: { agent: Agent }) {
               </TableBodyNote>
             ) : rows.length === 0 ? (
               <TableBodyNote colSpan={COLUMNS}>
-                Nothing answered yet — the first tool this agent runs that is not read-only will
-                ask.
+                Nothing answered yet. The first tool this agent runs that is not read-only will ask.
               </TableBodyNote>
             ) : (
               rows.map((approval) => {
