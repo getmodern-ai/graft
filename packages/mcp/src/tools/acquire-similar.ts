@@ -152,10 +152,7 @@ const LEADING_WRITE_VERBS = new Set([
   "star",
   "flag",
   "assign",
-  "close",
-  "open",
   "schedule",
-  "book",
 ]);
 
 /**

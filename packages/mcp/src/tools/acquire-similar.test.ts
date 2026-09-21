@@ -115,6 +115,9 @@ describe("similarTools", () => {
     expect(goalWrites("Add a label to the newest message")).toBe(true);
     expect(goalWrites("Reply to the latest email in the thread")).toBe(true);
     expect(goalWrites(GOALS.unreplied)).toBe(false);
+    // Words that are nouns as often as verbs when they lead — open, book, close — are not writes.
+    expect(goalWrites("Open invoices for the current month")).toBe(false);
+    expect(goalWrites("Book details for this order")).toBe(false);
     // With no annotation the words alone decide.
     expect(
       similarTools(
