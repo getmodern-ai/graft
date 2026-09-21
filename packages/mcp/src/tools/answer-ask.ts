@@ -346,9 +346,13 @@ async function answerConnectionAsk(
   );
   const result: AnswerAskResult = {
     answered: true,
-    sentence: `Connected. ${what} is in ${agentName}'s scope${
-      confirmed.buildApproval ? ", and it may build tools against it" : ""
-    }; nothing was entered, since the vendor takes no credential.`,
+    sentence: payload.widens
+      ? `Confirmed. ${what} now also reaches ${payload.widens.addedHosts.join(", ")}${
+          confirmed.buildApproval ? `, and ${agentName} may build tools against it` : ""
+        }; nothing was entered and no new connection was made.`
+      : `Connected. ${what} is in ${agentName}'s scope${
+          confirmed.buildApproval ? ", and it may build tools against it" : ""
+        }; nothing was entered, since the vendor takes no credential.`,
   };
   return toolResult(result);
 }

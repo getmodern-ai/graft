@@ -354,6 +354,36 @@ describe("a connection confirmation for a scheme that takes no credential", () =
   });
 });
 
+describe("a widening: a keyless connection the person holds, asked to reach another host (GRA-167)", () => {
+  const WIDEN: AskCard = {
+    ...KEYLESS,
+    pendingActionId: "pa_w",
+    hosts: ["api.open-meteo.com", "customer-api.open-meteo.com"],
+    widens: { connectionId: "conn_om", addedHosts: ["customer-api.open-meteo.com"] },
+  };
+
+  it("asks to also reach the added host, says no new connection is made, lists what is added, and offers the checked build choice", () => {
+    const root = renderAsk(WIDEN, handlers(), document);
+    expect(root.dataset).toMatchObject({ kind: "connection", answerable: "true" });
+    expect(root.querySelector("h1")?.textContent).toBe(
+      "Also reach customer-api.open-meteo.com with Open-Meteo (open-meteo)?",
+    );
+    expect(root.querySelector(".ask-description")?.textContent).toContain(
+      "no new connection is made",
+    );
+    const facts = [...root.querySelectorAll(".ask-facts dt")].map((node) => node.textContent);
+    expect(facts).toContain("Adds");
+    expect(root.textContent).toContain("customer-api.open-meteo.com");
+    expect(root.querySelector<HTMLInputElement>("input[type=checkbox]")?.checked).toBe(true);
+  });
+
+  it("reads off the wire with the widening, and drops one of the wrong shape", () => {
+    expect(readAskCard({ card: WIDEN })).toEqual(WIDEN);
+    const { widens: _dropped, ...bare } = WIDEN;
+    expect(readAskCard({ card: { ...WIDEN, widens: { connectionId: 1 } } })).toEqual(bare);
+  });
+});
+
 describe("a scope ask: a connection the person holds that this agent was not given", () => {
   it("asks to let the agent use the connection, names the provider and hosts, says nothing is entered, and offers a checked build choice with Decline and Allow", () => {
     const root = renderAsk(SCOPE, handlers(), document);

@@ -415,6 +415,48 @@ export async function widenProviderConnectionHosts(
 }
 
 /**
+ * Widen a keyring row's host set to what the person confirmed on a widening ask (GRA-167; ADR 0006
+ * as amended 2026-09-22). The keyring's host set is the person's — `widenProviderConnectionHosts`
+ * above refuses it for that reason — and this is the person changing it: the ask named the added
+ * hosts and they confirmed. Only a row on a scheme with no credential (`none`): a keyed row's
+ * widening would send its secret to a host it never went to, and no ask offers that yet. A
+ * revoked row is refused — its way back is Reconnect, not a wider set — and a union already
+ * declared is answered as it is. The write is `addConnectionHosts`'s one appending statement.
+ */
+export async function widenKeylessConnectionHosts(
+  ctx: ServiceContext,
+  principal: Principal,
+  connectionId: string,
+  hosts: readonly string[],
+  deps: ConnectionDeps,
+): Promise<ConnectionOutput> {
+  const row = orNotFound(
+    await deps.findConnection(ctx.db, principal.personId, connectionId),
+    "Connection not found",
+  );
+  if (row.provider !== KEYRING_PROVIDER || row.scheme !== "none") {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `${row.displayName}'s host set is widened only for a keyring connection that takes no credential`,
+    );
+  }
+  if (row.revokedAt !== null) {
+    throw new ServiceError(
+      "BAD_REQUEST",
+      `${row.displayName} is revoked; reconnect it in the console before widening it`,
+    );
+  }
+  const union = validateHostSet(row.primaryHost, [...row.hosts, ...hosts]);
+  if (!union.ok) refuseHostSet(union);
+  if (union.hosts.every((host) => row.hosts.includes(host))) return toConnectionOutput(row);
+  const updated = orNotFound(
+    await deps.addConnectionHosts(ctx.db, principal.personId, row.id, union.hosts),
+    "Connection not found",
+  );
+  return toConnectionOutput(updated);
+}
+
+/**
  * Reconnect a revoked connection that has no credential to re-enter — one a provider made with no
  * person step (ADR 0019, GRA-58), or a keyring row on a scheme that takes no credential (`none`,
  * GRA-66). The keyring's way back is otherwise a credential re-entered (`setConnectionCredential`

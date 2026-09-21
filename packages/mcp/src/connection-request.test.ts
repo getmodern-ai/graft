@@ -25,7 +25,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { recordApprovalAnswer } from "./ask-answer";
+import { confirmConnectionAsk, recordApprovalAnswer } from "./ask-answer";
 import { notifyAgentsReachingConnection } from "./connected";
 import {
   BUILD_APPROVAL_ON_THE_PAGE,
@@ -1842,6 +1842,180 @@ describe("request_connection finds the connection the person already has (GRA-76
  * answers `connected` with the execute tool named. A decline is `scope_declined` and the next call
  * asks afresh; one open ask per agent and connection; the other agent's scope never moves.
  */
+describe("a keyless proposal for a vendor the person already holds widens that row rather than making a second (GRA-167)", () => {
+  const made: string[] = [];
+  const FRANK = {
+    vendor: "frank",
+    displayName: "Frank rates",
+    primaryHost: "https://api.frank-sibling.example",
+    hosts: [],
+    scheme: "none",
+    schemeConfig: {},
+    docsUrl: "https://frank.example/docs",
+  };
+
+  function frankRow(id: string, changes: Partial<ConnectionRow> = {}): ConnectionRow {
+    const base = store.addConnection({
+      id,
+      personId: PERSON,
+      vendor: "frank",
+      displayName: "Frankfurter",
+      scheme: "none",
+      schemeConfig: {},
+      primaryHost: "https://api.frank.example",
+      hosts: ["api.frank.example"],
+    });
+    const row = { ...base, ...changes };
+    store.connections.set(id, row);
+    made.push(id);
+    return row;
+  }
+
+  const frankRows = () => [...store.connections.values()].filter((row) => row.vendor === "frank");
+  const asksFor = () =>
+    [...store.pendingActions.values()].filter(
+      (row) => row.kind === CONNECTION_ASK_KIND && row.payload.vendor === "frank",
+    );
+
+  afterEach(() => {
+    for (const id of made) {
+      store.connections.delete(id);
+      for (const scope of store.agentConnections.values()) scope.delete(id);
+    }
+    made.length = 0;
+    for (const [id, pending] of store.pendingActions) {
+      if (pending.kind === CONNECTION_ASK_KIND && pending.payload.vendor === "frank") {
+        store.pendingActions.delete(id);
+      }
+    }
+  });
+
+  it("asks to widen the row — the row's primary host and name, the hosts grown, the row stamped — re-uses the ask, and the confirmation grows the row and answers connected", async () => {
+    const row = frankRow("conn_frank");
+    store.agentConnections.get(AGENT_A)?.add(row.id);
+    const a = await connect(TOKEN_A);
+    try {
+      const first = await a.call("request_connection", FRANK);
+      const { answer, action } = awaiting(first, "awaiting_connection");
+      expect(action.connectionId).toBe(row.id);
+      expect(action.payload).toMatchObject({
+        provider: "keyring",
+        providerConnect: "form",
+        vendor: "frank",
+        displayName: "Frankfurter",
+        primaryHost: "https://api.frank.example",
+        hosts: ["api.frank.example", "api.frank-sibling.example"],
+        scheme: "none",
+        docsUrl: "https://frank.example/docs",
+        widens: { connectionId: row.id, addedHosts: ["api.frank-sibling.example"] },
+      });
+      expect(answer.connectionId).toBe(row.id);
+      expect(answer.message).toContain("already has a connection");
+      expect(answer.message).toContain("does not reach api.frank-sibling.example");
+      expect(answer.message).toContain("no new connection is made");
+      expect(answer.message).not.toContain("secret");
+      expect(answer.message).not.toContain("credential for");
+      // The card is the keyless confirmation, answerable in place, with the widening on it.
+      expect(first.structuredContent).toMatchObject({
+        card: {
+          kind: "connection",
+          answerable: true,
+          widens: { connectionId: row.id, addedHosts: ["api.frank-sibling.example"] },
+        },
+      });
+
+      // The same proposal, and a narrower one, re-use the open widening; a further host is another.
+      const again = awaiting(await a.call("request_connection", FRANK), "awaiting_connection");
+      expect(again.action.id).toBe(action.id);
+      expect(asksFor()).toHaveLength(1);
+
+      // The person's yes: the console's submit and the card's confirm share this function.
+      const confirmed = await confirmConnectionAsk(
+        ctx(),
+        principal,
+        action.id,
+        {
+          vendor: "frank",
+          displayName: "Frankfurter",
+          scheme: "none",
+          schemeConfig: {},
+          primaryHost: "https://api.frank.example",
+          hosts: ["api.frank.example", "api.frank-sibling.example"],
+          credential: {},
+          approveBuild: true,
+        },
+        {
+          connection: deps.connection,
+          agent: deps.agent,
+          approval: deps.approval,
+          pendingAction: deps.pendingAction,
+        },
+      );
+      expect(confirmed.connection.id).toBe(row.id);
+      expect(confirmed.buildApproval).toBeDefined();
+      expect(store.connections.get(row.id)?.hosts).toEqual([
+        "api.frank.example",
+        "api.frank-sibling.example",
+      ]);
+      expect(frankRows()).toHaveLength(1);
+
+      const done = await a.call("request_connection", FRANK);
+      expect(done.isError).toBeFalsy();
+      expect(body(done)).toMatchObject({
+        status: "connected",
+        connectionId: row.id,
+        message: expect.stringContaining("Confirmed"),
+      });
+      expect(String(body(done).message)).toContain("api.frank-sibling.example");
+      // And now the wider proposal is simply covered.
+      expect(body(await a.call("request_connection", FRANK))).toMatchObject({
+        status: "connected",
+        connectionId: row.id,
+        message: expect.stringContaining("already connected"),
+      });
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("does not widen a keyed row, a revoked row, or a row this agent was not given — those keep GRA-76's and GRA-104's answers", async () => {
+    // A keyed row of the vendor: the keyless proposal at another host is a new ask, as before.
+    const keyed = frankRow("conn_frank_keyed", {
+      scheme: "api_key_header",
+      schemeConfig: { headerName: "x-key" },
+      credentialCiphertext: Buffer.from("enc"),
+      credentialSetAt: new Date(),
+    });
+    store.agentConnections.get(AGENT_A)?.add(keyed.id);
+    const a = await connect(TOKEN_A);
+    try {
+      const { action } = awaiting(await a.call("request_connection", FRANK), "awaiting_connection");
+      expect(action.payload.widens).toBeUndefined();
+      expect(action.connectionId).toBeNull();
+      store.pendingActions.delete(action.id);
+    } finally {
+      await a.close();
+    }
+    store.connections.delete(keyed.id);
+
+    // A revoked keyless row: GRA-76's refusal names Reconnect.
+    const revoked = frankRow("conn_frank_revoked", { revokedAt: new Date() });
+    const b = await connect(TOKEN_A);
+    try {
+      const said = await b.call("request_connection", {
+        ...FRANK,
+        primaryHost: "https://api.frank.example",
+      });
+      expect(body(said)).toMatchObject({ reason: CONNECTION_EXISTS, connectionId: revoked.id });
+      // At a host the revoked row does not reach, nothing is widened either: a new ask.
+      const { action } = awaiting(await b.call("request_connection", FRANK), "awaiting_connection");
+      expect(action.payload.widens).toBeUndefined();
+    } finally {
+      await b.close();
+    }
+  });
+});
+
 describe("request_connection asks to use a connection the person holds but this agent was not given (GRA-104)", () => {
   const DELTA = {
     vendor: "delta",
