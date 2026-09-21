@@ -9,8 +9,10 @@ import type { AnalyticsEvent } from "@graft/observability";
  * event says something happened. Cando's `analytics-events.ts` is the shape (ADR 0011), with the
  * route standing where its `mutationKey` stood.
  *
- * Absent on purpose: the reads, sign-in and sign-out (Better Auth's routes), and the *content* of
- * any answer — `approval_answered` carries no `allow`, because whether a person trusts a tool is
+ * Absent on purpose: the reads, sign-in and sign-out (Better Auth's routes) — the sign-up is counted
+ * too, but from Better Auth's own hooks rather than its route, since the route answers the same
+ * for a taken address and a squatted one (`@graft/auth`'s `onPersonSignedUp`, GRA-157) — and the
+ * *content* of any answer — `approval_answered` carries no `allow`, because whether a person trusts a tool is
  * theirs. The MCP side's events (`tool_called`, the acquire job's end) come from the MCP hook and
  * the runner, not from here.
  */
