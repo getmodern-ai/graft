@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Agent } from "@/lib/agent-queries";
+import { hermesConfigSnippet } from "@/lib/mcp-snippet";
 import { AgentActions } from "./agent-actions";
 import { AgentsTable } from "./agents-table";
 
@@ -144,16 +145,10 @@ describe("agent actions", () => {
     expect(dialog?.textContent).not.toContain("—");
     await click("Copy URL");
     expect(copy).toHaveBeenLastCalledWith(`${window.location.origin}/mcp`);
+    // Hermes is the default harness (GRA-152), so the configuration copied is its YAML entry.
     await click("Copy configuration");
-    expect(JSON.parse(copy.mock.calls.at(-1)?.[0] ?? "{}")).toEqual({
-      mcpServers: {
-        graft: {
-          type: "http",
-          url: `${window.location.origin}/mcp`,
-          headers: { Authorization: expect.stringMatching(/^Bearer \$\{GRAFT_TOKEN\}$/) },
-        },
-      },
-    });
+    expect(copy.mock.calls.at(-1)?.[0]).toBe(hermesConfigSnippet(window.location.origin));
+    expect(copy.mock.calls.at(-1)?.[0]).toContain(`url: "${window.location.origin}/mcp"`);
     expect(fetch).not.toHaveBeenCalled();
     await click("Done");
     await waitFor(() => expect(document.querySelector("[role=dialog]")).toBeNull());
@@ -172,7 +167,9 @@ describe("agent actions", () => {
       trigger.click();
     });
     expect(document.querySelectorAll("[role=dialog]")).toHaveLength(1);
-    expect(document.querySelector("[role=dialog]")?.textContent).toContain("MCP configuration");
+    expect(document.querySelector("[role=dialog]")?.textContent).toContain(
+      "Add to ~/.hermes/config.yaml",
+    );
     await click("Done");
     await waitFor(() => expect(document.querySelector("[role=dialog]")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));
