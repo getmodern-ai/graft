@@ -220,6 +220,13 @@ export type ToolCallEvent = {
   /** The refusal's `reason` — `connection_not_in_scope`, `approval_declined`, … — when `outcome` is `refused`. */
   reason?: string;
   latencyMs: number;
+  /**
+   * Whether the session's client declared the MCP Apps extension in `initialize` (GRA-150). An
+   * observation and nothing else: the card gate reads the client's registered callback host and
+   * never this (ADR 0006 as amended 2026-09-21), and it is here so an operator can see which
+   * clients declare it against which the gate admits.
+   */
+  uiExtensionDeclared: boolean;
 };
 
 export type CreateMcpDepsInput = Pick<

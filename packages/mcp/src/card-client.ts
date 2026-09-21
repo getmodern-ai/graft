@@ -9,11 +9,16 @@ import { isAwaitingAnswer, toolAwaiting, toolAwaitingOrError, withCard } from ".
 /**
  * Whether the session's client renders the ask card and hides its app-only tools — the card gate's
  * client half (`tools/card-gate.ts`, GRA-84; ADR 0006 as amended 2026-09-18), factored out so the
- * awaiting results can read the same verdict (GRA-120). The two signals are the gate's: the agent
- * is one a chat product holds over OAuth (`connected_via_client_id`, ADR 0018) **and** either the
- * session's client declared the MCP Apps extension in `initialize` or every redirect URI the
- * client registered is on a card host (`GRAFT_CARD_HOSTS`). A static-token agent's harness renders
- * no card; an OAuth client nothing vouches for is not assumed to.
+ * awaiting results can read the same verdict (GRA-120). One signal, and it is the registration's:
+ * the agent is one a chat product holds over OAuth (`connected_via_client_id`, ADR 0018) **and**
+ * every redirect URI its client registered is on a card host (`GRAFT_CARD_HOSTS`). A static-token
+ * agent's harness renders no card; an OAuth client nothing vouches for is not assumed to.
+ *
+ * The client's own `initialize` is not the second signal it was until 2026-09-21: a client writes
+ * that handshake itself and nothing lets a server check it, so it admitted exactly the clients
+ * nobody vouched for (ADR 0006 as amended 2026-09-21, GRA-150).
+ * `SessionContext.uiExtensionDeclared` is still read, as an observation on the call's wide event,
+ * and decides nothing.
  *
  * **Memoised per session.** The agent's client and the session's capabilities do not change while
  * the session lives, and an awaiting result is built on every waiting call, so the agent row and
@@ -35,7 +40,6 @@ async function judgeClient(session: SessionContext): Promise<boolean> {
   const { ctx, principal, scope, deps } = session;
   const agent = await getAgent(ctx, principal, scope.agentId, deps.agent);
   if (!agent?.connectedVia) return false;
-  if (session.uiExtensionDeclared()) return true;
   const client = await deps.findMcpClient(ctx.db, agent.connectedVia.clientId);
   return (
     client !== null &&

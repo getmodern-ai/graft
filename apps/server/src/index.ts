@@ -366,6 +366,9 @@ const mcpOAuth = {
   agent: defaultAgentDeps,
   authUrl: env.GRAFT_AUTH_URL,
   consoleUrl: env.GRAFT_CONSOLE_URL,
+  // The same parsed list the MCP endpoint gates the ask card on (GRA-150), so the consent page's
+  // sentence about this client and the gate it will meet come from one value.
+  cardHosts: env.GRAFT_CARD_HOSTS,
 };
 
 const app = createServer({

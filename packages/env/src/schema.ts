@@ -536,13 +536,16 @@ export const pendingActionTtlHours = z.coerce
 
 /**
  * The hosts whose MCP clients are known to render the ask card and hide its app-only tool from
- * the model (GRA-84; ADR 0006 as amended 2026-09-18): a comma-separated list of hostnames, each
+ * the model (GRA-84; ADR 0006 as amended 2026-09-21): a comma-separated list of hostnames, each
  * matched against an OAuth client's registered redirect URIs — equal, or a subdomain. Claude's
  * callback is on `claude.ai`, ChatGPT's on `chatgpt.com`, and those two are the default; a
- * self-hoster whose chat product answers on another host adds it here. A hostname and nothing
- * more: a scheme or a path would never match a URI's hostname and would admit nobody silently.
- * The consumer is `@graft/mcp`'s `answer_ask` (`tools/answer-ask.ts`), whose `DEFAULT_CARD_HOSTS`
- * repeats this default for a deployment built without the environment.
+ * self-hoster whose chat product answers on another host adds it here. **This is the whole rule**
+ * since GRA-150: a client not on the list is sent to the console, whatever it declares about
+ * itself in `initialize`, which it writes. A hostname and nothing more: a scheme or a path would
+ * never match a URI's hostname and would admit nobody silently.
+ * The consumers are `@graft/mcp`'s card gate (`card-client.ts`), whose `DEFAULT_CARD_HOSTS`
+ * repeats this default for a deployment built without the environment, and the console's consent
+ * page, which says which way a client will go before the person connects.
  */
 export const cardHosts = z
   .string()

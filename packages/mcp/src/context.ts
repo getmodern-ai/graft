@@ -21,10 +21,11 @@ export type SessionContext = {
   channel: AskChannel;
   /**
    * Whether the session's client declared the MCP Apps extension in `initialize` — a client that
-   * has, hides `app`-only tools from its model by specification, which is one of the two signals
-   * the card gate admits a call on and an awaiting answer takes its card form on
-   * (`card-client.ts`, GRA-84, GRA-120). A thunk for the reason `channel` is one: the
-   * capabilities arrive after the session is built.
+   * has says it hides `app`-only tools from its model. **Observed, never trusted** (ADR 0006 as
+   * amended 2026-09-21, GRA-150): it goes onto every tool call's wide event
+   * (`ToolCallEvent.uiExtensionDeclared`) and the card gate reads the registration instead
+   * (`card-client.ts`), because a client writes its own handshake. A thunk for the reason
+   * `channel` is one: the capabilities arrive after the session is built.
    */
   uiExtensionDeclared: () => boolean;
 };
