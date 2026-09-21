@@ -15,6 +15,7 @@ import {
   createFakeMetadataSource,
   createPublishDeps,
   DEFAULT_PACKAGE_POLICY,
+  type PublishOutcome,
   publishToolVersion,
 } from "@graft/publish";
 import { loadSkills, runnerFiles } from "@graft/runner";
@@ -426,6 +427,15 @@ describe("the door", () => {
 
       const bad = await a.call("acquire", { connectionId: CONN_DEMO, goal: "" });
       expect(body(bad)).toMatchObject({ error: "refused", reason: "input_invalid" });
+      expect(String(body(bad).message)).toContain("goal is required");
+
+      // A wrong field name is named back with the accepted set, not silently dropped (GRA-130).
+      const wrongField = await a.call("acquire", { connectionId: CONN_DEMO, task: "Ping" });
+      expect(body(wrongField)).toMatchObject({ error: "refused", reason: "input_invalid" });
+      expect(String(body(wrongField).message)).toContain("goal is required");
+      expect(String(body(wrongField).message)).toContain(
+        "task is not an acquire argument; it takes connectionId, goal, hints",
+      );
 
       const unknown = await a.call("acquire_status", { jobId: "job_nobody" });
       expect(body(unknown)).toMatchObject({ error: "refused", reason: "job_not_found" });
@@ -621,34 +631,51 @@ describe("a job that fails and tries again", () => {
    * `acquire_status` holds its call until there is news. The suite's wait is 0 elsewhere, so every
    * other test sees the old shape; here the wait is long enough for the scripted job.
    */
-  /** GRA-123: a `draft-missing` refusal is the store's miss, and the job asks once more before the model sees it. */
-  it("asks the toolbox store a second time when the publish finds nothing at a draft the check read, and publishes on that answer", async () => {
+  /** A publish that refuses `draft-missing` — the store's miss, not the module's (GRA-123). */
+  const storeMiss = (draftPath: string): PublishOutcome =>
+    ({
+      ok: false,
+      refusals: [
+        {
+          rule: "draft-missing",
+          file: "index.ts",
+          line: 1,
+          column: 1,
+          text: "",
+          message: `Nothing is at ${draftPath} in the toolbox`,
+          hint: "Write the draft first.",
+        },
+      ],
+      advice: [],
+      annotations: { readOnly: false, destructive: true },
+    }) as never;
+
+  /**
+   * GRA-123, then GRA-141: a `draft-missing` refusal is the store's miss. The job holds the draft,
+   * so it writes it through the store — the side the publish reads — and publishes again, and the
+   * model never sees the miss.
+   */
+  it("writes the draft through the toolbox store when the publish finds nothing at it, and publishes on that", async () => {
     deps.model = createScriptedModel([
       write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     const publishBefore = deps.publishTool;
+    const toolboxBefore = deps.toolbox;
+    if (!toolboxBefore) throw new Error("no toolbox store in this suite");
+    const written: { path: string; files: string[] }[] = [];
+    deps.toolbox = {
+      readTree: (...a) => toolboxBefore.readTree(...a),
+      writeTree: async (toolboxId, path, files) => {
+        written.push({ path, files: files.map((f) => f.path) });
+        await toolboxBefore.writeTree(toolboxId, path, files);
+      },
+    };
     let calls = 0;
     deps.publishTool = async (args) => {
       calls += 1;
-      if (calls === 1) {
-        return {
-          ok: false,
-          refusals: [
-            {
-              rule: "draft-missing",
-              file: "index.ts",
-              line: 1,
-              column: 1,
-              text: "",
-              message: `Nothing is at ${args.draftPath} in the toolbox`,
-              hint: "Write the draft first.",
-            },
-          ],
-          advice: [],
-          annotations: { readOnly: false, destructive: true },
-        } as never;
-      }
+      // The store misses until the job has written the draft through it.
+      if (written.length === 0) return storeMiss(args.draftPath);
       if (!publishBefore) throw new Error("no publish in this suite");
       return publishBefore(args);
     };
@@ -659,17 +686,143 @@ describe("a job that fails and tries again", () => {
       expect((status.result as AcquireSuccess).tool).toBe(LIST_ITEMS);
       expect(calls).toBe(2);
       const { attempts, traces } = rowsOf(jobId);
+      expect(written).toEqual([{ path: attempts[0]?.draftPath, files: ["index.ts"] }]);
       // One attempt, passed: the miss cost the model nothing and was never shown to it.
       expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
       expect(
         traces.some(
-          (row) => row.kind === "publish" && row.text.includes("asking the store again once"),
+          (row) =>
+            row.kind === "publish" && row.text.includes("writing the draft through the store"),
         ),
       ).toBe(true);
       const model = deps.model as ReturnType<typeof createScriptedModel>;
       expect(model.conversations[0]?.situations.map((situation) => situation.kind)).not.toContain(
         "publish_refused",
       );
+    } finally {
+      deps.publishTool = publishBefore;
+      deps.toolbox = toolboxBefore;
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  /** GRA-141: a store that still misses after the write is waited for, once per configured delay, before the model hears of it. */
+  it("waits and asks the store again while it misses, and publishes when it answers", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000, storeMissRetryDelaysMs: [5, 5, 5] };
+    const publishBefore = deps.publishTool;
+    let calls = 0;
+    deps.publishTool = async (args) => {
+      calls += 1;
+      // The first ask, the one after the store write, and the first wait all miss.
+      if (calls <= 3) return storeMiss(args.draftPath);
+      if (!publishBefore) throw new Error("no publish in this suite");
+      return publishBefore(args);
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+      expect(calls).toBe(4);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
+      expect(
+        traces.filter((row) => row.kind === "publish" && row.text.includes("waiting 5 ms")).length,
+      ).toBe(2);
+      const model = deps.model as ReturnType<typeof createScriptedModel>;
+      expect(model.conversations[0]?.situations.map((situation) => situation.kind)).not.toContain(
+        "publish_refused",
+      );
+    } finally {
+      deps.publishTool = publishBefore;
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  /** Greptile on #114: a store write that fails is traced and the waits still run; the job does not end on it. */
+  it("goes on to the waits when writing the draft through the store fails", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000, storeMissRetryDelaysMs: [5, 5] };
+    const publishBefore = deps.publishTool;
+    const toolboxBefore = deps.toolbox;
+    if (!toolboxBefore) throw new Error("no toolbox store in this suite");
+    deps.toolbox = {
+      readTree: (...a) => toolboxBefore.readTree(...a),
+      writeTree: async () => {
+        throw new Error("the drive is read-only from here");
+      },
+    };
+    let calls = 0;
+    deps.publishTool = async (args) => {
+      calls += 1;
+      if (calls === 1) return storeMiss(args.draftPath);
+      if (!publishBefore) throw new Error("no publish in this suite");
+      return publishBefore(args);
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("succeeded");
+      // The miss, then the first wait's ask — the failed write asked nothing.
+      expect(calls).toBe(2);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([[1, "passed"]]);
+      expect(
+        traces.some(
+          (row) =>
+            row.kind === "publish" &&
+            row.text.includes("Writing the draft through the store failed (the drive is read-only"),
+        ),
+      ).toBe(true);
+    } finally {
+      deps.publishTool = publishBefore;
+      deps.toolbox = toolboxBefore;
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  /** GRA-141: the floor. A store that never answers reaches the model as `publish_refused`, as before. */
+  it("shows the model the draft-missing refusal only once the store write and every wait have missed", async () => {
+    deps.model = createScriptedModel([
+      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+      {
+        on: "publish_refused",
+        answer: { kind: "give_up", reason: "The toolbox lost the draft." },
+      },
+    ]);
+    deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000, storeMissRetryDelaysMs: [5, 5] };
+    const publishBefore = deps.publishTool;
+    let calls = 0;
+    deps.publishTool = async (args) => {
+      calls += 1;
+      return storeMiss(args.draftPath);
+    };
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a);
+      expect(status.status).toBe("failed");
+      // One ask, one after the store write, one per wait.
+      expect(calls).toBe(4);
+      const { attempts } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.outcome])).toEqual([
+        [1, "publish_refused"],
+      ]);
+      const model = deps.model as ReturnType<typeof createScriptedModel>;
+      const refused = model.conversations[0]?.situations.find((s) => s.kind === "publish_refused");
+      expect(refused).toMatchObject({
+        kind: "publish_refused",
+        refusals: [{ rule: "draft-missing" }],
+      });
     } finally {
       deps.publishTool = publishBefore;
       await a.close();

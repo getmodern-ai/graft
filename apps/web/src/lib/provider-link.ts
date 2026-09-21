@@ -29,11 +29,16 @@ import { api } from "./api";
  * body is the card's one choice — whether the asking agent may build against the connection the
  * return will make (GRA-75) — which the server signs into the link's state.
  */
+/** The button's answer: the provider's link, or the provider stepped aside and the ask is the form now (GRA-147). */
+export type LinkStartResult =
+  | { url: string; expiresAt: string; provider: string }
+  | { fallback: "form"; provider: string; message: string };
+
 export function startProviderLink(actionId: string, input: LinkStartBody) {
-  return api<{ url: string; expiresAt: string; provider: string }>(
-    `/pending-actions/${encodeURIComponent(actionId)}/link`,
-    { method: "POST", body: input },
-  );
+  return api<LinkStartResult>(`/pending-actions/${encodeURIComponent(actionId)}/link`, {
+    method: "POST",
+    body: input,
+  });
 }
 
 /** How the wait ended: the return route's word, the person stopped it, or the link's lifetime passed. */
