@@ -3,6 +3,7 @@ import { answerPendingAction, keyringProvider } from "@graft/core";
 import {
   createFakeLinkProvider,
   type FakeLinkProvider,
+  FakeLinkProviderError,
 } from "@graft/core/connection/testing/fake-link-provider";
 import { createScriptedModel } from "@graft/model";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -984,6 +985,36 @@ describe("start_link and ask_status", () => {
     expect(text(await claude.call("request_connection", GMAIL))).toMatchObject({
       reason: "connection_declined",
     });
+  });
+
+  /** GRA-147: a provider whose `start` fails steps aside; the card's console button lands on the form. */
+  it("start_link on a provider that cannot start answers card_not_available pointing at Graft's own page, and the ask is the keyring's form from then on", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const card = cardOf(await claude.call("request_connection", GMAIL));
+    broker.failNext(new FakeLinkProviderError("the broker refused to mint (fake)"));
+    const result = await claude.call(START_LINK, { pendingActionId: card.pendingActionId });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toMatchObject({
+      reason: "card_not_available",
+      message: expect.stringContaining("broker could not start its sign-in"),
+    });
+    expect(String(text(result).message)).toContain("Graft's own page");
+    const row = store.pendingActions.get(card.pendingActionId);
+    expect(row?.answeredAt).toBeNull();
+    expect(row?.payload).toMatchObject({
+      provider: "keyring",
+      providerConnect: "form",
+      providerFallback: { from: "broker" },
+    });
+    // The repeated call is the form's: the card is answerable-by-console, no provider named.
+    const again = await claude.call("request_connection", GMAIL);
+    expect(text(again)).toMatchObject({
+      reason: "awaiting_connection",
+      pendingActionId: card.pendingActionId,
+    });
+    expect(text(again).provider).toBeUndefined();
+    expect(cardOf(again)).toMatchObject({ provider: "keyring", providerConnect: "form" });
+    expect(String(text(again).message)).not.toContain("broker");
   });
 
   it("refuses start_link under the card gate and for an ask no link serves", async () => {

@@ -153,10 +153,14 @@ export {
 } from "./notifier";
 export { promotePublished } from "./promote";
 export {
+  isProviderLinkFallback,
   mintProviderLink,
   type ProviderLinkChoices,
+  type ProviderLinkFallback,
   type ProviderLinkMintDeps,
+  type ProviderLinkStartResult,
   proposalOfLinkAsk,
+  providerFallbackNote,
   type StartedProviderLink,
 } from "./provider-link";
 export { type Refusal, refusal, withCard } from "./result";

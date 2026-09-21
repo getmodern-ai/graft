@@ -226,3 +226,21 @@ private knowledge:
   which the gateway provider already did, so the proxy names no upstream but the open form's own.
   The wide event's `relay` still says which upstream carried the call: that is the plugin's name,
   not the row's scheme.
+
+- **A link provider that cannot start steps aside for the keyring** (2026-09-21; GRA-146, GRA-147).
+  Live, a proposal the Pipedream catalogue claimed — `chucknorris`, a no-auth app with the proxy on
+  — drew a Connect popup that could never finish, and the person's only exit was Decline, which
+  records nothing, so asking again reached the same dead end. Two rules follow. The catalogue's
+  coverage now also requires an auth Connect holds an account for (`oauth`, `keys`), so a no-auth
+  public API is the keyring's from the start (graft-cloud, GRA-146). And when a link provider's
+  `start` fails at mint time — its API refused, or is down — `mintProviderLink` rewrites the open
+  ask onto the keyring in place: same row, same handoff URL, same agent; `providerConnect: form`,
+  a note saying which provider stepped aside, and `providerFallback` recording why. The console's
+  card re-reads as the form, the chat card's console button lands on the form, and the agent's
+  repeated `request_connection` is worded for the ask as it now stands rather than as the call
+  would route it. The two link routes count `provider_link_started`, `provider_link_fell_back`
+  and `provider_link_returned` (with the outcome) so a provider that keeps failing is seen. Not
+  built, on purpose: a second button on every link card — for the OAuth vendors Pipedream exists
+  for, "another way" is registering an OAuth client and the seven-day Testing-mode expiry, a worse
+  path than the popup, and a visible choice on a one-click card is friction every person pays for.
+

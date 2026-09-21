@@ -353,6 +353,17 @@ export function readScopeAnswer(answer: Record<string, unknown> | null | undefin
  * (vendor, hosts, scheme parameters) are `normaliseProposal`'s, so an agent reads one sentence
  * about the first thing to fix.
  */
+/** The arguments request_connection reads — its inputSchema's properties (`tools/meta.ts`); an argument outside this set is named back to the caller (GRA-130). */
+const PROPOSAL_ARGS = new Set([
+  "vendor",
+  "displayName",
+  "primaryHost",
+  "hosts",
+  "scheme",
+  "schemeConfig",
+  "docsUrl",
+]);
+
 export function readConnectionProposal(
   args: Record<string, unknown>,
 ): ConnectionProposalInput | { error: string } {
@@ -391,7 +402,29 @@ export function readConnectionProposal(
       schemeConfig = args.schemeConfig;
     }
   }
+  // An argument the tool does not read is named back, so a model that spelled a field wrong is
+  // told which (GRA-130: a call carrying an unknown key gets no silent drop). The accepted set is
+  // request_connection's inputSchema; the answer lists it so the retry is right the first time.
+  const unrecognised = Object.keys(args).filter((key) => !PROPOSAL_ARGS.has(key));
+  if (unrecognised.length > 0) {
+    problems.push(
+      `${unrecognised.join(", ")} ${unrecognised.length === 1 ? "is" : "are"} not a request_connection argument (it takes ${[...PROPOSAL_ARGS].join(", ")})`,
+    );
+  }
+  // Only the required fields actually absent, so a model that supplied `vendor` is not told vendor
+  // is missing (GRA-130). The proposal is read from the vendor's own documentation, which the
+  // message says, so the next call carries the base URL and the auth scheme.
+  const missing: string[] = [];
+  if (!vendor) missing.push("vendor");
+  if (!primaryHost) missing.push("primaryHost");
+  if (!scheme) missing.push("scheme");
+  if (missing.length > 0) {
+    problems.push(
+      `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} required and ${missing.length === 1 ? "was" : "were"} not supplied — read the vendor's documentation for its base URL (primaryHost) and auth scheme, then call again`,
+    );
+  }
   if (problems.length > 0) return { error: problems.join("; ") };
+  // The missing branch above returned when any of the three was absent; this narrows their types.
   if (!vendor || !primaryHost || !scheme) {
     return { error: "vendor, primaryHost and scheme are required" };
   }
@@ -783,14 +816,24 @@ async function routeProposal(
       deps.pendingAction,
     ));
 
+  // The ask as it stands, not as this call would route it: an open ask a provider stepped aside
+  // from is the keyring's form now (GRA-147, `provider-link.ts`), and the answer, the card and the
+  // wording follow the row so the agent is not told to expect a provider's button the page no
+  // longer has.
+  const asked = (
+    open ? (open.payload as ConnectionProposalPayload) : payload
+  ) satisfies ConnectionProposalPayload;
+  const askedLink = asked.providerConnect === "link";
+  const askedProvider = asked.provider;
+
   // A link provider's ask is one click; the OAuth guidance is the keyring's form's alone (ADR 0005).
-  const oauth = !link && isOAuthAuthorizationCode(payload.scheme);
+  const oauth = !askedLink && isOAuthAuthorizationCode(asked.scheme);
   const redirectUri = oauth ? deps.oauthRedirectUri : undefined;
-  const what = `${payload.displayName} (${payload.vendor})`;
+  const what = `${asked.displayName} (${asked.vendor})`;
   return waitForAnswer(ctx, scope, action, deps, {
     awaiting: "awaiting_connection",
     what,
-    card: (url, agentName) => connectionAskCard({ action, agentName, payload, url }),
+    card: (url, agentName) => connectionAskCard({ action, agentName, payload: asked, url }),
     settle: (taken) =>
       settleByConnectionId(ctx, scope, taken, deps, {
         what,
@@ -803,16 +846,16 @@ async function routeProposal(
         onConnected: (connection) => connected(connection, "new"),
       }),
     ...(redirectUri ? { awaitingExtra: { redirectUri } } : {}),
-    ...(link ? { awaitingExtra: { provider: provider.name } } : {}),
+    ...(askedLink ? { awaitingExtra: { provider: askedProvider } } : {}),
     awaitingMessage: (url, expiresAt, form) =>
-      link
-        ? `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) through ${provider.name} — one click: they sign in at the vendor on ${provider.name}'s page, and the vendor's token stays there; nothing passes through you, and nothing is typed in the console. ` +
+      askedLink
+        ? `Graft needs the person to connect ${asked.displayName} (${asked.vendor}) through ${askedProvider} — one click: they sign in at the vendor on ${askedProvider}'s page, and the vendor's token stays there; nothing passes through you, and nothing is typed in the console. ` +
           `${handoffSentence(form, "Relay this link so they can press Connect", url, expiresAt)} ` +
           `${BUILD_APPROVAL_ON_THE_PAGE} ` +
           "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
         : oauth
           ? // The agent is the guide (ADR 0005): which console, what to name the client, which URI.
-            `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) with an OAuth client they register at the vendor — the client secret and the tokens never pass through you. ` +
+            `Graft needs the person to connect ${asked.displayName} (${asked.vendor}) with an OAuth client they register at the vendor — the client secret and the tokens never pass through you. ` +
             "Guide them in three sentences: open the vendor's developer console and create an OAuth client of the web-application kind; name it after Graft so they recognise it later; " +
             (redirectUri
               ? `and paste exactly this redirect URI into it: ${redirectUri} `
@@ -826,8 +869,8 @@ async function routeProposal(
             `${BUILD_APPROVAL_ON_THE_PAGE} ` +
             "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected. " +
             "A Google Cloud project in Testing mode expires refresh tokens after seven days, so a Google connection reconnects weekly until the app is published."
-          : takesCredential(payload.scheme)
-            ? `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
+          : takesCredential(asked.scheme)
+            ? `Graft needs the person to enter the credential for ${asked.displayName} (${asked.vendor}) in the console — the secret never passes through you. ` +
               `${handoffSentence(form, "Relay this link so they can check the hosts and enter it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
@@ -835,7 +878,7 @@ async function routeProposal(
               // hosts, and the message names no credential and no secret (GRA-91). Under a card
               // the confirmation is the card's own button (GRA-84), so the card form names no
               // console in its lead (Greptile on #96).
-              `Graft needs the person to confirm the connection to ${payload.displayName} (${payload.vendor})${form === "card" ? "" : " in the console"} — the scheme takes no credential, so nothing is entered. ` +
+              `Graft needs the person to confirm the connection to ${asked.displayName} (${asked.vendor})${form === "card" ? "" : " in the console"} — the scheme takes no credential, so nothing is entered. ` +
               `${handoffSentence(form, "Relay this link so they can check the hosts and confirm it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",

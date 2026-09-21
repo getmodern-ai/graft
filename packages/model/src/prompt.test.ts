@@ -100,4 +100,17 @@ describe("systemPrompt", () => {
       "Every request reaches the vendor from Graft's proxy, never from the person's machine, so whatever the vendor infers from the connection — the source address, its geolocation, a rate limit keyed on it, a \"your IP\" or \"your location\" answer — is the proxy's and not the person's, and the tool's description and its output names say so or leave it out.",
     );
   });
+
+  /**
+   * GRA-140: on 2026-09-20 every module that listed and then fetched each item named one proof read,
+   * the list, and the path whose fields it parsed was never proven before the publish.
+   */
+  it("asks for a proof read of every distinct path the module reads, not the first alone", () => {
+    const prose = systemPrompt(context).replace(/\s+/g, " ");
+    expect(prose).toContain(
+      "`proofReads` the GET paths that prove the credential and the shape: one for every distinct path the module reads, not the first alone",
+    );
+    expect(prose).toContain("not the first alone, up to 5 —");
+    expect(prose).toContain("a path built from another's answer (a record's id from a list)");
+  });
 });
