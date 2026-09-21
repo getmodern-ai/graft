@@ -58,7 +58,7 @@ export function HarnessSetup({ token }: { token?: string }) {
           {harness === "hermes"
             ? "Hermes reads its configuration from ~/.hermes/config.yaml and its secrets from ~/.hermes/.env."
             : harness === "openclaw"
-              ? "OpenClaw takes a JSON mcpServers block and reads the token from its environment."
+              ? "OpenClaw reads its own mcp.servers block in ~/.openclaw/openclaw.json and the token from ~/.openclaw/.env on the Gateway host."
               : "Any client that speaks MCP over HTTP with a bearer header: Claude Code, Cursor, a script."}
         </FieldDescription>
       </Field>

@@ -8,6 +8,7 @@ import {
   hermesEnvLine,
   mcpEndpointUrl,
   mcpServersSnippet,
+  openclawConfigSnippet,
   readHarness,
 } from "./mcp-snippet";
 
@@ -63,11 +64,30 @@ describe("the harness's own shape", () => {
     expect(hermes.config.code).toBe(hermesConfigSnippet("http://localhost:3001"));
     expect(hermes.token.hint).not.toContain("Replace");
 
+    // OpenClaw's own schema (GRA-161): mcp.servers with the transport said outright, the token in
+    // the Gateway host's .env — the docs site's OpenClaw page, byte for byte.
     const openclaw = harnessSetup("openclaw", "http://localhost:3001");
-    expect(openclaw.token.code).toBe("export GRAFT_TOKEN='YOUR_AGENT_TOKEN'");
+    expect(openclaw.token.label).toBe("Add your token to ~/.openclaw/.env");
+    expect(openclaw.token.code).toBe("GRAFT_TOKEN=YOUR_AGENT_TOKEN");
     expect(openclaw.token.hint).toContain("Replace YOUR_AGENT_TOKEN");
-    expect(openclaw.config.code).toBe(mcpServersSnippet("http://localhost:3001"));
-    expect(openclaw.config.hint).toContain("OpenClaw");
+    expect(openclaw.config.label).toBe("Add to ~/.openclaw/openclaw.json");
+    expect(JSON.parse(openclaw.config.code)).toEqual({
+      mcp: {
+        servers: {
+          graft: {
+            url: "http://localhost:3001/mcp",
+            transport: "streamable-http",
+            // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal placeholder is what OpenClaw expands
+            headers: { Authorization: "Bearer ${GRAFT_TOKEN}" },
+          },
+        },
+      },
+    });
+    expect(openclaw.config.code).not.toContain("mcpServers");
+    expect(openclaw.config.hint).toContain("mcp.servers");
+    expect(openclawConfigSnippet("https://app.getgraft.ai/")).toContain(
+      '"transport": "streamable-http"',
+    );
 
     const generic = harnessSetup("generic", "http://localhost:3001", "grft_x");
     expect(generic.config.code).toBe(mcpServersSnippet("http://localhost:3001"));
