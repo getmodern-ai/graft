@@ -14,7 +14,11 @@ import {
 import type { Agent } from "@/lib/agent-queries";
 import { mcpEndpointUrl } from "@/lib/mcp-snippet";
 
-/** Reopens setup without retrieving or minting a token (ADR 0007, ADR 0018). */
+/**
+ * Reopens setup without retrieving or minting a token (ADR 0007, ADR 0018). Named for what the
+ * person does, "Connect a harness", never "connection": that word is a vendor account
+ * (CONTEXT.md) and the screen beside this one (GRA-168).
+ */
 export function AgentConnectionDialog({
   agent,
   onClose,
@@ -36,9 +40,9 @@ export function AgentConnectionDialog({
     >
       <DialogContent className="sm:max-w-lg" finalFocus={returnFocus}>
         <DialogHeader>
-          <DialogTitle>Connection details</DialogTitle>
+          <DialogTitle>Connect a harness</DialogTitle>
           <DialogDescription>
-            Connect a harness to {agent.name} using the settings below.
+            Point the harness that will run as {agent.name} at Graft with the settings below.
           </DialogDescription>
         </DialogHeader>
         <div className="flex min-w-0 flex-col gap-4">

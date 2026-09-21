@@ -610,18 +610,21 @@ table keeps its headers and a centered, muted full-width sentence, following Can
 table. Archiving is excluded from this branch; the detail page retains standalone revocation
 (ADR 0007, ADR 0018).
 
-**Agent harnesses** (GRA-135): the Harnesses column names `connectedVia.clientName`, recorded at
-OAuth consent (ADR 0018). Without a recorded harness it says "Not connected"; for an active agent
-that opens Connection details, also available in its actions menu. This label is a setup prompt,
-not a live connectivity check: static tokens carry no harness identity. The dialog shares creation's
-MCP instructions but cannot retrieve the token; the shell command uses a saved-token placeholder
-(ADR 0007). OAuth agents get the URL and consent instructions. Agent names are blue links to the
-standalone `/agents/:agentId` page. Every row's menu also has View agent, including revoked rows;
-the detail drawer is deferred. That page keeps scope and limit editors, the working set,
-approvals, history and standalone revocation reachable; revoked records are read-only.
-`GET /api/agents` includes `workingSetCount`, counted against each person-scoped agent in the same
-statement; the table shows count/cap with Cando's status dot. The dev-only `preview-agent-multiple`
-row previews three harness badges and a populated count; the API still records one OAuth origin.
+**Agent harnesses** (GRA-135, GRA-168): the Harnesses column names `connectedVia.clientName`,
+recorded at OAuth consent (ADR 0018). A static-token agent records no harness, so its cell is the
+prompt **Set up harness** while it is active and *Not recorded* once revoked — a prompt, never a
+claim about whether the harness is connected, since a Hermes that is running tools looks the same
+as one never configured. The prompt, the row's actions menu and the agent page's header button all
+open **Connect a harness** (`agent-connection-dialog.tsx`), named for what the person does: the
+word *connection* is a vendor account (CONTEXT.md) and the screen beside this one, and the dialog
+never says it. The dialog shares creation's setup (`harness-setup.tsx`: the URL, a harness
+picker, the token's place and the configuration in that harness's shape — GRA-152) but cannot
+retrieve the token; the token line carries a saved-token placeholder (ADR 0007). OAuth agents get
+the URL and consent instructions. Agent names are links to the standalone `/agents/:agentId` page,
+and every row's menu has View agent, revoked rows included; the detail drawer is deferred. That
+page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
+revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
+person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
@@ -644,7 +647,9 @@ carrying the key's behaviour as rows. A failed **query** toasts once with a work
 stacks, dismissed on the next success) beside the mutation toast; a read that fails before a screen
 draws toasts *and* shows the route boundary, as Cando's does. A screen-level empty is the `Empty`
 primitive without a frame of its own, with a sentence-case title without a full stop and short,
-concrete supporting copy; an in-card empty is one muted sentence. **Console copy has no em dashes.**
+concrete supporting copy — except where the screen *is* a table: there the empty is one muted
+full-width sentence inside the body, as Cando's connections table and the agents table (GRA-135)
+do, and the headers stay. An in-card empty is one muted sentence. **Console copy has no em dashes.**
 Text-input placeholders use sentence case and a clear prompt; examples belong in helper text.
 `PageContainer` gaps: `gap-4` under the header of a list screen, `gap-6` on a detail or settings screen
 with several regions, as Cando's connections and settings screens pass them.

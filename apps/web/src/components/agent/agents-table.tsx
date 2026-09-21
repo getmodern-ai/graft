@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 
 const COLUMNS = 8;
 
-export type AgentTableRow = AgentListItem & { harnessNames?: readonly string[] };
+export type AgentTableRow = AgentListItem;
 
 /**
  * The recorded OAuth client names the harness (ADR 0018); static tokens record no client.
@@ -160,19 +160,21 @@ function AgentHarnesses({ agent }: { agent: AgentTableRow }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [connecting, setConnecting] = useState(false);
   const active = !agent.revokedAt;
-  const names = agent.harnessNames ?? (agent.connectedVia ? [agent.connectedVia.clientName] : []);
+  // The recorded OAuth client (ADR 0018); a static-token agent records no harness, so its cell is
+  // a prompt to set one up and never a claim about whether it is connected (GRA-168).
+  const names = agent.connectedVia ? [agent.connectedVia.clientName] : [];
   if (names.length === 0) {
-    if (!active) return <span className="text-muted-foreground">Not connected</span>;
+    if (!active) return <span className="text-muted-foreground">Not recorded</span>;
     return (
       <>
         <Button
           ref={trigger}
           variant="link"
           className="h-auto p-0 text-info"
-          aria-label={`Not connected: connection details for ${agent.name}`}
+          aria-label={`Set up harness for ${agent.name}`}
           onClick={() => setConnecting(true)}
         >
-          Not connected
+          Set up harness
         </Button>
         {connecting ? (
           <AgentConnectionDialog
