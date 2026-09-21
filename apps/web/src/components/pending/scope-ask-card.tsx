@@ -22,9 +22,9 @@ import {
  * An agent's ask to use a connection the person already holds (GRA-104; ADR 0006, ADR 0007). The
  * agent proposed a vendor and hosts a connection of the person's already reaches, made for another
  * of their agents; nothing here is the agent's to edit and nothing is entered, so the card is the
- * connection's facts, GRA-75's build choice, Allow and Decline. Allow is the scope change the
- * agent page's picker makes — this agent gains the connection, no other does — and, with the
- * choice left on, the build approval for it, in one transaction on the generic answer route
+ * connection's facts, GRA-75's build choice, Allow and Decline. Allow adds the connection to the asking
+ * agent's scope (ADR 0007) and, with the choice left on, records its build approval in the same
+ * transaction on the generic answer route
  * (`POST /pending-actions/:id/answer` with `{ allow: true, approveBuild }`); the agent's waiting
  * `request_connection` then answers connected with the execute tool named. Decline is
  * `{ allow: false }`, which the agent reads as a decline.
@@ -83,12 +83,8 @@ export function ScopeAskCard({
             Allowed. The connection is in the agent's scope
             {recorded.approveBuild === true ? ", and it may build tools against it" : ""}; its
             waiting call answers connected.{" "}
-            <Link
-              to="/agents/$agentId"
-              params={{ agentId: action.agentId }}
-              className="underline underline-offset-4"
-            >
-              See the agent
+            <Link to="/agents" className="underline underline-offset-4">
+              See agents
             </Link>
             .
           </>

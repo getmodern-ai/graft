@@ -173,7 +173,7 @@ function agentDeps(): AgentDeps {
     findAgentForUpdate: vi.fn(async () => agentRow),
     findAgentByTokenHash: vi.fn(async () => agentRow),
     findAgentByMcpAccessTokenHash: vi.fn(async () => null),
-    listAgents: vi.fn(async () => [agentRow]),
+    listAgents: vi.fn(async () => [{ ...agentRow, workingSetCount: 0 }]),
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...agentRow, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
@@ -559,6 +559,20 @@ describe("the session door", () => {
 });
 
 describe("agents", () => {
+  it("lists active and revoked agents with their working-set counts under the person", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.agent.listAgents).mockResolvedValue([
+      { ...agentRow, workingSetCount: 3 },
+      { ...agentRow, id: "revoked", revokedAt: NOW, workingSetCount: 1 },
+    ]);
+    const normal = (await (await app.request("/api/agents")).json()) as {
+      agents: { id: string; workingSetCount: number }[];
+    };
+    expect(normal.agents.map((agent) => agent.id)).toEqual([agentRow.id, "revoked"]);
+    expect(normal.agents.map((agent) => agent.workingSetCount)).toEqual([3, 1]);
+    expect(deps.agent.listAgents).toHaveBeenCalledWith(fakeDb, "person_1");
+  });
+
   it("creates an agent, answering the token once, and never shows it again", async () => {
     const { app } = harness({ user: { id: "person_1" } });
     const created = await app.request(

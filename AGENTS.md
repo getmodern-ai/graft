@@ -442,9 +442,9 @@ no-op for an agent on `all`, which is what makes every grant-on-connect path rig
 the mode, and `listAgentIdsForConnection` — the agents a revoke announces to — takes every agent on
 `all`. An agent on `all` never reaches the `scope` ask above: `existingConnectionFor` finds every
 usable row in scope and answers `connected`. The console draws the mode as a `Select` — `All
-connections` first, `Limit to these` revealing the picker — through `components/agent/scope-mode-field.tsx`
-in the create dialog and the consent card, and in the agent page's Scope section
-(`scope-editor.tsx`); the labels and the write's body are `src/lib/scope-mode.ts`, tested.
+connections` first, `Selected connections` revealing the picker — through `components/agent/scope-mode-field.tsx`
+in the create dialog and the consent card; the labels and the write's body are
+`src/lib/scope-mode.ts`, tested.
 
 **A tool follows its vendor's reconnected connection** (GRA-122; ADR 0007 as amended 2026-09-20).
 `authored_tool.default_connection_id` is the row the tool was authored against, and a run resolves
@@ -582,6 +582,25 @@ re-consent`), `outline` for waiting on something (a credential, a consent, a rec
 `secondary` for the neutral rest; `ToolAnnotations` reads its three from the same file. Labels are
 sentence case, like every label in the console, and its colocated test pins both.
 
+**Agent actions** (GRA-132, GRA-135): the agents table's dropdown opens the name/cap/idle-window
+edit dialog. The table groups Active and Revoked rows, omitting empty sections. An empty agents
+table keeps its headers and a centered, muted full-width sentence, following Cando's connections
+table. Archiving is excluded from this branch; the detail page retains standalone revocation
+(ADR 0007, ADR 0018).
+
+**Agent harnesses** (GRA-135): the Harnesses column names `connectedVia.clientName`, recorded at
+OAuth consent (ADR 0018). Without a recorded harness it says "Not connected"; for an active agent
+that opens Connection details, also available in its actions menu. This label is a setup prompt,
+not a live connectivity check: static tokens carry no harness identity. The dialog shares creation's
+MCP instructions but cannot retrieve the token; the shell command uses a saved-token placeholder
+(ADR 0007). OAuth agents get the URL and consent instructions. Agent names are blue links to the
+standalone `/agents/:agentId` page. Every row's menu also has View agent, including revoked rows;
+the detail drawer is deferred. That page keeps scope and limit editors, the working set,
+approvals, history and standalone revocation reachable; revoked records are read-only.
+`GET /api/agents` includes `workingSetCount`, counted against each person-scoped agent in the same
+statement; the table shows count/cap with Cando's status dot. The dev-only `preview-agent-multiple`
+row previews three harness badges and a populated count; the API still records one OAuth origin.
+
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
 auto — and `DataTableRow` for the 40px rhythm; a column the row cannot afford at 390px steps out
@@ -590,8 +609,8 @@ text instead. Loading, empty and failed are rows *inside* the body, never a spin
 beside the table: `components/table-body-states.tsx` holds `TableLoadingRows` (one full-span
 skeleton per row) and `TableBodyNote` (one full-span sentence), and the failed note carries
 `components/retry-notice.tsx`, Cando's inline Retry. A table owns its read (`useQuery`, not the
-suspense form) so those states are reachable; the agent page's loader awaits the agent and only
-*starts* the table reads, so the page paints once with skeleton rows. Connections stay cards —
+suspense form) so those states are reachable. The agents table starts its reads without awaiting
+and paints its own pending rows. Connections stay cards —
 each carries a status, hosts, tools, two actions and a table — with Cando's card anatomy, and the
 recent calls are a disclosure in the body, not the banded `CardFooter`. A notice inside a form is
 an `Alert`; a labelled control with a sentence beside it is an `Item` (`components/ui/item.tsx`,
@@ -602,10 +621,11 @@ carrying the key's behaviour as rows. A failed **query** toasts once with a work
 (`lib/query-error-retry.ts`, keyed to the query hash so a second failure replaces rather than
 stacks, dismissed on the next success) beside the mutation toast; a read that fails before a screen
 draws toasts *and* shows the route boundary, as Cando's does. A screen-level empty is the `Empty`
-primitive without a frame of its own, in Cando's voice — sentence-case title without a full stop,
-one sentence whose clause after the dash is reassurance — and an in-card empty is one muted
-sentence. `PageContainer` gaps: `gap-4` under the header of a list screen, `gap-6` on a detail or
-settings screen with several regions, as Cando's connections and settings screens pass them.
+primitive without a frame of its own, with a sentence-case title without a full stop and short,
+concrete supporting copy; an in-card empty is one muted sentence. **Console copy has no em dashes.**
+Text-input placeholders use sentence case and a clear prompt; examples belong in helper text.
+`PageContainer` gaps: `gap-4` under the header of a list screen, `gap-6` on a detail or settings screen
+with several regions, as Cando's connections and settings screens pass them.
 
 **Same-origin with the API, in both forms.** `pnpm --filter @graft/web dev` (or `pnpm run dev`, which
 starts the server too) serves the app on `:3001` with Vite proxying `/api` and `/mcp` to
@@ -621,8 +641,9 @@ point (GRA-23), which in development is the Vite origin.
 the `Sidebar` primitive off canvas at its own 16rem — the `sidebar_state` cookie it writes is read
 back by `src/lib/sidebar-state.ts`, ⌘B toggles it, and below `md` it is the drawer, closed on the
 router's `onBeforeNavigate` — with `SkipNav` first in the tree and the `<main>` region carrying
-`MAIN_CONTENT_ID`. `main-sidebar.tsx` draws the mark (`src/components/graft-mark.tsx` — the wave mark getgraft.ai and
-the docs carry, drawn in tokens; GRA-97), the four destinations from `src/lib/main-sidebar-nav-items.ts` (a pure data
+`MAIN_CONTENT_ID`. `main-sidebar.tsx` draws the wordmark (`src/components/graft-wordmark.tsx` — the
+supplied SVG with outlined lettering, also used by `AuthHeader`, drawn in tokens; GRA-108), the four
+destinations from `src/lib/main-sidebar-nav-items.ts` (a pure data
 module, tested) with the open-ask count as a `SidebarMenuBadge` and the count in the link's own
 name, and `account-menu.tsx` at the foot: name and email, the Theme radio group (label *inside* the
 group — Base UI's `Menu.GroupLabel` throws outside one), Sign out through `src/lib/sign-out.ts`,

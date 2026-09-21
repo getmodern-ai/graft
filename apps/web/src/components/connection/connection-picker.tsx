@@ -32,8 +32,7 @@ export function ConnectionPicker({
   if (connections.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
-        No connections yet — an agent proposes one and you enter its secret here; until then the
-        scope is empty and the agent can only author against nothing.
+        No connections yet. Once you add a connection, you can select it here.
       </p>
     );
   }
