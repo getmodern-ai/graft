@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 
+import { AgentActions } from "@/components/agent/agent-actions";
 import { RetryNotice } from "@/components/retry-notice";
 import { StatusChip } from "@/components/status-chip";
 import { TableBodyNote, TableLoadingRows } from "@/components/table-body-states";
@@ -11,7 +12,7 @@ import type { Agent } from "@/lib/agent-queries";
 import { count } from "@/lib/format";
 import { agentStatusChip } from "@/lib/status-chips";
 
-const COLUMNS = 6;
+const COLUMNS = 7;
 
 /**
  * The agents list — one row per harness connected to Graft (CONTEXT.md, *Agent*).
@@ -21,11 +22,8 @@ const COLUMNS = 6;
  * the row and the way into the agent, drawn as plain text that underlines on hover, the dress of
  * every inline link in Cando's tables.
  *
- * **Below `md` the cap and the idle window step out.** Six columns in 358px is a horizontal
- * scroll or truncation past reading, and those two are the least load-bearing facts on the row —
- * both editable on the agent's page, which the name opens. Cando's mobile frame for its own table
- * narrows every column rather than scrolling (its CAN-360); with two more columns than that
- * frame, narrowing alone does not get there.
+ * Below `md` the token, cap and idle window step out to keep the name and Actions readable.
+ * The agent's detail page still shows those facts (ADR 0017: compose from the table pattern).
  *
  * **An agent an MCP client connected wears the client's name as a chip beside its own** (ADR
  * 0018) — an outline `Badge`, dynamic text like the vendor badge in the connection picker, not a
@@ -56,11 +54,14 @@ export function AgentsTable({
       <TableHeader>
         <TableRow>
           <TableHead>Agent</TableHead>
-          <TableHead className="w-28 md:w-40">Token</TableHead>
+          <TableHead className="hidden md:table-cell md:w-40">Token</TableHead>
           <TableHead className="hidden md:table-cell md:w-24">Cap</TableHead>
           <TableHead className="hidden md:table-cell md:w-28">Idle window</TableHead>
           <TableHead className="w-26 md:w-36">Created</TableHead>
           <TableHead className="w-20 md:w-24">Status</TableHead>
+          <TableHead className="w-12 md:w-20">
+            <span className="sr-only md:not-sr-only">Actions</span>
+          </TableHead>
         </TableRow>
       </TableHeader>
       {/* A rule under the last row: this table stands alone on the page, with no card to close it. */}
@@ -93,7 +94,7 @@ export function AgentsTable({
                   </Badge>
                 ) : null}
               </TableCell>
-              <TableCell>
+              <TableCell className="hidden md:table-cell">
                 {agent.tokenPrefix ? (
                   <code className="font-mono text-xs">{agent.tokenPrefix}…</code>
                 ) : (
@@ -111,6 +112,9 @@ export function AgentsTable({
               </TableCell>
               <TableCell>
                 <StatusChip chip={agentStatusChip(agent)} />
+              </TableCell>
+              <TableCell className="py-1">
+                <AgentActions agent={agent} />
               </TableCell>
             </DataTableRow>
           ))
