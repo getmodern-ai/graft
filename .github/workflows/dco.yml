@@ -14,8 +14,8 @@ on:
 
 jobs:
   dco:
-    # Not a required status check in the ruleset as this lands; the one required check is
-    # `Typecheck, Lint & Test` (`ci.yml`). Making this one required is a change to the ruleset.
+    # A required status check on `main` since 2026-09-21, beside `Typecheck, Lint & Test`
+    # (`ci.yml`); the ruleset names both.
     name: DCO
     runs-on: ubuntu-latest
     permissions:
@@ -38,10 +38,16 @@ jobs:
           # login, because a bot holds no copyright and can certify nothing. Dependabot's are the
           # ones this repository sees, and the CLA workflow's allowlist said the same.
           #
-          # A merge commit is not passed over, though the DCO apps in common use do pass one over.
-          # A contributor who resolves a conflict while merging writes content in the merge itself,
-          # and "every commit is signed off" is what CONTRIBUTING.md, AGENTS.md and ADR 0022 say
-          # (Greptile on #112). `git merge --signoff` signs one.
+          # A merge commit a person makes is not passed over, though the DCO apps in common use do
+          # pass one over. A contributor who resolves a conflict while merging writes content in the
+          # merge itself, and "every commit is signed off" is what CONTRIBUTING.md, AGENTS.md and
+          # ADR 0022 say (Greptile on #112). `git merge --signoff` signs one.
+          #
+          # A merge commit GitHub makes is passed over: the "Update branch" button on a pull request
+          # commits as GitHub's own web-flow identity (`noreply@github.com`), carries only what the
+          # two parents already carried, and offers nobody a way to sign it (GRA-159). The
+          # exemption is that committer on a commit with two parents and nothing wider: a person's
+          # merge committed under their own identity is still theirs to sign.
           #
           # The line has to be a whole line: a trailing tab or space is allowed and anything else
           # after the address is not, so `Signed-off-by: A <a@b> and friends` fails rather than
@@ -50,6 +56,7 @@ jobs:
             .[]
             | .[]
             | select(((.author.login // "") | endswith("[bot]")) | not)
+            | select(((.parents | length) >= 2 and (.commit.committer.email // "") == "noreply@github.com") | not)
             | select((.commit.message | test("(^|\n)Signed-off-by: [^\n<]+ <[^\n<> ]+>[ \t]*(\n|$)")) | not)
             | "\(.sha) \(.commit.message | split("\n")[0])"
           ' <<<"$commits")

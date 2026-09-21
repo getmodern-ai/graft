@@ -33,7 +33,9 @@ Signed-off-by: Your Name <you@example.com>
 
 `git commit -s` writes it from your git identity, `git merge --signoff` signs a merge, and
 `git rebase --signoff origin/main` adds the line to a branch already written. Every commit in the
-pull request needs one, and the `DCO` check names any that lacks it.
+pull request needs one, and the `DCO` check names any that lacks it. The one commit it does not
+ask about is a merge GitHub itself makes, from the "Update branch" button, since nobody can sign
+that one; a merge you make locally is yours and `git merge --signoff` signs it.
 
 ## Two rules before you write code
 
