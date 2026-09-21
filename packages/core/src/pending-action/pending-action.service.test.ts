@@ -41,6 +41,7 @@ function fakeDeps(overrides: Partial<PendingActionDeps> = {}): PendingActionDeps
     listOpenPendingActions: vi.fn(async () => [open]),
     answerPendingAction: vi.fn(async () => answered),
     consumePendingAction: vi.fn(async () => ({ ...answered, consumedAt: NOW })),
+    updatePendingActionPayload: vi.fn(async () => null),
     newId: () => "pa_new",
     now: () => NOW,
     ...overrides,

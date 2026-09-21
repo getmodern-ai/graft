@@ -816,14 +816,24 @@ async function routeProposal(
       deps.pendingAction,
     ));
 
+  // The ask as it stands, not as this call would route it: an open ask a provider stepped aside
+  // from is the keyring's form now (GRA-147, `provider-link.ts`), and the answer, the card and the
+  // wording follow the row so the agent is not told to expect a provider's button the page no
+  // longer has.
+  const asked = (
+    open ? (open.payload as ConnectionProposalPayload) : payload
+  ) satisfies ConnectionProposalPayload;
+  const askedLink = asked.providerConnect === "link";
+  const askedProvider = asked.provider;
+
   // A link provider's ask is one click; the OAuth guidance is the keyring's form's alone (ADR 0005).
-  const oauth = !link && isOAuthAuthorizationCode(payload.scheme);
+  const oauth = !askedLink && isOAuthAuthorizationCode(asked.scheme);
   const redirectUri = oauth ? deps.oauthRedirectUri : undefined;
-  const what = `${payload.displayName} (${payload.vendor})`;
+  const what = `${asked.displayName} (${asked.vendor})`;
   return waitForAnswer(ctx, scope, action, deps, {
     awaiting: "awaiting_connection",
     what,
-    card: (url, agentName) => connectionAskCard({ action, agentName, payload, url }),
+    card: (url, agentName) => connectionAskCard({ action, agentName, payload: asked, url }),
     settle: (taken) =>
       settleByConnectionId(ctx, scope, taken, deps, {
         what,
@@ -836,16 +846,16 @@ async function routeProposal(
         onConnected: (connection) => connected(connection, "new"),
       }),
     ...(redirectUri ? { awaitingExtra: { redirectUri } } : {}),
-    ...(link ? { awaitingExtra: { provider: provider.name } } : {}),
+    ...(askedLink ? { awaitingExtra: { provider: askedProvider } } : {}),
     awaitingMessage: (url, expiresAt, form) =>
-      link
-        ? `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) through ${provider.name} — one click: they sign in at the vendor on ${provider.name}'s page, and the vendor's token stays there; nothing passes through you, and nothing is typed in the console. ` +
+      askedLink
+        ? `Graft needs the person to connect ${asked.displayName} (${asked.vendor}) through ${askedProvider} — one click: they sign in at the vendor on ${askedProvider}'s page, and the vendor's token stays there; nothing passes through you, and nothing is typed in the console. ` +
           `${handoffSentence(form, "Relay this link so they can press Connect", url, expiresAt)} ` +
           `${BUILD_APPROVAL_ON_THE_PAGE} ` +
           "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
         : oauth
           ? // The agent is the guide (ADR 0005): which console, what to name the client, which URI.
-            `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) with an OAuth client they register at the vendor — the client secret and the tokens never pass through you. ` +
+            `Graft needs the person to connect ${asked.displayName} (${asked.vendor}) with an OAuth client they register at the vendor — the client secret and the tokens never pass through you. ` +
             "Guide them in three sentences: open the vendor's developer console and create an OAuth client of the web-application kind; name it after Graft so they recognise it later; " +
             (redirectUri
               ? `and paste exactly this redirect URI into it: ${redirectUri} `
@@ -859,8 +869,8 @@ async function routeProposal(
             `${BUILD_APPROVAL_ON_THE_PAGE} ` +
             "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected. " +
             "A Google Cloud project in Testing mode expires refresh tokens after seven days, so a Google connection reconnects weekly until the app is published."
-          : takesCredential(payload.scheme)
-            ? `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
+          : takesCredential(asked.scheme)
+            ? `Graft needs the person to enter the credential for ${asked.displayName} (${asked.vendor}) in the console — the secret never passes through you. ` +
               `${handoffSentence(form, "Relay this link so they can check the hosts and enter it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
@@ -868,7 +878,7 @@ async function routeProposal(
               // hosts, and the message names no credential and no secret (GRA-91). Under a card
               // the confirmation is the card's own button (GRA-84), so the card form names no
               // console in its lead (Greptile on #96).
-              `Graft needs the person to confirm the connection to ${payload.displayName} (${payload.vendor})${form === "card" ? "" : " in the console"} — the scheme takes no credential, so nothing is entered. ` +
+              `Graft needs the person to confirm the connection to ${asked.displayName} (${asked.vendor})${form === "card" ? "" : " in the console"} — the scheme takes no credential, so nothing is entered. ` +
               `${handoffSentence(form, "Relay this link so they can check the hosts and confirm it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
