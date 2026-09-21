@@ -286,8 +286,8 @@ Developer Certificate of Origin: sign off each commit with `git commit -s`.
 1. [`CONTEXT.md`](CONTEXT.md), the glossary. Every term here is used exactly as defined there.
 2. [`docs/adr/`](docs/adr), the decision records, numbered in the order they were made.
 3. [`docs/roadmap.md`](docs/roadmap.md), the build order, the self-improvement levels and the
-   deferred items, and [`docs/research/`](docs/research), the teardown of executor.sh and the
-   comparison with the Self-Harness paper that shaped the bet.
+   deferred items, and [`docs/research/`](docs/research), the comparison with the Self-Harness
+   paper that shaped the bet.
 
 Tickets are referenced by number as `GRA-…`. Linear is private, so those do not open;
 [`docs/reports/README.md`](docs/reports/README.md) maps each ticket to its pull request here, and a
