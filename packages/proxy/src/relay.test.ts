@@ -6,9 +6,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createProxyApp } from "./app";
 import { DRY_RUN_HEADER } from "./dry-run";
 import { CREDENTIAL_REDACTED, REDACTED_HEADER } from "./echo";
+import { gatewayRelay } from "./gateway-relay";
 import {
   PASSTHROUGH_RELAY_RULES,
-  RELAYS,
   relayHeaders,
   relayPassesThrough,
   relayRefuses,
@@ -26,13 +26,13 @@ import type {
   TokenVerdict,
   UpstreamRequest,
 } from "./types";
-import { RELAY_SCHEMES } from "./types";
+import { RELAY_SCHEME, RELAY_SCHEMES } from "./types";
 
 /**
  * The relay engine (ADR 0019): the header rules as a pure function, and the ladder relaying through
  * a **fake upstream proxy** — a real HTTP server on a loopback port that decodes the vendor URL out
  * of the path it was sent and reports what it saw. The plugin here is the test's own, shaped like
- * the ones GRA-58 and GRA-59 add to `RELAYS`: it carries the vendor URL base64url in the path, the
+ * the gateway's and a hosted provider's: it carries the vendor URL base64url in the path, the
  * account id in the query, and authenticates to the upstream with a bearer token from its fields.
  * What these pin is that everything *around* the relay is unchanged — the token admits the call,
  * the vendor host is what the ladder judges, a dry run stops a write before the relay's fields are
@@ -59,7 +59,7 @@ const RULES: RelayHeaderRules = {
   refusePrefixes: ["sec-"],
 };
 
-/** The test's relay plugin: what a `RELAYS` entry looks like from the engine's side. */
+/** The test's relay plugin: what a provider's plugin looks like from the engine's side. */
 const testRelay: RelayPlugin = {
   kind: "relay",
   scheme: "test_relay",
@@ -147,13 +147,16 @@ describe("the relay's header rules", () => {
     expect(relayRulesOf(testRelay, { refuse: [] }).passThrough).toEqual(RULES.passThrough);
   });
 
-  /** The catalogue GRA-58 and GRA-59 add to: each entry's `scheme` is its key, and both are in `RELAY_SCHEMES`. */
-  it("every catalogued relay is named for its key and listed in RELAY_SCHEMES", () => {
-    expect(Object.keys(RELAYS).sort()).toEqual([...RELAY_SCHEMES].sort());
-    for (const [key, plugin] of Object.entries(RELAYS) as [string, RelayPlugin][]) {
-      expect(plugin.scheme).toBe(key);
-      expect(plugin.kind).toBe("relay");
-    }
+  /**
+   * The two relay schemes a row may carry (GRA-103): the gateway's, which is its plugin's name too,
+   * and the generic one every other relay provider's rows record — no catalogue maps it to a
+   * plugin, since the provider hands the proxy the plugin on the resolution.
+   */
+  it("names the gateway's relay and the generic one, and no vendor's", () => {
+    expect([...RELAY_SCHEMES]).toEqual(["gateway", RELAY_SCHEME]);
+    expect(gatewayRelay.scheme).toBe("gateway");
+    expect(gatewayRelay.kind).toBe("relay");
+    expect(RELAY_SCHEME).toBe("relay");
   });
 });
 

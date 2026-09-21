@@ -18,9 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check-types": "tsc -p tsconfig.json",
-    "publish-fixture": "tsx src/scripts/publish-fixture.ts",
-    "pipedream-proof": "tsx src/scripts/pipedream-proof.ts",
-    "pipedream-proof-agent": "tsx src/scripts/pipedream-proof-agent.ts"
+    "publish-fixture": "tsx src/scripts/publish-fixture.ts"
   },
   "dependencies": {
     "@graft/ask-card": "workspace:*",
@@ -32,7 +30,6 @@
     "@graft/mcp": "workspace:*",
     "@graft/model": "workspace:*",
     "@graft/observability": "workspace:*",
-    "@graft/pipedream": "workspace:*",
     "@graft/proxy": "workspace:*",
     "@graft/publish": "workspace:*",
     "@graft/sandbox": "workspace:*",

@@ -322,6 +322,71 @@ describe("a module with no dependencies", () => {
     expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/v2")).toEqual(second);
   });
 
+  it("under activate: false, a republish onto a tool whose default connection is revoked rebinds it to this publish's and leaves the rest where it was; a live default waits for the pass (GRA-122)", async () => {
+    const first = await readFixture("hello");
+    const activated = await publish({
+      draftPath: await draft("job1", first),
+      defaultConnectionId: "conn_old",
+    });
+    expect(activated.ok).toBe(true);
+    if (!activated.ok) return;
+    expect(h.tool.tools[0]?.defaultConnectionId).toBe("conn_old");
+
+    // The row's default is live and the job names another connection: the current version runs
+    // against the default meanwhile, so the binding waits for the pass like the rest.
+    const live = vi.spyOn(h.tool, "updateAuthoredTool");
+    const second = first.map((file) => ({ ...file, content: `${file.content}// v2\n` }));
+    const staged = await publish({
+      draftPath: await draft("job2", second),
+      jobId: "job2",
+      defaultConnectionId: "conn_new",
+      activate: false,
+    });
+    expect(staged.ok).toBe(true);
+    expect(live).not.toHaveBeenCalled();
+    expect(h.tool.tools[0]?.defaultConnectionId).toBe("conn_old");
+    live.mockRestore();
+
+    // The person revoked the old one and connected the vendor again: the binding moves at publish,
+    // and nothing else does.
+    h.tool.findConnectionForUpdate = async (_db, personId, id) =>
+      ({ id, personId, revokedAt: id === "conn_old" ? NOW : null }) as never;
+    const third = first.map((file) => ({ ...file, content: `${file.content}// v3\n` }));
+    const result = await publish({
+      draftPath: await draft("job3", third),
+      jobId: "job3",
+      description: "Greets a name through the vendor, politely",
+      defaultConnectionId: "conn_new",
+      activate: false,
+    });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) return;
+    expect(result.version).toMatchObject({ path: "tools/demo/hello/v3", versionNumber: 3 });
+    expect(result.tool).toMatchObject({
+      defaultConnectionId: "conn_new",
+      description: "Greets a name through the vendor",
+      currentVersionId: activated.version.id,
+    });
+    expect(h.tool.tools[0]).toMatchObject({
+      defaultConnectionId: "conn_new",
+      description: "Greets a name through the vendor",
+      currentVersionId: activated.version.id,
+    });
+
+    // The same connection again writes nothing to the tool row.
+    const update = vi.spyOn(h.tool, "updateAuthoredTool");
+    const fourth = first.map((file) => ({ ...file, content: `${file.content}// v4\n` }));
+    const unchanged = await publish({
+      draftPath: await draft("job4", fourth),
+      jobId: "job4",
+      defaultConnectionId: "conn_new",
+      activate: false,
+    });
+    expect(unchanged.ok).toBe(true);
+    expect(update).not.toHaveBeenCalled();
+    expect(h.tool.tools[0]?.defaultConnectionId).toBe("conn_new");
+  });
+
   it("carries the check's advice on a success", async () => {
     const result = await publish({
       draftPath: await draft("job1", [

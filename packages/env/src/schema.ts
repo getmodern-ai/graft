@@ -385,40 +385,6 @@ export const modelProviderOptionalKeys = [
 ] as const;
 
 /**
- * The Pipedream connection provider (ADR 0019; GRA-59), all-or-nothing and off by default: with the
- * four, a vendor Pipedream's Connect catalogue offers connects with one click and every call for it
- * relays through Pipedream's proxy; without them the provider is not on the list and every vendor
- * takes the keyring's form, exactly as before. The project id and the environment are identifiers
- * and may ride as plain environment; the client id and secret are the project's OAuth client, which
- * buys the access token every Connect call carries, and both are held to the placeholder rule. A
- * partial group is a half-finished deploy — a project with no client can mint nothing — and would
- * present as a provider that is enabled and fails on the first link. The hosted tier holds the
- * values (graft-cloud's secrets and app stacks); a self-host may set its own project.
- */
-export const pipedreamKeys = [
-  "GRAFT_PIPEDREAM_PROJECT_ID",
-  "GRAFT_PIPEDREAM_ENVIRONMENT",
-  "GRAFT_PIPEDREAM_CLIENT_ID",
-  "GRAFT_PIPEDREAM_CLIENT_SECRET",
-] as const;
-
-/** Pipedream's project ids start with `proj_` (its API reference); a swapped value fails here, not at Pipedream. */
-export const pipedreamProjectId = z
-  .string()
-  .regex(
-    /^proj_[A-Za-z0-9]+$/,
-    "GRAFT_PIPEDREAM_PROJECT_ID must be a Pipedream Connect project id — proj_ followed by letters and digits",
-  )
-  .optional();
-
-/** Which of the project's two account stores every call addresses (`x-pd-environment`). */
-export const pipedreamEnvironment = z
-  .enum(["development", "production"], {
-    error: "GRAFT_PIPEDREAM_ENVIRONMENT must be development or production",
-  })
-  .optional();
-
-/**
  * Sign-in with a provider's account (GRA-81; ADR 0020), two groups, each all-or-nothing and off by
  * default: Google's OAuth client and GitHub's. Two groups rather than one because a deployment with
  * one provider and not the other is a normal state — Cando's reasoning for its Google and Apple pair
@@ -716,7 +682,7 @@ export const gatewayHeaderName = z
 
 /**
  * The prefix the gateway wants on caller headers, for a gateway that forwards a caller's header to
- * the vendor only when it carries one (Pipedream's `x-pd-proxy-` is the shape). Unset, the default:
+ * the vendor only when it carries one (a broker's proxy prefix is the shape). Unset, the default:
  * caller headers travel under their own names, minus the credential-shaped ones the proxy strips
  * anyway. Read only beside the group; set without it, refused as a setting nothing would read.
  */
@@ -912,13 +878,6 @@ export function serverEnvIssues(value: Record<string, unknown>): string[] {
     );
   }
 
-  const partialPipedream = partialGroupIssue(
-    value,
-    "The Pipedream provider is partially configured — set GRAFT_PIPEDREAM_PROJECT_ID, GRAFT_PIPEDREAM_ENVIRONMENT, GRAFT_PIPEDREAM_CLIENT_ID and GRAFT_PIPEDREAM_CLIENT_SECRET together, or none.",
-    pipedreamKeys,
-  );
-  if (partialPipedream) issues.push(partialPipedream);
-
   // Sign-in providers, one rule per provider — see `googleSignInKeys` for why they are not one group.
   const partialGoogle = partialGroupIssue(
     value,
@@ -1073,12 +1032,6 @@ export const serverSchema = {
         "GRAFT_MODEL_BASE_URL must be an absolute http(s) URL — the provider's endpoint, or an OpenAI-compatible gateway's",
     })
     .optional(),
-
-  /** The Pipedream connection provider, all-or-nothing and off by default — see `pipedreamKeys`. */
-  GRAFT_PIPEDREAM_PROJECT_ID: pipedreamProjectId,
-  GRAFT_PIPEDREAM_ENVIRONMENT: pipedreamEnvironment,
-  GRAFT_PIPEDREAM_CLIENT_ID: secretValue("GRAFT_PIPEDREAM_CLIENT_ID"),
-  GRAFT_PIPEDREAM_CLIENT_SECRET: secretValue("GRAFT_PIPEDREAM_CLIENT_SECRET"),
 
   /** Sign in with Google or GitHub, each group all-or-nothing and off by default — see `googleSignInKeys`. */
   GRAFT_GOOGLE_CLIENT_ID: z.string().min(1).optional(),

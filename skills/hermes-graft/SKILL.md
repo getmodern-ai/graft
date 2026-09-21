@@ -32,8 +32,8 @@ their wiki, a report from their accounting app — and no tool in your list does
    That page also offers to allow you to build tools against the connection, on by default; left
    on, `acquire` against it starts without a second link, so do not tell the person to expect one.
    A public API that takes no key — Open-Meteo, an open-data endpoint — is scheme `none`: the
-   person confirms the connection and enters nothing; never invent a key for one, since a vendor
-   may read the key's presence and answer differently.
+   person confirms the connection and enters nothing; never propose a made-up key for one, since
+   a vendor may read the key's presence and answer differently.
    A vendor that needs an OAuth consent rather than a key — Gmail, Slack user tokens, Notion — has
    its own note, `connecting-with-oauth.md` beside this file.
    If the person already has the connection but it was made for another of their agents,
@@ -42,21 +42,25 @@ their wiki, a report from their accounting app — and no tool in your list does
    answers connected. Relay it like any handoff; do not send them to find the Scope page.
    If the vendor *is* connected and a call comes back 401 or 403, or the person says a key was
    rotated, call `request_credential { connectionId }`: a rotated or expired credential is
-   `request_credential` against the existing connection, never a new connection — a new connection
-   is a new row with no scope and no approvals.
+   `request_credential` on the existing connection, never a new one — a new connection is a new
+   row with no scope and no approvals.
 3. **`acquire { connectionId, goal, hints? }`, only when nothing fits.** `goal` is what the tool
    must do, in a sentence or two, in the person's terms. `hints` is anything you already know — an
    endpoint, a documentation URL, a field name; a documentation URL is the single most useful hint.
 
-`acquire` answers at once with `{ jobId, status, progress }`. It has not built anything yet.
+`acquire` waits about half a minute for the job. A job that finishes in time answers `succeeded` or
+`failed` with `result`, as `acquire_status` does; otherwise it answers `{ jobId, status, progress }`
+and nothing is built yet.
 
 ## While the job runs: `acquire_status`
 
-Call `acquire_status { jobId }` every ten to twenty seconds, or when the person asks how it is going.
-The answer is `{ status, progress, attempts, result? }`:
+Call `acquire_status { jobId }` again whenever the job is unfinished, or when the person asks how it
+is going: it waits up to twenty seconds for a progress line newer than the ones you have (`after`,
+the count you have seen) or for the end, so each answer carries news. The answer is
+`{ status, progress, attempts, result? }`:
 
-- `queued` or `running`: relay the newest `progress` line to the person in one sentence, only when it
-  changed. Do not start a second `acquire` for the same goal while one runs.
+- `queued` or `running`: relay the newest progress line in a sentence. Do not start a second
+  `acquire` for the same goal while one runs.
 - `succeeded`: `result.tool` is the new tool's name, `<vendor>__<name>`. It appears in your tool list
   when the list refreshes (Graft sends `tools/list_changed`; Hermes re-reads the list). Then call it
   for the person's actual request. Some clients snapshot the tool list per conversation; until it

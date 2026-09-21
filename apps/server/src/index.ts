@@ -268,6 +268,9 @@ const mcp = createMcpDeps({
   oauthRedirectUri: oauthRedirectUri(env.GRAFT_AUTH_URL),
   // The 401's discovery hint (ADR 0018): where the endpoint's protected resource metadata answers.
   resourceMetadataUrl: protectedResourceMetadataUrl(env.GRAFT_AUTH_URL),
+  // The origin a link provider's return route answers on (ADR 0019), for the card's `start_link`
+  // (GRA-117) — the same value `api.ts` hands the console's link route.
+  authUrl: env.GRAFT_AUTH_URL,
   model: modelSetup.model,
   acquire: {
     maxAttempts: env.GRAFT_ACQUIRE_MAX_ATTEMPTS,
@@ -278,6 +281,10 @@ const mcp = createMcpDeps({
    * `POST /mcp` says which tool, for which agent, with what outcome — and onto the person's
    * analytics profile as `tool_called`. Both carry the same fields and neither carries the input.
    */
+  /** A refused `/mcp` request, with the transport's or the door's reason (GRA-131): the same line, under `mcpRefusal`. */
+  onTransportRefusal: (event) => {
+    useLogger().set({ mcpRefusal: event });
+  },
   onToolCall: (event) => {
     useLogger().set({ mcp: event });
     backings.analytics.capture({

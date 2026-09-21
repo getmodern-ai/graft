@@ -10,7 +10,7 @@ import { api } from "./api";
 
 /**
  * A provider's **link** as the console runs it (ADR 0019; GRA-59) — the one-click connect of a
- * vendor a provider such as Pipedream covers. The shape is the OAuth consent's (`oauth-consent.ts`,
+ * vendor a link provider covers. The shape is the OAuth consent's (`oauth-consent.ts`,
  * GRA-30/48), with the thing waited on changed: a link answers a **pending action**, and the
  * connection exists only once the server's return route has confirmed the account, so the wait is
  * on the ask rather than on a connection. Three signals, any one enough, and the poll is the one
@@ -29,11 +29,16 @@ import { api } from "./api";
  * body is the card's one choice — whether the asking agent may build against the connection the
  * return will make (GRA-75) — which the server signs into the link's state.
  */
+/** The button's answer: the provider's link, or the provider stepped aside and the ask is the form now (GRA-147). */
+export type LinkStartResult =
+  | { url: string; expiresAt: string; provider: string }
+  | { fallback: "form"; provider: string; message: string };
+
 export function startProviderLink(actionId: string, input: LinkStartBody) {
-  return api<{ url: string; expiresAt: string; provider: string }>(
-    `/pending-actions/${encodeURIComponent(actionId)}/link`,
-    { method: "POST", body: input },
-  );
+  return api<LinkStartResult>(`/pending-actions/${encodeURIComponent(actionId)}/link`, {
+    method: "POST",
+    body: input,
+  });
 }
 
 /** How the wait ended: the return route's word, the person stopped it, or the link's lifetime passed. */

@@ -9,6 +9,7 @@ import {
   createTool,
   nextVersionNumber,
   publishToolVersion,
+  rebindToolIfConnectionDead,
   recordDryRun,
   updateToolDefinition,
   validateToolDefinition,
@@ -68,6 +69,7 @@ function fakeDeps(overrides: Partial<ToolDeps> = {}): ToolDeps {
     })),
     recordToolVersionDryRun: vi.fn(async () => version(1)),
     findConnection: vi.fn(async () => ({ id: "conn_1" }) as never),
+    findConnectionForUpdate: vi.fn(async () => ({ id: "conn_1", revokedAt: null }) as never),
     newId: () => "new_id",
     now: () => NOW,
     ...overrides,
@@ -299,6 +301,64 @@ describe("activateToolVersion", () => {
       const result = await activateToolVersion(ctx, PRINCIPAL, "tool_1", id, {}, deps);
       expect(result.currentVersionId).toBe(id);
     }
+  });
+});
+
+describe("rebindToolIfConnectionDead (GRA-122)", () => {
+  const boundToOld = { ...tool, defaultConnectionId: "conn_old" };
+
+  it("rebinds a tool whose default is revoked, reading that row locked in the transaction, and says it moved", async () => {
+    const deps = fakeDeps({
+      findAuthoredToolById: vi.fn(async () => boundToOld),
+      findConnectionForUpdate: vi.fn(async () => ({ id: "conn_old", revokedAt: NOW }) as never),
+    });
+    const result = await rebindToolIfConnectionDead(ctx, PRINCIPAL, "tool_1", "conn_new", deps);
+    expect(deps.findConnectionForUpdate).toHaveBeenCalledWith(fakeDb, "person_1", "conn_old");
+    expect(deps.updateAuthoredTool).toHaveBeenCalledWith(fakeDb, "person_1", "tool_1", {
+      defaultConnectionId: "conn_new",
+    });
+    expect(result).toMatchObject({ rebound: true, tool: { defaultConnectionId: "conn_new" } });
+  });
+
+  it("rebinds a tool with no default, or one whose default row is gone", async () => {
+    const none = fakeDeps({ findAuthoredToolById: vi.fn(async () => tool) });
+    expect(
+      await rebindToolIfConnectionDead(ctx, PRINCIPAL, "tool_1", "conn_new", none),
+    ).toMatchObject({
+      rebound: true,
+    });
+    expect(none.findConnectionForUpdate).not.toHaveBeenCalled();
+    const gone = fakeDeps({
+      findAuthoredToolById: vi.fn(async () => boundToOld),
+      findConnectionForUpdate: vi.fn(async () => null),
+    });
+    expect(
+      await rebindToolIfConnectionDead(ctx, PRINCIPAL, "tool_1", "conn_new", gone),
+    ).toMatchObject({
+      rebound: true,
+    });
+  });
+
+  it("leaves a live default alone — a reconnection that landed first wins — and writes nothing for the connection already bound", async () => {
+    const live = fakeDeps({ findAuthoredToolById: vi.fn(async () => boundToOld) });
+    const kept = await rebindToolIfConnectionDead(ctx, PRINCIPAL, "tool_1", "conn_new", live);
+    expect(kept).toEqual({ tool: boundToOld, rebound: false });
+    expect(live.updateAuthoredTool).not.toHaveBeenCalled();
+
+    const same = fakeDeps({
+      findAuthoredToolById: vi.fn(async () => ({ ...tool, defaultConnectionId: "conn_new" })),
+    });
+    const unchanged = await rebindToolIfConnectionDead(ctx, PRINCIPAL, "tool_1", "conn_new", same);
+    expect(unchanged.rebound).toBe(false);
+    expect(same.findConnectionForUpdate).not.toHaveBeenCalled();
+    expect(same.updateAuthoredTool).not.toHaveBeenCalled();
+  });
+
+  it("is NOT_FOUND for a tool that is not the person's", async () => {
+    const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => null) });
+    await expect(
+      rebindToolIfConnectionDead(ctx, PRINCIPAL, "tool_x", "conn_new", deps),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });
 

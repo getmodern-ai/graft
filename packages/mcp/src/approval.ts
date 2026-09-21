@@ -21,6 +21,7 @@ import type { ElicitRequestFormParams, ElicitResult } from "@modelcontextprotoco
 import { approvalAskCard } from "./ask-card";
 import type { McpDeps } from "./deps";
 import { handoffUrl, signHandoffToken } from "./handoff";
+import { type HandoffForm, handoffSentence } from "./handoff-message";
 import { refusal } from "./result";
 import { revokedConnectionRefusal } from "./revoke";
 import { authoredToolName } from "./tool-names";
@@ -138,11 +139,18 @@ export const DESCRIPTION_PROVENANCE_NOTE =
 /**
  * What a gate answers: proceed, or the body the tool returns instead — a refusal or
  * `awaiting_approval`, the latter with the ask card's data beside it (`ask-card.ts`, GRA-84) for
- * the tools that render one; a caller that does not attaches nothing.
+ * the tools that render one; a caller that does not attaches nothing. On the wire the two part:
+ * the refusal is an error, the awaiting answer a result (`result.ts`'s `toolAwaitingOrError`).
  */
 export type GateOutcome =
   | { pass: true }
-  | { pass: false; answer: Record<string, unknown>; card?: AskCard };
+  | {
+      pass: false;
+      answer: Record<string, unknown>;
+      card?: AskCard;
+      /** The awaiting `message` in its card form (`handoff-message.ts`, GRA-120), for a client that renders the card. */
+      cardMessage?: string;
+    };
 
 const PASS: GateOutcome = { pass: true };
 
@@ -623,29 +631,45 @@ async function askByHandoff(
   const byTheClient = automatic
     ? "Your client answered the approval prompt on its own, faster than a person could read it, so Graft set that answer aside; the person can answer in the console instead. "
     : "";
+  // The same message in both forms (`handoff-message.ts`, GRA-120): the console form is what a
+  // client that renders nothing reads, the card form what a client that renders the card reads,
+  // and the caller picks one per session (`card-client.ts`'s `toolAskResult`).
+  const message = (form: HandoffForm) =>
+    `Graft needs the person's approval before ${whatIsAsked(subject)}. ${byTheClient}${handoffSentence(
+      form,
+      "Relay this link so they can answer in the console",
+      url,
+      action.expiresAt.toISOString(),
+    )} ${afterAnswer}`;
   const awaiting: AwaitingApproval = {
     error: "awaiting_approval",
     reason: "awaiting_approval",
     pendingActionId: action.id,
     url,
     expiresAt: action.expiresAt.toISOString(),
-    message:
-      `Graft needs the person's approval before ${whatIsAsked(subject)}. ${byTheClient}Relay this link so they can answer in the console: ${url} ` +
-      `It expires at ${action.expiresAt.toISOString()}. ${afterAnswer}`,
+    message: message("console"),
   };
   // The card a chat product renders for this ask (GRA-84): the build approval answerable in place,
-  // a tool's first use with the console button alone.
+  // and since GRA-116 the tool's first use too, with the tool's facts as the console's card has them.
   const card = approvalAskCard({
     action,
-    kind: subject.kind,
     agentName,
     connection: subject.connection,
     url,
     ...(subject.kind === "tool"
-      ? { toolName: authoredToolName(subject.tool.vendor, subject.tool.name) }
-      : {}),
+      ? {
+          kind: "tool",
+          toolName: authoredToolName(subject.tool.vendor, subject.tool.name),
+          tool: {
+            description: subject.tool.description,
+            readOnly: subject.tool.readOnly,
+            destructive: subject.tool.destructive,
+            askEveryCall: subject.askEveryCall,
+          },
+        }
+      : { kind: "build" }),
   });
-  return { pass: false, answer: awaiting, card };
+  return { pass: false, answer: awaiting, card, cardMessage: message("card") };
 }
 
 async function applyAnswer(

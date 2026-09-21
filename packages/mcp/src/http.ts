@@ -4,13 +4,19 @@ import {
   type AgentScope,
   type AgentTokenRefusal,
   bearerTokenFrom,
+  MCP_ACCESS_TOKEN_PREFIX,
   requireAgent,
   ServiceError,
 } from "@graft/core";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import {
+  isInitializeRequest,
+  LATEST_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "@modelcontextprotocol/sdk/types.js";
 import { Hono } from "hono";
 
-import type { McpDeps } from "./deps";
+import type { McpDeps, TransportRefusalEvent } from "./deps";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { type AgentSession, createAgentSession } from "./session";
 
@@ -28,6 +34,21 @@ import { type AgentSession, createAgentSession } from "./session";
  * with another agent's token is refused too — a session id is not a credential, and must never
  * become one by being guessed or leaked. Sessions live in this process's memory, as the SDK's
  * transport keeps them.
+ *
+ * **A session this process no longer holds is re-opened in place for a chat product's client**
+ * (GRA-129; ADR 0018 as amended 2026-09-20). The specification's answer to an unknown session id is
+ * 404 and the client re-initialises, which Hermes, OpenClaw and ChatGPT do; Claude.ai's card frame
+ * does not — it keeps the id it had before a deploy ended the process, is refused, and draws
+ * "Unable to reach Graft" where the card goes (GRA-124). So a request carrying an access token
+ * (`grfta_`, the token a product holds after an OAuth consent) with a session id nobody here
+ * opened, or with no session id and no `initialize`, gets a fresh session under that id — or a
+ * new one, carried on the response — primed by a synthetic `initialize` declaring no client
+ * capabilities: the card gate's client half then falls back to the registered redirect URI, which
+ * is how those products are vouched for anyway (`card-client.ts`), and an elicitation is never
+ * offered, which no chat product has. A static-token agent keeps the specification's 404 and 400:
+ * a harness re-initialises, and its declared capabilities matter. Nothing is given away — the
+ * token is checked before the session is looked up, and the re-opened session is bound to that
+ * agent as any is.
  *
  * **Every 401 carries the OAuth discovery hint** the MCP authorization specification requires
  * (RFC 9728 §5.1): `WWW-Authenticate: Bearer resource_metadata="…"`, naming where the protected
@@ -51,8 +72,99 @@ type LiveSession = {
   session: AgentSession;
 };
 
+/** The `clientInfo` a re-opened session's synthetic `initialize` carries, so a trace says what it was. */
+const REOPENED_CLIENT = { name: "graft-reopened-session", version: "0" } as const;
+
+/**
+ * Whether a session-less request is the `initialize` a fresh session starts with, read from a
+ * clone so the transport still gets the body; anything unparseable is left to the transport's own
+ * 400.
+ */
+async function carriesInitialize(request: Request): Promise<boolean> {
+  try {
+    const body: unknown = await request.clone().json();
+    const messages = Array.isArray(body) ? body : [body];
+    return messages.some(isInitializeRequest);
+  } catch {
+    return true;
+  }
+}
+
+/** The protocol version a re-opened session negotiates: the client's header when it is one we speak, else the latest. */
+function protocolVersionFor(request: Request): string {
+  const header = request.headers.get("mcp-protocol-version");
+  return header && SUPPORTED_PROTOCOL_VERSIONS.includes(header) ? header : LATEST_PROTOCOL_VERSION;
+}
+
+function syntheticInitialize(request: Request): Request {
+  return new Request(request.url, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "initialize",
+      params: {
+        protocolVersion: protocolVersionFor(request),
+        capabilities: {},
+        clientInfo: REOPENED_CLIENT,
+      },
+    }),
+  });
+}
+
+/** The same request with the session id a re-opened session was given, for the transport's own check. */
+function withSessionId(request: Request, sessionId: string): Request {
+  const headers = new Headers(request.headers);
+  headers.set("mcp-session-id", sessionId);
+  return new Request(request, { headers });
+}
+
 function jsonRpcError(status: 400 | 404, code: number, message: string): Response {
   return Response.json({ jsonrpc: "2.0", error: { code, message }, id: null }, { status });
+}
+
+/**
+ * The hook told, and never in the way: a hook that throws is the deployment's problem, not the
+ * client's, whose 401 challenge or JSON-RPC error must still reach it.
+ */
+function tell(onRefusal: McpDeps["onTransportRefusal"], event: TransportRefusalEvent): void {
+  try {
+    onRefusal?.(event);
+  } catch {
+    // Telemetry never replaces an answer.
+  }
+}
+
+/**
+ * The transport's refusal read off its answer (GRA-131): a 4xx whose body is a JSON-RPC error is
+ * reported with the error's code and message; anything else with the status alone. A 5xx is the
+ * transport's own failure, not a refusal, and is not reported here. The body is read from a
+ * clone, so the answer goes to the client as it was.
+ */
+async function reportTransportRefusal(
+  response: Response,
+  request: Request,
+  onRefusal: McpDeps["onTransportRefusal"],
+): Promise<Response> {
+  if (!onRefusal || response.status < 400 || response.status >= 500) return response;
+  let code: number | undefined;
+  let message = response.statusText || `HTTP ${response.status}`;
+  try {
+    const body = (await response.clone().json()) as { error?: { code?: number; message?: string } };
+    if (typeof body?.error?.code === "number") code = body.error.code;
+    if (typeof body?.error?.message === "string") message = body.error.message;
+  } catch {
+    // Not JSON: the status is the whole story.
+  }
+  tell(onRefusal, {
+    status: response.status,
+    ...(code === undefined ? {} : { code }),
+    message,
+    method: request.method,
+    hasSessionHeader: request.headers.has("mcp-session-id"),
+  });
+  return response;
 }
 
 /**
@@ -92,6 +204,11 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
     deps.notifier ??
     createToolListChangedNotifier({ windowMs: deps.listChangedWindowMs });
   const sessions = new Map<string, LiveSession>();
+  /**
+   * Re-opens in flight, by session id: a client's frame sends its requests under one stale id
+   * back to back, and two must not each open a session under it, with one overwriting the other.
+   */
+  const reopening = new Map<string, Promise<LiveSession>>();
   const ctx = { db: deps.db };
   const app = new Hono();
 
@@ -115,52 +232,121 @@ export function createMcpHttpApp(deps: McpDeps, options: McpHttpOptions = {}): H
   app.all("/", async (c) => {
     const request = c.req.raw;
     const token = bearerTokenFrom(request.headers);
+    const requestSessionId = request.headers.get("mcp-session-id") ?? undefined;
+    /** Graft's own refusal, told to the hook with its reason word before it is answered. */
+    const refused = (response: Response, message: string, code?: number): Response => {
+      tell(deps.onTransportRefusal, {
+        status: response.status,
+        ...(code === undefined ? {} : { code }),
+        message,
+        method: request.method,
+        hasSessionHeader: requestSessionId !== undefined,
+        ...(requestSessionId === undefined ? {} : { sessionId: requestSessionId }),
+      });
+      return response;
+    };
+    /** The transport's answer, its refusal reported when it is one. */
+    const answered = (response: Response | Promise<Response>): Promise<Response> =>
+      Promise.resolve(response).then((r) =>
+        reportTransportRefusal(r, request, deps.onTransportRefusal),
+      );
+
     let scope: AgentScope;
     try {
       scope = await requireAgent(ctx, token, deps.agent);
     } catch (error) {
       if (error instanceof ServiceError && error.code === "UNAUTHORIZED") {
-        return unauthorized(refusalReasonOf(error), error.message);
+        const reason = refusalReasonOf(error);
+        return refused(unauthorized(reason, error.message), reason);
       }
       throw error;
     }
 
+    const generateSessionId = options.sessionIdGenerator ?? randomUUID;
+    /** A session and its transport, registered under the id the transport settles on. */
+    const open = async (sessionId?: string): Promise<LiveSession> => {
+      const session = createAgentSession(deps, scope, notifier);
+      // A closing transport removes the map's entry only while the entry is its own: a session
+      // re-opened under the same id meanwhile is not its to remove.
+      const forget = (id: string) => {
+        if (sessions.get(id)?.transport === transport) sessions.delete(id);
+      };
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: sessionId === undefined ? generateSessionId : () => sessionId,
+        onsessioninitialized: (id) => {
+          sessions.set(id, { transport, session });
+        },
+        onsessionclosed: forget,
+      });
+      await session.server.connect(transport);
+      // `connect` installed its own `transport.onclose`, which calls this; the session's own
+      // onclose detaches it from the notifier, and this removes it from the map on the way.
+      const detach = session.server.onclose;
+      session.server.onclose = () => {
+        detach?.();
+        if (transport.sessionId) forget(transport.sessionId);
+      };
+      return { transport, session };
+    };
+    /**
+     * A session opened under `sessionId` and primed as if its client had initialised it (the
+     * header's paragraph on re-opening); concurrent requests under one id share the one re-open.
+     */
+    const reopen = (sessionId: string): Promise<LiveSession> => {
+      const inFlight = reopening.get(sessionId);
+      if (inFlight) return inFlight;
+      const opening = (async () => {
+        const live = await open(sessionId);
+        const primed = await live.transport.handleRequest(syntheticInitialize(request));
+        // The transport marked itself initialised before answering; the answer itself is nobody's.
+        await primed.body?.cancel();
+        return live;
+      })().finally(() => {
+        reopening.delete(sessionId);
+      });
+      reopening.set(sessionId, opening);
+      return opening;
+    };
+    const reopens = token?.startsWith(MCP_ACCESS_TOKEN_PREFIX) === true;
+
+    /** The session's request, once the session is known to be this agent's — never another's. */
+    const handleAs = (live: LiveSession, req: Request): Promise<Response> =>
+      live.session.scope.agentId === scope.agentId
+        ? answered(live.transport.handleRequest(req))
+        : Promise.resolve(
+            refused(
+              unauthorized("session_mismatch", "This session was opened by another agent"),
+              "session_mismatch",
+            ),
+          );
+
     const sessionId = request.headers.get("mcp-session-id");
     if (sessionId) {
       const live = sessions.get(sessionId);
-      if (!live) return jsonRpcError(404, -32001, "Session not found");
-      if (live.session.scope.agentId !== scope.agentId) {
-        return unauthorized("session_mismatch", "This session was opened by another agent");
-      }
-      return live.transport.handleRequest(request);
+      if (live) return handleAs(live, request);
+      if (!reopens)
+        return refused(jsonRpcError(404, -32001, "Session not found"), "Session not found", -32001);
+      // Two agents presenting one unknown id at once share the one re-open, and the second finds
+      // a session that is not its own: the same refusal as on a session it never opened.
+      return handleAs(await reopen(sessionId), request);
     }
 
     if (request.method !== "POST") {
-      return jsonRpcError(400, -32000, "Bad Request: Mcp-Session-Id header is required");
+      const message = "Bad Request: Mcp-Session-Id header is required";
+      return refused(jsonRpcError(400, -32000, message), message, -32000);
+    }
+
+    if (reopens && !(await carriesInitialize(request))) {
+      // A chat product's client asking without a session: a session is opened for it and the
+      // answer carries the id, so a client that adopts it continues.
+      const id = generateSessionId();
+      return handleAs(await reopen(id), withSessionId(request, id));
     }
 
     // No session yet: this must be an `initialize`. The transport says so if it is not, in which
     // case nothing below registers a session and the pair is closed once the answer is written.
-    const session = createAgentSession(deps, scope, notifier);
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: options.sessionIdGenerator ?? randomUUID,
-      onsessioninitialized: (id) => {
-        sessions.set(id, { transport, session });
-      },
-      onsessionclosed: (id) => {
-        sessions.delete(id);
-      },
-    });
-    await session.server.connect(transport);
-    // `connect` installed its own `transport.onclose`, which calls this; the session's own onclose
-    // detaches it from the notifier, and this removes it from the map on the way.
-    const detach = session.server.onclose;
-    session.server.onclose = () => {
-      detach?.();
-      if (transport.sessionId) sessions.delete(transport.sessionId);
-    };
-
-    const response = await transport.handleRequest(request);
+    const { transport, session } = await open();
+    const response = await answered(transport.handleRequest(request));
     if (transport.sessionId === undefined) {
       // Not an `initialize` after all — the transport answered 400 and no session exists to keep.
       await session.close();

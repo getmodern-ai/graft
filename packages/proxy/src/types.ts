@@ -46,14 +46,19 @@ export type AuthScheme = (typeof AUTH_SCHEMES)[number];
  * only the fields that address the upstream. Kept apart from `AUTH_SCHEMES` on purpose: those are
  * the schemes a person may choose on the console's form, and a relay is never one of them — a
  * connection's *provider* decides that it relays (`ProxyConnection.relay`), and nothing a person
- * types can. `gateway` (GRA-58) and `pipedream_connect_proxy` (GRA-59) are the first two: a
- * company's API gateway fronting the vendor (`gateway-relay.ts`) and Pipedream's Connect proxy
- * (`pipedream-relay.ts`). The engine (`relay.ts`, `app.ts`) and its own tests still stand on a
- * plugin defined in the test, so a scheme is added here by adding its plugin to `RELAYS` and
- * nothing in the ladder changes.
+ * types can. Two names: `gateway` is the open form's own relay, a company's API gateway fronting
+ * the vendor (`gateway-relay.ts`, GRA-58); `relay` is the generic scheme every other relay
+ * provider's rows carry (GRA-103, ADR 0019 as amended 2026-09-20) — which upstream such a row goes
+ * through is the provider's to know, and it hands the proxy the plugin on the resolution rather
+ * than naming one here, so a hosted provider's plugin lives beside the provider and this package
+ * carries no vendor's. The engine (`relay.ts`, `app.ts`) and its own tests stand on a plugin
+ * defined in the test.
  */
-export const RELAY_SCHEMES = ["gateway", "pipedream_connect_proxy"] as const;
+export const RELAY_SCHEMES = ["gateway", "relay"] as const;
 export type RelayScheme = (typeof RELAY_SCHEMES)[number];
+
+/** The generic relay scheme: what a relay provider's rows record when the provider is not the open form's gateway. */
+export const RELAY_SCHEME: RelayScheme = "relay";
 
 /** Every scheme name a connection row may carry: what it signs with, or what it relays through. */
 export type ProxyScheme = AuthScheme | RelayScheme;
@@ -143,15 +148,15 @@ export type SchemeTarget = { url: URL; headers: Headers };
 /**
  * What an upstream proxy does with a caller's headers — the rules of the relay, as data, so a
  * plugin says *which* upstream it addresses and this table says *how* the caller's headers travel
- * (ADR 0019, "what Cando's relay taught"). Pipedream forwards a header to the vendor only under an
- * `x-pd-proxy-` prefix and refuses a documented list outright, `user-agent` among them; a gateway
- * that fronts the vendor itself forwards everything under its own name. Names are compared
+ * (ADR 0019, "what Cando's relay taught"). A broker's proxy forwards a header to the vendor only
+ * under a prefix of its own and refuses a documented list outright, `user-agent` among them; a
+ * gateway that fronts the vendor itself forwards everything under its own name. Names are compared
  * lower-case, as `Headers` reports them.
  */
 export type RelayHeaderRules = {
   /**
    * Every caller header is renamed under this prefix on the way to the upstream — including one
-   * that already carries it, so a caller sending `x-pd-proxy-authorization` cannot re-introduce a
+   * that already carries it, so a caller sending `<prefix>authorization` cannot re-introduce a
    * header the outgoing policy stripped (the upstream strips exactly one prefix). Null forwards the
    * caller's headers under their own names.
    */
@@ -170,12 +175,18 @@ export type RelayHeaderRules = {
  * query parameter, a header), the caller's headers under the upstream's rules, and the upstream's
  * own authentication from `fields`. What it does not do is decide anything the ladder already
  * decided: the vendor host was judged, the dry run has intercepted a write, the capability token has
- * admitted the call and been swept off the wire, all before `relay` runs. The shape GRA-58's gateway
- * and GRA-59's Pipedream plugins implement (`RELAYS` in `relay.ts`).
+ * admitted the call and been swept off the wire, all before `relay` runs. The shape the gateway's
+ * plugin implements here (`gateway-relay.ts`) and a hosted provider's implements beside itself; the
+ * proxy takes the plugin from the connection's resolution (`ProxyRelay.plugin`) and never looks
+ * one up by name.
  */
 export type RelayPlugin = {
   kind: "relay";
-  /** The name the row's `scheme` column carries and the wide event records — a `RELAY_SCHEMES` entry. */
+  /**
+   * What the wide event's `relay` records: the upstream the call left through. For the gateway it
+   * is the row's scheme too (`gateway`); a provider whose rows carry the generic `relay` scheme
+   * names its upstream here, so the audit trail says which proxy carried the call.
+   */
   scheme: string;
   /** The upstream's rules for the caller's headers; a connection may override a rule (`ProxyRelay.rules`). */
   rules: RelayHeaderRules;

@@ -31,6 +31,7 @@ import {
   type DocPage,
   type DryRunSummary,
   isValidUsage,
+  MAX_PROOF_READS,
   type ModelAnswer,
   type ModelConversation,
   type ModelDiagnostic,
@@ -42,7 +43,7 @@ import {
 import { hostSetOf } from "@graft/proxy/credential-source";
 import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
-import type { PublishOutcome } from "@graft/publish";
+import type { PublishArgs, PublishOutcome } from "@graft/publish";
 import type { SandboxHandle } from "@graft/sandbox";
 import { draftPath, sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import { NO_ELICITATION } from "../approval";
@@ -67,6 +68,7 @@ import {
   type AcquireSuccess,
   acquireNextStep,
   DEFAULT_ACQUIRE_CONFIG,
+  DEFAULT_STORE_MISS_RETRY_DELAYS_MS,
 } from "./shapes";
 
 /**
@@ -125,9 +127,10 @@ export function turnBudgetFor(maxAttempts: number): number {
   return maxAttempts * 6 + 6;
 }
 
-/** How many pages one `read_docs` answer may name, and how many proof reads one draft may ask for. */
+/** How many pages one `read_docs` answer may name. */
 export const MAX_DOCS_PER_TURN = 5;
-export const MAX_PROOF_READS = 5;
+/** The proof-read cap is `@graft/model`'s, so the protocol and the answer's validator name the number the job runs. */
+export { MAX_PROOF_READS };
 
 /** How much of a proof read's body the model is shown; enough to see a shape, not a catalogue. */
 export const PROOF_BODY_CHARS = 4_000;
@@ -795,6 +798,68 @@ class AcquireLoop {
     return reads;
   }
 
+  /**
+   * The store found nothing at a draft the check just read: the toolbox's view of a path another
+   * sandbox wrote can lag (GRA-123), and the refusal is the store's, not the module's. The job holds
+   * the draft, so it writes the files through the store itself — the side the publish reads — and
+   * publishes again; then, while the store still misses, waits and asks once per configured delay.
+   * Only after that is the model shown a refusal it can do nothing about but resubmit (GRA-141:
+   * one re-ask, with the store's own refresh, was not enough, and each miss cost an attempt).
+   */
+  private async publishAfterStoreMiss(
+    attempt: OpenAttempt,
+    args: PublishArgs,
+    publish: NonNullable<McpDeps["publishTool"]>,
+  ): Promise<PublishOutcome> {
+    let outcome: PublishOutcome | null = null;
+    const store = this.deps.toolbox;
+    if (store) {
+      await this.trace(
+        "publish",
+        `The toolbox store found nothing at ${args.draftPath} for attempt ${attempt.number}, though the check read it; writing the draft through the store and publishing again.`,
+        { attempt: attempt.number },
+      );
+      let written = false;
+      try {
+        await store.writeTree(args.toolboxId, args.draftPath, attempt.draft.files);
+        written = true;
+      } catch (error) {
+        // The write is one more way to reach the store, not the job's last: a refused write
+        // leaves the waits below to do their work (Greptile on #114). Only the write is caught:
+        // a publish that throws keeps the caller's handling, where a BAD_REQUEST is the
+        // definition's refusal.
+        await this.trace(
+          "publish",
+          `Writing the draft through the store failed (${errorMessage(error)}); waiting for the store instead.`,
+          { attempt: attempt.number },
+        );
+      }
+      if (written) {
+        outcome = await publish(args);
+        if (outcome.ok || !isStoreMiss(outcome)) return outcome;
+      }
+    } else {
+      await this.trace(
+        "publish",
+        `The toolbox store found nothing at ${args.draftPath} for attempt ${attempt.number}, though the check read it; this deployment gives the job no store to write through, so it waits and asks again.`,
+        { attempt: attempt.number },
+      );
+    }
+    const delays = this.config.storeMissRetryDelaysMs ?? DEFAULT_STORE_MISS_RETRY_DELAYS_MS;
+    for (const [index, delayMs] of delays.entries()) {
+      await this.trace(
+        "publish",
+        `The toolbox store still finds nothing at ${args.draftPath}; waiting ${delayMs} ms and asking again (${index + 1} of ${delays.length}).`,
+        { attempt: attempt.number },
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      outcome = await publish(args);
+      if (outcome.ok || !isStoreMiss(outcome)) return outcome;
+    }
+    // No store and no delays configured: the store is asked once more, as GRA-123 had it.
+    return outcome ?? (await publish(args));
+  }
+
   private async publishAndDryRun(
     attempt: OpenAttempt,
     connectionId: string,
@@ -813,7 +878,7 @@ class AcquireLoop {
     await this.step(`publishing ${wire}`);
     let outcome: PublishOutcome;
     try {
-      outcome = await publish({
+      const args = {
         personId: this.scope.personId,
         agentId: this.scope.agentId,
         jobId: this.job.id,
@@ -827,7 +892,11 @@ class AcquireLoop {
         // The version is written and nothing else moves: the pointer names only a version that
         // passed its dry run (ADR 0012, L0 as amended 2026-09-17), so it moves below, on the pass.
         activate: false,
-      });
+      };
+      outcome = await publish(args);
+      if (!outcome.ok && isStoreMiss(outcome)) {
+        outcome = await this.publishAfterStoreMiss(attempt, args, publish);
+      }
     } catch (error) {
       // A bad name or description is the publish's refusal before it reads anything; the model
       // fixes the definition as it would a diagnostic.
@@ -904,6 +973,10 @@ class AcquireLoop {
       vendor,
       name: draft.name,
       versionId: version.id,
+      // The job's connection, not the tool row's default (GRA-122): a republish onto an existing
+      // tool leaves the default where the pass will move it, and a default the person revoked
+      // since would refuse the dry run of every version this job publishes.
+      connectionId,
       input: draft.testInput,
       mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true },
       channel: NO_ELICITATION,
@@ -913,7 +986,7 @@ class AcquireLoop {
       : readDryRunReport((dry.answer as { dryRun?: unknown }).dryRun);
     if (!report) {
       const failure = dry.isError ? dry.answer : { error: "The run produced no dry-run report." };
-      const line = typeof failure.error === "string" ? failure.error : JSON.stringify(failure);
+      const line = describeRunFailure(failure);
       const didNotRun = `The dry run of ${wire} v${version.versionNumber} did not run: ${line}`;
       await this.trace("dry_run", didNotRun, {
         attempt: attempt.number,
@@ -1223,6 +1296,31 @@ class AcquireLoop {
   private end(kind: AcquireFailureKind, message: string, lastDiagnostics: unknown): JobEnded {
     return new JobEnded(this.failure(kind, message, lastDiagnostics));
   }
+}
+
+/**
+ * A dry run that did not run, in one line for the progress and the attempt's summary. A refusal
+ * carries its reason and message (`result.ts`), and both are the line (GRA-122): `refused` alone,
+ * which is all `error` says of one, hid `connection_revoked` and its sentence from the job's
+ * `tried` on 2026-09-20. Anything else is the runner's sentence, or the whole failure as JSON.
+ */
+function describeRunFailure(failure: Record<string, unknown>): string {
+  if (
+    failure.error === "refused" &&
+    typeof failure.reason === "string" &&
+    typeof failure.message === "string"
+  ) {
+    return `${failure.reason}: ${failure.message}`;
+  }
+  return typeof failure.error === "string" ? failure.error : JSON.stringify(failure);
+}
+
+/** A publish refused only because nothing was at the draft path — the store's miss, not a fault in the module (GRA-123). */
+function isStoreMiss(outcome: Extract<PublishOutcome, { ok: false }>): boolean {
+  return (
+    outcome.refusals.length > 0 &&
+    outcome.refusals.every((refusal) => refusal.rule === "draft-missing")
+  );
 }
 
 function toModelDiagnostic(diagnostic: {

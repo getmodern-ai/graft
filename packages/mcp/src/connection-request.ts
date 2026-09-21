@@ -29,7 +29,6 @@ import {
   widenProviderConnectionHosts,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
-import { SCHEME_CREDENTIAL_FIELDS } from "@graft/proxy/credential-fields";
 import { hostSetOf } from "@graft/proxy/credential-source";
 import { SCHEME_PARAMETERS } from "@graft/proxy/scheme-parameters";
 import { AUTH_SCHEMES, type AuthScheme, isAuthScheme } from "@graft/proxy/types";
@@ -39,6 +38,7 @@ import { connectionAskCard, credentialAskCard, scopeAskCard } from "./ask-card";
 import { notifyAgentsReachingConnection } from "./connected";
 import type { McpDeps } from "./deps";
 import { handoffUrl, signHandoffToken } from "./handoff";
+import { type HandoffForm, handoffSentence } from "./handoff-message";
 import type { ToolListChangedNotifier } from "./notifier";
 import { isPlainObject, refusal } from "./result";
 import { executeToolName } from "./tool-names";
@@ -79,7 +79,7 @@ import { executeToolName } from "./tool-names";
  * covers the vendor at these hosts decides how the person connects it. The keyring covers every
  * vendor and is always last, so with it alone every proposal takes the form below and the ask,
  * the answer and the card are exactly what they were before providers existed. A provider that
- * connects with a **link** (GRA-59; Pipedream) takes the same ask with a different card: the
+ * connects with a **link** (GRA-59; the hosted form's broker) takes the same ask with a different card: the
  * payload names the provider and what it calls the vendor, the person presses one button, the
  * provider's page runs the vendor's sign-in, and the server's return route — not a submit — makes
  * the connection and answers the ask once the provider has confirmed the account
@@ -158,7 +158,7 @@ export type ConnectionProposalPayload = {
    * the keyring's form.
    */
   providerConnect?: "form" | "link" | "none";
-  /** What a link provider calls the vendor on its side — Pipedream's app slug — for the card; null otherwise. */
+  /** What a link provider calls the vendor on its side — a broker's app slug — for the card; null otherwise. */
   providerTarget?: string | null;
   vendor: string;
   displayName: string;
@@ -198,7 +198,7 @@ export type ScopeAskPayload = {
   connectionId: string;
   vendor: string;
   displayName: string;
-  /** Where the row comes from (ADR 0019), so the card can say "via pipedream". */
+  /** Where the row comes from (ADR 0019), so the card can say "via <provider>". */
   provider: string;
   primaryHost: string;
   hosts: string[];
@@ -229,8 +229,9 @@ export const PROPOSAL_PROVENANCE_NOTE =
  * What every awaiting answer says about the build approval (GRA-75; ADR 0008, amendment of
  * 2026-09-18): the confirmation page offers it, on by default, for the asking agent and the
  * connection it is about to make — so the agent does not promise the person a second link that
- * `acquire` will not send. The tool's description says the same (`tools/meta.ts`), as does the
- * Hermes skill; `session.test.ts` pins the two.
+ * `acquire` will not send. The rule is `SERVER_INSTRUCTIONS`' and the Hermes skill's;
+ * `request_connection`'s description states the fact without the rule (GRA-111: descriptions
+ * describe, instructions instruct), and `session.test.ts` pins all four texts.
  */
 export const BUILD_APPROVAL_ON_THE_PAGE =
   "The same page offers to allow you to build tools against the connection, on by default; left on, acquire against it starts without a second link, so do not tell them to expect one.";
@@ -277,10 +278,18 @@ export type AwaitingHandoff = {
 /**
  * What either tool answers: `connected`, or the body it returns instead — a refusal, or an
  * awaiting answer with the ask card's data beside it (`ask-card.ts`, GRA-84) for the host to render.
+ * `isError` here means "not `connected`"; on the wire the awaiting answer is a result and the
+ * refusal an error (`result.ts`'s `toolAwaitingOrError`, GRA-112).
  */
 export type ConnectionRequestOutcome =
   | { isError: false; answer: Connected }
-  | { isError: true; answer: Record<string, unknown>; card?: AskCard };
+  | {
+      isError: true;
+      answer: Record<string, unknown>;
+      card?: AskCard;
+      /** The awaiting `message` in its card form (`handoff-message.ts`, GRA-120), for a client that renders the card. */
+      cardMessage?: string;
+    };
 
 /** The proposal as the agent sends it, before normalisation. */
 export type ConnectionProposalInput = {
@@ -296,7 +305,8 @@ export type ConnectionProposalInput = {
 export type CredentialRequestInput = { connectionId: string; reason?: string };
 
 /**
- * The scheme table in one sentence, for the tool's description — generated so it cannot drift. The
+ * The scheme table in one sentence — each signing scheme and the parameters a proposal carries for
+ * it — for `request_connection`'s `schemeConfig` description, generated so it cannot drift. The
  * signing schemes alone: a relay scheme is a provider's and never one the agent proposes (ADR 0019).
  */
 export function describeSchemes(): string {
@@ -306,10 +316,10 @@ export function describeSchemes(): string {
       ...rule.required,
       ...rule.optional.map((parameter) => `optional ${parameter}`),
     ];
-    // What the person supplies on the form: the scheme's secret fields, and the parameters only
-    // they can know — an OAuth client id (ADR 0005), which the proposal leaves out.
-    const entered = [...(rule.personEntered ?? []), ...SCHEME_CREDENTIAL_FIELDS[scheme]].join(", ");
-    return `${scheme} (parameters: ${parameters.join(", ") || "none"}; the person enters: ${entered || "nothing"})`;
+    // The parameters the proposal carries, and nothing of what the person types on the form: the
+    // secret fields and an OAuth client id (ADR 0005) are the console's, and naming them in a tool's
+    // schema is what ChatGPT's classifier read as risk handling (GRA-121).
+    return `${scheme}: ${parameters.join(", ") || "none"}`;
   }).join("; ");
 }
 
@@ -343,6 +353,17 @@ export function readScopeAnswer(answer: Record<string, unknown> | null | undefin
  * (vendor, hosts, scheme parameters) are `normaliseProposal`'s, so an agent reads one sentence
  * about the first thing to fix.
  */
+/** The arguments request_connection reads — its inputSchema's properties (`tools/meta.ts`); an argument outside this set is named back to the caller (GRA-130). */
+const PROPOSAL_ARGS = new Set([
+  "vendor",
+  "displayName",
+  "primaryHost",
+  "hosts",
+  "scheme",
+  "schemeConfig",
+  "docsUrl",
+]);
+
 export function readConnectionProposal(
   args: Record<string, unknown>,
 ): ConnectionProposalInput | { error: string } {
@@ -381,7 +402,29 @@ export function readConnectionProposal(
       schemeConfig = args.schemeConfig;
     }
   }
+  // An argument the tool does not read is named back, so a model that spelled a field wrong is
+  // told which (GRA-130: a call carrying an unknown key gets no silent drop). The accepted set is
+  // request_connection's inputSchema; the answer lists it so the retry is right the first time.
+  const unrecognised = Object.keys(args).filter((key) => !PROPOSAL_ARGS.has(key));
+  if (unrecognised.length > 0) {
+    problems.push(
+      `${unrecognised.join(", ")} ${unrecognised.length === 1 ? "is" : "are"} not a request_connection argument (it takes ${[...PROPOSAL_ARGS].join(", ")})`,
+    );
+  }
+  // Only the required fields actually absent, so a model that supplied `vendor` is not told vendor
+  // is missing (GRA-130). The proposal is read from the vendor's own documentation, which the
+  // message says, so the next call carries the base URL and the auth scheme.
+  const missing: string[] = [];
+  if (!vendor) missing.push("vendor");
+  if (!primaryHost) missing.push("primaryHost");
+  if (!scheme) missing.push("scheme");
+  if (missing.length > 0) {
+    problems.push(
+      `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} required and ${missing.length === 1 ? "was" : "were"} not supplied — read the vendor's documentation for its base URL (primaryHost) and auth scheme, then call again`,
+    );
+  }
   if (problems.length > 0) return { error: problems.join("; ") };
+  // The missing branch above returned when any of the three was absent; this narrows their types.
   if (!vendor || !primaryHost || !scheme) {
     return { error: "vendor, primaryHost and scheme are required" };
   }
@@ -645,6 +688,9 @@ export async function requestConnection(
  * Whatever the call answers, the agent is told which of the hosts it listed were set aside as
  * sign-in endpoints (GRA-89) and which the connection reaches, so it does not read the shorter host
  * set on the card, or in a later `connected`, as something lost. Nothing is added when none were.
+ * The outcome's other fields ride through untouched: the card, and the card-form message with the
+ * same sentence appended (GRA-120) — until then this rebuild dropped the card, so a proposal that
+ * named a sign-in host rendered none (Greptile on #96).
  */
 function namingHostsSetAside(
   outcome: ConnectionRequestOutcome,
@@ -657,11 +703,18 @@ function namingHostsSetAside(
     `${setAside.join(", ")} ${one ? "is a sign-in endpoint and was" : "are sign-in endpoints and were"} set aside, not recorded on the connection: ` +
     "tool calls never reach a sign-in endpoint (the sign-in runs in the console or on the provider's page), and hosts is for the hosts they do reach, " +
     `here ${hosts.join(", ")}.`;
-  const said = outcome.answer.message;
-  const message = typeof said === "string" && said.length > 0 ? `${said} ${sentence}` : sentence;
-  return outcome.isError
-    ? { isError: true, answer: { ...outcome.answer, message, hostsSetAside: [...setAside] } }
-    : { isError: false, answer: { ...outcome.answer, message, hostsSetAside: [...setAside] } };
+  const appended = (said: unknown) =>
+    typeof said === "string" && said.length > 0 ? `${said} ${sentence}` : sentence;
+  const hostsSetAside = [...setAside];
+  if (!outcome.isError) {
+    const { answer } = outcome;
+    return { ...outcome, answer: { ...answer, message: appended(answer.message), hostsSetAside } };
+  }
+  return {
+    ...outcome,
+    answer: { ...outcome.answer, message: appended(outcome.answer.message), hostsSetAside },
+    ...(outcome.cardMessage === undefined ? {} : { cardMessage: appended(outcome.cardMessage) }),
+  };
 }
 
 /**
@@ -676,7 +729,7 @@ async function routeProposal(
   deps: McpDeps,
   notifier?: ToolListChangedNotifier,
 ): Promise<ConnectionRequestOutcome> {
-  const provider = providerFor(deps.connection.providers, proposal.vendor, proposal.hosts);
+  const provider = await providerFor(deps.connection.providers, proposal.vendor, proposal.hosts);
   if (provider.connect.kind === "none") {
     return connectWithoutPersonStep(ctx, scope, provider, proposal, deps, notifier);
   }
@@ -684,7 +737,7 @@ async function routeProposal(
   const payload: ConnectionProposalPayload = {
     provider: provider.name,
     providerConnect: provider.connect.kind,
-    providerTarget: link?.target(proposal.vendor, proposal.hosts) ?? null,
+    providerTarget: link ? await link.target(proposal.vendor, proposal.hosts) : null,
     ...proposal,
     ...(link ? { note: LINK_PROVENANCE_NOTE } : {}),
   };
@@ -763,14 +816,24 @@ async function routeProposal(
       deps.pendingAction,
     ));
 
+  // The ask as it stands, not as this call would route it: an open ask a provider stepped aside
+  // from is the keyring's form now (GRA-147, `provider-link.ts`), and the answer, the card and the
+  // wording follow the row so the agent is not told to expect a provider's button the page no
+  // longer has.
+  const asked = (
+    open ? (open.payload as ConnectionProposalPayload) : payload
+  ) satisfies ConnectionProposalPayload;
+  const askedLink = asked.providerConnect === "link";
+  const askedProvider = asked.provider;
+
   // A link provider's ask is one click; the OAuth guidance is the keyring's form's alone (ADR 0005).
-  const oauth = !link && isOAuthAuthorizationCode(payload.scheme);
+  const oauth = !askedLink && isOAuthAuthorizationCode(asked.scheme);
   const redirectUri = oauth ? deps.oauthRedirectUri : undefined;
-  const what = `${payload.displayName} (${payload.vendor})`;
+  const what = `${asked.displayName} (${asked.vendor})`;
   return waitForAnswer(ctx, scope, action, deps, {
     awaiting: "awaiting_connection",
     what,
-    card: (url, agentName) => connectionAskCard({ action, agentName, payload, url }),
+    card: (url, agentName) => connectionAskCard({ action, agentName, payload: asked, url }),
     settle: (taken) =>
       settleByConnectionId(ctx, scope, taken, deps, {
         what,
@@ -783,33 +846,40 @@ async function routeProposal(
         onConnected: (connection) => connected(connection, "new"),
       }),
     ...(redirectUri ? { awaitingExtra: { redirectUri } } : {}),
-    ...(link ? { awaitingExtra: { provider: provider.name } } : {}),
-    awaitingMessage: (url, expiresAt) =>
-      link
-        ? `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) through ${provider.name} — one click: they sign in at the vendor on ${provider.name}'s page, and the vendor's token stays there; nothing passes through you, and nothing is typed in the console. ` +
-          `Relay this link so they can press Connect: ${url} It expires at ${expiresAt}. ` +
+    ...(askedLink ? { awaitingExtra: { provider: askedProvider } } : {}),
+    awaitingMessage: (url, expiresAt, form) =>
+      askedLink
+        ? `Graft needs the person to connect ${asked.displayName} (${asked.vendor}) through ${askedProvider} — one click: they sign in at the vendor on ${askedProvider}'s page, and the vendor's token stays there; nothing passes through you, and nothing is typed in the console. ` +
+          `${handoffSentence(form, "Relay this link so they can press Connect", url, expiresAt)} ` +
           `${BUILD_APPROVAL_ON_THE_PAGE} ` +
           "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
         : oauth
           ? // The agent is the guide (ADR 0005): which console, what to name the client, which URI.
-            `Graft needs the person to connect ${payload.displayName} (${payload.vendor}) with an OAuth client they register at the vendor — the client secret and the tokens never pass through you. ` +
+            `Graft needs the person to connect ${asked.displayName} (${asked.vendor}) with an OAuth client they register at the vendor — the client secret and the tokens never pass through you. ` +
             "Guide them in three sentences: open the vendor's developer console and create an OAuth client of the web-application kind; name it after Graft so they recognise it later; " +
             (redirectUri
               ? `and paste exactly this redirect URI into it: ${redirectUri} `
               : "and paste the redirect URI the form shows into it. ") +
-            `Then relay this link so they can enter the client id and secret and complete the consent in a popup: ${url} It expires at ${expiresAt}. ` +
+            `${handoffSentence(
+              form,
+              "Then relay this link so they can enter the client id and secret and complete the consent in a popup",
+              url,
+              expiresAt,
+            )} ` +
             `${BUILD_APPROVAL_ON_THE_PAGE} ` +
             "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected. " +
             "A Google Cloud project in Testing mode expires refresh tokens after seven days, so a Google connection reconnects weekly until the app is published."
-          : takesCredential(payload.scheme)
-            ? `Graft needs the person to enter the credential for ${payload.displayName} (${payload.vendor}) in the console — the secret never passes through you. ` +
-              `Relay this link so they can check the hosts and enter it: ${url} It expires at ${expiresAt}. ` +
+          : takesCredential(asked.scheme)
+            ? `Graft needs the person to enter the credential for ${asked.displayName} (${asked.vendor}) in the console — the secret never passes through you. ` +
+              `${handoffSentence(form, "Relay this link so they can check the hosts and enter it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected."
             : // A keyless scheme (GRA-66) has nothing to enter: the ask is a confirmation of the
-              // hosts, and the message names no credential and no secret (GRA-91).
-              `Graft needs the person to confirm the connection to ${payload.displayName} (${payload.vendor}) in the console — the scheme takes no credential, so nothing is entered. ` +
-              `Relay this link so they can check the hosts and confirm it: ${url} It expires at ${expiresAt}. ` +
+              // hosts, and the message names no credential and no secret (GRA-91). Under a card
+              // the confirmation is the card's own button (GRA-84), so the card form names no
+              // console in its lead (Greptile on #96).
+              `Graft needs the person to confirm the connection to ${asked.displayName} (${asked.vendor})${form === "card" ? "" : " in the console"} — the scheme takes no credential, so nothing is entered. ` +
+              `${handoffSentence(form, "Relay this link so they can check the hosts and confirm it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
   });
@@ -873,9 +943,9 @@ async function awaitScope(
     what,
     card: (url, agentName) => scopeAskCard({ action, agentName, payload, url }),
     awaitingExtra: { connectionId: connection.id, provider: connection.provider },
-    awaitingMessage: (url, expiresAt) =>
+    awaitingMessage: (url, expiresAt, form) =>
       `The person already has a connection to ${what}${via}, made for another of their agents; Graft needs them to allow you to use it — no new connection, nothing entered. ` +
-      `Relay this link so they can allow it in the console: ${url} It expires at ${expiresAt}. ` +
+      `${handoffSentence(form, "Relay this link so they can allow it in the console", url, expiresAt)} ` +
       `${BUILD_APPROVAL_ON_THE_PAGE} ` +
       "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
     settle: async (taken) => {
@@ -1096,9 +1166,9 @@ export async function requestCredential(
         declinedReason: "credential_declined",
         onConnected: (row) => connected(row, "credential"),
       }),
-    awaitingMessage: (url, expiresAt) =>
+    awaitingMessage: (url, expiresAt, form) =>
       `Graft needs the person to re-enter the credential for ${connection.displayName} (${connection.vendor}) in the console — the secret never passes through you. ` +
-      `Relay this link: ${url} It expires at ${expiresAt}. ` +
+      `${handoffSentence(form, "Relay this link", url, expiresAt)} ` +
       "Call request_credential again once they have — the answer is kept, and the call then answers connected.",
   });
 }
@@ -1149,7 +1219,8 @@ async function waitForAnswer(
     what: string;
     /** What the taken answer means for this ask — `connected`, or the refusal that says what the person said. */
     settle: (taken: PendingActionRow) => Promise<ConnectionRequestOutcome>;
-    awaitingMessage: (url: string, expiresAt: string) => string;
+    /** The awaiting message, in the console form or the card form (`handoff-message.ts`, GRA-120). */
+    awaitingMessage: (url: string, expiresAt: string, form: HandoffForm) => string;
     /** What the awaiting answer carries beyond the link — an OAuth proposal's redirect URI, a provider's name, the scope ask's connection. */
     awaitingExtra?: Pick<AwaitingHandoff, "redirectUri" | "provider" | "connectionId">;
     /** The ask card's data for a host that renders one (GRA-84), given the link and the agent's name. */
@@ -1196,12 +1267,17 @@ async function waitForAnswer(
     pendingActionId: action.id,
     url,
     expiresAt,
-    message: ask.awaitingMessage(url, expiresAt),
+    message: ask.awaitingMessage(url, expiresAt, "console"),
     ...ask.awaitingExtra,
   };
   // The agent's name is read here, on the ask path alone: the card shows who is asking.
   const agent = await getAgent(ctx, { personId: scope.personId }, scope.agentId, deps.agent);
-  return { isError: true, answer: awaiting, card: ask.card(url, agent?.name ?? scope.agentId) };
+  return {
+    isError: true,
+    answer: awaiting,
+    card: ask.card(url, agent?.name ?? scope.agentId),
+    cardMessage: ask.awaitingMessage(url, expiresAt, "card"),
+  };
 }
 
 /** The connection and credential asks' answer: the row the console named, or the generic decline. */

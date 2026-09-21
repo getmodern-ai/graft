@@ -15,12 +15,13 @@ import type { AcquireJobRow } from "@graft/db/repo/acquire-job";
  * message }`, with the build ask's `awaiting_approval` body passed through from `approval.ts`.
  */
 
-/** `acquire`'s answer once a job exists: its id, its status, and the first progress line at once. */
-export type AcquireStarted = {
-  jobId: string;
-  status: "queued" | "running";
-  progress: string[];
-};
+/**
+ * `acquire`'s answer once a job exists is `AcquireStatus` (GRA-125): the call waits the approvals'
+ * wait for the job, so a fast job answers settled with `result`, and a slow one answers `queued` or
+ * `running` with the lines so far. Until GRA-125 this was `AcquireStarted`, the id and the first
+ * line at once.
+ */
+export type AcquireStarted = AcquireStatus;
 
 /** The job succeeded: the tool is published, promoted for the calling agent, and in its list. */
 export type AcquireSuccess = {
@@ -120,7 +121,20 @@ export type AcquireConfig = {
   maxAttempts: number;
   /** Tokens per job, input and output summed — `GRAFT_ACQUIRE_TOKEN_CEILING`. */
   tokenCeiling: number;
+  /**
+   * How long the publish waits between asks when the toolbox store finds nothing at a draft the
+   * check just read (GRA-141), one wait per element; `DEFAULT_STORE_MISS_RETRY_DELAYS_MS` when unset.
+   * A test passes short ones.
+   */
+  storeMissRetryDelaysMs?: readonly number[];
 };
 
 /** The same figures `@graft/env`'s `acquireMaxAttempts` and `acquireTokenCeiling` default to. */
 export const DEFAULT_ACQUIRE_CONFIG: AcquireConfig = { maxAttempts: 4, tokenCeiling: 400_000 };
+
+/**
+ * About four seconds in all before a store miss reaches the model. The hosted store's view of a
+ * path another sandbox wrote lagged for tens of seconds at worst on 2026-09-20; the job writes the
+ * draft through the store first (`job.ts`), and these waits are the floor under that.
+ */
+export const DEFAULT_STORE_MISS_RETRY_DELAYS_MS: readonly number[] = [250, 500, 1000, 2000];

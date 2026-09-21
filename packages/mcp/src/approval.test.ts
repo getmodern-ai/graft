@@ -260,12 +260,12 @@ const actionsOf = (agentId: string, kind: string) =>
 
 const approvalOf = (agentId: string, toolId: string) => store.approvals.get(`${agentId} ${toolId}`);
 
-/** `awaiting_approval` as the agent reads it, with the pending action it names. */
+/** `awaiting_approval` as the agent reads it, with the pending action it names — a result, not an error (GRA-112). */
 function awaiting(result: CallToolResult): {
   answer: Record<string, unknown>;
   action: PendingActionRow;
 } {
-  expect(result.isError).toBe(true);
+  expect(result.isError).toBe(false);
   const said = body(result);
   expect(said).toMatchObject({
     error: "awaiting_approval",
@@ -326,6 +326,12 @@ describe("through a handoff — the channel every harness has", () => {
       const first = await a.call(CREATE_ITEM, { limit: 1 });
       const { answer: said, action } = awaiting(first);
       expect(vendor.requests).toHaveLength(requestsBefore);
+      // The tool ask's card rides beside the answer, in structuredContent alone (GRA-116; GRA-84):
+      // a host renders it for the tool that answered, so the answer must carry it.
+      expect(first.structuredContent).toMatchObject({
+        card: { kind: "tool", answerable: true, toolName: CREATE_ITEM, pendingActionId: action.id },
+      });
+      expect(first.content[0]).not.toMatchObject({ text: expect.stringContaining('"card"') });
       expect(action).toMatchObject({
         agentId: AGENT_A,
         kind: "tool",
@@ -556,6 +562,10 @@ describe("through a handoff — the channel every harness has", () => {
     try {
       const viaRunTool = await c.call("run_tool", { vendor: "demo", name: "create-item" });
       awaiting(viaRunTool);
+      // run_tool carries the same card (GRA-116).
+      expect(viaRunTool.structuredContent).toMatchObject({
+        card: { kind: "tool", answerable: true, toolName: CREATE_ITEM },
+      });
 
       const dry = await c.call("run_tool", { vendor: "demo", name: "delete-item", dryRun: true });
       expect(dry.isError).toBeFalsy();
@@ -574,7 +584,12 @@ describe("the build approval", () => {
     const b = await connect(TOKEN_B);
     const command = RUN_LIST_ITEMS;
     try {
-      const first = awaiting(await a.call(executeToolName(CONN_DEMO), { command }));
+      const executeResult = await a.call(executeToolName(CONN_DEMO), { command });
+      const first = awaiting(executeResult);
+      // The build ask's card rides on the execute tool's answer too (GRA-116).
+      expect(executeResult.structuredContent).toMatchObject({
+        card: { kind: "build", answerable: true, pendingActionId: first.action.id },
+      });
       expect(first.action).toMatchObject({
         agentId: AGENT_A,
         kind: "build",

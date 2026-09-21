@@ -216,7 +216,7 @@ describe("a connection proposed over MCP and entered over HTTP", () => {
     const b = await connect(TOKEN_B);
     try {
       const first = await a.call("request_connection", PROPOSAL);
-      expect(first.isError).toBe(true);
+      expect(first.isError).toBe(false);
       const said = body(first);
       expect(said).toMatchObject({
         error: "awaiting_connection",

@@ -3,7 +3,6 @@ import { join } from "node:path";
 import {
   type ConnectionProvider,
   createGatewayProvider,
-  createPipedreamProvider,
   keyringProvider,
   type ProviderConnect,
   providerListProblem,
@@ -16,7 +15,6 @@ import {
   type ModelTelemetryBacking,
   NO_ANALYTICS,
 } from "@graft/observability";
-import { createPipedreamClient, type PipedreamClient } from "@graft/pipedream";
 import {
   AUTH_SCHEMES,
   createUpstreamFetch,
@@ -50,14 +48,14 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  * broker for the vendors it has, the keyring for the rest — and a proposal is routed to the first
  * that covers it. The keyring is always present and last: `open` enables it alone, and `cloud`
  * appends it after whatever the private package answers, so today's behaviour is every deployment's
- * floor and no hosted provider can shadow it (`providerListProblem` refuses a list that tries). Two
- * providers are open code switched on by configuration rather than by form (ADR 0019, "code is open
- * while configuration may be hosted"), and `environmentProviders` puts them on the list in either
- * form: the **gateway** provider (GRA-58) whenever the `GRAFT_GATEWAY_*` group is set, first, ahead
- * of any broker the hosted package answers with, because an operator who named a vendor host as
- * covered by their gateway meant it; and the **Pipedream** provider (GRA-59) whenever the
- * `GRAFT_PIPEDREAM_*` group is set, after the hosted providers and ahead of the keyring, since the
- * hosted tier is what sets it (graft-cloud's app stack), though a self-host may. Absent otherwise.
+ * floor and no hosted provider can shadow it (`providerListProblem` refuses a list that tries). One
+ * provider is the environment's in either form (ADR 0019 as amended 2026-09-17): the **gateway**
+ * (GRA-58) whenever the `GRAFT_GATEWAY_*` group is set, first, ahead of any broker the hosted package
+ * answers with, because an operator who named a vendor host as covered by their gateway meant it —
+ * a company's own API gateway is a self-hoster's thing and not a vendor of Graft's. Every other
+ * provider is the private package's, code and configuration alike (ADR 0002 as amended 2026-09-19;
+ * GRA-103 moved the last one there), so under `open` the list is the gateway when configured and
+ * the keyring, and nothing else.
  *
  * `open` is what this repository holds: the sandbox `GRAFT_SANDBOX_BACKEND` names — Docker when
  * its pair of variables is set, none when it is not, or the in-process fake for a laptop without a
@@ -189,10 +187,6 @@ export type BackingsEnv = Pick<
   | "GRAFT_GATEWAY_HEADER_NAME"
   | "GRAFT_GATEWAY_HEADER_VALUE"
   | "GRAFT_GATEWAY_HEADER_PREFIX"
-  | "GRAFT_PIPEDREAM_PROJECT_ID"
-  | "GRAFT_PIPEDREAM_ENVIRONMENT"
-  | "GRAFT_PIPEDREAM_CLIENT_ID"
-  | "GRAFT_PIPEDREAM_CLIENT_SECRET"
   | "GRAFT_SMTP_URL"
   | "GRAFT_MAIL_FROM"
 >;
@@ -232,33 +226,6 @@ export function gatewayProviderFrom(
 }
 
 /**
- * The Pipedream provider the environment configures, or null when its group is unset (ADR 0019,
- * GRA-59). `@graft/env` has refused a partial group by the time this runs, so the four are read as
- * one; the client is built from them unless the caller hands one in — a fake in a test, one
- * pointed at a fake Pipedream in the proof script (`SelectBackingsDeps.pipedreamClient`).
- */
-export function pipedreamProviderFrom(
-  env: Pick<
-    BackingsEnv,
-    | "GRAFT_PIPEDREAM_PROJECT_ID"
-    | "GRAFT_PIPEDREAM_ENVIRONMENT"
-    | "GRAFT_PIPEDREAM_CLIENT_ID"
-    | "GRAFT_PIPEDREAM_CLIENT_SECRET"
-  >,
-  deps: Pick<SelectBackingsDeps, "pipedreamClient"> = {},
-): ConnectionProvider | null {
-  const projectId = env.GRAFT_PIPEDREAM_PROJECT_ID;
-  const environment = env.GRAFT_PIPEDREAM_ENVIRONMENT;
-  const clientId = env.GRAFT_PIPEDREAM_CLIENT_ID;
-  const clientSecret = env.GRAFT_PIPEDREAM_CLIENT_SECRET;
-  if (!projectId || !environment || !clientId || !clientSecret) return null;
-  const client =
-    deps.pipedreamClient ??
-    createPipedreamClient({ projectId, environment, clientId, clientSecret });
-  return createPipedreamProvider({ client });
-}
-
-/**
  * The mail transport the environment configures (ADR 0021 as amended for GRA-92), or null when the
  * `GRAFT_SMTP_URL`/`GRAFT_MAIL_FROM` pair is unset: the SMTP relay every self-host has, in either
  * form — the one backing of this seam that is open code switched on by configuration. `@graft/env`
@@ -277,12 +244,6 @@ export type SelectBackingsDeps = {
   raw?: Readonly<Record<string, string | undefined>>;
   /** The module imported under `cloud`. Default `CLOUD_BACKINGS_MODULE`; a test points it at a file. */
   cloudModule?: string;
-  /**
-   * The Pipedream Connect client the provider is built over, in place of the one
-   * `GRAFT_PIPEDREAM_*` would build — a fake in a test, one pointed at a fake Pipedream in the proof
-   * script. Read only when the group is set; without the group there is no provider to hand it to.
-   */
-  pipedreamClient?: PipedreamClient;
 };
 
 export async function selectBackings(
@@ -290,25 +251,21 @@ export async function selectBackings(
   deps: SelectBackingsDeps = {},
 ): Promise<Backings> {
   if (env.GRAFT_BACKINGS === "cloud") return loadCloudBackings(env, deps);
-  return openBackings(env, deps);
+  return openBackings(env);
 }
 
 /**
- * The providers configuration switches on in either form (ADR 0019), in routing order: the gateway
- * (GRA-58) ahead of Pipedream (GRA-59), because an operator who named a vendor host as covered by
- * their gateway meant it, ahead of a broker's app table; each on the list only when its
- * all-or-nothing group is set, and both ahead of the keyring, which the caller appends last.
+ * The providers configuration switches on in either form (ADR 0019), in routing order, ahead of
+ * the keyring the caller appends last: the gateway (GRA-58) when its all-or-nothing group is set,
+ * and nothing else since GRA-103 — a vendor's provider is the private package's.
  */
-export function environmentProviders(
-  env: BackingsEnv,
-  deps: Pick<SelectBackingsDeps, "pipedreamClient"> = {},
-): ConnectionProvider[] {
-  return [gatewayProviderFrom(env), pipedreamProviderFrom(env, deps)].filter(
+export function environmentProviders(env: BackingsEnv): ConnectionProvider[] {
+  return [gatewayProviderFrom(env)].filter(
     (provider): provider is ConnectionProvider => provider !== null,
   );
 }
 
-function openBackings(env: BackingsEnv, deps: SelectBackingsDeps): Backings {
+function openBackings(env: BackingsEnv): Backings {
   if (env.GRAFT_KEYRING_SECRET === undefined) {
     // `@graft/env` refuses this combination at boot (`serverEnvIssues`); the check here is what
     // makes the narrowing true for a caller that assembled the environment some other way.
@@ -348,7 +305,7 @@ function openBackings(env: BackingsEnv, deps: SelectBackingsDeps): Backings {
     sandbox,
     keyring: createLocalKeyring(env.GRAFT_KEYRING_SECRET),
     mirror: createNoopToolboxMirror(),
-    providers: [...environmentProviders(env, deps), keyringProvider],
+    providers: [...environmentProviders(env), keyringProvider],
     store,
     toolboxRoot: store.root,
     mail: environmentMail(env) ?? consoleTransport,
@@ -396,18 +353,10 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
     modelTelemetry,
     ...seams
   } = created;
-  // The environment's gateway first (GRA-58), the hosted providers, then the Pipedream provider the
-  // environment switches on (GRA-59), and the keyring after all of them, always: the floor every
-  // deployment has (ADR 0019). `environmentProviders` states the order between the two configured
-  // ones; the hosted list sits between them here because each side's reason places it there.
-  const gateway = gatewayProviderFrom(env);
-  const pipedream = pipedreamProviderFrom(env, deps);
-  const providers = [
-    ...(gateway ? [gateway] : []),
-    ...(hosted ?? []),
-    ...(pipedream ? [pipedream] : []),
-    keyringProvider,
-  ];
+  // The environment's gateway first (GRA-58), then the hosted providers in the order the private
+  // package answers them, and the keyring after all of them, always: the floor every deployment
+  // has (ADR 0019).
+  const providers = [...environmentProviders(env), ...(hosted ?? []), keyringProvider];
   const problem = providerListProblem(providers);
   if (problem) {
     throw new Error(`${specifier}'s createCloudBackings returned connection providers: ${problem}`);

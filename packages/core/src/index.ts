@@ -82,6 +82,15 @@ export {
   setApproval,
   setAskEveryCall,
 } from "./approval/approval.service";
+export {
+  ASK_ANSWERED_MESSAGE_TYPE,
+  type AskAnsweredMessage,
+  askAnsweredMessage,
+  FROM_CARD,
+  FROM_CARD_CLOSE_MS,
+  FROM_CARD_PARAM,
+  openedFromCard,
+} from "./connection/card.rules";
 export { type ConnectionDeps, createConnectionDeps } from "./connection/connection.deps";
 export {
   DISPLAY_NAME_MAX_LENGTH,
@@ -195,15 +204,6 @@ export {
   signOAuthState,
   verifyOAuthState,
 } from "./connection/oauth-consent";
-export {
-  createPipedreamProvider,
-  newestUnclaimedAccount,
-  PIPEDREAM_APPS,
-  PIPEDREAM_PROVIDER,
-  type PipedreamApp,
-  type PipedreamProviderDeps,
-  pipedreamAppFor,
-} from "./connection/pipedream-provider";
 export {
   type ConnectionProvider,
   DEFAULT_PROVIDERS,
@@ -369,6 +369,7 @@ export {
   moveToolPointer,
   nextVersionNumber,
   publishToolVersion,
+  rebindToolIfConnectionDead,
   recordDryRun,
   TOOL_DESCRIPTION_MAX_LENGTH,
   TOOL_NAME_MAX_LENGTH,

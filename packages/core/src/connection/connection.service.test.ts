@@ -175,12 +175,12 @@ function linkProvider(): ConnectionProvider & { revoked: string[]; revokedRefs: 
     name: "broker",
     connect: {
       kind: "link",
-      scheme: "pipedream_connect_proxy",
-      target: (vendor) => (vendor === "gmail" ? "gmail" : null),
+      scheme: "relay",
+      target: async (vendor) => (vendor === "gmail" ? "gmail" : null),
       start: async () => ({ url: "https://broker.example/link", expiresAt: NOW }),
       complete: async () => ({ ok: true, ref: "acct_1", label: null }),
     },
-    covers: (vendor) => vendor === "gmail",
+    covers: async (vendor) => vendor === "gmail",
     resolve: (r) => ({
       mode: "relay",
       relay: { plugin: fakeRelay, obtain: async () => ({ accountId: r.providerRef ?? "" }) },
@@ -493,7 +493,7 @@ describe("connectThroughProvider (ADR 0019; GRA-59)", () => {
     id: "conn_g",
     provider: "broker",
     vendor: "gmail",
-    scheme: "pipedream_connect_proxy" as const,
+    scheme: "relay" as const,
     schemeConfig: {},
     primaryHost: "https://gmail.googleapis.com/gmail/v1",
     hosts: ["gmail.googleapis.com", "www.googleapis.com"],
@@ -513,7 +513,7 @@ describe("connectThroughProvider (ADR 0019; GRA-59)", () => {
       providerRef: "acct_1",
       vendor: "gmail",
       displayName: "Gmail",
-      scheme: "pipedream_connect_proxy",
+      scheme: "relay",
       schemeConfig: {},
       primaryHost: "https://gmail.googleapis.com/gmail/v1",
       hosts: ["gmail.googleapis.com", "www.googleapis.com"],
@@ -553,6 +553,98 @@ describe("connectThroughProvider (ADR 0019; GRA-59)", () => {
     await connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, deps2);
     expect(deps2.setConnectionProviderRef).not.toHaveBeenCalled();
     expect(deps2.insertConnection).toHaveBeenCalled();
+  });
+
+  it("reconnects a released row whatever primary host and hosts the proposal names — keeping its id, primary host and name, widening its hosts to the union (GRA-122)", async () => {
+    const broker = linkProvider();
+    // The Gmail row as a first proposal made it: the bare API host, one host — and the proposal
+    // that reconnects it names `…/gmail/v1` and a second host, as the live case did (GRA-122).
+    const released = {
+      ...gmailRow,
+      providerRef: null,
+      revokedAt: NOW,
+      primaryHost: "https://gmail.googleapis.com",
+      hosts: ["gmail.googleapis.com"],
+    };
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      listConnections: vi.fn(async () => [released]),
+      setConnectionProviderRef: vi.fn(async (_db, _p, id, providerRef) => ({
+        ...released,
+        id,
+        providerRef,
+        revokedAt: null,
+      })),
+      addConnectionHosts: vi.fn(async (_db, _p, _id, hosts: string[]) => ({
+        ...released,
+        providerRef: "acct_1",
+        revokedAt: null,
+        hosts: [...released.hosts, ...hosts.filter((host) => !released.hosts.includes(host))],
+      })),
+    });
+    const out = await connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, deps);
+    expect(deps.setConnectionProviderRef).toHaveBeenCalledWith(
+      ctx.db,
+      "person_1",
+      "conn_g",
+      "acct_1",
+    );
+    expect(deps.addConnectionHosts).toHaveBeenCalledWith(ctx.db, "person_1", "conn_g", [
+      "gmail.googleapis.com",
+      "www.googleapis.com",
+    ]);
+    expect(deps.insertConnection).not.toHaveBeenCalled();
+    // The id every scope and every tool binding names; the primary host the proxy prepends to every
+    // module path; the name the person gave it — none of them the proposal's to change.
+    expect(out).toMatchObject({
+      id: "conn_g",
+      primaryHost: "https://gmail.googleapis.com",
+      displayName: gmailRow.displayName,
+      hosts: ["gmail.googleapis.com", "www.googleapis.com"],
+      revokedAt: null,
+    });
+  });
+
+  it("prefers the most recently revoked of several released rows, widens nothing when the union is already declared, and never touches a keyring row of the vendor", async () => {
+    const broker = linkProvider();
+    const older = {
+      ...gmailRow,
+      id: "conn_older",
+      providerRef: null,
+      revokedAt: new Date(NOW.getTime() - 60_000),
+    };
+    const newer = { ...gmailRow, id: "conn_newer", providerRef: null, revokedAt: NOW };
+    // A released row of the same vendor made through the console's form: the keyring's way back is
+    // a credential re-entered, and a link never reconnects it.
+    const keyring = {
+      ...gmailRow,
+      id: "conn_keyring",
+      provider: "keyring",
+      scheme: "oauth_authorization_code" as const,
+      providerRef: null,
+      revokedAt: NOW,
+    };
+    const deps = fakeDeps({
+      providers: [broker, keyringProvider],
+      listConnections: vi.fn(async () => [keyring, older, newer]),
+    });
+    await connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, deps);
+    expect(deps.setConnectionProviderRef).toHaveBeenCalledWith(
+      ctx.db,
+      "person_1",
+      "conn_newer",
+      "acct_1",
+    );
+    expect(deps.addConnectionHosts).not.toHaveBeenCalled();
+    expect(deps.insertConnection).not.toHaveBeenCalled();
+
+    const keyringOnly = fakeDeps({
+      providers: [broker, keyringProvider],
+      listConnections: vi.fn(async () => [keyring]),
+    });
+    await connectThroughProvider(ctx, PRINCIPAL, { ...input, provider: broker }, keyringOnly);
+    expect(keyringOnly.setConnectionProviderRef).not.toHaveBeenCalled();
+    expect(keyringOnly.insertConnection).toHaveBeenCalledTimes(1);
   });
 
   it("answers CONFLICT when the database refuses a reference another row already carries — two landings claimed one account", async () => {

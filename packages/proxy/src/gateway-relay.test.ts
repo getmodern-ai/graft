@@ -14,7 +14,7 @@ import {
   gatewayRelay,
   gatewayRelayUrl,
 } from "./gateway-relay";
-import { PASSTHROUGH_RELAY_RULES, RELAYS } from "./relay";
+import { PASSTHROUGH_RELAY_RULES } from "./relay";
 import { MissingCredentialFieldError } from "./scheme-errors";
 import type {
   CapabilityClaims,
@@ -251,8 +251,7 @@ describe("the gateway relay's URL form", () => {
 });
 
 describe("the gateway relay plugin", () => {
-  it("is catalogued under its scheme, forwards caller headers under their own names, and names no header of its own", () => {
-    expect(RELAYS[GATEWAY_RELAY_SCHEME]).toBe(gatewayRelay);
+  it("is named for its scheme, forwards caller headers under their own names, and names no header of its own", () => {
     expect(RELAY_SCHEMES).toContain(GATEWAY_RELAY_SCHEME);
     expect(gatewayRelay.scheme).toBe("gateway");
     expect(gatewayRelay.rules).toEqual(PASSTHROUGH_RELAY_RULES);

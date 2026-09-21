@@ -29,6 +29,13 @@ export type AnalyticsEvent =
   | "scope_changed"
   | "model_key_set"
   | "model_key_removed"
+  // A link provider's connect (ADR 0019), at the server's two link routes (GRA-147): whether the
+  // provider's link could be minted, and how the person's return ended. Properties: `provider`,
+  // and on the return `outcome` (connected | failed | declined). Counted so a provider that
+  // cannot finish is seen rather than quietly worked around.
+  | "provider_link_started"
+  | "provider_link_fell_back"
+  | "provider_link_returned"
   // Over MCP
   | "tool_called"
   | "acquire_completed"

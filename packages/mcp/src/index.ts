@@ -125,6 +125,7 @@ export {
   type PublishTool,
   type ToolboxReader,
   type ToolCallEvent,
+  type TransportRefusalEvent,
 } from "./deps";
 export {
   HANDOFF_PATH,
@@ -151,6 +152,17 @@ export {
   type ToolListChangedNotifier,
 } from "./notifier";
 export { promotePublished } from "./promote";
+export {
+  isProviderLinkFallback,
+  mintProviderLink,
+  type ProviderLinkChoices,
+  type ProviderLinkFallback,
+  type ProviderLinkMintDeps,
+  type ProviderLinkStartResult,
+  proposalOfLinkAsk,
+  providerFallbackNote,
+  type StartedProviderLink,
+} from "./provider-link";
 export { type Refusal, refusal, withCard } from "./result";
 export { revokeConnectionAndNotify } from "./revoke";
 export {
@@ -200,4 +212,6 @@ export {
 } from "./tool-names";
 export { authoredToolDefinition, META_TOOL_NAMES } from "./tools";
 export { ANSWER_ASK, CARD_NOT_AVAILABLE, readAnswerAskInput } from "./tools/answer-ask";
+export { ASK_STATUS, askState, askStateSentence } from "./tools/ask-status";
+export { START_LINK } from "./tools/start-link";
 export { type ReadWebPage, readWebPage, type WebPageResult } from "./web-page";

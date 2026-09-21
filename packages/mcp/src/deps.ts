@@ -53,12 +53,13 @@ import { type ReadWebPage, readWebPage } from "./web-page";
  */
 
 /**
- * The one read of the toolbox the MCP server makes through the store rather than through a sandbox
- * — `read_tool_source`, which has no reason to provision one. A run never reads through it: the
- * sandbox sees the mounted volume (ADR 0002's seam), and `@graft/toolbox`'s README says how the
- * store's tree and the mount are one.
+ * The toolbox as the MCP server touches it through the store rather than through a sandbox: the one
+ * read, `read_tool_source`, which has no reason to provision one; and the one write, an acquire job
+ * putting its draft where the publish reads when the store's view of the sandbox's write lags
+ * (`acquire/job.ts`, GRA-141). A run never reads through it: the sandbox sees the mounted volume
+ * (ADR 0002's seam), and `@graft/toolbox`'s README says how the store's tree and the mount are one.
  */
-export type ToolboxReader = Pick<ToolboxStore, "readTree">;
+export type ToolboxReader = Pick<ToolboxStore, "readTree" | "writeTree">;
 
 /** `publish_tool`'s publish — `@graft/publish`'s `publishToolVersion` with its deps bound. */
 export type PublishTool = (args: PublishArgs) => Promise<PublishOutcome>;
@@ -136,6 +137,14 @@ export type McpDeps = {
    */
   oauthRedirectUri?: string;
   /**
+   * `GRAFT_AUTH_URL` — the server's own origin, on which a link provider's return route answers
+   * (ADR 0019; `apps/server/src/provider-link.ts`), so the ask card's `start_link` can mint a
+   * link whose return lands there (`provider-link.ts`, GRA-117). Optional so a harness with no
+   * link provider needs nothing; `apps/server` always binds it, and without it `start_link`
+   * refuses with a sentence saying the console is the place.
+   */
+  authUrl?: string;
+  /**
    * The `tools/list_changed` notifier, one per process, shared by the endpoint's sessions and the
    * sweep (`sweep.ts`) so a demotion the rule makes reaches the harness exactly as one the agent made
    * does (ADR 0003). `createMcpDeps` makes it; `createMcpHttpApp` makes its own when it is absent.
@@ -171,6 +180,27 @@ export type McpDeps = {
    * there is one, the latency. Absent, a call is exactly what it was.
    */
   onToolCall?: (event: ToolCallEvent) => void;
+  /**
+   * Fired once for every `/mcp` request the door or the transport refuses before any tool runs
+   * (GRA-131): Graft's own 401, 404 and 400 in `http.ts`, and the SDK transport's 4xx — an
+   * `initialize` under a live session, an unsupported protocol version, a parse error, a missing
+   * session header. The reading of a 400 in the request log was a guess without it (GRA-124,
+   * GRA-129). Carries the status and the JSON-RPC error, never the body. Absent, nothing changes.
+   */
+  onTransportRefusal?: (event: TransportRefusalEvent) => void;
+};
+
+/** One refused `/mcp` request as `McpDeps.onTransportRefusal` sees it. */
+export type TransportRefusalEvent = {
+  status: number;
+  /** The JSON-RPC error code the answer carries, when it is JSON-RPC; Graft's 401 carries none. */
+  code?: number;
+  /** The answer's own sentence: the SDK's (`Bad Request: Server already initialized`) or Graft's reason word. */
+  message: string;
+  method: string;
+  /** Whether the request named a session, and — for a request Graft answered — which. */
+  hasSessionHeader: boolean;
+  sessionId?: string;
 };
 
 /**
@@ -178,7 +208,8 @@ export type McpDeps = {
  * (ADR 0003): a fixed meta-tool, a connection's execute tool, or an authored tool in the working
  * set — an unknown name is reported as `authored`, since that is the list it would have been in.
  * `outcome` is MCP's `isError` read back: `refused` when the answer is Graft's own refusal shape
- * (`result.ts`), `error` for a run's failure or an internal one, `ok` otherwise.
+ * (`result.ts`), `error` for a run's failure or an internal one, `ok` otherwise — an awaiting
+ * answer included, since it is a result and not an error (GRA-112, `result.ts`'s `toolAwaiting`).
  */
 export type ToolCallEvent = {
   tool: string;
@@ -186,7 +217,7 @@ export type ToolCallEvent = {
   agentId: string;
   personId: string;
   outcome: "ok" | "refused" | "error";
-  /** The refusal's `reason` — `connection_not_in_scope`, `awaiting_approval`, … — when `outcome` is `refused`. */
+  /** The refusal's `reason` — `connection_not_in_scope`, `approval_declined`, … — when `outcome` is `refused`. */
   reason?: string;
   latencyMs: number;
 };

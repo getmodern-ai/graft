@@ -7,7 +7,6 @@ import {
   type ConnectionProvider,
   connectThroughProvider,
   createGatewayProvider,
-  createPipedreamProvider,
   grantBuildApproval,
   keyringProvider,
   registerConnectionWithCredential,
@@ -15,6 +14,7 @@ import {
   setConnectionCredential,
   toProxyConnection,
 } from "@graft/core";
+import { createFakeLinkProvider } from "@graft/core/connection/testing/fake-link-provider";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import { createScriptedModel } from "@graft/model";
 import { loadSkills, runnerFiles } from "@graft/runner";
@@ -270,12 +270,12 @@ async function submitCredential(actionId: string, credential: Record<string, str
 const actionsOf = (agentId: string, kind: string) =>
   [...store.pendingActions.values()].filter((row) => row.agentId === agentId && row.kind === kind);
 
-/** The awaiting answer as the agent reads it, with the row it names. */
+/** The awaiting answer as the agent reads it, with the row it names — a result, not an error (GRA-112). */
 function awaiting(
   result: CallToolResult,
   error: "awaiting_connection" | "awaiting_credential" | "awaiting_scope",
 ) {
-  expect(result.isError).toBe(true);
+  expect(result.isError).toBe(false);
   const said = body(result);
   expect(said).toMatchObject({
     error,
@@ -348,9 +348,19 @@ describe("the proposal's rules, before any record exists", () => {
   });
 
   it("reads the tool's arguments by shape and says what is wrong", () => {
-    expect(readConnectionProposal({ vendor: "acme", scheme: "bearer" })).toEqual({
-      error: "vendor, primaryHost and scheme are required",
+    // Only the fields actually absent are named, and the vendor supplied is not called missing (GRA-130).
+    const missing = readConnectionProposal({ vendor: "acme", scheme: "bearer" });
+    expect(missing).toMatchObject({
+      error: expect.stringContaining("primaryHost is required and was not supplied"),
     });
+    expect((missing as { error: string }).error).not.toMatch(/vendor (is|and)/);
+    expect((missing as { error: string }).error).toContain("read the vendor's documentation");
+    // An argument the tool does not take is named back with the accepted set (GRA-130: `task` for `goal`).
+    const unknown = readConnectionProposal({ ...PROPOSAL, task: "fetch a uuid" });
+    expect(unknown).toMatchObject({
+      error: expect.stringContaining("task is not a request_connection argument"),
+    });
+    expect((unknown as { error: string }).error).toContain("vendor, displayName, primaryHost");
     expect(readConnectionProposal({ ...PROPOSAL, hosts: "files.acme.example" })).toMatchObject({
       error: expect.stringContaining("hosts must be an array"),
     });
@@ -360,20 +370,32 @@ describe("the proposal's rules, before any record exists", () => {
     expect(readConnectionProposal(PROPOSAL)).toEqual(PROPOSAL);
   });
 
-  it("describes every scheme with its parameters and the fields the person enters, from the tables", () => {
+  /**
+   * The parameters a proposal carries, per scheme, and nothing of what the person types: the
+   * secret fields and the OAuth client id (ADR 0005) are the console form's, and a schema that
+   * named them was what ChatGPT's classifier badged (GRA-121).
+   */
+  it("describes every scheme with the parameters a proposal carries, and none of the fields the person enters", () => {
     const text = describeSchemes();
+    expect(text).toContain("api_key_header: headerName, optional prefix");
+    expect(text).toContain("basic: none");
+    expect(text).toContain("none: none");
     expect(text).toContain(
-      "api_key_header (parameters: headerName, optional prefix; the person enters: apiKey)",
+      "oauth2_client_credentials: tokenUrl, optional scopes, optional clientAuth",
     );
-    expect(text).toContain("basic (parameters: none; the person enters: username, password)");
-    expect(text).toContain("none (parameters: none; the person enters: nothing)");
     expect(text).toContain(
-      "oauth2_client_credentials (parameters: tokenUrl, optional scopes, optional clientAuth; the person enters: clientId, clientSecret)",
+      "oauth_authorization_code: authorizeUrl, tokenUrl, optional scopes, optional clientAuth",
     );
-    // The client id is the person's to enter, not the agent's to propose (ADR 0005).
-    expect(text).toContain(
-      "oauth_authorization_code (parameters: authorizeUrl, tokenUrl, optional scopes, optional clientAuth; the person enters: clientId, clientSecret)",
-    );
+    for (const typed of [
+      "apiKey",
+      "clientSecret",
+      "clientId",
+      "password",
+      "privateKey",
+      "enters",
+    ]) {
+      expect(text, typed).not.toContain(typed);
+    }
   });
 
   /** ADR 0005: the agent proposes the endpoints and scopes; the client id it cannot know. */
@@ -745,7 +767,7 @@ describe("the connection confirmation and the build approval (GRA-75)", () => {
         status: "connected",
       });
       const asked = await a.call("acquire", { connectionId: other.id, goal: "List things" });
-      expect(asked.isError).toBe(true);
+      expect(asked.isError).toBe(false);
       expect(body(asked)).toMatchObject({
         error: "awaiting_approval",
         pendingActionId: expect.any(String),
@@ -991,7 +1013,7 @@ describe("request_connection with the OAuth shape", () => {
 describe("request_connection routes a proposal to the provider that covers it", () => {
   const fakeRelay = {
     kind: "relay" as const,
-    scheme: "pipedream_connect_proxy",
+    scheme: "relay",
     rules: { prefix: null, passThrough: [], refuse: [], refusePrefixes: [] },
     relay: () => undefined,
     headerNames: () => [],
@@ -1001,8 +1023,8 @@ describe("request_connection routes a proposal to the provider that covers it", 
     name: "broker",
     connect: {
       kind: "link",
-      scheme: "pipedream_connect_proxy",
-      target: (vendor) => (vendor === "acme" ? "acme_app" : null),
+      scheme: "relay",
+      target: async (vendor) => (vendor === "acme" ? "acme_app" : null),
       start: async (input) => {
         started.push(input.returnTo.success);
         return {
@@ -1012,7 +1034,7 @@ describe("request_connection routes a proposal to the provider that covers it", 
       },
       complete: async () => ({ ok: true, ref: "acct_1", label: "ops@acme.example" }),
     },
-    covers: (vendor) => vendor === "acme",
+    covers: async (vendor) => vendor === "acme",
     resolve: (row) => ({
       mode: "relay",
       relay: { plugin: fakeRelay, obtain: async () => ({ accountId: row.providerRef ?? "" }) },
@@ -1101,7 +1123,7 @@ describe("request_connection routes a proposal to the provider that covers it", 
       expect(connection).toMatchObject({
         provider: "broker",
         vendor: "acme",
-        scheme: "pipedream_connect_proxy",
+        scheme: "relay",
         credentialSetAt: null,
         revokedAt: null,
       });
@@ -1157,13 +1179,12 @@ describe("request_connection routes a proposal to the provider that covers it", 
   it("refuses a proposal naming a relay scheme — a provider's, never the agent's to propose", async () => {
     const a = await connect(TOKEN_B);
     try {
-      const said = await a.call("request_connection", {
-        ...PROPOSAL,
-        scheme: "pipedream_connect_proxy",
-      });
-      expect(said.isError).toBe(true);
-      expect(body(said)).toMatchObject({ reason: "input_invalid", field: "scheme" });
-      expect(describeSchemes()).not.toContain("pipedream_connect_proxy");
+      for (const scheme of ["relay", "gateway"]) {
+        const said = await a.call("request_connection", { ...PROPOSAL, scheme });
+        expect(said.isError).toBe(true);
+        expect(body(said)).toMatchObject({ reason: "input_invalid", field: "scheme" });
+        expect(describeSchemes()).not.toContain(scheme);
+      }
     } finally {
       await a.close();
     }
@@ -1982,7 +2003,7 @@ describe("request_connection asks to use a connection the person holds but this 
       });
       expect(store.buildApprovals.get(`${AGENT_B} ${row.id}`)).toBeUndefined();
       const asked = await b.call("acquire", { connectionId: row.id, goal: "List books" });
-      expect(asked.isError).toBe(true);
+      expect(asked.isError).toBe(false);
       expect(body(asked)).toMatchObject({ error: "awaiting_approval" });
     } finally {
       await b.close();
@@ -2081,12 +2102,13 @@ describe("request_connection asks to use a connection the person holds but this 
 
 /**
  * Sign-in endpoints are not hosts (ADR 0019, consequence of 2026-09-18; GRA-89). During GRA-35
- * Hermes listed Google's sign-in hosts under `hosts` beside the API host, the Pipedream provider's
- * `covers` declined the proposal, and the person got the client-registration form instead of the
- * one-click link. The real Pipedream provider is on the list here, over a client the suite never
- * reaches: the console's button mints the link, and the return is played by the same core call
- * the server's route makes (`connectThroughProvider`), which checks the row's hosts against the
- * provider's coverage, so a set-aside host that reached the payload would fail it.
+ * Hermes listed Google's sign-in hosts under `hosts` beside the API host, the hosted form's link
+ * provider's `covers` declined the proposal, and the person got the client-registration form
+ * instead of the one-click link. A link provider covering Gmail at Google's two API hosts and no
+ * other — the fake's coverage rule is the broker's, every proposed host in the vendor's own set —
+ * is on the list here: the console's button mints the link, and the return is played by the same
+ * core call the server's route makes (`connectThroughProvider`), which checks the row's hosts
+ * against the provider's coverage, so a set-aside host that reached the payload would fail it.
  */
 describe("an agent on all connections reaches the person's rows without an ask (GRA-105)", () => {
   const AGENT_C = "agent_c";
@@ -2252,17 +2274,10 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
   };
   const SIGN_IN = ["oauth2.googleapis.com", "accounts.google.com"];
 
-  const unreached = () => Promise.reject(new Error("Pipedream is not reached in this suite"));
-  const pipedream = createPipedreamProvider({
-    client: {
-      createConnectToken: unreached,
-      listAccounts: unreached,
-      relayFields: unreached,
-      deleteAccount: unreached,
-      apiOrigin: "https://api.pipedream.test",
-      projectId: "proj_test",
-      environment: "development",
-    },
+  const GMAIL_HOSTS = new Set(["gmail.googleapis.com", "www.googleapis.com"]);
+  const broker = createFakeLinkProvider({
+    name: "broker",
+    covers: (vendor, hosts) => vendor === "gmail" && hosts.every((host) => GMAIL_HOSTS.has(host)),
   });
 
   /**
@@ -2277,7 +2292,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
         store.connections.delete(id);
       }
     }
-    deps.connection = { ...deps.connection, providers: [pipedream, keyringProvider] };
+    deps.connection = { ...deps.connection, providers: [broker, keyringProvider] };
   });
 
   afterEach(() => {
@@ -2300,22 +2315,22 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
   const gmailAsks = () =>
     actionsOf(AGENT_B, CONNECTION_ASK_KIND).filter((row) => row.payload.vendor === "gmail");
 
-  it("the proposal Hermes made takes the Pipedream link: the sign-in hosts are set aside and named, and the row reaches gmail.googleapis.com alone", async () => {
+  it("the proposal Hermes made takes the link provider's link: the sign-in hosts are set aside and named, and the row reaches gmail.googleapis.com alone", async () => {
     const b = await connect(TOKEN_B);
     try {
       const first = await b.call("request_connection", HERMES_GMAIL);
       const { answer, action } = awaiting(first, "awaiting_connection");
-      expect(answer.provider).toBe("pipedream");
+      expect(answer.provider).toBe("broker");
       expect(answer.redirectUri).toBeUndefined();
       expect(answer.hostsSetAside).toEqual(SIGN_IN);
       const message = String(answer.message);
-      expect(message).toContain("through pipedream");
+      expect(message).toContain("through broker");
       expect(message).toContain(
         "oauth2.googleapis.com, accounts.google.com are sign-in endpoints and were set aside, not recorded on the connection",
       );
       expect(message).toContain("here gmail.googleapis.com.");
       expect(action.payload).toMatchObject({
-        provider: "pipedream",
+        provider: "broker",
         providerConnect: "link",
         providerTarget: "gmail",
         scheme: "oauth_authorization_code",
@@ -2330,7 +2345,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
         ctx(),
         principal,
         {
-          provider: pipedream,
+          provider: broker,
           vendor: payload.vendor,
           displayName: payload.displayName,
           primaryHost: payload.primaryHost,
@@ -2348,8 +2363,8 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
         deps.pendingAction,
       );
       expect(connection).toMatchObject({
-        provider: "pipedream",
-        scheme: "pipedream_connect_proxy",
+        provider: "broker",
+        scheme: "relay",
         hosts: ["gmail.googleapis.com"],
       });
       expect(connection.hosts).not.toContain("accounts.google.com");
@@ -2361,7 +2376,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
       expect(body(done)).toMatchObject({
         status: "connected",
         connectionId: connection.id,
-        provider: "pipedream",
+        provider: "broker",
         hostsSetAside: SIGN_IN,
         message: expect.stringContaining("were set aside"),
       });
@@ -2370,7 +2385,7 @@ describe("sign-in endpoints are not hosts (GRA-89)", () => {
     }
   });
 
-  it("a host outside the vendor's own is still the keyring's: Pipedream declines example.com and the form asks, the sign-in host set aside all the same", async () => {
+  it("a host outside the vendor's own is still the keyring's: the link provider declines example.com and the form asks, the sign-in host set aside all the same", async () => {
     const b = await connect(TOKEN_B);
     try {
       const said = await b.call("request_connection", {

@@ -77,7 +77,11 @@ import { z } from "zod";
 import { routeEvent } from "./analytics-routes";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
-import { createProviderLinkRoutes, startProviderLink } from "./provider-link";
+import {
+  createProviderLinkRoutes,
+  isProviderLinkFallback,
+  startProviderLink,
+} from "./provider-link";
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -115,8 +119,8 @@ import { createProviderLinkRoutes, startProviderLink } from "./provider-link";
  * are the consent's two ends.
  *
  * **A link provider's ask has a button rather than a form** (GRA-59; ADR 0019). `POST
- * /pending-actions/:id/link` mints the provider's link for the ask — Pipedream's Connect Link, for
- * the person's external user id — and the console opens it in a popup; `GET /providers/link/callback`
+ * /pending-actions/:id/link` mints the provider's link for the ask — a broker's Connect Link, for
+ * the person's id at the broker — and the console opens it in a popup; `GET /providers/link/callback`
  * is where the provider sends the browser back, with no session and a signed state, and is what
  * makes the connection and answers the ask once the provider has confirmed the account
  * (`provider-link.ts`). No secret is entered anywhere in that flow, and none is stored.
@@ -587,6 +591,7 @@ export function createApi(options: ApiOptions): Hono {
       handoff,
       authUrl: options.authUrl,
       notifier: options.notifier,
+      analytics: options.analytics,
     };
   };
 
@@ -1140,6 +1145,13 @@ export function createApi(options: ApiOptions): Hono {
     const body = await parseBody(c.req.raw, linkStartBody, { emptyIs: {} });
     const started = await startProviderLink(ctx, principal, c.req.param("id"), linkOptions(), {
       approveBuild: body.approveBuild,
+    });
+    // Counted here rather than in the route table (GRA-147): the same 200 is a link minted or a
+    // provider that stepped aside, and the two are different facts about the provider.
+    (options.analytics ?? NO_ANALYTICS).capture({
+      distinctId: principal.personId,
+      event: isProviderLinkFallback(started) ? "provider_link_fell_back" : "provider_link_started",
+      properties: { provider: started.provider, via: "console" },
     });
     return c.json(started);
   });

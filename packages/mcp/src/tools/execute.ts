@@ -1,13 +1,14 @@
 import { type ConnectionOutput, getConnection, recordUsage } from "@graft/core";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
-
 import { requireBuildApproval } from "../approval";
+import { ASK_CARD_TOOL_META } from "../ask-card";
 import {
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   MAX_COMMAND_TIMEOUT_SECONDS,
   MAX_OUTPUT_CHARS,
   readCommandInput,
 } from "../bounds";
+import { toolAskResult } from "../card-client";
 import type { SessionContext } from "../context";
 import { heldInFlight } from "../in-flight";
 import { toolError, toolRefusal, toolResult } from "../result";
@@ -42,11 +43,12 @@ export function executeToolDefinition(connection: ConnectionOutput): Tool {
   return {
     name: executeToolName(connection.id),
     description:
-      `Advanced: run code against ${label} (${connection.vendor}) by hand, when the person asked you to author a tool yourself rather than through acquire. A shell command in your sandbox that can call ${label} through the proxy with this connection's credential injected; nothing else is granted. ` +
-      `The process has GRAFT_PROXY_URL, GRAFT_CONNECTION and GRAFT_TOKEN set: a module run as \`echo '{}' | node /graft/runner.mjs <module directory or index.ts>\` reaches ${label} through ctx.fetch('/<vendor path>'). A module you will publish must use ctx alone: the runner removes every GRAFT_* variable before the module loads, and check_tool refuses one that names them. Never write the vendor's host or a key into code. ` +
+      `Advanced: runs code against ${label} (${connection.vendor}) by hand, for an agent the person asked to author a tool itself rather than through acquire. A shell command in the agent's sandbox that can call ${label} through the proxy with this connection's credential injected; nothing else is granted. ` +
+      `The process has GRAFT_PROXY_URL, GRAFT_CONNECTION and GRAFT_TOKEN set: a module run as \`echo '{}' | node /graft/runner.mjs <module directory or index.ts>\` reaches ${label} through ctx.fetch('/<vendor path>'). A module to be published uses ctx alone: the runner removes every GRAFT_* variable before the module loads, and check_tool refuses a module that names them or a literal vendor host. ` +
       `Answers like run_command, the exit code and the output cut to its last ${MAX_OUTPUT_CHARS} characters, and is killed after timeoutSeconds (default ${DEFAULT_COMMAND_TIMEOUT_SECONDS}, at most ${MAX_COMMAND_TIMEOUT_SECONDS} when waiting). ` +
       `With dryRun: true the proxy makes GET and HEAD calls for real and stops every other method before it reaches ${label}, answering 202 with header x-graft-dry-run: intercepted and a JSON preview of the request that would have been sent. ` +
-      "The first call against a connection may answer awaiting_approval with a url: give the person the link exactly as returned, wait, and call again once they have answered. " +
+      "The first call against a connection may answer awaiting_approval with a url: a handoff whose next step is the person's, in the console; the same call, once they have answered, runs. " +
+      "Marked destructive because the hint is the carried command's, which the host cannot know per call. " +
       detachedAdvice(),
     inputSchema: {
       type: "object",
@@ -65,6 +67,10 @@ export function executeToolDefinition(connection: ConnectionOutput): Tool {
       required: ["command"],
       additionalProperties: false,
     },
+    // As destructive as the command it carries, which a host cannot know per call (GRA-114).
+    annotations: { readOnlyHint: false, destructiveHint: true },
+    // The first call against a connection may answer the tool ask's card (GRA-116; `../tools.ts`).
+    _meta: ASK_CARD_TOOL_META,
   };
 }
 
@@ -110,7 +116,7 @@ export async function callExecuteTool(
       },
       deps.ledger,
     );
-    return toolError(gate.answer);
+    return toolAskResult(session, gate);
   }
 
   // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).

@@ -346,7 +346,7 @@ export async function registerProviderConnection(
   refuse(validateDisplayName(input.displayName));
   const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
   if (!hostSet.ok) refuseHostSet(hostSet);
-  if (!provider.covers(input.vendor, hostSet.hosts)) {
+  if (!(await provider.covers(input.vendor, hostSet.hosts))) {
     throw new ServiceError(
       "BAD_REQUEST",
       `The ${provider.name} provider does not cover ${input.vendor} at ${hostSet.hosts.join(", ")}`,
@@ -400,7 +400,7 @@ export async function widenProviderConnectionHosts(
   }
   const union = validateHostSet(row.primaryHost, [...row.hosts, ...hosts]);
   if (!union.ok) refuseHostSet(union);
-  if (!provider.covers(row.vendor, union.hosts)) {
+  if (!(await provider.covers(row.vendor, union.hosts))) {
     throw new ServiceError(
       "BAD_REQUEST",
       `The ${provider.name} provider does not cover ${row.vendor} at ${union.hosts.join(", ")}`,
@@ -476,15 +476,22 @@ export type ConnectThroughProviderInput = {
  * (`registerConnection`), plus one: the provider must cover the vendor at these hosts, since the
  * relay injects the account's token into whatever vendor URL it is handed.
  *
- * A revoked row of the same provider at the same vendor, primary host and host set is
- * **reconnected in place** rather than shadowed by a second row — the reconnection a credential
- * re-entry is for a keyring row (ADR 0007) — so the connection id stays what every agent's scope
- * names. Only once the provider has released it: a revoked row still carrying its reference has a
- * release outstanding — in flight, or failed and awaiting the retry — and writing a new reference
- * over it would orphan the account at the provider. Any other row makes a new one; a person may
- * well hold two accounts at one vendor. A reference already on another row is the database's
- * refusal (`connection_provider_ref_idx`), answered `CONFLICT`: two landings claimed one account,
- * and the caller re-reads what the first did.
+ * A revoked row of the same provider at the same vendor is **reconnected in place** rather than
+ * shadowed by a second row — the reconnection a credential re-entry is for a keyring row (ADR
+ * 0007) — so the connection id stays what every agent's scope and every authored tool's binding
+ * names. Whatever primary host and hosts the second proposal spells (GRA-122): until 2026-09-20
+ * the match demanded the same primary host and the exact host set, and a Gmail re-proposal naming
+ * `…/gmail/v1` with one more host made a new row beside the released one, leaving every tool bound
+ * to the old row refused `connection_revoked`. Now the row is the match when the provider covers
+ * the union of its hosts and the proposal's; its hosts grow to that union, and its **primary host
+ * stays** — the proxy prepends the primary host's path to every module path (`resolveTarget` in
+ * `@graft/proxy`), so moving it would break the very tools the reconnection keeps. Several released
+ * rows: the most recently revoked. Only once the provider has released it: a revoked row still
+ * carrying its reference has a release outstanding — in flight, or failed and awaiting the retry —
+ * and writing a new reference over it would orphan the account at the provider. Any other row makes
+ * a new one; a person may well hold two accounts at one vendor. A reference already on another row
+ * is the database's refusal (`connection_provider_ref_idx`), answered `CONFLICT`: two landings
+ * claimed one account, and the caller re-reads what the first did.
  */
 export async function connectThroughProvider(
   ctx: ServiceContext,
@@ -510,7 +517,7 @@ export async function connectThroughProvider(
   refuse(validateDisplayName(input.displayName));
   const hostSet = validateHostSet(input.primaryHost, input.hosts ?? []);
   if (!hostSet.ok) refuseHostSet(hostSet);
-  if (!provider.covers(input.vendor, hostSet.hosts)) {
+  if (!(await provider.covers(input.vendor, hostSet.hosts))) {
     throw new ServiceError(
       "BAD_REQUEST",
       `The ${provider.name} provider does not cover ${input.vendor} at ${hostSet.hosts.join(", ")}`,
@@ -520,17 +527,15 @@ export async function connectThroughProvider(
     throw new ServiceError("BAD_REQUEST", `The ${provider.name} provider named no account`);
   }
 
-  // A released row and no other: `provider_ref` is null once the provider let go
-  // (`recordProviderRelease`), and still set while the release is outstanding.
-  const hostsKey = [...hostSet.hosts].sort().join(" ");
-  const released = (await deps.listConnections(ctx.db, principal.personId)).find(
-    (row) =>
-      row.revokedAt !== null &&
-      row.providerRef === null &&
-      row.provider === provider.name &&
-      row.vendor === input.vendor &&
-      row.primaryHost === hostSet.primaryHost &&
-      [...row.hosts].sort().join(" ") === hostsKey,
+  // A released row of this provider at this vendor, and no other: `provider_ref` is null once the
+  // provider let go (`recordProviderRelease`), and still set while the release is outstanding. The
+  // hosts need not match (GRA-122; the header): the row is a candidate when the provider covers the
+  // union of its hosts and the proposal's, and the most recently revoked candidate is the one.
+  const released = await releasedRowFor(
+    await deps.listConnections(ctx.db, principal.personId),
+    provider,
+    input.vendor,
+    hostSet.hosts,
   );
   const claimed = () =>
     new ServiceError(
@@ -543,14 +548,23 @@ export async function connectThroughProvider(
       reconnected = await deps.setConnectionProviderRef(
         ctx.db,
         principal.personId,
-        released.id,
+        released.row.id,
         input.ref,
       );
     } catch (error) {
       if (isUniqueViolation(error)) throw claimed();
       throw error;
     }
-    return toConnectionOutput(orNotFound(reconnected, "Connection not found"));
+    let row = orNotFound(reconnected, "Connection not found");
+    // The union, appended by the one statement `widenProviderConnectionHosts` uses, when it adds
+    // to what the row held; the primary host and the display name are the row's own and stay.
+    if (!released.hosts.every((host) => released.row.hosts.includes(host))) {
+      row = orNotFound(
+        await deps.addConnectionHosts(ctx.db, principal.personId, row.id, released.hosts),
+        "Connection not found",
+      );
+    }
+    return toConnectionOutput(row);
   }
 
   let row: ConnectionRow;
@@ -572,6 +586,36 @@ export async function connectThroughProvider(
     throw error;
   }
   return toConnectionOutput(row);
+}
+
+/**
+ * The released row a link's return reconnects (`connectThroughProvider`, GRA-122), with the host
+ * set it is to hold afterwards: of the provider, at the vendor, revoked, its reference released,
+ * and the union of its hosts and the proposal's a set the provider covers — the most recently
+ * revoked when several qualify. Null when the proposal makes a new row.
+ */
+async function releasedRowFor(
+  rows: readonly ConnectionRow[],
+  provider: ConnectionProvider,
+  vendor: string,
+  proposedHosts: readonly string[],
+): Promise<{ row: ConnectionRow; hosts: string[] } | null> {
+  const candidates: { row: ConnectionRow; hosts: string[] }[] = [];
+  for (const row of rows) {
+    if (
+      row.revokedAt === null ||
+      row.providerRef !== null ||
+      row.provider !== provider.name ||
+      row.vendor !== vendor
+    ) {
+      continue;
+    }
+    const union = validateHostSet(row.primaryHost, [...row.hosts, ...proposedHosts]);
+    if (!union.ok || !(await provider.covers(row.vendor, union.hosts))) continue;
+    candidates.push({ row, hosts: union.hosts });
+  }
+  candidates.sort((a, b) => (b.row.revokedAt?.getTime() ?? 0) - (a.row.revokedAt?.getTime() ?? 0));
+  return candidates[0] ?? null;
 }
 
 export async function listConnections(

@@ -1,3 +1,4 @@
+import { openedFromCard } from "@graft/core/connection/card.rules";
 import {
   LINK_CHANNEL,
   linkCallbackMessage,
@@ -23,12 +24,21 @@ import { announceConsent, OAUTH_CALLBACK_CLOSE_MS } from "@/lib/oauth-consent";
  * (`lib/oauth-consent.ts`, `announceConsent`) — and on a success closes itself after a moment.
  * Public, outside `_auth` and the shell, on purpose, for the reasons the consent's route gives.
  *
- * Nothing here is trusted beyond what it is: the query is read into four fields and no more, the
+ * A link the ask card minted arrives with `from=card` (GRA-117; `card.rules.ts`): nothing in the
+ * console is waiting, the card polls Graft for the outcome itself, so the page says so. A success
+ * closes itself after the same moment; a failure stays, because the ask is still open and the
+ * card, which reads `open` from Graft, has no sentence for it — this page is the one that says
+ * what went wrong, and the card's button is where the person tries again (Greptile on #94).
+ *
+ * Nothing here is trusted beyond what it is: the query is read into five fields and no more, the
  * message is posted to this page's own origin alone, and the waiting card takes it only for the ask
  * it is waiting on.
  */
 export const Route = createFileRoute("/link/callback")({
-  validateSearch: readLinkCallbackSearch,
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...readLinkCallbackSearch(search),
+    ...(openedFromCard(search) ? { fromCard: true as const } : {}),
+  }),
   head: ({ match }) => ({
     meta: [
       { title: `Graft — ${callbackOutcomeTitle(match.search.status)}` },
@@ -39,7 +49,7 @@ export const Route = createFileRoute("/link/callback")({
 });
 
 function LinkCallbackRoute() {
-  const { status, pendingActionId, connectionId, message } = Route.useSearch();
+  const { status, pendingActionId, connectionId, message, fromCard = false } = Route.useSearch();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -60,5 +70,7 @@ function LinkCallbackRoute() {
     }, 200);
   };
 
-  return <CallbackOutcomePage status={status} message={message} onClose={close} />;
+  return (
+    <CallbackOutcomePage status={status} message={message} onClose={close} fromCard={fromCard} />
+  );
 }
