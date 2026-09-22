@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { checkModule } from "@graft/check";
+import { checkModule, readModuleSources } from "@graft/check";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox/fake";
 import type { InstallArgs, SandboxProcessResult } from "@graft/sandbox/types";
 import {
@@ -806,5 +806,33 @@ describe("the mirror", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(unhandled).not.toHaveBeenCalled();
     process.off("unhandledRejection", unhandled);
+  });
+});
+
+/**
+ * Every fixture under `fixtures/` passes the check as the publish would run it: the files read
+ * whole, the schema beside them, the dependencies off the manifest. The check's banned list grows
+ * (GRA-188 added the filesystem modules, ADR 0023), and a fixture the suites above publish must keep
+ * clearing it, or the by-hand publish in AGENTS.md ("Publishing a tool by hand") stops working.
+ */
+describe("the fixtures", () => {
+  it("every one passes the check with no refusals", async () => {
+    const names = (await readdir(FIXTURES, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    expect(names).toEqual(["hello", "left-pad"]);
+
+    for (const name of names) {
+      const files = await readFixture(name);
+      const schema: unknown = JSON.parse(
+        await readFile(join(FIXTURES, name, "schema.json"), "utf8"),
+      );
+      const result = await checkModule({
+        ...readModuleSources(files),
+        inputSchema: schema as Record<string, unknown>,
+      });
+      expect(result.refusals, name).toEqual([]);
+    }
   });
 });

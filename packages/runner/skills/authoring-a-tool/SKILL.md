@@ -205,7 +205,8 @@ and only when it clears the package policy** — the allowlist of official vendo
 provenance with an age and download threshold. A refused package is a diagnostic, not a blocked
 tool: write the calls by hand with `ctx.fetch`. `check_tool` refuses an import of a package that
 `dependencies` does not declare, and nothing installs on a run. Node's built-ins (`node:crypto`,
-`node:url`) and siblings by relative path are always there.
+`node:url`) and siblings by relative path are always there, less the ten the check refuses (the
+list under *Checking it*).
 
 ## Checking it
 
@@ -213,7 +214,10 @@ tool: write the calls by hand with `ctx.fetch`. `check_tool` refuses an import o
 **refusals** — what `publish_tool` will refuse on — and **advice**, each naming the file, line and
 column, quoting the line, and saying what to change. Refusals: a syntax error; no default export,
 or one that is not an async function of two parameters; a type error against `Input` or `Context`;
-the exec's environment; `child_process`, `net` or `dgram`; an import from outside the module, or of
+the exec's environment; `child_process`, `net`, `dgram`, `fs`, `fs/promises`, `worker_threads`,
+`vm`, `module`, `cluster` or `inspector`, bare or `node:`-prefixed, however imported (a tool has no
+filesystem of its own: a file it writes for another tool, or reads from one, is a blob, and
+`ctx.blob.write` and `ctx.blob.read` are the route); an import from outside the module, or of
 a package `dependencies` does not declare; an absolute URL passed to `ctx.fetch`; an SDK not bound
 to `ctx.proxyKey` and `ctx.proxyBase`; syntax Node cannot strip. Advice: an implicit `any`, a
 declared input field the module never reads, a result JSON would lose (a function, a `Map`).
