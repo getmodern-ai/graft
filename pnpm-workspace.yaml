@@ -39,7 +39,7 @@ catalog:
   pg: ^8.23.0
   "@types/pg": ^8.23.1
   better-auth: 1.7.5
-  dotenv: ^17.4.2
+  dotenv: ^18.0.1
   # The provider-backed model adapter (`@graft/model/provider`, ADR 0004, ADR 0014) speaks to a
   # provider through the AI SDK, at the major Cando runs (ADR 0011): `ai` for `generateText` with a
   # structured `Output`, one provider package each for Anthropic and for OpenAI — the latter also
