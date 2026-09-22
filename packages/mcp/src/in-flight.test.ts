@@ -34,6 +34,43 @@ describe("a call", () => {
   });
 });
 
+/**
+ * The blob budget a run is handed (GRA-187, after Greptile on #148): outstanding from the grant
+ * until its release, or, moved onto a detached process, until that process settles or times out.
+ */
+describe("a budget grant", () => {
+  it("is outstanding until released, summed across calls, and releasing twice is a no-op", () => {
+    const registry = createInFlightRegistry();
+    expect(registry.outstandingBudget("a")).toBe(0);
+    const first = registry.grant("a", 1000);
+    const second = registry.grant("a", 500);
+    expect(registry.outstandingBudget("a")).toBe(1500);
+    expect(registry.outstandingBudget("b")).toBe(0);
+    first();
+    first();
+    expect(registry.outstandingBudget("a")).toBe(500);
+    second();
+    expect(registry.outstandingBudget("a")).toBe(0);
+    // A grant alone is not a hold: the sweep's question is unchanged by it.
+    registry.grant("a", 7);
+    expect(registry.has("a")).toBe(false);
+    registry.close();
+  });
+
+  it("rides on a detached process until it is settled or its time is up", async () => {
+    const registry = createInFlightRegistry();
+    registry.track("a", "tool-1", 60_000, 2048);
+    registry.track("a", "tool-2", 20, 1024);
+    expect(registry.outstandingBudget("a")).toBe(3072);
+    registry.settle("a", "tool-1");
+    expect(registry.outstandingBudget("a")).toBe(1024);
+    await tick(40);
+    expect(registry.outstandingBudget("a")).toBe(0);
+    expect(registry.has("a")).toBe(false);
+    registry.close();
+  });
+});
+
 describe("a detached process", () => {
   it("holds by name until settled", () => {
     const registry = createInFlightRegistry();

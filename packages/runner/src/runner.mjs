@@ -81,8 +81,10 @@
  *    characters (`blob_invalid_content_type` otherwise) and a `name` that is a file name of at most
  *    255 characters with no slash and no control character (`blob_invalid_name`), mints a UUID,
  *    streams the bytes into `/blobs/<id>.tmp/data`
- *    counting them — refused as `blob_too_large` the moment they pass 256 MiB, the `.tmp` directory
- *    removed before the throw — writes `meta.json` (`bytes`, `contentType`, `name`, `writtenAt`,
+ *    counting them — refused as `blob_too_large` the moment they pass 256 MiB, or as `blob_quota`
+ *    the moment they would carry this run's committed total past `GRAFT_BLOB_BUDGET_BYTES`
+ *    (whichever bound is the smaller; the `.tmp` directory removed before either throw) — writes
+ *    `meta.json` (`bytes`, `contentType`, `name`, `writtenAt`,
  *    `expiresAt` 24 hours on, `agentId`, `toolVersion`) beside it, and renames the directory to
  *    `/blobs/<id>/` **once**. That rename is the one commit point: a reader or the sweep sees a whole
  *    blob or none, and a `.tmp` directory is a write in progress or an abandoned one. It answers the
@@ -91,12 +93,41 @@
  *    without the sandbox ever reaching the database. Writing never asks (ADR 0008's grain is about
  *    vendor side effects), and a dry run writes too.
  *  - `ctx.blob.stat(ref)` answers the sidecar's `{ bytes, contentType, name?, expiresAt }`.
- *  - `ctx.blob.read(ref)` answers a `Blob` over `data`, lazily, so it drops into a request body or
- *    a `FormData` without being held whole. Declared ahead of the ticket that proves it (GRA-187):
- *    neither it nor `stat` checks the expiry, which the server's door refuses before a run.
+ *  - `ctx.blob.read(ref)` answers a `Blob` over `data`, opened lazily (`fs.openAsBlob`) and typed
+ *    from the sidecar, so `.stream()` reads the file in chunks and it drops into a request body or
+ *    a `FormData` without being held whole (GRA-187). Neither it nor `stat` checks the expiry: the
+ *    server's door refuses a dead ref before a run (`packages/mcp/src/blob-door.ts`), and the
+ *    runner has no clock the door does not have.
  *
- * A ref that is not `blob://<id>` is a usage error; one whose id names no directory under `/blobs`
- * is `blob_not_found`, another agent's included, since another agent's blobs are on no path here.
+ * Every ref a module hands `read` or `stat` is resolved to `/blobs/<id>` and refused as
+ * `blob_not_found`, the ref in the sentence, when it does not resolve there: a string that is not
+ * `blob://<id>`, an id that is not a directory name (a climb, a slash, an empty id), a `.tmp` name,
+ * an id with no directory, and a directory or a file inside it that is a symlink (`lstat`, as the
+ * server's blob store judges the same tree from outside; GRA-185). Another agent's blob is one of
+ * these: its directory is on no path this sandbox can name (ADR 0023: the scope is the mount).
+ *
+ * `GRAFT_BLOB_BUDGET_BYTES` is what this run may still commit under the agent's quota, set per exec
+ * by the server's door from the agent's live rows (`packages/mcp/src/blob-door.ts`; GRA-187, after
+ * Greptile on #145): the door's check runs before the run, and without this a module could loop
+ * `ctx.blob.write` and commit 256 MiB per call to the persistent mount with nothing bounding the
+ * total inside one run. The runner reserves against the budget as each chunk lands, one shared
+ * figure across every write in flight, and refuses the write that would pass it as `blob_quota`,
+ * so one oversized write stops at the smaller of the cap and the budget and two writes at once
+ * cannot both fit in a remainder only one of them fits; a refused write gives its reservation
+ * back and is on no ledger. Unset, the cap alone bounds a write. `GRAFT_BLOB_QUOTA_BYTES` rides
+ * beside it so the sentence can name the quota.
+ *
+ * ## A failed run's blobs
+ *
+ * A blob is committed when its write returns, before the module's outcome is known, so a module
+ * that writes and then throws (or answers something JSON cannot carry) has bytes on the mount the
+ * server would otherwise never hear of. Such a failure carries the ledger out ahead of it: on
+ * stdout, `ENVELOPE_MARKER` on a line of its own and then `{ result: null, blobs }`, before the
+ * error goes to stderr and the process exits 1; on the detached path, the same envelope in the
+ * result file with `RESULT_MARKER` on stdout, as a result would be. The server records the rows
+ * off it as it does off a success (`run.ts`, `wait_for_process`). A run that wrote nothing fails
+ * with nothing on stdout, as before. A timeout (exit 2, or the sandbox's kill) prints nothing, and
+ * a blob it committed is the sweep's to adopt from its sidecar (GRA-189).
  *
  * `GRAFT_AGENT` (the agent id) and `GRAFT_TOOL_VERSION` (the version id of the tool running) are set
  * per exec by the run and go into the sidecar and nowhere else — never into a path — and are deleted
@@ -145,7 +176,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createWriteStream, openAsBlob } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
@@ -217,6 +248,30 @@ const blobsDir = process.env.GRAFT_BLOBS_DIR || BLOBS_MOUNT_PATH;
 
 /** The ledger the envelope carries: every blob this run wrote, in write order (the header). */
 const blobLedger = [];
+/**
+ * What this run may still commit under the agent's quota (the header): `GRAFT_BLOB_BUDGET_BYTES`,
+ * which the server's door sets per exec from the agent's live rows (GRA-187), since the sandbox has
+ * no route to the database. Unset, or not a number, is no budget: a server older than the variable
+ * (or a runner invoked by hand) bounds a write by the per-blob cap alone, as before the variable.
+ * The quota itself rides beside it for the sentence, and is never a bound here.
+ */
+const blobBudgetBytes =
+  readByteCount(process.env.GRAFT_BLOB_BUDGET_BYTES) ?? Number.POSITIVE_INFINITY;
+const blobQuotaBytes =
+  readByteCount(process.env.GRAFT_BLOB_QUOTA_BYTES) ?? Number.POSITIVE_INFINITY;
+/**
+ * Bytes this run holds against its budget: every committed blob's size plus every byte a write in
+ * progress has landed so far. Reserved as the chunks land, not after the commit, so several writes
+ * in flight at once (`Promise.all`) share one figure and cannot each see the whole remainder
+ * (Greptile on #148); a refused or failed write gives its reservation back with its `.tmp`.
+ */
+let blobBytesReserved = 0;
+
+function readByteCount(value) {
+  if (value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
 
 /** The proxy's marker on a dry-run answer and the value for a stopped write — `DRY_RUN_HEADER` in `runner-source.ts`. */
 const DRY_RUN_HEADER = "x-graft-dry-run";
@@ -340,6 +395,43 @@ function fail(code, message) {
       ? `…${message.slice(message.length - STDERR_TAIL_CHARS)}`
       : message;
   process.stderr.write(`${text}\n`, () => process.exit(code));
+}
+
+/**
+ * A module's failure after it wrote a blob (the header, "A failed run's blobs"): the blob is
+ * committed and the server must learn of it, so the ledger goes out ahead of the failure as an
+ * envelope with `result: null`, behind the same `ENVELOPE_MARKER` line a result's envelope sits
+ * behind, so the server has one reader for both. On stdout it is the two lines; on the detached
+ * path it goes to the result file with `RESULT_MARKER` on stdout, as a result would. A run that
+ * wrote nothing fails exactly as it always did, with nothing on stdout. A timeout cannot come
+ * through here: the process is killed with nothing printed, and the sweep adopts the directory
+ * from its sidecar (GRA-189).
+ */
+async function failWithLedger(code, message) {
+  if (blobLedger.length === 0) {
+    fail(code, message);
+    return;
+  }
+  const json = `${ENVELOPE_MARKER}\n${JSON.stringify({ result: null, blobs: blobLedger })}`;
+  try {
+    if (resultPath) {
+      await mkdir(dirname(resultPath), { recursive: true });
+      await writeFile(`${resultPath}.tmp`, json, "utf8");
+      await rename(`${resultPath}.tmp`, resultPath);
+      await new Promise((resolve) =>
+        process.stdout.write(`${RESULT_MARKER}${resultPath}\n`, resolve),
+      );
+    } else {
+      await new Promise((resolve) => process.stdout.write(`${json}\n`, resolve));
+    }
+  } catch (error) {
+    fail(
+      code,
+      `${message}\n(the ledger of ${blobLedger.length} blob(s) written could not be reported: ${describe(error)})`,
+    );
+    return;
+  }
+  fail(code, message);
 }
 
 function describe(error) {
@@ -499,14 +591,16 @@ function blobRefusal(reason, message) {
 }
 
 /**
- * The id inside a ref, and the blob's directory under the mount — see the header. A ref that is
- * not `blob://<id>` is a usage error; an id that is not a directory name, or names a `.tmp`, is
- * `blob_not_found`, since nothing under `/blobs` can be called that.
+ * The id inside a ref, and the blob's directory under the mount (the header). A string that is
+ * not `blob://<id>` is `blob_not_found` with a sentence saying what a ref looks like; an id that is
+ * not a directory name, or names a `.tmp`, is `blob_not_found` too, since nothing under `/blobs`
+ * can be called that.
  */
 function resolveBlobRef(ref) {
   if (typeof ref !== "string" || !ref.startsWith(BLOB_REF_SCHEME)) {
-    throw new Error(
-      `ctx.blob takes a ref of the form ${BLOB_REF_SCHEME}<id>, the string ctx.blob.write answered, not ${JSON.stringify(ref)}.`,
+    throw blobRefusal(
+      "blob_not_found",
+      `${JSON.stringify(ref)} is not a blob ref and names no blob this agent holds. ctx.blob takes the ${BLOB_REF_SCHEME}<id> string ctx.blob.write answered.`,
     );
   }
   const id = ref.slice(BLOB_REF_SCHEME.length);
@@ -521,6 +615,43 @@ function blobNotFound(ref) {
     "blob_not_found",
     `${ref} names no blob this agent holds. It may have expired, or been written by another agent; run the tool that produced it again.`,
   );
+}
+
+/**
+ * The blob's directory, once it is known to be one: the directory and the two files in it are each
+ * `lstat`ed, so a symlink anywhere in the three (a path a dependency planted, pointing out of the
+ * mount) is `blob_not_found` rather than followed, as the header lists. `stat` and `read` both open
+ * a blob through here.
+ */
+async function openBlob(ref) {
+  const { dir } = resolveBlobRef(ref);
+  const entry = await lstatOrNotFound(dir, ref);
+  if (!entry.isDirectory()) throw blobNotFound(ref);
+  for (const file of [BLOB_META_FILE, BLOB_DATA_FILE]) {
+    const inside = await lstatOrNotFound(join(dir, file), ref);
+    if (!inside.isFile()) throw blobNotFound(ref);
+  }
+  return dir;
+}
+
+async function lstatOrNotFound(path, ref) {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") throw blobNotFound(ref);
+    throw error;
+  }
+}
+
+/** The sidecar of an opened blob, as `stat` answers it. */
+async function readBlobMeta(dir) {
+  const meta = JSON.parse(await readFile(join(dir, BLOB_META_FILE), "utf8"));
+  return {
+    bytes: meta.bytes,
+    contentType: meta.contentType,
+    ...(typeof meta.name === "string" ? { name: meta.name } : {}),
+    expiresAt: meta.expiresAt,
+  };
 }
 
 /** Bytes as `ctx.blob.write` accepts them: a `Uint8Array` (a `Buffer` included), any other view, or an `ArrayBuffer`. */
@@ -598,17 +729,28 @@ async function blobWrite(data, opts) {
     throw error;
   }
 
+  // Two bounds on this write (the header), judged per chunk as the bytes land: the per-blob cap on
+  // this write's own count, and the budget on the shared reservation, which every write in flight
+  // adds to as it goes. One chunk is one synchronous step, so the shared figure is exact.
   let bytes = 0;
   try {
     const counted = async function* () {
       for await (const chunk of source) {
         const part = bytesOf(chunk, "a stream handed to ctx.blob.write yields");
         bytes += part.byteLength;
-        if (bytes > MAX_BLOB_BYTES) {
-          throw blobRefusal(
-            "blob_too_large",
-            `the blob passed ${MAX_BLOB_BYTES} bytes (256 MiB), the cap on one blob. Write less — a page, a range, a compressed form.`,
-          );
+        blobBytesReserved += part.byteLength;
+        if (blobBytesReserved > blobBudgetBytes || bytes > MAX_BLOB_BYTES) {
+          // What this write had left to it: the budget less what every other write holds.
+          const left = Math.max(0, blobBudgetBytes - (blobBytesReserved - bytes));
+          throw bytes > MAX_BLOB_BYTES && left >= MAX_BLOB_BYTES
+            ? blobRefusal(
+                "blob_too_large",
+                `the blob passed ${MAX_BLOB_BYTES} bytes (256 MiB), the cap on one blob. Write less — a page, a range, a compressed form.`,
+              )
+            : blobRefusal(
+                "blob_quota",
+                `the blob would carry this run past the ${formatMiB(left)} MiB left of its budget: the agent's live blobs are at the ${formatMiB(blobQuotaBytes)} MiB quota. A blob expires 24 hours after its write and stops counting then; write less, or run again once one has.`,
+              );
         }
         yield part;
       }
@@ -639,34 +781,32 @@ async function blobWrite(data, opts) {
     });
     return ref;
   } catch (error) {
+    // A refused or failed write is nowhere: not on disk, not on the ledger, and its reservation
+    // goes back to the budget with its `.tmp`.
+    blobBytesReserved -= bytes;
     await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
 }
 
-/** `ctx.blob.stat` — the sidecar, or `blob_not_found`. */
-async function blobStat(ref) {
-  const { dir } = resolveBlobRef(ref);
-  let text;
-  try {
-    text = await readFile(join(dir, BLOB_META_FILE), "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") throw blobNotFound(ref);
-    throw error;
-  }
-  const meta = JSON.parse(text);
-  return {
-    bytes: meta.bytes,
-    contentType: meta.contentType,
-    ...(typeof meta.name === "string" ? { name: meta.name } : {}),
-    expiresAt: meta.expiresAt,
-  };
+/** A byte count in MiB for a sentence, to one decimal where it is not whole. */
+function formatMiB(bytes) {
+  return String(Math.round((bytes / (1024 * 1024)) * 10) / 10);
 }
 
-/** `ctx.blob.read` — a `Blob` over `data`, opened lazily, typed from the sidecar. */
+/** `ctx.blob.stat` — the sidecar, or `blob_not_found`. */
+async function blobStat(ref) {
+  return readBlobMeta(await openBlob(ref));
+}
+
+/**
+ * `ctx.blob.read`: a `Blob` over `data`, opened lazily, typed from the sidecar (the header). The
+ * `Blob` holds a handle to the file and nothing of its bytes: `.stream()` reads it in chunks, and
+ * only `.arrayBuffer()`, `.bytes()` or `.text()` on the module's side holds it whole.
+ */
 async function blobRead(ref) {
-  const { dir } = resolveBlobRef(ref);
-  const meta = await blobStat(ref);
+  const dir = await openBlob(ref);
+  const meta = await readBlobMeta(dir);
   return openAsBlob(join(dir, BLOB_DATA_FILE), { type: meta.contentType });
 }
 
@@ -733,7 +873,8 @@ async function main() {
   } catch (error) {
     // In a dry run a throw is part of the report, not the end of the process — see the header.
     if (!dryRun) {
-      fail(EXIT_THREW, describe(error));
+      clearTimeout(timer);
+      await failWithLedger(EXIT_THREW, describe(error));
       return;
     }
     moduleError = describe(error);
@@ -745,7 +886,10 @@ async function main() {
     json = JSON.stringify(result === undefined ? null : result);
   } catch (error) {
     if (!dryRun) {
-      fail(EXIT_THREW, `The module's result is not serialisable as JSON: ${describe(error)}`);
+      await failWithLedger(
+        EXIT_THREW,
+        `The module's result is not serialisable as JSON: ${describe(error)}`,
+      );
       return;
     }
     moduleError = `The module's result is not serialisable as JSON: ${describe(error)}`;

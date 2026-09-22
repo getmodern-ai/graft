@@ -660,6 +660,45 @@ sync run (with the version) and the poll (without one, since a poll cannot know 
 `McpDeps.onBlobWritten`, which the server captures as `blob_written` with the size and the media type
 and never the name.
 
+**The read path and the door are GRA-187.** `ctx.blob.read(ref)` answers `fs.openAsBlob` over
+`/blobs/<id>/data`, typed from the sidecar, so `.stream()` reads the file in 64 KiB chunks and a
+`FormData` upload never holds it whole; a ref that does not resolve there is `blob_not_found` with
+the ref in the sentence, whether it is not of the scheme, fails the id rule, names a `.tmp`, names
+nothing, or reaches a symlink at the directory or either file (`lstat`, as the store judges the
+tree from outside). The runner checks no expiry: **the door is the expiry's one judge.**
+`packages/mcp/src/blob-door.ts`'s `admitBlobs` runs in `run.ts` after the input is validated and
+before the approval gate, for a dry run too, so `acquire`'s job learns of a dead ref there: the
+agent's live bytes (`sumLiveBlobBytes`: `removed_at` null and `expires_at` ahead, one statement)
+against `BLOB_QUOTA_BYTES` answers `blob_quota` with `bytes` and `quota` on every run, a ref in the
+input or not; then every `blob://` string leaf of the input, arrays and nested objects included, is
+looked up under the person and the agent in one statement (`findBlobs`) and the first without a row
+is `blob_not_found` with `ref`, another agent's row answering the same sentence, and the first past
+its expiry or with `removed_at` set is `blob_expired` with `ref`, naming the 24 hours. Each is a
+refusal in the run's own shape (`isError: true`, a `refused` ledger row) and none asks (ADR 0008).
+The quota lives beside the scheme, the cap and the TTL in `@graft/runner`'s `runner-source.ts`,
+the one file that spells the three numbers; `judgeBlobQuota` and `judgeBlobRefs` are pure and
+`blob-door.test.ts` pins the sentences, `server.test.ts` the loop end to end over the fake sandbox.
+**A run the door admits is handed its budget** (Greptile on #145): the door's check runs once,
+before the run, so `run.ts` puts `BLOB_QUOTA_BYTES - liveBytes` into the exec as
+`GRAFT_BLOB_BUDGET_BYTES` (the quota beside it as `GRAFT_BLOB_QUOTA_BYTES`, for the sentence), both
+deleted with the rest before the module loads, and the runner keeps the total it has committed and
+refuses the write that would pass the budget as `blob_quota` as the bytes stream in, at the smaller
+of the per-blob cap and the budget, removing the `.tmp` directory as `blob_too_large` does; a
+refused write is on no ledger. Unset, as under a server older than the variable or a runner run by
+hand, the per-blob cap alone bounds a write. `execute__` commands and `run_command` never pass the
+door and carry no budget. Three more rules from Greptile's review of #148: the runner reserves
+against the budget **as each chunk lands**, one shared figure across every write in flight, so two
+writes started together cannot both fit a remainder only one fits; the door subtracts **what it has
+already handed to this agent's runs still in flight** (`InFlightRegistry.grant` and
+`outstandingBudget`, `in-flight.ts`; a detached run's grant rides on its process name until its
+poll settles it), a per-process record as the in-flight hold is, with ADR 0023's option C as the
+shape for the day two replicas admit one agent's runs; and **a failed run reports the blobs it
+committed**: a module that writes and then throws prints the same `ENVELOPE_MARKER` line a result's
+envelope sits behind (`__GRAFT_ENVELOPE__:1`, `@graft/runner`) and `{ result: null, blobs }` on
+stdout before the error (the result file on the detached path), so `readRunnerEnvelope` is the one
+reader; `run.ts` records the rows off it and the failure names the refs, while a timeout prints
+nothing and its blobs are the sweep's to adopt (GRA-189).
+
 ### The self-hosted image
 
 `apps/server/Dockerfile`, built from the repository root, is the one image (GRA-33). Its stages:

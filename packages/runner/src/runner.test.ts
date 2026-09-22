@@ -1,6 +1,16 @@
 /* biome-ignore-all lint/suspicious/noTemplateCurlyInString: the fixtures are module source text, and a template placeholder inside a plain string is exactly what a module holds. */
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  BLOB_QUOTA_BYTES,
   BLOB_REF_SCHEME,
   BLOB_TTL_MS,
   DRY_RUN_HEADER,
@@ -277,6 +288,82 @@ const FIXTURES: Record<string, string> = {
     "  } catch (error) {",
     "    return { refused: error.message, code: error.code ?? null };",
     "  }",
+    "};",
+  ].join("\n"),
+  // Blobs of the sizes (in MiB) the input names, each streamed in 64 KiB chunks and each refusal
+  // caught, so one run shows what the budget lets through and what it stops (GRA-187).
+  "writesSizedBlobs.mjs": [
+    "export default async (input, ctx) => {",
+    "  const out = [];",
+    "  for (const mib of input.sizes) {",
+    "    const chunk = new Uint8Array(65536).fill(1);",
+    "    let left = Math.round(mib * 16);",
+    "    const stream = new ReadableStream({ pull(c) { if (left-- > 0) c.enqueue(chunk); else c.close(); } });",
+    '    try { out.push({ ref: await ctx.blob.write(stream, { contentType: "application/octet-stream" }) }); }',
+    "    catch (error) { out.push({ code: error.code ?? null, message: error.message }); }",
+    "  }",
+    "  return out;",
+    "};",
+  ].join("\n"),
+  // Two 1 MiB writes started together: under a budget one of them fits, the shared reservation
+  // decides which, and the other is refused (Greptile on #148).
+  "writesConcurrentBlobs.mjs": [
+    "export default async (_input, ctx) => {",
+    "  const write = () => {",
+    "    const chunk = new Uint8Array(65536).fill(3);",
+    "    let left = 16;",
+    "    const stream = new ReadableStream({ pull(c) { if (left-- > 0) c.enqueue(chunk); else c.close(); } });",
+    '    return ctx.blob.write(stream, { contentType: "application/octet-stream" });',
+    "  };",
+    "  const settled = await Promise.allSettled([write(), write()]);",
+    '  return settled.map((s) => s.status === "fulfilled" ? { ref: s.value } : { code: s.reason.code ?? null, message: s.reason.message });',
+    "};",
+  ].join("\n"),
+  // A write, then a throw: the blob is committed and the failure must still report it.
+  "writesThenThrows.mjs": [
+    "export default async (input, ctx) => {",
+    '  const file = await ctx.blob.write(new TextEncoder().encode("kept before the fall"), { contentType: "text/plain", name: "kept.txt" });',
+    "  if (input.unserialisable) return { file, cycle: (() => { const o = {}; o.self = o; return o; })() };",
+    "  throw new Error(`fell over after writing ${file}`);",
+    "};",
+  ].join("\n"),
+  // The read half (GRA-187): every ref read, the found ones as their size and type.
+  "readRefs.mjs": [
+    "export default async (input, ctx) => {",
+    "  const out = {};",
+    "  for (const [key, ref] of Object.entries(input)) {",
+    "    try { const blob = await ctx.blob.read(ref); out[key] = { size: blob.size, type: blob.type }; }",
+    "    catch (error) { out[key] = { code: error.code ?? null, message: error.message }; }",
+    "  }",
+    "  return out;",
+    "};",
+  ].join("\n"),
+  // Write bytes under a media type and read them straight back: what comes out is what went in.
+  "readsBlob.mjs": [
+    "export default async (input, ctx) => {",
+    '  const file = await ctx.blob.write(Buffer.from(input.base64, "base64"), { contentType: input.contentType, name: input.name });',
+    "  const blob = await ctx.blob.read(file);",
+    '  return { file, size: blob.size, type: blob.type, base64: Buffer.from(await blob.arrayBuffer()).toString("base64") };',
+    "};",
+  ].join("\n"),
+  // A 20 MiB blob written in 1 MiB chunks, then read back through `.stream()` chunk by chunk with a
+  // collection between chunks (`--expose-gc` in NODE_OPTIONS): the high-water mark of the process's
+  // ArrayBuffer memory says whether the read held the file whole.
+  "streamsLargeBlob.mjs": [
+    "export default async (_input, ctx) => {",
+    "  const chunk = new Uint8Array(1024 * 1024).fill(7);",
+    "  let left = 20;",
+    "  const source = new ReadableStream({ pull(controller) { if (left-- > 0) controller.enqueue(chunk); else controller.close(); } });",
+    '  const file = await ctx.blob.write(source, { contentType: "application/octet-stream" });',
+    "  const blob = await ctx.blob.read(file);",
+    "  globalThis.gc?.();",
+    "  const baseline = process.memoryUsage().arrayBuffers;",
+    "  let chunks = 0, total = 0, maxChunk = 0, peak = baseline;",
+    "  for await (const part of blob.stream()) {",
+    "    chunks += 1; total += part.byteLength; maxChunk = Math.max(maxChunk, part.byteLength);",
+    "    if (chunks % 16 === 0) { globalThis.gc?.(); peak = Math.max(peak, process.memoryUsage().arrayBuffers); }",
+    "  }",
+    "  return { size: blob.size, type: blob.type, chunks, total, maxChunk, baseline, peak, gc: typeof globalThis.gc };",
     "};",
   ].join("\n"),
   "blobBadWrite.mjs": [
@@ -582,7 +669,7 @@ describe("a TypeScript module", () => {
   });
 
   /** And the blob contract's scheme, cap and life (GRA-186); the path names are pinned to `@graft/toolbox` in `packages/mcp/src/run.test.ts`. */
-  it("names the blob scheme, cap and life runner-source.ts declares", async () => {
+  it("names the blob scheme, cap and life runner-source.ts declares, and the quota is the server's alone", async () => {
     const source = await readFile(RUNNER, "utf8");
     expect(source).toContain(`const BLOB_REF_SCHEME = ${JSON.stringify(BLOB_REF_SCHEME)};`);
     // Spelt with their units in both files, so a reader sees 256 MiB and 24 hours, not a number.
@@ -593,6 +680,12 @@ describe("a TypeScript module", () => {
     expect(source).toContain(`const ENVELOPE_MARKER = ${JSON.stringify(ENVELOPE_MARKER)};`);
     expect(source).toContain(`const MAX_BLOB_NAME_CHARS = ${MAX_BLOB_NAME_CHARS};`);
     expect(source).toContain(`const MAX_BLOB_CONTENT_TYPE_CHARS = ${MAX_BLOB_CONTENT_TYPE_CHARS};`);
+    // The quota is judged at the door over the rows (GRA-187); the runner holds no copy of the
+    // number to drift, and learns its run's budget and the quota from the door's two variables.
+    expect(BLOB_QUOTA_BYTES).toBe(1024 * 1024 * 1024);
+    expect(source).not.toMatch(/const \w*QUOTA\w* = \d/);
+    expect(source).toContain("process.env.GRAFT_BLOB_BUDGET_BYTES");
+    expect(source).toContain("process.env.GRAFT_BLOB_QUOTA_BYTES");
   });
 });
 
@@ -1235,28 +1328,284 @@ describe("ctx.blob", () => {
     expect(await readdir(blobs)).toEqual([]);
   }, 60_000);
 
-  it("stat answers blob_not_found for an id that names nothing, a .tmp name or a climb, and a usage error for a string that is not a ref", async () => {
+  /** Every way a ref fails to resolve under `/blobs/<id>`, and the one answer (the header; GRA-187). */
+  const DEAD_REFS = {
+    missing: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21",
+    tmp: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21.tmp",
+    climbs: "blob://../etc",
+    slash: "blob://a/b",
+    empty: "blob://",
+    notARef: "https://vendor.example/file.pdf",
+  };
+
+  it("stat answers blob_not_found, naming the ref, for an id that names nothing, a .tmp name, a climb, a slash, an empty id and a string that is not a ref", async () => {
     const { env } = await withBlobs();
     const run = await runRunner({
       module: fixture("blobRefs.mjs"),
-      stdin: JSON.stringify({
-        missing: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21",
-        tmp: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21.tmp",
-        climbs: "blob://../etc",
-        slash: "blob://a/b",
-        notARef: "https://vendor.example/file.pdf",
-      }),
+      stdin: JSON.stringify(DEAD_REFS),
       env,
     });
 
     expect(run.code).toBe(0);
     const result = resultOf(run) as Record<string, { code: string | null; message: string }>;
-    for (const key of ["missing", "tmp", "climbs", "slash"]) {
-      expect(result[key]?.code).toBe("blob_not_found");
-      expect(result[key]?.message).toMatch(/names no blob this agent holds/);
+    for (const [key, ref] of Object.entries(DEAD_REFS)) {
+      expect(result[key]?.code, key).toBe("blob_not_found");
+      expect(result[key]?.message, key).toContain(ref);
     }
-    expect(result.notARef?.code).toBeNull();
-    expect(result.notARef?.message).toMatch(/a ref of the form blob:\/\/<id>/);
+    expect(result.missing?.message).toMatch(/names no blob this agent holds/);
+    expect(result.notARef?.message).toMatch(/is not a blob ref .* takes the blob:\/\/<id> string/);
+  });
+
+  /**
+   * The run's budget under the agent's quota (GRA-187, after Greptile on #145): what the door hands
+   * the exec as GRAFT_BLOB_BUDGET_BYTES bounds the total this process commits, checked as the bytes
+   * stream in; a refused write is on no disk and no ledger.
+   */
+  describe("GRAFT_BLOB_BUDGET_BYTES", () => {
+    const MIB = 1024 * 1024;
+    type Outcome = { ref?: string; code?: string | null; message?: string };
+    const budget = (bytes: number) => ({
+      GRAFT_BLOB_BUDGET_BYTES: String(bytes),
+      GRAFT_BLOB_QUOTA_BYTES: String(1024 * MIB),
+    });
+
+    it("lets a run commit up to the budget and refuses the write that would pass it as blob_quota, naming the MiB left and the quota, with only the first on disk and on the ledger", async () => {
+      const { blobs, env } = await withBlobs(budget(1.5 * MIB));
+      const run = await runRunner({
+        module: fixture("writesSizedBlobs.mjs"),
+        stdin: JSON.stringify({ sizes: [1, 1] }),
+        env,
+      });
+
+      expect(run.code).toBe(0);
+      const envelope = envelopeOf(run);
+      const [first, second] = envelope.result as Outcome[];
+      expect(first?.ref).toMatch(REF);
+      expect(second).toEqual({
+        code: "blob_quota",
+        message:
+          "blob_quota: the blob would carry this run past the 0.5 MiB left of its budget: the agent's live blobs are at the 1024 MiB quota. A blob expires 24 hours after its write and stops counting then; write less, or run again once one has.",
+      });
+      expect((envelope.blobs as Ledger).map((line) => line.ref)).toEqual([first?.ref]);
+      expect(await readdir(blobs)).toEqual([idOf(first?.ref ?? "")]);
+    });
+
+    it("stops one oversized write at the budget as the bytes stream in, and a budget of 0 refuses the first write", async () => {
+      const oversized = await withBlobs(budget(1.5 * MIB));
+      const one = await runRunner({
+        module: fixture("writesSizedBlobs.mjs"),
+        stdin: JSON.stringify({ sizes: [2] }),
+        env: oversized.env,
+      });
+      expect(one.code).toBe(0);
+      expect(envelopeOf(one).result).toEqual([
+        { code: "blob_quota", message: expect.stringContaining("1.5 MiB left of its budget") },
+      ]);
+      expect(envelopeOf(one).blobs).toEqual([]);
+      expect(await readdir(oversized.blobs)).toEqual([]);
+
+      const none = await withBlobs(budget(0));
+      const zero = await runRunner({
+        module: fixture("writesSizedBlobs.mjs"),
+        stdin: JSON.stringify({ sizes: [1] }),
+        env: none.env,
+      });
+      expect(envelopeOf(zero).result).toEqual([
+        { code: "blob_quota", message: expect.stringContaining("the 0 MiB left of its budget") },
+      ]);
+      expect(await readdir(none.blobs)).toEqual([]);
+    });
+
+    it("reserves as the bytes land, so of two 1 MiB writes started together under 1.5 MiB exactly one commits", async () => {
+      const { blobs, env } = await withBlobs(budget(1.5 * MIB));
+      const run = await runRunner({ module: fixture("writesConcurrentBlobs.mjs"), env });
+
+      expect(run.code).toBe(0);
+      const envelope = envelopeOf(run);
+      const outcomes = envelope.result as Outcome[];
+      const committed = outcomes.filter((o) => o.ref !== undefined);
+      const refused = outcomes.filter((o) => o.code !== undefined);
+      expect(committed).toHaveLength(1);
+      expect(refused).toEqual([
+        { code: "blob_quota", message: expect.stringContaining("left of its budget") },
+      ]);
+      expect((envelope.blobs as Ledger).map((line) => line.ref)).toEqual([committed[0]?.ref]);
+      expect(await readdir(blobs)).toEqual([idOf(committed[0]?.ref ?? "")]);
+    });
+
+    it("without the variable, a server older than it, the per-blob cap alone bounds a write", async () => {
+      // `withBlobs` sets no budget: two writes go, as they did before the variable existed.
+      const { blobs, env } = await withBlobs();
+      const run = await runRunner({
+        module: fixture("writesSizedBlobs.mjs"),
+        stdin: JSON.stringify({ sizes: [1, 1] }),
+        env,
+      });
+      expect(run.code).toBe(0);
+      const outcomes = envelopeOf(run).result as Outcome[];
+      expect(outcomes.map((o) => o.ref)).toEqual([
+        expect.stringMatching(REF),
+        expect.stringMatching(REF),
+      ]);
+      expect(envelopeOf(run).blobs).toHaveLength(2);
+      expect(await readdir(blobs)).toHaveLength(2);
+    });
+  });
+
+  /**
+   * A failed run's blobs (GRA-187, after Greptile on #148): the blob is committed before the module's
+   * outcome is known, so the failure carries the ledger out ahead of it, behind the sentinel on
+   * stdout, or in the result file on the detached path.
+   */
+  describe("a module that writes and then fails", () => {
+    it("exits 1 with the error on stderr and the ledger behind the sentinel on stdout, the blob committed", async () => {
+      const { blobs, env } = await withBlobs();
+      const run = await runRunner({ module: fixture("writesThenThrows.mjs"), env });
+
+      expect(run.code).toBe(1);
+      expect(run.stderr).toContain("fell over after writing blob://");
+      const [sentinel, json, ...rest] = run.stdout.split("\n");
+      expect(sentinel).toBe(ENVELOPE_MARKER);
+      expect(rest).toEqual([""]);
+      const envelope = JSON.parse(json ?? "") as { result: unknown; blobs: Ledger };
+      expect(envelope.result).toBeNull();
+      expect(envelope.blobs).toEqual([
+        {
+          ref: expect.stringMatching(REF),
+          bytes: 20,
+          contentType: "text/plain",
+          name: "kept.txt",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      expect(await readdir(blobs)).toEqual([idOf(envelope.blobs[0]?.ref ?? "")]);
+    });
+
+    it("does the same for a result JSON cannot carry, and on the detached path writes the envelope to the result file", async () => {
+      const sync = await withBlobs();
+      const unserialisable = await runRunner({
+        module: fixture("writesThenThrows.mjs"),
+        stdin: JSON.stringify({ unserialisable: true }),
+        env: sync.env,
+      });
+      expect(unserialisable.code).toBe(1);
+      expect(unserialisable.stderr).toContain("not serialisable as JSON");
+      expect(unserialisable.stdout.startsWith(`${ENVELOPE_MARKER}\n`)).toBe(true);
+      expect(JSON.parse(unserialisable.stdout.slice(ENVELOPE_MARKER.length)).blobs).toHaveLength(1);
+
+      const resultPath = join(fixtures, "results", "failed.result.json");
+      const detached = await withBlobs({ GRAFT_RESULT_PATH: resultPath });
+      const run = await runRunner({ module: fixture("writesThenThrows.mjs"), env: detached.env });
+      expect(run.code).toBe(1);
+      expect(run.stdout).toBe(`${RESULT_MARKER}${resultPath}\n`);
+      const written = await writtenEnvelope(resultPath);
+      expect(written.result).toBeNull();
+      expect(written.blobs).toHaveLength(1);
+      expect(await readdir(detached.blobs)).toHaveLength(1);
+    });
+
+    it("a module that wrote nothing fails with nothing on stdout, as before", async () => {
+      const { env } = await withBlobs();
+      const run = await runRunner({ module: fixture("throws.mjs"), env });
+      expect(run.code).toBe(1);
+      expect(run.stdout).toBe("");
+    });
+  });
+
+  it("read answers the bytes and the media type the write was given", async () => {
+    const { env } = await withBlobs();
+    const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x00, 0xff, 0x0a]);
+    const run = await runRunner({
+      module: fixture("readsBlob.mjs"),
+      stdin: JSON.stringify({
+        base64: bytes.toString("base64"),
+        contentType: "application/pdf",
+        name: "invoice.pdf",
+      }),
+      env,
+    });
+
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe("");
+    const result = resultOf(run) as { file: string; size: number; type: string; base64: string };
+    expect(result.file).toMatch(REF);
+    expect(result.size).toBe(bytes.length);
+    expect(result.type).toBe("application/pdf");
+    expect(Buffer.from(result.base64, "base64").equals(bytes)).toBe(true);
+  });
+
+  it("read's Blob streams a 20 MiB blob in chunks without holding it whole", async () => {
+    const { env } = await withBlobs({ NODE_OPTIONS: "--expose-gc" });
+    const run = await runRunner({ module: fixture("streamsLargeBlob.mjs"), env });
+
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe("");
+    const result = resultOf(run) as {
+      size: number;
+      type: string;
+      chunks: number;
+      total: number;
+      maxChunk: number;
+      baseline: number;
+      peak: number;
+      gc: string;
+    };
+    const size = 20 * 1024 * 1024;
+    expect(result.gc).toBe("function");
+    expect(result.size).toBe(size);
+    expect(result.type).toBe("application/octet-stream");
+    expect(result.total).toBe(size);
+    // Many chunks, none of them the file: the stream is the file read a piece at a time.
+    expect(result.chunks).toBeGreaterThan(16);
+    expect(result.maxChunk).toBeLessThan(size / 8);
+    // And the process never held the blob's bytes: the high-water mark of ArrayBuffer memory over
+    // the read, collected every sixteen chunks, stays well under the blob's size.
+    expect(result.peak - result.baseline).toBeLessThan(size / 4);
+  }, 60_000);
+
+  it("read refuses a symlink at the blob's directory or at its data as blob_not_found, and every dead ref stat refuses", async () => {
+    const { blobs, env } = await withBlobs();
+    const written = await runRunner({
+      module: fixture("writesBlob.mjs"),
+      stdin: JSON.stringify({ text: "real bytes" }),
+      env,
+    });
+    const real = (resultOf(written) as { file: string }).file;
+    const realId = idOf(real);
+    // A directory that is a link to the real blob, and a blob whose `data` is a link to the real data.
+    const linkedDir = "1e1e1e1e-0000-4000-8000-000000000001";
+    const linkedData = "1e1e1e1e-0000-4000-8000-000000000002";
+    await symlink(join(blobs, realId), join(blobs, linkedDir), "dir");
+    await mkdir(join(blobs, linkedData));
+    await copyFile(join(blobs, realId, "meta.json"), join(blobs, linkedData, "meta.json"));
+    await symlink(join(blobs, realId, "data"), join(blobs, linkedData, "data"), "file");
+
+    const run = await runRunner({
+      module: fixture("readRefs.mjs"),
+      stdin: JSON.stringify({
+        ...DEAD_REFS,
+        real,
+        linkedDir: `blob://${linkedDir}`,
+        linkedData: `blob://${linkedData}`,
+      }),
+      env,
+    });
+
+    expect(run.code).toBe(0);
+    const result = resultOf(run) as Record<
+      string,
+      { code?: string | null; message?: string; size?: number; type?: string }
+    >;
+    expect(result.real).toEqual({ size: 10, type: "text/plain" });
+    for (const key of [...Object.keys(DEAD_REFS), "linkedDir", "linkedData"]) {
+      expect(result[key]?.code, key).toBe("blob_not_found");
+    }
+    expect(result.linkedDir?.message).toContain(`blob://${linkedDir}`);
+    expect(result.linkedData?.message).toContain(`blob://${linkedData}`);
+    // The links and their target are left as they were: refused, not followed and not removed.
+    expect(await readFile(join(blobs, realId, "data"), "utf8")).toBe("real bytes");
+    expect((await lstat(join(blobs, linkedDir))).isSymbolicLink()).toBe(true);
+    expect((await lstat(join(blobs, linkedData, "data"))).isSymbolicLink()).toBe(true);
   });
 
   it("refuses a write of something that is not bytes, or with no content type, before touching the disk", async () => {

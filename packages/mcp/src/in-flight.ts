@@ -24,8 +24,21 @@ import { isPlainObject } from "./result";
 export type InFlightRegistry = {
   /** A call is in flight from now until the returned function runs; running it twice is a no-op. */
   begin(agentId: string): () => void;
-  /** A detached process is in flight by name until settled, or until `ttlMs` has passed. */
-  track(agentId: string, processName: string, ttlMs: number): void;
+  /**
+   * The blob budget the door handed a run of this agent's (GRA-187; `blob-door.ts`), held from now
+   * until the returned function runs. Two runs admitted from the same rows would otherwise each be
+   * handed the whole remainder (Greptile on #148): the door subtracts `outstandingBudget` first.
+   * A run that starts detached moves its grant onto the process name (`track`'s `budgetBytes`)
+   * before releasing this one, so the agent is never momentarily ungranted between the two.
+   */
+  grant(agentId: string, budgetBytes: number): () => void;
+  /** Bytes granted to this agent's runs still in flight: every open grant and every tracked process's. */
+  outstandingBudget(agentId: string): number;
+  /**
+   * A detached process is in flight by name until settled, or until `ttlMs` has passed; the budget
+   * the door handed its run, when it has one, is outstanding for as long.
+   */
+  track(agentId: string, processName: string, ttlMs: number, budgetBytes?: number): void;
   /** `wait_for_process` saw the process finish. A name not tracked is ignored. */
   settle(agentId: string, processName: string): void;
   has(agentId: string): boolean;
@@ -33,9 +46,13 @@ export type InFlightRegistry = {
   close(): void;
 };
 
+type Detached = { timer: ReturnType<typeof setTimeout>; budgetBytes: number };
+
 type AgentHolds = {
   calls: number;
-  detached: Map<string, ReturnType<typeof setTimeout>>;
+  /** The sum of every open call grant (`grant`), in bytes. */
+  granted: number;
+  detached: Map<string, Detached>;
 };
 
 export function createInFlightRegistry(): InFlightRegistry {
@@ -44,22 +61,24 @@ export function createInFlightRegistry(): InFlightRegistry {
   const holdsOf = (agentId: string): AgentHolds => {
     let holds = agents.get(agentId);
     if (!holds) {
-      holds = { calls: 0, detached: new Map() };
+      holds = { calls: 0, granted: 0, detached: new Map() };
       agents.set(agentId, holds);
     }
     return holds;
   };
 
   const prune = (agentId: string, holds: AgentHolds) => {
-    if (holds.calls === 0 && holds.detached.size === 0) agents.delete(agentId);
+    if (holds.calls === 0 && holds.granted === 0 && holds.detached.size === 0) {
+      agents.delete(agentId);
+    }
   };
 
   const settle = (agentId: string, processName: string) => {
     const holds = agents.get(agentId);
     if (!holds) return;
-    const timer = holds.detached.get(processName);
-    if (timer === undefined) return;
-    clearTimeout(timer);
+    const entry = holds.detached.get(processName);
+    if (entry === undefined) return;
+    clearTimeout(entry.timer);
     holds.detached.delete(processName);
     prune(agentId, holds);
   };
@@ -76,14 +95,33 @@ export function createInFlightRegistry(): InFlightRegistry {
         prune(agentId, holds);
       };
     },
-    track(agentId, processName, ttlMs) {
+    grant(agentId, budgetBytes) {
+      const holds = holdsOf(agentId);
+      const bytes = Math.max(0, budgetBytes);
+      holds.granted += bytes;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        holds.granted -= bytes;
+        prune(agentId, holds);
+      };
+    },
+    outstandingBudget(agentId) {
+      const holds = agents.get(agentId);
+      if (!holds) return 0;
+      let total = holds.granted;
+      for (const entry of holds.detached.values()) total += entry.budgetBytes;
+      return total;
+    },
+    track(agentId, processName, ttlMs, budgetBytes = 0) {
       const holds = holdsOf(agentId);
       const previous = holds.detached.get(processName);
-      if (previous !== undefined) clearTimeout(previous);
+      if (previous !== undefined) clearTimeout(previous.timer);
       const timer = setTimeout(() => settle(agentId, processName), Math.max(0, ttlMs));
       // A tracked process must not hold the server open past its last session.
       timer.unref?.();
-      holds.detached.set(processName, timer);
+      holds.detached.set(processName, { timer, budgetBytes: Math.max(0, budgetBytes) });
     },
     settle,
     has(agentId) {
@@ -92,7 +130,7 @@ export function createInFlightRegistry(): InFlightRegistry {
     },
     close() {
       for (const holds of agents.values()) {
-        for (const timer of holds.detached.values()) clearTimeout(timer);
+        for (const entry of holds.detached.values()) clearTimeout(entry.timer);
         holds.detached.clear();
       }
       agents.clear();

@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, sum } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { blob, type NewBlobRow } from "../schema/blob";
@@ -48,6 +48,39 @@ export async function findBlob(
     .where(and(eq(blob.id, blobId), inScope(scope)))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * The rows among `blobIds` that are this agent's and this person's, in one statement: the door's
+ * read for every ref an input names (GRA-187). An id with no row here is absent from the answer,
+ * whether nobody wrote it or another agent did: the two are one answer by design (ADR 0023, "never
+ * saying whose"). No ids is no statement.
+ */
+export async function findBlobs(
+  db: DbOrTx,
+  scope: AgentScope,
+  blobIds: readonly string[],
+): Promise<BlobRow[]> {
+  if (blobIds.length === 0) return [];
+  return db
+    .select()
+    .from(blob)
+    .where(and(inArray(blob.id, [...blobIds]), inScope(scope)));
+}
+
+/**
+ * How many bytes of blobs this agent holds live at `now`: rows not yet removed whose expiry is
+ * still ahead, summed in one statement: the door's quota read (GRA-187, `blob_quota`). A row past
+ * its expiry stops counting whether or not the sweep has reached it, so the quota frees itself on
+ * the TTL alone. Zero for an agent that has never written.
+ */
+export async function sumLiveBlobBytes(db: DbOrTx, scope: AgentScope, now: Date): Promise<number> {
+  const [row] = await db
+    .select({ bytes: sum(blob.bytes) })
+    .from(blob)
+    .where(and(inScope(scope), isNull(blob.removedAt), gt(blob.expiresAt, now)));
+  // `sum` over a bigint comes back as Postgres's numeric, a string; null when no row matched.
+  return Number(row?.bytes ?? 0);
 }
 
 /** This agent's blobs, newest first, removed ones included — the record, not the live set. */

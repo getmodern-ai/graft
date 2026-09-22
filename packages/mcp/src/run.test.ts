@@ -17,6 +17,7 @@ import {
 } from "@graft/toolbox";
 import { describe, expect, it } from "vitest";
 
+import { blobBudgetEnvironment } from "./blob-door";
 import { blobsOnWire, withBlobs } from "./blobs";
 import { MAX_RESULT_BLOBS } from "./bounds";
 import {
@@ -185,6 +186,16 @@ describe("the blobs beside a result (GRA-186)", () => {
     expect(cut.blobs).toEqual(many.slice(0, MAX_RESULT_BLOBS));
     expect(cut.blobsOmitted).toBe(3);
     expect(cut.blobsNote).toMatch(/wrote 35 blobs; the first 32 are listed and 3 omitted/);
+  });
+
+  it("names the run's budget under the two variables runner.mjs reads (GRA-187)", async () => {
+    const source = await readFile(RUNNER_SOURCE_PATH, "utf8");
+    expect(source).toContain("process.env.GRAFT_BLOB_BUDGET_BYTES");
+    expect(source).toContain("process.env.GRAFT_BLOB_QUOTA_BYTES");
+    expect(Object.keys(blobBudgetEnvironment({ budgetBytes: 1 }))).toEqual([
+      "GRAFT_BLOB_BUDGET_BYTES",
+      "GRAFT_BLOB_QUOTA_BYTES",
+    ]);
   });
 
   it("hands every command the blobs mount as GRAFT_BLOBS_DIR, the runner's default spelt the same", async () => {

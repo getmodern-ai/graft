@@ -87,7 +87,9 @@ export { type BlobDeps, defaultBlobDeps } from "./blob/blob.deps";
 export {
   type BlobWrittenInput,
   getBlob,
+  getBlobs,
   listBlobs,
+  liveBlobBytes,
   recordBlobsWritten,
 } from "./blob/blob.service";
 export {

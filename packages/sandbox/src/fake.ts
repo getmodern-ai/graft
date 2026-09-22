@@ -287,6 +287,13 @@ export type FakeSandboxBackend = SandboxBackend & {
   toolboxRoot(toolboxId: string): string;
   /** The host directory an agent's blobs live in, beside the toolboxes; what `/blobs` is a symlink to. */
   blobsRoot(agentId: string): string;
+  /**
+   * The names of every process `execDetached` started in a sandbox, finished ones included, in
+   * start order; `[]` for a sandbox never opened. For a suite asserting that a refusal happened
+   * before anything ran (GRA-187's door): a run is one such process, so the list not growing is
+   * the fact.
+   */
+  processNames(name: string): string[];
   /** Kill every process still running and delete the directory. */
   close(): Promise<void>;
 };
@@ -427,6 +434,7 @@ export function createFakeSandboxBackend(): FakeSandboxBackend {
     sandboxRoot,
     toolboxRoot,
     blobsRoot,
+    processNames: (name) => [...(sandboxes.get(name)?.processes.keys() ?? [])],
     ensure: async ({ name }) => {
       assertSandboxName("a sandbox name", name);
       const existing = sandboxes.get(name);
