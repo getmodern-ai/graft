@@ -235,7 +235,7 @@ describe("the blob rows name the person and the agent in every statement", () =>
     ]);
     const s = only();
     expect(s.sql).toMatch(
-      /^insert into "blob" \(.*"person_id".*"agent_id".*\) values \(.*\), \(.*\) returning/,
+      /^insert into "blob" \(.*"person_id".*"agent_id".*\) values \(.*\), \(.*\) on conflict \("id"\) do nothing returning/,
     );
     expect(s.params.filter((p) => p === "person_1")).toHaveLength(2);
     expect(s.params.filter((p) => p === "agent_1")).toHaveLength(2);

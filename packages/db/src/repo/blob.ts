@@ -26,9 +26,13 @@ function inScope(scope: AgentScope) {
  */
 export async function insertBlobs(db: DbOrTx, rows: readonly NewBlobRow[]): Promise<BlobRow[]> {
   if (rows.length === 0) return [];
+  // Idempotent on the id: a finished detached run is polled more than once and every poll carries
+  // the same ledger (GRA-186; `wait_for_process` in `@graft/mcp`), so a row already there is left
+  // as it was and only the rows this call added come back.
   return db
     .insert(blob)
     .values([...rows])
+    .onConflictDoNothing({ target: blob.id })
     .returning();
 }
 
