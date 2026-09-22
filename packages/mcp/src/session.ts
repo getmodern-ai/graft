@@ -61,7 +61,11 @@ export const SERVER_INFO = { name: "graft", version: "0.1.0" } as const;
  * tightening another: GRA-190's blob rule cost the facts the descriptions already carry (that
  * `acquire` waits for the job and `acquire_status` for news, the four authoring tools' names, which
  * `ADVANCED_WHEN` opens each of them with) and "from Graft" in the opener, said by the handshake
- * itself. Measure with `SERVER_INSTRUCTIONS.length` before adding a word.
+ * itself. Measure with `SERVER_INSTRUCTIONS.length` before adding a word. GRA-197's sentence on
+ * `ctx.fetch` and an absolute URL is the authoring skill's alone
+ * (`packages/runner/skills/authoring-a-tool/SKILL.md`): it is a rule for the model that writes the
+ * module, which is Graft's and not the client's, and at 2,039 of 2,048 the budget had no room for
+ * it without tightening a rule of conduct.
  */
 
 /**

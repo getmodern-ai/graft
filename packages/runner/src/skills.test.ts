@@ -152,6 +152,12 @@ describe("the shipped skills", () => {
       "ctx.fetch(path, init)",
       "vendor-relative",
       "never names a host, never holds a key",
+      // GRA-197 (ADR 0010 as amended 2026-09-23): a URL the vendor answers at run time goes to
+      // ctx.fetch as it is, and a write flow is ctx.fetch rather than an SDK.
+      "goes to `ctx.fetch` as it is",
+      "admits the host only if the connection declares it",
+      "Prefer `ctx.fetch` over a vendor SDK for a write flow",
+      "will time out against the dry run's 202 preview",
       "The vendor sees the proxy, not the person",
       "the tool's description and its output names say so or leave it out",
       "The bare minimum",

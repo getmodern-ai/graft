@@ -144,9 +144,12 @@ export type ModuleCheckResult = {
 
 /**
  * The module's whole route out, as a type: exactly what the runner's `ctx` carries (`runner.mjs`,
- * `Object.freeze({ fetch, proxyBase, proxyKey, connection, blob })`). `proxyBase` and `proxyKey` are
- * the two an SDK is bound with (ADR 0010); `blob` is the module's one route to a file (ADR 0023,
- * GRA-186), and a call on it is not a vendor method, so it moves no annotation.
+ * `Object.freeze({ fetch, proxyBase, proxyKey, connection, blob })`). `fetch` takes a vendor-relative
+ * path on the connection's primary host, or an absolute `https://` URL on another of the connection's
+ * hosts, which the runner routes through the proxy's host form (GRA-197; ADR 0010 as amended
+ * 2026-09-23); the `fetch-absolute-url` rule below still refuses a literal one. `proxyBase` and
+ * `proxyKey` are the two an SDK is bound with (ADR 0010); `blob` is the module's one route to a file
+ * (ADR 0023, GRA-186), and a call on it is not a vendor method, so it moves no annotation.
  */
 export const CONTEXT_DECLARATION =
   "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }";
@@ -841,9 +844,13 @@ function scanText(
           head !== null &&
           (/^[a-z][a-z0-9+.-]*:/i.test(head) || head.startsWith("//") || /^http/i.test(head))
         ) {
+          // A host written into the module is the smell this refuses; a URL a vendor hands back at
+          // run time is a value the check never sees, and the runner routes it through the proxy's
+          // host form, where the connection's host set is judged (GRA-197; ADR 0010 as amended
+          // 2026-09-23).
           bag.at("fetch-absolute-url", abs, argument?.getStart(sf) ?? node.getStart(sf), {
-            message: `ctx.fetch is given an absolute URL (${head.slice(0, 60)}); the proxy supplies the host from the connection, and the runner refuses any other.`,
-            hint: 'Pass the vendor-relative path — "/v1/orders" — and nothing before it.',
+            message: `ctx.fetch is given a literal absolute URL (${head.slice(0, 60)}); the proxy supplies the host from the connection, and a host written into the module is refused. A URL a vendor hands back at run time, on one of the connection's hosts, may be passed as it is.`,
+            hint: 'Pass the vendor-relative path, "/v1/orders", with nothing before it; pass a URL the vendor answered (an upload_url, a presigned URL) as the value you read, never as a literal.',
           });
         }
       }

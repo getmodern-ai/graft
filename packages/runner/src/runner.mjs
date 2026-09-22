@@ -43,13 +43,20 @@
  * five and nothing else (`module-check.core.ts`, `CONTEXT_DECLARATION`).
  *
  *  - `ctx.fetch(path, init)` prepends `${GRAFT_PROXY_URL}/c/${GRAFT_CONNECTION}` to a vendor-relative
- *    path and adds `Authorization: Bearer ${GRAFT_TOKEN}`. Both halves of the binding are refused
- *    rather than bent: an absolute URL, so the token cannot be sent to any host but the proxy; a path
- *    that walks out of `/c/<connection>/`, so it cannot be sent for any connection but the one this
- *    run was minted for. It never follows a redirect (`redirect: "manual"`): a vendor 3xx the proxy
- *    hands back reaches the module as that status with its `Location`. The proxy does not follow
- *    redirects (CONTEXT.md, *Proxy*), and a sandbox can reach nothing but the proxy, so following
- *    one here could only dial a host the egress refuses and die as an opaque `fetch failed` (GRA-64).
+ *    path and adds `Authorization: Bearer ${GRAFT_TOKEN}`. An absolute `https://` URL is routed to
+ *    the proxy's host form for its host, `…/c/${connection}/h/${host}${path}${query}`, the route
+ *    `ctx.proxyBase(host)` names, so a URL a vendor hands back at run time on a second host of the
+ *    connection (Slack's `files.slack.com` upload URL, GRA-197) reaches the proxy, which judges the
+ *    host against the connection's set as it does an SDK's call (ADR 0010 as amended 2026-09-23).
+ *    The runner adds nothing it does not have: no host list, so which hosts are allowed is the
+ *    proxy's alone. Refused rather than bent, before any request leaves: a URL that is not `https:`,
+ *    one carrying credentials (`user:pass@`), one whose host is not a host name; and a relative path
+ *    that walks out of `/c/<connection>/`, so nothing can be sent for any connection but the one this
+ *    run was minted for. The token travels to the proxy and nowhere else under either form. It
+ *    never follows a redirect (`redirect: "manual"`): a vendor 3xx the proxy hands back reaches the
+ *    module as that status with its `Location`. The proxy does not follow redirects (CONTEXT.md,
+ *    *Proxy*), and a sandbox can reach nothing but the proxy, so following one here could only dial
+ *    a host the egress refuses and die as an opaque `fetch failed` (GRA-64).
  *  - `ctx.proxyBase(host?)` is the base URL an SDK is pointed at: `${GRAFT_PROXY_URL}/c/${connection}`
  *    for the connection's primary host, `…/c/${connection}/h/${host}` for another host the connection
  *    declares (ADR 0010). The proxy pins the request to the connection's host set; this only builds
@@ -290,7 +297,7 @@ const READ_METHODS = new Set(["GET", "HEAD"]);
 const MAX_RECORDED_BODY_CHARS = 4_000;
 /** How many calls the report records in full. Past this it counts, so a loop cannot flood the model. */
 const MAX_RECORDED_CALLS = 50;
-/** What `ctx.proxyBase(host)` accepts: a host name, optionally with a port, and nothing that could be a path. */
+/** What `ctx.proxyBase(host)` and an absolute URL's host must be: a host name, optionally with a port, and nothing that could be a path. */
 const HOST_PATTERN =
   /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i;
 
@@ -519,6 +526,41 @@ function proxyBase(host) {
   return `${base}/h/${host}`;
 }
 
+/**
+ * An absolute URL given to `ctx.fetch`, rewritten onto the proxy's host form (the header):
+ * `https://files.slack.com/upload/v1/abc?x=1` becomes `${prefix}h/files.slack.com/upload/v1/abc?x=1`,
+ * the same route `ctx.proxyBase("files.slack.com")` names, so the proxy judges the host against the
+ * connection's set and this function judges nothing about the set (GRA-197). What it does refuse is
+ * what would make the rewrite a lie: a scheme other than `https:` (the proxy speaks only that to a
+ * vendor), credentials in the URL (the proxy supplies the credential, and a module never holds one),
+ * and a host that is not a host name (so it cannot become a path). The fragment is dropped, as fetch
+ * drops it. `refuse` is the caller's, so a refused write is on the dry run's report as before.
+ */
+function hostRoute(target, prefix, refuse) {
+  let given;
+  try {
+    given = new URL(target);
+  } catch {
+    throw refuse(`ctx.fetch refused a URL it could not parse: ${target}`);
+  }
+  if (given.protocol !== "https:") {
+    throw refuse(
+      `ctx.fetch takes an https:// URL on one of the connection's hosts, or a vendor-relative path such as "/v1/orders", not ${given.protocol}// (${target}).`,
+    );
+  }
+  if (given.username !== "" || given.password !== "") {
+    throw refuse(
+      `ctx.fetch refused a URL carrying credentials for ${given.host}: the proxy supplies the connection's credential, and a module never holds one.`,
+    );
+  }
+  if (!HOST_PATTERN.test(given.host)) {
+    throw refuse(
+      `ctx.fetch refused a URL whose host is not a host name (${given.host}); the proxy reaches a host the connection declares, such as "files.example.com".`,
+    );
+  }
+  return new URL(`h/${given.host}${given.pathname}${given.search}`, prefix);
+}
+
 function boundFetch(path, init = {}) {
   if (!proxyUrl || !connection) throw unbound("ctx.fetch");
   const target = String(path);
@@ -536,16 +578,15 @@ function boundFetch(path, init = {}) {
     }
     return new Error(message);
   };
-  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) {
-    throw refuse(
-      `ctx.fetch takes a vendor-relative path such as "/v1/orders", not an absolute URL (${target}); the proxy supplies the host.`,
-    );
-  }
-
   const prefix = connectionPrefix();
-  const url = new URL(target.replace(/^\/+/, ""), prefix);
-  if (!url.href.startsWith(prefix.href)) {
-    throw refuse(`ctx.fetch refused a path that leaves the connection: ${target}`);
+  let url;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) {
+    url = hostRoute(target, prefix, refuse);
+  } else {
+    url = new URL(target.replace(/^\/+/, ""), prefix);
+    if (!url.href.startsWith(prefix.href)) {
+      throw refuse(`ctx.fetch refused a path that leaves the connection: ${target}`);
+    }
   }
 
   const headers = new Headers(init.headers);

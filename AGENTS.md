@@ -752,6 +752,26 @@ then, a `.tmp` goes by the bound, and no `blob_swept` fires, since there is no p
 `sweep -- --plan` shows a revoked agent's actions like any other's. A hosted blob store (GRA-192)
 implements `listAgents` beside the five verbs or `assertCloudBackings` refuses it at boot.
 
+**`ctx.fetch` takes an absolute URL on one of the connection's hosts** (GRA-197; ADR 0010 as
+amended 2026-09-23). The runner (`packages/runner/src/runner.mjs`, `hostRoute`) rewrites an absolute
+`https://` URL onto the proxy's host form for its host, `${proxy}/c/<conn>/h/<host><path><query>`,
+the same route `ctx.proxyBase(host)` names, so the proxy judges the host against the connection's
+`hosts` as it does an SDK's call and refuses one the person did not confirm with its existing
+`403 host_not_in_set`; the runner holds no host list and adds no variable. Refused in the runner
+before any request leaves, each with a sentence: a URL that is not `https:`, one carrying
+credentials (`user:pass@`, the host named and the credentials not), one whose host fails
+`HOST_PATTERN`. A relative path resolves as before, `redirect: "manual"` stays, and a dry run
+records such a call by the URL the module gave, host and all. The check's `fetch-absolute-url`
+still refuses a *literal* absolute URL at a `.fetch(` call and its sentence says a URL a vendor
+hands back at run time may be passed as it is; `global-fetch` and `sdk-not-bound` are unchanged.
+The authoring skill's `ctx.fetch` bullet says so, and says to prefer `ctx.fetch` over a vendor SDK
+for a write flow, since an SDK that retries on a body it does not expect times out against the dry
+run's 202 preview (GRA-198 decides whether the preview changes shape instead). `SERVER_INSTRUCTIONS`
+and the Hermes skill carry no sentence on it: the budget stood at 2,039 of 2,048, and the rule is
+for the model that writes the module, which is Graft's. This is what let Slack's
+`files.getUploadURLExternal` flow (a `POST` of the bytes to `files.slack.com`) be authored without
+an SDK.
+
 **`acquire` authors both halves, and the playbook carries the one rule (GRA-190).** The authoring
 skill's *Moving a file between tools* section says when to write a blob and when to return data, how
 to pipe a response into `ctx.blob.write` (`res.body`, the type and name off the headers, base64 in

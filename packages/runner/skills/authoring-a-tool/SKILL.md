@@ -122,8 +122,13 @@ for `quantity` — fails the check at its line rather than the run.
 - **`ctx.fetch(path, init)`** is how the module calls the vendor, and the path is vendor-relative —
   `/orders`, not `https://api.vendor.com/orders`. The proxy supplies the connection's primary host
   and injects the credential on the way out. A module never names a host, never holds a key, never
-  sets an `Authorization` header of its own: the runner refuses an absolute URL before any request
-  is made.
+  sets an `Authorization` header of its own: the check refuses an absolute URL written into the
+  module. A URL the vendor answers at run time on another of the connection's hosts (Slack's
+  `upload_url` on `files.slack.com`, a presigned upload URL) goes to `ctx.fetch` as it is: the runner
+  routes it through the proxy, which admits the host only if the connection declares it and refuses
+  it otherwise, so the module still names no host of its own. Prefer `ctx.fetch` over a vendor SDK
+  for a write flow: an SDK that retries on a body it does not expect will time out against the dry
+  run's 202 preview.
 - **`ctx.proxyBase(host?)`** is the base URL an SDK is pointed at, and nothing else uses it. Without
   an argument it is the connection's primary host; with one — `ctx.proxyBase("www.googleapis.com")`
   — it is another host the connection declares. It is a call, never a string you assemble.
@@ -264,7 +269,10 @@ Two SDKs need a word each:
 - **Slack** (`@slack/web-api`): `new WebClient(ctx.proxyKey, { slackApiUrl: ctx.proxyBase(),
   allowAbsoluteUrls: false })`. `allowAbsoluteUrls: false` is required — the SDK otherwise treats a
   method name that is an absolute URL as the URL to call — and the check refuses a `WebClient`
-  without it.
+  without it. For a write, and for the file upload in particular, do not use it: the SDK reads the
+  dry run's 202 preview as a protocol error and retries until the run times out. Write the three
+  calls with `ctx.fetch`, `files.getUploadURLExternal`, then a `POST` of the bytes to the
+  `upload_url` it answered, then `files.completeUploadExternal`.
 - **Stripe**: its SDK has no base-path option, so it cannot be pointed at the proxy. Write Stripe
   calls with `ctx.fetch` for now.
 
@@ -289,8 +297,8 @@ the exec's environment; `child_process`, `net`, `dgram`, `fs`, `fs/promises`, `w
 `vm`, `module`, `cluster` or `inspector`, bare or `node:`-prefixed, however imported (a tool has no
 filesystem of its own: a file it writes for another tool, or reads from one, is a blob, and
 `ctx.blob.write` and `ctx.blob.read` are the route); an import from outside the module, or of
-a package `dependencies` does not declare; an absolute URL passed to `ctx.fetch`; an SDK not bound
-to `ctx.proxyKey` and `ctx.proxyBase`; syntax Node cannot strip. Advice: an implicit `any`, a
+a package `dependencies` does not declare; a literal absolute URL passed to `ctx.fetch`; an SDK not
+bound to `ctx.proxyKey` and `ctx.proxyBase`; syntax Node cannot strip. Advice: an implicit `any`, a
 declared input field the module never reads, a result JSON would lose (a function, a `Map`).
 
 The check also answers with the tool's **annotations**, `readOnly` and `destructive`, read off the
@@ -382,14 +390,14 @@ Read it in this order:
   reading an `id` off the response, checking for `201` — ran against the preview, not a vendor
   answer, so it proves nothing. A `moduleError` there (the module threw on the preview) does not
   fail the dry run; a `moduleError` with no write previewed does.
-- **`writesRefused`** is a write that never became a preview: an absolute URL, a path that left the
-  connection, or a refusal from the proxy (a host the connection does not declare, an expired
-  token). Fix the module.
+- **`writesRefused`** is a write that never became a preview: a URL that is not `https://` or that
+  carries credentials, a path that left the connection, or a refusal from the proxy (a host the
+  connection does not declare, an expired token). Fix the module.
 - **`reads`** with a status of `400` or more failed the dry run — the credential, the path or the
   query is wrong, and the docs say which. A `3xx` failed it too: the proxy hands a vendor redirect
   back and `ctx.fetch` does not follow it, so the vendor did not answer the read where you asked.
-  Its `Location` says where it points; a host the connection declares is yours to call through
-  `ctx.proxyBase(host)`, and one it does not is a connection question, not a code one.
+  Its `Location` says where it points; a host the connection declares is yours to call with
+  `ctx.fetch` on that URL as it is, and one it does not is a connection question, not a code one.
 
 An SDK's calls cross the proxy with the same token, so writes through an SDK are stopped and
 previewed all the same — but they do not pass through `ctx.fetch`, so they are absent from `reads`
