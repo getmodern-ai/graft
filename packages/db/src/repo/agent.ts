@@ -1,4 +1,4 @@
-import { and, asc, eq, exists, getTableColumns, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, exists, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent, agentConnection, type NewAgent } from "../schema/agent";
@@ -139,10 +139,14 @@ export async function listAgentPersonIds(
   agentIds: readonly string[],
 ): Promise<AgentPersonId[]> {
   if (agentIds.length === 0) return [];
+  // One array parameter (`= any($1)`), not `in ($1, $2, ...)`: the list is every agent the store has
+  // a directory for and no row, which is unbounded, and Postgres refuses a statement past its
+  // parameter limit (Greptile on #152). `sql.param` hands the array to the driver whole; a bare
+  // array in the template expands to `($1, $2, ...)`. The rendered form is pinned in `scope.test.ts`.
   return db
     .select({ agentId: agent.id, personId: agent.personId })
     .from(agent)
-    .where(inArray(agent.id, [...agentIds]))
+    .where(sql`${agent.id} = any(${sql.param([...agentIds])})`)
     .orderBy(asc(agent.id));
 }
 

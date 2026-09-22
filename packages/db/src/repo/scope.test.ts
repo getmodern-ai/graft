@@ -532,15 +532,17 @@ describe("person-scoped statements take the person", () => {
    * no unremoved row are, revoked agents included, so the pass has a person to act under; an id
    * with no row is an agent deleted by hand. Unscoped by nature, and no statement for no ids.
    */
-  it("the blob pass's read of whose an agent directory is, is unscoped, by id, revoked agents included, and no statement for no ids", async () => {
+  it("the blob pass's read of whose an agent directory is, is unscoped, by id as one array parameter, revoked agents included, and no statement for no ids", async () => {
     await listAgentPersonIds(db, ["agent_1", "agent_2"]);
     const s = only();
+    // `= any($1)` with the ids as one array, never `in ($1, $2, ...)`: the list is unbounded and a
+    // statement past Postgres's parameter limit is refused (Greptile on #152).
     expect(s.sql).toMatch(
-      /^select "id", "person_id" from "agent" where "agent"\."id" in \(\$1, \$2\) order by "agent"\."id" asc$/,
+      /^select "id", "person_id" from "agent" where "agent"\."id" = any\(\$1\) order by "agent"\."id" asc$/,
     );
     expect(s.sql).not.toContain("revoked_at");
     expect(s.sql).not.toContain('person_id" =');
-    expect(s.params).toEqual(["agent_1", "agent_2"]);
+    expect(s.params).toEqual([["agent_1", "agent_2"]]);
 
     statements = [];
     expect(await listAgentPersonIds(db, [])).toEqual([]);
