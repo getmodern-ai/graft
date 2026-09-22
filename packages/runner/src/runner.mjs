@@ -15,6 +15,11 @@
  *    or a `namespace` fails to load here, which is what the check refuses ahead of time. The module is
  *    an ES module whose default export is an async function of `(input, ctx)`; it may import siblings
  *    by relative path, extension included, and the packages vendored beside it.
+ *  - The module imports Node's built-ins less the ten the check refuses before a version is published
+ *    (`module-check.core.ts`, `BANNED_MODULES`): `child_process`, `net`, `dgram`, `fs`, `fs/promises`,
+ *    `worker_threads`, `vm`, `module`, `cluster` and `inspector`. The runner does not re-check; a
+ *    published version was checked. A file a tool writes for another is a blob, and the scope that
+ *    holds it is the mount the sandbox is given, not the check's list (ADR 0023).
  *  - stdin is the JSON input. Empty stdin is `{}`.
  *  - stdout receives exactly the **envelope** and nothing else, exit code 0: the marker line
  *    `__GRAFT_ENVELOPE__:1`, a newline, then one line of JSON `{ result, blobs }` — the module's

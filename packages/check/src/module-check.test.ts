@@ -432,6 +432,123 @@ describe("banned surface", () => {
     },
   );
 
+  /** ADR 0023: the ten, in the ticket's order; the skill and the runner header name the same list. */
+  it("bans the filesystem and process-hosting modules beside the three sockets-and-processes ones", () => {
+    expect(BANNED_MODULES).toEqual([
+      "child_process",
+      "net",
+      "dgram",
+      "fs",
+      "fs/promises",
+      "worker_threads",
+      "vm",
+      "module",
+      "cluster",
+      "inspector",
+    ]);
+  });
+
+  /** The route to a file is `ctx.blob` (ADR 0023); the sentence says so for `fs` and for nothing else. */
+  it.each(["fs", "fs/promises", "node:fs", "node:fs/promises"])(
+    "names ctx.blob.write and ctx.blob.read as the route when %s is imported",
+    (specifier) => {
+      const result = check({
+        "index.ts": [
+          `import { readFile } from "${specifier}";`,
+          `export default async (input: Input, ctx: Context) => ({ readFile, ${READS_INPUT} });`,
+        ].join("\n"),
+      });
+      expect(rules(result.refusals)).toEqual(["banned-module"]);
+      expect(result.refusals[0]?.message).toContain(`imports ${specifier}`);
+      expect(result.refusals[0]?.message).toContain("ctx.blob.write and ctx.blob.read");
+      expect(result.refusals[0]?.hint).toContain("ctx.blob.write(");
+      expect(result.refusals[0]?.hint).toContain("ctx.blob.read(");
+      expect(result.refusals[0]?.hint).toContain("blob://<id>");
+    },
+  );
+
+  it.each(["worker_threads", "vm", "module", "cluster", "inspector", "child_process"])(
+    "keeps the processes-and-sockets sentence for %s, with no word of ctx.blob",
+    (name) => {
+      const result = check({
+        "index.ts": [
+          `import x from "node:${name}";`,
+          `export default async (input: Input, ctx: Context) => ({ x, ${READS_INPUT} });`,
+        ].join("\n"),
+      });
+      expect(rules(result.refusals)).toEqual(["banned-module"]);
+      expect(result.refusals[0]?.message).toContain("does not start processes or open sockets");
+      expect(result.refusals[0]?.message).not.toContain("ctx.blob");
+      expect(result.refusals[0]?.hint).toContain(`whatever ${name} was for`);
+    },
+  );
+
+  /** Left alone on purpose (GRA-188): the built-ins a module leans on for bytes, paths and streams. */
+  it("still admits path, stream, stream/promises, crypto, buffer, zlib, url, util, events, string_decoder and timers", () => {
+    const result = check({
+      "index.ts": [
+        'import { basename } from "node:path";',
+        'import { Readable } from "stream";',
+        'import { pipeline } from "node:stream/promises";',
+        'import { createHash } from "node:crypto";',
+        'import { Buffer as B } from "node:buffer";',
+        'import { gzipSync } from "node:zlib";',
+        'import { fileURLToPath } from "node:url";',
+        'import { inspect } from "node:util";',
+        'import { EventEmitter } from "node:events";',
+        'import { StringDecoder } from "node:string_decoder";',
+        'import { setTimeout as sleep } from "node:timers/promises";',
+        "export default async (input: Input, ctx: Context) => {",
+        "  await sleep(1);",
+        "  const res = await ctx.fetch(`/items/${input.itemId}`);",
+        "  return { basename, Readable, pipeline, createHash, B, gzipSync, fileURLToPath, inspect, EventEmitter, StringDecoder, ok: res.ok, q: input.quantity, n: input.notes };",
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toEqual([]);
+  });
+
+  /**
+   * A banned module has no ambient declaration, so a reference in a type position, erased at run
+   * time and seen by no import rule, is refused with the sentence an import gets rather than typed
+   * `any` or answered with TypeScript's "install @types/node".
+   */
+  it("refuses a type reference to fs, and one to worker_threads, as banned-module rather than typing it any", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  let stats: import("node:fs").Stats | null = null;',
+        '  let worker: import("worker_threads").Worker | null = null;',
+        "  const res = await ctx.fetch(`/items/${input.itemId}`);",
+        "  return { stats, worker, ok: res.ok, q: input.quantity, n: input.notes };",
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals.map((r) => [r.rule, r.line])).toEqual([
+      ["banned-module", 2],
+      ["banned-module", 3],
+    ]);
+    expect(result.refusals[0]?.message).toContain("index.ts imports node:fs;");
+    expect(result.refusals[0]?.message).toContain("ctx.blob.write and ctx.blob.read");
+    expect(result.refusals[1]?.message).toContain("index.ts imports worker_threads;");
+    expect(result.refusals[1]?.message).not.toContain("ctx.blob");
+  });
+
+  /** The shorthand declaration types the whole module `any`, which is what an admitted built-in keeps. */
+  it("still types a reference to an admitted built-in as any, as before", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  let r: typeof import("node:stream") | null = null;',
+        '  let p: typeof import("path") | null = null;',
+        "  const res = await ctx.fetch(`/items/${input.itemId}`);",
+        "  return { r, p, ok: res.ok, q: input.quantity, n: input.notes };",
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toEqual([]);
+  });
+
   it("refuses an import from outside the module, by relative path, by absolute path, or by a computed name", () => {
     const result = check({
       "index.ts": [
@@ -940,12 +1057,12 @@ describe("TypeScript that Node cannot strip", () => {
         "enum Status { Open }",
         "namespace NS { export const a = 1; }",
         "class C { constructor(public x: number) {} }",
-        'import fs = require("node:fs");',
+        'import path = require("node:path");',
         "function dec(target: unknown, key: string) {}",
         "class D { @dec method() {} }",
         "declare enum Fine { A }",
         "declare namespace AlsoFine { const b: number; }",
-        "export default async (input: Input, ctx: Context) => ({ s: Status.Open, a: NS.a, c: new C(1), fs, d: new D(), i: input.itemId, q: input.quantity, n: input.notes });",
+        "export default async (input: Input, ctx: Context) => ({ s: Status.Open, a: NS.a, c: new C(1), path, d: new D(), i: input.itemId, q: input.quantity, n: input.notes });",
       ].join("\n"),
     });
     expect(result.refusals.map((r) => [r.rule, r.line])).toEqual([

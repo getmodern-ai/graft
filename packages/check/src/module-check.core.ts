@@ -135,8 +135,31 @@ export const CONTEXT_DECLARATION =
 /** The type the default export must satisfy; declared globally so the entry can be re-typed in place. */
 const TOOL_TYPE = "__GraftTool";
 
-/** Bare or `node:`-prefixed, these are refused outright: a tool makes one HTTP call, nothing else. */
-export const BANNED_MODULES = ["child_process", "net", "dgram"] as const;
+/**
+ * Bare or `node:`-prefixed, these are refused outright, and none has an ambient declaration below, so
+ * a type reference to one is a type error rather than `any`. The first three: a tool makes one HTTP
+ * call, nothing else. The rest are the filesystem and process-hosting modules, refused as defence in
+ * depth over the authored code: a file a tool writes for another is a blob, reached through
+ * `ctx.blob`, and the scope that holds is the mount the agent's sandbox is given, not this list,
+ * since a vendored dependency runs in-process and the check never reads it (ADR 0023). The authoring
+ * skill's refusal list (`packages/runner/skills/authoring-a-tool/SKILL.md`) and the runner's contract
+ * comment (`runner.mjs`) name the same ten.
+ */
+export const BANNED_MODULES = [
+  "child_process",
+  "net",
+  "dgram",
+  "fs",
+  "fs/promises",
+  "worker_threads",
+  "vm",
+  "module",
+  "cluster",
+  "inspector",
+] as const;
+
+/** The root the blob route replaces (ADR 0023): `fs` and `fs/promises` are told about `ctx.blob`. */
+const FILESYSTEM_MODULES: ReadonlySet<string> = new Set(["fs"]);
 
 /**
  * The option names an SDK takes its credential and its base URL under, across the SDKs the recipe was
@@ -229,6 +252,31 @@ const NODE_BUILTINS: ReadonlySet<string> = new Set(
   builtinModules.map((name) => name.replace(/^node:/, "")),
 );
 const BANNED: ReadonlySet<string> = new Set(BANNED_MODULES);
+
+/** The first path segment, `node:` stripped: `node:fs/promises` → `fs`, the name `BANNED` is keyed on. */
+function builtinRootOf(specifier: string): string {
+  const bare = specifier.replace(/^node:/, "");
+  return bare.split("/")[0] ?? bare;
+}
+
+/**
+ * The `banned-module` sentence for a specifier, from an import, a `require`, an `import()` or a type
+ * reference alike. `fs` and `fs/promises` are told the route to a file; the rest that there is none.
+ */
+function bannedModuleDiagnostic(rel: string, specifier: string): { message: string; hint: string } {
+  const root = builtinRootOf(specifier);
+  if (FILESYSTEM_MODULES.has(root)) {
+    return {
+      message: `${rel} imports ${specifier}; a tool has no filesystem of its own, and a file it writes for another tool, or reads from one, is a blob: ctx.blob.write and ctx.blob.read are the route.`,
+      hint: "Remove the import. Write the file with ctx.blob.write(data, { contentType, name }) and return the blob://<id> ref it answers; read one the tool was given with ctx.blob.read(ref), which answers a Blob.",
+    };
+  }
+  return {
+    message: `${rel} imports ${specifier}; a tool makes one HTTP call through the proxy and does not start processes or open sockets.`,
+    hint: `Remove the import; whatever ${root} was for is outside what a published tool may do.`,
+  };
+}
+
 const CREDENTIAL_OPTIONS: ReadonlySet<string> = new Set(SDK_CREDENTIAL_OPTIONS);
 const BASE_OPTIONS: ReadonlySet<string> = new Set(SDK_BASE_OPTIONS);
 
@@ -731,6 +779,18 @@ function scanText(
           dependencies,
         );
       }
+    } else if (ts.isImportTypeNode(node)) {
+      // `import("node:fs").Stats` in a type position is erased at run time and resolves nothing, but a
+      // banned module has no ambient declaration (`BANNED_MODULES`), so this is the refusal the model
+      // reads instead of TypeScript's "install @types/node". An admitted built-in is left to the compiler.
+      const argument = node.argument;
+      if (
+        ts.isLiteralTypeNode(argument) &&
+        ts.isStringLiteral(argument.literal) &&
+        BANNED.has(builtinRootOf(argument.literal.text))
+      ) {
+        checkSpecifier(argument.literal.text, argument.literal, abs, bag, module, dependencies);
+      }
     } else if (ts.isCallExpression(node)) {
       const callee = node.expression;
       const isRequire = ts.isIdentifier(callee) && callee.text === "require";
@@ -807,14 +867,10 @@ function checkSpecifier(
 ): void {
   const rel = abs.slice(MODULE_ROOT.length + 1);
   const sf = node.getSourceFile();
-  const bare = specifier.replace(/^node:/, "");
-  const root = bare.split("/")[0] ?? bare;
+  const root = builtinRootOf(specifier);
 
   if (BANNED.has(root)) {
-    bag.at("banned-module", abs, node.getStart(sf), {
-      message: `${rel} imports ${specifier}; a tool makes one HTTP call through the proxy and does not start processes or open sockets.`,
-      hint: `Remove the import; whatever ${root} was for is outside what a published tool may do.`,
-    });
+    bag.at("banned-module", abs, node.getStart(sf), bannedModuleDiagnostic(rel, specifier));
     return;
   }
   if (specifier.startsWith("node:") || NODE_BUILTINS.has(root)) return;
@@ -1842,6 +1898,9 @@ export const RUNTIME_DECLARATIONS = `${[
   "declare var process: { readonly env: Record<string, string | undefined>; readonly argv: readonly string[]; readonly platform: string; readonly version: string; readonly pid: number; hrtime: { bigint(): bigint }; nextTick(callback: (...args: any[]) => void, ...args: any[]): void; cwd(): string; uptime(): number; memoryUsage(): { rss: number; heapTotal: number; heapUsed: number; external: number } };",
   "interface ImportMeta { url: string; dirname: string; filename: string; resolve(specifier: string): string; }",
 ].join("\n")}\n${[...NODE_BUILTINS]
+  // A banned built-in is left undeclared on purpose (`BANNED_MODULES`); `fs/promises` and
+  // `inspector/promises` go with their roots, as `checkSpecifier` refuses them.
+  .filter((name) => !BANNED.has(builtinRootOf(name)))
   .sort()
   .flatMap((name) => [`declare module "${name}";`, `declare module "node:${name}";`])
   .join("\n")}\n`;

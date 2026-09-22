@@ -175,6 +175,11 @@ describe("the shipped skills", () => {
       "(input: Input, ctx: Context)",
       "import type",
       "refuses on the same list",
+      // ADR 0023: the check's banned list, as `BANNED_MODULES` in `@graft/check` spells it (which
+      // depends on this package, so the sentence is pinned here rather than the constant), and the
+      // blob route the sentence names for a file.
+      "`child_process`, `net`, `dgram`, `fs`, `fs/promises`, `worker_threads`, `vm`, `module`, `cluster` or `inspector`",
+      "`ctx.blob.write` and `ctx.blob.read` are the route",
       // Publish with a test input, read the dry-run report, then the agent's first write.
       "Publish with a test input",
       "testInput",
