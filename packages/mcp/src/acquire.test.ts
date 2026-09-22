@@ -261,7 +261,15 @@ beforeAll(async () => {
     store: toolbox,
     mirror: createNoopToolboxMirror(),
     sandbox,
-    metadata: createFakeMetadataSource({}),
+    // The registry is asked about every declared package, an allowlisted one included (GRA-176),
+    // so the one SDK a draft in this file declares has the facts the age and download rules read.
+    metadata: createFakeMetadataSource({
+      "@linear/sdk": {
+        publishedAt: new Date("2021-01-01T00:00:00Z"),
+        weeklyDownloads: 120_000,
+        hasProvenance: true,
+      },
+    }),
     policy: DEFAULT_PACKAGE_POLICY,
     tool: fake.tool,
     // The publish's check is the one the deps name at call time, so a test that swaps in the real

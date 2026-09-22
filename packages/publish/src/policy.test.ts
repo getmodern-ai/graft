@@ -123,17 +123,69 @@ describe("the allowlist", () => {
     expect(isAllowlisted("googleapis", [])).toBe(false);
   });
 
-  it("allows an exact-pinned allowlisted package with no registry facts at all", () => {
+  /**
+   * What the allowlist waives, and what it does not (GRA-176). An official client that publishes no
+   * attestation is admitted by name — that is what the list is for — and the registry's age and
+   * download facts still decide, so a name on the list is not a way past them.
+   */
+  it("waives provenance for an allowlisted package, which is admitted as the allowlist", () => {
     expect(
-      evaluatePackage({ name: "@aws-sdk/client-s3", version: "3.700.0", metadata: null }, config),
+      evaluatePackage(
+        {
+          name: "@aws-sdk/client-s3",
+          version: "3.700.0",
+          metadata: { ...GOOD, hasProvenance: false },
+        },
+        config,
+      ),
     ).toEqual({ allowed: true, reason: "allowlist" });
+  });
+
+  it("refuses an allowlisted name whose package is younger than the age rule allows", () => {
+    const ninetySecondsOld = new Date(NOW.getTime() - 90 * 1000);
+    const verdict = evaluatePackage(
+      {
+        name: "@aws-sdk/client-s3",
+        version: "3.700.0",
+        metadata: { ...GOOD, hasProvenance: false, publishedAt: ninetySecondsOld },
+      },
+      config,
+    );
+    expect(verdict).toMatchObject({ allowed: false, rule: "age" });
+    expect((verdict as { message: string }).message).toContain("@aws-sdk/client-s3");
+    expect((verdict as { message: string }).message).toContain("requires at least 90");
+  });
+
+  it("refuses an allowlisted name nobody downloads, or one the registry does not have", () => {
+    expect(
+      evaluatePackage(
+        { name: "stripe", version: "18.0.0", metadata: { ...GOOD, weeklyDownloads: 12 } },
+        config,
+      ),
+    ).toMatchObject({ allowed: false, rule: "downloads" });
+    expect(
+      evaluatePackage(
+        { name: "@aws-sdk/client-nothing", version: "3.700.0", metadata: null },
+        config,
+      ),
+    ).toMatchObject({ allowed: false, rule: "unknown-package" });
   });
 
   it("is extended by configuration", () => {
     const extended = { ...config, allowlist: [...DEFAULT_PACKAGE_ALLOWLIST, "left-pad"] };
     expect(
-      evaluatePackage({ name: "left-pad", version: "1.3.0", metadata: null }, extended),
+      evaluatePackage(
+        { name: "left-pad", version: "1.3.0", metadata: { ...GOOD, hasProvenance: false } },
+        extended,
+      ),
     ).toEqual({ allowed: true, reason: "allowlist" });
+    // The extra name waives the attestation and nothing else.
+    expect(
+      evaluatePackage(
+        { name: "left-pad", version: "1.3.0", metadata: { ...GOOD, weeklyDownloads: 1 } },
+        extended,
+      ),
+    ).toMatchObject({ allowed: false, rule: "downloads" });
   });
 });
 

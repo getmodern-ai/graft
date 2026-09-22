@@ -220,9 +220,10 @@ export const toolboxVolume = z
 
 /**
  * The package policy's two thresholds (ADR 0013; `@graft/publish`'s `evaluatePackage`): a package
- * off the allowlist installs only with npm provenance *and* at least this many days since its first
- * publish *and* at least this many downloads last week. Whole numbers, zero allowed — a laptop
- * testing the install step against a fresh package sets both to `0` rather than editing code.
+ * installs only with at least this many days since its first publish *and* at least this many
+ * downloads last week, and, unless it is on the allowlist, npm provenance as well — the allowlist
+ * waives provenance alone (GRA-176). Whole numbers, zero allowed — a laptop testing the install
+ * step against a fresh package sets both to `0` rather than editing code.
  */
 export const packageMinAgeDays = z.coerce
   .number({ error: "GRAFT_PACKAGE_MIN_AGE_DAYS must be a whole number of days" })
