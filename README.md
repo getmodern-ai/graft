@@ -170,21 +170,25 @@ beyond a per-agent cap. Nothing is deleted; a demoted tool is one `find_tool` ca
 You need Docker with Compose, a model provider key (a self-hosted Graft always brings its own, ADR
 0014), and a harness.
 
-**1. Clone, build and mint the secrets.**
+**1. Clone, pull the images and mint the secrets.**
 
 ```bash
 git clone https://github.com/getmodern-ai/graft && cd graft
 cp .env.example .env
-docker compose build graft
+docker compose pull
 docker compose run --rm --no-deps graft node dist/keys.mjs >> .env
 ```
+
+The pull fetches `ghcr.io/getmodern-ai/graft` and `ghcr.io/getmodern-ai/graft-sandbox`, the server
+and the image sandboxes are created from, at the version `GRAFT_IMAGE_TAG` names in `.env`, `0.1.0`
+as this repository ships it, for `linux/amd64` and `linux/arm64`
+([`release.yml`](.github/workflows/release.yml) publishes both on a `v*` tag). Set that variable to
+`latest` to follow the newest release instead. Nothing is built: the only files the pull and
+everything after it need from the checkout are `docker-compose.yml` and `.env.example`.
 
 That last line prints six `.env` lines: the three secrets Graft refuses to start without, the
 capability-token key pair, and a fresh `GRAFT_ADMIN_PASSWORD`. Nothing in this repository ships a
 value for any of them.
-
-`.github/workflows/release.yml` publishes `ghcr.io/getmodern-ai/graft` and
-`ghcr.io/getmodern-ai/graft-sandbox` on a `v*` tag. There is no tag yet, so build from the checkout.
 
 **2. Fill in `.env`.** The model group is `GRAFT_MODEL_BACKEND=provider` with `GRAFT_MODEL_PROVIDER`
 (`anthropic` or `openai`) and `GRAFT_MODEL_API_KEY`; the two model ids default per provider. Graft
@@ -199,14 +203,14 @@ variable. Leave both unset to register through the console's `/signup` instead.
 **3. Bring it up.**
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 docker compose logs graft
 ```
 
 Postgres first, then Graft: the server, the proxy, the MCP endpoint and the console in one
 container, with the committed migrations applied on start and the admin account opened into the
-empty database. A database that already holds a person is never touched. The sandbox image is built
-alongside, and sandboxes run on an internal network whose only other member is the proxy.
+empty database. A database that already holds a person is never touched. The sandbox image was
+pulled alongside it, and sandboxes run on an internal network whose only other member is the proxy.
 
 **4. Create an agent.** Open `http://localhost:3000`, sign in as the admin, then *Agents*, *New
 agent*. The token is shown once; put it where your harness reads environment variables, point the
@@ -243,9 +247,10 @@ Every variable the server reads is documented in
   shipping and no model tracing, only the seams the hosted form fills from its own package (ADR
   0002). Your wide events are in `docker compose logs graft`, one per request.
 
-**Upgrading**, while the images are built from the checkout, is `git pull && docker compose up -d
---build`: migrations apply on start, and the toolbox lives in the `graft_toolboxes` volume, which
-only `docker compose down -v` removes.
+**Upgrading** is `docker compose pull && docker compose up -d`: migrations apply on start, and the
+toolbox lives in the `graft_toolboxes` volume, which only `docker compose down -v` removes. With
+`GRAFT_IMAGE_TAG` pinned, put the version you are moving to in `.env` first; on `latest` the pull
+is the upgrade. Building from the checkout instead is `git pull && docker compose up -d --build`.
 `docker compose down` leaves the sandbox containers running and says so; clear them with
 `docker rm -f $(docker ps -aq --filter label=graft.sandbox.prefix)`.
 
