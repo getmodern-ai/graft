@@ -64,8 +64,8 @@ catalogs:
       specifier: ^2.1.1
       version: 2.1.1
     dotenv:
-      specifier: ^17.4.2
-      version: 17.4.2
+      specifier: ^18.0.1
+      version: 18.0.3
     drizzle-kit:
       specifier: ^0.31.10
       version: 0.31.10
@@ -478,7 +478,7 @@ importers:
         version: 8.23.1
       dotenv:
         specifier: 'catalog:'
-        version: 17.4.2
+        version: 18.0.3
       drizzle-kit:
         specifier: 'catalog:'
         version: 0.31.10
@@ -524,7 +524,7 @@ importers:
         version: 0.13.11(typescript@7.0.2)(zod@4.6.5)
       dotenv:
         specifier: 'catalog:'
-        version: 17.4.2
+        version: 18.0.3
       zod:
         specifier: 'catalog:'
         version: 4.6.5
@@ -579,7 +579,7 @@ importers:
         version: 1.30.0(zod@4.6.5)
       dotenv:
         specifier: 'catalog:'
-        version: 17.4.2
+        version: 18.0.3
     devDependencies:
       '@graft/config':
         specifier: workspace:*
@@ -687,7 +687,7 @@ importers:
         version: 26.6.1
       dotenv:
         specifier: 'catalog:'
-        version: 17.4.2
+        version: 18.0.3
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -2782,6 +2782,11 @@ packages:
   dotenv@17.4.2:
     resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
     engines: {node: '>=12'}
+
+  dotenv@18.0.3:
+    resolution: {integrity: sha512-/8CJTyL817qPnfbQrJgOEcrU3fDrJkRIoXBE566wHuvIXKOCHUZhPqGPbCPi9SogjdGnreF0TlvnTgK6J/8zpA==}
+    engines: {node: '>=12'}
+    hasBin: true
 
   drizzle-kit@0.31.10:
     resolution: {integrity: sha512-7OZcmQUrdGI+DUNNsKBn1aW8qSoKuTH7d0mYgSP8bAzdFzKoovxEFnoGQp2dVs82EOJeYycqRtciopszwUf8bw==}
@@ -6049,6 +6054,8 @@ snapshots:
       is-obj: 2.0.0
 
   dotenv@17.4.2: {}
+
+  dotenv@18.0.3: {}
 
   drizzle-kit@0.31.10:
     dependencies:
