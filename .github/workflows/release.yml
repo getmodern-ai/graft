@@ -184,10 +184,11 @@ jobs:
       # and is empty on a tag push, where the action reads the git tag instead (`procSemver` in the
       # action's `src/meta.ts`: an empty `value` means read `refs/tags/…`), so the set a real
       # release writes is the one this file wrote before GRA-180 and is declared here alone.
-      # `latest` is written on a tag push alone: a dispatch is a
-      # rehearsal and must not move the tag a self-hoster pulls, and `flavor: latest=false` is here
-      # so the action's own automatic `latest` for a non-pre-release semver cannot write it either.
-      # On a tag push the set is unchanged by that pair, since the raw line below wrote it already.
+      #
+      # `latest` is written on a tag push alone: a dispatch is a rehearsal and must not move the tag
+      # a self-hoster pulls, and `flavor: latest=false` is here so the action's own automatic
+      # `latest` for a non-pre-release semver cannot write it either. On a tag push the set is
+      # unchanged by that pair, since the raw line below wrote `latest` already.
       - uses: docker/metadata-action@v6
         id: meta
         with:
@@ -206,7 +207,8 @@ jobs:
       # version was no semver and would publish a manifest list nothing names, and a short digest
       # list means a build leg of this image failed, where publishing would put the release's tags,
       # `latest` among them, on an image that runs on one architecture. The directory is made here
-      # because the download above creates none when it matches no artifact, which is that case.
+      # because the download above creates none when its pattern matches no artifact, which is what
+      # a failed leg of this image leaves behind.
       - name: Create the manifest list from the platform digests
         env:
           IMAGE: ${{ matrix.image }}
