@@ -7,13 +7,7 @@ import { OAuthClientNotice } from "@/components/connection/oauth-client-notice";
 import { KeyboardArrowDownIcon, LanguageIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLegend,
-  FieldSet,
-} from "@/components/ui/field";
+import { FieldError, FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -119,9 +113,6 @@ export function ConnectionForm(props: ConnectionFormProps) {
   return (
     <>
       <HostsNotice draft={draft} />
-      <FieldDescription>
-        Complete the required fields. Expand connection details to make changes.
-      </FieldDescription>
       <FieldSet>
         <FieldLegend className="w-full border-border border-b pb-2">Required fields</FieldLegend>
         <FieldGroup>
