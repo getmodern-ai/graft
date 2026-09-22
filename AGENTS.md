@@ -197,10 +197,11 @@ pnpm run db:studio     # Drizzle Studio
 ### The compose file is the development environment
 
 `docker-compose.yml` at the root is the self-hosted form (ADR 0002) and, from GRA-33 on, the way this
-repository is run whole: `docker compose up -d` brings up Postgres, builds the sandbox image, and runs
-the server image — server, proxy, MCP endpoint and console in one container — with migrations applied
-and an admin opened on first start. README, "Self-hosting", is the walkthrough; the compose file's
-comments are the reference for each name. Two ways to use it while developing:
+repository is run whole: `docker compose pull` fetches the two published images, and `docker compose
+up -d` brings up Postgres and runs the server image — server, proxy, MCP endpoint and console in one
+container — with migrations applied and an admin opened on first start. `--build` builds this
+checkout's Dockerfiles over the tags instead (GRA-194). README, "Self-hosting", is the walkthrough;
+the compose file's comments are the reference for each name. Two ways to use it while developing:
 
 - **Postgres alone** (`pnpm run db:start`) and the server from source on the host (`pnpm run dev`) —
   the inner loop, where `tsx watch` and Vite reload. `apps/server/.env` names the database for it.
@@ -664,9 +665,11 @@ Docker socket is mounted (arrangement 1 of `packages/sandbox-docker/README.md`; 
 sibling is arrangement 2) with `group_add: ${GRAFT_DOCKER_GID:-0}` for the socket's group. The
 toolbox is the named volume `<project>_toolboxes`, mounted at `GRAFT_TOOLBOX_ROOT` and named again in
 `GRAFT_TOOLBOX_VOLUME` so the backing mounts each toolbox into its sandbox as a subpath of the same
-volume — one tree (`packages/toolbox/README.md`). Service `sandbox` has `scale: 0`: it builds the
-sandbox image under the name `GRAFT_SANDBOX_IMAGE` carries and starts nothing. Health checks:
-`pg_isready` and `GET /api/health`; `graft` waits for Postgres healthy.
+volume — one tree (`packages/toolbox/README.md`). Service `sandbox` has `scale: 0`: it names the
+sandbox image at the same reference `GRAFT_SANDBOX_IMAGE` defaults to, so `docker compose pull`
+leaves it on the daemon under the name the server creates sandboxes by, keeps a `build:` for
+patching it, and starts nothing. Health checks: `pg_isready` and `GET /api/health`; `graft` waits
+for Postgres healthy.
 
 CI builds the image on every pull request and asserts that it refuses to start naming what is missing:
 run with no environment, `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` and `GRAFT_HANDOFF_SECRET`; run with
@@ -680,6 +683,13 @@ and arm64 on GitHub's native `ubuntu-24.04-arm`, each pushing by digest, and a m
 writing the tags over one manifest list (GRA-180). Nothing emulates an architecture; the QEMU
 cross-build this replaced cost the first tag over two and a half hours on the server image. A
 `workflow_dispatch` with an optional `ref` is how the file is exercised without cutting a release.
+
+**`v0.1.0`, 2026-09-22, is the first tag**, and what a release writes is four tags per image —
+`0.1.0`, `0.1`, `0` and `latest`, no `v` — beside the commit SHA, over one manifest list per image
+naming both platforms. `docker-compose.yml` and `.env.example` pin `GRAFT_IMAGE_TAG` to that
+version rather than leaving it on `latest` (GRA-194): a checkout then runs the release its README
+was written for, an upgrade is a tag in `.env` and a `pull`, and `GRAFT_IMAGE_TAG=latest` is how a
+self-hoster opts into following the newest release. A release moves that default in both files.
 The conformance suite against a running compose project is
 `packages/sandbox-docker/src/compose.test.ts`, opt-in by `GRAFT_COMPOSE_NETWORK` and
 `GRAFT_SANDBOX_IMAGE`; its header has the command.
