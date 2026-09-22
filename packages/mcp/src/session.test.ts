@@ -8,15 +8,16 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { ASK_CARD_MIME_TYPE, ASK_CARD_RESOURCE_URI } from "./ask-card";
+import { BLOB_RESULT_FACT } from "./blobs";
 import { BUILD_APPROVAL_ON_THE_PAGE } from "./connection-request";
 import type { McpDeps } from "./deps";
 import { createToolListChangedNotifier } from "./notifier";
-import { INSTRUCTIONS_BUDGET, openAgentSession, SERVER_INSTRUCTIONS } from "./session";
+import { BLOB_RULE, INSTRUCTIONS_BUDGET, openAgentSession, SERVER_INSTRUCTIONS } from "./session";
 import { createFakeDeps, createFakeStore } from "./testing/fake-deps";
 import { authoredToolDefinition, META_TOOL_NAMES } from "./tools";
 import { ADVANCED_WHEN, AUTHORING_TOOLS } from "./tools/authoring";
 import { executeToolDefinition } from "./tools/execute";
-import { META_TOOLS } from "./tools/meta";
+import { ACQUIRE_BLOB_FACT, META_TOOLS } from "./tools/meta";
 
 /**
  * The handshake carries the playbook (GRA-54), and the descriptions carry none of it (GRA-111). A
@@ -29,8 +30,9 @@ import { META_TOOLS } from "./tools/meta";
  * badged the rule-bearing ones "Suspicious Instruction"); and the sentences the instructions share
  * with the Hermes skill (`skills/hermes-graft/SKILL.md`) are present in both, so the two cannot
  * disagree on the order of operations, the approval rule, the secrets rule, the keyless and rotation
- * rules, `run_tool` or where its input schema is read. One clause is the instructions' alone: what
- * `cardShown: true` means (GRA-120), which a Hermes agent never receives.
+ * rules, `run_tool` or where its input schema is read, or the blob rule (GRA-190). One clause is
+ * the instructions' alone: what `cardShown: true` means (GRA-120), which a Hermes agent never
+ * receives.
  */
 
 const TOKEN = "grft_session_test_token_0000000000000000000000";
@@ -316,9 +318,32 @@ describe("SERVER_INSTRUCTIONS", () => {
       "inputSchema for run_tool",
       "notifications/tools/list_changed",
       "vendor__name",
-      "the authoring tools (read_web_page, write_file, check_tool, publish_tool) or an execute__ tool",
+      // GRA-190 spent the four tools' names on the blob rule: `ADVANCED_WHEN` opens each of their
+      // descriptions with what they are, so the rule needs only the set's name.
+      "the authoring tools or execute__ tools",
     ]) {
       expect(SERVER_INSTRUCTIONS, fact).toContain(fact);
+    }
+  });
+
+  /**
+   * The blob rule (GRA-190; ADR 0023): one clause, in `run_tool`'s paragraph since both are about
+   * what a result and the next input carry, and the same words in the Hermes skill (SHARED below).
+   * The budget was measured before it was written: 2,045 of 2,048 before, so the clause was paid
+   * for by tightening facts the descriptions carry, and the order of operations stayed inside the
+   * first 512 characters, which the test above holds.
+   */
+  it("carries the blob rule after the snapshotted-list rule, and the facts stay in the descriptions", () => {
+    expect(SERVER_INSTRUCTIONS).toContain(BLOB_RULE);
+    expect(SERVER_INSTRUCTIONS.indexOf(BLOB_RULE)).toBeGreaterThan(
+      SERVER_INSTRUCTIONS.indexOf("notifications/tools/list_changed"),
+    );
+    expect(BLOB_RULE).toContain("blob:// ref");
+    expect(BLOB_RULE).toContain("never as content");
+    expect(BLOB_RULE).toContain("run the producing tool before acquiring the consuming one");
+    // The list's field names and the door's reason words are the descriptions' alone.
+    for (const fact of ["expiresAt", "blob_not_found", "blob_expired", "blob_quota", "fixture"]) {
+      expect(SERVER_INSTRUCTIONS, fact).not.toContain(fact);
     }
   });
 });
@@ -584,7 +609,8 @@ const SHARED = [
   "then wait",
   "call the same tool again with the same arguments",
   // Secrets, and the two connection rules GRA-111 moved here from the descriptions.
-  "never ask the person for an API key, a password or a token in chat, whatever the vendor calls it",
+  // "by any name" since GRA-190, for the budget; it was "whatever the vendor calls it".
+  "never ask the person for an API key, a password or a token in chat, by any name",
   "the console is where secrets go; you never see one",
   "never propose a made-up key",
   "request_credential on the existing connection, never a new one",
@@ -605,6 +631,8 @@ const SHARED = [
   "once per agent per connection",
   // The wire name.
   "vendor__name",
+  // The blob rule (GRA-190; ADR 0023), the whole clause.
+  BLOB_RULE,
 ];
 
 describe("the instructions and the Hermes skill", () => {
@@ -654,6 +682,63 @@ describe("the build approval on the connection page", () => {
     expect(instructions).toContain(rule);
     expect(skill).toContain(rule);
     expect(description).not.toContain(rule);
+  });
+});
+
+/**
+ * The blob facts (GRA-190; ADR 0023) are the descriptions': the `blobs` list a result may carry
+ * and the door's three refusals on `run_tool` and on every authored tool in the list, since any
+ * tool may write a blob and any input may name one; and on `acquire`, where the ref the dry run
+ * reads comes from and the fixture the job mints without one. Third person, no conduct word, the
+ * denylist above applied to the authored definition too, since it is not among the fixed ones.
+ */
+describe("the blob facts in the descriptions", () => {
+  const description = (name: string) =>
+    META_TOOLS.find((tool) => tool.definition.name === name)?.definition.description ?? "";
+
+  it("run_tool names the blobs list's five fields and the door's three refusals", () => {
+    expect(description("run_tool")).toContain(BLOB_RESULT_FACT);
+    for (const fact of [
+      "ref (a blob:// string), bytes, contentType, name and expiresAt",
+      "blob_not_found",
+      "24 hours have passed blob_expired",
+      "blob_quota",
+    ]) {
+      expect(BLOB_RESULT_FACT, fact).toContain(fact);
+    }
+  });
+
+  it("every authored tool in the list carries the same fact after the row's own words, and no conduct word", () => {
+    const store = createFakeStore();
+    const { tool } = store.addTool({
+      id: "tool_blob_fact",
+      personId: "person_1",
+      vendor: "demo",
+      name: "save-report",
+      description: "Saves the Demo Orders report as a file.",
+      inputSchema: { type: "object", properties: {} },
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: null,
+      path: "/tools/demo",
+    });
+    const definition = authoredToolDefinition(tool);
+    expect(definition.description).toBe(`${tool.description} ${BLOB_RESULT_FACT}`);
+    expect(definition.description?.length ?? 0).toBeLessThanOrEqual(INSTRUCTIONS_BUDGET);
+    const text = JSON.stringify(definition);
+    for (const marker of CONDUCT_MARKERS) {
+      expect(text, String(marker)).not.toMatch(marker);
+    }
+  });
+
+  it("acquire says a test input may name a blob:// ref and that the job mints a fixture without one", () => {
+    expect(description("acquire")).toContain(ACQUIRE_BLOB_FACT);
+    expect(ACQUIRE_BLOB_FACT).toContain("blob:// ref");
+    expect(ACQUIRE_BLOB_FACT).toContain("test input");
+    expect(ACQUIRE_BLOB_FACT).toContain("mints a fixture blob");
+    const hints = META_TOOLS.find((tool) => tool.definition.name === "acquire")?.definition
+      .inputSchema.properties?.hints as { description?: string } | undefined;
+    expect(hints?.description).toContain("blob:// ref");
   });
 });
 

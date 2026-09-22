@@ -111,7 +111,7 @@ export default async (input: Input, ctx: Context) => {
 from the input schema you pass to `check_tool` and `publish_tool`, and `Context` is exactly
 
 ```ts
-{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null }
+{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }
 ```
 
 Annotate the export with both, so a read of a field the schema does not declare — `input.quanity`
@@ -132,6 +132,8 @@ for `quantity` — fails the check at its line rather than the run.
   connection only: never cache it, log it, return it, or send it anywhere but through an SDK bound
   to `ctx.proxyBase`.
 - **`ctx.connection`** is the connection id, for a message; it is null when no connection is bound.
+- **`ctx.blob`** is `{ write, read, stat }`: the module's one route to a file, for a file one tool
+  writes and another reads (*Moving a file between tools*, below). Nothing else touches a disk.
 
 The rules, and why each holds:
 
@@ -159,6 +161,75 @@ Write it with `write_file`. A relative path — `demo-orders/index.ts` — lands
 for this job on the toolbox; that directory survives the sandbox, so a half-finished module is still
 there next attempt. The entry file is `index.ts`; helpers sit beside it. A module written as
 `index.mjs` still runs and is checked as JavaScript; write new ones in TypeScript.
+
+## Moving a file between tools
+
+A tool is one call against one connection, so a file that goes from one vendor to another goes
+through two tools, and the model between them never needs to read it. A **blob** is how it crosses:
+one tool writes the bytes with `ctx.blob.write` and answers the ref, `blob://<id>`, where a caller
+would look for the file; the next tool takes that ref as a plain string in its input and reads the
+bytes back with `ctx.blob.read`. The bytes never enter a model turn and never sit in a result; the
+ref is the whole of what a model sees of the file.
+
+**When to write a blob**: a binary body (a PDF, an image, an archive), or any body the next tool
+needs and the model does not (a CSV export, an attachment to forward). **When to return data
+instead**: a small JSON answer the agent is going to read (an id, a status, a list of names). One
+file, one write, the ref in the result; a blob is not scratch space and not a cache.
+
+Writing one from a vendor response, without holding the body:
+
+```ts
+export default async (input: Input, ctx: Context) => {
+  const res = await ctx.fetch(`/messages/${input.messageId}/attachments/${input.attachmentId}`);
+  if (!res.ok || !res.body) throw new Error(`GET attachment ${res.status}: ${await res.text()}`);
+  const name =
+    res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? input.filename;
+  const file = await ctx.blob.write(res.body, {
+    contentType: res.headers.get("content-type") ?? "application/octet-stream",
+    name,
+  });
+  return { file, name };
+};
+```
+
+`res.body` is the response's stream, so the bytes go to disk as they arrive; `contentType` is the
+response's, or the vendor's own field where its JSON names one; `name` is the vendor's filename
+where there is one. A vendor that answers a file as base64 inside JSON, as Gmail's attachment
+endpoint does, is decoded before the write: `ctx.blob.write(Buffer.from(data, "base64url"), {
+contentType, name })`. The ref goes in the result under a field named for what it is, `file` or
+`attachment`, so the agent finds it where it would look for the file.
+
+Reading one into a `FormData` or a request body:
+
+```ts
+export default async (input: Input, ctx: Context) => {
+  const file = await ctx.blob.read(input.file);
+  const form = new FormData();
+  form.append("channels", input.channel);
+  form.append("file", file, input.filename ?? "upload.bin");
+  const res = await ctx.fetch("/files.upload", { method: "POST", body: form });
+  if (!res.ok) throw new Error(`POST /files.upload ${res.status}: ${await res.text()}`);
+  return { uploaded: input.file, channel: input.channel };
+};
+```
+
+`ctx.blob.read` answers a `Blob` that holds a handle and none of the bytes: as a `FormData` part or
+as a request `body` it streams, and only `.arrayBuffer()`, `.bytes()` or `.text()` on your side
+holds it whole. A consuming tool's input takes the ref as a plain string (`file: { type: "string" }`
+in the schema, no marker); `ctx.blob.stat(ref)` answers its `bytes`, `contentType`, `name` and
+`expiresAt`. When the goal or the hints carry a `blob://` ref, put it in `testInput`: the dry run
+then reads a real file, and the door judges the ref before the run. With no live ref in the test
+input, `acquire` mints a fixture blob (a few hundred bytes of `text/plain`) and substitutes it for
+the dry run alone; a fixture proves the code path, not the vendor's handling of the real file.
+
+What a blob is held to. `fs` and `fs/promises` are refused by the check, so `ctx.blob` is the
+module's only route to a file. A blob belongs to the agent that wrote it and lives 24 hours; a write
+past 256 MiB is refused as it streams, as `blob_too_large`. Before a run, the door refuses a ref the
+agent holds no blob for as `blob_not_found` (another agent's ref reads the same), one past its 24
+hours as `blob_expired`, and any run while the agent's live blobs are at their quota as `blob_quota`;
+inside the run, `ctx.blob.read` and `stat` answer `blob_not_found` for a ref that does not resolve.
+Writing a blob asks nothing and moves no annotation: a tool that downloads a file and writes it as a
+blob stays read-only.
 
 ## When to use an SDK, and how
 

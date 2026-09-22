@@ -82,7 +82,22 @@ the link exactly as returned, with one line saying what it is for, then wait. Wh
 done, call the same tool again with the same arguments; Graft finds the answer and continues.
 
 Never put a handoff link into a tool argument, and never ask the person for an API key, a password
-or a token in chat, whatever the vendor calls it. The console is where secrets go; you never see one.
+or a token in chat, by any name. The console is where secrets go; you never see one.
+
+## Moving a file between tools
+
+A file moves between tools as a `blob://` ref in one result and the next input, never as content;
+run the producing tool before acquiring the consuming one. A tool that fetches a file (a Gmail
+attachment, an export, a PDF) writes it as a **blob** and answers the ref where a caller would look
+for the file (`file`, `attachment`), with a `blobs` list beside the result giving each blob's `ref`,
+`bytes`, `contentType`, `name` and `expiresAt`. The next tool takes that ref as a plain string in
+its input and reads the bytes itself; you carry the ref, and the bytes stay out of the chat. So for
+"download the invoice and post it to #finance": acquire the download tool, run it, then acquire the
+upload tool with the ref in `hints`, so Graft's model puts it in the test input and the dry run
+reads a real file; without one the job mints a small text fixture for the dry run, which proves
+less. A blob lives 24 hours and belongs to your agent alone: `blob_not_found` means the ref is not
+one of yours (run the producing tool again), `blob_expired` that its time has passed (the same), and
+`blob_quota` that your agent's live blobs are at the cap until some expire.
 
 ## Describing an approval
 

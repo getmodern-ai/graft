@@ -33,7 +33,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { NO_ELICITATION } from "./approval";
-import type { BlobWrittenEvent } from "./blobs";
+import { BLOB_RESULT_FACT, type BlobWrittenEvent } from "./blobs";
 import type { McpDeps, ToolCallEvent } from "./deps";
 import { createInFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
@@ -550,7 +550,8 @@ describe("the tool list", () => {
       ]);
       const listItems = tools.find((tool) => tool.name === LIST_ITEMS);
       expect(listItems).toMatchObject({
-        description: "List items from Demo Orders.",
+        // The row's prose, then the blob fact every authored tool carries (GRA-190; `tools.ts`).
+        description: `List items from Demo Orders. ${BLOB_RESULT_FACT}`,
         inputSchema: LIST_ITEMS_SCHEMA,
         annotations: { readOnlyHint: true, destructiveHint: false },
       });

@@ -1,3 +1,4 @@
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { checkModule, type ModuleCheck } from "@graft/check";
@@ -28,6 +29,12 @@ import {
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  blobReadFieldsOf,
+  FIXTURE_BLOB_CONTENT_TYPE,
+  FIXTURE_BLOB_NAME,
+  substituteBlobRefs,
+} from "./acquire/job";
 import { type AcquireRunner, type AcquireRunnerEvent, createAcquireRunner } from "./acquire/runner";
 import type { AcquireFailure, AcquireStatus, AcquireSuccess } from "./acquire/shapes";
 import type { McpDeps } from "./deps";
@@ -108,6 +115,67 @@ const CREATE_ORDER_SCHEMA = {
   additionalProperties: false,
 };
 
+/** The file the vendor's export answers: 3,000 fixed bytes, so the blob's data can be compared whole. */
+const EXPORT_BYTES = new Uint8Array(3_000).map((_, i) => i % 251);
+
+/**
+ * A producing tool (GRA-190; ADR 0023), in the authoring skill's shape: the vendor's body goes to
+ * `ctx.blob.write` as the response's stream, typed and named from the headers, and the ref is
+ * answered under `file`. Through the real check, since `ctx.blob` and `res.body` are what it types.
+ */
+const EXPORT_FILE_MODULE = [
+  "export default async (input: Input, ctx: Context) => {",
+  `  const res = await ctx.fetch(\`/export?id=${D}{input.id}\`);`,
+  `  if (!res.ok || !res.body) throw new Error(\`GET /export ${D}{res.status}: ${D}{await res.text()}\`);`,
+  '  const name = res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "export.bin";',
+  "  const file = await ctx.blob.write(res.body, {",
+  '    contentType: res.headers.get("content-type") ?? "application/octet-stream",',
+  "    name,",
+  "  });",
+  "  return { file, name };",
+  "};",
+  "",
+].join("\n");
+const EXPORT_FILE_SCHEMA = {
+  type: "object",
+  properties: { id: { type: "string" } },
+  required: ["id"],
+  additionalProperties: false,
+};
+const EXPORT_FILE = authoredToolName("demo", "export-file");
+
+/** The consuming tool: the ref off `input.file`, the `Blob` into a `FormData`, one write. */
+const UPLOAD_FILE_MODULE = [
+  "export default async (input: Input, ctx: Context) => {",
+  "  const file = await ctx.blob.read(input.file);",
+  "  const form = new FormData();",
+  '  form.append("channel", input.channel);',
+  '  form.append("file", file, input.name ?? "upload.bin");',
+  '  const res = await ctx.fetch("/files/upload", { method: "POST", body: form });',
+  `  if (!res.ok) throw new Error(\`POST /files/upload ${D}{res.status}: ${D}{await res.text()}\`);`,
+  "  return { uploaded: input.file, status: res.status, bytes: file.size };",
+  "};",
+  "",
+].join("\n");
+const UPLOAD_FILE_SCHEMA = {
+  type: "object",
+  properties: { file: { type: "string" }, channel: { type: "string" }, name: { type: "string" } },
+  required: ["file", "channel"],
+  additionalProperties: false,
+};
+const UPLOAD_FILE = authoredToolName("demo", "upload-file");
+
+function uploadDraft(testInput: Record<string, unknown>): ModuleDraft {
+  return {
+    name: "upload-file",
+    description: "Uploads a file to a Demo Orders channel.",
+    inputSchema: UPLOAD_FILE_SCHEMA,
+    files: [{ path: "index.ts", content: UPLOAD_FILE_MODULE }],
+    testInput,
+    proofReads: [],
+  };
+}
+
 function draft(overrides: Partial<ModuleDraft> & { path?: string } = {}): ModuleDraft {
   const { path, ...rest } = overrides;
   return {
@@ -126,6 +194,14 @@ function draft(overrides: Partial<ModuleDraft> & { path?: string } = {}): Module
 const write = (on: ModelSituationKind, module: ModuleDraft, note: string): ScriptedStep => ({
   on,
   answer: { kind: "write_module", draft: module, note },
+});
+
+/** The suite's default check, which a test that swapped the real one in puts back. */
+const FAKE_CHECK: ModuleCheck = async (input) => ({
+  entry: input.entry,
+  refusals: [],
+  advice: [],
+  annotations: { readOnly: true, destructive: false },
 });
 
 let sandbox: FakeSandboxBackend;
@@ -199,6 +275,19 @@ beforeAll(async () => {
       }
       if (url.pathname === "/v2/orders" && request.method === "POST") {
         return Response.json({ id: "ord_1", status: "created" }, { status: 201 });
+      }
+      // A file the vendor answers as bytes with a filename (GRA-190): what a producing tool moves
+      // into a blob; and the upload a consuming tool posts the blob to.
+      if (url.pathname === "/v2/export") {
+        return new Response(EXPORT_BYTES, {
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": 'attachment; filename="invoice.pdf"',
+          },
+        });
+      }
+      if (url.pathname === "/v2/files/upload" && request.method === "POST") {
+        return Response.json({ ok: true, file: { id: "F1" } }, { status: 201 });
       }
       return Response.json({ error: "not found" }, { status: 404 });
     },
@@ -2113,6 +2202,311 @@ describe("what the rows hold", () => {
         advice: [],
         annotations: { readOnly: true, destructive: false },
       });
+      await a.close();
+    }
+  }, 60_000);
+});
+
+/**
+ * A file between two tools (GRA-190; ADR 0023), as the loop authors each half: a producing tool
+ * whose module writes the vendor's body as a blob, and a consuming tool whose dry run has to have a
+ * blob to read — the one the test input names when it is live, a fixture the job mints when it
+ * names none or a dead one. Both through the real check, since `ctx.blob` is what it types.
+ */
+describe("a tool that moves a file (GRA-190)", () => {
+  const REF = /^blob:\/\/[0-9a-f-]{36}$/;
+  const DEAD_REF = "blob://00000000-0000-4000-8000-000000000000";
+  const FIXTURE_LINE = new RegExp(
+    `so a fixture blob \\(\\d+ bytes of ${FIXTURE_BLOB_CONTENT_TYPE}, ${FIXTURE_BLOB_NAME.replace(".", "\\.")}\\) stands in`,
+  );
+  /** The ref the producing tool answers in (a), read by (b). */
+  let liveRef = "";
+  /** A failed job's result as the assertion's message, so the failure is named rather than "failed". */
+  const failureOf = (status: AcquireStatus) =>
+    status.status === "succeeded" ? "" : JSON.stringify(status.result, null, 1);
+
+  const dryRunOf = (jobId: string) => {
+    const { attempts } = rowsOf(jobId);
+    return store.versions.get(attempts.at(-1)?.versionId ?? "")?.dryRunOutcome as {
+      passed: boolean;
+      writesPreviewed: { method: string; path: string }[];
+      moduleResult: Record<string, unknown> | null;
+    };
+  };
+
+  it("finds the field a module reads a blob from, and only that", () => {
+    const module = (body: string) => [{ path: "index.ts", content: body }];
+    expect(blobReadFieldsOf(module(UPLOAD_FILE_MODULE))).toEqual({
+      readsABlob: true,
+      fields: ["file"],
+    });
+    expect(
+      blobReadFieldsOf(
+        module('await ctx.blob.stat(input?.attachment); await ctx.blob.read(input["report"]);'),
+      ),
+    ).toEqual({ readsABlob: true, fields: ["attachment", "report"] });
+    // Read through a variable: the module reads a blob, and the field is not the match's to name.
+    expect(blobReadFieldsOf(module("const ref = input.file; await ctx.blob.read(ref);"))).toEqual({
+      readsABlob: true,
+      fields: [],
+    });
+    expect(blobReadFieldsOf(module(EXPORT_FILE_MODULE))).toEqual({ readsABlob: false, fields: [] });
+    // A `package.json` beside the module is not source.
+    expect(
+      blobReadFieldsOf([{ path: "package.json", content: '{"x":"ctx.blob.read(input.a)"}' }]),
+    ).toEqual({ readsABlob: false, fields: [] });
+  });
+
+  it("substitutes every dead ref, nested included, and nothing else", () => {
+    const dead = new Set([DEAD_REF]);
+    expect(
+      substituteBlobRefs(
+        {
+          file: DEAD_REF,
+          channel: "finance",
+          more: [DEAD_REF, "blob://other"],
+          meta: { f: DEAD_REF },
+        },
+        dead,
+        "blob://fixture",
+      ),
+    ).toEqual({
+      file: "blob://fixture",
+      channel: "finance",
+      more: ["blob://fixture", "blob://other"],
+      meta: { f: "blob://fixture" },
+    });
+  });
+
+  it("(a) a producing tool whose module writes a blob publishes, dry-runs and promotes; its run answers the ref and the ledger and the vendor's bytes are the blob", async () => {
+    deps.checkModule = checkModule;
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        {
+          name: "export-file",
+          description: "Downloads the Demo Orders export as a file.",
+          inputSchema: EXPORT_FILE_SCHEMA,
+          files: [{ path: "index.ts", content: EXPORT_FILE_MODULE }],
+          testInput: { id: "exp_1" },
+          proofReads: [],
+        },
+        "Drafted export-file: the export's bytes go to ctx.blob.write.",
+      ),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Download the latest export as a file",
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      expect(status.result).toMatchObject({
+        tool: EXPORT_FILE,
+        // Writing a blob moves no annotation (ADR 0023): a download that writes one stays read-only.
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      });
+      expect(status.progress.join("\n")).not.toContain("fixture");
+      // The dry run wrote a real blob under the mount and it got its row, with the version.
+      const dry = dryRunOf(jobId);
+      expect(dry).toMatchObject({ passed: true, writesPreviewed: [] });
+      expect(dry.moduleResult?.file).toMatch(REF);
+      const { attempts } = rowsOf(jobId);
+      expect(store.blobs.slice(blobsBefore)).toEqual([
+        expect.objectContaining({
+          personId: PERSON,
+          agentId: AGENT_A,
+          versionId: attempts[0]?.versionId,
+          bytes: EXPORT_BYTES.length,
+          contentType: "application/pdf",
+          name: "invoice.pdf",
+        }),
+      ]);
+
+      // The first-class run: the ref where a caller would look, the ledger beside it, no byte on the wire.
+      const result = await a.call("run_tool", {
+        vendor: "demo",
+        name: "export-file",
+        input: { id: "exp_2" },
+      });
+      expect(result.isError).toBeFalsy();
+      const answer = body<{
+        result: { file: string; name: string };
+        blobs: Record<string, unknown>[];
+      }>(result);
+      expect(answer.result).toEqual({ file: expect.stringMatching(REF), name: "invoice.pdf" });
+      expect(answer.blobs).toEqual([
+        {
+          ref: answer.result.file,
+          bytes: EXPORT_BYTES.length,
+          contentType: "application/pdf",
+          name: "invoice.pdf",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      liveRef = answer.result.file;
+      const id = liveRef.slice("blob://".length);
+      const data = await readFile(join(sandbox.blobsRoot(AGENT_A), id, "data"));
+      expect(new Uint8Array(data)).toEqual(EXPORT_BYTES);
+    } finally {
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+    }
+  }, 60_000);
+
+  it("(b) a consuming tool whose test input names a live ref dry-runs against it, the write is intercepted, and no fixture is minted", async () => {
+    expect(liveRef).toMatch(REF);
+    deps.checkModule = checkModule;
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        uploadDraft({ file: liveRef, channel: "finance" }),
+        "Drafted upload-file around POST /files/upload with the blob in a FormData.",
+      ),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = vendor.events.length;
+    const requestsBefore = vendor.requests.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Upload a file to a channel",
+        hints: `The file to upload is ${liveRef}`,
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      expect(status.result).toMatchObject({
+        tool: UPLOAD_FILE,
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      });
+      expect(status.progress.join("\n")).not.toContain("fixture");
+      const { traces } = rowsOf(jobId);
+      expect(traces.map((row) => row.text)).toContain(
+        "The test input names 1 live blob(s); the dry run reads it.",
+      );
+      // The write stopped at the proxy as a preview; the vendor saw no request at all.
+      expect(vendor.events.slice(eventsBefore).map((e) => e.outcome)).toContain(
+        "dry_run_intercepted",
+      );
+      expect(vendor.requests.slice(requestsBefore)).toEqual([]);
+      const dry = dryRunOf(jobId);
+      expect(dry.passed).toBe(true);
+      expect(dry.writesPreviewed).toEqual([
+        expect.objectContaining({ method: "POST", path: expect.stringContaining("/files/upload") }),
+      ]);
+      expect(dry.moduleResult).toMatchObject({ uploaded: liveRef, bytes: EXPORT_BYTES.length });
+      expect(store.blobs).toHaveLength(blobsBefore);
+    } finally {
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+    }
+  }, 60_000);
+
+  it("(c) with no ref in the test input, the job mints a fixture blob through the runner, says so, dry-runs against it and passes; the draft's test input is untouched", async () => {
+    deps.checkModule = checkModule;
+    const draft = uploadDraft({ channel: "finance" });
+    deps.model = createScriptedModel([
+      write("goal", draft, "Drafted upload-file; no file to hand, so the test input names none."),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Upload a file to a channel",
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      const line = status.progress.find((entry) => FIXTURE_LINE.test(entry));
+      expect(line).toMatch(
+        /^Attempt 1: the test input names no blob and the module reads one from input\.file, so a fixture blob \(\d+ bytes of text\/plain, fixture\.txt\) stands in as input\.file in the dry run's input alone; the test input itself is unchanged\.$/,
+      );
+      // One row for the fixture: the agent's, a few hundred bytes of text, no version, the normal TTL.
+      const rows = store.blobs.slice(blobsBefore);
+      expect(rows).toHaveLength(1);
+      const fixture = rows[0];
+      expect(fixture).toMatchObject({
+        personId: PERSON,
+        agentId: AGENT_A,
+        versionId: null,
+        contentType: FIXTURE_BLOB_CONTENT_TYPE,
+        name: FIXTURE_BLOB_NAME,
+        removedAt: null,
+      });
+      expect(fixture?.bytes).toBeGreaterThan(200);
+      expect(fixture?.bytes).toBeLessThan(1_000);
+      expect((fixture?.expiresAt.getTime() ?? 0) - Date.now()).toBeGreaterThan(23 * 60 * 60 * 1000);
+      expect(line).toContain(`(${fixture?.bytes} bytes of`);
+      // Written through the same path as any blob: the directory under the agent's mount, whole.
+      const dir = join(sandbox.blobsRoot(AGENT_A), fixture?.id ?? "");
+      expect((await readdir(dir)).sort()).toEqual(["data", "meta.json"]);
+      const text = await readFile(join(dir, "data"), "utf8");
+      expect(text).toContain("A fixture blob.");
+      expect(text).toContain(jobId);
+      expect(text).toContain(UPLOAD_FILE);
+      expect(JSON.parse(await readFile(join(dir, "meta.json"), "utf8"))).toMatchObject({
+        agentId: AGENT_A,
+        toolVersion: null,
+        contentType: FIXTURE_BLOB_CONTENT_TYPE,
+        name: FIXTURE_BLOB_NAME,
+      });
+      // The dry run read the fixture and previewed the upload.
+      const dry = dryRunOf(jobId);
+      expect(dry.passed).toBe(true);
+      expect(dry.moduleResult).toMatchObject({
+        uploaded: `blob://${fixture?.id}`,
+        bytes: fixture?.bytes,
+      });
+      expect(dry.writesPreviewed).toEqual([
+        expect.objectContaining({ method: "POST", path: expect.stringContaining("/files/upload") }),
+      ]);
+      // The substitution was the dry run's alone.
+      expect(draft.testInput).toEqual({ channel: "finance" });
+    } finally {
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+    }
+  }, 60_000);
+
+  it("(d) a ref dead at the door is replaced by a fixture the same way, and the line names the ref and the reason", async () => {
+    deps.checkModule = checkModule;
+    const draft = uploadDraft({ file: DEAD_REF, channel: "finance" });
+    deps.model = createScriptedModel([
+      write("goal", draft, "Drafted upload-file with the ref from the hints."),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Upload a file to a channel",
+        hints: `The file to upload is ${DEAD_REF}`,
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      const line = status.progress.find((entry) => FIXTURE_LINE.test(entry));
+      expect(line).toMatch(
+        new RegExp(
+          `^Attempt 1: the test input's ref is dead at the door \\(${DEAD_REF} blob_not_found\\), so a fixture blob \\(\\d+ bytes of text/plain, fixture\\.txt\\) stands in for it in the dry run's input alone; the test input itself is unchanged\\.$`,
+        ),
+      );
+      const rows = store.blobs.slice(blobsBefore);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        agentId: AGENT_A,
+        versionId: null,
+        name: FIXTURE_BLOB_NAME,
+        contentType: FIXTURE_BLOB_CONTENT_TYPE,
+      });
+      const dry = dryRunOf(jobId);
+      expect(dry.passed).toBe(true);
+      expect(dry.moduleResult?.uploaded).toBe(`blob://${rows[0]?.id}`);
+      expect(draft.testInput).toEqual({ file: DEAD_REF, channel: "finance" });
+    } finally {
+      deps.checkModule = FAKE_CHECK;
       await a.close();
     }
   }, 60_000);

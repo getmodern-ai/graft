@@ -14,7 +14,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { ASK_CARD_TOOL_META } from "./ask-card";
-import { type BlobTally, withBlobTally } from "./blobs";
+import { BLOB_RESULT_FACT, type BlobTally, withBlobTally } from "./blobs";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "./bounds";
 import { agentDrivesByHand, hiddenToolRefusal } from "./by-hand";
 import { toolAskResult } from "./card-client";
@@ -49,11 +49,14 @@ export const META_TOOL_NAMES: readonly string[] = FIXED_TOOLS.map((tool) => tool
  * the ask card's resource (GRA-116): a write's first call answers `awaiting_approval` with the tool
  * ask's card, and a host renders a card only for a tool whose definition names the resource — so
  * every tool that can ask carries it, the card drawing nothing for a result that is not an ask.
+ * The blob fact rides after the row's prose (GRA-190): any tool may write a blob and any input may
+ * name one, and the description is where the model reads the shape of what comes back and what
+ * is refused (`blobs.ts`). The row keeps the model's words alone, which is what the approval shows.
  */
 export function authoredToolDefinition(tool: AuthoredToolRow): Tool {
   return {
     name: authoredToolName(tool.vendor, tool.name),
-    description: tool.description,
+    description: `${tool.description} ${BLOB_RESULT_FACT}`,
     // Stored as `type: "object"` — the tool service refuses anything else at create.
     inputSchema: tool.inputSchema as Tool["inputSchema"],
     annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
