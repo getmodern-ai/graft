@@ -507,8 +507,10 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       expect(result.isError, JSON.stringify(body(result))).toBeFalsy();
       const run = body(result);
       expect(run).toMatchObject({ exitCode: 0 });
+      // The runner prints its envelope (GRA-186): the module's result beside the blobs it wrote.
       expect(JSON.parse(String(run.output))).toMatchObject({
-        messages: [{ id: "18f1", threadId: "18f1" }],
+        result: { messages: [{ id: "18f1", threadId: "18f1" }] },
+        blobs: [],
       });
 
       const [left] = vendor.requests;

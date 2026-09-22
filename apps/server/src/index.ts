@@ -322,6 +322,23 @@ const mcp = createMcpDeps({
       },
     });
   },
+  /**
+   * Every blob a run wrote, once per blob as its row lands (GRA-186; ADR 0023): the size and the
+   * media type on the person's profile beside the `tool_called` of the run, and never the name the
+   * module gave the file or a byte of it.
+   */
+  onBlobWritten: (event) => {
+    backings.analytics.capture({
+      distinctId: event.personId,
+      event: "blob_written",
+      properties: {
+        agent_id: event.agentId,
+        version_id: event.versionId,
+        bytes: event.bytes,
+        content_type: event.contentType,
+      },
+    });
+  },
 });
 
 /**

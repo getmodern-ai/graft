@@ -606,7 +606,8 @@ describe("request_connection through a harness", () => {
       const run = await a.call(executeToolName(connection.id), { command: RUN_LIST_ITEMS });
       expect(run.isError, JSON.stringify(body(run))).toBeFalsy();
       expect(body(run)).toMatchObject({ exitCode: 0 });
-      expect(JSON.parse(String(body(run).output))).toEqual(VENDOR_BODY);
+      // The runner prints its envelope (GRA-186): the module's result beside the blobs it wrote, none here.
+      expect(JSON.parse(String(body(run).output))).toEqual({ result: VENDOR_BODY, blobs: [] });
       const request = vendor.requests.at(-1);
       expect(request?.url).toBe("https://api.acme.example/v2/items");
       expect(request?.headers.get("x-acme-key")).toBe("sk_live_acme_1");
@@ -1412,7 +1413,8 @@ describe("request_connection through the gateway provider (GRA-58)", () => {
       store.grantBuild(AGENT_A, id);
       const run = await a.call(executeToolName(id), { command: RUN_LIST_ITEMS });
       expect(run.isError, JSON.stringify(body(run))).toBeFalsy();
-      expect(JSON.parse(String(body(run).output))).toEqual(VENDOR_BODY);
+      // The runner prints its envelope (GRA-186): the module's result beside the blobs it wrote, none here.
+      expect(JSON.parse(String(body(run).output))).toEqual({ result: VENDOR_BODY, blobs: [] });
       const request = vendor.requests.at(-1);
       expect(request?.url).toBe(`${GATEWAY_URL}/api.unleashed.example/items`);
       expect(request?.headers.get("x-deployment-token")).toBe(IDENTITY);

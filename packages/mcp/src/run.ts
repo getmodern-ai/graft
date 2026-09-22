@@ -18,11 +18,19 @@ import {
   touchToolUsed,
 } from "@graft/core";
 import type { UsageOutcome } from "@graft/db/schema/usage";
-import { EXIT_TIMEOUT, EXIT_USAGE, MODULE_ENTRIES, RUNNER_PATH } from "@graft/runner";
+import {
+  type BlobLedgerEntry,
+  EXIT_TIMEOUT,
+  EXIT_USAGE,
+  MODULE_ENTRIES,
+  RUNNER_PATH,
+  readRunnerEnvelope,
+} from "@graft/runner";
 import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
 import { sandboxPath } from "@graft/toolbox";
 import { type AskChannel, gateToolCall } from "./approval";
+import { blobsOnWire, recordWrittenBlobs, withBlobs } from "./blobs";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
 import { detachedHoldMs, heldInFlight } from "./in-flight";
@@ -85,6 +93,14 @@ import { authoredToolName } from "./tool-names";
  * scope is read before the choice, so a live row the agent was never given is never followed; the
  * approval gate still sits after the choice, so a write asks on the connection it will run against
  * (ADR 0008). A caller that names the connection (`connectionId`) gets no following: it said which.
+ *
+ * **A blob the module wrote comes back on the runner's ledger, never through the model** (GRA-186;
+ * ADR 0023). The runner prints an envelope, `{ result, blobs }`, and this file is where it is read
+ * (`describeModuleRun`): the module's result goes on as it always did — bounded, wrapped as a
+ * dry-run report, recorded — and the ledger becomes one `blob` row per line (`blobs.ts`) before
+ * the answer carries the same list beside the result. `GRAFT_AGENT` and `GRAFT_TOOL_VERSION` go
+ * into the exec's environment for the sidecar the runner writes, and `GRAFT_BLOBS_DIR` names the
+ * mount (`commandEnvironment`); the runner deletes all three before the module loads.
  */
 
 /**
@@ -164,13 +180,16 @@ export async function runWithCapability<T>(args: {
     GRAFT_PROXY_URL: deps.proxyPublicUrl,
     GRAFT_CONNECTION: args.connectionId,
     GRAFT_TOKEN: token,
+    // For the sidecar of a blob the run writes (the header; ADR 0023), never for a path.
+    GRAFT_AGENT: scope.agentId,
     // The runner's own switch into dry-run mode; the claim on the token is what the proxy enforces.
     ...(mode.dryRun ? { GRAFT_DRY_RUN: "1" } : {}),
   });
 }
 
 export type ModuleRunOutcome =
-  | { ok: true; result: unknown }
+  /** The module's result, and the blobs the run wrote (`[]` for a module that wrote none). */
+  | { ok: true; result: unknown; blobs: BlobLedgerEntry[] }
   | { ok: true; detached: DetachedStart }
   | { ok: false; failure: RunFailure };
 
@@ -317,14 +336,31 @@ export function describeModuleRun(
   }
 
   const text = stdout.trim();
-  if (text === "") return { ok: true, result: null };
+  if (text === "") return { ok: true, result: null, blobs: [] };
+  let value: unknown;
   try {
-    return { ok: true, result: JSON.parse(text) };
+    value = JSON.parse(text);
   } catch {
     return failure(
       `The tool exited 0 but printed something that is not JSON. The runner writes only the module's result to stdout, so the module printed to stdout itself: ${text.slice(-500)}`,
     );
   }
+  return unwrapEnvelope(value);
+}
+
+/**
+ * The runner's envelope read off the parsed JSON (`@graft/runner`'s `readRunnerEnvelope`): the
+ * module's result and the blobs the run wrote. A value that is not the envelope is read as a bare
+ * result with no blobs, because that is what a runner older than the envelope prints, and a
+ * sandbox is seeded with the runner once (`sandbox.ts`, `seedRunner`) — the Docker backing
+ * recreates every sandbox for the `/blobs` mount (GRA-185), the hosted form's until GRA-192 lands
+ * keeps its copy, and a run there is exactly what it was.
+ */
+export function unwrapEnvelope(value: unknown): ModuleRunOutcome {
+  const envelope = readRunnerEnvelope(value);
+  return envelope
+    ? { ok: true, result: envelope.result, blobs: envelope.blobs }
+    : { ok: true, result: value, blobs: [] };
 }
 
 function splitAtMarker(stdout: string): [string, string?] {
@@ -599,7 +635,8 @@ async function runHeld(
         scope,
         modulePath: sandboxPath(version.path),
         input: verdict.value,
-        env,
+        // The version whose run this is, for the sidecar of any blob it writes (ADR 0023).
+        env: { ...env, GRAFT_TOOL_VERSION: version.id },
         mode: args.mode,
       });
     },
@@ -628,6 +665,9 @@ async function runHeld(
     await record("ok", versioned);
     return { answer: describeDetachedStart(run.detached), isError: false };
   }
+  // The blobs the run wrote, one row each, before the answer names them (the header; `blobs.ts`).
+  // A dry run's blobs are real files under the mount and get their rows like any other.
+  await recordWrittenBlobs(deps, scope, version.id, run.blobs);
   if (args.mode.dryRun) {
     const report = readDryRunReport(run.result);
     await recordDryRun(
@@ -644,7 +684,10 @@ async function runHeld(
     );
     await record(report ? "ok" : "error", versioned);
     return report
-      ? { answer: { dryRun: report }, isError: false }
+      ? {
+          answer: { dryRun: report, ...(run.blobs.length > 0 ? blobsOnWire(run.blobs) : {}) },
+          isError: false,
+        }
       : {
           answer: {
             error: "The run produced no dry-run report; the runner did not run in dry-run mode.",
@@ -656,7 +699,10 @@ async function runHeld(
   }
   await record("ok", versioned);
   const bounded = boundResult(run.result);
-  return { answer: "truncated" in bounded ? bounded : bounded.result, isError: false };
+  return {
+    answer: withBlobs("truncated" in bounded ? bounded : bounded.result, run.blobs),
+    isError: false,
+  };
 }
 
 /**

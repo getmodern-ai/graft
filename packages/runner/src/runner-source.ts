@@ -68,6 +68,86 @@ export const REFUSAL_HEADER = "x-graft-refusal";
 export const RESULT_MARKER = "__GRAFT_RESULT__:";
 
 /**
+ * The ref a module carries for a blob, `blob://<id>` (ADR 0023; GRA-186): the scheme, the cap the
+ * runner refuses a write at as `blob_too_large`, and how long a blob lives from its write. Each is
+ * spelt again in `runner.mjs`, which ships to the sandbox alone, and `runner.test.ts` pins the
+ * pairs. The cap and the life are constants and not knobs (ADR 0023: knobs when someone hits them).
+ */
+export const BLOB_REF_SCHEME = "blob://";
+export const MAX_BLOB_BYTES = 256 * 1024 * 1024;
+export const BLOB_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * What a blob id may be — `@graft/toolbox`'s segment rule (`assertBlobId`), which is what makes an
+ * id a directory name and never a path; the runner holds the same pattern (`BLOB_ID_PATTERN`).
+ * Spelt here rather than imported because this package depends on nothing (the runner is a plain
+ * file), and `packages/mcp/src/run.test.ts` pins it to the layout's rule.
+ */
+const BLOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** The ref for a blob id. */
+export function blobRefOf(blobId: string): string {
+  return `${BLOB_REF_SCHEME}${blobId}`;
+}
+
+/** The id inside a ref, or null when the string is not a ref or its id could not name a directory. */
+export function blobIdOf(ref: string): string | null {
+  if (!ref.startsWith(BLOB_REF_SCHEME)) return null;
+  const id = ref.slice(BLOB_REF_SCHEME.length);
+  return BLOB_ID_PATTERN.test(id) && id !== "." && id !== ".." ? id : null;
+}
+
+/**
+ * One line of the runner's blob ledger, as the envelope carries it: the ref, the size, the media
+ * type the module declared, the name it gave (absent when it gave none) and when the blob expires.
+ * Never the bytes, never a path. The server writes one `blob` row per line and hands the same list
+ * to the agent beside the result (`packages/mcp/src/run.ts`).
+ */
+export type BlobLedgerEntry = {
+  ref: string;
+  bytes: number;
+  contentType: string;
+  name?: string;
+  expiresAt: string;
+};
+
+/** The runner's stdout contract since GRA-186 — the header of `runner.mjs`: the module's result beside the ledger. */
+export type RunnerEnvelope = { result: unknown; blobs: BlobLedgerEntry[] };
+
+/**
+ * The envelope, read strictly off the parsed JSON the runner printed or wrote: a plain object of
+ * exactly `result` and `blobs`, every ledger line whole and its ref a well-formed one. Anything else
+ * answers null and is the caller's to word — `run.ts` reads it as a bare result from a sandbox
+ * seeded with a runner older than the envelope, which is the one other thing a runner has ever
+ * printed.
+ */
+export function readRunnerEnvelope(value: unknown): RunnerEnvelope | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const keys = Object.keys(value).sort();
+  if (keys.length !== 2 || keys[0] !== "blobs" || keys[1] !== "result") return null;
+  const { result, blobs } = value as { result: unknown; blobs: unknown };
+  if (!Array.isArray(blobs)) return null;
+  const ledger: BlobLedgerEntry[] = [];
+  for (const line of blobs) {
+    const entry = readLedgerEntry(line);
+    if (!entry) return null;
+    ledger.push(entry);
+  }
+  return { result, blobs: ledger };
+}
+
+function readLedgerEntry(value: unknown): BlobLedgerEntry | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { ref, bytes, contentType, name, expiresAt } = value as Record<string, unknown>;
+  if (typeof ref !== "string" || blobIdOf(ref) === null) return null;
+  if (typeof bytes !== "number" || !Number.isInteger(bytes) || bytes < 0) return null;
+  if (typeof contentType !== "string" || contentType === "") return null;
+  if (typeof expiresAt !== "string" || Number.isNaN(Date.parse(expiresAt))) return null;
+  if (name !== undefined && typeof name !== "string") return null;
+  return { ref, bytes, contentType, ...(name !== undefined ? { name } : {}), expiresAt };
+}
+
+/**
  * The exit codes the runner's header promises, so a caller reads the code by name. `64` is EX_USAGE
  * from sysexits, kept for the same meaning.
  */

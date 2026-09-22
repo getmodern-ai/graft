@@ -16,7 +16,11 @@
  *    an ES module whose default export is an async function of `(input, ctx)`; it may import siblings
  *    by relative path, extension included, and the packages vendored beside it.
  *  - stdin is the JSON input. Empty stdin is `{}`.
- *  - stdout receives exactly the JSON result and nothing else; exit code 0.
+ *  - stdout receives exactly one JSON **envelope** and nothing else, exit code 0:
+ *    `{ result, blobs }` — the module's JSON result, and the ledger of every blob `ctx.blob.write`
+ *    produced during the run as `[{ ref, bytes, contentType, name?, expiresAt }]`, in write order
+ *    (GRA-186; ADR 0023). A module that wrote nothing has `blobs: []`. In a dry run `result` is the
+ *    report described below; on the detached path the same envelope goes to the file.
  *  - A thrown error puts its message and the tail of its stack on stderr, then each `cause` in its
  *    chain on a line of its own — undici's `fetch failed` keeps the host and the errno there and
  *    nowhere in the stack; exit code 1.
@@ -26,8 +30,8 @@
  *
  * ## `ctx` is the module's whole route out, and it never sees `GRAFT_*`
  *
- * `ctx` is `{ fetch, proxyBase, proxyKey, connection }`, frozen; the check declares the same four and
- * nothing else (`module-check.core.ts`, `CONTEXT_DECLARATION`).
+ * `ctx` is `{ fetch, proxyBase, proxyKey, connection, blob }`, frozen; the check declares the same
+ * five and nothing else (`module-check.core.ts`, `CONTEXT_DECLARATION`).
  *
  *  - `ctx.fetch(path, init)` prepends `${GRAFT_PROXY_URL}/c/${GRAFT_CONNECTION}` to a vendor-relative
  *    path and adds `Authorization: Bearer ${GRAFT_TOKEN}`. Both halves of the binding are refused
@@ -46,12 +50,49 @@
  *    the one thing a module holds that is secret-shaped, and it is bounded to this exec, this
  *    connection and minutes. Empty when no connection is bound, as `ctx.fetch` is unavailable then.
  *  - `ctx.connection` is the connection id, or null when none is bound.
+ *  - `ctx.blob` is `{ write, read, stat }`, the module's one route to a file (ADR 0023) — the
+ *    section below.
  *
  * Every `GRAFT_*` variable is read out of the environment once, below, and then the whole `GRAFT_*`
  * set is deleted from `process.env` **before the module is imported** — so a module that prints its
  * environment prints none of them, and a module built from `process.env.GRAFT_TOKEN` sends no
  * credential at all. The check refuses such a module first (`execute-environment`); the two rules name
  * the same prefix and must change together.
+ *
+ * ## `ctx.blob`: a file moves between tools as a blob, never through the model
+ *
+ * A blob is a directory `<id>/` holding `data` and a `meta.json` sidecar under `/blobs`, where the
+ * agent's sandbox mounts its own blobs directory alone (`@graft/toolbox`'s layout; ADR 0023). The
+ * scope is that mount: there is no agent id in a path here, because the mount already is the
+ * agent's, and a ref that does not resolve under `/blobs/<id>` is refused. The four names spelt
+ * below (`/blobs`, `.tmp`, `data`, `meta.json`) are `@graft/toolbox`'s constants, copied because
+ * this file ships to the sandbox alone; `packages/mcp/src/run.test.ts` pins the two spellings.
+ *
+ *  - `ctx.blob.write(data, { contentType, name? })` takes a `Uint8Array`, a `Blob` or a
+ *    `ReadableStream<Uint8Array>`, mints a UUID, streams the bytes into `/blobs/<id>.tmp/data`
+ *    counting them — refused as `blob_too_large` the moment they pass 256 MiB, the `.tmp` directory
+ *    removed before the throw — writes `meta.json` (`bytes`, `contentType`, `name`, `writtenAt`,
+ *    `expiresAt` 24 hours on, `agentId`, `toolVersion`) beside it, and renames the directory to
+ *    `/blobs/<id>/` **once**. That rename is the one commit point: a reader or the sweep sees a whole
+ *    blob or none, and a `.tmp` directory is a write in progress or an abandoned one. It answers the
+ *    ref, `blob://<id>`, a plain string a module puts wherever it likes in its result. Every write
+ *    goes onto the ledger the envelope carries, so the server writes one `blob` row per file
+ *    without the sandbox ever reaching the database. Writing never asks (ADR 0008's grain is about
+ *    vendor side effects), and a dry run writes too.
+ *  - `ctx.blob.stat(ref)` answers the sidecar's `{ bytes, contentType, name?, expiresAt }`.
+ *  - `ctx.blob.read(ref)` answers a `Blob` over `data`, lazily, so it drops into a request body or
+ *    a `FormData` without being held whole. Declared ahead of the ticket that proves it (GRA-187):
+ *    neither it nor `stat` checks the expiry, which the server's door refuses before a run.
+ *
+ * A ref that is not `blob://<id>` is a usage error; one whose id names no directory under `/blobs`
+ * is `blob_not_found`, another agent's included, since another agent's blobs are on no path here.
+ *
+ * `GRAFT_AGENT` (the agent id) and `GRAFT_TOOL_VERSION` (the version id of the tool running) are set
+ * per exec by the run and go into the sidecar and nowhere else — never into a path — and are deleted
+ * with the rest before the module loads. `GRAFT_BLOBS_DIR` is the mount path, `/blobs`, set by the
+ * run for the same reason `GRAFT_RESULT_PATH` is a variable and not a constant: a backing that maps
+ * the sandbox's paths under a root maps the environment's values with them, and this file cannot
+ * know the root. Unset, `/blobs` as it stands.
  *
  * ## `NODE_USE_ENV_PROXY=1` has to arrive in the environment, and this file cannot set it
  *
@@ -84,15 +125,18 @@
  *
  * ## `GRAFT_RESULT_PATH` is the detached path
  *
- * Set by a detached exec, for work past the synchronous cap: the result is written to that file,
+ * Set by a detached exec, for work past the synchronous cap: the envelope is written to that file,
  * whole, and stdout carries `__GRAFT_RESULT__:<path>` instead of the JSON, so the process record's
  * logs say where the result went and the caller reads the file back once the status says the process
  * has finished. Written beside and renamed into place, so a reader that races the write sees the whole
- * result or no file — never half of one. Unset, stdout carries the JSON as above.
+ * envelope or no file — never half of one. Unset, stdout carries the JSON as above.
  */
 
-import { mkdir, rename, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { createWriteStream, openAsBlob } from "node:fs";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 
 const EXIT_OK = 0;
@@ -115,6 +159,35 @@ const token = process.env.GRAFT_TOKEN;
 const timeoutMs = Number(process.env.GRAFT_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
 const resultPath = process.env.GRAFT_RESULT_PATH;
 const dryRun = process.env.GRAFT_DRY_RUN === "1";
+/** The agent and the tool version this run is for — into a blob's sidecar and nowhere else (the header). */
+const agentId = process.env.GRAFT_AGENT || null;
+const toolVersion = process.env.GRAFT_TOOL_VERSION || null;
+
+/**
+ * Where the agent's blobs directory is mounted, the suffix of a blob still being written, and the two
+ * files in a blob — `BLOBS_MOUNT_PATH`, `BLOB_TMP_SUFFIX`, `BLOB_DATA_FILE` and `BLOB_META_FILE` in
+ * `@graft/toolbox`'s layout, spelt again here because this file ships to the sandbox alone;
+ * `packages/mcp/src/run.test.ts` pins the two spellings together (GRA-186).
+ */
+const BLOBS_MOUNT_PATH = "/blobs";
+const BLOB_TMP_SUFFIX = ".tmp";
+const BLOB_DATA_FILE = "data";
+const BLOB_META_FILE = "meta.json";
+/** The ref's scheme, the per-blob cap and the life of a blob — `runner-source.ts` declares the same three; `runner.test.ts` pins them. */
+const BLOB_REF_SCHEME = "blob://";
+const MAX_BLOB_BYTES = 256 * 1024 * 1024;
+const BLOB_TTL_MS = 24 * 60 * 60 * 1000;
+/** What a blob id may be: `@graft/toolbox`'s segment rule (`assertBlobId`), so an id is a directory name and never a path. */
+const BLOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+/**
+ * Where this run's blobs live: `GRAFT_BLOBS_DIR`, which the run sets to the mount path — a backing
+ * that maps the sandbox's paths (the fake, `rewriteEnvPaths`) maps this value with them, as it maps
+ * `GRAFT_RESULT_PATH` — or the mount path itself for a runner invoked by hand without it.
+ */
+const blobsDir = process.env.GRAFT_BLOBS_DIR || BLOBS_MOUNT_PATH;
+
+/** The ledger the envelope carries: every blob this run wrote, in write order (the header). */
+const blobLedger = [];
 
 /** The proxy's marker on a dry-run answer and the value for a stopped write — `DRY_RUN_HEADER` in `runner-source.ts`. */
 const DRY_RUN_HEADER = "x-graft-dry-run";
@@ -391,6 +464,171 @@ async function dryRunFetch(url, request, call) {
   return response;
 }
 
+/** A refusal of `ctx.blob`'s: the reason word first, so stderr and a `cause` line both name it, and on `code` for a module that reads it. */
+function blobRefusal(reason, message) {
+  return Object.assign(new Error(`${reason}: ${message}`), { code: reason });
+}
+
+/**
+ * The id inside a ref, and the blob's directory under the mount — see the header. A ref that is
+ * not `blob://<id>` is a usage error; an id that is not a directory name, or names a `.tmp`, is
+ * `blob_not_found`, since nothing under `/blobs` can be called that.
+ */
+function resolveBlobRef(ref) {
+  if (typeof ref !== "string" || !ref.startsWith(BLOB_REF_SCHEME)) {
+    throw new Error(
+      `ctx.blob takes a ref of the form ${BLOB_REF_SCHEME}<id>, the string ctx.blob.write answered, not ${JSON.stringify(ref)}.`,
+    );
+  }
+  const id = ref.slice(BLOB_REF_SCHEME.length);
+  if (!BLOB_ID_PATTERN.test(id) || id === "." || id === ".." || id.endsWith(BLOB_TMP_SUFFIX)) {
+    throw blobNotFound(ref);
+  }
+  return { id, dir: `${blobsDir}/${id}` };
+}
+
+function blobNotFound(ref) {
+  return blobRefusal(
+    "blob_not_found",
+    `${ref} names no blob this agent holds. It may have expired, or been written by another agent; run the tool that produced it again.`,
+  );
+}
+
+/** Bytes as `ctx.blob.write` accepts them: a `Uint8Array` (a `Buffer` included), any other view, or an `ArrayBuffer`. */
+function bytesOf(chunk, what) {
+  if (chunk instanceof Uint8Array) return chunk;
+  if (ArrayBuffer.isView(chunk)) {
+    return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  }
+  if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk);
+  throw new Error(
+    `${what} bytes: a Uint8Array, a Blob or a ReadableStream<Uint8Array>, not ${describeType(chunk)}. Encode text with new TextEncoder().encode(text).`,
+  );
+}
+
+function describeType(value) {
+  if (value === null) return "null";
+  if (typeof value !== "object") return typeof value;
+  return value.constructor?.name ? `a ${value.constructor.name}` : "an object";
+}
+
+/** `data` as something to iterate chunks of: one chunk for bytes, the stream of a `Blob`, a `ReadableStream` as it is. */
+function blobSource(data) {
+  if (typeof Blob !== "undefined" && data instanceof Blob) return data.stream();
+  if (typeof ReadableStream !== "undefined" && data instanceof ReadableStream) return data;
+  return [bytesOf(data, "ctx.blob.write takes")];
+}
+
+/**
+ * `ctx.blob.write` — see the header. The bytes are streamed and counted on the way in, the cap
+ * refused mid-stream, and the directory renamed into place once `data` and `meta.json` are both
+ * whole: the one commit point. Whatever fails, the `.tmp` directory goes before the error does.
+ */
+async function blobWrite(data, opts) {
+  const contentType =
+    opts !== null && typeof opts === "object" && typeof opts.contentType === "string"
+      ? opts.contentType.trim()
+      : "";
+  if (contentType === "") {
+    throw new Error(
+      'ctx.blob.write takes { contentType } naming the media type of the bytes, such as "application/pdf", and an optional name.',
+    );
+  }
+  if (opts.name !== undefined && opts.name !== null && typeof opts.name !== "string") {
+    throw new Error(`ctx.blob.write's name is a string, not ${describeType(opts.name)}.`);
+  }
+  const name = typeof opts.name === "string" && opts.name !== "" ? opts.name : undefined;
+  const source = blobSource(data);
+
+  const id = randomUUID();
+  const tmp = `${blobsDir}/${id}${BLOB_TMP_SUFFIX}`;
+  const dir = `${blobsDir}/${id}`;
+  try {
+    // Not recursive on purpose: a sandbox with no `/blobs` mount has nowhere a blob may live, and
+    // making the directory on the sandbox's own disk would hide the file from the server.
+    await mkdir(tmp);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw blobRefusal(
+        "blob_store_unavailable",
+        `${blobsDir} is not mounted in this sandbox, so no blob can be written here.`,
+      );
+    }
+    throw error;
+  }
+
+  let bytes = 0;
+  try {
+    const counted = async function* () {
+      for await (const chunk of source) {
+        const part = bytesOf(chunk, "a stream handed to ctx.blob.write yields");
+        bytes += part.byteLength;
+        if (bytes > MAX_BLOB_BYTES) {
+          throw blobRefusal(
+            "blob_too_large",
+            `the blob passed ${MAX_BLOB_BYTES} bytes (256 MiB), the cap on one blob. Write less — a page, a range, a compressed form.`,
+          );
+        }
+        yield part;
+      }
+    };
+    await pipeline(counted(), createWriteStream(join(tmp, BLOB_DATA_FILE)));
+
+    const writtenAt = new Date();
+    const expiresAt = new Date(writtenAt.getTime() + BLOB_TTL_MS).toISOString();
+    const meta = {
+      bytes,
+      contentType,
+      ...(name !== undefined ? { name } : {}),
+      writtenAt: writtenAt.toISOString(),
+      expiresAt,
+      agentId,
+      toolVersion,
+    };
+    await writeFile(join(tmp, BLOB_META_FILE), JSON.stringify(meta), "utf8");
+    await rename(tmp, dir);
+
+    const ref = `${BLOB_REF_SCHEME}${id}`;
+    blobLedger.push({
+      ref,
+      bytes,
+      contentType,
+      ...(name !== undefined ? { name } : {}),
+      expiresAt,
+    });
+    return ref;
+  } catch (error) {
+    await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** `ctx.blob.stat` — the sidecar, or `blob_not_found`. */
+async function blobStat(ref) {
+  const { dir } = resolveBlobRef(ref);
+  let text;
+  try {
+    text = await readFile(join(dir, BLOB_META_FILE), "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") throw blobNotFound(ref);
+    throw error;
+  }
+  const meta = JSON.parse(text);
+  return {
+    bytes: meta.bytes,
+    contentType: meta.contentType,
+    ...(typeof meta.name === "string" ? { name: meta.name } : {}),
+    expiresAt: meta.expiresAt,
+  };
+}
+
+/** `ctx.blob.read` — a `Blob` over `data`, opened lazily, typed from the sidecar. */
+async function blobRead(ref) {
+  const { dir } = resolveBlobRef(ref);
+  const meta = await blobStat(ref);
+  return openAsBlob(join(dir, BLOB_DATA_FILE), { type: meta.contentType });
+}
+
 async function main() {
   if (!modulePath) {
     fail(
@@ -430,12 +668,13 @@ async function main() {
     );
   }, timeoutMs);
 
-  // The four the check declares, and no more — see the header.
+  // The five the check declares, and no more — see the header.
   const ctx = Object.freeze({
     fetch: boundFetch,
     proxyBase,
     proxyKey: token ?? "",
     connection: connection ?? null,
+    blob: Object.freeze({ write: blobWrite, read: blobRead, stat: blobStat }),
   });
 
   let result;
@@ -471,7 +710,13 @@ async function main() {
     moduleError = `The module's result is not serialisable as JSON: ${describe(error)}`;
     json = "null";
   }
-  if (dryRun) json = JSON.stringify(dryRunReport(json, moduleError));
+  // The envelope — see the header: the result (the dry-run report, in a dry run) beside the ledger
+  // of every blob written. The result is parsed back from the JSON it was just checked to be, so
+  // one object is serialised and a caller reads one.
+  json = JSON.stringify({
+    result: dryRun ? dryRunReport(json, moduleError) : JSON.parse(json),
+    blobs: blobLedger,
+  });
   if (resultPath) {
     // The detached path — see the header. The directory is made here rather than assumed, because a
     // plain command started detached has written nothing under it before the runner runs.
@@ -496,7 +741,8 @@ async function main() {
  * preview, and the module did not fail *before* it got there — a throw with no write intercepted is
  * the module failing on its own, while a throw after one is the unverified half doing what it must
  * with a preview for a response. The module's result rides inside as `moduleResult`, parsed back from
- * the JSON it was already checked to be, so a caller reads one object.
+ * the JSON it was already checked to be, so a caller reads one object; the report itself rides as the
+ * envelope's `result`, with the blobs the dry run wrote beside it.
  */
 function dryRunReport(resultJson, moduleError) {
   const { reads, writesPreviewed, writesRefused, omitted } = dryRunRecord;

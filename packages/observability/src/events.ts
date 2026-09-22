@@ -45,6 +45,10 @@ export type AnalyticsEvent =
   | "provider_link_returned"
   // Over MCP
   | "tool_called"
+  // A blob a tool wrote (ADR 0023; GRA-186), once per blob, beside the `tool_called` of the run
+  // that wrote it: `bytes`, `content_type` (a kind), `agent_id`, `version_id`. Never the name the
+  // module gave it and never a byte of it.
+  | "blob_written"
   | "acquire_completed"
   | "acquire_failed";
 

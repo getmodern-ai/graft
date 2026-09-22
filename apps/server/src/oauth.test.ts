@@ -516,7 +516,8 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
       // The execute tool reaches the fake provider's API with the access token injected.
       const run = body(await a.call(executeToolName(connectionId), { command: RUN }));
       expect(run.exitCode, JSON.stringify(run)).toBe(0);
-      expect(JSON.parse(String(run.output))).toEqual(MESSAGES);
+      // The runner prints its envelope (GRA-186): the module's result beside the blobs it wrote.
+      expect(JSON.parse(String(run.output))).toEqual({ result: MESSAGES, blobs: [] });
       const request = vendor.requests.at(-1);
       expect(request?.url).toBe("https://mail.vendor.example/v1/messages");
       expect(request?.headers.get("authorization")).toBe("Bearer access-1");

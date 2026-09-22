@@ -143,8 +143,45 @@ describe("a clean module", () => {
     });
     expect(result.refusals).toEqual([]);
     expect(CONTEXT_DECLARATION).toBe(
-      "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null }",
+      "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }",
     );
+  });
+
+  /**
+   * `ctx.blob` (GRA-186; ADR 0023): a module that writes a blob from a vendor response's body,
+   * stats it and reads one back type-checks, and its annotations are its vendor methods' alone — a
+   * blob write is Graft's own scratch, not a vendor side effect, so a read-only tool stays read-only.
+   */
+  it("may write, stat and read a blob through ctx.blob, which moves no annotation", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        "  const res = await ctx.fetch(`/attachments/${input.itemId}`);",
+        "  if (!res.body) throw new Error(`GET attachment ${res.status}`);",
+        '  const file: string = await ctx.blob.write(res.body, { contentType: res.headers.get("content-type") ?? "application/octet-stream", name: input.notes });',
+        '  const again: string = await ctx.blob.write(new TextEncoder().encode(input.notes ?? ""), { contentType: "text/plain" });',
+        "  const stat: { bytes: number; contentType: string; name?: string; expiresAt: string } = await ctx.blob.stat(file);",
+        "  const blob: Blob = await ctx.blob.read(again);",
+        `  return { file, again, bytes: stat.bytes, size: blob.size, ${READS_INPUT} };`,
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toEqual([]);
+    expect(result.advice).toEqual([]);
+    expect(result.annotations).toEqual(READ);
+  });
+
+  it("refuses a blob written from a string: the runner takes bytes, and the check says so first", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  const file = await ctx.blob.write("plain text", { contentType: "text/plain" });',
+        `  return { file, ${READS_INPUT} };`,
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toHaveLength(1);
+    expect(result.refusals[0]).toMatchObject({ rule: "type-error", line: 2 });
   });
 });
 
@@ -316,7 +353,7 @@ describe("a read of a field the schema does not declare", () => {
       "index.ts": `export default async (input: Input, ctx: Context) => ({ t: ctx.token, ${READS_INPUT} });`,
     });
     expect(rules(result.refusals)).toEqual(["type-error"]);
-    expect(result.refusals[0]?.hint).toContain("fetch, proxyBase, proxyKey and connection");
+    expect(result.refusals[0]?.hint).toContain("fetch, proxyBase, proxyKey, connection and blob");
     expect(result.refusals[0]?.hint).toContain(CONTEXT_DECLARATION);
   });
 });

@@ -22,7 +22,7 @@ import { type ToolAnnotations, UNKNOWN_ANNOTATIONS } from "./annotations.ts";
  *
  * A virtual TypeScript program: the module's files mounted under `/module`, three ambient declarations
  * under `/graft` — `Input`, generated from the tool's JSON Schema (`inputTypeFromSchema`); `Context`,
- * the four names the runner's `ctx` carries (`CONTEXT_DECLARATION`, matched by `runner.mjs`) with a
+ * the five names the runner's `ctx` carries (`CONTEXT_DECLARATION`, matched by `runner.mjs`) with a
  * DOM-free `Response` and the Node globals a module may lean on (`RUNTIME_DECLARATIONS`); and a
  * shorthand `declare module` for every package the version vendors — and a wrapper that imports the
  * entry's default export and assigns it to `(input: Input, ctx: Context) => Promise<unknown>`. The
@@ -125,11 +125,12 @@ export type ModuleCheckResult = {
 
 /**
  * The module's whole route out, as a type: exactly what the runner's `ctx` carries (`runner.mjs`,
- * `Object.freeze({ fetch, proxyBase, proxyKey, connection })`). `proxyBase` and `proxyKey` are the two
- * an SDK is bound with (ADR 0010).
+ * `Object.freeze({ fetch, proxyBase, proxyKey, connection, blob })`). `proxyBase` and `proxyKey` are
+ * the two an SDK is bound with (ADR 0010); `blob` is the module's one route to a file (ADR 0023,
+ * GRA-186), and a call on it is not a vendor method, so it moves no annotation.
  */
 export const CONTEXT_DECLARATION =
-  "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null }";
+  "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }";
 
 /** The type the default export must satisfy; declared globally so the entry can be re-typed in place. */
 const TOOL_TYPE = "__GraftTool";
@@ -1443,7 +1444,7 @@ function classify(
     return {
       rule: "type-error",
       message,
-      hint: `ctx carries fetch, proxyBase, proxyKey and connection, and nothing else: Context is ${CONTEXT_DECLARATION}.`,
+      hint: `ctx carries fetch, proxyBase, proxyKey, connection and blob, and nothing else: Context is ${CONTEXT_DECLARATION}.`,
       advice: false,
     };
   }
@@ -1797,7 +1798,9 @@ export const RUNTIME_DECLARATIONS = `${[
   "interface Headers { append(name: string, value: string): void; delete(name: string): void; get(name: string): string | null; has(name: string): boolean; set(name: string, value: string): void; forEach(callback: (value: string, key: string) => void): void; entries(): IterableIterator<[string, string]>; keys(): IterableIterator<string>; values(): IterableIterator<string>; [Symbol.iterator](): IterableIterator<[string, string]>; }",
   "declare var Headers: { prototype: Headers; new (init?: HeadersInit): Headers };",
   "type BodyInit = string | ArrayBuffer | ArrayBufferView | URLSearchParams | FormData | Blob;",
-  "interface Blob { readonly size: number; readonly type: string; arrayBuffer(): Promise<ArrayBuffer>; text(): Promise<string>; slice(start?: number, end?: number, contentType?: string): Blob; }",
+  "interface ReadableStream<R = any> { readonly locked: boolean; cancel(reason?: unknown): Promise<void>; getReader(): { read(): Promise<{ done: false; value: R } | { done: true; value?: undefined }>; releaseLock(): void; cancel(reason?: unknown): Promise<void> }; [Symbol.asyncIterator](): AsyncIterableIterator<R>; }",
+  "declare var ReadableStream: { prototype: ReadableStream; new <R = any>(underlyingSource?: { start?(controller: { enqueue(chunk: R): void; close(): void; error(reason?: unknown): void }): void | Promise<void>; pull?(controller: { enqueue(chunk: R): void; close(): void; error(reason?: unknown): void }): void | Promise<void>; cancel?(reason?: unknown): void | Promise<void> }): ReadableStream<R> };",
+  "interface Blob { readonly size: number; readonly type: string; arrayBuffer(): Promise<ArrayBuffer>; bytes(): Promise<Uint8Array>; text(): Promise<string>; stream(): ReadableStream<Uint8Array>; slice(start?: number, end?: number, contentType?: string): Blob; }",
   "declare var Blob: { prototype: Blob; new (parts?: readonly (string | ArrayBuffer | ArrayBufferView | Blob)[], options?: { type?: string }): Blob };",
   "interface FormData { append(name: string, value: string | Blob, fileName?: string): void; delete(name: string): void; get(name: string): string | Blob | null; getAll(name: string): (string | Blob)[]; has(name: string): boolean; set(name: string, value: string | Blob, fileName?: string): void; }",
   "declare var FormData: { prototype: FormData; new (): FormData };",
@@ -1806,7 +1809,7 @@ export const RUNTIME_DECLARATIONS = `${[
   "interface AbortController { readonly signal: AbortSignal; abort(reason?: unknown): void; }",
   "declare var AbortController: { prototype: AbortController; new (): AbortController };",
   "interface RequestInit { method?: string; headers?: HeadersInit; body?: BodyInit | null; signal?: AbortSignal | null; redirect?: 'follow' | 'error' | 'manual'; }",
-  "interface Response { readonly ok: boolean; readonly status: number; readonly statusText: string; readonly headers: Headers; readonly url: string; readonly redirected: boolean; readonly bodyUsed: boolean; json(): Promise<any>; text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer>; blob(): Promise<Blob>; formData(): Promise<FormData>; clone(): Response; }",
+  "interface Response { readonly ok: boolean; readonly status: number; readonly statusText: string; readonly headers: Headers; readonly url: string; readonly redirected: boolean; readonly body: ReadableStream<Uint8Array> | null; readonly bodyUsed: boolean; json(): Promise<any>; text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer>; blob(): Promise<Blob>; formData(): Promise<FormData>; clone(): Response; }",
   "declare var Response: { prototype: Response; new (body?: BodyInit | null, init?: { status?: number; statusText?: string; headers?: HeadersInit }): Response; json(data: unknown, init?: { status?: number; headers?: HeadersInit }): Response };",
   "interface URLSearchParams { readonly size: number; append(name: string, value: string): void; delete(name: string, value?: string): void; get(name: string): string | null; getAll(name: string): string[]; has(name: string, value?: string): boolean; set(name: string, value: string): void; sort(): void; toString(): string; forEach(callback: (value: string, key: string) => void): void; entries(): IterableIterator<[string, string]>; keys(): IterableIterator<string>; values(): IterableIterator<string>; [Symbol.iterator](): IterableIterator<[string, string]>; }",
   "declare var URLSearchParams: { prototype: URLSearchParams; new (init?: string | Record<string, string> | readonly (readonly [string, string])[] | URLSearchParams): URLSearchParams };",

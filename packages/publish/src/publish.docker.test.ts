@@ -243,7 +243,8 @@ describe.skipIf(docker.reason !== undefined)("the publish against the Docker bac
       `printf '%s' '{"word":"x","width":3}' | node ${RUNNER_PATH} ${modulePath}`,
       { timeoutSeconds: 60 },
     );
-    expect(JSON.parse(output)).toEqual({ padded: "--x" });
+    // The runner's envelope (GRA-186): the module's result beside the ledger of blobs it wrote, none here.
+    expect(JSON.parse(output)).toEqual({ result: { padded: "--x" }, blobs: [] });
 
     // And that sandbox has no route to the registry: the vendored copy is the only one it could load.
     expect(await handle.exec(fetchProbe("https://registry.npmjs.org/left-pad"))).toMatch(/^failed/);

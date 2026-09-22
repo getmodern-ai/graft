@@ -1,4 +1,9 @@
 export {
+  BLOB_REF_SCHEME,
+  BLOB_TTL_MS,
+  type BlobLedgerEntry,
+  blobIdOf,
+  blobRefOf,
   DRY_RUN_HEADER,
   DRY_RUN_INTERCEPTED,
   EXIT_OK,
@@ -6,6 +11,7 @@ export {
   EXIT_TIMEOUT,
   EXIT_USAGE,
   loadRunnerSource,
+  MAX_BLOB_BYTES,
   MODULE_ENTRIES,
   MODULE_ENTRY,
   type ModuleEntry,
@@ -17,7 +23,9 @@ export {
   RUNNER_FILE,
   RUNNER_PATH,
   RUNNER_SOURCE_PATH,
+  type RunnerEnvelope,
   type RunnerFile,
+  readRunnerEnvelope,
   runnerFiles,
 } from "./runner-source";
 export {

@@ -3,7 +3,15 @@ import { randomUUID } from "node:crypto";
 import { type ModuleSources, readModuleSources, singleFileModule } from "@graft/check";
 import type { AgentScope } from "@graft/core";
 import { causeChain, describeLink, TRUNCATED } from "@graft/proxy/cause-chain";
-import { RESULT_MARKER, RUNNER_DIR, RUNNER_PATH, SKILLS_DIR, skillFiles } from "@graft/runner";
+import {
+  type BlobLedgerEntry,
+  RESULT_MARKER,
+  RUNNER_DIR,
+  RUNNER_PATH,
+  readRunnerEnvelope,
+  SKILLS_DIR,
+  skillFiles,
+} from "@graft/runner";
 import type { MountToolboxArgs, SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import {
   BLOBS_MOUNT_PATH,
@@ -13,6 +21,7 @@ import {
   TOOLBOX_MOUNT_PATH,
 } from "@graft/toolbox";
 
+import { blobsOnWire } from "./blobs";
 import {
   boundJson,
   type CommandInput,
@@ -167,13 +176,17 @@ export function errorMessage(error: unknown): string {
  * The environment every command runs with: `NODE_USE_ENV_PROXY=1`, because the hosted backing
  * reaches the proxy through `HTTPS_PROXY` and Node's `fetch` ignores it otherwise (`runner.mjs`
  * says so); `GRAFT_TIMEOUT_MS` a little inside the kill bound, so a module that hangs is reported
- * by the runner's own exit code rather than seen killed. No token here — `run.ts` adds one, per
- * process, for a run that may reach a vendor (ADR 0010).
+ * by the runner's own exit code rather than seen killed; `GRAFT_BLOBS_DIR`, where the agent's blobs
+ * are mounted (ADR 0023), a variable rather than a constant in the runner for the reason
+ * `GRAFT_RESULT_PATH` is one: a backing that maps the sandbox's paths under a root maps the
+ * environment's values with them (the fake's `rewriteEnvPaths`), and the runner cannot know the
+ * root. No token here — `run.ts` adds one, per process, for a run that may reach a vendor (ADR 0010).
  */
 export function commandEnvironment(timeoutSeconds: number): Record<string, string> {
   return {
     NODE_USE_ENV_PROXY: "1",
     GRAFT_TIMEOUT_MS: String(Math.max(1_000, (timeoutSeconds - 2) * 1_000)),
+    GRAFT_BLOBS_DIR: BLOBS_DIR,
   };
 }
 
@@ -296,13 +309,17 @@ export function describeProcess(
 }
 
 /**
+ * What a poll answers, and — apart from it — the blobs a runner invocation inside the process wrote
+ * (GRA-186): `answer` names them as the agent reads them, `blobs` is the whole ledger for the rows
+ * the caller writes (`tools/authoring.ts`), which is why the two are not one object.
+ */
+export type PolledProcess = { answer: Record<string, unknown>; blobs: BlobLedgerEntry[] };
+
+/**
  * Look in on a detached process, and read the runner's result file back when the process wrote one
  * — stdout carries `RESULT_MARKER` followed by the path, which is the runner's detached contract.
  */
-export async function pollProcess(
-  handle: SandboxHandle,
-  input: WaitInput,
-): Promise<Record<string, unknown>> {
+export async function pollProcess(handle: SandboxHandle, input: WaitInput): Promise<PolledProcess> {
   const result = await handle.waitForProcess(input.processName, {
     maxWaitSeconds: input.maxWaitSeconds,
   });
@@ -318,52 +335,73 @@ export async function pollProcess(
 
   if (result.status === "running") {
     return {
-      status: "running",
-      ...base,
-      waitedSeconds: input.maxWaitSeconds,
-      note: `Still running after another ${input.maxWaitSeconds} seconds. Call wait_for_process again with the same processName; the process is killed when its timeoutSeconds elapse.`,
+      answer: {
+        status: "running",
+        ...base,
+        waitedSeconds: input.maxWaitSeconds,
+        note: `Still running after another ${input.maxWaitSeconds} seconds. Call wait_for_process again with the same processName; the process is killed when its timeoutSeconds elapse.`,
+      },
+      blobs: [],
     };
   }
 
   // The marker says the runner wrote a result; the path is the one this side chose at the start.
   const runner = result.stdout.includes(RESULT_MARKER)
     ? await readRunnerResult(handle, resultPathFor(input.processName))
-    : {};
+    : { answer: {}, blobs: [] };
 
   if (result.status === "killed") {
     return {
-      status: "killed",
-      ...base,
-      ...runner,
-      note: `The process was killed before it finished — usually because it ran past its timeoutSeconds. Start it again with a longer timeoutSeconds, up to ${MAX_DETACHED_TIMEOUT_SECONDS} when detached.`,
+      answer: {
+        status: "killed",
+        ...base,
+        ...runner.answer,
+        note: `The process was killed before it finished — usually because it ran past its timeoutSeconds. Start it again with a longer timeoutSeconds, up to ${MAX_DETACHED_TIMEOUT_SECONDS} when detached.`,
+      },
+      blobs: runner.blobs,
     };
   }
-  if (result.exitCode === 0) return { status: "completed", ...base, ...runner };
+  if (result.exitCode === 0) {
+    return { answer: { status: "completed", ...base, ...runner.answer }, blobs: runner.blobs };
+  }
   return {
-    status: "failed",
-    ...base,
-    ...runner,
-    error: `The process exited with code ${result.exitCode}.`,
+    answer: {
+      status: "failed",
+      ...base,
+      ...runner.answer,
+      error: `The process exited with code ${result.exitCode}.`,
+    },
+    blobs: runner.blobs,
   };
 }
 
-async function readRunnerResult(
-  handle: SandboxHandle,
-  resultPath: string,
-): Promise<Record<string, unknown>> {
+/**
+ * The runner's result file: the envelope (`@graft/runner`'s `readRunnerEnvelope`), or the bare
+ * result a runner older than the envelope wrote (`run.ts`'s `unwrapEnvelope` says why both are
+ * read). The module's result is bounded as a file is; the blobs ride beside it whole.
+ */
+async function readRunnerResult(handle: SandboxHandle, resultPath: string): Promise<PolledProcess> {
   try {
     const value: unknown = JSON.parse(await handle.read(resultPath));
-    const bounded = boundJson(value, MAX_FILE_CHARS);
-    if (!bounded.cut) return { resultPath, result: bounded.value };
+    const envelope = readRunnerEnvelope(value);
+    const result = envelope ? envelope.result : value;
+    const blobs = envelope ? envelope.blobs : [];
+    const named = blobs.length > 0 ? blobsOnWire(blobs) : {};
+    const bounded = boundJson(result, MAX_FILE_CHARS);
+    if (!bounded.cut) return { answer: { resultPath, result: bounded.value, ...named }, blobs };
     return {
-      resultPath,
-      result: null,
-      resultTruncated: true,
-      resultHead: bounded.text,
-      note: `The result was ${bounded.length} characters and was cut at ${MAX_FILE_CHARS}. Have the module return less, or read resultPath in parts.`,
+      answer: {
+        resultPath,
+        result: null,
+        resultTruncated: true,
+        resultHead: bounded.text,
+        note: `The result was ${bounded.length} characters and was cut at ${MAX_FILE_CHARS}. Have the module return less, or read resultPath in parts.`,
+        ...named,
+      },
+      blobs,
     };
   } catch (error) {
-    return { resultPath, resultError: errorMessage(error) };
+    return { answer: { resultPath, resultError: errorMessage(error) }, blobs: [] };
   }
 }
 

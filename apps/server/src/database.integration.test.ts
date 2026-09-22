@@ -184,6 +184,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "agent_connection",
       "approval",
       "authored_tool",
+      "blob",
       "build_approval",
       "connection",
       "mcp_authorization_code",

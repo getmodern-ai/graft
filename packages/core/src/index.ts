@@ -83,6 +83,13 @@ export {
   setApproval,
   setAskEveryCall,
 } from "./approval/approval.service";
+export { type BlobDeps, defaultBlobDeps } from "./blob/blob.deps";
+export {
+  type BlobWrittenInput,
+  getBlob,
+  listBlobs,
+  recordBlobsWritten,
+} from "./blob/blob.service";
 export {
   ASK_ANSWERED_MESSAGE_TYPE,
   type AskAnsweredMessage,
