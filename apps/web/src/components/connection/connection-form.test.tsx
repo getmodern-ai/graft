@@ -147,6 +147,8 @@ describe("connection field entry", () => {
     expect(document.querySelector('button[aria-label^="Edit "]')).toBeNull();
     expect(document.body.textContent).not.toContain("Prefilled");
     expect(prefilledToggle().getAttribute("aria-expanded")).toBe("false");
+    expect(document.getElementById("test-service-name")?.textContent).toBe(proposal.vendor);
+    expect(document.getElementById("test-service-name")?.closest("[hidden]")).toBeNull();
     expect(input("displayName").readOnly).toBe(false);
     expect(input("displayName").closest("[hidden]")).toBeNull();
     expect(input("displayName").tabIndex).toBe(0);
@@ -168,6 +170,7 @@ describe("connection field entry", () => {
     expect(status("hosts")).toBeNull();
     expect(status("schemeConfig.prefix")).toBeNull();
     await change("displayName", "My search connection");
+    expect(document.getElementById("test-service-name")?.textContent).toBe(proposal.vendor);
     await change("credential-apiKey", "test-only-secret");
     expect(status("credential-apiKey")).toBe("Entered");
     expect(section("credential-apiKey")).toBe("Required fields");
@@ -207,6 +210,11 @@ describe("connection field entry", () => {
     await change("displayName", "");
     expect(status("displayName")).toBe("To complete");
     expect(input("displayName").readOnly).toBe(false);
+    await togglePrefilled();
+    await change("vendor", "another-service");
+    await togglePrefilled();
+    expect(document.getElementById("test-service-name")?.textContent).toBe("another-service");
+    expect(document.getElementById("test-service-name")?.closest("[hidden]")).toBeNull();
   });
 
   it("preserves changes made directly to a supplied value across collapse and expand", async () => {
@@ -250,6 +258,7 @@ describe("connection field entry", () => {
 
   it("treats the URL starter as incomplete and never locks a newly entered field", async () => {
     await mount(emptyDraft());
+    expect(document.getElementById("test-service-name")).toBeNull();
     for (const name of [
       "vendor",
       "displayName",
@@ -261,10 +270,12 @@ describe("connection field entry", () => {
       expect(input(name).readOnly).toBe(false);
     }
     await change("vendor", "example");
+    expect(document.getElementById("test-service-name")?.textContent).toBe("example");
     expect(status("vendor")).toBe("Entered");
     expect(section("vendor")).toBe("Required fields");
     expect(input("vendor").readOnly).toBe(false);
     await change("vendor", "   ");
+    expect(document.getElementById("test-service-name")).toBeNull();
     expect(status("vendor")).toBe("To complete");
   });
 

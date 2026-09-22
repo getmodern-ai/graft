@@ -112,6 +112,14 @@ export function ConnectionForm(props: ConnectionFormProps) {
 
   return (
     <>
+      {draft.vendor.trim() ? (
+        <dl className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+          <dt className="text-muted-foreground">Service</dt>
+          <dd id={`${idPrefix}-service-name`} className="font-medium capitalize">
+            {draft.vendor.trim()}
+          </dd>
+        </dl>
+      ) : null}
       <HostsNotice draft={draft} />
       <FieldSet>
         <FieldLegend className="w-full border-border border-b pb-2">Required fields</FieldLegend>
