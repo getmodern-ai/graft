@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ConnectionField } from "@/components/connection/connection-field";
 import { CredentialFields } from "@/components/connection/credential-fields";
 import { OAuthClientNotice } from "@/components/connection/oauth-client-notice";
-import { KeyboardArrowDownIcon, KeyboardArrowUpIcon, LanguageIcon } from "@/components/icons";
+import { KeyboardArrowDownIcon, LanguageIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -118,15 +118,15 @@ export function ConnectionForm(props: ConnectionFormProps) {
 
   return (
     <>
+      <HostsNotice draft={draft} />
       <FieldDescription>
         Complete the required fields. Expand prefilled details to review or edit them.
       </FieldDescription>
       <FieldSet>
-        <FieldLegend>Required fields</FieldLegend>
+        <FieldLegend className="w-full border-border border-b pb-2">Required fields</FieldLegend>
         <FieldGroup>
           <OAuthClientNotice draft={draft} />
           <ConnectionFormFields {...props} fieldNames={required} />
-          <HostsNotice draft={draft} />
           <CredentialFields {...credentialProps} include="required" />
         </FieldGroup>
       </FieldSet>
@@ -136,15 +136,14 @@ export function ConnectionForm(props: ConnectionFormProps) {
           <FieldLegend className="mb-0 w-full">
             <Button
               type="button"
-              variant="outline"
-              size="lg"
-              className="w-full justify-between"
+              variant="ghost"
+              className="-ml-2.5 h-auto justify-start py-1 aria-expanded:bg-transparent"
               aria-expanded={showPrefilled}
               aria-controls={`${idPrefix}-prefilled-details`}
               onClick={() => setShowPrefilled((open) => !open)}
             >
+              <KeyboardArrowDownIcon className={showPrefilled ? undefined : "-rotate-90"} />
               Prefilled details
-              {showPrefilled ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
             </Button>
           </FieldLegend>
           {/* Keep controls mounted so collapsing preserves each field's editing state. */}
@@ -159,7 +158,7 @@ export function ConnectionForm(props: ConnectionFormProps) {
       ) : null}
       {hasOptional ? (
         <FieldSet>
-          <FieldLegend>Optional fields</FieldLegend>
+          <FieldLegend className="w-full border-border border-b pb-2">Optional fields</FieldLegend>
           <FieldGroup>
             <ConnectionFormFields {...props} fieldNames={optional} />
             <CredentialFields {...credentialProps} include="optional" />
