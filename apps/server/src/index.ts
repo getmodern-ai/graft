@@ -377,7 +377,13 @@ const acquireRunner = createAcquireRunner(mcp, {
       backings.analytics.capture({
         distinctId: event.personId,
         event: "acquire_failed",
-        properties: { job_id: event.jobId, agent_id: event.agentId, status: "crashed" },
+        properties: {
+          job_id: event.jobId,
+          agent_id: event.agentId,
+          status: "crashed",
+          // A crash after a write still wrote it: the same tally the finished event reports.
+          blobs_written: event.blobsWritten,
+        },
       });
       return;
     }
@@ -395,6 +401,8 @@ const acquireRunner = createAcquireRunner(mcp, {
         failure: event.failure?.split(":")[0] ?? null,
         attempts: event.attempts ?? null,
         token_spend: event.tokenSpend ?? null,
+        // The job's own count (GRA-186): its runs' blobs are reported here, never on the call that queued it.
+        blobs_written: event.blobsWritten,
       },
     });
   },

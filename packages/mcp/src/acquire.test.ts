@@ -33,7 +33,7 @@ import { FIXTURE_BLOB_CONTENT_TYPE, FIXTURE_BLOB_NAME, substituteBlobRefs } from
 import { type AcquireRunner, type AcquireRunnerEvent, createAcquireRunner } from "./acquire/runner";
 import type { AcquireFailure, AcquireStatus, AcquireSuccess } from "./acquire/shapes";
 import { admitBlobs } from "./blob-door";
-import type { McpDeps } from "./deps";
+import type { McpDeps, ToolCallEvent } from "./deps";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier } from "./notifier";
 import { openAgentSession } from "./session";
@@ -227,8 +227,20 @@ const FAKE_CHECK: ModuleCheck = async (input) => ({
   blobReadFields: [],
 });
 
+/** A module that moves the vendor's answer into a blob (GRA-186), for the job whose dry run writes one. */
+const BLOB_WRITER_MODULE = [
+  "export default async (input: Input, ctx: Context) => {",
+  `  const res = await ctx.fetch(\`/items?limit=${D}{input.limit ?? 5}\`);`,
+  `  if (!res.ok) throw new Error(\`GET ${D}{res.status}: ${D}{await res.text()}\`);`,
+  '  const file = await ctx.blob.write(new TextEncoder().encode(await res.text()), { contentType: "application/json" });',
+  "  return { file };",
+  "};",
+  "",
+].join("\n");
+
 let sandbox: FakeSandboxBackend;
 const runnerEvents: AcquireRunnerEvent[] = [];
+const toolEvents: ToolCallEvent[] = [];
 let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
@@ -408,6 +420,7 @@ beforeAll(async () => {
     listChangedWindowMs: 50,
     toolbox,
     publishTool: (args) => publishToolVersion(publish, args),
+    onToolCall: (event) => toolEvents.push(event),
     handoff: {
       consoleUrl: "http://console.graft.test",
       secret: "graft-acquire-test-handoff-secret-long-enough-32",
@@ -1113,6 +1126,64 @@ describe("a job that fails and tries again", () => {
       const bad = await a.call("acquire_status", { jobId: settled.jobId, after: -1 });
       expect(bad.isError).toBe(true);
       expect(body(bad).reason).toBe("input_invalid");
+    } finally {
+      deps.handoff = { ...deps.handoff, waitMs: waitBefore, pollMs: undefined };
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  /**
+   * A job runs on the scheduler, not on the call that queued it (Greptile on #144): the blobs its
+   * dry run writes while the `acquire` call is still waiting are counted on the job's own event,
+   * and the call's `tool_called` event reports none.
+   */
+  it("counts a job's dry-run blobs on the job's finished event, and none on the acquire call that waited for it", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({
+          name: "save-items",
+          files: [{ path: "index.ts", content: BLOB_WRITER_MODULE }],
+          proofReads: ["/items?limit=1"],
+        }),
+        "Drafted save-items.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    deps.model = scripted;
+    const waitBefore = deps.handoff.waitMs;
+    deps.handoff = { ...deps.handoff, waitMs: 20_000, pollMs: 25 };
+    const blobsBefore = store.blobs.length;
+    const runnerBefore = runnerEvents.length;
+    const a = await connect(TOKEN_A);
+    try {
+      const settled = body<AcquireStatus>(
+        await a.call("acquire", {
+          connectionId: CONN_DEMO,
+          goal: "Save the items as a file",
+          ignoreExisting: true,
+        }),
+      );
+      expect(settled.status).toBe("succeeded");
+      await runner.idle();
+
+      // The dry run wrote one blob, the job's row, for the job's agent.
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({
+        agentId: AGENT_A,
+        contentType: "application/json",
+      });
+
+      // Counted where the job reports it, and nowhere on the call that queued it and waited.
+      const finished = runnerEvents
+        .slice(runnerBefore)
+        .find((event) => event.kind === "finished" && event.jobId === settled.jobId);
+      expect(finished).toMatchObject({ kind: "finished", blobsWritten: 1, blobsDropped: 0 });
+      const call = toolEvents.findLast((event) => event.tool === "acquire");
+      expect(call).toMatchObject({ outcome: "ok", detail: { jobId: settled.jobId } });
+      expect(call?.detail?.blobs ?? 0).toBe(0);
+      expect(call?.detail?.blobsDropped ?? 0).toBe(0);
     } finally {
       deps.handoff = { ...deps.handoff, waitMs: waitBefore, pollMs: undefined };
       await a.close();
@@ -1862,6 +1933,9 @@ describe("a job that fails and tries again", () => {
         status: "failed",
         failure:
           "sandbox_unavailable: The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
+        // No sandbox, so no run and no blob: the job's own tally, zeros included (GRA-186).
+        blobsWritten: 0,
+        blobsDropped: 0,
         attempts: 1,
         tokenSpend: 600,
       });
