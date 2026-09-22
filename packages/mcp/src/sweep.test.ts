@@ -910,7 +910,7 @@ describe("the blob pass", () => {
     });
   });
 
-  it("spells the .tmp suffix and the TTL as the store and the runner do", () => {
+  it("spells the .tmp suffix as the store does, and takes the TTL from the runner", () => {
     expect(BLOB_SWEEP_TMP_SUFFIX).toBe(BLOB_TMP_SUFFIX);
     expect(BLOB_SWEEP_TTL_MS).toBe(BLOB_TTL_MS);
   });

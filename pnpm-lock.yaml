@@ -438,6 +438,9 @@ importers:
       '@graft/proxy':
         specifier: workspace:*
         version: link:../proxy
+      '@graft/runner':
+        specifier: workspace:*
+        version: link:../runner
       '@graft/vault':
         specifier: workspace:*
         version: link:../vault

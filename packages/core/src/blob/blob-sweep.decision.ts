@@ -43,32 +43,35 @@
  * plan, since the names come from a store that reaches `.blobs/` alone.
  */
 
+import { BLOB_TTL_MS, MAX_BLOB_CONTENT_TYPE_CHARS, MAX_BLOB_NAME_CHARS } from "@graft/runner";
+
+/** How long a blob lives from its write (ADR 0023): the runner's figure, which the clamp below applies. */
+export { BLOB_TTL_MS };
+
 /** The suffix of a directory the runner is still writing; `@graft/toolbox`'s `BLOB_TMP_SUFFIX`, spelt here so this package does not depend on the store and pinned equal in `@graft/mcp`'s `sweep.test.ts`. */
 export const BLOB_TMP_SUFFIX = ".tmp";
 
-/** How long a blob lives from its write (ADR 0023): `@graft/runner`'s `BLOB_TTL_MS`, spelt here for the clamp and pinned equal in `@graft/mcp`'s `sweep.test.ts`. */
-export const BLOB_TTL_MS = 24 * 60 * 60 * 1000;
-
 /**
- * What a blob's name may be, as the sweep admits one from a sidecar: at most 255 characters, no
- * slash or backslash (a name is shown to the agent, never read as a path) and no control
- * character. The runner's write is held to the same rule (GRA-186, `blob_invalid`); when that
- * rule is exported from one place, this is the copy to pin against it.
+ * What a blob's name may be, as the sweep admits one from a sidecar: the runner's length
+ * (`MAX_BLOB_NAME_CHARS`, the same figure its `blob_invalid_name` refuses past, GRA-186), no slash
+ * or backslash (a name is shown to the agent, never read as a path) and no control character. The
+ * runner's own pattern is private to `runner.mjs`; the length is the one spelling.
  */
 export const BLOB_NAME_RULES = {
-  maxChars: 255,
+  maxChars: MAX_BLOB_NAME_CHARS,
   /** Neither separator may appear: a name is never read as a path, and one that looks like it is refused. */
   forbidden: ["/", "\\"],
 } as const;
 
 /**
- * What a blob's media type may be: at most 128 characters, shaped `type/subtype` with optional
- * `; key=value` parameters (RFC 9110's token grammar), which is what the runner's write admits.
- * Control characters are refused by `hasControlCharacter` rather than the pattern, so no
- * character class here has to spell one.
+ * What a blob's media type may be: the runner's length (`MAX_BLOB_CONTENT_TYPE_CHARS`, its
+ * `blob_invalid_content_type` figure), shaped `type/subtype` with optional `; key=value`
+ * parameters (RFC 9110's token grammar), which is what the runner's write admits. Control
+ * characters are refused by `hasControlCharacter` rather than the pattern, so no character class
+ * here has to spell one.
  */
 export const BLOB_CONTENT_TYPE_RULES = {
-  maxChars: 128,
+  maxChars: MAX_BLOB_CONTENT_TYPE_CHARS,
   pattern:
     /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+(?:\s*;\s*[A-Za-z0-9!#$&^_.+-]+=(?:"[^"]*"|[A-Za-z0-9!#$&^_.+-]+))*$/,
 } as const;
