@@ -115,10 +115,11 @@ export const API_MOUNT_PATH = "/api";
 export const MCP_MOUNT_PATH = "/mcp";
 
 /**
- * The boot line's clause for the proxy's body cap (GRA-183): named when an operator raised it over
- * the proxy's default, so a deployment carrying a larger memory cost per call says so where the
- * other backings are named, and nothing when it is the default, since a self-host that set nothing
- * has nothing to be told. In mebibytes when the number is whole ones, otherwise in bytes.
+ * The boot line's clause for the proxy's body cap (GRA-183): named whenever an operator set it to
+ * anything but the proxy's default, raised or lowered, so a deployment whose memory cost per call
+ * or whose refusals differ from a stock one says so where the other backings are named, and nothing
+ * when it is the default, since a self-host that set nothing has nothing to be told. In mebibytes
+ * when the number is whole ones, otherwise in bytes.
  */
 export function proxyBodyCapClause(maxBodyBytes: number): string {
   if (maxBodyBytes === DEFAULT_PROXY_OPTIONS.maxBodyBytes) return "";

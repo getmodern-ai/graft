@@ -333,7 +333,7 @@ describe("the proxy with the real verifier and the real vault", () => {
 /**
  * The body cap is the environment's (GRA-183): what `index.ts` reads from `GRAFT_PROXY_MAX_BODY_BYTES`
  * reaches the proxy's options, the refusal quotes it, the two defaults are one figure, and the boot
- * line names the cap only when an operator raised it.
+ * line names the cap only when an operator set it to something other than the default.
  */
 describe("the proxy's body cap from the environment (GRA-183)", () => {
   it("is the same ten mebibytes in @graft/env and in @graft/proxy", () => {
