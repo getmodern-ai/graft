@@ -300,7 +300,10 @@ handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTIO
 24) how long that action stays answerable (ADR 0006, ADR 0008). `GRAFT_CARD_HOSTS` (default
 `claude.ai,chatgpt.com`) names the chat products whose OAuth clients may answer the ask card, by the
 host of their registered redirect URIs, and is the whole of that rule (GRA-84, GRA-150; the
-paragraph on the card below). `packages/env/src/schema.ts` is the rules as code.
+paragraph on the card below). `GRAFT_PROXY_MAX_BODY_BYTES` (default 10 MiB, floor 1 MiB) is the
+proxy's body cap on both legs, passed into the proxy's options beside `followRedirects` and named on
+the boot line only when raised (GRA-183; ADR 0010). `packages/env/src/schema.ts` is the rules as
+code.
 
 **An OAuth consent (ADR 0005) adds no variable, two server routes and one console route.**
 `GET /api/oauth/redirect-uri` is `GRAFT_AUTH_URL` plus `/api/oauth/callback`, computed by one function

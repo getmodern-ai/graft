@@ -1,5 +1,11 @@
 import { createMcpHttpApp, type McpDeps } from "@graft/mcp";
-import { createProxyApp, type ProxyDeps, type ProxyEvent, type UpstreamFetch } from "@graft/proxy";
+import {
+  createProxyApp,
+  DEFAULT_PROXY_OPTIONS,
+  type ProxyDeps,
+  type ProxyEvent,
+  type UpstreamFetch,
+} from "@graft/proxy";
 import { type CapabilityTokenKeys, createCapabilityTokenVerifier } from "@graft/token";
 import type { CredentialVault } from "@graft/vault";
 import { type EvlogVariables, evlog, useLogger } from "evlog/hono";
@@ -57,6 +63,12 @@ export type ServerDeps = {
   /** The break glass from the environment — off unless the deployment says otherwise. */
   followRedirects: boolean;
   /**
+   * The proxy's body cap on both legs, `GRAFT_PROXY_MAX_BODY_BYTES` (GRA-183). Optional so the
+   * harnesses that pass nothing run on the proxy's own default; `index.ts` always passes it, so in
+   * a running server the environment is the rule and `DEFAULT_PROXY_OPTIONS` only its default.
+   */
+  maxBodyBytes?: number;
+  /**
    * A test's fake vendor; production takes the proxy's default, undici behind the guarded resolver
    * with no exemption — a gateway relay's own fetch rides on its connection (ADR 0019, GRA-58).
    */
@@ -101,6 +113,19 @@ export const API_MOUNT_PATH = "/api";
 
 /** Where a harness connects: one streamable-HTTP endpoint, the agent's bearer token in `Authorization`. */
 export const MCP_MOUNT_PATH = "/mcp";
+
+/**
+ * The boot line's clause for the proxy's body cap (GRA-183): named when an operator raised it over
+ * the proxy's default, so a deployment carrying a larger memory cost per call says so where the
+ * other backings are named, and nothing when it is the default, since a self-host that set nothing
+ * has nothing to be told. In mebibytes when the number is whole ones, otherwise in bytes.
+ */
+export function proxyBodyCapClause(maxBodyBytes: number): string {
+  if (maxBodyBytes === DEFAULT_PROXY_OPTIONS.maxBodyBytes) return "";
+  const MIB = 1024 * 1024;
+  const figure = maxBodyBytes % MIB === 0 ? `${maxBodyBytes / MIB} MiB` : `${maxBodyBytes} bytes`;
+  return `, proxy body cap ${figure}`;
+}
 
 export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
   const app = new Hono<EvlogVariables>();
@@ -153,7 +178,11 @@ export function createServer(deps: ServerDeps): Hono<EvlogVariables> {
       decryptCredential: (ciphertext, scope) => deps.vault.decrypt(ciphertext, scope),
       ...deps.credentialRotation,
       log: deps.log ?? ((event) => useLogger().set({ proxy: event })),
-      options: { followRedirects: deps.followRedirects },
+      // Spread rather than passed as `undefined`, which would sit over the proxy's default.
+      options: {
+        followRedirects: deps.followRedirects,
+        ...(deps.maxBodyBytes !== undefined ? { maxBodyBytes: deps.maxBodyBytes } : {}),
+      },
       ...(deps.upstreamFetch ? { upstreamFetch: deps.upstreamFetch } : {}),
     }),
   );

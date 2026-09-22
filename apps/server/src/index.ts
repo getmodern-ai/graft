@@ -35,7 +35,13 @@ import { serve } from "@hono/node-server";
 import { initLogger, log } from "evlog";
 import { useLogger } from "evlog/hono";
 
-import { API_MOUNT_PATH, createServer, MCP_MOUNT_PATH, PROXY_MOUNT_PATH } from "./app";
+import {
+  API_MOUNT_PATH,
+  createServer,
+  MCP_MOUNT_PATH,
+  PROXY_MOUNT_PATH,
+  proxyBodyCapClause,
+} from "./app";
 import { selectBackings } from "./backings";
 import { bootstrapAdmin, MigrationChainBrokenError, migrateOnStart } from "./boot";
 import {
@@ -401,6 +407,8 @@ const app = createServer({
   // An authorization-code token the proxy refreshes goes back into the row it came from (ADR 0005).
   credentialRotation: createDatabaseCredentialRotation(db, connectionDeps),
   followRedirects: env.GRAFT_PROXY_FOLLOW_REDIRECTS,
+  // The body cap on both legs, the environment's over the proxy's default (GRA-183).
+  maxBodyBytes: env.GRAFT_PROXY_MAX_BODY_BYTES,
   api: {
     auth: {
       handler: (request) => auth.handler(request),
@@ -481,6 +489,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       modelSetup.summary +
       `, ${describeObservability(backings)}` +
       `, rate limit ${backings.rateLimiter.name}` +
+      proxyBodyCapClause(env.GRAFT_PROXY_MAX_BODY_BYTES) +
       `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );

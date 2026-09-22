@@ -1316,6 +1316,87 @@ describe("limits", () => {
     expect((await body(res)).reason).toBe("response_too_large");
   });
 
+  /**
+   * The cap at its real size (GRA-183): fifteen mebibytes is over the ten-mebibyte default and
+   * under a raised twenty, on each leg, and each refusal quotes the number the call ran under.
+   */
+  const FIFTEEN_MIB = 15 * 1024 * 1024;
+  const TWENTY_MIB = 20 * 1024 * 1024;
+
+  it("refuses a 15 MiB vendor response at the default and passes it at 20 MiB, quoting the cap", async () => {
+    const atDefault = harness();
+    atDefault.respond(() => new Response(new Uint8Array(FIFTEEN_MIB), { status: 200 }));
+    const refused = await atDefault.app.request("/c/conn_1/export", { headers: bearer(GOOD) });
+
+    expect(refused.status).toBe(502);
+    expect(await body(refused)).toEqual({
+      error: "bad_gateway",
+      reason: "response_too_large",
+      message: `Response bodies are capped at ${DEFAULT_PROXY_OPTIONS.maxBodyBytes} bytes`,
+    });
+    expect(atDefault.events[0]).toMatchObject({
+      outcome: "response_too_large",
+      responseBytes: null,
+    });
+
+    const raised = harness({ maxBodyBytes: TWENTY_MIB });
+    raised.respond(() => new Response(new Uint8Array(FIFTEEN_MIB), { status: 200 }));
+    const passed = await raised.app.request("/c/conn_1/export", { headers: bearer(GOOD) });
+
+    expect(passed.status).toBe(200);
+    expect((await passed.arrayBuffer()).byteLength).toBe(FIFTEEN_MIB);
+    expect(raised.events[0]).toMatchObject({ outcome: "forwarded", responseBytes: FIFTEEN_MIB });
+  });
+
+  it("refuses a 15 MiB request body at the default and passes it at 20 MiB, quoting the cap", async () => {
+    const atDefault = harness();
+    const refused = await atDefault.app.request("/c/conn_1/upload", {
+      method: "POST",
+      headers: bearer(GOOD),
+      body: new Uint8Array(FIFTEEN_MIB),
+    });
+
+    expect(refused.status).toBe(413);
+    expect(await body(refused)).toEqual({
+      error: "payload_too_large",
+      reason: "request_too_large",
+      message: `Request bodies are capped at ${DEFAULT_PROXY_OPTIONS.maxBodyBytes} bytes`,
+    });
+    expect(atDefault.forwarded).toHaveLength(0);
+
+    const raised = harness({ maxBodyBytes: TWENTY_MIB });
+    const passed = await raised.app.request("/c/conn_1/upload", {
+      method: "POST",
+      headers: bearer(GOOD),
+      body: new Uint8Array(FIFTEEN_MIB),
+    });
+
+    expect(passed.status).toBe(200);
+    expect(raised.forwarded[0]?.body?.byteLength).toBe(FIFTEEN_MIB);
+    expect(raised.events[0]).toMatchObject({ outcome: "forwarded", requestBytes: FIFTEEN_MIB });
+  });
+
+  it("quotes a raised cap in both refusals", async () => {
+    const h = harness({ maxBodyBytes: TWENTY_MIB });
+    const request = await h.app.request("/c/conn_1/upload", {
+      method: "POST",
+      headers: { ...bearer(GOOD), "content-length": String(TWENTY_MIB + 1) },
+      body: "x",
+    });
+    expect((await body(request)).message).toBe(`Request bodies are capped at ${TWENTY_MIB} bytes`);
+
+    h.respond(() => ({
+      status: 200,
+      statusText: "OK",
+      headers: new Headers({ "content-length": String(TWENTY_MIB + 1) }),
+      body: new ReadableStream<Uint8Array>({ pull() {} }, { highWaterMark: 0 }),
+    }));
+    const response = await h.app.request("/c/conn_1/export", { headers: bearer(GOOD) });
+    expect((await body(response)).message).toBe(
+      `Response bodies are capped at ${TWENTY_MIB} bytes`,
+    );
+  });
+
   it("times out a caller that never finishes sending its body, before touching the vendor", async () => {
     const h = harness({ upstreamTimeoutMs: 20 });
     const stalled = new ReadableStream<Uint8Array>({
