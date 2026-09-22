@@ -40,6 +40,15 @@ export const CONNECTION_STATUS_CHIP = {
   revoked: { variant: "destructive", label: "Revoked" },
 } as const satisfies Record<ConnectionStatus, StatusChip>;
 
+export const CONNECTION_FIELD_CHIP = {
+  missing: { variant: "outline", label: "To complete" },
+  prefilled: { variant: "secondary", label: "Prefilled" },
+  editing: { variant: "outline", label: "Editing" },
+  edited: { variant: "secondary", label: "Edited" },
+  entered: { variant: "secondary", label: "Entered" },
+  invalid: { variant: "destructive", label: "Check this" },
+} as const satisfies Record<string, StatusChip>;
+
 /** An OAuth connection's missing credential is its client secret, and the chip says so (ADR 0005). */
 export const AWAITING_CLIENT_SECRET_CHIP: StatusChip = {
   variant: "outline",

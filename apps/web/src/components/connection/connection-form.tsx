@@ -1,8 +1,18 @@
 import type { AuthScheme } from "@graft/proxy/types";
+import { useState } from "react";
 
+import { ConnectionField } from "@/components/connection/connection-field";
+import { CredentialFields } from "@/components/connection/credential-fields";
+import { OAuthClientNotice } from "@/components/connection/oauth-client-notice";
 import { LanguageIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
+import {
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -14,6 +24,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   type ConnectionDraft,
+  credentialFieldsFor,
   type DraftErrors,
   hostsNoticeTitle,
   hostsOf,
@@ -23,10 +34,122 @@ import {
   SCHEMES,
   withScheme,
 } from "@/lib/connection-form";
+import { cn } from "@/lib/utils";
 
 /** What a scheme is called in the picker: the person's words, then the wire name it maps to. */
 const schemeOption = (scheme: AuthScheme) => `${SCHEME_LABELS[scheme]} · ${scheme}`;
 const SCHEME_ITEMS = SCHEMES.map((scheme) => ({ value: scheme, label: schemeOption(scheme) }));
+
+type ConnectionFormProps = {
+  draft: ConnectionDraft;
+  onChange: (next: ConnectionDraft) => void;
+  errors: DraftErrors;
+  idPrefix: string;
+  disabled?: boolean;
+};
+
+function groupFields(fields: { name: string; value: string; required: boolean }[]) {
+  const groups: { required: string[]; prefilled: string[]; optional: string[] } = {
+    required: [],
+    prefilled: [],
+    optional: [],
+  };
+  for (const field of fields) {
+    const group = field.value.trim() ? "prefilled" : field.required ? "required" : "optional";
+    groups[group].push(field.name);
+  }
+  return groups;
+}
+
+function groupParameters(draft: ConnectionDraft) {
+  return {
+    scheme: draft.scheme,
+    ...groupFields(
+      parametersFor(draft.scheme).map((field) => ({
+        ...field,
+        name: `schemeConfig.${field.name}`,
+        value: draft.schemeConfig[field.name] ?? "",
+      })),
+    ),
+  };
+}
+
+/** Required entry comes first; the opening values determine each detail's section (ADR 0006). */
+export function ConnectionForm(props: ConnectionFormProps) {
+  const { draft, onChange, errors, idPrefix, disabled } = props;
+  // Hold only field names, so typing never moves a field or copies a credential into this state.
+  const [details] = useState(() =>
+    groupFields([
+      { name: "vendor", value: draft.vendor, required: true },
+      { name: "displayName", value: draft.displayName, required: true },
+      {
+        name: "primaryHost",
+        value: draft.primaryHost.trim() === "https://" ? "" : draft.primaryHost,
+        required: true,
+      },
+      { name: "hosts", value: draft.hosts, required: false },
+      { name: "scheme", value: draft.scheme, required: true },
+    ]),
+  );
+  const [parameters, setParameters] = useState(() => groupParameters(draft));
+  // A different scheme has fresh parameters; the other details keep their original sections.
+  if (parameters.scheme !== draft.scheme) setParameters(groupParameters(draft));
+
+  const required = [...details.required, ...parameters.required];
+  const prefilled = [...details.prefilled, ...parameters.prefilled];
+  const optional = [...details.optional, ...parameters.optional];
+  const credentials = credentialFieldsFor(draft.scheme);
+  const hasRequired = required.length > 0 || credentials.some((field) => field.required);
+  const hasOptional = optional.length > 0 || credentials.some((field) => !field.required);
+  const credentialProps = {
+    scheme: draft.scheme,
+    value: draft.credential,
+    onChange: (credential: Record<string, string>) => onChange({ ...draft, credential }),
+    errors,
+    idPrefix,
+    disabled,
+  };
+
+  return (
+    <>
+      <FieldDescription>
+        Complete the required fields first. Prefilled details below can be edited individually.
+      </FieldDescription>
+      {hasRequired ? (
+        <FieldSet>
+          <FieldLegend>Required fields</FieldLegend>
+          <FieldGroup>
+            <OAuthClientNotice draft={draft} />
+            <ConnectionFormFields {...props} fieldNames={required} />
+            <HostsNotice draft={draft} />
+            <CredentialFields {...credentialProps} include="required" />
+          </FieldGroup>
+        </FieldSet>
+      ) : (
+        <HostsNotice draft={draft} />
+      )}
+      {credentials.length === 0 ? <CredentialFields {...credentialProps} /> : null}
+      {prefilled.length > 0 ? (
+        <FieldSet>
+          <FieldLegend>Prefilled details</FieldLegend>
+          <FieldGroup>
+            <ConnectionFormFields {...props} fieldNames={prefilled} />
+          </FieldGroup>
+        </FieldSet>
+      ) : null}
+      {hasOptional ? (
+        <FieldSet>
+          <FieldLegend>Optional fields</FieldLegend>
+          <FieldGroup>
+            <ConnectionFormFields {...props} fieldNames={optional} />
+            <CredentialFields {...credentialProps} include="optional" />
+          </FieldGroup>
+        </FieldSet>
+      ) : null}
+      {errors.schemeConfig ? <FieldError>{errors.schemeConfig}</FieldError> : null}
+    </>
+  );
+}
 
 /**
  * The non-secret half of a connection (ADR 0006: everything the handoff carries): the vendor slug,
@@ -34,166 +157,196 @@ const SCHEME_ITEMS = SCHEMES.map((scheme) => ({ value: scheme, label: schemeOpti
  * judged by the service's own rule as the person types (`lib/connection-form.ts`). The secret half
  * is `credential-fields.tsx`, kept apart so the credential ask can show it alone.
  */
-export function ConnectionFormFields({
+function ConnectionFormFields({
   draft,
   onChange,
   errors,
   idPrefix,
   disabled,
-}: {
-  draft: ConnectionDraft;
-  onChange: (next: ConnectionDraft) => void;
-  errors: DraftErrors;
-  idPrefix: string;
-  disabled?: boolean;
-}) {
+  fieldNames,
+}: ConnectionFormProps & { fieldNames: string[] }) {
   const id = (name: string) => `${idPrefix}-${name}`;
-  const invalid = (key: string) => (errors[key] ? true : undefined);
-  const parameters = parametersFor(draft.scheme);
+  const show = (name: string) => fieldNames.includes(name);
+  const parameters = parametersFor(draft.scheme).filter((field) =>
+    show(`schemeConfig.${field.name}`),
+  );
 
   return (
     <>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field data-invalid={invalid("vendor")}>
-          <FieldLabel htmlFor={id("vendor")}>Vendor</FieldLabel>
-          <Input
-            id={id("vendor")}
-            value={draft.vendor}
-            disabled={disabled}
-            placeholder="unleashed"
-            autoComplete="off"
-            spellCheck={false}
-            aria-invalid={invalid("vendor")}
-            onChange={(event) => onChange({ ...draft, vendor: event.target.value })}
-          />
-          <FieldDescription>
-            A kebab-case slug. Tools authored against this connection are bound to it.
-          </FieldDescription>
-          {errors.vendor ? <FieldError>{errors.vendor}</FieldError> : null}
-        </Field>
-        <Field data-invalid={invalid("displayName")}>
-          <FieldLabel htmlFor={id("displayName")}>Name</FieldLabel>
-          <Input
-            id={id("displayName")}
-            value={draft.displayName}
-            disabled={disabled}
-            placeholder="Acme Unleashed (production)"
-            autoComplete="off"
-            aria-invalid={invalid("displayName")}
-            onChange={(event) => onChange({ ...draft, displayName: event.target.value })}
-          />
-          <FieldDescription>What you and your agents will see.</FieldDescription>
-          {errors.displayName ? <FieldError>{errors.displayName}</FieldError> : null}
-        </Field>
-      </div>
+      {show("vendor") || show("displayName") ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {show("vendor") ? (
+            <ConnectionField
+              id={id("vendor")}
+              label="Vendor"
+              value={draft.vendor}
+              required
+              disabled={disabled}
+              error={errors.vendor}
+              hint="A kebab-case slug. Tools authored against this connection are bound to it."
+            >
+              {(props) => (
+                <Input
+                  {...props}
+                  value={draft.vendor}
+                  placeholder="Enter the vendor slug"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => onChange({ ...draft, vendor: event.target.value })}
+                />
+              )}
+            </ConnectionField>
+          ) : null}
+          {show("displayName") ? (
+            <ConnectionField
+              id={id("displayName")}
+              label="Name"
+              value={draft.displayName}
+              required
+              disabled={disabled}
+              error={errors.displayName}
+              hint="What you and your agents will see."
+            >
+              {(props) => (
+                <Input
+                  {...props}
+                  value={draft.displayName}
+                  placeholder="Name this connection"
+                  autoComplete="off"
+                  onChange={(event) => onChange({ ...draft, displayName: event.target.value })}
+                />
+              )}
+            </ConnectionField>
+          ) : null}
+        </div>
+      ) : null}
 
-      <Field data-invalid={invalid("primaryHost")}>
-        <FieldLabel htmlFor={id("primaryHost")}>Primary host</FieldLabel>
-        <Input
+      {show("primaryHost") ? (
+        <ConnectionField
           id={id("primaryHost")}
+          label="Primary host"
           value={draft.primaryHost}
+          incomplete={!draft.primaryHost.trim() || draft.primaryHost.trim() === "https://"}
+          required
           disabled={disabled}
-          placeholder="https://api.vendor.example/v1"
-          autoComplete="off"
-          spellCheck={false}
-          inputMode="url"
-          className="font-mono"
-          aria-invalid={invalid("primaryHost")}
-          onChange={(event) => onChange({ ...draft, primaryHost: event.target.value })}
-        />
-        <FieldDescription>
-          The https base URL vendor paths resolve against. Private, loopback, link-local and
-          cloud-metadata hosts are refused here and again by the proxy.
-        </FieldDescription>
-        {errors.primaryHost ? <FieldError>{errors.primaryHost}</FieldError> : null}
-      </Field>
+          error={errors.primaryHost}
+          hint="The https base URL vendor paths resolve against. Private, loopback, link-local and cloud-metadata hosts are refused here and again by the proxy."
+        >
+          {(props) => (
+            <Input
+              {...props}
+              value={draft.primaryHost}
+              placeholder="Enter the API base URL"
+              autoComplete="off"
+              spellCheck={false}
+              inputMode="url"
+              className={cn(props.className, "font-mono")}
+              onChange={(event) => onChange({ ...draft, primaryHost: event.target.value })}
+            />
+          )}
+        </ConnectionField>
+      ) : null}
 
-      <Field data-invalid={invalid("hosts")}>
-        <FieldLabel htmlFor={id("hosts")}>
-          Additional hosts
-          <span className="font-normal text-muted-foreground">(optional)</span>
-        </FieldLabel>
-        <Textarea
+      {show("hosts") ? (
+        <ConnectionField
           id={id("hosts")}
+          label="Additional hosts"
           value={draft.hosts}
           disabled={disabled}
-          placeholder={"files.vendor.example\nupload.vendor.example"}
-          autoComplete="off"
-          spellCheck={false}
-          className="min-h-12 font-mono"
-          aria-invalid={invalid("hosts")}
-          onChange={(event) => onChange({ ...draft, hosts: event.target.value })}
-        />
-        <FieldDescription>
-          One hostname per line, for a vendor whose API spans several. The primary's own host is
-          always included.
-        </FieldDescription>
-        {errors.hosts ? <FieldError>{errors.hosts}</FieldError> : null}
-      </Field>
-
-      <Field>
-        <FieldLabel htmlFor={id("scheme")}>Auth scheme</FieldLabel>
-        <Select
-          value={draft.scheme}
-          items={SCHEME_ITEMS}
-          disabled={disabled}
-          onValueChange={(next) => {
-            if (next !== null && isScheme(next)) onChange(withScheme(draft, next));
-          }}
+          error={errors.hosts}
+          hint="One hostname per line, for a vendor whose API spans several. The primary's own host is always included."
         >
-          <SelectTrigger id={id("scheme")} className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {SCHEMES.map((scheme) => (
-              <SelectItem key={scheme} value={scheme}>
-                {schemeOption(scheme)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <FieldDescription>
-          How the proxy presents the credential to the vendor. The secret fields below follow it.
-        </FieldDescription>
-      </Field>
+          {(props) => (
+            <Textarea
+              {...props}
+              value={draft.hosts}
+              placeholder="Add any other API hosts"
+              autoComplete="off"
+              spellCheck={false}
+              className={cn(props.className, "min-h-12 font-mono")}
+              onChange={(event) => onChange({ ...draft, hosts: event.target.value })}
+            />
+          )}
+        </ConnectionField>
+      ) : null}
+
+      {show("scheme") ? (
+        <ConnectionField
+          id={id("scheme")}
+          label="Auth scheme"
+          value={draft.scheme}
+          required
+          disabled={disabled}
+          hint="How the proxy presents the credential to the vendor. Changing it updates the required fields."
+        >
+          {({ readOnly, ...props }) =>
+            readOnly ? (
+              <Input {...props} readOnly value={SCHEME_LABELS[draft.scheme]} />
+            ) : (
+              <Select
+                value={draft.scheme}
+                items={SCHEME_ITEMS}
+                disabled={disabled}
+                onValueChange={(next) => {
+                  if (next !== null && isScheme(next) && next !== draft.scheme) {
+                    onChange(withScheme(draft, next));
+                  }
+                }}
+              >
+                <SelectTrigger {...props} className={cn(props.className, "w-full")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCHEMES.map((scheme) => (
+                    <SelectItem key={scheme} value={scheme}>
+                      {schemeOption(scheme)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )
+          }
+        </ConnectionField>
+      ) : null}
 
       {parameters.length > 0 ? (
         <div className="grid gap-4 sm:grid-cols-2">
           {parameters.map((parameter) => {
             const key = `schemeConfig.${parameter.name}`;
             return (
-              <Field key={parameter.name} data-invalid={invalid(key)}>
-                <FieldLabel htmlFor={id(key)}>
-                  {parameter.presentation.label}
-                  {parameter.required ? null : (
-                    <span className="font-normal text-muted-foreground">(optional)</span>
-                  )}
-                </FieldLabel>
-                <Input
-                  id={id(key)}
-                  value={draft.schemeConfig[parameter.name] ?? ""}
-                  disabled={disabled}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="font-mono"
-                  aria-invalid={invalid(key)}
-                  onChange={(event) =>
-                    onChange({
-                      ...draft,
-                      schemeConfig: { ...draft.schemeConfig, [parameter.name]: event.target.value },
-                    })
-                  }
-                />
-                {parameter.presentation.hint ? (
-                  <FieldDescription>{parameter.presentation.hint}</FieldDescription>
-                ) : null}
-                {errors[key] ? <FieldError>{errors[key]}</FieldError> : null}
-              </Field>
+              <ConnectionField
+                key={`${draft.scheme}-${parameter.name}`}
+                id={id(key)}
+                label={parameter.presentation.label}
+                value={draft.schemeConfig[parameter.name] ?? ""}
+                required={parameter.required}
+                disabled={disabled}
+                error={errors[key]}
+                hint={parameter.presentation.hint}
+              >
+                {(props) => (
+                  <Input
+                    {...props}
+                    value={draft.schemeConfig[parameter.name] ?? ""}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className={cn(props.className, "font-mono")}
+                    onChange={(event) =>
+                      onChange({
+                        ...draft,
+                        schemeConfig: {
+                          ...draft.schemeConfig,
+                          [parameter.name]: event.target.value,
+                        },
+                      })
+                    }
+                  />
+                )}
+              </ConnectionField>
             );
           })}
         </div>
       ) : null}
-      {errors.schemeConfig ? <FieldError>{errors.schemeConfig}</FieldError> : null}
     </>
   );
 }

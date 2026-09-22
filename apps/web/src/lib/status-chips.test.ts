@@ -7,6 +7,7 @@ import {
   AWAITING_RECONNECTION_CHIP,
   agentStatusChip,
   CALL_OUTCOME_CHIP,
+  CONNECTION_FIELD_CHIP,
   CONNECTION_STATUS_CHIP,
   connectionStatusChips,
   DRY_RUN_CHIP,
@@ -21,6 +22,7 @@ import {
 const EVERY_CHIP: StatusChip[] = [
   ...Object.values(AGENT_STATUS_CHIP),
   ...Object.values(CONNECTION_STATUS_CHIP),
+  ...Object.values(CONNECTION_FIELD_CHIP),
   AWAITING_CLIENT_SECRET_CHIP,
   AWAITING_RECONNECTION_CHIP,
   ...Object.values(CALL_OUTCOME_CHIP),
