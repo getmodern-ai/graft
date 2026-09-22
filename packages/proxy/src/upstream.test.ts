@@ -76,6 +76,22 @@ describe("guardedLookup", () => {
     expect(ok).toBeNull();
   });
 
+  /**
+   * The answers are addresses, and the guard asks the address question of them (`isPublicAddress`,
+   * GRA-176): a resolver that answered with a name — which `dns.lookup` never does, but the seam
+   * admits — is refused rather than judged as a public hostname would be.
+   */
+  it("refuses an answer that is not an address at all", async () => {
+    for (const answer of ["api.vendor.example", "localhost", "", "999.1.1.1"]) {
+      const [error] = await lookup(
+        resolver({ "evil.example": [{ address: answer, family: 4 }] }),
+        "evil.example",
+      );
+      expect(error, answer).toBeInstanceOf(PrivateAddressError);
+      expect((error as PrivateAddressError).address).toBe(answer);
+    }
+  });
+
   /** The operator's configured upstream may resolve privately — a company gateway (ADR 0019, GRA-58) — and nothing else may. */
   it("lifts the guard for a named host alone, compared case-insensitively", async () => {
     const resolve = resolver({

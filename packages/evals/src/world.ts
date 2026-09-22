@@ -62,6 +62,7 @@ import {
   GITHUB_PRIMARY_HOST,
   GITHUB_TOKEN,
   GITHUB_VENDOR,
+  OCTOKIT_PACKAGE,
   respondGithub,
 } from "./github-vendor";
 
@@ -288,7 +289,16 @@ export async function openWorld(options: WorldOptions): Promise<World> {
     store: toolbox,
     mirror: createNoopToolboxMirror(),
     sandbox: installing,
-    metadata: createFakeMetadataSource({}),
+    // What the registry says about the one SDK a scenario declares. It is asked about an
+    // allowlisted name too — the allowlist waives provenance alone (GRA-176) — and the answer is
+    // keyed by bare name, so it holds whatever version the model pins.
+    metadata: createFakeMetadataSource({
+      [OCTOKIT_PACKAGE]: {
+        publishedAt: new Date("2013-01-01T00:00:00Z"),
+        weeklyDownloads: 3_000_000,
+        hasProvenance: true,
+      },
+    }),
     policy: DEFAULT_PACKAGE_POLICY,
     tool: fake.tool,
     check: (input, checkOptions) => checkModule(input, checkOptions),

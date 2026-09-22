@@ -9,9 +9,12 @@
  */
 
 /**
- * Official vendor SDKs, allowed by name. Exact versions are still required of them (ADR 0013), and
- * the check still requires the proxy binding (ADR 0010). An entry ending in `/*` admits a whole
- * scope, which is how the AWS SDK's one-client-per-service layout is covered.
+ * Official vendor SDKs, allowed by name. The allowlist says the *name* is admissible and waives
+ * npm provenance, which a vendor's own client may not publish; it waives nothing else (GRA-176).
+ * Exact versions are still required of them (ADR 0013), the registry is still asked about them and
+ * its age and download rules still apply, and the check still requires the proxy binding (ADR
+ * 0010). An entry ending in `/*` admits a whole scope, which is how the AWS SDK's
+ * one-client-per-service layout is covered.
  *
  * The list grows from real `acquire` runs through the review queue (ADR 0013): a package the model
  * reached for and the policy refused is reviewed by a person and, if it is a vendor's own client,
@@ -54,7 +57,8 @@ export const DEFAULT_PACKAGE_POLICY: PackagePolicyConfig = {
  * package's first publish (`time.created`), not the version's: a typosquat is a young *package*, and
  * a fresh version of an old one is not what the age rule is for. `hasProvenance` is whether the
  * version asked about carries an npm provenance attestation. Null fields are facts the registry did
- * not have, and each fails the rule that needs it.
+ * not have, and each fails the rule that needs it. The whole of it is null only when the registry
+ * has no such package or no such version — it is asked about an allowlisted name too (GRA-176).
  */
 export type PackageMetadata = {
   publishedAt: Date | null;
@@ -115,9 +119,14 @@ export function ageInDays(publishedAt: Date, now: Date): number {
 
 /**
  * The policy over one declared dependency. The rules run in the order a reader of a refusal wants
- * them: the name and the version first, because those are the module's to fix; the allowlist next,
- * because an allowlisted SDK needs nothing from the registry; then what the registry said.
- * `metadata` may be null for an allowlisted package, since nothing looked it up.
+ * them: the name and the version first, because those are the module's to fix; then what the
+ * registry said. The allowlist is not a rule of its own but a waiver of the provenance rule alone
+ * (GRA-176) — a vendor's own client may publish no attestation, and admitting one that does not is
+ * what the list is for; an allowlisted name the registry has never heard of, or one nobody
+ * downloads, is not a vendor's client, and the age and download rules are what say so. `metadata`
+ * null is the registry having no such package or no such version, for an allowlisted name as for
+ * any other. What the age rule can see is bounded by `PackageMetadata` above: it catches a young
+ * package, never a young *version* of an old one.
  */
 export function evaluatePackage(
   pkg: { name: string; version: string; metadata: PackageMetadata | null },
@@ -141,9 +150,7 @@ export function evaluatePackage(
     };
   }
 
-  if (isAllowlisted(name, config.allowlist)) {
-    return { allowed: true, reason: "allowlist" };
-  }
+  const allowlisted = isAllowlisted(name, config.allowlist);
 
   if (metadata === null) {
     return {
@@ -153,7 +160,7 @@ export function evaluatePackage(
     };
   }
 
-  if (!metadata.hasProvenance) {
+  if (!allowlisted && !metadata.hasProvenance) {
     return {
       allowed: false,
       rule: "provenance",
@@ -185,5 +192,5 @@ export function evaluatePackage(
     };
   }
 
-  return { allowed: true, reason: "attested" };
+  return { allowed: true, reason: allowlisted ? "allowlist" : "attested" };
 }

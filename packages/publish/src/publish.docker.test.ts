@@ -188,7 +188,15 @@ describe.skipIf(docker.reason !== undefined)("the publish against the Docker bac
         store,
         mirror: createNoopToolboxMirror(),
         sandbox: backend,
-        metadata: createFakeMetadataSource({}),
+        // `left-pad` is old and downloaded and carries no attestation, which is what the registry
+        // says of it; the allowlist waives the attestation alone (GRA-176), so the facts are here.
+        metadata: createFakeMetadataSource({
+          "left-pad@1.3.0": {
+            publishedAt: new Date("2014-03-05T00:00:00Z"),
+            weeklyDownloads: 1_436_537,
+            hasProvenance: false,
+          },
+        }),
         // `left-pad` is not an official SDK; the extra-names option is how a deployment admits one.
         policy: {
           ...DEFAULT_PACKAGE_POLICY,

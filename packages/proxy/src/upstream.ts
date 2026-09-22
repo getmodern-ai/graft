@@ -4,7 +4,7 @@ import type { LookupFunction } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
 
 import { hasCauseNamed } from "./cause-chain";
-import { isPublicHost } from "./public-host";
+import { isPublicAddress } from "./public-host";
 import type { UpstreamFetch } from "./types";
 
 /**
@@ -69,9 +69,12 @@ export function guardedLookup(
   return (hostname, options, callback) => {
     resolveAll(hostname, (error, addresses) => {
       if (error) return callback(error, []);
+      // `isPublicAddress` and not `isPublicHost`: what a resolver answers with is an address, so
+      // anything else here is an error rather than a name to judge as one — and the name form
+      // would wave a hostname-shaped answer through as public (GRA-176).
       const offender = unguarded.has(hostname.toLowerCase())
         ? undefined
-        : addresses.find((entry) => !isPublicHost(entry.address));
+        : addresses.find((entry) => !isPublicAddress(entry.address));
       if (offender) return callback(new PrivateAddressError(hostname, offender.address), []);
       const first = addresses[0];
       if (!first) return callback(new PrivateAddressError(hostname, "(no address)"), []);
