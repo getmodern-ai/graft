@@ -122,6 +122,7 @@ export function ConnectionAskCard({
   const oauth = isOAuthDraft(draft);
   const secret = secretLegend(draft);
   const provider: string = payload.provider ?? KEYRING_PROVIDER;
+  const widens = payload.widens ?? null;
   // Once the client is saved and the popup is open, the form's job is done; the callback settles it.
   const consenting = consent.state.phase !== "idle" && consent.state.phase !== "done";
   const busy = connect.isPending || decline.isPending || consenting;
@@ -141,7 +142,7 @@ export function ConnectionAskCard({
       action={action}
       title={
         <>
-          <span className="text-muted-foreground">connect</span>
+          <span className="text-muted-foreground">{widens ? "widen" : "connect"}</span>
           <span>{payload.displayName}</span>
           <Badge variant="outline">{payload.vendor}</Badge>
           {provider === KEYRING_PROVIDER ? null : <Badge variant="outline">via {provider}</Badge>}
@@ -156,8 +157,9 @@ export function ConnectionAskCard({
       settled={(recorded) =>
         typeof recorded?.connectionId === "string" ? (
           <>
-            Connected. The connection is in the agent's scope and its waiting call answers
-            connected; other agents get it when you add it to theirs.{" "}
+            {widens
+              ? "Confirmed. The connection now reaches the added hosts and the agent's waiting call answers connected; nothing new was made."
+              : "Connected. The connection is in the agent's scope and its waiting call answers connected; other agents get it when you add it to theirs."}{" "}
             <Link to="/connections" className="underline underline-offset-4">
               See connections
             </Link>
@@ -193,7 +195,35 @@ export function ConnectionAskCard({
         )}
       </figure>
 
-      {open ? (
+      {open && widens ? (
+        // A widening (GRA-167): the row is the person's already, so nothing here is editable —
+        // the added hosts, the set the row will reach, and the build choice; Connect grows the row.
+        <>
+          <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+            <dt className="text-muted-foreground">Adds</dt>
+            <dd>
+              <Hosts hosts={widens.addedHosts} />
+            </dd>
+            <dt className="text-muted-foreground">Will reach</dt>
+            <dd>
+              <Hosts hosts={payload.hosts} />
+            </dd>
+            <dt className="text-muted-foreground">Primary host</dt>
+            <dd>
+              <code className="font-mono text-xs">{payload.primaryHost}</code>
+            </dd>
+            <dt className="text-muted-foreground">Scheme</dt>
+            <dd>No credential (public API)</dd>
+          </dl>
+          <BuildApprovalItem
+            id={`ask-${action.id}-approve-build`}
+            agentName={agentName}
+            checked={approveBuild}
+            onCheckedChange={setApproveBuild}
+            disabled={busy}
+          />
+        </>
+      ) : open ? (
         <>
           <FieldSet>
             <FieldLegend variant="label">

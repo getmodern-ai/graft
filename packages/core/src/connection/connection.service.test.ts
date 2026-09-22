@@ -23,6 +23,7 @@ import {
   storeRefreshedCredential,
   toConnectionOutput,
   toProxyConnection,
+  widenKeylessConnectionHosts,
   widenProviderConnectionHosts,
 } from "./connection.service";
 import { createGatewayProvider } from "./gateway-provider";
@@ -1633,6 +1634,71 @@ describe("a provider with no person step (ADR 0019, GRA-58)", () => {
     expect(
       toProxyConnection({ ...row, revokedAt: NOW, credentialCiphertext: null }, providers),
     ).toMatchObject({ authScheme: null, credentialCiphertext: null, revokedAt: NOW });
+  });
+
+  it("widens a keyless keyring row on the person's confirmation (GRA-167), and refuses a keyed row, a revoked row and a bad host", async () => {
+    const keyless: ConnectionRow = {
+      ...row,
+      id: "conn_k",
+      vendor: "frankfurter",
+      displayName: "Frankfurter",
+      scheme: "none",
+      schemeConfig: {},
+      primaryHost: "https://api.frankfurter.app",
+      hosts: ["api.frankfurter.app"],
+    };
+    const deps = fakeDeps({ providers, findConnection: vi.fn(async () => keyless) });
+    const output = await widenKeylessConnectionHosts(
+      ctx,
+      PRINCIPAL,
+      "conn_k",
+      ["api.frankfurter.app", "API.frankfurter.dev"],
+      deps,
+    );
+    expect(deps.addConnectionHosts).toHaveBeenCalledWith(fakeDb, "person_1", "conn_k", [
+      "api.frankfurter.app",
+      "api.frankfurter.dev",
+    ]);
+    expect(output.id).toBe("conn_1");
+
+    // Already declared: answered as it is, nothing written.
+    const same = fakeDeps({ providers, findConnection: vi.fn(async () => keyless) });
+    await widenKeylessConnectionHosts(ctx, PRINCIPAL, "conn_k", ["api.frankfurter.app"], same);
+    expect(same.addConnectionHosts).not.toHaveBeenCalled();
+
+    // A keyed row's credential would go to a host it never went to: not this function's.
+    await expect(
+      widenKeylessConnectionHosts(
+        ctx,
+        PRINCIPAL,
+        "conn_1",
+        ["files.unleashedsoftware.com"],
+        fakeDeps({ providers, findConnection: vi.fn(async () => row) }),
+      ),
+    ).rejects.toThrow(/takes no credential/);
+    // A revoked row's way back is Reconnect.
+    await expect(
+      widenKeylessConnectionHosts(
+        ctx,
+        PRINCIPAL,
+        "conn_k",
+        ["api.frankfurter.dev"],
+        fakeDeps({
+          providers,
+          findConnection: vi.fn(async () => ({ ...keyless, revokedAt: NOW })),
+        }),
+      ),
+    ).rejects.toThrow(/revoked/);
+    // The host rule holds here as everywhere (ADR 0010).
+    await expect(
+      widenKeylessConnectionHosts(
+        ctx,
+        PRINCIPAL,
+        "conn_k",
+        ["169.254.169.254"],
+        fakeDeps({ providers, findConnection: vi.fn(async () => keyless) }),
+      ),
+    ).rejects.toThrow();
   });
 
   it("widens a gateway row's host set to a later proposal's, within the gateway's coverage, and never a keyring row's", async () => {

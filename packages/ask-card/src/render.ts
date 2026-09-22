@@ -130,6 +130,7 @@ export function titleOf(card: AskCard): string {
     case "build":
       return `Let ${card.agentName} build tools against ${what}?`;
     case "connection":
+      if (card.widens) return `Also reach ${card.widens.addedHosts.join(", ")} with ${what}?`;
       return isLinkAsk(card)
         ? `Connect ${what} through ${card.provider ?? "its provider"}?`
         : card.answerable
@@ -153,6 +154,10 @@ export function descriptionOf(card: AskCard): string {
       if (isLinkAsk(card)) {
         const provider = card.provider ?? "the provider";
         return `${card.agentName} proposes this connection. You sign in at the vendor on ${provider}'s page, which opens in a new window; the account's token stays with ${provider}, and nothing is typed here.`;
+      }
+      if (card.widens) {
+        // A widening (GRA-167): the row exists; the yes adds hosts to it and makes nothing new.
+        return `${card.agentName} proposes that the connection you already have to ${card.displayName} also reach ${card.widens.addedHosts.join(", ")}. The vendor takes no credential, so there is nothing to enter: confirming adds the hosts to that connection; no new connection is made.`;
       }
       return card.answerable
         ? `${card.agentName} proposes this connection. The vendor takes no credential, so there is nothing to enter: confirming makes the connection and gives it to this agent.`
@@ -194,6 +199,9 @@ export function factsOf(card: AskCard): Array<{ label: string; value: string; mo
   }
   if (card.primaryHost) facts.push({ label: "Primary host", value: card.primaryHost, mono: true });
   facts.push({ label: "Hosts", value: card.hosts.join(", "), mono: true });
+  if (card.kind === "connection" && card.widens) {
+    facts.push({ label: "Adds", value: card.widens.addedHosts.join(", "), mono: true });
+  }
   if (card.kind === "connection" || card.kind === "credential" || card.kind === "scope") {
     facts.push({
       label: "Scheme",

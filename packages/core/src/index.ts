@@ -138,6 +138,7 @@ export {
   storeRefreshedCredential,
   toConnectionOutput,
   toProxyConnection,
+  widenKeylessConnectionHosts,
   widenProviderConnectionHosts,
 } from "./connection/connection.service";
 export {

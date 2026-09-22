@@ -451,6 +451,16 @@ which answers `connected` naming the execute tool, or `scope_declined`. The ask 
 the same gate. `SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts`
 pins the word across the description and the Hermes skill.
 
+**A keyless proposal for a vendor the person already holds widens that row** (GRA-167; ADR 0006 as
+amended 2026-09-22). When `existingConnectionFor` finds no row covering a `none`-scheme proposal
+but the person has a live, usable keyring row of the vendor on `none` in this agent's scope, the
+verdict is `widen` and `askToWiden` makes a `connection` ask about that row: the row's primary host
+and name, `hosts` grown to the union, `widens: { connectionId, addedHosts }` on the payload, the
+`connection_id` column set. `confirmConnectionAsk` reads `widens` and calls `@graft/core`'s
+`widenKeylessConnectionHosts` instead of registering a row; the agent's next call answers
+`connected` ("Confirmed. … now reaches …"). The console's card and the ask card draw the added
+hosts and no form. A keyed or revoked row, or one outside the scope, is never widened.
+
 **A person's connections reach every agent of theirs by default; scope is a narrowing the person
 opts into** (GRA-105; ADR 0007 as amended 2026-09-19). `agent.scope_mode` is `all` or `listed`
 (`agentScopeMode` in `packages/db/src/schema/agent.ts`; migration 0009 added the column as `listed`

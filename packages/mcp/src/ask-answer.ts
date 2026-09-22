@@ -6,6 +6,7 @@ import {
   type ConnectionDeps,
   type ConnectionOutput,
   consumePendingAction,
+  getAgentScope,
   getPendingActionForPerson,
   grantBuildApproval,
   KEYRING_PROVIDER,
@@ -17,6 +18,7 @@ import {
   type ServiceContext,
   ServiceError,
   setApproval,
+  widenKeylessConnectionHosts,
 } from "@graft/core";
 import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
@@ -285,6 +287,17 @@ export type ConnectionConfirmation = RegisterConnectionWithCredentialInput & {
   approveBuild?: boolean;
 };
 
+/** The `widens` block on a connection ask's payload (GRA-167), or null for an ask that makes a new row. */
+export function wideningOf(
+  payload: Record<string, unknown>,
+): { connectionId: string; addedHosts: string[] } | null {
+  const widens = payload.widens;
+  if (typeof widens !== "object" || widens === null) return null;
+  const { connectionId, addedHosts } = widens as Record<string, unknown>;
+  if (typeof connectionId !== "string" || !Array.isArray(addedHosts)) return null;
+  return { connectionId, addedHosts: addedHosts.map(String) };
+}
+
 /**
  * The server's hook for an authorization-code connection (ADR 0005): start the consent and hand
  * back what the route answers. Null for every other scheme. Bound by `apps/server/src/api.ts`;
@@ -352,13 +365,42 @@ export async function confirmConnectionAsk(
       );
     }
     const { approveBuild, ...registration } = submit;
-    const connection = await registerConnectionWithCredential(
-      scoped,
-      principal,
-      { ...registration, provider: routed },
-      deps.connection,
-    );
-    await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, deps.agent);
+    const widens = wideningOf(action.payload);
+    // A widening ask (GRA-167) is about a row the person already made: the yes grows that row's
+    // host set to the union the ask carries and makes nothing new. The submitted proposal is not
+    // read — the ask is not the person's to edit, only to confirm or decline.
+    let connection: ConnectionOutput;
+    if (widens) {
+      // The row was this agent's when the ask was made; a person who has since taken it out of
+      // the agent's scope is not handed it back by a confirmation about hosts (Greptile on #131).
+      // The ask is refused rather than answered, so it stays open for them to decline.
+      const scopeIds = await getAgentScope(
+        scoped,
+        { personId: principal.personId, agentId: action.agentId },
+        deps.agent,
+      );
+      if (!scopeIds.includes(widens.connectionId)) {
+        throw new ServiceError(
+          "BAD_REQUEST",
+          "This connection was taken out of the agent's scope after the ask was made; decline the ask, or add the connection back on the agent's page first",
+        );
+      }
+      connection = await widenKeylessConnectionHosts(
+        scoped,
+        principal,
+        widens.connectionId,
+        Array.isArray(action.payload.hosts) ? action.payload.hosts.map(String) : [],
+        deps.connection,
+      );
+    } else {
+      connection = await registerConnectionWithCredential(
+        scoped,
+        principal,
+        { ...registration, provider: routed },
+        deps.connection,
+      );
+      await addConnectionToAgentScope(scoped, principal, action.agentId, connection.id, deps.agent);
+    }
     const buildApproval = approveBuild
       ? await grantBuildApproval(
           scoped,

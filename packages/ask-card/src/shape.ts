@@ -104,6 +104,11 @@ export type AskCard = {
   provider?: string;
   /** How the provider connects, when the ask names one: a link provider's ask is a button, never a form. */
   providerConnect?: "form" | "link";
+  /**
+   * For a connection ask that widens a connection the person already holds (GRA-167): the row,
+   * and the hosts confirming adds to it. `hosts` is the union the row will reach.
+   */
+  widens?: { connectionId: string; addedHosts: string[] };
   /** For a tool ask: the wire name, `<vendor>__<name>`. */
   toolName?: string;
   /** For a tool ask: the tool's facts (GRA-116). */
@@ -209,7 +214,14 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
       : {}),
     ...(typeof card.toolName === "string" ? { toolName: card.toolName } : {}),
     ...(isAskCardTool(card.tool) ? { tool: card.tool } : {}),
+    ...(isWidening(card.widens) ? { widens: card.widens } : {}),
   };
+}
+
+function isWidening(value: unknown): value is { connectionId: string; addedHosts: string[] } {
+  return (
+    isRecord(value) && typeof value.connectionId === "string" && isStringArray(value.addedHosts)
+  );
 }
 
 function isAskCardTool(value: unknown): value is AskCardTool {
