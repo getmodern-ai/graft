@@ -8,6 +8,7 @@ import {
   blobRefsIn,
   judgeBlobQuota,
   judgeBlobRefs,
+  MAX_INPUT_DEPTH,
 } from "./blob-door";
 import type { McpDeps } from "./deps";
 import { createInFlightRegistry } from "./in-flight";
@@ -51,14 +52,52 @@ describe("blobRefsIn", () => {
         attachments: [OLD, LIVE, { deeper: [GONE] }],
         meta: { previous: NOBODYS, flag: true, nothing: null },
       }),
-    ).toEqual([LIVE, OLD, GONE, NOBODYS]);
+    ).toEqual({ refs: [LIVE, OLD, GONE, NOBODYS], tooDeep: false });
   });
 
   it("finds nothing in a value with no such leaf, a bare string included", () => {
-    expect(blobRefsIn({ limit: 1, tags: ["a", "b"] })).toEqual([]);
-    expect(blobRefsIn("blob://alone")).toEqual(["blob://alone"]);
-    expect(blobRefsIn(null)).toEqual([]);
-    expect(blobRefsIn(undefined)).toEqual([]);
+    expect(blobRefsIn({ limit: 1, tags: ["a", "b"] })).toEqual({ refs: [], tooDeep: false });
+    expect(blobRefsIn("blob://alone")).toEqual({ refs: ["blob://alone"], tooDeep: false });
+    expect(blobRefsIn(null)).toEqual({ refs: [], tooDeep: false });
+    expect(blobRefsIn(undefined)).toEqual({ refs: [], tooDeep: false });
+  });
+
+  /**
+   * The walk is a stack, not the call stack (Greptile on #149): an input nested ten thousand deep
+   * is not a stack overflow turned internal error, and past the bound the door refuses it as
+   * `input_invalid`, naming the bound.
+   */
+  it("stops past MAX_INPUT_DEPTH without recursing, and admitBlobs refuses such an input as input_invalid naming the bound", async () => {
+    const nest = (depth: number): unknown => {
+      let value: unknown = LIVE;
+      for (let i = 0; i < depth; i += 1) value = i % 2 === 0 ? { value } : [value];
+      return value;
+    };
+    expect(MAX_INPUT_DEPTH).toBe(64);
+    expect(blobRefsIn(nest(MAX_INPUT_DEPTH))).toEqual({ refs: [LIVE], tooDeep: false });
+    expect(blobRefsIn(nest(MAX_INPUT_DEPTH + 1))).toEqual({ refs: [], tooDeep: true });
+    expect(blobRefsIn(nest(10_000)).tooDeep).toBe(true);
+
+    const store = createFakeStore();
+    const deps = {
+      ...createFakeDeps(store),
+      inFlight: createInFlightRegistry(),
+    } as unknown as McpDeps;
+    const scope = { personId: "person_1", agentId: "agent_1" };
+    const refused = await admitBlobs(deps, scope, { deep: nest(MAX_INPUT_DEPTH + 1) });
+    expect(refused).toEqual({
+      ok: false,
+      refusal: expect.objectContaining({
+        error: "refused",
+        reason: "input_invalid",
+        maxDepth: MAX_INPUT_DEPTH,
+        message: expect.stringContaining(`${MAX_INPUT_DEPTH} levels`),
+      }),
+    });
+    // At the bound, the same ref is judged as any other: no row, so not found.
+    const judged = await admitBlobs(deps, scope, { deep: nest(MAX_INPUT_DEPTH - 1) });
+    expect(judged).toMatchObject({ ok: false, refusal: { reason: "blob_not_found", ref: LIVE } });
+    deps.inFlight?.close();
   });
 });
 

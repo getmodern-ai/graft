@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { DRY_RUN_HEADER } from "./runner-source";
+import { BLOB_REF_SCHEME, BLOB_TTL_MS, DRY_RUN_HEADER, MAX_BLOB_BYTES } from "./runner-source";
 import { loadSkillsFrom, parseSkill, SKILLS_SOURCE_DIR, skillFiles } from "./skills";
 
 /**
@@ -180,6 +180,28 @@ describe("the shipped skills", () => {
       // blob route the sentence names for a file.
       "`child_process`, `net`, `dgram`, `fs`, `fs/promises`, `worker_threads`, `vm`, `module`, `cluster` or `inspector`",
       "`ctx.blob.write` and `ctx.blob.read` are the route",
+      // GRA-190: the blob section, in the words the runner and the door use. The `Context` line
+      // is the check's `CONTEXT_DECLARATION` whole (pinned there to the runner's `ctx`); the
+      // scheme, the cap and the life are this package's constants; the four refusal names are the
+      // runner's (`blob_too_large`, `blob_not_found`) and the door's (`blob_not_found`,
+      // `blob_expired`, `blob_quota`, `packages/mcp/src/blob-door.ts`).
+      "## Moving a file between tools",
+      "blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> }",
+      `\`${BLOB_REF_SCHEME}<id>\``,
+      "When to write a blob",
+      "When to return data instead",
+      "ctx.blob.write(res.body, {",
+      'Buffer.from(data, "base64url")',
+      "a field named for what it is, `file` or `attachment`",
+      "takes the ref as a plain string",
+      "put it in `testInput`",
+      "mints a fixture blob (a few hundred bytes of `text/plain`)",
+      `lives ${BLOB_TTL_MS / 3_600_000} hours`,
+      `past ${MAX_BLOB_BYTES / (1024 * 1024)} MiB is refused as it streams, as \`blob_too_large\``,
+      "as `blob_not_found` (another agent's ref reads the same)",
+      "as `blob_expired`",
+      "as `blob_quota`",
+      "Writing a blob asks nothing and moves no annotation",
       // Publish with a test input, read the dry-run report, then the agent's first write.
       "Publish with a test input",
       "testInput",

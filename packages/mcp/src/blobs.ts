@@ -1,10 +1,22 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import { type AgentScope, recordBlobsWritten } from "@graft/core";
-import { type BlobLedgerEntry, blobIdOf } from "@graft/runner";
+import { BLOB_TTL_MS, type BlobLedgerEntry, blobIdOf } from "@graft/runner";
 
 import { type boundResult, MAX_RESULT_BLOBS } from "./bounds";
 import type { McpDeps } from "./deps";
+
+/**
+ * What a tool's description says of blobs (GRA-190; ADR 0023): the shape of the `blobs` list a
+ * result may carry, and the three refusals the door answers an input's dead ref with
+ * (`blob-door.ts`). A capability statement in the third person, as every description is
+ * (GRA-111): it names what comes back and what is refused, and carries no rule; the rule, that a
+ * file crosses as the ref and the producing tool runs first, is `session.ts`'s `BLOB_RULE`.
+ * `run_tool` and every authored tool in the list carry this sentence (`tools/meta.ts`, `tools.ts`).
+ */
+export const BLOB_RESULT_FACT =
+  "A result may carry blobs, one entry per file the tool wrote, each with ref (a blob:// string), bytes, contentType, name and expiresAt. " +
+  `An input naming a blob:// ref this agent holds no blob for is refused blob_not_found, one whose ${BLOB_TTL_MS / 3_600_000} hours have passed blob_expired, and any run while the agent's live blobs are at their quota blob_quota.`;
 
 /**
  * What the server does with the runner's blob ledger (GRA-186; ADR 0023): the rows, the analytics
