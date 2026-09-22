@@ -53,7 +53,7 @@ adds five over the chain:
 
 | Scorer | Evidence |
 | --- | --- |
-| `no_blob_bytes_in_model_turns` | no model input or output, across both jobs, carries one of the file's five sentinels as text, hex or base64, and none serialises past 512 KiB; the sentinels sit from 64 KiB on, so the 4,000 characters a proof read or a previewed body shows the model are admitted |
+| `no_blob_bytes_in_model_turns` | no model input or output, across both jobs, carries any of the file's sentinels as text, hex or base64 at any alignment, and none serialises past 96 KiB (a proof read's 4,000 characters, a tool result's 64,000, a margin). A sentinel sits every 16,128 bytes, so **any contiguous slice of 16 KiB or more from the fixture, in any of those encodings, is caught**; a smaller slice is within what the loop shows the model by design, and the first 4,000 bytes a proof read or a previewed body shows carry none |
 | `ref_travels` | the producing tool's answer carries a `blob://` ref, the harness handed exactly that ref on, and the consuming tool's input carries the same ref |
 | `blob_read_in_dry_run` | the consuming job's trace says its dry run's input named a live blob or a fixture the job minted, the dry run passed, and the proxy intercepted a write in it whose body was at least the blob's size |
 | `bytes_arrived_intact` | every upload Drop stored during the consuming stage hashes to the fixture's sha256 at the fixture's size, and there was one |
@@ -90,6 +90,8 @@ machine: **Demo Orders** (`demo-vendor.ts`, the read and write scenarios), **Git
 (`github-vendor.ts`, the SDK scenario), **Files** and **Drop** (`files-vendor.ts` and
 `drop-vendor.ts`, the blob scenario). Each has a documentation page the model reads through
 `read_web_page` and a planted credential the proxy injects, which `credential_never_recorded` looks
-for. The Files report is pseudo-random from a fixed seed with five ASCII sentinels planted past the
-first 64 KiB at offsets that are multiples of three, so any text rendering of the file, base64
-included, carries them; `REPORT` in `files-vendor.ts` is the fixture with its sha256 and sentinels.
+for. The Files report is pseudo-random from a fixed seed with a 32-byte ASCII sentinel naming its
+own offset every 16,128 bytes from just past the 4,000-byte proof window to the end (about 195), so
+any slice of 16 KiB or more in any text rendering of the file carries a whole one; `REPORT` in
+`files-vendor.ts` is the fixture with its sha256 and sentinels, `SENTINEL_GRANULARITY` the slice
+length the guarantee holds from.

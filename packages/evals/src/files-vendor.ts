@@ -10,11 +10,14 @@ import type { UpstreamRequest } from "@graft/proxy";
  * so the scenario needs no knob, and far past the 4,000 characters a proof read or a previewed body
  * carries to the model, so the head a model may legitimately see is nowhere near the sentinels.
  *
- * The bytes are pseudo-random from a fixed seed with five ASCII sentinels planted at known offsets
- * past the first 64 KiB. A model turn that carries the file in any text form (the bytes decoded as
- * UTF-8 or Latin-1, hex, base64 of the whole) carries a sentinel, and `no_blob_bytes_in_model_turns`
- * looks for exactly those. Offsets are multiples of three so a sentinel's base64 is a substring of
- * the whole file's base64, whatever the encoder.
+ * The bytes are pseudo-random from a fixed seed with a 32-byte ASCII sentinel, carrying its own
+ * offset, planted every `SENTINEL_PERIOD` bytes from just past the proof window to the end, about
+ * 195 of them. Any contiguous slice of `SENTINEL_GRANULARITY` bytes (under 16 KiB) or more holds a
+ * whole sentinel wherever it starts, so a model turn that carries such a slice in any text form
+ * (the bytes decoded as UTF-8 or Latin-1, hex, base64 at any alignment) carries a sentinel, and
+ * `no_blob_bytes_in_model_turns` looks for exactly those; a smaller slice is within what the loop
+ * shows the model by design. The first 4,000 bytes carry none: that is the head a proof read or a
+ * previewed body shows the model.
  */
 
 export const FILES_VENDOR = "files";
@@ -31,8 +34,19 @@ export const REPORT_NAME = "report-2026-q3.pdf";
 export const REPORT_CONTENT_TYPE = "application/pdf";
 export const REPORT_BYTES = 3 * 1024 * 1024;
 
-/** A sentinel: 32 ASCII bytes at an offset past the head, the same in every text rendering of the file. */
+/** A sentinel: 32 ASCII bytes naming their own offset, the same in every text rendering of the file. */
 export type Sentinel = { offset: number; text: string };
+
+/**
+ * The head a proof read or a previewed body shows the model, in characters (`PROOF_BODY_CHARS` and
+ * the runner's `MAX_RECORDED_BODY_CHARS`, both 4,000); no sentinel sits inside it.
+ */
+export const PROOF_WINDOW_BYTES = 4_000;
+export const SENTINEL_LENGTH = 32;
+/** Between sentinels: 3 x 5,376, a multiple of three and, with a sentinel's length, under 16 KiB. */
+export const SENTINEL_PERIOD = 16_128;
+/** Any contiguous slice of the fixture this long or longer holds a whole sentinel, wherever it starts. */
+export const SENTINEL_GRANULARITY = SENTINEL_PERIOD + SENTINEL_LENGTH;
 
 /** The report as the vendor serves it, with what a scorer needs to recognise it anywhere. */
 export type BlobFixture = {
@@ -41,12 +55,8 @@ export type BlobFixture = {
   sentinels: readonly Sentinel[];
 };
 
-/** The first 64 KiB carry no sentinel: the head is what a 4,000-character proof read or preview shows. */
-const HEAD_BYTES = 64 * 1024;
-const SENTINEL_LENGTH = 32;
-
-function sentinelText(index: number): string {
-  return `graft-eval-blob-sentinel-${index}-of-5`.padEnd(SENTINEL_LENGTH, "#");
+function sentinelText(offset: number): string {
+  return `graft-blob-sentinel@${String(offset).padStart(8, "0")}`.padEnd(SENTINEL_LENGTH, "#");
 }
 
 function makeFixture(): BlobFixture {
@@ -61,18 +71,21 @@ function makeFixture(): BlobFixture {
   }
   // A PDF's opening line, so the head reads as the content type says.
   bytes.set(new TextEncoder().encode("%PDF-1.7\n"), 0);
-  const offsets = [
-    HEAD_BYTES,
-    Math.floor(REPORT_BYTES / 4),
-    Math.floor(REPORT_BYTES / 2),
-    Math.floor((3 * REPORT_BYTES) / 4),
-    REPORT_BYTES - SENTINEL_LENGTH,
-  ].map((offset) => offset - (offset % 3));
-  const sentinels = offsets.map((offset, index) => {
-    const text = sentinelText(index + 1);
+  const sentinels: Sentinel[] = [];
+  for (
+    let offset = SENTINEL_PERIOD;
+    offset + SENTINEL_LENGTH <= REPORT_BYTES;
+    offset += SENTINEL_PERIOD
+  ) {
+    const text = sentinelText(offset);
+    if (text.length !== SENTINEL_LENGTH) throw new Error(`sentinel ${text} is not 32 bytes`);
     bytes.set(new TextEncoder().encode(text), offset);
-    return { offset, text };
-  });
+    sentinels.push({ offset, text });
+  }
+  const first = sentinels[0];
+  if (!first || first.offset < PROOF_WINDOW_BYTES) {
+    throw new Error("the first sentinel must sit past the proof window");
+  }
   return { bytes, sha256: sha256Of(bytes), sentinels };
 }
 

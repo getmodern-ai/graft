@@ -407,31 +407,41 @@ function turnsOf(run: ScenarioRun): ModelTurn[] {
 }
 
 /**
- * The most one model turn may serialise to. The file is 3 MiB, so a turn carrying it whole in any
- * encoding is past this whatever the sentinels say; the largest legitimate turn, the opening context
- * with the skill and a documentation page, is a few tens of KiB.
+ * The most one model turn may serialise to: a proof read's 4,000 characters, a tool result's 64,000,
+ * and a margin. The opening context with the skill is about 33 KiB; a turn carrying a slice of the
+ * file that holds no sentinel and still passes this is under 96 KiB in its encoding, which the
+ * loop's own cuts admit.
  */
-export const MAX_MODEL_TURN_CHARS = 512 * 1024;
+export const MAX_MODEL_TURN_CHARS = 96 * 1024;
 
 /**
  * No blob bytes in any model turn (ADR 0023: the bytes never enter a model turn). Every model input
- * and output is searched for the fixture's sentinels in the three text forms bytes take on a wire
- * (the bytes as text, hex, base64), and bounded in size. The head of the file is not a sentinel: a
- * proof read or a previewed body shows the model 4,000 characters, and the first sentinel sits at
- * 64 KiB, so that bound is what "a small bound of the fixture's content" means here.
+ * and output, across both jobs, is searched for every sentinel of the fixture in the text forms
+ * bytes take on a wire (the bytes as text, hex in either case, base64 at each of its three
+ * alignments), and bounded at `MAX_MODEL_TURN_CHARS`.
+ *
+ * The guarantee, at a stated granularity: a sentinel sits every `SENTINEL_PERIOD` bytes of the
+ * fixture (`files-vendor.ts`), so **any contiguous slice of `SENTINEL_GRANULARITY` bytes (under
+ * 16 KiB) or more, from any offset, in any of those encodings, is caught**; a smaller slice is
+ * within what the loop shows the model by design, since a proof read or a previewed body carries
+ * the first 4,000 characters of a response, and no sentinel sits inside that head.
  */
 export function noBlobBytesInModelTurns(run: ScenarioRun, fixture: BlobFixture): Score {
   const turns = turnsOf(run);
   const offenders: string[] = [];
   const forms = fixture.sentinels.flatMap((sentinel) => {
-    // The sentinel's offset is a multiple of three, so its base64 is a substring of the whole's.
-    const aligned = sentinel.text.slice(0, 30);
     const hex = Buffer.from(sentinel.text, "ascii").toString("hex");
     return [
       { form: "text", needle: sentinel.text },
-      { form: "base64", needle: Buffer.from(aligned, "ascii").toString("base64") },
       { form: "hex", needle: hex },
       { form: "hex", needle: hex.toUpperCase() },
+      // base64 groups bytes in threes from wherever the encoded slice began, so a sentinel's
+      // encoding depends on the slice's start modulo three: one needle per phase, over the 27
+      // bytes of the sentinel that fall in whole groups at that phase.
+      ...[0, 1, 2].map((phase) => ({
+        form: "base64",
+        needle: Buffer.from(sentinel.text.slice(phase, phase + 27), "ascii").toString("base64"),
+      })),
     ];
   });
   turns.forEach((turn, index) => {

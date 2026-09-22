@@ -3,7 +3,7 @@ import type { ToolVersionRow } from "@graft/db/repo/tool";
 import type { ProxyEvent } from "@graft/proxy";
 import { describe, expect, it } from "vitest";
 
-import { REPORT } from "./files-vendor";
+import { REPORT, SENTINEL_GRANULARITY } from "./files-vendor";
 import { listItems, moveReport } from "./scenarios";
 import {
   blobReadInDryRun,
@@ -498,16 +498,29 @@ describe("the blob scorers", () => {
     );
     expect(base64.pass).toBe(false);
     expect(base64.detail).toContain("as base64");
-    const hex = noBlobBytesInModelTurns(
-      chain({
-        model: [
-          turn("turn", giveUp(Buffer.from(REPORT.bytes.slice(65_000, 66_000)).toString("hex"))),
-        ],
-      }),
-      REPORT,
-    );
-    expect(hex.pass).toBe(false);
-    expect(hex.detail).toContain("as hex");
+    // A 20 KiB slice from between two of the sentinel positions the first cut of this fixture had
+    // (64 KiB and a quarter of the file), so a scorer that only knew those would miss it: caught in
+    // every encoding, base64 at each of its three alignments included, at under the turn bound.
+    const slice = (from: number) => REPORT.bytes.slice(from, from + 20 * 1024);
+    const encodings: [string, string][] = [
+      ["text", Buffer.from(slice(200_000)).toString("latin1")],
+      ["text", new TextDecoder().decode(slice(200_000))],
+      ["hex", Buffer.from(slice(200_000)).toString("hex")],
+      ["hex", Buffer.from(slice(200_000)).toString("hex").toUpperCase()],
+      ["base64", Buffer.from(slice(200_000)).toString("base64")],
+      ["base64", Buffer.from(slice(200_001)).toString("base64")],
+      ["base64", Buffer.from(slice(200_002)).toString("base64")],
+    ];
+    for (const [form, text] of encodings) {
+      expect(text.length).toBeLessThan(MAX_MODEL_TURN_CHARS);
+      const sliced = noBlobBytesInModelTurns(
+        chain({ model: [turn("turn", giveUp(text))] }),
+        REPORT,
+      );
+      expect(sliced.pass, `${form}: ${sliced.detail}`).toBe(false);
+      expect(sliced.detail).toContain(`as ${form}`);
+      expect(sliced.detail).not.toContain("over the");
+    }
     expect(
       noBlobBytesInModelTurns(
         chain({ model: [turn("turn", giveUp("x".repeat(MAX_MODEL_TURN_CHARS)))] }),
@@ -535,6 +548,25 @@ describe("the blob scorers", () => {
         REPORT,
       ).pass,
     ).toBe(true);
+    // The granularity as stated: a whole sentinel within every SENTINEL_GRANULARITY bytes, from any start.
+    expect(SENTINEL_GRANULARITY).toBeLessThanOrEqual(16 * 1024);
+    for (const start of [
+      0,
+      1,
+      4_000,
+      16_129,
+      200_000,
+      REPORT.bytes.length - SENTINEL_GRANULARITY,
+    ]) {
+      const window = Buffer.from(REPORT.bytes.slice(start, start + SENTINEL_GRANULARITY)).toString(
+        "latin1",
+      );
+      expect(
+        REPORT.sentinels.some((sentinel) => window.includes(sentinel.text)),
+        `no whole sentinel in the ${SENTINEL_GRANULARITY} bytes from ${start}`,
+      ).toBe(true);
+    }
+    expect(REPORT.sentinels[0]?.offset).toBeGreaterThanOrEqual(4_000);
   });
 
   it("ref_travels: green when the answered ref is the handoff and the second input carries it; red for a ref that does not match, no ref, or no handoff", () => {
