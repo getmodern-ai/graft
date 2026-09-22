@@ -30,7 +30,8 @@ form's is the private package's (GRA-192), and `blobStoreConformance` is the sui
                                     its own node_modules and package-lock.json (ADR 0013)
     .drafts/<jobId>/                what an acquire job writes before it publishes
   .blobs/<agentId>/
-    <blobId>/                       one blob (ADR 0023): its `data` and its `meta.json` sidecar, written
+    <blobId>/                       one blob (ADR 0023): its `data` and its `meta.json` sidecar (bytes,
+                                    contentType, name, writtenAt, expiresAt, agentId, toolVersion), written
                                     by the runner (GRA-186), removed by the sweep once expired (GRA-189)
     <blobId>.tmp/                   the same blob while it is still being written, renamed whole
 ```

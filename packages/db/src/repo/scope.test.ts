@@ -30,6 +30,7 @@ import {
   findApproval,
   updateAskEveryCall,
 } from "./approval";
+import { findBlob, insertBlobs, listBlobs } from "./blob";
 import {
   addConnectionHosts,
   findConnection,
@@ -181,6 +182,66 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     expect(traces.sql).toMatch(SCOPED_AGENT);
     expect(traces.sql).toContain('"acquire_trace"."job_id" = $');
     expect(traces.sql).toMatch(/order by "acquire_trace"\."sequence" asc limit \$\d+$/);
+  });
+});
+
+/**
+ * The blob rows (ADR 0023, GRA-186) carry both ids of the scope, so the predicate names the pair
+ * directly rather than through `scopedAgentIds`; a write carries the pair in its values.
+ */
+describe("the blob rows name the person and the agent in every statement", () => {
+  const BLOB_PAIR = /"blob"\."agent_id" = \$\d+ and "blob"\."person_id" = \$\d+/;
+
+  it("a blob read by id", async () => {
+    await findBlob(db, SCOPE, "blob_1");
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "blob" where \("blob"\."id" = \$1 and \(/);
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.params).toEqual(["blob_1", "agent_1", "person_1", 1]);
+  });
+
+  it("the agent's blobs", async () => {
+    await listBlobs(db, SCOPE);
+    const s = only();
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.params).toEqual(["agent_1", "person_1"]);
+  });
+
+  it("an insert carries the pair on every row, in one statement, and none for an empty ledger", async () => {
+    const at = new Date("2026-09-22T10:00:00Z");
+    await insertBlobs(db, [
+      {
+        id: "blob_1",
+        personId: "person_1",
+        agentId: "agent_1",
+        versionId: "ver_1",
+        bytes: 11,
+        contentType: "text/plain",
+        name: "a.txt",
+        expiresAt: at,
+        createdAt: at,
+      },
+      {
+        id: "blob_2",
+        personId: "person_1",
+        agentId: "agent_1",
+        versionId: null,
+        bytes: 5,
+        contentType: "application/pdf",
+        name: null,
+        expiresAt: at,
+        createdAt: at,
+      },
+    ]);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^insert into "blob" \(.*"person_id".*"agent_id".*\) values \(.*\), \(.*\) on conflict \("id"\) do nothing returning/,
+    );
+    expect(s.params.filter((p) => p === "person_1")).toHaveLength(2);
+    expect(s.params.filter((p) => p === "agent_1")).toHaveLength(2);
+    statements = [];
+    expect(await insertBlobs(db, [])).toEqual([]);
+    expect(statements).toEqual([]);
   });
 });
 

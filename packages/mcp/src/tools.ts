@@ -14,6 +14,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { ASK_CARD_TOOL_META } from "./ask-card";
+import { type BlobTally, withBlobTally } from "./blobs";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "./bounds";
 import { agentDrivesByHand, hiddenToolRefusal } from "./by-hand";
 import { toolAskResult } from "./card-client";
@@ -98,9 +99,13 @@ export async function callToolFor(
   args: Record<string, unknown>,
 ): Promise<CallToolResult> {
   const startedAt = Date.now();
-  const result = await answer(session, name, args);
+  // The blob counts the event carries come from the runner's parsed ledger (`blobs.ts`), tallied
+  // over this call, and never from the answer, whose keys are the module's.
+  const { value: result, tally } = await withBlobTally(() => answer(session, name, args));
   // The hook sees every answer, an unknown tool's `McpError` excepted — that one never reached a tool.
-  session.deps.onToolCall?.(toolCallEvent(session, name, result, Date.now() - startedAt, args));
+  session.deps.onToolCall?.(
+    toolCallEvent(session, name, result, Date.now() - startedAt, args, tally),
+  );
   return result;
 }
 
@@ -134,6 +139,7 @@ export function toolCallEvent(
   result: CallToolResult,
   latencyMs: number,
   args: Record<string, unknown> = {},
+  tally: BlobTally = { seen: false, written: 0, dropped: 0 },
 ): ToolCallEvent {
   const kind = FIXED_BY_NAME.has(name)
     ? "meta"
@@ -142,7 +148,7 @@ export function toolCallEvent(
       : "authored";
   const body = result.structuredContent;
   const refused = result.isError === true && body?.error === "refused";
-  const detail = eventDetail(name, args, body ?? {});
+  const detail = eventDetail(name, args, body ?? {}, tally);
   return {
     tool: name,
     kind,
@@ -167,6 +173,23 @@ type EventDetail = NonNullable<ToolCallEvent["detail"]>;
  * until this.
  */
 export function eventDetail(
+  name: string,
+  args: Record<string, unknown>,
+  body: Record<string, unknown>,
+  tally: BlobTally = { seen: false, written: 0, dropped: 0 },
+): EventDetail | undefined {
+  const merged: EventDetail = { ...toolDetail(name, args, body) };
+  // The blobs a run wrote and the ledger lines the server refused (GRA-186; `blobs.ts`), from the
+  // tally over the runner's parsed ledger and never from the answer's keys, which are the module's
+  // (Greptile on #144). Present, zeros included, whenever a ledger was read on this call.
+  if (tally.seen) {
+    merged.blobs = tally.written;
+    merged.blobsDropped = tally.dropped;
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function toolDetail(
   name: string,
   args: Record<string, unknown>,
   body: Record<string, unknown>,

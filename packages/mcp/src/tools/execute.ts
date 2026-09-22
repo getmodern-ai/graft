@@ -2,6 +2,7 @@ import { type ConnectionOutput, getConnection, recordUsage } from "@graft/core";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { requireBuildApproval } from "../approval";
 import { ASK_CARD_TOOL_META } from "../ask-card";
+import { recordWrittenBlobs } from "../blobs";
 import {
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   MAX_COMMAND_TIMEOUT_SECONDS,
@@ -14,7 +15,7 @@ import { heldInFlight } from "../in-flight";
 import { toolError, toolRefusal, toolResult } from "../result";
 import { revokedConnectionRefusal } from "../revoke";
 import { runWithCapability } from "../run";
-import { openAgentSandbox, runCommand, withSandbox } from "../sandbox";
+import { openAgentSandbox, type PolledProcess, runCommand, withSandbox } from "../sandbox";
 import { executeToolName } from "../tool-names";
 import { commandTimingProperties, detachedAdvice } from "./authoring";
 
@@ -120,7 +121,7 @@ export async function callExecuteTool(
   }
 
   // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
-  const outcome = await heldInFlight(deps.inFlight, scope.agentId, () =>
+  const ran = await heldInFlight(deps.inFlight, scope.agentId, () =>
     runWithCapability({
       deps,
       scope,
@@ -134,6 +135,11 @@ export async function callExecuteTool(
         ),
     }),
   );
+  // A runner the command invoked wrote these blobs (GRA-186; `../blobs.ts`): their rows land here,
+  // as a detached run's land at the poll, with no version since the command names none.
+  const polled = isPolledProcess(ran) ? ran : null;
+  if (polled) await recordWrittenBlobs(deps, scope, null, polled.blobs, polled.dropped);
+  const outcome: Record<string, unknown> = polled ? polled.answer : ran;
 
   const refused = "error" in outcome && outcome.error === "refused";
   const failed = !refused && "error" in outcome;
@@ -150,4 +156,14 @@ export async function callExecuteTool(
     deps.ledger,
   );
   return refused || failed ? toolError(outcome as Record<string, unknown>) : toolResult(outcome);
+}
+
+/** `runCommand`'s answer with its ledger, as against `withSandbox`'s `{ error }` and a refusal. */
+function isPolledProcess(value: unknown): value is PolledProcess {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "answer" in value &&
+    Array.isArray((value as { blobs?: unknown }).blobs)
+  );
 }

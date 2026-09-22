@@ -8,7 +8,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { checkModule } from "@graft/check";
-import { RUNNER_DIR, RUNNER_PATH, runnerFiles } from "@graft/runner/runner-source";
+import {
+  RUNNER_DIR,
+  RUNNER_PATH,
+  readRunnerEnvelope,
+  runnerFiles,
+} from "@graft/runner/runner-source";
 import { fetchProbe } from "@graft/sandbox/conformance";
 import {
   createDockerSandboxBackend,
@@ -243,7 +248,12 @@ describe.skipIf(docker.reason !== undefined)("the publish against the Docker bac
       `printf '%s' '{"word":"x","width":3}' | node ${RUNNER_PATH} ${modulePath}`,
       { timeoutSeconds: 60 },
     );
-    expect(JSON.parse(output)).toEqual({ padded: "--x" });
+    // The runner's envelope (GRA-186): the module's result beside the ledger of blobs it wrote, none here.
+    expect(readRunnerEnvelope(output)).toEqual({
+      result: { padded: "--x" },
+      blobs: [],
+      dropped: 0,
+    });
 
     // And that sandbox has no route to the registry: the vendored copy is the only one it could load.
     expect(await handle.exec(fetchProbe("https://registry.npmjs.org/left-pad"))).toMatch(/^failed/);

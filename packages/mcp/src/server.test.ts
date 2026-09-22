@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { ModuleCheck } from "@graft/check";
@@ -9,7 +9,7 @@ import {
   DEFAULT_PACKAGE_POLICY,
   publishToolVersion,
 } from "@graft/publish";
-import { loadSkills, runnerFiles } from "@graft/runner";
+import { loadSkills, readRunnerEnvelope, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -21,7 +21,8 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { NO_ELICITATION } from "./approval";
-import type { McpDeps } from "./deps";
+import type { BlobWrittenEvent } from "./blobs";
+import type { McpDeps, ToolCallEvent } from "./deps";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { revokeConnectionAndNotify } from "./revoke";
 import { runAuthoredTool } from "./run";
@@ -74,11 +75,39 @@ const LIST_ITEMS_MODULE = `export default async (input, ctx) => {
 };
 `;
 
+/**
+ * A module that moves the vendor's answer into a blob rather than through the model (GRA-186; ADR
+ * 0023): the bytes go to `ctx.blob.write`, the result carries the ref and a count, and nothing of
+ * the body.
+ */
+/** A module whose result wears the server's own keys, and writes one blob (Greptile on #144). */
+const DECOY_MODULE = `export default async (_input, ctx) => {
+  await ctx.blob.write(new TextEncoder().encode("decoy"), { contentType: "text/plain" });
+  return { result: "x", truncated: true, blobs: ["y"] };
+};
+`;
+
+/** A module whose result wears the wide event's counter keys, and writes nothing (Greptile on #144). */
+const DECOY_COUNTS_MODULE = `export default async () => ({ blobs: ["vendor data"], blobsDropped: 3 });
+`;
+
+const SAVE_REPORT = authoredToolName("demo", "save-report");
+const SAVE_REPORT_MODULE = `export default async (input, ctx) => {
+  const res = await ctx.fetch(\`/items?limit=\${input.limit ?? 5}\`);
+  if (!res.ok) throw new Error(\`GET /items \${res.status}: \${await res.text()}\`);
+  const body = await res.text();
+  const file = await ctx.blob.write(new TextEncoder().encode(body), { contentType: "application/json", name: "items.json" });
+  return { file, count: JSON.parse(body).items.length, stat: await ctx.blob.stat(file) };
+};
+`;
+
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
 let checked: Parameters<ModuleCheck>[0][];
+const blobEvents: BlobWrittenEvent[] = [];
+const toolEvents: ToolCallEvent[] = [];
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
@@ -118,6 +147,15 @@ beforeAll(async () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "index.ts"), LIST_ITEMS_MODULE);
   }
+  const saveReport = join(sandbox.toolboxRoot(PERSON), "tools/demo/save-report/v1");
+  await mkdir(saveReport, { recursive: true });
+  await writeFile(join(saveReport, "index.ts"), SAVE_REPORT_MODULE);
+  const decoy = join(sandbox.toolboxRoot(PERSON), "tools/demo/decoy/v1");
+  await mkdir(decoy, { recursive: true });
+  await writeFile(join(decoy, "index.ts"), DECOY_MODULE);
+  const decoyCounts = join(sandbox.toolboxRoot(PERSON), "tools/demo/decoy-counts/v1");
+  await mkdir(decoyCounts, { recursive: true });
+  await writeFile(join(decoyCounts, "index.ts"), DECOY_COUNTS_MODULE);
 
   store = createFakeStore();
   store.addConnection({
@@ -175,6 +213,44 @@ beforeAll(async () => {
     path: "tools/demo/list-items/v1",
   });
   store.addTool({
+    id: "tool_save_report",
+    personId: PERSON,
+    vendor: "demo",
+    name: "save-report",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Keep what the vendor answered as a file.",
+    inputSchema: LIST_ITEMS_SCHEMA,
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/save-report/v1",
+  });
+  // In the toolbox and not promoted: reached through run_tool.
+  store.addTool({
+    id: "tool_decoy",
+    personId: PERSON,
+    vendor: "demo",
+    name: "decoy",
+    description: "Answers a result shaped like the server's own, and writes a blob.",
+    inputSchema: { type: "object" },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/decoy/v1",
+  });
+  store.addTool({
+    id: "tool_decoy_counts",
+    personId: PERSON,
+    vendor: "demo",
+    name: "decoy-counts",
+    description: "Answers a result wearing the wide event's counter keys, and writes nothing.",
+    inputSchema: { type: "object" },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/decoy-counts/v1",
+  });
+  store.addTool({
     id: "tool_other_ping",
     personId: PERSON,
     vendor: "other",
@@ -200,6 +276,7 @@ beforeAll(async () => {
   });
   // Promoted for agent A alone; agent B holds the same toolbox with an empty working set.
   store.promote(AGENT_A, "tool_list_items");
+  store.promote(AGENT_A, "tool_save_report");
   // Agent A may run code against Demo (the build approval, ADR 0008); the asks themselves are
   // `approval.test.ts`'s subject, and this suite is about everything that happens once they pass.
   store.grantBuild(AGENT_A, CONN_DEMO);
@@ -252,6 +329,8 @@ beforeAll(async () => {
     listChangedWindowMs: 300,
     toolbox,
     publishTool: (args) => publishToolVersion(publish, args),
+    onBlobWritten: (event) => blobEvents.push(event),
+    onToolCall: (event) => toolEvents.push(event),
     handoff: {
       consoleUrl: "http://console.graft.test",
       secret: "graft-mcp-test-handoff-secret-that-is-long-enough",
@@ -329,6 +408,7 @@ describe("the tool list", () => {
         ...META_TOOL_NAMES,
         executeToolName(CONN_DEMO),
         LIST_ITEMS,
+        SAVE_REPORT,
       ]);
       const listItems = tools.find((tool) => tool.name === LIST_ITEMS);
       expect(listItems).toMatchObject({
@@ -445,6 +525,249 @@ describe("a first-class call", () => {
       await a.close();
     }
   });
+});
+
+/**
+ * A tool that writes a blob (GRA-186; ADR 0023): the ref is in the result where the module put it,
+ * the ledger rides beside it as `blobs` in the text block and in `structuredContent`, the bytes are
+ * on the agent's blobs mount and nowhere in the answer, and the server holds one row per blob.
+ */
+describe("a tool that writes a blob", () => {
+  const REF = /^blob:\/\/[0-9a-f-]{36}$/;
+
+  it("returns the ref in the result and the ledger beside it, writes the bytes under the agent's mount alone, and one blob row for the person and agent", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    const before = Date.now();
+    try {
+      const result = await a.call(SAVE_REPORT, { limit: 1 });
+      expect(result.isError).toBeFalsy();
+      const text = (result.content[0] as { text: string }).text;
+      const answer = body(result) as {
+        result: { file: string; count: number; stat: Record<string, unknown> };
+        blobs: Record<string, unknown>[];
+      };
+      expect(answer.result.file).toMatch(REF);
+      expect(answer.result.count).toBe(1);
+      const id = answer.result.file.slice("blob://".length);
+      // The vendor's body went into the blob, not the answer: not a byte of it is on the wire.
+      expect(text).not.toContain("Widget");
+      expect(text).not.toContain(JSON.stringify(VENDOR_BODY));
+
+      // The bytes, under this agent's directory beside the toolboxes and under /blobs in its
+      // sandbox, and nowhere under /tools (ADR 0023: the scope is the mount).
+      const dir = join(sandbox.blobsRoot(AGENT_A), id);
+      expect((await readdir(dir)).sort()).toEqual(["data", "meta.json"]);
+      const data = await readFile(join(dir, "data"), "utf8");
+      expect(JSON.parse(data)).toEqual(VENDOR_BODY);
+      expect(await readdir(sandbox.blobsRoot(AGENT_A))).not.toContain(`${id}.tmp`);
+      expect(await readdir(join(sandbox.sandboxRoot(`agent-${AGENT_A}`), "blobs"))).toContain(id);
+      await expect(stat(join(sandbox.toolboxRoot(PERSON), ".blobs"))).rejects.toThrow();
+      const meta = JSON.parse(await readFile(join(dir, "meta.json"), "utf8"));
+      expect(meta).toMatchObject({
+        bytes: data.length,
+        contentType: "application/json",
+        name: "items.json",
+        agentId: AGENT_A,
+        toolVersion: "tool_save_report_v1",
+      });
+
+      // The ledger beside the result, in the text block and in structuredContent alike, with an
+      // expiry 24 hours out; stat inside the module read the same sidecar.
+      const line = {
+        ref: answer.result.file,
+        bytes: data.length,
+        contentType: "application/json",
+        name: "items.json",
+        expiresAt: meta.expiresAt,
+      };
+      expect(answer.blobs).toEqual([line]);
+      expect(result.structuredContent).toEqual({ result: answer.result, blobs: [line] });
+      expect(answer.result.stat).toEqual({
+        bytes: data.length,
+        contentType: "application/json",
+        name: "items.json",
+        expiresAt: meta.expiresAt,
+      });
+      const expiresAt = Date.parse(meta.expiresAt);
+      expect(expiresAt - Date.parse(meta.writtenAt)).toBe(24 * 60 * 60 * 1000);
+      expect(expiresAt).toBeGreaterThan(before + 23 * 60 * 60 * 1000);
+
+      // One row, the person's and the agent's, keyed by the id inside the ref, and one event.
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({
+        id,
+        personId: PERSON,
+        agentId: AGENT_A,
+        versionId: "tool_save_report_v1",
+        bytes: data.length,
+        contentType: "application/json",
+        name: "items.json",
+        removedAt: null,
+      });
+      expect(store.blobs.at(-1)?.expiresAt.toISOString()).toBe(meta.expiresAt);
+      expect(blobEvents.slice(eventsBefore)).toEqual([
+        {
+          agentId: AGENT_A,
+          personId: PERSON,
+          versionId: "tool_save_report_v1",
+          bytes: data.length,
+          contentType: "application/json",
+        },
+      ]);
+      // The run is still one ledger line, as before.
+      expect(store.usage.at(-1)).toMatchObject({ toolId: "tool_save_report", outcome: "ok" });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("a tool that writes no blob answers exactly what it did before, with no blobs key", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const result = await a.call(LIST_ITEMS, { limit: 2 });
+      expect(body(result)).toEqual(VENDOR_BODY);
+      expect(result.structuredContent).toEqual(VENDOR_BODY);
+      expect(store.blobs).toHaveLength(blobsBefore);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("a detached run's blobs come back from wait_for_process with their rows written then, and no version", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const started = body(
+        await a.call("run_tool", { vendor: "demo", name: "save-report", detached: true }),
+      );
+      expect(started).toMatchObject({ status: "running" });
+      // The start knows nothing of a blob yet: the row lands when the poll reads the envelope.
+      expect(store.blobs).toHaveLength(blobsBefore);
+
+      const processName = started.processName as string;
+      const waited = body(await a.call("wait_for_process", { processName, maxWaitSeconds: 10 }));
+      expect(waited).toMatchObject({ status: "completed", exitCode: 0 });
+      const file = (waited.result as { file: string }).file;
+      expect(file).toMatch(REF);
+      expect(waited.blobs).toEqual([
+        {
+          ref: file,
+          bytes: expect.any(Number),
+          contentType: "application/json",
+          name: "items.json",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({
+        id: file.slice("blob://".length),
+        personId: PERSON,
+        agentId: AGENT_A,
+        versionId: null,
+      });
+      // Polled again, the same finished process writes no second row and fires no second event:
+      // the insert is idempotent on the id (`repo/blob.ts`), and the fake mirrors it.
+      const eventsAfterFirst = blobEvents.length;
+      const again = body(await a.call("wait_for_process", { processName, maxWaitSeconds: 1 }));
+      expect(again).toMatchObject({
+        status: "completed",
+        blobs: [expect.objectContaining({ ref: file })],
+      });
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(blobEvents).toHaveLength(eventsAfterFirst);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /** Whether the server cut a result is the server's word, never read off a key the module chose. */
+  it("keeps a module's own result, truncated and blobs keys inside its result, under the real ledger", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const result = await a.call("run_tool", { vendor: "demo", name: "decoy" });
+      expect(result.isError).toBeFalsy();
+      const answer = body(result) as { result: unknown; blobs: Record<string, unknown>[] };
+      expect(answer.result).toEqual({ result: "x", truncated: true, blobs: ["y"] });
+      expect(answer.blobs).toHaveLength(1);
+      expect(answer.blobs[0]?.ref).toMatch(REF);
+      expect(answer.blobs[0]?.bytes).toBe(5);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /** The wide event's counts come from the parsed ledger, never from the answer's keys (Greptile on #144). */
+  it("counts zero written and zero dropped for a module whose result wears the counter keys, and fires no blob_written", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    try {
+      const result = await a.call("run_tool", { vendor: "demo", name: "decoy-counts" });
+      expect(result.isError).toBeFalsy();
+      // The answer is the module's, keys and all: nothing was written, so nothing was wrapped.
+      expect(body(result)).toEqual({ blobs: ["vendor data"], blobsDropped: 3 });
+      const event = toolEvents.at(-1);
+      expect(event).toMatchObject({ tool: "run_tool", outcome: "ok" });
+      expect(event?.detail).toEqual({
+        tool: authoredToolName("demo", "decoy-counts"),
+        blobs: 0,
+        blobsDropped: 0,
+      });
+      expect(store.blobs).toHaveLength(blobsBefore);
+      expect(blobEvents).toHaveLength(eventsBefore);
+
+      // And a run that did write is counted from its ledger, once.
+      await a.call(SAVE_REPORT, { limit: 1 });
+      expect(toolEvents.at(-1)?.detail).toEqual({ blobs: 1, blobsDropped: 0 });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /** The synchronous execute path reads the same envelope off the command's stdout (Greptile on #144). */
+  it("records the blobs a runner invoked through execute__<connection> wrote, with no version, and names them beside the output", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    try {
+      const ran = body(
+        await a.call(executeToolName(CONN_DEMO), {
+          command: `echo '{"limit":1}' | node /graft/runner.mjs /tools/tools/demo/save-report/v1`,
+        }),
+      );
+      expect(ran.exitCode).toBe(0);
+      const envelope = readRunnerEnvelope(String(ran.output));
+      if (!envelope) throw new Error("the command's output carries no envelope");
+      const file = (envelope.result as { file: string }).file;
+      expect(file).toMatch(REF);
+      expect(ran.blobs).toEqual([
+        {
+          ref: file,
+          bytes: expect.any(Number),
+          contentType: "application/json",
+          name: "items.json",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({
+        id: file.slice("blob://".length),
+        personId: PERSON,
+        agentId: AGENT_A,
+        versionId: null,
+      });
+      expect(blobEvents.slice(eventsBefore)).toEqual([
+        expect.objectContaining({ agentId: AGENT_A, versionId: null }),
+      ]);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
 });
 
 describe("promote and demote", () => {

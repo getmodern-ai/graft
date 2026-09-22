@@ -11,7 +11,7 @@ import {
 import type { SandboxFile } from "@graft/sandbox";
 import { sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-
+import { recordWrittenBlobs } from "../blobs";
 import {
   boundJson,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -231,13 +231,15 @@ const runCommandTool: MetaTool = {
     const parsed = readCommandInput(args);
     if ("error" in parsed) return toolRefusal("input_invalid", parsed.error);
     // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
-    return answer(
-      await heldInFlight(session.deps.inFlight, session.scope.agentId, () =>
-        withSandbox(open(session), (handle) =>
-          runCommand(handle, parsed, commandEnvironment(parsed.timeoutSeconds)),
-        ),
+    const ran = await heldInFlight(session.deps.inFlight, session.scope.agentId, () =>
+      withSandbox(open(session), (handle) =>
+        runCommand(handle, parsed, commandEnvironment(parsed.timeoutSeconds)),
       ),
     );
+    if (!("answer" in ran)) return answer(ran);
+    // A runner the command invoked by hand wrote these (GRA-186; `../blobs.ts`): rows now, no version.
+    await recordWrittenBlobs(session.deps, session.scope, null, ran.blobs, ran.dropped);
+    return answer(ran.answer);
   },
 };
 
@@ -271,11 +273,15 @@ const waitForProcess: MetaTool = {
     const parsed = readWaitInput(args);
     if ("error" in parsed) return toolRefusal("input_invalid", parsed.error);
     const polled = await withSandbox(open(session), (handle) => pollProcess(handle, parsed));
+    if (!("answer" in polled)) return answer(polled);
+    // The blobs a runner inside the process wrote get their rows here, since the run that started
+    // it returned before they existed (GRA-186; `../blobs.ts`). The version is not known to a poll.
+    await recordWrittenBlobs(session.deps, session.scope, null, polled.blobs, polled.dropped);
     // A process seen finished releases its hold; one still running keeps it (ADR 0009; `in-flight.ts`).
-    if (isSettledProcess(polled)) {
+    if (isSettledProcess(polled.answer)) {
       session.deps.inFlight?.settle(session.scope.agentId, parsed.processName);
     }
-    return answer(polled);
+    return answer(polled.answer);
   },
 };
 

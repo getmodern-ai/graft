@@ -5,6 +5,10 @@
  * `McpDeps` from its environment; a test drives `createAgentSession` over the SDK's in-memory
  * transport.
  */
+
+// The runner's envelope, read where a caller of this server sees a run's stdout (GRA-186): the
+// server's suites drive `execute__` and read the ledger back through it.
+export { type BlobLedgerEntry, type RunnerEnvelope, readRunnerEnvelope } from "@graft/runner";
 export {
   attemptDraftPath,
   DEFAULT_HEARTBEAT_MS,

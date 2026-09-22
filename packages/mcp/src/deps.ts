@@ -4,10 +4,12 @@ import {
   type AcquireJobDeps,
   type AgentDeps,
   type ApprovalDeps,
+  type BlobDeps,
   type ConnectionDeps,
   defaultAcquireJobDeps,
   defaultAgentDeps,
   defaultApprovalDeps,
+  defaultBlobDeps,
   defaultLedgerDeps,
   defaultPendingActionDeps,
   defaultToolDeps,
@@ -33,6 +35,7 @@ import type { CapabilityTokenKeys } from "@graft/token";
 import type { ToolboxStore } from "@graft/toolbox";
 
 import type { AcquireConfig } from "./acquire/shapes";
+import type { BlobWrittenEvent } from "./blobs";
 import type { HandoffConfig } from "./handoff";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
@@ -71,6 +74,8 @@ export type McpDeps = {
   tool: ToolDeps;
   workingSet: WorkingSetDeps;
   ledger: LedgerDeps;
+  /** The blob rows (ADR 0023; GRA-186): written from the runner's ledger after a run (`blobs.ts`). */
+  blob: BlobDeps;
   /**
    * The seam (ADR 0002): Docker in this repository, the hosted backing privately, the fake in tests.
    * Null when the deployment configured none — the server boots and every run refuses, saying so,
@@ -181,6 +186,12 @@ export type McpDeps = {
    */
   onToolCall?: (event: ToolCallEvent) => void;
   /**
+   * Fired once per blob a run wrote, as its row is written (GRA-186; `blobs.ts`) — the hook the
+   * server binds `blob_written` to, beside `tool_called`. Carries the size and the media type, the
+   * agent, the person and the version, and never the name or a byte. Absent, the row is still written.
+   */
+  onBlobWritten?: (event: BlobWrittenEvent) => void;
+  /**
    * Fired once for every `/mcp` request the door or the transport refuses before any tool runs
    * (GRA-131): Graft's own 401, 404 and 400 in `http.ts`, and the SDK transport's 4xx — an
    * `initialize` under a live session, an unsupported protocol version, a parse error, a missing
@@ -231,7 +242,9 @@ export type ToolCallEvent = {
    * What the call was about, per tool, in counts and names and never content (GRA-155): `find_tool`'s
    * `queryWords` and `hits`; `acquire`'s `goalLength`, `similarOffered` and the `jobId` it opened;
    * `acquire_status`'s `jobId` and `status`; `run_tool`'s `tool`. `tools.ts`'s `eventDetail` is the
-   * table. Absent for a tool the table does not name.
+   * table. Absent for a tool the table does not name. A call that read a runner's ledger (GRA-186)
+   * carries `blobs`, the rows it recorded, and `blobsDropped`, the ledger lines it refused, from
+   * the tally over the parsed ledger (`blobs.ts`) and never from the answer's keys.
    */
   detail?: Record<string, string | number | boolean>;
   /**
@@ -268,6 +281,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     tool: defaultToolDeps,
     workingSet: defaultWorkingSetDeps,
     ledger: defaultLedgerDeps,
+    blob: defaultBlobDeps,
     approval: defaultApprovalDeps,
     pendingAction: defaultPendingActionDeps,
     acquireJob: defaultAcquireJobDeps,

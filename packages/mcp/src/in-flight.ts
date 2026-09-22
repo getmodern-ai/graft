@@ -121,9 +121,15 @@ export function trackDetachedStart(
   agentId: string,
   answer: unknown,
 ): void {
-  if (!registry || !isPlainObject(answer) || answer.status !== "running") return;
-  if (typeof answer.processName !== "string" || typeof answer.timeoutSeconds !== "number") return;
-  registry.track(agentId, answer.processName, detachedHoldMs(answer.timeoutSeconds));
+  // `runCommand` answers `{ answer, blobs }` since GRA-186 (`sandbox.ts`'s `PolledProcess`); the
+  // detached start is the `answer` inside it.
+  const start =
+    isPlainObject(answer) && "answer" in answer && Array.isArray(answer.blobs)
+      ? answer.answer
+      : answer;
+  if (!registry || !isPlainObject(start) || start.status !== "running") return;
+  if (typeof start.processName !== "string" || typeof start.timeoutSeconds !== "number") return;
+  registry.track(agentId, start.processName, detachedHoldMs(start.timeoutSeconds));
 }
 
 /**

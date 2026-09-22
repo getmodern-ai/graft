@@ -1,6 +1,6 @@
 /* biome-ignore-all lint/suspicious/noTemplateCurlyInString: the fixtures are module source text, and a template placeholder inside a plain string is exactly what a module holds. */
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,8 +9,14 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  BLOB_REF_SCHEME,
+  BLOB_TTL_MS,
   DRY_RUN_HEADER,
   DRY_RUN_INTERCEPTED,
+  ENVELOPE_MARKER,
+  MAX_BLOB_BYTES,
+  MAX_BLOB_CONTENT_TYPE_CHARS,
+  MAX_BLOB_NAME_CHARS,
   MODULE_ENTRIES,
   REFUSAL_HEADER,
   RESULT_MARKER,
@@ -30,6 +36,22 @@ import {
 const RUNNER = fileURLToPath(new URL("./runner.mjs", import.meta.url));
 
 type Run = { code: number | null; stdout: string; stderr: string };
+
+/**
+ * The envelope stdout carries (the header of `runner.mjs`): the marker line, then one line of JSON
+ * with the module's result beside the blob ledger. Parsed here by hand rather than through
+ * `readRunnerEnvelope`, so the two halves of the contract are pinned independently.
+ */
+const parseEnvelope = (text: string) => {
+  expect(text.startsWith(`${ENVELOPE_MARKER}\n`)).toBe(true);
+  const json = text.slice(ENVELOPE_MARKER.length + 1);
+  expect(json).not.toContain("\n");
+  return JSON.parse(json) as { result: unknown; blobs: unknown[] };
+};
+const envelopeOf = (run: Run) => parseEnvelope(run.stdout);
+const resultOf = (run: Run) => envelopeOf(run).result;
+/** The same envelope, read back from a detached run's result file. */
+const writtenEnvelope = async (path: string) => parseEnvelope(await readFile(path, "utf8"));
 
 function runRunner(args: {
   module: string;
@@ -195,6 +217,75 @@ const FIXTURES: Record<string, string> = {
     "  } catch (error) {",
     '    const res = await ctx.fetch("/orders", { method: "DELETE" });',
     "    return { caught: error.message, status: res.status };",
+    "  }",
+    "};",
+  ].join("\n"),
+  // The blob fixtures (GRA-186; ADR 0023): a write from each kind of data, the sidecar read back
+  // through stat and the bytes through read, a stream that never ends, a ref that names nothing.
+  "writesBlob.mjs": [
+    "export default async (input, ctx) => {",
+    '  const file = await ctx.blob.write(new TextEncoder().encode(input.text), { contentType: "text/plain", name: input.name });',
+    "  return { file, stat: await ctx.blob.stat(file) };",
+    "};",
+  ].join("\n"),
+  "writesBlobKinds.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const bytes = await ctx.blob.write(Buffer.from("from bytes"), { contentType: "text/plain" });',
+    '  const blob = await ctx.blob.write(new Blob(["from a blob"], { type: "text/plain" }), { contentType: "text/plain", name: "blob.txt" });',
+    "  const stream = new ReadableStream({",
+    "    start(controller) {",
+    '      controller.enqueue(new TextEncoder().encode("from a "));',
+    '      controller.enqueue(new TextEncoder().encode("stream"));',
+    "      controller.close();",
+    "    },",
+    "  });",
+    '  const streamed = await ctx.blob.write(stream, { contentType: "application/octet-stream" });',
+    "  const read = await ctx.blob.read(streamed);",
+    "  return { bytes, blob, streamed, read: { size: read.size, type: read.type, text: await read.text() } };",
+    "};",
+  ].join("\n"),
+  // Chunks of 64 MiB, forever: the fifth crosses the cap before it is written.
+  "writesHugeBlob.mjs": [
+    "export default async (_input, ctx) => {",
+    "  const chunk = new Uint8Array(64 * 1024 * 1024);",
+    "  const stream = new ReadableStream({ pull(controller) { controller.enqueue(chunk); } });",
+    "  try {",
+    '    await ctx.blob.write(stream, { contentType: "application/octet-stream" });',
+    '    return "written";',
+    "  } catch (error) {",
+    "    return { refused: error.message, code: error.code };",
+    "  }",
+    "};",
+  ].join("\n"),
+  "blobRefs.mjs": [
+    "export default async (input, ctx) => {",
+    "  const out = {};",
+    "  for (const [key, ref] of Object.entries(input)) {",
+    "    try { out[key] = await ctx.blob.stat(ref); } catch (error) { out[key] = { code: error.code ?? null, message: error.message }; }",
+    "  }",
+    "  return out;",
+    "};",
+  ].join("\n"),
+  // A module whose result is shaped like the envelope, with a well-formed ledger line in it.
+  "decoy.mjs":
+    'export default async () => ({ result: 42, blobs: [{ ref: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21", bytes: 1, contentType: "text/plain", expiresAt: "2099-01-01T00:00:00.000Z" }] });',
+  "blobBadMeta.mjs": [
+    "export default async (input, ctx) => {",
+    "  try {",
+    "    await ctx.blob.write(new Uint8Array(1), { contentType: input.contentType, name: input.name });",
+    '    return "written";',
+    "  } catch (error) {",
+    "    return { refused: error.message, code: error.code ?? null };",
+    "  }",
+    "};",
+  ].join("\n"),
+  "blobBadWrite.mjs": [
+    "export default async (input, ctx) => {",
+    "  try {",
+    "    await ctx.blob.write(input.text, { contentType: input.contentType });",
+    '    return "written";',
+    "  } catch (error) {",
+    "    return { refused: error.message };",
     "  }",
     "};",
   ].join("\n"),
@@ -374,16 +465,39 @@ describe("the stdout contract", () => {
 
     expect(run.code).toBe(0);
     expect(run.stderr).toBe("");
-    expect(JSON.parse(run.stdout)).toEqual({ echoed: { a: 1, b: [true] } });
-    // Nothing but the JSON — a caller parses stdout whole.
-    expect(run.stdout).toBe(JSON.stringify({ echoed: { a: 1, b: [true] } }));
+    expect(resultOf(run)).toEqual({ echoed: { a: 1, b: [true] } });
+    // Nothing but the envelope — the marker line, then the JSON. A module that wrote no blob carries
+    // an empty ledger, so everything downstream of it reads what it always did (GRA-186).
+    expect(run.stdout).toBe(
+      `${ENVELOPE_MARKER}\n${JSON.stringify({ result: { echoed: { a: 1, b: [true] } }, blobs: [] })}`,
+    );
+  });
+
+  /** Only the runner writes the marker, so a module's own `{ result, blobs }` is its result and nothing more. */
+  it("returns a module's envelope-shaped result untouched, behind the marker, with an empty ledger", async () => {
+    const run = await runRunner({ module: fixture("decoy.mjs") });
+
+    expect(run.code).toBe(0);
+    const envelope = envelopeOf(run);
+    expect(envelope.result).toEqual({
+      result: 42,
+      blobs: [
+        {
+          ref: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21",
+          bytes: 1,
+          contentType: "text/plain",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(envelope.blobs).toEqual([]);
   });
 
   it("treats empty stdin as an empty input object", async () => {
     const run = await runRunner({ module: fixture("echo.mjs") });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({ echoed: {} });
+    expect(resultOf(run)).toEqual({ echoed: {} });
   });
 
   /** The module contract allows sibling imports, so a tool can keep a helper beside its entry. */
@@ -391,7 +505,7 @@ describe("the stdout contract", () => {
     const run = await runRunner({ module: fixture("sibling.mjs"), stdin: '{"n": 21}' });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toBe(42);
+    expect(resultOf(run)).toBe(42);
   });
 });
 
@@ -415,7 +529,7 @@ describe("a TypeScript module", () => {
 
     expect(run.stderr).toBe("");
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({ customer: "ACME", total: 5, first: "A" });
+    expect(resultOf(run)).toEqual({ customer: "ACME", total: 5, first: "A" });
   });
 
   it("runs the .ts entry given as a file, too", async () => {
@@ -425,14 +539,14 @@ describe("a TypeScript module", () => {
     });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({ customer: "ACME", total: 0, first: null });
+    expect(resultOf(run)).toEqual({ customer: "ACME", total: 0, first: null });
   });
 
   it("falls back to index.mjs when a directory holds no index.ts", async () => {
     const run = await runRunner({ module: fixture("legacy"), stdin: '{"n": 1}' });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({ legacy: true, n: 1 });
+    expect(resultOf(run)).toEqual({ legacy: true, n: 1 });
   });
 
   /** The reason the check refuses non-erasable syntax: here is what happens without it. */
@@ -465,6 +579,20 @@ describe("a TypeScript module", () => {
     expect(source).toContain(`const DRY_RUN_INTERCEPTED = ${JSON.stringify(DRY_RUN_INTERCEPTED)};`);
     expect(source).toContain(`const REFUSAL_HEADER = ${JSON.stringify(REFUSAL_HEADER)};`);
     expect(source).toContain(`const RESULT_MARKER = ${JSON.stringify(RESULT_MARKER)};`);
+  });
+
+  /** And the blob contract's scheme, cap and life (GRA-186); the path names are pinned to `@graft/toolbox` in `packages/mcp/src/run.test.ts`. */
+  it("names the blob scheme, cap and life runner-source.ts declares", async () => {
+    const source = await readFile(RUNNER, "utf8");
+    expect(source).toContain(`const BLOB_REF_SCHEME = ${JSON.stringify(BLOB_REF_SCHEME)};`);
+    // Spelt with their units in both files, so a reader sees 256 MiB and 24 hours, not a number.
+    expect(source).toContain("const MAX_BLOB_BYTES = 256 * 1024 * 1024;");
+    expect(MAX_BLOB_BYTES).toBe(256 * 1024 * 1024);
+    expect(source).toContain("const BLOB_TTL_MS = 24 * 60 * 60 * 1000;");
+    expect(BLOB_TTL_MS).toBe(24 * 60 * 60 * 1000);
+    expect(source).toContain(`const ENVELOPE_MARKER = ${JSON.stringify(ENVELOPE_MARKER)};`);
+    expect(source).toContain(`const MAX_BLOB_NAME_CHARS = ${MAX_BLOB_NAME_CHARS};`);
+    expect(source).toContain(`const MAX_BLOB_CONTENT_TYPE_CHARS = ${MAX_BLOB_CONTENT_TYPE_CHARS};`);
   });
 });
 
@@ -531,14 +659,17 @@ describe("the exec's environment stays out of the module's reach", () => {
    * token itself is on `ctx.proxyKey` by decision (ADR 0010, amended): an SDK needs a credential
    * slot filled, and the proxy swaps this one for the real credential.
    */
-  it("is deleted from process.env before the module loads, and ctx carries exactly four names", async () => {
-    const run = await runRunner({ module: fixture("leaks.mjs"), env: bound() });
+  it("is deleted from process.env before the module loads, and ctx carries exactly five names", async () => {
+    const run = await runRunner({
+      module: fixture("leaks.mjs"),
+      env: { ...bound(), GRAFT_AGENT: "agent_1", GRAFT_TOOL_VERSION: "ver_1" },
+    });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       token: null,
       graftEnv: [],
-      ctxKeys: ["connection", "fetch", "proxyBase", "proxyKey"],
+      ctxKeys: ["blob", "connection", "fetch", "proxyBase", "proxyKey"],
       proxyKey: "tok_secret_123",
     });
   });
@@ -548,14 +679,21 @@ describe("the exec's environment stays out of the module's reach", () => {
     const resultPath = join(fixtures, "results", "env.result.json");
     const run = await runRunner({
       module: fixture("envAtImport.mjs"),
-      env: { ...dry(), GRAFT_RESULT_PATH: resultPath, GRAFT_TIMEOUT_MS: "5000" },
+      env: {
+        ...dry(),
+        GRAFT_RESULT_PATH: resultPath,
+        GRAFT_TIMEOUT_MS: "5000",
+        GRAFT_AGENT: "agent_1",
+        GRAFT_TOOL_VERSION: "ver_1",
+        GRAFT_BLOBS_DIR: join(fixtures, "blobs-env"),
+      },
     });
 
     expect(run.code).toBe(0);
     expect(run.stderr).toBe("");
     // The variables still did their work before they went: this was a dry run, written to the file.
     expect(run.stdout).toBe(`${RESULT_MARKER}${resultPath}\n`);
-    const report = JSON.parse(await readFile(resultPath, "utf8")) as DryRunReport;
+    const report = (await writtenEnvelope(resultPath)).result as DryRunReport;
     expect(report.dryRun).toBe(true);
     expect(report.moduleResult).toEqual({ atImport: [], atCall: [] });
   });
@@ -571,7 +709,7 @@ describe("ctx.fetch", () => {
     });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       status: 200,
       body: { path: "/c/conn_1/v1/orders?x=1" },
       connection: "conn_1",
@@ -590,7 +728,7 @@ describe("ctx.fetch", () => {
     const run = await runRunner({ module: fixture("redirected.mjs"), env: bound() });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       status: 303,
       location: "https://elsewhere.example/moved",
     });
@@ -608,7 +746,7 @@ describe("ctx.fetch", () => {
     });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       refused: expect.stringContaining("not an absolute URL"),
     });
     expect(received).toHaveLength(before);
@@ -623,7 +761,7 @@ describe("ctx.fetch", () => {
       env: bound(),
     });
 
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       refused: expect.stringContaining("leaves the connection"),
     });
     expect(received).toHaveLength(before);
@@ -637,7 +775,7 @@ describe("ctx.fetch", () => {
     });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       refused: expect.stringContaining("no connection bound"),
     });
   });
@@ -657,7 +795,7 @@ describe("ctx.proxyBase", () => {
     });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       primary: `${proxyUrl}/c/conn_1`,
       host: `${proxyUrl}/c/conn_1/h/api.example.com`,
       frozen: true,
@@ -671,7 +809,7 @@ describe("ctx.proxyBase", () => {
       env: { ...bound(), GRAFT_PROXY_URL: `${proxyUrl}/api/proxy/` },
     });
 
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       primary: `${proxyUrl}/api/proxy/c/conn_1`,
       host: `${proxyUrl}/api/proxy/c/conn_1/h/graph.microsoft.com:443`,
       frozen: true,
@@ -688,7 +826,7 @@ describe("ctx.proxyBase", () => {
         env: bound(),
       });
 
-      expect(JSON.parse(run.stdout)).toEqual({
+      expect(resultOf(run)).toEqual({
         refused: expect.stringContaining("ctx.proxyBase takes a host name"),
       });
     },
@@ -700,7 +838,7 @@ describe("ctx.proxyBase", () => {
       stdin: JSON.stringify({ host: "api.example.com" }),
     });
 
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       refused: expect.stringContaining("ctx.proxyBase is unavailable"),
     });
   });
@@ -711,7 +849,7 @@ describe("ctx.proxyBase", () => {
     const run = await runRunner({ module: fixture("sdk.mjs"), env: bound() });
 
     expect(run.code).toBe(0);
-    expect(JSON.parse(run.stdout)).toEqual({
+    expect(resultOf(run)).toEqual({
       status: 200,
       body: { path: "/c/conn_1/h/api.example.com/v2/things" },
     });
@@ -743,7 +881,7 @@ describe("GRAFT_RESULT_PATH", () => {
     expect(run.code).toBe(0);
     expect(run.stderr).toBe("");
     expect(run.stdout).toBe(`${RESULT_MARKER}${resultPath}\n`);
-    expect(JSON.parse(await readFile(resultPath, "utf8"))).toEqual({ echoed: { n: 1 } });
+    expect(await writtenEnvelope(resultPath)).toEqual({ result: { echoed: { n: 1 } }, blobs: [] });
     await expect(stat(`${resultPath}.tmp`)).rejects.toThrow();
   });
 
@@ -769,7 +907,7 @@ describe("GRAFT_RESULT_PATH", () => {
  * decided on the preview rather than on what the module did after it.
  */
 describe("GRAFT_DRY_RUN", () => {
-  const report = (run: Run): DryRunReport => JSON.parse(run.stdout) as DryRunReport;
+  const report = (run: Run): DryRunReport => resultOf(run) as DryRunReport;
 
   it("passes a read-only module on its real responses, with nothing unverified", async () => {
     const run = await runRunner({ module: fixture("dryReadOnly.mjs"), env: dry() });
@@ -943,7 +1081,7 @@ describe("GRAFT_DRY_RUN", () => {
 
     expect(run.code).toBe(0);
     expect(run.stdout).toBe(`${RESULT_MARKER}${resultPath}\n`);
-    const written = JSON.parse(await readFile(resultPath, "utf8")) as DryRunReport;
+    const written = (await writtenEnvelope(resultPath)).result as DryRunReport;
     expect(written.dryRun).toBe(true);
     expect(written.passed).toBe(true);
     expect(written.writesPreviewed[0]?.body).toBe('{"n":1}');
@@ -958,8 +1096,272 @@ describe("GRAFT_DRY_RUN", () => {
     });
 
     expect(run.code).toBe(0);
-    const result = JSON.parse(run.stdout) as Record<string, unknown>;
+    const result = resultOf(run) as Record<string, unknown>;
     expect(result).not.toHaveProperty("dryRun");
     expect(result).toMatchObject({ read: 200, write: 202 });
+  });
+});
+
+/**
+ * `ctx.blob` (GRA-186; ADR 0023): a blob is a directory of `data` and `meta.json` under the blobs
+ * directory, written whole by one rename, named by a `blob://<id>` ref, and every write is on the
+ * ledger the envelope carries. The blobs directory is `GRAFT_BLOBS_DIR` here, a fresh temporary
+ * directory per test, as it is the mapped `/blobs` under the fake sandbox and `/blobs` itself in
+ * Docker.
+ */
+describe("ctx.blob", () => {
+  const withBlobs = async (env: Record<string, string> = {}) => {
+    const blobs = await mkdtemp(join(fixtures, "blobs-"));
+    return {
+      blobs,
+      env: { GRAFT_BLOBS_DIR: blobs, GRAFT_AGENT: "agent_1", GRAFT_TOOL_VERSION: "ver_1", ...env },
+    };
+  };
+  const REF = /^blob:\/\/[0-9a-f-]{36}$/;
+  const idOf = (ref: string) => ref.slice(BLOB_REF_SCHEME.length);
+  type Ledger = {
+    ref: string;
+    bytes: number;
+    contentType: string;
+    name?: string;
+    expiresAt: string;
+  }[];
+
+  it("write lands data and meta.json under <id>/ by one rename, answers the ref, and the ledger and stat both say what the sidecar says", async () => {
+    const { blobs, env } = await withBlobs();
+    const before = Date.now();
+    const run = await runRunner({
+      module: fixture("writesBlob.mjs"),
+      stdin: JSON.stringify({ text: "hello, blob", name: "hello.txt" }),
+      env,
+    });
+
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe("");
+    const envelope = envelopeOf(run);
+    const result = envelope.result as { file: string; stat: Record<string, unknown> };
+    expect(result.file).toMatch(REF);
+    const id = idOf(result.file);
+
+    // The one directory, whole, and no `.tmp` beside it.
+    expect(await readdir(blobs)).toEqual([id]);
+    expect((await readdir(join(blobs, id))).sort()).toEqual(["data", "meta.json"]);
+    expect(await readFile(join(blobs, id, "data"), "utf8")).toBe("hello, blob");
+    const meta = JSON.parse(await readFile(join(blobs, id, "meta.json"), "utf8"));
+    expect(meta).toEqual({
+      bytes: 11,
+      contentType: "text/plain",
+      name: "hello.txt",
+      writtenAt: expect.any(String),
+      expiresAt: expect.any(String),
+      agentId: "agent_1",
+      toolVersion: "ver_1",
+    });
+    const writtenAt = Date.parse(meta.writtenAt);
+    expect(writtenAt).toBeGreaterThanOrEqual(before - 1000);
+    expect(Date.parse(meta.expiresAt) - writtenAt).toBe(BLOB_TTL_MS);
+
+    // The ledger is the sidecar less what the server does not need, and stat is the same view.
+    expect(envelope.blobs).toEqual([
+      {
+        ref: result.file,
+        bytes: 11,
+        contentType: "text/plain",
+        name: "hello.txt",
+        expiresAt: meta.expiresAt,
+      },
+    ]);
+    expect(result.stat).toEqual({
+      bytes: 11,
+      contentType: "text/plain",
+      name: "hello.txt",
+      expiresAt: meta.expiresAt,
+    });
+  });
+
+  it("writes from a Uint8Array, a Blob and a ReadableStream, reads one back as a Blob, and keeps the ledger in write order with name only where one was given", async () => {
+    const { blobs, env } = await withBlobs();
+    const run = await runRunner({ module: fixture("writesBlobKinds.mjs"), env });
+
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe("");
+    const envelope = envelopeOf(run);
+    const result = envelope.result as {
+      bytes: string;
+      blob: string;
+      streamed: string;
+      read: { size: number; type: string; text: string };
+    };
+    expect(result.read).toEqual({
+      size: 13,
+      type: "application/octet-stream",
+      text: "from a stream",
+    });
+    expect(envelope.blobs as Ledger).toEqual([
+      { ref: result.bytes, bytes: 10, contentType: "text/plain", expiresAt: expect.any(String) },
+      {
+        ref: result.blob,
+        bytes: 11,
+        contentType: "text/plain",
+        name: "blob.txt",
+        expiresAt: expect.any(String),
+      },
+      {
+        ref: result.streamed,
+        bytes: 13,
+        contentType: "application/octet-stream",
+        expiresAt: expect.any(String),
+      },
+    ]);
+    expect((await readdir(blobs)).sort()).toEqual(
+      [result.bytes, result.blob, result.streamed].map(idOf).sort(),
+    );
+    expect(await readFile(join(blobs, idOf(result.blob), "data"), "utf8")).toBe("from a blob");
+  });
+
+  it("refuses blob_too_large mid-stream at 256 MiB, removes the .tmp directory, and puts nothing on the ledger", async () => {
+    const { blobs, env } = await withBlobs();
+    const run = await runRunner({ module: fixture("writesHugeBlob.mjs"), env });
+
+    expect(run.code).toBe(0);
+    const envelope = envelopeOf(run);
+    expect(envelope.result).toEqual({
+      code: "blob_too_large",
+      refused: expect.stringMatching(
+        /^blob_too_large: the blob passed 268435456 bytes \(256 MiB\)/,
+      ),
+    });
+    expect(envelope.blobs).toEqual([]);
+    expect(await readdir(blobs)).toEqual([]);
+  }, 60_000);
+
+  it("stat answers blob_not_found for an id that names nothing, a .tmp name or a climb, and a usage error for a string that is not a ref", async () => {
+    const { env } = await withBlobs();
+    const run = await runRunner({
+      module: fixture("blobRefs.mjs"),
+      stdin: JSON.stringify({
+        missing: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21",
+        tmp: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21.tmp",
+        climbs: "blob://../etc",
+        slash: "blob://a/b",
+        notARef: "https://vendor.example/file.pdf",
+      }),
+      env,
+    });
+
+    expect(run.code).toBe(0);
+    const result = resultOf(run) as Record<string, { code: string | null; message: string }>;
+    for (const key of ["missing", "tmp", "climbs", "slash"]) {
+      expect(result[key]?.code).toBe("blob_not_found");
+      expect(result[key]?.message).toMatch(/names no blob this agent holds/);
+    }
+    expect(result.notARef?.code).toBeNull();
+    expect(result.notARef?.message).toMatch(/a ref of the form blob:\/\/<id>/);
+  });
+
+  it("refuses a write of something that is not bytes, or with no content type, before touching the disk", async () => {
+    const { blobs, env } = await withBlobs();
+    const asString = await runRunner({
+      module: fixture("blobBadWrite.mjs"),
+      stdin: JSON.stringify({ text: "plain text", contentType: "text/plain" }),
+      env,
+    });
+    expect(resultOf(asString)).toEqual({
+      refused: expect.stringMatching(
+        /a Uint8Array, a Blob or a ReadableStream<Uint8Array>, not string/,
+      ),
+    });
+    const noType = await runRunner({
+      module: fixture("blobBadWrite.mjs"),
+      stdin: JSON.stringify({ text: "plain text", contentType: "" }),
+      env,
+    });
+    expect(resultOf(noType)).toEqual({
+      refused: expect.stringMatching(/takes \{ contentType \}/),
+    });
+    expect(await readdir(blobs)).toEqual([]);
+  });
+
+  /** The ledger the result carries is bounded by construction: a name is a file name, a content type a media type. */
+  it("refuses blob_invalid_name and blob_invalid_content_type before touching the disk, and admits a media type with parameters", async () => {
+    const { blobs, env } = await withBlobs();
+    const attempt = async (contentType: string, name?: string) =>
+      resultOf(
+        await runRunner({
+          module: fixture("blobBadMeta.mjs"),
+          stdin: JSON.stringify({ contentType, ...(name !== undefined ? { name } : {}) }),
+          env,
+        }),
+      ) as { refused?: string; code?: string | null } | string;
+
+    expect(await attempt("text/plain", "n".repeat(MAX_BLOB_NAME_CHARS + 1))).toMatchObject({
+      code: "blob_invalid_name",
+      refused: expect.stringMatching(/^blob_invalid_name: .*at most 255 characters, no slash/),
+    });
+    expect(await attempt("text/plain", "dir/file.txt")).toMatchObject({
+      code: "blob_invalid_name",
+    });
+    expect(await attempt("text/plain", "ab")).toMatchObject({ code: "blob_invalid_name" });
+    expect(await attempt(`text/${"x".repeat(MAX_BLOB_CONTENT_TYPE_CHARS)}`)).toMatchObject({
+      code: "blob_invalid_content_type",
+      refused: expect.stringMatching(/^blob_invalid_content_type: .*at most 128 characters/),
+    });
+    expect(await attempt("not a media type")).toMatchObject({ code: "blob_invalid_content_type" });
+    expect(await attempt("text\n/plain")).toMatchObject({ code: "blob_invalid_content_type" });
+    expect(await readdir(blobs)).toEqual([]);
+
+    expect(await attempt("text/csv; charset=utf-8", "report.csv")).toBe("written");
+    expect(await attempt("application/vnd.ms-excel")).toBe("written");
+    expect(await readdir(blobs)).toHaveLength(2);
+  }, 30_000);
+
+  it("refuses blob_store_unavailable rather than making a blobs directory of its own when the mount is not there", async () => {
+    const run = await runRunner({
+      module: fixture("writesBlob.mjs"),
+      stdin: JSON.stringify({ text: "x" }),
+      env: { GRAFT_BLOBS_DIR: join(fixtures, "no-such-mount") },
+    });
+
+    expect(run.code).toBe(1);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toMatch(/blob_store_unavailable: .*no-such-mount is not mounted/);
+    await expect(stat(join(fixtures, "no-such-mount"))).rejects.toThrow();
+  });
+
+  it("carries the ledger in the envelope on the detached path and in a dry run alike", async () => {
+    const resultPath = join(fixtures, "results", "blob.result.json");
+    const detached = await withBlobs({ GRAFT_RESULT_PATH: resultPath });
+    const run = await runRunner({
+      module: fixture("writesBlob.mjs"),
+      stdin: JSON.stringify({ text: "detached" }),
+      env: detached.env,
+    });
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe(`${RESULT_MARKER}${resultPath}\n`);
+    const written = await writtenEnvelope(resultPath);
+    expect((written.result as { file: string }).file).toMatch(REF);
+    expect(written.blobs).toEqual([
+      {
+        ref: expect.stringMatching(REF),
+        bytes: 8,
+        contentType: "text/plain",
+        expiresAt: expect.any(String),
+      },
+    ]);
+
+    const dryRun = await withBlobs(dry());
+    const dried = await runRunner({
+      module: fixture("writesBlob.mjs"),
+      stdin: JSON.stringify({ text: "dry" }),
+      env: dryRun.env,
+    });
+    expect(dried.code).toBe(0);
+    const envelope = envelopeOf(dried);
+    const report = envelope.result as DryRunReport;
+    expect(report.dryRun).toBe(true);
+    expect(report.passed).toBe(true);
+    expect((report.moduleResult as { file: string }).file).toMatch(REF);
+    expect(envelope.blobs).toHaveLength(1);
+    expect(await readdir(dryRun.blobs)).toHaveLength(1);
   });
 });

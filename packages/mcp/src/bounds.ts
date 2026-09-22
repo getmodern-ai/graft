@@ -36,6 +36,12 @@ export const WAIT_SLACK_SECONDS = 5;
 export const MAX_OUTPUT_CHARS = 16_000;
 export const MAX_FILE_CHARS = 64_000;
 export const MAX_RESULT_CHARS = 64_000;
+/**
+ * How many of a run's blobs the result names beside the module's result (GRA-186). A ledger line is
+ * short, so the bound is a count rather than characters; past it the list is cut with a note, and
+ * every blob still has its row — the wire is what is bounded, not the record.
+ */
+export const MAX_RESULT_BLOBS = 32;
 
 /** Bounds on what one call accepts, protecting the request rather than the context. */
 export const MAX_WRITE_BYTES = 256 * 1024;

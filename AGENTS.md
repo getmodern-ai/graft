@@ -638,6 +638,28 @@ expired blobs through the blob store and keeps the row with `removed_at`. The pr
 a file larger than that only once its operator raises it. The spec is GRA-181 and its sub-issues are
 the build order.
 
+**The write path is GRA-186.** `ctx` is five frozen names, `blob` the fifth: `ctx.blob.write(data,
+{ contentType, name? })` takes a `Uint8Array`, a `Blob` or a `ReadableStream<Uint8Array>`, streams
+it into `/blobs/<id>.tmp/`, writes the sidecar (`bytes`, `contentType`, `name`, `writtenAt`,
+`expiresAt`, `agentId`, `toolVersion`) and renames the directory once; `stat` reads the sidecar;
+`read` answers a lazy `Blob` (declared ahead of GRA-187, which adds the door). The runner's stdout
+contract is now an **envelope**, `{ result, blobs }`, on the sync, detached and dry-run paths alike
+(`readRunnerEnvelope` in `@graft/runner`; `run.ts`'s `unwrapEnvelope` reads a bare result from a
+sandbox seeded with an older runner as one with no blobs, since `seedRunner` seeds once). Three
+per-exec variables ride beside the token and are deleted with it before the module loads:
+`GRAFT_AGENT` and `GRAFT_TOOL_VERSION` for the sidecar, never for a path, and `GRAFT_BLOBS_DIR`, the
+mount path, a variable for the reason `GRAFT_RESULT_PATH` is one (a backing that maps the sandbox's
+paths maps the environment's values; the fake does). On the wire a run that wrote nothing answers
+exactly what it did; one that wrote answers `{ result, blobs: [{ ref, bytes, contentType, name?,
+expiresAt }] }` in the text block and `structuredContent`, the list cut at `MAX_RESULT_BLOBS` (32)
+with a count and a note; `wait_for_process` puts the same list beside a detached run's `result`. The
+`blob` table (`packages/db/src/schema/blob.ts`, migration 0011) is keyed by the id inside the ref and
+carries the person and the agent, so `repo/blob.ts` names both in every statement; `@graft/core`'s
+`recordBlobsWritten` writes the rows from the ledger, `packages/mcp/src/blobs.ts` calls it from the
+sync run (with the version) and the poll (without one, since a poll cannot know it) and fires
+`McpDeps.onBlobWritten`, which the server captures as `blob_written` with the size and the media type
+and never the name.
+
 ### The self-hosted image
 
 `apps/server/Dockerfile`, built from the repository root, is the one image (GRA-33). Its stages:
