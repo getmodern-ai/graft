@@ -42,8 +42,6 @@ export const CONNECTION_STATUS_CHIP = {
 
 export const CONNECTION_FIELD_CHIP = {
   missing: { variant: "outline", label: "To complete" },
-  prefilled: { variant: "secondary", label: "Prefilled" },
-  editing: { variant: "outline", label: "Editing" },
   edited: { variant: "secondary", label: "Edited" },
   entered: { variant: "secondary", label: "Entered" },
   invalid: { variant: "destructive", label: "Check this" },

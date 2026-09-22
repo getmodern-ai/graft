@@ -120,7 +120,7 @@ export function ConnectionForm(props: ConnectionFormProps) {
     <>
       <HostsNotice draft={draft} />
       <FieldDescription>
-        Complete the required fields. Expand prefilled details to review or edit them.
+        Complete the required fields. Expand connection details to make changes.
       </FieldDescription>
       <FieldSet>
         <FieldLegend className="w-full border-border border-b pb-2">Required fields</FieldLegend>
@@ -143,10 +143,10 @@ export function ConnectionForm(props: ConnectionFormProps) {
               onClick={() => setShowPrefilled((open) => !open)}
             >
               <KeyboardArrowDownIcon className={showPrefilled ? undefined : "-rotate-90"} />
-              Prefilled details
+              Connection details
             </Button>
           </FieldLegend>
-          {/* Keep controls mounted so collapsing preserves each field's editing state. */}
+          {/* Keep controls mounted so collapsing preserves each field's change status. */}
           <FieldGroup
             id={`${idPrefix}-prefilled-details`}
             hidden={!showPrefilled}
@@ -202,7 +202,6 @@ function ConnectionFormFields({
               label="Name"
               value={draft.displayName}
               required
-              alwaysEditable
               disabled={disabled}
               error={errors.displayName}
               hint="What you and your agents will see."
@@ -301,33 +300,29 @@ function ConnectionFormFields({
           disabled={disabled}
           hint="How the proxy presents the credential to the vendor. Changing it updates the required fields."
         >
-          {({ readOnly, ...props }) =>
-            readOnly ? (
-              <Input {...props} readOnly value={SCHEME_LABELS[draft.scheme]} />
-            ) : (
-              <Select
-                value={draft.scheme}
-                items={SCHEME_ITEMS}
-                disabled={disabled}
-                onValueChange={(next) => {
-                  if (next !== null && isScheme(next) && next !== draft.scheme) {
-                    onChange(withScheme(draft, next));
-                  }
-                }}
-              >
-                <SelectTrigger {...props} className={cn(props.className, "w-full")}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SCHEMES.map((scheme) => (
-                    <SelectItem key={scheme} value={scheme}>
-                      {schemeOption(scheme)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )
-          }
+          {(props) => (
+            <Select
+              value={draft.scheme}
+              items={SCHEME_ITEMS}
+              disabled={disabled}
+              onValueChange={(next) => {
+                if (next !== null && isScheme(next) && next !== draft.scheme) {
+                  onChange(withScheme(draft, next));
+                }
+              }}
+            >
+              <SelectTrigger {...props} className={cn(props.className, "w-full")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCHEMES.map((scheme) => (
+                  <SelectItem key={scheme} value={scheme}>
+                    {schemeOption(scheme)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </ConnectionField>
       ) : null}
 
