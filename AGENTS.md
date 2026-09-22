@@ -125,7 +125,7 @@ ours, so put it back after a run. The CLI is the `auth` package since Better Aut
 (`@better-auth/cli` stopped at 1.4.21), published in lockstep with the library, and the script runs
 the version matching the installed `better-auth`, so the generator and the runtime cannot drift.
 Regenerate rather than edit when the auth configuration or that version changes, then
-`db:generate`: Better Auth 1.7.3 validates the schema at init and refuses a required column it
+`db:generate`: Better Auth since 1.7.3 validates the schema at init and refuses a required column it
 never writes (GRA-86, migration 0008).
 
 **Two suites need Postgres**: `apps/server/src/database.integration.test.ts`, which migrates a fresh

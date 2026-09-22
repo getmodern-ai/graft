@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/getmodern-ai/graft/blob/main/SECURITY.md#reporting-a-vulnerability
+    about: Do not open a public issue for a security vulnerability. SECURITY.md says where to email it.
+  - name: Setup question
+    url: https://github.com/getmodern-ai/graft/blob/main/README.md#self-hosting
+    about: The README's self-hosting section walks through clone, keys and docker compose up.
