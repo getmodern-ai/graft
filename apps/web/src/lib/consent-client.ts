@@ -6,11 +6,11 @@ import type { AgentScopeMode } from "@graft/core";
  * Registration is open and unauthenticated, since every chat product registers itself before any
  * person is involved (ADR 0018), so `client_name`, `client_uri` and `logo_uri` are the
  * registrant's own words, and a client named for a product nobody here vouches for is registered
- * as easily as one that is. The signal that separates them is the one the card gate already reads: every callback
- * the client registered is on a `GRAFT_CARD_HOSTS` host, which a client cannot claim because it
- * would have to control what answers there (ADR 0006 as amended 2026-09-21). The server computes
- * it once per described request as `rendersCards` (GRA-150), and this page reads that value rather
- * than a second rule of its own.
+ * as easily as one that is. The signal that separates them is the one the card gate already
+ * reads: every callback the client registered is on a `GRAFT_CARD_HOSTS` host, which a client
+ * cannot claim because it would have to control what answers there (ADR 0006 as amended
+ * 2026-09-21). The server computes it once per described request as `rendersCards`
+ * (GRA-150), and this page reads that value rather than a second rule of its own.
  *
  * For a client the deployment vouches for, nothing about the page moves. For one it does not, the
  * page says so in a notice, names the host the answer will be sent to, qualifies the name as the
@@ -22,7 +22,7 @@ export type ConsentClientVerdict = {
   vouched: boolean;
   /** Whether the notice shows above the form: for an unvouched client, and no other. */
   showsNotice: boolean;
-  /** The host this request's answer goes to, as the notice prints it; empty when the request named none. */
+  /** The host this request's answer goes to, as the notice prints it; empty if it named none. */
   callbackHost: string;
   /** Where the scope field starts: every connection for a vouched client, nothing for the rest. */
   defaultScopeMode: AgentScopeMode;
