@@ -675,7 +675,12 @@ which only runs once every field is present; run with every field under `GRAFT_B
 sentence that `@graft/cloud-backings` is not installed — the open image's proof that it carries no
 hosted backings (GRA-38), which needs no database because the selector runs before the pool is opened.
 `.github/workflows/release.yml` pushes `ghcr.io/getmodern-ai/graft` and `graft-sandbox` on a `v*` tag,
-for `linux/amd64` and `linux/arm64`. The conformance suite against a running compose project is
+for `linux/amd64` and `linux/arm64`: one build leg per image and platform, amd64 on `ubuntu-latest`
+and arm64 on GitHub's native `ubuntu-24.04-arm`, each pushing by digest, and a merge job per image
+writing the tags over one manifest list (GRA-180). Nothing emulates an architecture; the QEMU
+cross-build this replaced cost the first tag over two and a half hours on the server image. A
+`workflow_dispatch` with an optional `ref` is how the file is exercised without cutting a release.
+The conformance suite against a running compose project is
 `packages/sandbox-docker/src/compose.test.ts`, opt-in by `GRAFT_COMPOSE_NETWORK` and
 `GRAFT_SANDBOX_IMAGE`; its header has the command.
 
