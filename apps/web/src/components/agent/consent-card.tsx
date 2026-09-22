@@ -3,7 +3,9 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { ScopeModeField } from "@/components/agent/scope-mode-field";
+import { WarningIcon } from "@/components/icons";
 import { RetryNotice } from "@/components/retry-notice";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -24,6 +26,11 @@ import {
 } from "@/components/ui/select";
 import type { Agent } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
+import {
+  consentCardTitle,
+  judgeConsentClient,
+  UNVOUCHED_CLIENT_NOTICE,
+} from "@/lib/consent-client";
 import { type ConsentRequest, decideConsent } from "@/lib/mcp-oauth-queries";
 
 /** The one option that is not an agent: mint a new one, named for the client. */
@@ -44,6 +51,12 @@ const NEW_AGENT = "new";
  * here from another product and has nowhere else to be. The choice between a new agent and an
  * existing one is the `Select` primitive with `items` on the root, as every fixed choice in the
  * console is (AGENTS.md).
+ *
+ * **A client the deployment does not vouch for is said to be one** (ADR 0018 as amended
+ * 2026-09-22): the notice above the form, the name in the title as the app's own claim, and the
+ * scope starting at `Selected connections` with nothing ticked. The verdict is one function over
+ * the server's description (`lib/consent-client.ts`), and for a vouched client the card is what it
+ * was.
  */
 export function ConsentCard({
   request,
@@ -64,9 +77,12 @@ export function ConsentCard({
   agentsFailed?: { error: unknown; onRetry: () => void; retrying: boolean };
 }) {
   const client = request.client.name;
+  // Whether Graft's deployment vouches for the client, and what the page does about it. Read from
+  // the description the server answered with, so the page applies no rule of its own.
+  const verdict = judgeConsentClient(request);
   const [as, setAs] = useState<string>(NEW_AGENT);
   const [name, setName] = useState(client);
-  const [scopeMode, setScopeMode] = useState<AgentScopeMode>("all");
+  const [scopeMode, setScopeMode] = useState<AgentScopeMode>(verdict.defaultScopeMode);
   const [scope, setScope] = useState<Set<string>>(new Set());
   const [leaving, setLeaving] = useState(false);
 
@@ -100,7 +116,7 @@ export function ConsentCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Connect {client} to Graft</CardTitle>
+        <CardTitle>{consentCardTitle(client, verdict.vouched)}</CardTitle>
         <CardDescription>
           {client} asked to connect over MCP. It will act as one agent of yours — with that agent's
           scope, working set and approvals — and when you connect it is sent back to{" "}
@@ -138,6 +154,7 @@ export function ConsentCard({
           }}
         >
           <FieldGroup>
+            {verdict.showsNotice ? <UnvouchedClientNotice host={verdict.callbackHost} /> : null}
             <Field>
               <FieldLabel htmlFor="consent-as">Connect as</FieldLabel>
               <Select
@@ -230,5 +247,26 @@ export function ConsentCard({
         </Button>
       </CardFooter>
     </Card>
+  );
+}
+
+/**
+ * The notice above the form for a client the deployment does not vouch for (ADR 0018 as amended
+ * 2026-09-22). An `Alert`, as every notice inside a form in this console is (AGENTS.md), and the
+ * callback host on a line of its own: it is the one fact in the card that the registrant could not
+ * choose freely, and the only one that tells the person whether the app asking is the app they
+ * started from. The words are `lib/consent-client.ts`'s, tested there.
+ */
+function UnvouchedClientNotice({ host }: { host: string }) {
+  return (
+    <Alert>
+      <WarningIcon />
+      <AlertTitle>{UNVOUCHED_CLIENT_NOTICE.title}</AlertTitle>
+      <AlertDescription>
+        <p>{UNVOUCHED_CLIENT_NOTICE.registered}</p>
+        <p className="break-all font-medium font-mono text-base text-foreground">{host}</p>
+        <p>{UNVOUCHED_CLIENT_NOTICE.started}</p>
+      </AlertDescription>
+    </Alert>
   );
 }

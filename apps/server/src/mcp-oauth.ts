@@ -318,6 +318,13 @@ export type ConsentRequestDescription = {
    * redirect URI on a card host, which is the whole rule since ADR 0006's amendment of
    * 2026-09-21 (GRA-150). The page says so in one sentence, because it changes where the person
    * answers every ask this client's agent makes.
+   *
+   * It is also the deployment's vouching signal, and the only one there is: a registrant chooses
+   * `client_name`, `client_uri` and `logo_uri` freely (registration is open, ADR 0018) but cannot
+   * claim a callback on a card host. False, and the consent page says Graft has not seen this app
+   * before and starts its scope at nothing (ADR 0018 as amended 2026-09-22;
+   * `apps/web/src/lib/consent-client.ts`). The page decides that; this route only answers the
+   * verdict, and `POST /consent` accepts either scope the person then chooses.
    */
   rendersCards: boolean;
 };

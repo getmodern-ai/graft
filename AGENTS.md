@@ -311,7 +311,15 @@ thirty seconds it is a replay that revokes the grant; revoking the agent revokes
 same transaction. No variable is added: the issuer is `GRAFT_AUTH_URL`'s origin and the
 consent page is under `GRAFT_CONSOLE_URL`. The rules and the service are `packages/core/src/mcp-oauth/`;
 the two suites are `packages/core/src/mcp-oauth/mcp-oauth.service.test.ts` over fakes and
-`apps/server/src/mcp-oauth.integration.test.ts` over Postgres with the SDK's own client. **A session
+`apps/server/src/mcp-oauth.integration.test.ts` over Postgres with the SDK's own client. **A client
+the deployment does not vouch for is drawn as its own claim** (GRA-175; ADR 0018 as amended
+2026-09-22): the description's `rendersCards` is the vouching signal too, since a registrant picks
+`client_name`, `client_uri` and `logo_uri` freely but cannot claim a callback on a `GRAFT_CARD_HOSTS`
+host, and where it is false the consent card shows the unknown-app `Alert` with the callback host on
+a line of its own, titles itself *Connect X, as it calls itself, to Graft*, and starts the scope at
+`listed` with nothing ticked, leaving the first connection to the `scope` ask. The verdict is one
+tested function, `apps/web/src/lib/consent-client.ts`, and `POST /api/mcp-oauth/consent` still takes
+either scope the person chooses: the change is the default, not a restriction. **A session
 this process no longer holds is re-opened for a chat product's client** (GRA-129; ADR 0018 as
 amended 2026-09-20): a `grfta_` request with an unknown session id, or with none and no
 `initialize`, gets a session under that id (or a new one, on the response), primed by a synthetic
