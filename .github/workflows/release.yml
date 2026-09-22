@@ -5,38 +5,149 @@ name: Release
 # version tag. `docker-compose.yml` names both; a self-hoster who never builds pulls these.
 #
 # Two platforms, because the audience runs Graft on a laptop as often as on a server, and Apple
-# laptops are arm64. Cross-building the arm64 half under QEMU is slow — Cando measured its pnpm
-# install going from twenty seconds to four minutes — which is acceptable on a tag and would not be
-# on every pull request; CI builds the amd64 server image alone.
+# laptops are arm64. Each platform is built on a runner of its own architecture and the two results
+# are merged into one manifest list (GRA-180), rather than cross-building the arm64 half under QEMU
+# as this file did until then: emulating a pnpm install, the console's `vite build` and the server's
+# `tsdown` bundle cost the first tag, v0.1.0, more than two and a half hours on the server image
+# without finishing, while the sandbox image, which installs no Node dependencies, took minutes.
+# GitHub's arm64 standard runners are generally available and free on public repositories, which
+# this one is, so the label `ubuntu-24.04-arm` replaces the emulator and no job installs QEMU:
+# https://docs.github.com/en/actions/reference/runners/github-hosted-runners and
+# https://github.blog/changelog/2025-08-07-arm64-hosted-runners-for-public-repositories-are-now-generally-available/
+# (`docker/github-builder`'s own reusable workflow maps `linux/arm64` to the same label.)
+# CI builds the amd64 server and sandbox images alone, on `ubuntu-latest`, and emulates nothing.
 on:
   push:
     tags: ["v*"]
+  # A tag publishes a release and cannot be rehearsed, so this file cannot be exercised by a pull
+  # request. A dispatch is how a maintainer tries a change to it before the next real tag: run it on
+  # a throwaway tag (`gh workflow run release.yml --ref v0.0.0-test1`), or from a branch with `ref`
+  # set to a tag name, which is then the ref built and the version the tags are derived from. A
+  # dispatch never moves `latest`; the tag list in the merge job below says how.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag or ref to build and tag from (defaults to the ref dispatched on)"
+        required: false
+        type: string
 
 permissions:
   contents: read
   packages: write
 
 jobs:
-  images:
-    name: Build and push the images
-    runs-on: ubuntu-latest
+  build:
+    # One leg per image and platform: a sandbox-image failure does not wait out the server build,
+    # each image keeps its own build cache scope, and each platform is built on a runner of its own
+    # architecture. `fail-fast: false` is the first of those reasons, so that one leg failing does
+    # not cancel the other image's.
+    #
+    # Each leg pushes by digest and writes no tag: a tag can only name one manifest, so a tag
+    # written here would be overwritten by whichever platform finished last. The merge job below is
+    # where the tags are written, over the manifest list that names both digests.
+    name: Build the ${{ matrix.image.scope }} image for ${{ matrix.platform.arch }}
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
-      # Two jobs rather than two steps so a sandbox-image failure does not wait out the server
-      # build, and so each has its own build cache scope.
+      fail-fast: false
       matrix:
-        include:
-          - image: ghcr.io/getmodern-ai/graft
+        image:
+          # The `scope` of each image is repeated in the merge job's matrix, which has to name the
+          # same images; the digest artifacts are matched by it.
+          - name: ghcr.io/getmodern-ai/graft
             context: .
             file: apps/server/Dockerfile
             scope: server
-          - image: ghcr.io/getmodern-ai/graft-sandbox
+          - name: ghcr.io/getmodern-ai/graft-sandbox
             context: packages/sandbox-docker
             file: packages/sandbox-docker/Dockerfile
             scope: sandbox
+        platform:
+          - id: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - id: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
+      # Empty on a tag push, where checkout falls back to the ref that triggered the run.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
 
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Labels only. The tags this release writes are declared once, in the merge job, because this
+      # leg pushes none; giving this step that list too would put the release's tag set in two
+      # places to be kept in step. The one tag line here writes no tag either: it is what makes the
+      # `org.opencontainers.image.version` label on the image config read `1.2.3` rather than the
+      # `v1.2.3` the action's default configuration would take from the ref, which is what the label
+      # said while this workflow built both platforms in one step.
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ matrix.image.name }}
+          tags: type=semver,pattern={{version}},value=${{ inputs.ref }}
+
+      # `push-by-digest` publishes the manifest under its own digest and no tag, and
+      # `name-canonical` is what makes the digest a pullable reference of this repository. One cache
+      # scope per image *and* platform: two architectures share no layers, and one scope would have
+      # each leg evicting the other's.
+      - uses: docker/build-push-action@v7
+        id: build
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          platforms: ${{ matrix.platform.id }}
+          tags: ${{ matrix.image.name }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.image.scope }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.scope }}-${{ matrix.platform.arch }}
+
+      # The digest is the file's name rather than its content, so the merge job reads the directory
+      # listing and needs no parsing. Through the environment, not an expression inside the script.
+      - name: Record the digest for the merge job
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          touch "${{ runner.temp }}/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.image.scope }}-${{ matrix.platform.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    # One manifest list per image, from the digests its two legs pushed. This is where a tag first
+    # names anything: until this job runs, the platform manifests are in the registry under their
+    # digests and nothing points at them.
+    name: Publish the ${{ matrix.scope }} manifest list
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The same two images as the build matrix above, by the same `scope`.
+        include:
+          - image: ghcr.io/getmodern-ai/graft
+            scope: server
+          - image: ghcr.io/getmodern-ai/graft-sandbox
+            scope: sandbox
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-${{ matrix.scope }}-*
+          merge-multiple: true
 
       - uses: docker/setup-buildx-action@v4
 
@@ -48,24 +159,57 @@ jobs:
 
       # `v1.2.3` → `1.2.3`, `1.2`, `1` and `latest`; a pre-release tag (`v1.2.3-rc.1`) gets its own
       # tag and does not move `latest`. The commit SHA rides along so an image can always be traced.
+      #
+      # `value` on the semver lines is the dispatch input, and is empty on a tag push, where the
+      # action reads the git tag instead. `latest` is written on a tag push alone: a dispatch is a
+      # rehearsal and must not move the tag a self-hoster pulls, and `flavor: latest=false` is here
+      # so the action's own automatic `latest` for a non-pre-release semver cannot write it either.
+      # On a tag push the set is unchanged by that pair, since the raw line below wrote it already.
       - uses: docker/metadata-action@v6
         id: meta
         with:
           images: ${{ matrix.image }}
+          flavor: latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{version}},value=${{ inputs.ref }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.ref }}
+            type=semver,pattern={{major}},value=${{ inputs.ref }}
             type=sha,format=long
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && !contains(github.ref_name, '-') }}
 
-      - uses: docker/build-push-action@v7
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.file }}
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.scope }}
+      # Each file in the directory is one platform's digest. Both lists are built as arrays rather
+      # than interpolated into one command line, so a tag or a digest is never split on whitespace,
+      # and each is checked: an empty tag list means the ref was no semver version and would
+      # otherwise publish a manifest list nothing names.
+      - name: Create the manifest list from the platform digests
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ${{ matrix.image }}
+          META_JSON: ${{ steps.meta.outputs.json }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tags=()
+          while IFS= read -r tag; do
+            tags+=(--tag "$tag")
+          done < <(jq -r '.tags[]' <<<"$META_JSON")
+          sources=()
+          for digest in *; do
+            sources+=("${IMAGE}@sha256:${digest}")
+          done
+          if [ ${#tags[@]} -eq 0 ]; then
+            echo "::error::no tags were derived for ${IMAGE}; dispatch this workflow on a v* tag, or pass one as the \`ref\` input" >&2
+            exit 1
+          fi
+          if [ ${#sources[@]} -eq 0 ]; then
+            echo "::error::no platform digests were uploaded for ${IMAGE}" >&2
+            exit 1
+          fi
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+
+      # What was published, read back from the registry: the step prints the manifest list and the
+      # platform of each manifest in it, which is the one place a missing architecture shows.
+      - name: Inspect the published manifest list
+        env:
+          REFERENCE: ${{ matrix.image }}:${{ steps.meta.outputs.version }}
+        run: docker buildx imagetools inspect "$REFERENCE"
