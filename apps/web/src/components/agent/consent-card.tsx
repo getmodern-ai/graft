@@ -78,7 +78,9 @@ export function ConsentCard({
 }) {
   const client = request.client.name;
   // Whether Graft's deployment vouches for the client, and what the page does about it. Read from
-  // the description the server answered with, so the page applies no rule of its own.
+  // the description the server answered with, so the page applies no rule of its own. It seeds the
+  // scope's initial state: the card mounts only once that description has arrived (the route shows
+  // a loader until then), and another authorization request is another visit to this page.
   const verdict = judgeConsentClient(request);
   const [as, setAs] = useState<string>(NEW_AGENT);
   const [name, setName] = useState(client);
