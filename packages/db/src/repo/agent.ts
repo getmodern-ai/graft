@@ -1,4 +1,4 @@
-import { and, asc, eq, exists, getTableColumns, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, exists, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent, agentConnection, type NewAgent } from "../schema/agent";
@@ -8,8 +8,9 @@ import type { AgentScope } from "./scope";
 
 /**
  * Query ownership for the agent aggregate: the agent row and its scope (ADR 0007). Every read and
- * write takes the person's id in the SQL; the token lookup and the sweep's roster are the two
- * deliberate exceptions, and each says why.
+ * write takes the person's id in the SQL; the token lookup, the sweep's roster and the blob pass's
+ * read of whose a directory is (`listAgentPersonIds`) are the three deliberate exceptions, and
+ * each says why.
  */
 
 export type AgentRow = typeof agent.$inferSelect;
@@ -119,6 +120,34 @@ export async function listAllActiveAgents(db: DbOrTx): Promise<AgentRow[]> {
     .from(agent)
     .where(isNull(agent.revokedAt))
     .orderBy(asc(agent.createdAt), asc(agent.id));
+}
+
+/** An agent's id and its person's, as `listAgentPersonIds` answers them. */
+export type AgentPersonId = { agentId: string; personId: string };
+
+/**
+ * Whose agents these are: the person of every id in `agentIds` that names an agent row, revoked or
+ * not. The blob pass's read for a directory the blob store lists under an agent that has no
+ * unremoved row (GRA-195): a revoked agent whose blobs were all removed, or a run killed before
+ * its row landed. **Deliberately unscoped**, and pinned by name in `scope.test.ts` beside the
+ * roster above: the sweep has no person until this answers, and an id with no row here is an agent
+ * deleted by hand, whose directories are nobody's. It answers the pair and nothing else of the row;
+ * what the pass does next is a statement under that pair. No ids is no statement.
+ */
+export async function listAgentPersonIds(
+  db: DbOrTx,
+  agentIds: readonly string[],
+): Promise<AgentPersonId[]> {
+  if (agentIds.length === 0) return [];
+  // One array parameter (`= any($1)`), not `in ($1, $2, ...)`: the list is every agent the store has
+  // a directory for and no row, which is unbounded, and Postgres refuses a statement past its
+  // parameter limit (Greptile on #152). `sql.param` hands the array to the driver whole; a bare
+  // array in the template expands to `($1, $2, ...)`. The rendered form is pinned in `scope.test.ts`.
+  return db
+    .select({ agentId: agent.id, personId: agent.personId })
+    .from(agent)
+    .where(sql`${agent.id} = any(${sql.param([...agentIds])})`)
+    .orderBy(asc(agent.id));
 }
 
 export async function updateAgent(

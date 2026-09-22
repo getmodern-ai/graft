@@ -123,6 +123,43 @@ export async function listUnremovedBlobs(
   return deps.listUnremovedBlobs(ctx.db, scope);
 }
 
+/** One agent the blob pass walks: its id, and its person where the database still names one. */
+export type BlobSweepAgent = {
+  agentId: string;
+  /**
+   * Null for an agent the database no longer holds (deleted by hand, or with its person), whose
+   * directories the store still lists: there is no row to judge and none to adopt into, so the
+   * pass treats what is there as junk once past the TTL and never writes a row for it.
+   */
+  personId: string | null;
+};
+
+/**
+ * The blob pass's roster (GRA-195; ADR 0023, "the sweep deletes"): every agent with at least one
+ * unremoved blob row, with its person off the rows, in union with every agent id the blob store
+ * lists a directory for (`BlobStore.listAgents`, the caller's read), with its person off the agent
+ * table where that still holds the row, revoked or not. The working-set sweep's roster
+ * (`listActiveAgentScopes`) is the live agents; this one is whoever has bytes or rows, so a revoked
+ * agent's blobs expire, are removed and are marked on the same rule as any other's, and an agent
+ * deleted by hand has its directories cleared. Sorted by agent id, so a report reads the same from
+ * pass to pass.
+ */
+export async function listBlobSweepAgents(
+  ctx: ServiceContext,
+  directoryAgentIds: readonly string[],
+  deps: BlobDeps,
+): Promise<BlobSweepAgent[]> {
+  const withRows = await deps.listAgentsWithUnremovedBlobs(ctx.db);
+  const agents = new Map<string, string | null>(withRows.map((row) => [row.agentId, row.personId]));
+  const unresolved = [...new Set(directoryAgentIds)].filter((agentId) => !agents.has(agentId));
+  const resolved = await deps.listAgentPersonIds(ctx.db, unresolved);
+  for (const row of resolved) agents.set(row.agentId, row.personId);
+  for (const agentId of unresolved) if (!agents.has(agentId)) agents.set(agentId, null);
+  return [...agents.entries()]
+    .map(([agentId, personId]) => ({ agentId, personId }))
+    .sort((a, b) => (a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0));
+}
+
 /**
  * The sweep removed this blob's directory, or found it already gone: the row stays with
  * `removed_at`, so the door says expired rather than not found (ADR 0023; GRA-187). Answers whether

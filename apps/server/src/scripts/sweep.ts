@@ -11,7 +11,7 @@ import { selectBackings } from "../backings";
 /**
  * Run one sweep by hand and print the report (ADR 0009; `@graft/mcp`'s `runSweep`): the
  * working-set pass and, since GRA-189, the blob pass beside it (ADR 0023), whose actions are the
- * report's `blobs.actions`.
+ * report's `blobs.actions`, over every agent with blobs, revoked ones included (GRA-195).
  *
  *   pnpm --filter @graft/server sweep            # demote, remove, mark and adopt what the rules say
  *   pnpm --filter @graft/server sweep -- --plan  # print what it would do; change nothing

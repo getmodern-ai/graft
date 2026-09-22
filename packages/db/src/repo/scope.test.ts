@@ -18,6 +18,7 @@ import {
   findAgentForUpdate,
   listAgentConnectionIds,
   listAgentIdsForConnection,
+  listAgentPersonIds,
   listAgents,
   listAllActiveAgents,
   listScopeConnectionIds,
@@ -35,6 +36,7 @@ import {
   findBlobs,
   insertAdoptedBlob,
   insertBlobs,
+  listAgentsWithUnremovedBlobs,
   listBlobs,
   listUnremovedBlobs,
   markBlobRemoved,
@@ -508,6 +510,43 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toMatch(/^select .* from "agent" where "agent"\."revoked_at" is null order by/);
     expect(s.sql).not.toContain('person_id" =');
     expect(s.params).toEqual([]);
+  });
+
+  /**
+   * The blob pass's roster (GRA-195; ADR 0023, "the sweep deletes"): every agent with an unremoved
+   * blob, with its person off the rows, so a revoked agent's blobs are judged too. Unscoped by
+   * nature, as the working-set roster is, and recognisable as such.
+   */
+  it("the blob pass's roster of agents with unremoved blobs is unscoped, by name, and takes only the removed filter", async () => {
+    await listAgentsWithUnremovedBlobs(db);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select distinct "person_id", "agent_id" from "blob" where "blob"\."removed_at" is null order by "blob"\."agent_id" asc, "blob"\."person_id" asc$/,
+    );
+    expect(s.sql).not.toContain('person_id" =');
+    expect(s.params).toEqual([]);
+  });
+
+  /**
+   * The blob pass's other read (GRA-195): whose the directories the store lists under an agent with
+   * no unremoved row are, revoked agents included, so the pass has a person to act under; an id
+   * with no row is an agent deleted by hand. Unscoped by nature, and no statement for no ids.
+   */
+  it("the blob pass's read of whose an agent directory is, is unscoped, by id as one array parameter, revoked agents included, and no statement for no ids", async () => {
+    await listAgentPersonIds(db, ["agent_1", "agent_2"]);
+    const s = only();
+    // `= any($1)` with the ids as one array, never `in ($1, $2, ...)`: the list is unbounded and a
+    // statement past Postgres's parameter limit is refused (Greptile on #152).
+    expect(s.sql).toMatch(
+      /^select "id", "person_id" from "agent" where "agent"\."id" = any\(\$1\) order by "agent"\."id" asc$/,
+    );
+    expect(s.sql).not.toContain("revoked_at");
+    expect(s.sql).not.toContain('person_id" =');
+    expect(s.params).toEqual([["agent_1", "agent_2"]]);
+
+    statements = [];
+    expect(await listAgentPersonIds(db, [])).toEqual([]);
+    expect(statements).toEqual([]);
   });
 
   /** The boot's other write (GRA-94): the bootstrapped admin is verified by address, before any person has signed in. */

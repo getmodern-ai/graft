@@ -731,8 +731,26 @@ every destructive action: the rest of that pass is deferred (`SweepBlobCounts.de
 `SweepReport.blobs` and the server puts them on the sweep's wide event under `sweep.blobs`;
 `McpDeps.onBlobSwept` fires once per `remove` and `remove_orphan` and the server captures it as
 `blob_swept` with `bytes` and `cause`, never the name; a cleared `.tmp` was never a blob and fires
-nothing. `sweep -- --plan` prints the blob actions under `blobs.actions` beside the demotions. A
-revoked agent's blobs are not swept, since the roster is the working-set sweep's; a follow-up.
+nothing. `sweep -- --plan` prints the blob actions under `blobs.actions` beside the demotions.
+
+**The blob pass's roster is its own, not the working-set sweep's** (GRA-195). The working-set pass
+walks the live agents (`listActiveAgentScopes`); the blob pass walks the union of every agent with
+at least one unremoved `blob` row (`listAgentsWithUnremovedBlobs` in `packages/db/src/repo/blob.ts`,
+the person off the rows) and every agent the blob store lists a directory for
+(`BlobStore.listAgents()`, new here: the agent ids under `.blobs/`, sorted, a symlink or a name that
+is not an agent id skipped), with the person of a directory-only agent read off the agent table
+(`listAgentPersonIds` in `repo/agent.ts`, revoked agents included); `@graft/core`'s
+`listBlobSweepAgents` is the union, and both reads are deliberately unscoped and pinned by name in
+`repo/scope.test.ts` beside `listAllActiveAgents`, since the sweep has no person to scope by. So a
+revoked agent's blobs expire, are removed and are marked on the same 24 hour rule as any other's
+and its bytes stop counting; the in-flight skip is a no-op for it, since it can have no run. An
+agent the database no longer holds (deleted by hand, its blob rows cascaded away) is walked with no
+person: the decision is asked with `agentExists: false`, nothing is adopted, a committed directory
+is junk once its last write is past the TTL (`remove_orphan`) and `keep` (reason `unclaimed`) until
+then, a `.tmp` goes by the bound, and no `blob_swept` fires, since there is no person to name.
+`SweepBlobCounts.agents` counts the agents the pass walked, on the wide event under `sweep.blobs`;
+`sweep -- --plan` shows a revoked agent's actions like any other's. A hosted blob store (GRA-192)
+implements `listAgents` beside the five verbs or `assertCloudBackings` refuses it at boot.
 
 **`acquire` authors both halves, and the playbook carries the one rule (GRA-190).** The authoring
 skill's *Moving a file between tools* section says when to write a blob and when to return data, how
@@ -813,8 +831,9 @@ window, then the least recently used beyond the cap — never a tool used inside
 while the agent has a run in flight — and fires `tools/list_changed`. Each demotion is a
 `working_set_change` row with cause `idle` or `cap`, which `GET /api/agents/:id/working-set/changes`
 reads for the console. The rule itself is `packages/core/src/working-set/sweep.decision.ts`, a pure
-function; `packages/mcp/src/sweep.ts` applies it, and on the same tick runs the blob pass (the
-paragraph *The sweep's blob pass is GRA-189* above). `pnpm --filter @graft/server sweep -- --plan`
+function; `packages/mcp/src/sweep.ts` applies it, and on the same tick runs the blob pass over its
+own roster, revoked agents included (the paragraphs *The sweep's blob pass is GRA-189* and *The blob
+pass's roster is its own* above). `pnpm --filter @graft/server sweep -- --plan`
 prints what a sweep would do without doing it; without `--plan` it demotes and removes, from a
 process that can neither see a running server's in-flight runs nor notify its sessions, so use that
 form with the server stopped.

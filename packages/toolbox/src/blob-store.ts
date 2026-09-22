@@ -9,6 +9,7 @@ import {
   BLOB_DATA_FILE,
   BLOB_META_FILE,
   BLOB_TMP_SUFFIX,
+  BLOBS_ROOT,
   blobPath,
 } from "./layout";
 import type { BlobDirectoryStat, BlobStore } from "./types";
@@ -23,7 +24,8 @@ import type { BlobDirectoryStat, BlobStore } from "./types";
  *
  * This store never writes a blob: the runner does, inside the sandbox, into `<blobId>.tmp` and then
  * by rename (GRA-186). What the server needs of a blob is to see it, read its sidecar, tell how
- * old a directory is and remove it when the sweep says so (GRA-189), and those are the five verbs.
+ * old a directory is and remove it when the sweep says so (GRA-189), and to know which agents have
+ * a directory at all (GRA-195), and those are the six verbs.
  *
  * **What the sandbox wrote is untrusted input here.** ADR 0023's "the scope is a mount" paragraph
  * makes the mount the guarantee for code running *inside* the sandbox; this store reads the same
@@ -49,6 +51,23 @@ export function createFilesystemBlobStore(options: { root: string }): Filesystem
   return {
     root,
     agentRoot,
+
+    listAgents: async () => {
+      const entries = await readdir(join(root, BLOBS_ROOT), { withFileTypes: true }).catch(
+        (error: unknown) => {
+          // No `.blobs/` yet is no agents: the first blob any run writes makes it.
+          if ((error as { code?: unknown }).code === "ENOENT") return [];
+          throw error;
+        },
+      );
+      // As `list` below: a symlink is not a directory to `Dirent`, and a name that is not an agent id
+      // is one no other verb would accept, so both are skipped rather than handed to a caller that
+      // could do nothing with them.
+      return entries
+        .filter((entry) => entry.isDirectory() && isAgentName(entry.name))
+        .map((entry) => entry.name)
+        .sort();
+    },
 
     list: async (agentId) => {
       const dir = agentRoot(agentId);
@@ -137,6 +156,15 @@ export function assertBlobName(name: string): void {
 function isBlobName(name: string): boolean {
   try {
     assertBlobName(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isAgentName(name: string): boolean {
+  try {
+    assertAgentId(name);
     return true;
   } catch {
     return false;

@@ -64,9 +64,16 @@ export type ToolboxStore = {
  *
  * Reads and removes only. The runner writes a blob from inside the sandbox (GRA-186), where the
  * server's store is not; what the server needs of a blob is to see it, read its sidecar and remove
- * it when the sweep says so (GRA-189).
+ * it when the sweep says so (GRA-189), and to know which agents have any (GRA-195).
  */
 export type BlobStore = {
+  /**
+   * The agent ids that have a blobs directory, sorted: the store's half of the sweep's roster
+   * (GRA-195), so an agent whose token no longer resolves, or whose row is gone, still has its
+   * directories judged. A name under `.blobs/` that is not an agent id, a file or a symlink is
+   * skipped and left in place, as `list` does with a foreign name; no `.blobs/` yet is no agents.
+   */
+  listAgents(): Promise<string[]>;
   /**
    * The directory names under the agent's blobs directory that are a blob id or a `<blobId>.tmp` a
    * killed run left half-written, sorted. An agent with no directory yet has no blobs, not an error.
