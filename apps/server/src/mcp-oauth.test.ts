@@ -525,6 +525,25 @@ describe("the console's consent routes", () => {
     );
     expect(noAgent.status).toBe(400);
   });
+
+  it("takes either scope from the person for a client nobody vouched for: the page's default is not a restriction", async () => {
+    // The page starts an unvouched client at `listed` with nothing ticked (GRA-175; ADR 0018 as
+    // amended 2026-09-22), and the person may still choose every connection. The decision route
+    // judges the request again and accepts both answers; the notice is what changed, not what a
+    // consent may ask for.
+    const { app } = harness();
+    const { client_id } = await register(app);
+    const scopeOf = async (agent: Record<string, unknown>) => {
+      const res = await app.request(
+        `${AUTH_URL}/api/mcp-oauth/consent`,
+        json({ request: request(client_id, generatePkce().challenge), decision: "allow", agent }),
+      );
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { agent: { scopeMode: string } }).agent.scopeMode;
+    };
+    expect(await scopeOf({ kind: "new", name: "Inspector", scopeMode: "listed" })).toBe("listed");
+    expect(await scopeOf({ kind: "new", name: "Inspector", scopeMode: "all" })).toBe("all");
+  });
 });
 
 describe("the token and revocation endpoints", () => {

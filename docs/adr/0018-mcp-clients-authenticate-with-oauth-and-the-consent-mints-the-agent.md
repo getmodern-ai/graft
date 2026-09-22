@@ -174,3 +174,40 @@ version would now hold a session that refuses its every call, where before it wa
 door and could fall back; GRA-162's live check against Claude.ai is what rules that out. Adopting
 the 2026-07-28 revision itself — which removes sessions and this handshake — is GRA-165, and waits
 on an SDK that carries it.
+
+## Amendment 2026-09-22: a client nobody vouched for is named as its own claim and starts with no connections
+
+GRA-175. Registration is open and unauthenticated, and this ADR's consequences say why it has to
+be: every product registers before any person is involved. What it did not say is that the three
+fields the consent page shows a person (`client_name`, `client_uri` and `logo_uri`) are the
+registrant's own words, and that the page presented them as though Graft had checked them. The
+class is **consent phishing through open registration**: a client registered as "Claude", with
+Anthropic's logo and a callback on the registrant's own host, and an authorize link sent to a
+signed-in person. The page showed Graft's mark, the registrant's chosen name, the callback host in
+a `code` span among the prose, and a scope already set to every connection the person has; an
+Allow minted an agent bound to that client with the person's whole keyring in reach, and every ask
+it raised afterwards reached the console under the borrowed name.
+
+**The rule.** The consent page treats a client the deployment vouches for and one it does not
+differently, and the vouching signal is the one the card gate already reads: every redirect URI
+the client registered is on a `GRAFT_CARD_HOSTS` host (ADR 0006 as amended 2026-09-21), answered
+per request as `rendersCards` on the description and never recomputed. For an unvouched client the
+page shows a notice above the form saying Graft has not seen this app before, that it registered
+itself with the name it shows, and where the answer will be sent, with the callback host on a line
+of its own; it says the name as the app's own claim ("Connect X, as it calls itself, to Graft");
+and it starts the scope at `listed` with nothing ticked, so an Allow gives the agent no connection
+until the person grants one, which is the `scope` ask (ADR 0006 as amended 2026-09-19). No logo is
+rendered for any client today, and none is to be rendered for an unvouched one.
+
+**What still holds.** Open registration, for the reason this ADR gives, and the protocol's shape
+around it: the bounds on a registration, the exact-match redirect URIs, and the refusal to send a
+browser anywhere the server has not confirmed. The default scope for a vouched client is `all`
+(ADR 0007 as amended 2026-09-19), unchanged. And the server still does not trust the page: the
+decision route judges the request again and accepts either scope the person chose, because this is
+a default and not a restriction.
+
+**The decision is the page's, and pure.** `apps/web/src/lib/consent-client.ts` answers the
+verdict, the default mode and the notice's words from `rendersCards` and the redirect target, with
+its own test; `consent-card.tsx` only renders it. A self-hoster whose own chat product is on
+`GRAFT_CARD_HOSTS` is vouched for by the same list that admits its cards, so there is one thing to
+configure and not two.
