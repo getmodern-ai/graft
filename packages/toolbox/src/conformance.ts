@@ -171,9 +171,14 @@ export function blobStoreConformance(
   describe(`blob store conformance: ${name}`, () => {
     let fixture: BlobStoreFixture;
     let store: BlobStore;
-    const agent = `conf-${Date.now().toString(36)}`;
-    const other = `${agent}-other`;
+    /** One agent per test, so each case makes what it needs and runs alone and in any order. */
+    const run = `conf-${Date.now().toString(36)}`;
+    const agentFor = (label: string) => `${run}-${label}`;
     const meta = '{"bytes":5,"contentType":"text/plain"}';
+    const blob = (name: string) => [
+      { path: "data", content: "bytes" },
+      { path: BLOB_META_FILE, content: `${meta.slice(0, -1)},"name":"${name}"}` },
+    ];
 
     beforeAll(async () => {
       fixture = await makeFixture();
@@ -185,26 +190,47 @@ export function blobStoreConformance(
     });
 
     it("lists nothing for an agent that has written no blob, then blob ids and .tmp names sorted", async () => {
+      const agent = agentFor("list");
       expect(await store.list(agent)).toEqual([]);
 
-      await fixture.write(agent, "blob-b", [
-        { path: "data", content: "bytes" },
-        { path: BLOB_META_FILE, content: meta },
-      ]);
+      await fixture.write(agent, "blob-b", blob("b"));
       await fixture.write(agent, "blob-a", [{ path: "data", content: "x" }]);
       await fixture.write(agent, `blob-c${BLOB_TMP_SUFFIX}`, [{ path: "data", content: "half" }]);
 
       expect(await store.list(agent)).toEqual(["blob-a", "blob-b", `blob-c${BLOB_TMP_SUFFIX}`]);
     });
 
+    it("lists only what it can act on: a directory a sandbox made under a foreign name is skipped, left in place and refused by remove", async () => {
+      const agent = agentFor("foreign");
+      await fixture.write(agent, "blob-a", blob("a"));
+      await fixture.write(agent, "not a blob", [{ path: "data", content: "?" }]);
+      await fixture.write(agent, "..evil", [{ path: "data", content: "?" }]);
+
+      expect(await store.list(agent)).toEqual(["blob-a"]);
+      await expect(store.remove(agent, "not a blob")).rejects.toThrow(/blob id/);
+      await expect(store.remove(agent, "..evil")).rejects.toThrow(/blob id/);
+      // Still there, and still skipped: the store never removes what it cannot name.
+      expect(await store.list(agent)).toEqual(["blob-a"]);
+    });
+
     it("reads a blob's sidecar, and rejects for a blob or a sidecar that is not there", async () => {
-      expect(await store.readMeta(agent, "blob-b")).toBe(meta);
+      const agent = agentFor("read");
+      const other = agentFor("read-other");
+      await fixture.write(agent, "blob-b", blob("b"));
+      await fixture.write(agent, "blob-a", [{ path: "data", content: "x" }]);
+
+      expect(JSON.parse(await store.readMeta(agent, "blob-b"))).toMatchObject({ name: "b" });
       await expect(store.readMeta(agent, "blob-a")).rejects.toThrow(/no such blob/);
       await expect(store.readMeta(agent, "nowhere")).rejects.toThrow(/no such blob/);
       await expect(store.readMeta(other, "blob-b")).rejects.toThrow(/no such blob/);
     });
 
     it("answers exists for a blob, and not for one that is missing, another agent's, or still .tmp", async () => {
+      const agent = agentFor("exists");
+      const other = agentFor("exists-other");
+      await fixture.write(agent, "blob-b", blob("b"));
+      await fixture.write(agent, `blob-c${BLOB_TMP_SUFFIX}`, [{ path: "data", content: "half" }]);
+
       expect(await store.exists(agent, "blob-b")).toBe(true);
       expect(await store.exists(agent, "nowhere")).toBe(false);
       expect(await store.exists(other, "blob-b")).toBe(false);
@@ -212,7 +238,12 @@ export function blobStoreConformance(
     });
 
     it("removes a blob and a .tmp, leaves the agent's others and another agent's, and one already gone is not an error", async () => {
-      await fixture.write(other, "blob-b", [{ path: "data", content: "theirs" }]);
+      const agent = agentFor("remove");
+      const other = agentFor("remove-other");
+      await fixture.write(agent, "blob-a", blob("a"));
+      await fixture.write(agent, "blob-b", blob("b"));
+      await fixture.write(agent, `blob-c${BLOB_TMP_SUFFIX}`, [{ path: "data", content: "half" }]);
+      await fixture.write(other, "blob-b", blob("theirs"));
 
       await store.remove(agent, "blob-b");
       await store.remove(agent, `blob-c${BLOB_TMP_SUFFIX}`);
@@ -225,6 +256,9 @@ export function blobStoreConformance(
     });
 
     it("refuses a name that is not a blob id or a .tmp name, before touching anything", async () => {
+      const agent = agentFor("bad-name");
+      await fixture.write(agent, "blob-a", blob("a"));
+
       for (const bad of ["", "..", ".", "a/b", "../blob-a", "/blob-a", BLOB_TMP_SUFFIX, "a b"]) {
         await expect(store.remove(agent, bad), bad).rejects.toThrow(/blob id/);
       }

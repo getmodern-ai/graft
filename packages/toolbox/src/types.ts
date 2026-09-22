@@ -68,19 +68,27 @@ export type ToolboxStore = {
  */
 export type BlobStore = {
   /**
-   * The directory names under the agent's blobs directory, sorted: blob ids, and any `<blobId>.tmp`
-   * a killed run left half-written. An agent with no directory yet has no blobs, not an error.
+   * The directory names under the agent's blobs directory that are a blob id or a `<blobId>.tmp` a
+   * killed run left half-written, sorted. An agent with no directory yet has no blobs, not an error.
+   * Anything else a sandbox wrote there (a directory under a foreign name, a file, a symlink) is
+   * skipped, left in place and never removed by the store: `remove` takes only the two names, and
+   * the sweep deletes only what it can name (ADR 0023).
    */
   list(agentId: string): Promise<string[]>;
-  /** The text of a blob's `meta.json`. Rejects when the blob, or its sidecar, is not there. */
+  /**
+   * The text of a blob's `meta.json`. Rejects when the blob, or its sidecar, is not there, and
+   * refuses either when it is a symlink: the tree is sandbox-writable and the store follows no link
+   * out of the agent's directory (ADR 0023, "the scope is a mount").
+   */
   readMeta(agentId: string, blobId: string): Promise<string>;
-  /** Whether the blob's directory is there. A `.tmp` directory is not yet a blob. */
+  /** Whether the blob's directory is there. A `.tmp` directory is not yet a blob; a symlink is refused. */
   exists(agentId: string, blobId: string): Promise<boolean>;
   /**
    * Remove one blob's directory, or one `<blobId>.tmp`, and everything in it; one already gone is
    * not an error. `name` is a blob id, or a blob id with `BLOB_TMP_SUFFIX`, and nothing else: a
-   * slash, `..` or an empty name is refused before anything is touched, so nothing outside the
-   * agent's own directory is reachable through this verb.
+   * slash, `..` or an empty name is refused before anything is touched, and a symlink under a legal
+   * name is refused and left as it is, so nothing outside the agent's own directory is reachable
+   * through this verb.
    */
   remove(agentId: string, name: string): Promise<void>;
 };

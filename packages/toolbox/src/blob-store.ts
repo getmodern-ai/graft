@@ -1,5 +1,6 @@
-import { readdir, readFile, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import type { Stats } from "node:fs";
+import { lstat, readdir, readFile, realpath, rm } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 
 import {
   agentBlobsPath,
@@ -22,6 +23,14 @@ import type { BlobStore } from "./types";
  * This store never writes a blob: the runner does, inside the sandbox, into `<blobId>.tmp` and then
  * by rename (GRA-186). What the server needs of a blob is to see it, read its sidecar and remove it
  * when the sweep says so (GRA-189), and those are the four verbs.
+ *
+ * **What the sandbox wrote is untrusted input here.** ADR 0023's "the scope is a mount" paragraph
+ * makes the mount the guarantee for code running *inside* the sandbox; this store reads the same
+ * tree from outside, where no mount narrows it, so a symlink authored or vendored code dropped at
+ * `/blobs/<id>` or `/blobs/<id>/meta.json` would otherwise lead the server into another agent's
+ * directory or any readable host file. Every entry touched is `lstat`ed and refused if it is a
+ * symlink, and what is read or removed has to resolve beneath the agent's real directory; `list`
+ * answers only names the store can act on, and skips the rest.
  */
 export type FilesystemBlobStore = BlobStore & {
   /** The absolute root the blobs tree lives under; `<root>/.blobs/<agentId>` is one agent's. */
@@ -48,28 +57,43 @@ export function createFilesystemBlobStore(options: { root: string }): Filesystem
         if ((error as { code?: unknown }).code === "ENOENT") return [];
         throw error;
       });
+      // `Dirent.isDirectory()` does not follow a link, so a symlink is skipped here whatever it
+      // points at; a directory under a name that is not a blob id or a `.tmp` is skipped too, since
+      // `remove` refuses it and a listing a caller cannot act on is a listing that breaks the caller.
       return entries
-        .filter((entry) => entry.isDirectory())
+        .filter((entry) => entry.isDirectory() && isBlobName(entry.name))
         .map((entry) => entry.name)
         .sort();
     },
 
     readMeta: async (agentId, blobId) => {
-      const file = join(blobDir(agentId, blobId), BLOB_META_FILE);
-      const info = await stat(file).catch(() => null);
-      if (!info?.isFile()) throw new Error(`no such blob for agent ${agentId}: ${blobId}`);
+      const dir = blobDir(agentId, blobId);
+      const file = join(dir, BLOB_META_FILE);
+      const directory = await inspect(dir, `blob ${blobId} of agent ${agentId}`);
+      const sidecar = directory?.isDirectory()
+        ? await inspect(file, `the sidecar of blob ${blobId} of agent ${agentId}`)
+        : null;
+      if (!sidecar?.isFile()) throw new Error(`no such blob for agent ${agentId}: ${blobId}`);
+      await assertBeneath(agentRoot(agentId), file);
       return readFile(file, "utf8");
     },
 
     exists: async (agentId, blobId) => {
-      const info = await stat(blobDir(agentId, blobId)).catch(() => null);
+      const info = await inspect(blobDir(agentId, blobId), `blob ${blobId} of agent ${agentId}`);
       return info?.isDirectory() ?? false;
     },
 
     remove: async (agentId, name) => {
       assertAgentId(agentId);
       assertBlobName(name);
-      await rm(join(agentRoot(agentId), name), { recursive: true, force: true });
+      const target = join(agentRoot(agentId), name);
+      // Refused rather than unlinked: `rm` on a link would remove the link alone and leave what it
+      // pointed at, but a link here is a sandbox reaching for something, and the store does not act
+      // on it either way.
+      const info = await inspect(target, `${name} of agent ${agentId}`);
+      if (info === null) return;
+      await assertBeneath(agentRoot(agentId), target);
+      await rm(target, { recursive: true, force: true });
     },
   };
 }
@@ -83,4 +107,45 @@ export function createFilesystemBlobStore(options: { root: string }): Filesystem
 export function assertBlobName(name: string): void {
   const id = name.endsWith(BLOB_TMP_SUFFIX) ? name.slice(0, -BLOB_TMP_SUFFIX.length) : name;
   assertBlobId(id);
+}
+
+function isBlobName(name: string): boolean {
+  try {
+    assertBlobName(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `lstat`, so a link is seen as a link and never followed: null when nothing is there, a refusal
+ * naming the entry when it is a symlink, the entry's own info otherwise.
+ */
+async function inspect(path: string, what: string): Promise<Stats | null> {
+  const info = await lstat(path).catch((error: unknown) => {
+    const code = (error as { code?: unknown }).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw error;
+  });
+  if (info?.isSymbolicLink()) {
+    throw new Error(
+      `${what} is a symlink, which the blob store does not follow: a sandbox may write only real files under /blobs (ADR 0023)`,
+    );
+  }
+  return info;
+}
+
+/**
+ * Throw unless `path`, as the filesystem resolves it, is under the agent's directory as the
+ * filesystem resolves that. The `lstat` above catches a link at the entry itself; this catches
+ * anything else that would carry a read or a remove out of the agent's own directory.
+ */
+async function assertBeneath(agentDir: string, path: string): Promise<void> {
+  const [realAgentDir, real] = await Promise.all([realpath(agentDir), realpath(path)]);
+  if (real !== realAgentDir && !real.startsWith(`${realAgentDir}${sep}`)) {
+    throw new Error(
+      `${path} resolves outside the agent's blobs directory (ADR 0023): ${real} is not under ${realAgentDir}`,
+    );
+  }
 }
