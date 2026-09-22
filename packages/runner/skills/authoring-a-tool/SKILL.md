@@ -239,7 +239,7 @@ Run the module through the connection's **execute tool** — `execute__<connecti
 whose description begins "Run code against <connection>":
 
 ```sh
-echo '{"itemId":"itm_a","quantity":2}' | node /graft/runner.mjs /tools/.drafts/<job>/demo-orders
+echo '{"itemId":"itm_a","quantity":2}' | node "$GRAFT_RUNNER" /tools/.drafts/<job>/demo-orders
 ```
 
 The runner takes the module's directory — running its `index.ts`, or `index.mjs` — or the file

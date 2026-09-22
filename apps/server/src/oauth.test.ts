@@ -68,7 +68,7 @@ const MODULE = `export default async (input, ctx) => {
   return await res.json();
 };
 `;
-const RUN = `echo '{}' | node /graft/runner.mjs ${sandboxPath("tools/mail/list-messages/v1")}`;
+const RUN = `echo '{}' | node "$GRAFT_RUNNER" ${sandboxPath("tools/mail/list-messages/v1")}`;
 
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;

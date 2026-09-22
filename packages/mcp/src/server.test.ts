@@ -1,5 +1,5 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { join, posix } from "node:path";
 
 import type { ModuleCheck } from "@graft/check";
 import { setConnectionCredential } from "@graft/core";
@@ -10,7 +10,14 @@ import {
   DEFAULT_PACKAGE_POLICY,
   publishToolVersion,
 } from "@graft/publish";
-import { loadSkills, readRunnerEnvelope, runnerFiles } from "@graft/runner";
+import {
+  loadRunnerSource,
+  loadSkills,
+  RUNNER_DIR,
+  RUNNER_FILE,
+  readRunnerEnvelope,
+  runnerFiles,
+} from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -28,6 +35,7 @@ import { createInFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { revokeConnectionAndNotify } from "./revoke";
 import { runAuthoredTool } from "./run";
+import { seededRunnerPath } from "./sandbox";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
@@ -862,7 +870,7 @@ describe("a tool that writes a blob", () => {
     try {
       const ran = body(
         await a.call(executeToolName(CONN_DEMO), {
-          command: `echo '{"limit":1}' | node /graft/runner.mjs /tools/tools/demo/save-report/v1`,
+          command: `echo '{"limit":1}' | node "$GRAFT_RUNNER" /tools/tools/demo/save-report/v1`,
         }),
       );
       expect(ran.exitCode).toBe(0);
@@ -2276,6 +2284,59 @@ describe("publish_tool", () => {
       });
       expect(body(badName)).toMatchObject({ error: "refused", reason: "input_invalid" });
       expect([...store.tools.values()].some((row) => row.name === "x")).toBe(false);
+    } finally {
+      await a.close();
+    }
+  });
+});
+
+/**
+ * A sandbox first seeded with a runner that had no `ctx.blob` runs the server's runner on its next
+ * open (GRA-193; ADR 0013 as corrected, ADR 0023): the sandbox is the agent's and is never
+ * destroyed, and each server seeds its own `/graft/<hash>/` and runs from it, so what an older
+ * server left at the fixed path is never what runs. Proved both ways: with the stripped runner
+ * standing at this server's own path (present means seeded), the blob tool fails inside the module;
+ * with that directory absent, as in a sandbox that never met this server, the same call seeds and
+ * succeeds, and the older runner at `/graft/runner.mjs` is untouched.
+ */
+describe("a sandbox seeded before ctx.blob existed", () => {
+  const BLOB_MEMBER = "blob: Object.freeze({ write: blobWrite, read: blobRead, stat: blobStat }),";
+
+  it("runs a tool that writes a blob from the server's own runner directory, whatever an older server left at the fixed path", async () => {
+    const source = await loadRunnerSource();
+    expect(source).toContain(BLOB_MEMBER);
+    const stripped = (source ?? "").replace(BLOB_MEMBER, "");
+    const sandboxName = `agent-${AGENT_A}`;
+    const { handle } = await sandbox.ensure({ name: sandboxName });
+    const runner = await seededRunnerPath(deps);
+    expect(runner).toMatch(/^\/graft\/[0-9a-f]{64}\/runner\.mjs$/);
+    // An older server's runner at its fixed path, and the same bytes standing in at this server's
+    // path: the open finds its runner present and leaves it, so the stripped one runs.
+    await handle.writeTree([{ path: RUNNER_FILE, content: stripped }], RUNNER_DIR);
+    await handle.writeTree([{ path: RUNNER_FILE, content: stripped }], posix.dirname(runner));
+
+    const a = await connect(TOKEN_A);
+    try {
+      const before = await a.call(SAVE_REPORT, { limit: 1 });
+      expect(before.isError).toBe(true);
+      // `ctx.blob` is undefined in that runner, and the module's first use of it is `.write`.
+      expect((before.content[0] as { text: string }).text).toContain(
+        "Cannot read properties of undefined (reading 'write')",
+      );
+
+      // Behind the seam, this server's directory removed: the sandbox as one that never met this
+      // server holds it. The open seeds it whole and the blob write goes through.
+      await rm(join(sandbox.sandboxRoot(sandboxName), posix.dirname(runner)), {
+        recursive: true,
+        force: true,
+      });
+      const after = await a.call(SAVE_REPORT, { limit: 1 });
+      expect(after.isError).toBeFalsy();
+      const answer = body(after) as { result: { file: string }; blobs: unknown[] };
+      expect(answer.result.file).toMatch(/^blob:\/\/[0-9a-f-]{36}$/);
+      expect(answer.blobs).toHaveLength(1);
+      expect(await handle.read(runner)).toBe(source);
+      expect(await handle.read(`${RUNNER_DIR}/${RUNNER_FILE}`)).toBe(stripped);
     } finally {
       await a.close();
     }

@@ -41,6 +41,7 @@ import {
   pollProcess,
   readModuleFromSandbox,
   runCommand,
+  seededRunnerPath,
   TOOLBOX_DIR,
   toolboxRelativePath,
   withSandbox,
@@ -217,7 +218,7 @@ const runCommandTool: MetaTool = {
         command: {
           type: "string",
           description:
-            "A shell command, e.g. `echo '{\"n\":1}' | node /graft/runner.mjs <module directory>`.",
+            'A shell command, e.g. `echo \'{"n":1}\' | node "$GRAFT_RUNNER" <module directory>`; GRAFT_RUNNER is set to the runner\'s path in this sandbox.',
         },
         ...commandTimingProperties(),
       },
@@ -230,11 +231,11 @@ const runCommandTool: MetaTool = {
   handle: async (args, session) => {
     const parsed = readCommandInput(args);
     if ("error" in parsed) return toolRefusal("input_invalid", parsed.error);
+    // The runner's path in the sandbox rides in the environment as GRAFT_RUNNER (GRA-193).
+    const env = commandEnvironment(parsed.timeoutSeconds, await seededRunnerPath(session.deps));
     // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
     const ran = await heldInFlight(session.deps.inFlight, session.scope.agentId, () =>
-      withSandbox(open(session), (handle) =>
-        runCommand(handle, parsed, commandEnvironment(parsed.timeoutSeconds)),
-      ),
+      withSandbox(open(session), (handle) => runCommand(handle, parsed, env)),
     );
     if (!("answer" in ran)) return answer(ran);
     // A runner the command invoked by hand wrote these (GRA-186; `../blobs.ts`): rows now, no version.

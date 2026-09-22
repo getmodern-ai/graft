@@ -1,9 +1,10 @@
 /**
  * The runner: how a module of authored code is executed inside a sandbox.
  *
- *   echo '{"orderId": 7}' | node /graft/runner.mjs /tools/unleashed/create-order/v3
+ *   echo '{"orderId": 7}' | node "$GRAFT_RUNNER" /tools/unleashed/create-order/v3
  *
- * Seeded onto every sandbox beside the skills (`runner-source.ts` reads this file from the package).
+ * Seeded onto every sandbox with the skills, under `/graft/<hash>/` (`runner-source.ts` reads this file
+ * from the package and names the directory by its content; `GRAFT_RUNNER` is the path, per exec).
  * Plain Node, no dependencies, because the sandbox image has nothing else at `/graft` — Node 24,
  * `fetch` built in. A published version carries its own `node_modules` beside the module (ADR 0013),
  * and that is the only place an import of a package resolves.

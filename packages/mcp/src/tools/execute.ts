@@ -45,7 +45,7 @@ export function executeToolDefinition(connection: ConnectionOutput): Tool {
     name: executeToolName(connection.id),
     description:
       `Advanced: runs code against ${label} (${connection.vendor}) by hand, for an agent the person asked to author a tool itself rather than through acquire. A shell command in the agent's sandbox that can call ${label} through the proxy with this connection's credential injected; nothing else is granted. ` +
-      `The process has GRAFT_PROXY_URL, GRAFT_CONNECTION and GRAFT_TOKEN set: a module run as \`echo '{}' | node /graft/runner.mjs <module directory or index.ts>\` reaches ${label} through ctx.fetch('/<vendor path>'). A module to be published uses ctx alone: the runner removes every GRAFT_* variable before the module loads, and check_tool refuses a module that names them or a literal vendor host. ` +
+      `The process has GRAFT_PROXY_URL, GRAFT_CONNECTION, GRAFT_TOKEN and GRAFT_RUNNER (the runner's path in this sandbox) set: a module run as \`echo '{}' | node "$GRAFT_RUNNER" <module directory or index.ts>\` reaches ${label} through ctx.fetch('/<vendor path>'). A module to be published uses ctx alone: the runner removes every GRAFT_* variable before the module loads, and check_tool refuses a module that names them or a literal vendor host. ` +
       `Answers like run_command, the exit code and the output cut to its last ${MAX_OUTPUT_CHARS} characters, and is killed after timeoutSeconds (default ${DEFAULT_COMMAND_TIMEOUT_SECONDS}, at most ${MAX_COMMAND_TIMEOUT_SECONDS} when waiting). ` +
       `With dryRun: true the proxy makes GET and HEAD calls for real and stops every other method before it reaches ${label}, answering 202 with header x-graft-dry-run: intercepted and a JSON preview of the request that would have been sent. ` +
       "The first call against a connection may answer awaiting_approval with a url: a handoff whose next step is the person's, in the console; the same call, once they have answered, runs. " +
@@ -57,7 +57,7 @@ export function executeToolDefinition(connection: ConnectionOutput): Tool {
         command: {
           type: "string",
           description:
-            "A shell command, e.g. `echo '{\"limit\":5}' | node /graft/runner.mjs <module directory>`.",
+            'A shell command, e.g. `echo \'{"limit":5}\' | node "$GRAFT_RUNNER" <module directory>`.',
         },
         ...commandTimingProperties(),
         dryRun: {

@@ -199,7 +199,7 @@ describe("the blobs beside a result (GRA-186)", () => {
   });
 
   it("hands every command the blobs mount as GRAFT_BLOBS_DIR, the runner's default spelt the same", async () => {
-    expect(commandEnvironment(60).GRAFT_BLOBS_DIR).toBe(BLOBS_MOUNT_PATH);
+    expect(commandEnvironment(60, "/graft/x/runner.mjs").GRAFT_BLOBS_DIR).toBe(BLOBS_MOUNT_PATH);
     // The runner ships to the sandbox alone and spells the layout's four names itself; the two
     // spellings are pinned here, where both packages are in reach (`runner.mjs`, the header).
     const source = await readFile(RUNNER_SOURCE_PATH, "utf8");
