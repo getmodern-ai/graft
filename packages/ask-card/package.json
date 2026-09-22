@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@graft/config": "workspace:*",
-    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/ext-apps": "2.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "catalog:",
     "happy-dom": "^20.14.5",
