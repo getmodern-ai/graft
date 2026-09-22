@@ -375,7 +375,7 @@ function ConnectionFormFields({
 
 /**
  * Where the credential will go, as the form stands — every host the proxy will pin the connection
- * to (ADR 0010), named beside the secret inputs so the person reads them before typing (ADR 0006).
+ * to (ADR 0010), shown above the form so the person reads them before typing (ADR 0006).
  * The title follows the scheme (`hostsNoticeTitle`): a keyless scheme has no credential to send, so
  * it says the vendor is reached there. An `Alert`, the primitive's own frame, as every notice in
  * this form is.
@@ -383,7 +383,7 @@ function ConnectionFormFields({
 export function HostsNotice({ draft }: { draft: ConnectionDraft }) {
   const hosts = hostsOf(draft);
   return (
-    <Alert>
+    <Alert className="bg-secondary text-secondary-foreground">
       <LanguageIcon />
       <AlertTitle>{hostsNoticeTitle(draft)}</AlertTitle>
       {hosts ? (
