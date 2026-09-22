@@ -377,7 +377,13 @@ const acquireRunner = createAcquireRunner(mcp, {
       backings.analytics.capture({
         distinctId: event.personId,
         event: "acquire_failed",
-        properties: { job_id: event.jobId, agent_id: event.agentId, status: "crashed" },
+        properties: {
+          job_id: event.jobId,
+          agent_id: event.agentId,
+          status: "crashed",
+          // A crash after a write still wrote it: the same tally the finished event reports.
+          blobs_written: event.blobsWritten,
+        },
       });
       return;
     }

@@ -94,9 +94,23 @@ const tallies = new AsyncLocalStorage<BlobTally>();
 export async function withBlobTally<T>(
   work: () => Promise<T>,
 ): Promise<{ value: T; tally: BlobTally }> {
-  const tally: BlobTally = { seen: false, written: 0, dropped: 0 };
-  const value = await tallies.run(tally, work);
+  const tally = newBlobTally();
+  const value = await runUnderBlobTally(tally, work);
   return { value, tally };
+}
+
+/** A fresh tally, for a caller that must read it whether `work` settles or rejects. */
+export function newBlobTally(): BlobTally {
+  return { seen: false, written: 0, dropped: 0 };
+}
+
+/**
+ * Run `work` under a tally the caller holds, so a rejection loses nothing: the acquire runner
+ * reports a crashed job's blobs from the same tally its finished event would have (Greptile on
+ * #151).
+ */
+export function runUnderBlobTally<T>(tally: BlobTally, work: () => Promise<T>): Promise<T> {
+  return tallies.run(tally, work);
 }
 
 /**

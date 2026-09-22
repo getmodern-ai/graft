@@ -1,7 +1,7 @@
 import { claimRunnableAcquireJobs } from "@graft/core";
 import type { AcquireJobRow, RunnableAcquireJob } from "@graft/db/repo/acquire-job";
 
-import { outsideBlobTally, withBlobTally } from "../blobs";
+import { newBlobTally, outsideBlobTally, runUnderBlobTally } from "../blobs";
 import type { McpDeps } from "../deps";
 import { errorMessage } from "../sandbox";
 import { DEFAULT_HEARTBEAT_MS, runAcquireJob } from "./job";
@@ -63,7 +63,16 @@ export type AcquireRunnerEvent =
       blobsWritten: number;
       blobsDropped: number;
     }
-  | { kind: "failed"; jobId: string; agentId: string; personId: string; error: string };
+  | {
+      kind: "failed";
+      jobId: string;
+      agentId: string;
+      personId: string;
+      error: string;
+      /** The same two counts as `finished`: a job that crashed after a write still wrote it. */
+      blobsWritten: number;
+      blobsDropped: number;
+    };
 
 export type AcquireRunner = {
   /** Poll now — coalesced: a kick during a tick schedules one more tick, never a parallel one. */
@@ -109,11 +118,12 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
     });
     // A tally of the job's own (`../blobs.ts`): the dry run's blobs, and later a fixture's, are
     // counted on this job's event, whichever call or tick started it.
-    const work = withBlobTally(() =>
+    const tally = newBlobTally();
+    const work = runUnderBlobTally(tally, () =>
       runAcquireJob(deps, claimed, { heartbeatMs, now: options.now }),
     )
       .then(
-        ({ value: row, tally }) => {
+        (row) => {
           options.onEvent?.({
             kind: "finished",
             jobId: job.id,
@@ -133,6 +143,8 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
             agentId: job.agentId,
             personId: claimed.personId,
             error: errorMessage(error),
+            blobsWritten: tally.written,
+            blobsDropped: tally.dropped,
           });
         },
       )
