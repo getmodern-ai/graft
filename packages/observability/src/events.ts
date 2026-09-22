@@ -49,6 +49,12 @@ export type AnalyticsEvent =
   // that wrote it: `bytes`, `content_type` (a kind), `agent_id`, `version_id`. Never the name the
   // module gave it and never a byte of it.
   | "blob_written"
+  // A blob directory the sweep removed (ADR 0023, "the sweep deletes"; GRA-189), once per removal:
+  // `bytes` (null when an orphan held no data), `cause` (`expired` for a row past its time,
+  // `orphan` for a committed directory with no row and no readable sidecar), `agent_id`. Never the
+  // name and never a byte; a `.tmp` an abandoned write left is cleared without an event, since it
+  // was never a blob.
+  | "blob_swept"
   | "acquire_completed"
   | "acquire_failed";
 

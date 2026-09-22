@@ -22,6 +22,17 @@ export const MAX_COMMAND_TIMEOUT_SECONDS = 300;
 export const DEFAULT_DETACHED_TIMEOUT_SECONDS = 600;
 export const MAX_DETACHED_TIMEOUT_SECONDS = 3600;
 
+/**
+ * How long a `<blobId>.tmp` directory may stand before the sweep reads it as a write a killed run
+ * abandoned rather than one in progress (ADR 0023, "a blob has one commit point"; GRA-189): the
+ * longest any run may live (the detached ceiling, since a detached `run_tool` writes blobs too)
+ * plus one sync ceiling as the margin. A `.tmp` younger than this is never touched, and the sweep
+ * never runs for an agent with a run in flight at all; this bound is for a process that restarted
+ * with a detached run still in a sandbox, and for the by-hand `sweep` script.
+ */
+export const ABANDONED_BLOB_WRITE_SECONDS =
+  MAX_DETACHED_TIMEOUT_SECONDS + MAX_COMMAND_TIMEOUT_SECONDS;
+
 /** Past about this long, a command should be started detached. The one number the descriptions carry. */
 export const DETACHED_ADVICE_SECONDS = 45;
 

@@ -15,9 +15,12 @@ and the S3 mirror is the private package's (GRA-20). Neither interface names a b
 region.
 
 `BlobStore` (`list(agentId)`, `readMeta(agentId, blobId)`, `exists(agentId, blobId)`,
-`remove(agentId, name)`) is keyed by agent, reads and removes only, and is the seam a blob past its
-time is deleted through (GRA-189); a blob is written by the runner from inside the sandbox (GRA-186),
-never by the server. `remove` takes a blob id or a `<blobId>.tmp` and refuses anything else. The
+`remove(agentId, name)`, `stat(agentId, name)`) is keyed by agent, reads and removes only, and is the
+seam a blob past its time is deleted through (GRA-189); a blob is written by the runner from inside
+the sandbox (GRA-186), never by the server. `remove` and `stat` take a blob id or a `<blobId>.tmp`
+and refuse anything else; `stat` answers when the directory was last written (the newest of its own,
+`data`'s and `meta.json`'s modification times) and how many bytes `data` holds, which is how the
+sweep tells a write still landing from one a killed run abandoned. The
 backing here is `createFilesystemBlobStore`, over the same root as the toolbox store; the hosted
 form's is the private package's (GRA-192), and `blobStoreConformance` is the suite both run.
 

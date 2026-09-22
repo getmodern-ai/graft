@@ -4,6 +4,7 @@ import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { AgentScope } from "../tenancy";
 import type { BlobDeps } from "./blob.deps";
+import type { BlobSidecar } from "./blob-sweep.decision";
 
 /**
  * The blob rows (CONTEXT.md, *Blob*; ADR 0023): what the server knows of a file one tool wrote for
@@ -111,4 +112,58 @@ export async function listBlobs(
   deps: BlobDeps,
 ): Promise<BlobRow[]> {
   return deps.listBlobs(ctx.db, scope);
+}
+
+/** This agent's blobs the sweep has not yet removed, soonest to expire first: what the sweep judges (GRA-189). */
+export async function listUnremovedBlobs(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  deps: BlobDeps,
+): Promise<BlobRow[]> {
+  return deps.listUnremovedBlobs(ctx.db, scope);
+}
+
+/**
+ * The sweep removed this blob's directory, or found it already gone: the row stays with
+ * `removed_at`, so the door says expired rather than not found (ADR 0023; GRA-187). Answers whether
+ * this call marked it; a row already marked, or not this agent's, is false and nothing is written.
+ */
+export async function markBlobRemoved(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  blobId: string,
+  deps: BlobDeps,
+): Promise<boolean> {
+  return deps.markBlobRemoved(ctx.db, scope, blobId, deps.now());
+}
+
+/**
+ * The row for a committed directory the sweep found no row for, written from its sidecar (ADR 0023:
+ * a run killed after its rename leaves a directory with a sidecar and no row). The person is the
+ * scope's, the agent the directory's (the sidecar's own `agentId` was judged by the decision), and
+ * the version is the sidecar's `toolVersion`. Null when a row with that id already exists: the run
+ * wrote it meanwhile, or the sweep once removed it and its directory has come back, and the caller
+ * reads the null as "not mine to adopt".
+ */
+export async function adoptBlob(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  blobId: string,
+  sidecar: BlobSidecar,
+  deps: BlobDeps,
+): Promise<BlobRow | null> {
+  if (blobId.trim().length === 0) {
+    throw new ServiceError("BAD_REQUEST", "A blob row names the blob's id");
+  }
+  return deps.insertAdoptedBlob(ctx.db, {
+    id: blobId,
+    personId: scope.personId,
+    agentId: scope.agentId,
+    versionId: sidecar.toolVersion,
+    bytes: sidecar.bytes,
+    contentType: sidecar.contentType,
+    name: sidecar.name,
+    expiresAt: sidecar.expiresAt,
+    createdAt: sidecar.writtenAt,
+  });
 }

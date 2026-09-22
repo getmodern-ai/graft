@@ -6,11 +6,12 @@ import {
   agentBlobsPath,
   assertAgentId,
   assertBlobId,
+  BLOB_DATA_FILE,
   BLOB_META_FILE,
   BLOB_TMP_SUFFIX,
   blobPath,
 } from "./layout";
-import type { BlobStore } from "./types";
+import type { BlobDirectoryStat, BlobStore } from "./types";
 
 /**
  * The blob store as directories on this machine, under the same root the filesystem toolbox store
@@ -21,8 +22,8 @@ import type { BlobStore } from "./types";
  * `packages/sandbox-docker`'s `mountToolbox` with `blobs`).
  *
  * This store never writes a blob: the runner does, inside the sandbox, into `<blobId>.tmp` and then
- * by rename (GRA-186). What the server needs of a blob is to see it, read its sidecar and remove it
- * when the sweep says so (GRA-189), and those are the four verbs.
+ * by rename (GRA-186). What the server needs of a blob is to see it, read its sidecar, tell how
+ * old a directory is and remove it when the sweep says so (GRA-189), and those are the five verbs.
  *
  * **What the sandbox wrote is untrusted input here.** ADR 0023's "the scope is a mount" paragraph
  * makes the mount the guarantee for code running *inside* the sandbox; this store reads the same
@@ -94,6 +95,28 @@ export function createFilesystemBlobStore(options: { root: string }): Filesystem
       if (info === null) return;
       await assertBeneath(agentRoot(agentId), target);
       await rm(target, { recursive: true, force: true });
+    },
+
+    stat: async (agentId, name): Promise<BlobDirectoryStat | null> => {
+      assertAgentId(agentId);
+      assertBlobName(name);
+      const dir = join(agentRoot(agentId), name);
+      const directory = await inspect(dir, `${name} of agent ${agentId}`);
+      if (!directory?.isDirectory()) return null;
+      await assertBeneath(agentRoot(agentId), dir);
+      const [data, meta] = await Promise.all([
+        inspect(join(dir, BLOB_DATA_FILE), `the data of ${name} of agent ${agentId}`),
+        inspect(join(dir, BLOB_META_FILE), `the sidecar of ${name} of agent ${agentId}`),
+      ]);
+      // The newest of the three: a directory's own mtime moves when an entry lands in it, `data`'s
+      // on every chunk the runner streams, so a write in progress is never read as old.
+      const moments = [directory, data, meta]
+        .filter((info): info is Stats => info !== null)
+        .map((info) => info.mtimeMs);
+      return {
+        lastWrittenAt: new Date(Math.max(...moments)),
+        bytes: data?.isFile() ? data.size : null,
+      };
     },
   };
 }

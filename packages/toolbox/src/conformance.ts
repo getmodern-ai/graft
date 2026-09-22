@@ -261,8 +261,30 @@ export function blobStoreConformance(
 
       for (const bad of ["", "..", ".", "a/b", "../blob-a", "/blob-a", BLOB_TMP_SUFFIX, "a b"]) {
         await expect(store.remove(agent, bad), bad).rejects.toThrow(/blob id/);
+        await expect(store.stat(agent, bad), bad).rejects.toThrow(/blob id/);
       }
       expect(await store.exists(agent, "blob-a")).toBe(true);
+    });
+
+    it("stats a blob and a .tmp: when it was last written and how many bytes its data holds, null bytes with no data, null for nothing", async () => {
+      const agent = agentFor("stat");
+      const before = Date.now() - 5_000;
+      await fixture.write(agent, "blob-a", blob("a"));
+      await fixture.write(agent, `blob-b${BLOB_TMP_SUFFIX}`, [{ path: "data", content: "half" }]);
+      await fixture.write(agent, `blob-c${BLOB_TMP_SUFFIX}`, [
+        { path: BLOB_META_FILE, content: meta },
+      ]);
+
+      const whole = await store.stat(agent, "blob-a");
+      expect(whole?.bytes).toBe("bytes".length);
+      expect(whole?.lastWrittenAt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(whole?.lastWrittenAt.getTime()).toBeLessThanOrEqual(Date.now() + 5_000);
+      expect(await store.stat(agent, `blob-b${BLOB_TMP_SUFFIX}`)).toMatchObject({
+        bytes: "half".length,
+      });
+      expect(await store.stat(agent, `blob-c${BLOB_TMP_SUFFIX}`)).toMatchObject({ bytes: null });
+      expect(await store.stat(agent, "nowhere")).toBeNull();
+      expect(await store.stat(agentFor("stat-other"), "blob-a")).toBeNull();
     });
 
     it("refuses an agent id that could be a path, on every verb", async () => {
@@ -271,6 +293,7 @@ export function blobStoreConformance(
         await expect(store.readMeta(bad, "blob-a"), bad).rejects.toThrow(/agent id/);
         await expect(store.exists(bad, "blob-a"), bad).rejects.toThrow(/agent id/);
         await expect(store.remove(bad, "blob-a"), bad).rejects.toThrow(/agent id/);
+        await expect(store.stat(bad, "blob-a"), bad).rejects.toThrow(/agent id/);
       }
     });
   });

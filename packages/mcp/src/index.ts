@@ -90,6 +90,7 @@ export {
   UI_EXTENSION_ID,
 } from "./ask-card";
 export {
+  ABANDONED_BLOB_WRITE_SECONDS,
   clampTimeout,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   DEFAULT_DETACHED_TIMEOUT_SECONDS,
@@ -197,9 +198,12 @@ export {
   SERVER_INSTRUCTIONS,
 } from "./session";
 export {
+  type BlobSweptEvent,
   type RunSweepOptions,
   runSweep,
   type StartSweepOptions,
+  type SweepBlobAction,
+  type SweepBlobCounts,
   type SweepDemotion,
   type SweepHandle,
   type SweepReport,

@@ -890,6 +890,53 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
             row.expiresAt.getTime() > now.getTime(),
         )
         .reduce((total, row) => total + row.bytes, 0),
+    // The sweep's three (GRA-189): the unremoved rows soonest to expire first, the one-shot mark
+    // under the pair, and the adoption that writes nothing when the id is taken.
+    listUnremovedBlobs: async (_db, scope) =>
+      store.blobs
+        .filter(
+          (row) =>
+            row.agentId === scope.agentId &&
+            row.personId === scope.personId &&
+            row.removedAt === null,
+        )
+        .sort(
+          (a, b) =>
+            a.expiresAt.getTime() - b.expiresAt.getTime() ||
+            (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        ),
+    markBlobRemoved: async (_db, scope, blobId, removedAt) => {
+      const index = store.blobs.findIndex(
+        (row) =>
+          row.id === blobId &&
+          row.agentId === scope.agentId &&
+          row.personId === scope.personId &&
+          row.removedAt === null,
+      );
+      const row = store.blobs[index];
+      if (!row) return false;
+      store.blobs[index] = { ...row, removedAt, updatedAt: store.now() };
+      return true;
+    },
+    insertAdoptedBlob: async (_db, row) => {
+      if (store.blobs.some((existing) => existing.id === row.id)) return null;
+      const inserted: BlobRow = {
+        id: row.id,
+        personId: row.personId,
+        agentId: row.agentId,
+        versionId: row.versionId ?? null,
+        bytes: row.bytes,
+        contentType: row.contentType,
+        name: row.name ?? null,
+        expiresAt: row.expiresAt,
+        removedAt: row.removedAt ?? null,
+        owner: "person",
+        createdAt: row.createdAt ?? store.now(),
+        updatedAt: row.updatedAt ?? store.now(),
+      };
+      store.blobs.push(inserted);
+      return inserted;
+    },
     now: store.now,
   };
 

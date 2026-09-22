@@ -91,6 +91,24 @@ export type BlobStore = {
    * through this verb.
    */
   remove(agentId: string, name: string): Promise<void>;
+  /**
+   * When a directory under the agent's blobs directory was last written to, and how many bytes its
+   * `data` holds; null when nothing is there. `name` is a blob id or a `<blobId>.tmp`, as `remove`
+   * takes. The sweep's two reads past the sidecar (GRA-189): whether a `.tmp` is a write still
+   * landing or one a killed run abandoned, and what a committed directory it found no row and no
+   * readable sidecar for held. `lastWrittenAt` is the newest modification time among the directory,
+   * `data` and `meta.json`, so a write still streaming into `data` reads as now; `bytes` is null
+   * when there is no `data` yet. A symlink at any of the three is refused, as everywhere here.
+   */
+  stat(agentId: string, name: string): Promise<BlobDirectoryStat | null>;
+};
+
+/** What `BlobStore.stat` answers for a directory that is there. */
+export type BlobDirectoryStat = {
+  /** The newest of the directory's, `data`'s and `meta.json`'s modification times. */
+  lastWrittenAt: Date;
+  /** The size of `data`, or null when the directory holds none yet. */
+  bytes: number | null;
 };
 
 /**
