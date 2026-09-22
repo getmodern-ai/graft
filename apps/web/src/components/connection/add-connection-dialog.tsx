@@ -109,8 +109,8 @@ export function AddConnectionDialog({
           <DialogHeader>
             <DialogTitle>Add a connection</DialogTitle>
             <DialogDescription>
-              One vendor account: its hosts, its auth scheme and its credential, entered once and
-              never shown again. Agents use it once you add it to their scope.
+              Connect an account for your agents to use. Your credentials are saved securely and
+              won’t be shown again.
             </DialogDescription>
           </DialogHeader>
           <ConnectionForm
