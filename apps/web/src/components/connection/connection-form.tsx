@@ -1,11 +1,12 @@
 import type { AuthScheme } from "@graft/proxy/types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ConnectionField } from "@/components/connection/connection-field";
 import { CredentialFields } from "@/components/connection/credential-fields";
 import { OAuthClientNotice } from "@/components/connection/oauth-client-notice";
-import { LanguageIcon } from "@/components/icons";
+import { KeyboardArrowDownIcon, KeyboardArrowUpIcon, LanguageIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
   FieldDescription,
   FieldError,
@@ -81,7 +82,6 @@ export function ConnectionForm(props: ConnectionFormProps) {
   const [details] = useState(() =>
     groupFields([
       { name: "vendor", value: draft.vendor, required: true },
-      { name: "displayName", value: draft.displayName, required: true },
       {
         name: "primaryHost",
         value: draft.primaryHost.trim() === "https://" ? "" : draft.primaryHost,
@@ -95,12 +95,18 @@ export function ConnectionForm(props: ConnectionFormProps) {
   // A different scheme has fresh parameters; the other details keep their original sections.
   if (parameters.scheme !== draft.scheme) setParameters(groupParameters(draft));
 
-  const required = [...details.required, ...parameters.required];
+  const required = ["displayName", ...details.required, ...parameters.required];
   const prefilled = [...details.prefilled, ...parameters.prefilled];
   const optional = [...details.optional, ...parameters.optional];
   const credentials = credentialFieldsFor(draft.scheme);
-  const hasRequired = required.length > 0 || credentials.some((field) => field.required);
   const hasOptional = optional.length > 0 || credentials.some((field) => !field.required);
+  const [showPrefilled, setShowPrefilled] = useState(false);
+  useEffect(() => {
+    const hasPrefilledErrors = [...details.prefilled, ...parameters.prefilled].some(
+      (name) => errors[name] || (name.startsWith("schemeConfig.") && errors.schemeConfig),
+    );
+    if (hasPrefilledErrors) setShowPrefilled(true);
+  }, [errors, details.prefilled, parameters.prefilled]);
   const credentialProps = {
     scheme: draft.scheme,
     value: draft.credential,
@@ -113,26 +119,40 @@ export function ConnectionForm(props: ConnectionFormProps) {
   return (
     <>
       <FieldDescription>
-        Complete the required fields first. Prefilled details below can be edited individually.
+        Complete the required fields. Expand prefilled details to review or edit them.
       </FieldDescription>
-      {hasRequired ? (
-        <FieldSet>
-          <FieldLegend>Required fields</FieldLegend>
-          <FieldGroup>
-            <OAuthClientNotice draft={draft} />
-            <ConnectionFormFields {...props} fieldNames={required} />
-            <HostsNotice draft={draft} />
-            <CredentialFields {...credentialProps} include="required" />
-          </FieldGroup>
-        </FieldSet>
-      ) : (
-        <HostsNotice draft={draft} />
-      )}
+      <FieldSet>
+        <FieldLegend>Required fields</FieldLegend>
+        <FieldGroup>
+          <OAuthClientNotice draft={draft} />
+          <ConnectionFormFields {...props} fieldNames={required} />
+          <HostsNotice draft={draft} />
+          <CredentialFields {...credentialProps} include="required" />
+        </FieldGroup>
+      </FieldSet>
       {credentials.length === 0 ? <CredentialFields {...credentialProps} /> : null}
       {prefilled.length > 0 ? (
         <FieldSet>
-          <FieldLegend>Prefilled details</FieldLegend>
-          <FieldGroup>
+          <FieldLegend className="mb-0 w-full">
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              className="w-full justify-between"
+              aria-expanded={showPrefilled}
+              aria-controls={`${idPrefix}-prefilled-details`}
+              onClick={() => setShowPrefilled((open) => !open)}
+            >
+              Prefilled details
+              {showPrefilled ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+            </Button>
+          </FieldLegend>
+          {/* Keep controls mounted so collapsing preserves each field's editing state. */}
+          <FieldGroup
+            id={`${idPrefix}-prefilled-details`}
+            hidden={!showPrefilled}
+            className={cn("pt-4", !showPrefilled && "hidden")}
+          >
             <ConnectionFormFields {...props} fieldNames={prefilled} />
           </FieldGroup>
         </FieldSet>
@@ -174,7 +194,31 @@ function ConnectionFormFields({
   return (
     <>
       {show("vendor") || show("displayName") ? (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div
+          className={cn("grid gap-4", show("vendor") && show("displayName") && "sm:grid-cols-2")}
+        >
+          {show("displayName") ? (
+            <ConnectionField
+              id={id("displayName")}
+              label="Name"
+              value={draft.displayName}
+              required
+              alwaysEditable
+              disabled={disabled}
+              error={errors.displayName}
+              hint="What you and your agents will see."
+            >
+              {(props) => (
+                <Input
+                  {...props}
+                  value={draft.displayName}
+                  placeholder="Name this connection"
+                  autoComplete="off"
+                  onChange={(event) => onChange({ ...draft, displayName: event.target.value })}
+                />
+              )}
+            </ConnectionField>
+          ) : null}
           {show("vendor") ? (
             <ConnectionField
               id={id("vendor")}
@@ -193,27 +237,6 @@ function ConnectionFormFields({
                   autoComplete="off"
                   spellCheck={false}
                   onChange={(event) => onChange({ ...draft, vendor: event.target.value })}
-                />
-              )}
-            </ConnectionField>
-          ) : null}
-          {show("displayName") ? (
-            <ConnectionField
-              id={id("displayName")}
-              label="Name"
-              value={draft.displayName}
-              required
-              disabled={disabled}
-              error={errors.displayName}
-              hint="What you and your agents will see."
-            >
-              {(props) => (
-                <Input
-                  {...props}
-                  value={draft.displayName}
-                  placeholder="Name this connection"
-                  autoComplete="off"
-                  onChange={(event) => onChange({ ...draft, displayName: event.target.value })}
                 />
               )}
             </ConnectionField>

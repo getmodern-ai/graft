@@ -99,7 +99,20 @@ function status(name: string) {
   return document.getElementById(`test-${name}-status`)?.textContent ?? null;
 }
 
+function prefilledToggle() {
+  const button = document.querySelector<HTMLButtonElement>(
+    'button[aria-controls="test-prefilled-details"]',
+  );
+  if (!button) throw new Error("No prefilled details toggle");
+  return button;
+}
+
+async function togglePrefilled() {
+  await act(async () => prefilledToggle().click());
+}
+
 async function edit(label: string) {
+  if (prefilledToggle().getAttribute("aria-expanded") === "false") await togglePrefilled();
   const button = document.querySelector<HTMLButtonElement>(`button[aria-label="Edit ${label}"]`);
   if (!button) throw new Error(`No edit button: ${label}`);
   await act(async () => button.click());
@@ -125,20 +138,20 @@ async function scheme(label: string) {
 }
 
 describe("connection field entry", () => {
-  it("keeps supplied details readable and submits them untouched alongside the entered secret", async () => {
+  it("starts with supplied details collapsed and submits them untouched alongside the name and secret", async () => {
     await mount();
-    for (const name of [
-      "vendor",
-      "displayName",
-      "primaryHost",
-      "scheme",
-      "schemeConfig.headerName",
-    ]) {
+    for (const name of ["vendor", "primaryHost", "scheme", "schemeConfig.headerName"]) {
       expect(input(name).readOnly).toBe(true);
       expect(input(name).disabled).toBe(false);
       expect(status(name)).toBe("Prefilled");
       expect(input(name).tabIndex).toBe(-1);
+      expect(input(name).closest("[hidden]")).not.toBeNull();
     }
+    expect(prefilledToggle().getAttribute("aria-expanded")).toBe("false");
+    expect(input("displayName").readOnly).toBe(false);
+    expect(input("displayName").closest("[hidden]")).toBeNull();
+    expect(input("displayName").tabIndex).toBe(0);
+    expect(document.querySelector('button[aria-label="Edit Name"]')).toBeNull();
     expect(status("credential-apiKey")).toBe("To complete");
     expect([...document.querySelectorAll("legend")].map((legend) => legend.textContent)).toEqual([
       "Required fields",
@@ -146,14 +159,16 @@ describe("connection field entry", () => {
       "Optional fields",
     ]);
     expect(section("credential-apiKey")).toBe("Required fields");
+    expect(section("displayName")).toBe("Required fields");
     expect(section("vendor")).toBe("Prefilled details");
     expect(section("hosts")).toBe("Optional fields");
-    expect(document.querySelector("input")?.id).toBe("test-credential-apiKey");
+    expect(document.querySelector("input")?.id).toBe("test-displayName");
     expect(input("credential-apiKey").type).toBe("password");
     expect(input("credential-apiKey").readOnly).toBe(false);
     expect(input("credential-apiKey").getAttribute("aria-invalid")).toBeNull();
     expect(status("hosts")).toBeNull();
     expect(status("schemeConfig.prefix")).toBeNull();
+    await change("displayName", "My search connection");
     await change("credential-apiKey", "test-only-secret");
     expect(status("credential-apiKey")).toBe("Entered");
     expect(section("credential-apiKey")).toBe("Required fields");
@@ -168,7 +183,7 @@ describe("connection field entry", () => {
       ok: true,
       value: {
         vendor: proposal.vendor,
-        displayName: proposal.displayName,
+        displayName: "My search connection",
         primaryHost: proposal.primaryHost,
         hosts: ["api.example.com"],
         scheme: proposal.scheme,
@@ -176,6 +191,38 @@ describe("connection field entry", () => {
         credential: { apiKey: "test-only-secret" },
       },
     });
+  });
+
+  it("keeps Name editable and visible when prefilled details are expanded or collapsed", async () => {
+    await mount();
+    await togglePrefilled();
+    expect(input("vendor").closest("[hidden]")).toBeNull();
+    expect(input("displayName").readOnly).toBe(false);
+    await change("displayName", "A different name");
+    expect(status("displayName")).toBe("Edited");
+    await togglePrefilled();
+    expect(input("displayName").value).toBe("A different name");
+    expect(input("displayName").closest("[hidden]")).toBeNull();
+    await change("displayName", proposal.displayName);
+    expect(input("displayName").readOnly).toBe(false);
+    await change("displayName", "");
+    expect(status("displayName")).toBe("To complete");
+    expect(input("displayName").readOnly).toBe(false);
+  });
+
+  it("preserves a default's edited value and unlocked state across collapse and expand", async () => {
+    await mount();
+    await edit("Header name");
+    await change("schemeConfig.headerName", "api-key");
+    await togglePrefilled();
+    expect(prefilledToggle().getAttribute("aria-expanded")).toBe("false");
+    expect(input("schemeConfig.headerName").closest("[hidden]")).not.toBeNull();
+    await togglePrefilled();
+    expect(prefilledToggle().getAttribute("aria-expanded")).toBe("true");
+    expect(input("schemeConfig.headerName").value).toBe("api-key");
+    expect(input("schemeConfig.headerName").readOnly).toBe(false);
+    expect(status("schemeConfig.headerName")).toBe("Edited");
+    expect(document.querySelector('button[aria-label="Edit Header name"]')).toBeNull();
   });
 
   it("focuses an unlocked default and keeps it editable as the person changes or clears it", async () => {
@@ -215,13 +262,19 @@ describe("connection field entry", () => {
   it("opens a rejected default for correction and links its error to the field", async () => {
     await mount();
     await mount(proposal, { primaryHost: "This host was refused." });
+    expect(prefilledToggle().getAttribute("aria-expanded")).toBe("true");
+    expect(input("primaryHost").closest("[hidden]")).toBeNull();
     expect(input("primaryHost").readOnly).toBe(false);
     expect(status("primaryHost")).toBe("Check this");
     expect(input("primaryHost").getAttribute("aria-describedby")).toContain(
       "test-primaryHost-error",
     );
+    await togglePrefilled();
+    await mount(proposal, { primaryHost: "This host was refused." });
+    expect(prefilledToggle().getAttribute("aria-expanded")).toBe("true");
     await change("primaryHost", "https://other.example.com");
     await mount();
+    expect(prefilledToggle().getAttribute("aria-expanded")).toBe("true");
     expect(input("primaryHost").readOnly).toBe(false);
     expect(status("primaryHost")).toBe("Edited");
   });
@@ -243,6 +296,7 @@ describe("connection field entry", () => {
     await scheme("No credential");
     expect(document.querySelector('input[type="password"]')).toBeNull();
     expect([...document.querySelectorAll("legend")].map((legend) => legend.textContent)).toEqual([
+      "Required fields",
       "Prefilled details",
       "Optional fields",
     ]);
@@ -269,7 +323,7 @@ describe("connection field entry", () => {
     expect(section("schemeConfig.authorizeUrl")).toBe("Prefilled details");
     expect(section("schemeConfig.tokenUrl")).toBe("Prefilled details");
     expect(section("schemeConfig.scopes")).toBe("Prefilled details");
-    expect(document.querySelector("input")?.id).toBe("test-schemeConfig.clientId");
+    expect(document.querySelector("input")?.id).toBe("test-displayName");
     await change("schemeConfig.clientId", "example-client");
     expect(section("schemeConfig.clientId")).toBe("Required fields");
     await edit("Token URL");
@@ -289,6 +343,7 @@ describe("connection field entry", () => {
   it("disables both Edit and entry while the form is busy", async () => {
     await mount(proposal, {}, true);
     expect(input("credential-apiKey").disabled).toBe(true);
+    expect(input("displayName").disabled).toBe(true);
     const button = document.querySelector<HTMLButtonElement>('button[aria-label="Edit Vendor"]');
     expect(button?.disabled).toBe(true);
     await edit("Vendor");

@@ -25,6 +25,7 @@ export function ConnectionField({
   required = false,
   incomplete = !value.trim(),
   secret = false,
+  alwaysEditable = false,
   hint,
   error,
   disabled,
@@ -36,6 +37,7 @@ export function ConnectionField({
   required?: boolean;
   incomplete?: boolean;
   secret?: boolean;
+  alwaysEditable?: boolean;
   hint?: string;
   error?: string;
   disabled?: boolean;
@@ -45,7 +47,7 @@ export function ConnectionField({
   const [initialValue] = useState(() => (secret || incomplete ? "" : value));
   const [editing, setEditing] = useState(false);
   const prefilled = initialValue !== "";
-  const readOnly = prefilled && !editing && !error && value === initialValue;
+  const readOnly = prefilled && !alwaysEditable && !editing && !error && value === initialValue;
   const missing = required && incomplete;
   const status = error
     ? "invalid"
