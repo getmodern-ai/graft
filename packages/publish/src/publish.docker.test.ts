@@ -9,10 +9,10 @@ import { promisify } from "node:util";
 
 import { checkModule } from "@graft/check";
 import {
-  RUNNER_DIR,
-  RUNNER_PATH,
   readRunnerEnvelope,
   runnerFiles,
+  runnerPath,
+  runnerSeedDir,
 } from "@graft/runner/runner-source";
 import { fetchProbe } from "@graft/sandbox/conformance";
 import {
@@ -241,11 +241,12 @@ describe.skipIf(docker.reason !== undefined)("the publish against the Docker bac
     // A run: the toolbox mounted first, the runner seeded, the module imported from the version.
     const { handle } = await backend.ensure({ name: "run" });
     await handle.mountToolbox({ toolboxId: PERSON, mountPath: TOOLBOX_MOUNT_PATH });
-    await handle.writeTree(await runnerFiles(), RUNNER_DIR);
+    // Seeded by hand under a stand-in hash: this suite has no MCP deps to compute the real one.
+    await handle.writeTree(await runnerFiles(), runnerSeedDir("test"));
     const modulePath = sandboxPath(result.version.path);
     expect(modulePath).toBe("/tools/tools/demo/pad/v1");
     const output = await handle.exec(
-      `printf '%s' '{"word":"x","width":3}' | node ${RUNNER_PATH} ${modulePath}`,
+      `printf '%s' '{"word":"x","width":3}' | node ${runnerPath("test")} ${modulePath}`,
       { timeoutSeconds: 60 },
     );
     // The runner's envelope (GRA-186): the module's result beside the ledger of blobs it wrote, none here.

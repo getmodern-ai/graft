@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { type ModuleSources, readModuleSources, singleFileModule } from "@graft/check";
 import type { AgentScope } from "@graft/core";
@@ -6,10 +6,12 @@ import { causeChain, describeLink, TRUNCATED } from "@graft/proxy/cause-chain";
 import {
   type BlobLedgerEntry,
   RESULT_MARKER,
-  RUNNER_DIR,
-  RUNNER_PATH,
+  RUNNER_PATH_VARIABLE,
+  type RunnerFile,
   readRunnerEnvelope,
-  SKILLS_DIR,
+  runnerPath,
+  runnerSeedDir,
+  SKILLS_SUBDIR,
   skillFiles,
 } from "@graft/runner";
 import type { MountToolboxArgs, SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
@@ -42,7 +44,8 @@ import type { McpDeps } from "./deps";
  * One sandbox per agent, found again by name on every call. The mounts come **first**, before
  * anything is written: a backing may recreate the sandbox to attach a mount and only the mounts are
  * guaranteed to survive that (`@graft/sandbox`'s `mountToolbox`), so the runner and the skills are
- * seeded after them, and only when they are not already there. The toolbox id is the person's id,
+ * seeded after them, under a directory named by their content hash and only when that directory is
+ * not there yet (`seedRunner`). The toolbox id is the person's id,
  * because the toolbox is the person's (ADR 0007): every agent of one person mounts one volume, and a
  * tool published for one is on the disk of all. The blobs directory is the agent's own (ADR 0023):
  * `.blobs/<agentId>` beside the toolboxes, mounted alone at `/blobs`, so the scope of a blob is the
@@ -93,8 +96,14 @@ export function agentSandboxName(prefix: string, agentId: string): string {
   return `${prefix}-${agentId}`;
 }
 
+/** What opening a sandbox reads off the deps: the backing, its name prefix, and the seed's two trees. */
+export type SandboxDeps = Pick<McpDeps, "sandbox" | "sandboxNamePrefix" | "runnerFiles" | "skills">;
+
 /** The agent's sandbox, mounted and seeded. Throws what the backing throws; callers wrap it. */
-export async function openAgentSandbox(deps: McpDeps, scope: AgentScope): Promise<SandboxHandle> {
+export async function openAgentSandbox(
+  deps: SandboxDeps,
+  scope: AgentScope,
+): Promise<SandboxHandle> {
   if (!deps.sandbox) {
     throw new Error(
       "no sandbox backing is configured on this deployment — set GRAFT_SANDBOX_IMAGE and GRAFT_SANDBOX_NETWORK for Docker, or GRAFT_SANDBOX_BACKEND=fake on a laptop",
@@ -115,13 +124,107 @@ export async function remountToolbox(handle: SandboxHandle, scope: AgentScope): 
   await handle.mountToolbox(agentMounts(scope));
 }
 
-async function seedRunner(deps: McpDeps, handle: SandboxHandle): Promise<void> {
-  const present = await handle.ls(RUNNER_DIR).catch(() => [] as string[]);
-  if (present.includes(RUNNER_PATH)) return;
-  const runner = await deps.runnerFiles();
-  if (runner.length > 0) await handle.writeTree(runner, RUNNER_DIR);
-  const skills = skillFiles(await deps.skills());
-  if (skills.length > 0) await handle.writeTree(skills, SKILLS_DIR);
+/**
+ * The seed: the runner and the skills as one tree under a directory named by its content hash,
+ * `/graft/<hash>/` (`@graft/runner`'s `runnerSeedDir`) — `runner.mjs` at the top, each skill at
+ * `skills/<name>/SKILL.md`. The paths are relative to that directory, and the runner is last: its
+ * presence is what an open checks, so a runner that is there says the tree before it is too.
+ */
+type Seed = { files: RunnerFile[]; digest: string };
+
+/**
+ * The seed and its digest, computed once per pair of sources: the runner source and the skills are
+ * each read once per process (`@graft/runner`), so the hash is too. Keyed on the two functions
+ * rather than the deps object, because a test hands different sources under one shape and the
+ * server hands one pair under any number of deps objects.
+ */
+const seeds = new WeakMap<
+  SandboxDeps["runnerFiles"],
+  WeakMap<SandboxDeps["skills"], Promise<Seed>>
+>();
+
+function seedFor(deps: SandboxDeps): Promise<Seed> {
+  let bySkills = seeds.get(deps.runnerFiles);
+  if (!bySkills) {
+    bySkills = new WeakMap();
+    seeds.set(deps.runnerFiles, bySkills);
+  }
+  let seed = bySkills.get(deps.skills);
+  if (!seed) {
+    seed = Promise.all([deps.runnerFiles(), deps.skills()]).then(([runner, skills]) => {
+      const files = [
+        ...skillFiles(skills).map((file) => ({
+          path: `${SKILLS_SUBDIR}/${file.path}`,
+          content: file.content,
+        })),
+        ...runner,
+      ];
+      return { files, digest: seedDigest(files) };
+    });
+    bySkills.set(deps.skills, seed);
+  }
+  return seed;
+}
+
+/**
+ * The hex SHA-256 over every seeded file, ordered by its path inside the seed's directory, each as
+ * the path, the byte length and the content with a NUL between: two servers shipping the same
+ * runner and skills name the same directory, and one that ships a different byte names another.
+ */
+export function seedDigest(files: readonly RunnerFile[]): string {
+  const hash = createHash("sha256");
+  const entries = [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  for (const entry of entries) {
+    hash.update(`${entry.path}\0${Buffer.byteLength(entry.content)}\0`);
+    hash.update(entry.content);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+/** Where this server's runner is in every sandbox it has seeded: `/graft/<hash>/runner.mjs`. */
+export async function seededRunnerPath(deps: SandboxDeps): Promise<string> {
+  return runnerPath((await seedFor(deps)).digest);
+}
+
+/**
+ * The runner's path off a command's environment (`commandEnvironment` put it there), for the
+ * script `run.ts` builds around a module. Thrown for an environment built any other way.
+ */
+export function runnerPathIn(env: Record<string, string>): string {
+  const path = env[RUNNER_PATH_VARIABLE];
+  if (!path) {
+    throw new Error(
+      `${RUNNER_PATH_VARIABLE} is not in the command's environment; build it with commandEnvironment`,
+    );
+  }
+  return path;
+}
+
+/**
+ * Seed the runner and the skills, or find them there: a sandbox is one per agent and never destroyed
+ * (ADR 0013's Docker consequence as corrected on 2026-09-22; ADR 0023's second paragraph), so a
+ * long-lived sandbox runs the server's runner rather than the one it was first seeded with — a
+ * deploy that changes `runner.mjs` or a skill seeds its own directory into every agent's sandbox on
+ * its next open and runs from it (GRA-193). The directory is named by the content, so two server
+ * versions sharing a sandbox through a rolling deploy write two directories and never one path, and
+ * two processes of one version write the same bytes to the same paths; there is no marker to
+ * disagree with the files. The open reads one file, the runner at this server's path, in place of
+ * the directory listing it used to do. What an older server seeded — `/graft/runner.mjs` before
+ * GRA-193, another hash's directory after — stays where it is, a few tens of kilobytes each; nothing
+ * here removes.
+ */
+async function seedRunner(deps: SandboxDeps, handle: SandboxHandle): Promise<void> {
+  const seed = await seedFor(deps);
+  const sentinel = seed.files.at(-1);
+  if (!sentinel) return;
+  const directory = runnerSeedDir(seed.digest);
+  const present = await handle.read(`${directory}/${sentinel.path}`).then(
+    () => true,
+    () => false,
+  );
+  if (present) return;
+  await handle.writeTree(seed.files, directory);
 }
 
 /**
@@ -180,13 +283,20 @@ export function errorMessage(error: unknown): string {
  * are mounted (ADR 0023), a variable rather than a constant in the runner for the reason
  * `GRAFT_RESULT_PATH` is one: a backing that maps the sandbox's paths under a root maps the
  * environment's values with them (the fake's `rewriteEnvPaths`), and the runner cannot know the
- * root. No token here — `run.ts` adds one, per process, for a run that may reach a vendor (ADR 0010).
+ * root; and `GRAFT_RUNNER`, where this server's runner is in the sandbox (`seededRunnerPath`), for
+ * the same reason and so a command the model types runs `node "$GRAFT_RUNNER" <module>` without
+ * knowing the hash (GRA-193). No token here — `run.ts` adds one, per process, for a run that may
+ * reach a vendor (ADR 0010).
  */
-export function commandEnvironment(timeoutSeconds: number): Record<string, string> {
+export function commandEnvironment(
+  timeoutSeconds: number,
+  runnerPathInSandbox: string,
+): Record<string, string> {
   return {
     NODE_USE_ENV_PROXY: "1",
     GRAFT_TIMEOUT_MS: String(Math.max(1_000, (timeoutSeconds - 2) * 1_000)),
     GRAFT_BLOBS_DIR: BLOBS_DIR,
+    [RUNNER_PATH_VARIABLE]: runnerPathInSandbox,
   };
 }
 

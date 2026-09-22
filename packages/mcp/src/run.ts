@@ -23,7 +23,6 @@ import {
   EXIT_TIMEOUT,
   EXIT_USAGE,
   MODULE_ENTRIES,
-  RUNNER_PATH,
   readRunnerEnvelope,
 } from "@graft/runner";
 import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
@@ -45,6 +44,8 @@ import {
   openAgentSandbox,
   RUN_SCRATCH_DIR,
   remountToolbox,
+  runnerPathIn,
+  seededRunnerPath,
   startDetached,
 } from "./sandbox";
 import { compileInputSchema } from "./schema";
@@ -188,7 +189,7 @@ export async function runWithCapability<T>(args: {
     );
   }
   return args.run({
-    ...commandEnvironment(mode.timeoutSeconds),
+    ...commandEnvironment(mode.timeoutSeconds, await seededRunnerPath(deps)),
     GRAFT_PROXY_URL: deps.proxyPublicUrl,
     GRAFT_CONNECTION: args.connectionId,
     GRAFT_TOKEN: token,
@@ -257,6 +258,8 @@ export async function runModule(
   );
 
   const module = shellQuote(args.modulePath);
+  // This server's runner, `/graft/<hash>/runner.mjs`, as the environment carries it (GRA-193).
+  const runner = shellQuote(runnerPathIn(args.env));
   const absent = moduleAbsent(module);
   // A dry run is always waited: the report is the point.
   const detached = args.mode.detached && !args.mode.dryRun;
@@ -279,7 +282,7 @@ export async function runModule(
     }
     const script = [
       `if ${absent}; then exit ${EXIT_MODULE_MISSING}; fi;`,
-      `node ${shellQuote(RUNNER_PATH)} ${module} < ${shellQuote(inputFile)}; code=$?;`,
+      `node ${runner} ${module} < ${shellQuote(inputFile)}; code=$?;`,
       `rm -f ${shellQuote(inputFile)}; exit $code`,
     ].join(" ");
     const started = await startDetached(handle, {
@@ -293,7 +296,7 @@ export async function runModule(
 
   const script = [
     `if ${absent}; then exit ${EXIT_MODULE_MISSING}; fi;`,
-    `node ${shellQuote(RUNNER_PATH)} ${module} < ${shellQuote(inputFile)} 2> ${shellQuote(stderrFile)}; code=$?;`,
+    `node ${runner} ${module} < ${shellQuote(inputFile)} 2> ${shellQuote(stderrFile)}; code=$?;`,
     `printf '\\n${STDERR_MARKER}\\n'; tail -c ${STDERR_TAIL_BYTES} ${shellQuote(stderrFile)};`,
     `rm -f ${shellQuote(inputFile)} ${shellQuote(stderrFile)}; exit $code`,
   ].join(" ");

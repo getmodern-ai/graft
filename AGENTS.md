@@ -645,7 +645,10 @@ it into `/blobs/<id>.tmp/`, writes the sidecar (`bytes`, `contentType`, `name`, 
 `read` answers a lazy `Blob` (declared ahead of GRA-187, which adds the door). The runner's stdout
 contract is now an **envelope**, `{ result, blobs }`, on the sync, detached and dry-run paths alike
 (`readRunnerEnvelope` in `@graft/runner`; `run.ts`'s `unwrapEnvelope` reads a bare result from a
-sandbox seeded with an older runner as one with no blobs, since `seedRunner` seeds once). Three
+sandbox seeded with an older runner as one with no blobs; since GRA-193 each server seeds the runner
+and the skills under `/graft/<sha256 of both>/` when that directory is absent and runs from it, handing
+every command the path as `GRAFT_RUNNER`, so a long-lived sandbox runs the server's runner on its next
+open and that tolerance is a later ticket's to narrow). Three
 per-exec variables ride beside the token and are deleted with it before the module loads:
 `GRAFT_AGENT` and `GRAFT_TOOL_VERSION` for the sidecar, never for a path, and `GRAFT_BLOBS_DIR`, the
 mount path, a variable for the reason `GRAFT_RESULT_PATH` is one (a backing that maps the sandbox's
