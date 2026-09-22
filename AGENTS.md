@@ -618,16 +618,19 @@ refusal's `reason: message` rather than the word `refused`. `packages/mcp/src/se
 GRA-122 describe), `acquire.test.ts` and `publish.service.test.ts` are the suites.
 
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
-directory `.blobs/<agentId>/<id>/` on the toolbox volume (the Agent Drive in the hosted form)
-holding `data` and a `meta.json` sidecar, written by the runner's `ctx.blob.write` and read by
-`ctx.blob.read`, each landed by rename; the ref `blob://<id>` is a plain string in a tool's result
-and the next tool's input, and the runner's ledger comes back beside the result as `blobs` so the
-server writes one `blob` row per file. The check bans `fs`, `fs/promises`, `worker_threads`, `vm`,
-`module`, `cluster` and `inspector` so `ctx.blob` is the only route, the runner refuses a ref
-outside the agent's directory, and the door refuses `blob_not_found`, `blob_expired` and
+directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
+`.blobs/<agentId>/` beside the toolboxes on the toolbox volume (the Agent Drive in the hosted form),
+which the agent's sandbox mounts alone at `/blobs` as it mounts the toolbox at `/tools`; the scope
+is that mount, since a vendored dependency runs in-process and the check never reads it. The runner's
+`ctx.blob.write` writes into a temporary directory and renames it once, `ctx.blob.read` answers a
+`Blob`; the ref `blob://<id>` is a plain string in a tool's result and the next tool's input, and the
+runner's ledger comes back beside the result as `blobs` so the server writes one `blob` row per file
+through a blob store seam beside the toolbox store. The check bans `fs`, `fs/promises`,
+`worker_threads`, `vm`, `module`, `cluster` and `inspector` as defence in depth, the runner refuses a
+ref that does not resolve under `/blobs`, and the door refuses `blob_not_found`, `blob_expired` and
 `blob_quota` before a sandbox is touched. 24 hours, 256 MiB per blob, 1 GiB live per agent, all
 constants; writing one never asks. The working-set sweep's timer runs a second pass that removes
-expired blobs through the toolbox store and keeps the row with `removed_at`. The proxy's cap is
+expired blobs through the blob store and keeps the row with `removed_at`. The proxy's cap is
 `GRAFT_PROXY_MAX_BODY_BYTES` (default 10 MiB; ADR 0010 as amended 2026-09-22), so a self-host moves
 a file larger than that only once its operator raises it. The spec is GRA-181 and its sub-issues are
 the build order.
