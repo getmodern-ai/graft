@@ -42,12 +42,7 @@ function AgentsRoute() {
   const agents = useQuery(agentsQuery);
   const connections = useQuery(connectionsQuery);
   const [creating, setCreating] = useState(false);
-  const rows = (agents.data?.agents ?? []).map((agent) =>
-    // This local mock previews multiple harnesses and a populated working set (GRA-135).
-    import.meta.env.DEV && agent.id === "preview-agent-multiple"
-      ? { ...agent, harnessNames: ["Claude", "ChatGPT", "Hermes"], workingSetCount: 12 }
-      : agent,
-  );
+  const rows = agents.data?.agents ?? [];
 
   useScreenTitle("Agents");
 

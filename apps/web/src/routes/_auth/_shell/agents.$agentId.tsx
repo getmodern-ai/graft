@@ -101,7 +101,7 @@ function AgentRoute() {
         {agent.revokedAt ? null : (
           <PageHeaderActions>
             <Button ref={connectionTrigger} variant="outline" onClick={() => setConnecting(true)}>
-              Connection details
+              Connect a harness
             </Button>
             <Button variant="destructive" onClick={() => setRevoking(true)}>
               {agent.tokenPrefix === null ? "Revoke agent" : "Revoke token"}
