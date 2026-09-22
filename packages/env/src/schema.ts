@@ -56,13 +56,40 @@ export const capabilityTokenPublicKey = pemKey("PUBLIC KEY", "GRAFT_CAPABILITY_T
  * answers 503 `proxy_unconfigured`, and nothing mints a token. A *partial* pair is a half-finished
  * deploy: a private key alone would mint tokens the proxy cannot verify, a public key alone would
  * verify tokens nobody can mint, and either presents as every vendor call failing with nothing in
- * the boot log to say why. `GRAFT_PROXY_PUBLIC_URL` and `GRAFT_PROXY_FOLLOW_REDIRECTS` sit outside
- * the group because each has a correct default.
+ * the boot log to say why. `GRAFT_PROXY_PUBLIC_URL`, `GRAFT_PROXY_FOLLOW_REDIRECTS` and
+ * `GRAFT_PROXY_MAX_BODY_BYTES` sit outside the group because each has a correct default.
  */
 export const capabilityTokenKeys = [
   "GRAFT_CAPABILITY_TOKEN_PRIVATE_KEY",
   "GRAFT_CAPABILITY_TOKEN_PUBLIC_KEY",
 ] as const;
+
+/** The proxy's body cap when `GRAFT_PROXY_MAX_BODY_BYTES` is unset: `@graft/proxy`'s own default. */
+export const PROXY_MAX_BODY_BYTES_DEFAULT = 10 * 1024 * 1024;
+
+/** The least the cap may be set to; below it an ordinary JSON answer would be refused. */
+export const PROXY_MAX_BODY_BYTES_FLOOR = 1024 * 1024;
+
+/**
+ * The most bytes a request or a response body may carry through the proxy, on either leg (ADR 0010
+ * as amended for GRA-181; GRA-183). Ten mebibytes by default, which is the proxy's own constant and
+ * the figure the alpha ran on: the proxy buffers a body whole so the wide event's byte counts are
+ * exact (`@graft/proxy`'s `body.ts`), so the cap is also the memory one in-flight call may hold,
+ * and raising it is a decision an operator makes for a workflow that moves files, not a default
+ * that moves under every existing tool. A floor of one mebibyte, because a cap under it refuses
+ * ordinary vendor answers and nobody means that; zero, which would refuse everything, is the case
+ * the floor exists to make unwritable. `@graft/proxy` reads the number as `maxBodyBytes` and
+ * quotes it in both refusals, `request_too_large` and `response_too_large`; the boot line names it
+ * when it is not the default.
+ */
+export const proxyMaxBodyBytes = z.coerce
+  .number({ error: "GRAFT_PROXY_MAX_BODY_BYTES must be a whole number of bytes" })
+  .int("GRAFT_PROXY_MAX_BODY_BYTES must be a whole number of bytes")
+  .min(
+    PROXY_MAX_BODY_BYTES_FLOOR,
+    `GRAFT_PROXY_MAX_BODY_BYTES must be at least ${PROXY_MAX_BODY_BYTES_FLOOR} (1 MiB); unset it for the default of ${PROXY_MAX_BODY_BYTES_DEFAULT} (10 MiB)`,
+  )
+  .default(PROXY_MAX_BODY_BYTES_DEFAULT);
 
 /**
  * The local keyring's seed (`@graft/vault`, ADR 0002's self-hosted backing). Required whenever the
@@ -1112,6 +1139,9 @@ export const serverSchema = {
    * new code. Even on, only hops inside the set are followed, and only three deep.
    */
   GRAFT_PROXY_FOLLOW_REDIRECTS: z.stringbool().default(false),
+
+  /** The proxy's body cap on both legs, in bytes, with a floor; see `proxyMaxBodyBytes`. */
+  GRAFT_PROXY_MAX_BODY_BYTES: proxyMaxBodyBytes,
 
   /**
    * A JSON file of connections to seed the in-memory store with at boot — development only, refused
