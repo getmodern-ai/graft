@@ -313,7 +313,7 @@ describe("the cloud form", () => {
 
   it("takes the blob store a factory answers with in place of the filesystem one, and keeps the filesystem one when it answers none", async () => {
     const own = await selectBackings(cloud, { cloudModule: fixture("own-store") });
-    expect(JSON.parse(await own.blobStore.readMeta("agent1", "own-blob"))).toEqual({
+    expect(JSON.parse((await own.blobStore.readMeta("agent1", "own-blob")) ?? "")).toEqual({
       marker: "written by the factory's own blob store",
     });
     expect(existsSync(join(toolboxRoot, ".blobs", "agent1", "own-blob"))).toBe(false);
@@ -487,12 +487,16 @@ describe("assertCloudBackings", () => {
   });
 
   it("accepts a blob store beside the seams, whole or absent, and names the first verb a partial one lacks", () => {
-    const blobStore = { list() {}, readMeta() {}, exists() {}, remove() {} };
+    const blobStore = { list() {}, readMeta() {}, exists() {}, remove() {}, stat() {} };
     expect(() => assertCloudBackings({ ...complete, blobStore }, "m")).not.toThrow();
     expect(() => assertCloudBackings({ ...complete, blobStore: undefined }, "m")).not.toThrow();
     expect(() =>
       assertCloudBackings({ ...complete, blobStore: { ...blobStore, readMeta: "no" } }, "m"),
     ).toThrow(/blob store without readMeta\(\)/);
+    // The sweep's age read (GRA-189): a hosted store without it is refused at boot, not at the first sweep.
+    expect(() =>
+      assertCloudBackings({ ...complete, blobStore: { ...blobStore, stat: undefined } }, "m"),
+    ).toThrow(/blob store without stat\(\)/);
     expect(() => assertCloudBackings({ ...complete, blobStore: null }, "m")).toThrow(
       /blob store that is not an object/,
     );

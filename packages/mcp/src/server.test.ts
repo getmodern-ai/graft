@@ -19,7 +19,11 @@ import {
   runnerFiles,
 } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
-import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
+import {
+  createFilesystemBlobStore,
+  createFilesystemToolboxStore,
+  createNoopToolboxMirror,
+} from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
@@ -37,6 +41,7 @@ import { revokeConnectionAndNotify } from "./revoke";
 import { runAuthoredTool } from "./run";
 import { seededRunnerPath } from "./sandbox";
 import { openAgentSession } from "./session";
+import { type BlobSweptEvent, runSweep } from "./sweep";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
 import { authoredToolName, executeToolName } from "./tool-names";
@@ -1298,6 +1303,65 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
           await b.close();
         }
       });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /**
+   * The sweep's blob pass over what a real run wrote (GRA-189; ADR 0023, "the sweep deletes"): the
+   * filesystem blob store over the fake sandbox's own toolbox root, which is the tree `/blobs` is a
+   * link into, and a clock a day on. The door's `blob_expired` reading of the row is GRA-187's.
+   */
+  it("a sweep with the clock past the TTL removes the blob's directory from the agent's /blobs and keeps the row with removed_at", async () => {
+    const a = await connect(TOKEN_A);
+    const swept: BlobSweptEvent[] = [];
+    try {
+      const answer = body(await a.call(SAVE_REPORT, { limit: 1 })) as {
+        result: { file: string };
+      };
+      const id = answer.result.file.slice("blob://".length);
+      const row = () => store.blobs.find((blob) => blob.id === id);
+      expect(row()?.removedAt).toBeNull();
+      const hostDir = join(sandbox.blobsRoot(AGENT_A), id);
+      const mountDir = join(sandbox.sandboxRoot(`agent-${AGENT_A}`), "blobs", id);
+      expect((await readdir(mountDir)).sort()).toEqual(["data", "meta.json"]);
+
+      const blobStore = createFilesystemBlobStore({ root: join(sandbox.root, "toolboxes") });
+      const sweeping: McpDeps = { ...deps, blobStore, onBlobSwept: (event) => swept.push(event) };
+
+      // Inside the TTL: kept, and nothing on disk moves.
+      const early = await runSweep({ db: deps.db }, sweeping, new Date());
+      expect(early.blobs.actions.filter((action) => action.agentId === AGENT_A)).toEqual([]);
+      expect(await blobStore.exists(AGENT_A, id)).toBe(true);
+
+      // A day and an hour on: removed through the store, the row marked, one event with the bytes.
+      const later = new Date(Date.now() + 25 * 60 * 60 * 1000);
+      const report = await runSweep({ db: deps.db }, sweeping, later);
+      expect(report.failed).toEqual([]);
+      expect(report.blobs.actions).toContainEqual({
+        agentId: AGENT_A,
+        action: "remove",
+        blobId: id,
+        bytes: row()?.bytes,
+        mark: true,
+      });
+      await expect(stat(hostDir)).rejects.toThrow();
+      await expect(stat(mountDir)).rejects.toThrow();
+      expect(await blobStore.exists(AGENT_A, id)).toBe(false);
+      // Marked at the service's clock (the fake store's, real time here), as `created_at` is.
+      expect(row()).toMatchObject({ id, agentId: AGENT_A, removedAt: expect.any(Date) });
+      expect(swept).toContainEqual({
+        agentId: AGENT_A,
+        personId: PERSON,
+        blobId: id,
+        bytes: row()?.bytes,
+        cause: "expired",
+      });
+      // The toolbox beside the blobs is untouched: nothing under tools/ is ever in a plan.
+      expect(
+        await stat(join(sandbox.toolboxRoot(PERSON), "tools/demo/save-report/v1/index.ts")),
+      ).toBeTruthy();
     } finally {
       await a.close();
     }

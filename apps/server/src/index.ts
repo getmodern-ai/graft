@@ -339,6 +339,19 @@ const mcp = createMcpDeps({
       },
     });
   },
+  /**
+   * The agents' blobs as this server sees them, for the sweep's second pass (ADR 0023, "the sweep
+   * deletes"; GRA-189): the same store the selector chose beside the toolbox store.
+   */
+  blobStore: backings.blobStore,
+  /** Every blob directory the sweep removed, once (GRA-189): the size and the cause, never the name. */
+  onBlobSwept: (event) => {
+    backings.analytics.capture({
+      distinctId: event.personId,
+      event: "blob_swept",
+      properties: { agent_id: event.agentId, bytes: event.bytes, cause: event.cause },
+    });
+  },
 });
 
 /**
@@ -464,26 +477,45 @@ const app = createServer({
 });
 
 /**
- * The working-set sweep (ADR 0009) on a plain timer — GRA-1's "no durable engine for the alpha". A
- * sweep that demoted something, or failed for some agent, is one log line; a quiet one is silent.
+ * The working-set sweep (ADR 0009) on a plain timer, GRA-1's "no durable engine for the alpha",
+ * and, on the same tick, the blob pass (ADR 0023; GRA-189). A sweep that demoted something, removed,
+ * marked or adopted a blob, or failed for some agent, is one log line with the blob counts under
+ * `sweep.blobs`; a quiet one is silent.
  */
 const sweep = startSweep(mcp, {
   intervalSeconds: env.GRAFT_SWEEP_INTERVAL_SECONDS,
   onReport: (report) => {
-    if (report.demoted.length === 0 && report.failed.length === 0) return;
+    const { actions: blobActions, ...blobs } = report.blobs;
+    if (
+      report.demoted.length === 0 &&
+      report.failed.length === 0 &&
+      blobActions.length === 0 &&
+      blobs.deferred === 0
+    ) {
+      return;
+    }
     const skipped =
       report.skipped.length > 0 ? `, ${report.skipped.length} skipped for a run in flight` : "";
     const failed =
       report.failed.length > 0
         ? `, ${report.failed.length} failed: ${report.failed.map((f) => `${f.agentId} (${f.error})`).join("; ")}`
         : "";
+    const swept =
+      blobActions.length > 0 || blobs.deferred > 0
+        ? `, blobs: ${blobs.removed} removed, ${blobs.marked} marked, ${blobs.adopted} adopted, ${blobs.orphansRemoved} orphan(s) and ${blobs.tmpRemoved} abandoned write(s) cleared, ${blobs.bytesRemoved} byte(s) freed` +
+          (blobs.deferred > 0
+            ? `, ${blobs.deferred} deferred for a run that started during the pass (${report.deferred.join(", ")})`
+            : "")
+        : "";
     log.info({
       sweep: {
         agents: report.agents,
         demoted: report.demoted.length,
         skipped: report.skipped.length,
+        deferred: report.deferred.length,
         failed: report.failed.length,
-        message: `${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${failed}`,
+        blobs,
+        message: `${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${swept}${failed}`,
       },
     });
   },

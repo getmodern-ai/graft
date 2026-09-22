@@ -30,7 +30,16 @@ import {
   findApproval,
   updateAskEveryCall,
 } from "./approval";
-import { findBlob, findBlobs, insertBlobs, listBlobs, sumLiveBlobBytes } from "./blob";
+import {
+  findBlob,
+  findBlobs,
+  insertAdoptedBlob,
+  insertBlobs,
+  listBlobs,
+  listUnremovedBlobs,
+  markBlobRemoved,
+  sumLiveBlobBytes,
+} from "./blob";
 import {
   addConnectionHosts,
   findConnection,
@@ -228,6 +237,47 @@ describe("the blob rows name the person and the agent in every statement", () =>
     expect(s.sql).toContain('"blob"."removed_at" is null');
     expect(s.sql).toContain('"blob"."expires_at" > $');
     expect(s.params).toEqual(["agent_1", "person_1", now.toISOString()]);
+  });
+
+  it("the sweep's read: the agent's unremoved blobs, soonest to expire first", async () => {
+    await listUnremovedBlobs(db, SCOPE);
+    const s = only();
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.sql).toContain('"blob"."removed_at" is null');
+    expect(s.sql).toMatch(/order by "blob"\."expires_at" asc, "blob"\."id" asc$/);
+    expect(s.params).toEqual(["agent_1", "person_1"]);
+  });
+
+  it("the sweep's mark takes the id, the pair and an unmarked row", async () => {
+    const at = new Date("2026-09-23T10:00:00Z");
+    await markBlobRemoved(db, SCOPE, "blob_1", at);
+    const s = only();
+    expect(s.sql).toMatch(/^update "blob" set "removed_at" = \$1, "updated_at" = \$2 where \(/);
+    expect(s.sql).toContain('"blob"."id" = $3');
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.sql).toContain('"blob"."removed_at" is null');
+    expect(s.params.slice(2)).toEqual(["blob_1", "agent_1", "person_1"]);
+  });
+
+  it("an adoption carries the pair in its values and does nothing on a conflict", async () => {
+    const at = new Date("2026-09-22T10:00:00Z");
+    await insertAdoptedBlob(db, {
+      id: "blob_1",
+      personId: "person_1",
+      agentId: "agent_1",
+      versionId: null,
+      bytes: 11,
+      contentType: "text/plain",
+      name: null,
+      expiresAt: at,
+      createdAt: at,
+    });
+    const s = only();
+    expect(s.sql).toMatch(
+      /^insert into "blob" \(.*"person_id".*"agent_id".*\) values \(.*\) on conflict do nothing returning/,
+    );
+    expect(s.params).toContain("person_1");
+    expect(s.params).toContain("agent_1");
   });
 
   it("an insert carries the pair on every row, in one statement, and none for an empty ledger", async () => {

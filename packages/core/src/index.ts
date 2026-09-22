@@ -85,13 +85,36 @@ export {
 } from "./approval/approval.service";
 export { type BlobDeps, defaultBlobDeps } from "./blob/blob.deps";
 export {
+  adoptBlob,
   type BlobWrittenInput,
   getBlob,
   getBlobs,
   listBlobs,
+  listUnremovedBlobs,
   liveBlobBytes,
+  markBlobRemoved,
   recordBlobsWritten,
 } from "./blob/blob.service";
+export {
+  type AdoptedBlob,
+  adoptedBlobOf,
+  BLOB_CONTENT_TYPE_RULES,
+  BLOB_NAME_RULES,
+  BLOB_TMP_SUFFIX as BLOB_SWEEP_TMP_SUFFIX,
+  BLOB_TTL_MS as BLOB_SWEEP_TTL_MS,
+  type BlobDirectoryAge,
+  type BlobSidecar,
+  type BlobSweepAction,
+  type BlobSweepDecision,
+  type BlobSweepDecisionInput,
+  type BlobSweepEntry,
+  type BlobSweepRow,
+  blobSweepDecision,
+  isTmpName,
+  isValidBlobContentType,
+  isValidBlobName,
+  parseBlobSidecar,
+} from "./blob/blob-sweep.decision";
 export {
   ASK_ANSWERED_MESSAGE_TYPE,
   type AskAnsweredMessage,

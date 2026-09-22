@@ -32,13 +32,14 @@ import {
 import { loadSkills, type RunnerFile, runnerFiles, type Skill } from "@graft/runner";
 import type { SandboxBackend } from "@graft/sandbox";
 import type { CapabilityTokenKeys } from "@graft/token";
-import type { ToolboxStore } from "@graft/toolbox";
+import type { BlobStore, ToolboxStore } from "@graft/toolbox";
 
 import type { AcquireConfig } from "./acquire/shapes";
 import type { BlobWrittenEvent } from "./blobs";
 import type { HandoffConfig } from "./handoff";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
+import type { BlobSweptEvent } from "./sweep";
 import { type ReadWebPage, readWebPage } from "./web-page";
 
 /**
@@ -101,6 +102,13 @@ export type McpDeps = {
   readWebPage: ReadWebPage;
   /** The store, for `read_tool_source`; absent, the tool reads through the agent's sandbox instead. */
   toolbox?: ToolboxReader | null;
+  /**
+   * The agents' blobs as the server sees them, `Backings.blobStore` (ADR 0023; GRA-185), for the
+   * sweep's blob pass (`sweep.ts`, GRA-189): what it lists, reads the sidecar and age of, and
+   * removes. Absent, the sweep judges no blob and every row and directory stays as it is, which is
+   * what a harness with no blobs in it wants; `apps/server` always binds it.
+   */
+  blobStore?: BlobStore | null;
   /** Absent, `publish_tool` refuses `publish_unconfigured`. */
   publishTool?: PublishTool | null;
   /**
@@ -191,6 +199,14 @@ export type McpDeps = {
    * agent, the person and the version, and never the name or a byte. Absent, the row is still written.
    */
   onBlobWritten?: (event: BlobWrittenEvent) => void;
+  /**
+   * Fired once per blob directory the sweep removed (GRA-189; `sweep.ts`): the hook the server
+   * binds `blob_swept` to. Carries the size the row or the store knew, the cause (a row past its
+   * time, or a committed directory no row and no sidecar claimed), the agent and the person, and
+   * never the name or a byte. A `.tmp` cleared is not a blob removed and fires nothing. Absent, the
+   * directory still goes.
+   */
+  onBlobSwept?: (event: BlobSweptEvent) => void;
   /**
    * Fired once for every `/mcp` request the door or the transport refuses before any tool runs
    * (GRA-131): Graft's own 401, 404 and 400 in `http.ts`, and the SDK transport's 4xx — an

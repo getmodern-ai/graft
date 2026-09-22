@@ -4,7 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { BlobDeps } from "./blob.deps";
-import { getBlob, getBlobs, liveBlobBytes, recordBlobsWritten } from "./blob.service";
+import {
+  adoptBlob,
+  getBlob,
+  getBlobs,
+  liveBlobBytes,
+  markBlobRemoved,
+  recordBlobsWritten,
+} from "./blob.service";
 
 /** The blob service over fakes: what one run's ledger becomes as rows, and what is refused first. */
 
@@ -30,10 +37,75 @@ function fakeDeps(overrides: Partial<BlobDeps> = {}): BlobDeps {
     findBlobs: vi.fn(async () => []),
     listBlobs: vi.fn(async () => []),
     sumLiveBlobBytes: vi.fn(async () => 0),
+    listUnremovedBlobs: vi.fn(async () => []),
+    markBlobRemoved: vi.fn(async () => true),
+    insertAdoptedBlob: vi.fn(async (_db: unknown, row: NewBlobRow) => ({
+      ...row,
+      versionId: row.versionId ?? null,
+      name: row.name ?? null,
+      removedAt: null,
+      owner: "person" as const,
+      createdAt: row.createdAt ?? NOW,
+      updatedAt: NOW,
+    })),
     now: () => NOW,
     ...overrides,
   };
 }
+
+describe("the sweep's writes", () => {
+  it("marks a removal at the service's clock, under the scope", async () => {
+    const deps = fakeDeps();
+    expect(await markBlobRemoved(ctx, SCOPE, "b1", deps)).toBe(true);
+    expect(deps.markBlobRemoved).toHaveBeenCalledWith(ctx.db, SCOPE, "b1", NOW);
+  });
+
+  it("adopts an orphan as the decision built it: the scope's pair, the version, size, type, name and times", async () => {
+    const deps = fakeDeps();
+    const writtenAt = new Date("2026-09-22T08:00:00Z");
+    const row = await adoptBlob(
+      ctx,
+      SCOPE,
+      "b9",
+      {
+        bytes: 7,
+        contentType: "text/csv",
+        name: "rows.csv",
+        writtenAt,
+        expiresAt: EXPIRES,
+        toolVersion: "ver_2",
+      },
+      deps,
+    );
+    expect(deps.insertAdoptedBlob).toHaveBeenCalledWith(ctx.db, {
+      id: "b9",
+      personId: "person_1",
+      agentId: "agent_1",
+      versionId: "ver_2",
+      bytes: 7,
+      contentType: "text/csv",
+      name: "rows.csv",
+      expiresAt: EXPIRES,
+      createdAt: writtenAt,
+    });
+    expect(row?.id).toBe("b9");
+  });
+
+  it("answers the repo's null when the row already exists, and refuses an empty id first", async () => {
+    const deps = fakeDeps({ insertAdoptedBlob: vi.fn(async () => null) });
+    const sidecar = {
+      bytes: 1,
+      contentType: "text/plain",
+      name: null,
+      writtenAt: NOW,
+      expiresAt: EXPIRES,
+      toolVersion: null,
+    };
+    expect(await adoptBlob(ctx, SCOPE, "b1", sidecar, deps)).toBeNull();
+    await expect(adoptBlob(ctx, SCOPE, " ", sidecar, deps)).rejects.toBeInstanceOf(ServiceError);
+    expect(deps.insertAdoptedBlob).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("recordBlobsWritten", () => {
   it("writes one row per ledger line, the scope's pair and the version on each, in one call", async () => {

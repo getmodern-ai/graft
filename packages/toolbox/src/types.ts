@@ -76,11 +76,14 @@ export type BlobStore = {
    */
   list(agentId: string): Promise<string[]>;
   /**
-   * The text of a blob's `meta.json`. Rejects when the blob, or its sidecar, is not there, and
-   * refuses either when it is a symlink: the tree is sandbox-writable and the store follows no link
-   * out of the agent's directory (ADR 0023, "the scope is a mount").
+   * The text of a blob's `meta.json`, or null when the blob, or its sidecar, is confirmed not to be
+   * there. The null is the store's own not-found signal and the only one: anything else that stops
+   * the read (a symlink at the directory or the sidecar, since the tree is sandbox-writable and the
+   * store follows no link out of the agent's directory, ADR 0023 "the scope is a mount"; a
+   * permission or a backing error) rejects, so a caller deciding on a missing sidecar (the sweep's
+   * `remove_orphan`, GRA-189) never mistakes a failed read for an absent file.
    */
-  readMeta(agentId: string, blobId: string): Promise<string>;
+  readMeta(agentId: string, blobId: string): Promise<string | null>;
   /** Whether the blob's directory is there. A `.tmp` directory is not yet a blob; a symlink is refused. */
   exists(agentId: string, blobId: string): Promise<boolean>;
   /**
@@ -91,6 +94,24 @@ export type BlobStore = {
    * through this verb.
    */
   remove(agentId: string, name: string): Promise<void>;
+  /**
+   * When a directory under the agent's blobs directory was last written to, and how many bytes its
+   * `data` holds; null when nothing is there. `name` is a blob id or a `<blobId>.tmp`, as `remove`
+   * takes. The sweep's two reads past the sidecar (GRA-189): whether a `.tmp` is a write still
+   * landing or one a killed run abandoned, and what a committed directory it found no row and no
+   * readable sidecar for held. `lastWrittenAt` is the newest modification time among the directory,
+   * `data` and `meta.json`, so a write still streaming into `data` reads as now; `bytes` is null
+   * when there is no `data` yet. A symlink at any of the three is refused, as everywhere here.
+   */
+  stat(agentId: string, name: string): Promise<BlobDirectoryStat | null>;
+};
+
+/** What `BlobStore.stat` answers for a directory that is there. */
+export type BlobDirectoryStat = {
+  /** The newest of the directory's, `data`'s and `meta.json`'s modification times. */
+  lastWrittenAt: Date;
+  /** The size of `data`, or null when the directory holds none yet. */
+  bytes: number | null;
 };
 
 /**

@@ -702,6 +702,38 @@ stdout before the error (the result file on the detached path), so `readRunnerEn
 reader; `run.ts` records the rows off it and the failure names the refs, while a timeout prints
 nothing and its blobs are the sweep's to adopt (GRA-189).
 
+**The sweep's blob pass is GRA-189** (ADR 0023, "the sweep deletes"). On the working-set timer,
+after the working-set pass for an agent and under the same in-flight skip, `packages/mcp/src/sweep.ts`
+reads the agent's unremoved rows (`listUnremovedBlobs`) and what `McpDeps.blobStore` lists, reads the
+sidecar and the age (`BlobStore.stat`, new here: the newest modification time among the directory,
+`data` and `meta.json`, and `data`'s size) of every directory no row claims, and applies what
+`packages/core/src/blob/blob-sweep.decision.ts` decides, a pure function in the working-set
+decision's shape with seven outcomes: `keep` (a live row, with or without its directory, since a
+write may still be landing; a `.tmp` inside the bound), `remove` (a row past its expiry whose
+directory is there: the directory goes through the store, then `markBlobRemoved` sets `removed_at`,
+in that order so a throw between the two leaves a `mark` and never a marked row with bytes on disk),
+`mark` (a row past its expiry whose directory is gone), `adopt` (a directory with a readable sidecar
+and no row: `adoptedBlobOf` builds the row from what the store measured and the sidecar clamped to
+it, since a sidecar is sandbox-written and untrusted: `bytes` is `data`'s real size, `writtenAt` the
+sidecar's unless missing or later than the store's last write, `expiresAt` never past `writtenAt`
+plus the TTL, `name` and `contentType` held to `BLOB_NAME_RULES` and `BLOB_CONTENT_TYPE_RULES`;
+`adoptBlob` writes it, `insertAdoptedBlob` doing nothing on a conflict, which the applier reads as
+"a row exists now" and keeps the blob; the next pass judges it as a row), `remove_orphan` (a
+directory with no row and no sidecar the sweep can adopt from: absent, unparseable, breaking a write
+rule or naming another agent; junk, since the rename is the commit and the sidecar precedes it), and
+`remove_tmp` (a `<blobId>.tmp` last written to longer ago than `ABANDONED_BLOB_WRITE_SECONDS` in
+`bounds.ts`, the detached ceiling plus the sync ceiling; `RunSweepOptions.abandonedWriteMs` is the
+test seam). Expiry is strict. Only `BlobStore.readMeta`'s `null`, the store's own not-found signal,
+reads as "no sidecar"; any other read error ends the agent's pass with the error on the report and
+the blob is judged again next tick. A run that starts after an agent's pass began is caught before
+every destructive action: the rest of that pass is deferred (`SweepBlobCounts.deferred`,
+`SweepReport.deferred`) and finished next tick. The counts ride on
+`SweepReport.blobs` and the server puts them on the sweep's wide event under `sweep.blobs`;
+`McpDeps.onBlobSwept` fires once per `remove` and `remove_orphan` and the server captures it as
+`blob_swept` with `bytes` and `cause`, never the name; a cleared `.tmp` was never a blob and fires
+nothing. `sweep -- --plan` prints the blob actions under `blobs.actions` beside the demotions. A
+revoked agent's blobs are not swept, since the roster is the working-set sweep's; a follow-up.
+
 ### The self-hosted image
 
 `apps/server/Dockerfile`, built from the repository root, is the one image (GRA-33). Its stages:
@@ -754,10 +786,11 @@ window, then the least recently used beyond the cap — never a tool used inside
 while the agent has a run in flight — and fires `tools/list_changed`. Each demotion is a
 `working_set_change` row with cause `idle` or `cap`, which `GET /api/agents/:id/working-set/changes`
 reads for the console. The rule itself is `packages/core/src/working-set/sweep.decision.ts`, a pure
-function; `packages/mcp/src/sweep.ts` applies it. `pnpm --filter @graft/server sweep -- --plan`
-prints what a sweep would do without doing it; without `--plan` it demotes, from a process that can
-neither see a running server's in-flight runs nor notify its sessions, so use that form with the
-server stopped.
+function; `packages/mcp/src/sweep.ts` applies it, and on the same tick runs the blob pass (the
+paragraph *The sweep's blob pass is GRA-189* above). `pnpm --filter @graft/server sweep -- --plan`
+prints what a sweep would do without doing it; without `--plan` it demotes and removes, from a
+process that can neither see a running server's in-flight runs nor notify its sessions, so use that
+form with the server stopped.
 
 ### The console
 
