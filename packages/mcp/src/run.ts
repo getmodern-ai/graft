@@ -206,7 +206,14 @@ export type ModuleRunOutcome =
    */
   | { ok: true; result: unknown; blobs: BlobLedgerEntry[]; blobsDropped: number }
   | { ok: true; detached: DetachedStart }
-  | { ok: false; failure: RunFailure };
+  /**
+   * The runner's failure, and the blobs the module committed before it failed (GRA-187): a module
+   * that writes and then throws has bytes on the mount, and the runner prints their ledger behind
+   * the same `ENVELOPE_MARKER` line a result's envelope sits behind, before the error, so
+   * `readRunnerEnvelope` reads both. `[]` for every other failure, a timeout included, whose
+   * committed blobs are the sweep's to adopt (GRA-189).
+   */
+  | { ok: false; failure: RunFailure; blobs: BlobLedgerEntry[]; blobsDropped: number };
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -265,6 +272,8 @@ export async function runModule(
             exitCode: EXIT_MODULE_MISSING,
             stderrTail: "",
           },
+          blobs: [],
+          blobsDropped: 0,
         };
       }
     }
@@ -324,10 +333,17 @@ export function describeModuleRun(
 ): ModuleRunOutcome {
   const [stdout, stderrTail = ""] = splitAtMarker(result.stdout);
   const stderr = stderrTail.trim();
-  const failure = (error: string): ModuleRunOutcome => ({
-    ok: false,
-    failure: { error, exitCode: result.exitCode, stderrTail: stderr },
-  });
+  // A failure that followed a write carries the ledger behind the runner's marker (the outcome
+  // type); a killed or timed-out process printed nothing, so its list is empty.
+  const failure = (error: string): ModuleRunOutcome => {
+    const envelope = readRunnerEnvelope(stdout);
+    return {
+      ok: false,
+      failure: { error, exitCode: result.exitCode, stderrTail: stderr },
+      blobs: envelope?.blobs ?? [],
+      blobsDropped: envelope?.dropped ?? 0,
+    };
+  };
 
   if (result.status === "running") {
     return failure(
@@ -630,116 +646,156 @@ async function runHeld(
     await record("refused", versioned);
     return { answer: door.refusal, isError: true };
   }
-
-  // The approval gate (ADR 0008): after the scope check, before the mint. A dry run passes it: reads
-  // reach the vendor as they would for a read-only tool and every write stops at the proxy on the
-  // token's claim, so nothing changes at the vendor and no trust is spent — publishing's dry run
-  // (`publish_tool`) asks nothing for the same reason.
-  if (!args.mode.dryRun) {
-    const gate = await gateToolCall(ctx, scope, { tool: gated, connectionId }, deps, args.channel);
-    if (!gate.pass) {
-      await record("refused", versioned);
-      return { answer: gate.answer, isError: true, card: gate.card, cardMessage: gate.cardMessage };
-    }
+  // The budget is outstanding from here until the run settles (`in-flight.ts`), so a second run
+  // admitted meanwhile is handed the remainder after this one's; a detached start moves the grant
+  // onto its process name below before this release runs.
+  const admitted = door.admission;
+  const releaseGrant = deps.inFlight?.grant(scope.agentId, admitted.budgetBytes);
+  // The narrowed values the admitted run reads, captured once for the function below.
+  const runVersion = version;
+  const runTool = tool;
+  const input = verdict.value;
+  try {
+    return await runAdmitted();
+  } finally {
+    releaseGrant?.();
   }
 
-  const outcome = await runWithCapability({
-    deps,
-    scope,
-    connectionId,
-    claim: wireName,
-    mode: args.mode,
-    run: async (env): Promise<ModuleRunOutcome> => {
-      let handle: SandboxHandle;
-      try {
-        handle = await openAgentSandbox(deps, scope);
-      } catch (error) {
+  async function runAdmitted(): Promise<AuthoredRunAnswer> {
+    // The approval gate (ADR 0008): after the scope check, before the mint. A dry run passes it: reads
+    // reach the vendor as they would for a read-only tool and every write stops at the proxy on the
+    // token's claim, so nothing changes at the vendor and no trust is spent — publishing's dry run
+    // (`publish_tool`) asks nothing for the same reason.
+    if (!args.mode.dryRun) {
+      const gate = await gateToolCall(
+        ctx,
+        scope,
+        { tool: gated, connectionId },
+        deps,
+        args.channel,
+      );
+      if (!gate.pass) {
+        await record("refused", versioned);
         return {
-          ok: false,
-          failure: {
-            error: `The sandbox is unavailable right now: ${errorMessage(error)}`,
-            exitCode: null,
-            stderrTail: "",
-          },
+          answer: gate.answer,
+          isError: true,
+          card: gate.card,
+          cardMessage: gate.cardMessage,
         };
       }
-      return runModule(handle, {
-        scope,
-        modulePath: sandboxPath(version.path),
-        input: verdict.value,
-        // The version whose run this is, for the sidecar of any blob it writes (ADR 0023), and
-        // what the run may still commit under the agent's quota (the header; `blob-door.ts`).
-        env: { ...env, GRAFT_TOOL_VERSION: version.id, ...blobBudgetEnvironment(door.admission) },
-        mode: args.mode,
-      });
-    },
-  });
+    }
 
-  if ("error" in outcome && outcome.error === "refused") {
-    await record("refused", versioned);
-    return { answer: outcome, isError: true };
-  }
-  const run = outcome as ModuleRunOutcome;
-
-  // A capability was issued and the runner ran: the clock moves whatever the module said (ADR 0009).
-  await touchToolUsed(ctx, scope, tool.id, deps.workingSet);
-
-  if (!run.ok) {
-    await record("error", versioned);
-    return { answer: run.failure, isError: true };
-  }
-  if ("detached" in run) {
-    // Before the call's own hold releases, so the agent is never momentarily unheld.
-    deps.inFlight?.track(
-      scope.agentId,
-      run.detached.processName,
-      detachedHoldMs(run.detached.timeoutSeconds),
-    );
-    await record("ok", versioned);
-    return { answer: describeDetachedStart(run.detached), isError: false };
-  }
-  // The blobs the run wrote, one row each, before the answer names them (the header; `blobs.ts`).
-  // A dry run's blobs are real files under the mount and get their rows like any other.
-  await recordWrittenBlobs(deps, scope, version.id, run.blobs, run.blobsDropped);
-  if (args.mode.dryRun) {
-    const report = readDryRunReport(run.result);
-    await recordDryRun(
-      ctx,
-      principal,
-      version.id,
-      {
-        report: report ?? { dryRun: true, passed: false, missing: true },
-        writesInvolved: report
-          ? report.writesPreviewed.length + report.writesRefused.length > 0
-          : false,
-      },
-      deps.tool,
-    );
-    await record(report ? "ok" : "error", versioned);
-    return report
-      ? {
-          answer: {
-            dryRun: report,
-            ...(run.blobs.length > 0 || run.blobsDropped > 0
-              ? blobsOnWire(run.blobs, run.blobsDropped)
-              : {}),
-          },
-          isError: false,
+    const outcome = await runWithCapability({
+      deps,
+      scope,
+      connectionId,
+      claim: wireName,
+      mode: args.mode,
+      run: async (env): Promise<ModuleRunOutcome> => {
+        let handle: SandboxHandle;
+        try {
+          handle = await openAgentSandbox(deps, scope);
+        } catch (error) {
+          return {
+            ok: false,
+            failure: {
+              error: `The sandbox is unavailable right now: ${errorMessage(error)}`,
+              exitCode: null,
+              stderrTail: "",
+            },
+            blobs: [],
+            blobsDropped: 0,
+          };
         }
-      : {
-          answer: {
-            error: "The run produced no dry-run report; the runner did not run in dry-run mode.",
-            exitCode: 0,
-            stderrTail: "",
-          },
-          isError: true,
-        };
+        return runModule(handle, {
+          scope,
+          modulePath: sandboxPath(runVersion.path),
+          input: input,
+          // The version whose run this is, for the sidecar of any blob it writes (ADR 0023), and
+          // what the run may still commit under the agent's quota (the header; `blob-door.ts`).
+          env: { ...env, GRAFT_TOOL_VERSION: runVersion.id, ...blobBudgetEnvironment(admitted) },
+          mode: args.mode,
+        });
+      },
+    });
+
+    if ("error" in outcome && outcome.error === "refused") {
+      await record("refused", versioned);
+      return { answer: outcome, isError: true };
+    }
+    const run = outcome as ModuleRunOutcome;
+
+    // A capability was issued and the runner ran: the clock moves whatever the module said (ADR 0009).
+    await touchToolUsed(ctx, scope, runTool.id, deps.workingSet);
+
+    if (!run.ok) {
+      // A module that wrote and then failed committed its blobs all the same (the outcome type): the
+      // rows land as they do on a success, and the failure names the refs beside its own fields.
+      await recordWrittenBlobs(deps, scope, runVersion.id, run.blobs, run.blobsDropped);
+      await record("error", versioned);
+      return {
+        answer:
+          run.blobs.length > 0 || run.blobsDropped > 0
+            ? { ...run.failure, ...blobsOnWire(run.blobs, run.blobsDropped) }
+            : run.failure,
+        isError: true,
+      };
+    }
+    if ("detached" in run) {
+      // Before the call's own hold and grant release, so the agent is never momentarily unheld or
+      // ungranted: the process carries both until its poll settles it or its time is up.
+      deps.inFlight?.track(
+        scope.agentId,
+        run.detached.processName,
+        detachedHoldMs(run.detached.timeoutSeconds),
+        admitted.budgetBytes,
+      );
+      await record("ok", versioned);
+      return { answer: describeDetachedStart(run.detached), isError: false };
+    }
+    // The blobs the run wrote, one row each, before the answer names them (the header; `blobs.ts`).
+    // A dry run's blobs are real files under the mount and get their rows like any other.
+    await recordWrittenBlobs(deps, scope, runVersion.id, run.blobs, run.blobsDropped);
+    if (args.mode.dryRun) {
+      const report = readDryRunReport(run.result);
+      await recordDryRun(
+        ctx,
+        principal,
+        runVersion.id,
+        {
+          report: report ?? { dryRun: true, passed: false, missing: true },
+          writesInvolved: report
+            ? report.writesPreviewed.length + report.writesRefused.length > 0
+            : false,
+        },
+        deps.tool,
+      );
+      await record(report ? "ok" : "error", versioned);
+      return report
+        ? {
+            answer: {
+              dryRun: report,
+              ...(run.blobs.length > 0 || run.blobsDropped > 0
+                ? blobsOnWire(run.blobs, run.blobsDropped)
+                : {}),
+            },
+            isError: false,
+          }
+        : {
+            answer: {
+              error: "The run produced no dry-run report; the runner did not run in dry-run mode.",
+              exitCode: 0,
+              stderrTail: "",
+            },
+            isError: true,
+          };
+    }
+    await record("ok", versioned);
+    return {
+      answer: withBlobs(boundResult(run.result), run.blobs, run.blobsDropped),
+      isError: false,
+    };
   }
-  await record("ok", versioned);
-  return {
-    answer: withBlobs(boundResult(run.result), run.blobs, run.blobsDropped),
-    isError: false,
-  };
 }
 
 /**

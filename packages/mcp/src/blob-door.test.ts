@@ -2,7 +2,16 @@ import type { BlobRow } from "@graft/db/repo/blob";
 import { BLOB_QUOTA_BYTES, BLOB_TTL_MS } from "@graft/runner";
 import { describe, expect, it } from "vitest";
 
-import { blobBudgetEnvironment, blobRefsIn, judgeBlobQuota, judgeBlobRefs } from "./blob-door";
+import {
+  admitBlobs,
+  blobBudgetEnvironment,
+  blobRefsIn,
+  judgeBlobQuota,
+  judgeBlobRefs,
+} from "./blob-door";
+import type { McpDeps } from "./deps";
+import { createInFlightRegistry } from "./in-flight";
+import { createFakeDeps, createFakeStore } from "./testing/fake-deps";
 
 /**
  * The door's pure parts (GRA-187): which strings of an input are refs, where the quota bites, and
@@ -71,6 +80,59 @@ describe("judgeBlobQuota", () => {
     const over = judgeBlobQuota(BLOB_QUOTA_BYTES + 5 * 1024 * 1024);
     expect(over?.message).toContain("1029 MiB");
     expect(over).toMatchObject({ bytes: BLOB_QUOTA_BYTES + 5 * 1024 * 1024 });
+  });
+});
+
+/**
+ * The door over the fake store and a registry (GRA-187, after Greptile on #148): the budget it hands
+ * a run is the quota less the live rows less what it has already handed to this agent's runs still
+ * in flight, and a released grant gives the remainder back.
+ */
+describe("admitBlobs and the outstanding grants", () => {
+  const SCOPE = { personId: "person_1", agentId: "agent_1" };
+  const MIB = 1024 * 1024;
+
+  it("subtracts the grants still in flight and never hands out less than nothing", async () => {
+    const store = createFakeStore();
+    const inFlight = createInFlightRegistry();
+    const deps = { ...createFakeDeps(store), inFlight } as unknown as McpDeps;
+    store.blobs.push({
+      ...row(LIVE),
+      personId: SCOPE.personId,
+      agentId: SCOPE.agentId,
+      bytes: BLOB_QUOTA_BYTES - 3 * MIB,
+      expiresAt: new Date(Date.now() + BLOB_TTL_MS),
+    });
+
+    const first = await admitBlobs(deps, SCOPE, {});
+    expect(first).toEqual({ ok: true, admission: { budgetBytes: 3 * MIB } });
+    const releaseFirst = inFlight.grant(SCOPE.agentId, 3 * MIB);
+
+    const second = await admitBlobs(deps, SCOPE, {});
+    expect(second).toEqual({ ok: true, admission: { budgetBytes: 0 } });
+    const releaseSecond = inFlight.grant(SCOPE.agentId, 0);
+
+    // A detached run carries its grant on its process name; another agent's grants are not this one's.
+    inFlight.track("agent_2", "tool-x", 60_000, 5 * MIB);
+    releaseFirst();
+    inFlight.track(SCOPE.agentId, "tool-1", 60_000, 1 * MIB);
+    expect(await admitBlobs(deps, SCOPE, {})).toEqual({
+      ok: true,
+      admission: { budgetBytes: 2 * MIB },
+    });
+    inFlight.settle(SCOPE.agentId, "tool-1");
+    releaseSecond();
+    expect(await admitBlobs(deps, SCOPE, {})).toEqual({
+      ok: true,
+      admission: { budgetBytes: 3 * MIB },
+    });
+    // The quota refusal reads the rows alone: a grant is a promise, not a byte on the mount.
+    inFlight.grant(SCOPE.agentId, 10 * MIB);
+    expect(await admitBlobs(deps, SCOPE, {})).toEqual({
+      ok: true,
+      admission: { budgetBytes: 0 },
+    });
+    inFlight.close();
   });
 });
 

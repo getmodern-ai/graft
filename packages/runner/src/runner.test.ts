@@ -305,6 +305,28 @@ const FIXTURES: Record<string, string> = {
     "  return out;",
     "};",
   ].join("\n"),
+  // Two 1 MiB writes started together: under a budget one of them fits, the shared reservation
+  // decides which, and the other is refused (Greptile on #148).
+  "writesConcurrentBlobs.mjs": [
+    "export default async (_input, ctx) => {",
+    "  const write = () => {",
+    "    const chunk = new Uint8Array(65536).fill(3);",
+    "    let left = 16;",
+    "    const stream = new ReadableStream({ pull(c) { if (left-- > 0) c.enqueue(chunk); else c.close(); } });",
+    '    return ctx.blob.write(stream, { contentType: "application/octet-stream" });',
+    "  };",
+    "  const settled = await Promise.allSettled([write(), write()]);",
+    '  return settled.map((s) => s.status === "fulfilled" ? { ref: s.value } : { code: s.reason.code ?? null, message: s.reason.message });',
+    "};",
+  ].join("\n"),
+  // A write, then a throw: the blob is committed and the failure must still report it.
+  "writesThenThrows.mjs": [
+    "export default async (input, ctx) => {",
+    '  const file = await ctx.blob.write(new TextEncoder().encode("kept before the fall"), { contentType: "text/plain", name: "kept.txt" });',
+    "  if (input.unserialisable) return { file, cycle: (() => { const o = {}; o.self = o; return o; })() };",
+    "  throw new Error(`fell over after writing ${file}`);",
+    "};",
+  ].join("\n"),
   // The read half (GRA-187): every ref read, the found ones as their size and type.
   "readRefs.mjs": [
     "export default async (input, ctx) => {",
@@ -1394,6 +1416,23 @@ describe("ctx.blob", () => {
       expect(await readdir(none.blobs)).toEqual([]);
     });
 
+    it("reserves as the bytes land, so of two 1 MiB writes started together under 1.5 MiB exactly one commits", async () => {
+      const { blobs, env } = await withBlobs(budget(1.5 * MIB));
+      const run = await runRunner({ module: fixture("writesConcurrentBlobs.mjs"), env });
+
+      expect(run.code).toBe(0);
+      const envelope = envelopeOf(run);
+      const outcomes = envelope.result as Outcome[];
+      const committed = outcomes.filter((o) => o.ref !== undefined);
+      const refused = outcomes.filter((o) => o.code !== undefined);
+      expect(committed).toHaveLength(1);
+      expect(refused).toEqual([
+        { code: "blob_quota", message: expect.stringContaining("left of its budget") },
+      ]);
+      expect((envelope.blobs as Ledger).map((line) => line.ref)).toEqual([committed[0]?.ref]);
+      expect(await readdir(blobs)).toEqual([idOf(committed[0]?.ref ?? "")]);
+    });
+
     it("without the variable, a server older than it, the per-blob cap alone bounds a write", async () => {
       // `withBlobs` sets no budget: two writes go, as they did before the variable existed.
       const { blobs, env } = await withBlobs();
@@ -1410,6 +1449,66 @@ describe("ctx.blob", () => {
       ]);
       expect(envelopeOf(run).blobs).toHaveLength(2);
       expect(await readdir(blobs)).toHaveLength(2);
+    });
+  });
+
+  /**
+   * A failed run's blobs (GRA-187, after Greptile on #148): the blob is committed before the module's
+   * outcome is known, so the failure carries the ledger out ahead of it, behind the sentinel on
+   * stdout, or in the result file on the detached path.
+   */
+  describe("a module that writes and then fails", () => {
+    it("exits 1 with the error on stderr and the ledger behind the sentinel on stdout, the blob committed", async () => {
+      const { blobs, env } = await withBlobs();
+      const run = await runRunner({ module: fixture("writesThenThrows.mjs"), env });
+
+      expect(run.code).toBe(1);
+      expect(run.stderr).toContain("fell over after writing blob://");
+      const [sentinel, json, ...rest] = run.stdout.split("\n");
+      expect(sentinel).toBe(ENVELOPE_MARKER);
+      expect(rest).toEqual([""]);
+      const envelope = JSON.parse(json ?? "") as { result: unknown; blobs: Ledger };
+      expect(envelope.result).toBeNull();
+      expect(envelope.blobs).toEqual([
+        {
+          ref: expect.stringMatching(REF),
+          bytes: 20,
+          contentType: "text/plain",
+          name: "kept.txt",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      expect(await readdir(blobs)).toEqual([idOf(envelope.blobs[0]?.ref ?? "")]);
+    });
+
+    it("does the same for a result JSON cannot carry, and on the detached path writes the envelope to the result file", async () => {
+      const sync = await withBlobs();
+      const unserialisable = await runRunner({
+        module: fixture("writesThenThrows.mjs"),
+        stdin: JSON.stringify({ unserialisable: true }),
+        env: sync.env,
+      });
+      expect(unserialisable.code).toBe(1);
+      expect(unserialisable.stderr).toContain("not serialisable as JSON");
+      expect(unserialisable.stdout.startsWith(`${ENVELOPE_MARKER}\n`)).toBe(true);
+      expect(JSON.parse(unserialisable.stdout.slice(ENVELOPE_MARKER.length)).blobs).toHaveLength(1);
+
+      const resultPath = join(fixtures, "results", "failed.result.json");
+      const detached = await withBlobs({ GRAFT_RESULT_PATH: resultPath });
+      const run = await runRunner({ module: fixture("writesThenThrows.mjs"), env: detached.env });
+      expect(run.code).toBe(1);
+      expect(run.stdout).toBe(`${RESULT_MARKER}${resultPath}\n`);
+      const written = await writtenEnvelope(resultPath);
+      expect(written.result).toBeNull();
+      expect(written.blobs).toHaveLength(1);
+      expect(await readdir(detached.blobs)).toHaveLength(1);
+    });
+
+    it("a module that wrote nothing fails with nothing on stdout, as before", async () => {
+      const { env } = await withBlobs();
+      const run = await runRunner({ module: fixture("throws.mjs"), env });
+      expect(run.code).toBe(1);
+      expect(run.stdout).toBe("");
     });
   });
 

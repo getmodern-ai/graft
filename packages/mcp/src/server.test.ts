@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { NO_ELICITATION } from "./approval";
 import type { BlobWrittenEvent } from "./blobs";
 import type { McpDeps, ToolCallEvent } from "./deps";
+import { createInFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { revokeConnectionAndNotify } from "./revoke";
 import { runAuthoredTool } from "./run";
@@ -148,6 +149,14 @@ const WRITE_TWO_MODULE = `export default async (_input, ctx) => {
 };
 `;
 
+/** A module that writes a blob and then throws (GRA-187, after Greptile on #148): the row must still land. */
+const WRITE_THEN_THROW = authoredToolName("demo", "write-then-throw");
+const WRITE_THEN_THROW_MODULE = `export default async (_input, ctx) => {
+  const file = await ctx.blob.write(new TextEncoder().encode("kept before the fall"), { contentType: "text/plain", name: "kept.txt" });
+  throw new Error(\`fell over after writing \${file}\`);
+};
+`;
+
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
@@ -209,6 +218,9 @@ beforeAll(async () => {
   const writeTwo = join(sandbox.toolboxRoot(PERSON), "tools/demo/write-two/v1");
   await mkdir(writeTwo, { recursive: true });
   await writeFile(join(writeTwo, "index.ts"), WRITE_TWO_MODULE);
+  const writeThenThrow = join(sandbox.toolboxRoot(PERSON), "tools/demo/write-then-throw/v1");
+  await mkdir(writeThenThrow, { recursive: true });
+  await writeFile(join(writeThenThrow, "index.ts"), WRITE_THEN_THROW_MODULE);
 
   store = createFakeStore();
   store.addConnection({
@@ -360,6 +372,20 @@ beforeAll(async () => {
     path: "tools/demo/write-two/v1",
   });
   store.promote(AGENT_A, "tool_write_two");
+  store.addTool({
+    id: "tool_write_then_throw",
+    personId: PERSON,
+    vendor: "demo",
+    name: "write-then-throw",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Keeps a page and then falls over.",
+    inputSchema: { type: "object", additionalProperties: false },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/write-then-throw/v1",
+  });
+  store.promote(AGENT_A, "tool_write_then_throw");
   // Agent A may run code against Demo (the build approval, ADR 0008); the asks themselves are
   // `approval.test.ts`'s subject, and this suite is about everything that happens once they pass.
   store.grantBuild(AGENT_A, CONN_DEMO);
@@ -402,6 +428,8 @@ beforeAll(async () => {
 
   deps = {
     ...fake,
+    // The registry the door's budget grants live on (GRA-187); the sweep's use of it is `sweep.test.ts`.
+    inFlight: createInFlightRegistry(),
     sandbox,
     keys,
     proxyPublicUrl: vendor.url,
@@ -434,6 +462,7 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  deps.inFlight?.close();
   await sandbox.close();
   await vendor.close();
 });
@@ -504,6 +533,7 @@ describe("the tool list", () => {
         SAVE_REPORT,
         UPLOAD_FILE,
         WRITE_TWO,
+        WRITE_THEN_THROW,
       ]);
       const listItems = tools.find((tool) => tool.name === LIST_ITEMS);
       expect(listItems).toMatchObject({
@@ -1109,6 +1139,90 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
         expect(entries).toHaveLength(dirsBefore + 1);
         expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
         expect(store.usage.at(-1)).toMatchObject({ toolId: "tool_write_two", outcome: "ok" });
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("a module that writes and then throws still gets its row and its blob_written event, and the failure names the ref", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    try {
+      const result = await a.call(WRITE_THEN_THROW, {});
+      expect(result.isError).toBe(true);
+      const answer = body(result) as {
+        error: string;
+        exitCode: number;
+        stderrTail: string;
+        blobs: { ref: string; bytes: number; name: string }[];
+      };
+      expect(answer.error).toMatch(/^The tool failed \(exit code 1\)/);
+      expect(answer.stderrTail).toContain("fell over after writing blob://");
+      expect(answer.blobs).toEqual([
+        expect.objectContaining({ bytes: 20, contentType: "text/plain", name: "kept.txt" }),
+      ]);
+      const id = answer.blobs[0]?.ref.slice("blob://".length) ?? "";
+      expect(await readFile(join(sandbox.blobsRoot(AGENT_A), id, "data"), "utf8")).toBe(
+        "kept before the fall",
+      );
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({ id, agentId: AGENT_A, bytes: 20 });
+      expect(blobEvents.slice(eventsBefore)).toEqual([
+        expect.objectContaining({ agentId: AGENT_A, bytes: 20, contentType: "text/plain" }),
+      ]);
+      expect(store.usage.at(-1)).toMatchObject({
+        toolId: "tool_write_then_throw",
+        outcome: "error",
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("two overlapping runs share the remainder: a detached run holds its grant until its poll settles it, and a run admitted meanwhile is handed what is left", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const already = store.blobs
+        .filter((b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date())
+        .reduce((total, b) => total + b.bytes, 0);
+      // 2.5 MiB left of the quota. The detached write-two run is handed all of it and commits 2 MiB.
+      const filler = row("f0f0f0f0-0000-4000-8000-000000000001", AGENT_A, {
+        bytes: GIB - 2.5 * 1024 * 1024 - already,
+      });
+      await withRows([filler], async () => {
+        const started = body(
+          await a.call("run_tool", { vendor: "demo", name: "write-two", detached: true }),
+        );
+        expect(started).toMatchObject({ status: "running" });
+        const processName = started.processName as string;
+        expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(2.5 * 1024 * 1024);
+
+        // Admitted while the first is outstanding: nothing left, so its first write is refused.
+        const meanwhile = body(await a.call(WRITE_TWO, {})) as {
+          result?: { second: { code: string } };
+          refused?: string;
+        };
+        // write-two's first write is uncaught, so the run fails at it and the failure says so.
+        expect(meanwhile).toMatchObject({
+          error: expect.stringMatching(/^The tool failed \(exit code 1\)/),
+          stderrTail: expect.stringContaining(
+            "blob_quota: the blob would carry this run past the 0 MiB left",
+          ),
+        });
+
+        const waited = body(await a.call("wait_for_process", { processName, maxWaitSeconds: 10 }));
+        expect(waited).toMatchObject({ status: "completed", exitCode: 0 });
+        expect((waited.result as { second: unknown }).second).toMatch(/^blob:\/\//);
+        expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+
+        // Settled: the grant is back, and the live rows now hold the 2 MiB it committed, so the next
+        // run is handed 0.5 MiB and its first 1 MiB write is refused naming that.
+        const after = body(await a.call(WRITE_TWO, {}));
+        expect(after).toMatchObject({
+          stderrTail: expect.stringContaining("past the 0.5 MiB left of its budget"),
+        });
       });
     } finally {
       await a.close();

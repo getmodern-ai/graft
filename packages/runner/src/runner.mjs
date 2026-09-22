@@ -110,10 +110,24 @@
  * by the server's door from the agent's live rows (`packages/mcp/src/blob-door.ts`; GRA-187, after
  * Greptile on #145): the door's check runs before the run, and without this a module could loop
  * `ctx.blob.write` and commit 256 MiB per call to the persistent mount with nothing bounding the
- * total inside one run. The runner keeps the total of what it has committed and refuses the write
- * that would pass the budget as `blob_quota`, as the bytes stream in, so one oversized write stops
- * at the smaller of the cap and the budget; a refused write is on no ledger. Unset, the cap alone
- * bounds a write. `GRAFT_BLOB_QUOTA_BYTES` rides beside it so the sentence can name the quota.
+ * total inside one run. The runner reserves against the budget as each chunk lands, one shared
+ * figure across every write in flight, and refuses the write that would pass it as `blob_quota`,
+ * so one oversized write stops at the smaller of the cap and the budget and two writes at once
+ * cannot both fit in a remainder only one of them fits; a refused write gives its reservation
+ * back and is on no ledger. Unset, the cap alone bounds a write. `GRAFT_BLOB_QUOTA_BYTES` rides
+ * beside it so the sentence can name the quota.
+ *
+ * ## A failed run's blobs
+ *
+ * A blob is committed when its write returns, before the module's outcome is known, so a module
+ * that writes and then throws (or answers something JSON cannot carry) has bytes on the mount the
+ * server would otherwise never hear of. Such a failure carries the ledger out ahead of it: on
+ * stdout, `ENVELOPE_MARKER` on a line of its own and then `{ result: null, blobs }`, before the
+ * error goes to stderr and the process exits 1; on the detached path, the same envelope in the
+ * result file with `RESULT_MARKER` on stdout, as a result would be. The server records the rows
+ * off it as it does off a success (`run.ts`, `wait_for_process`). A run that wrote nothing fails
+ * with nothing on stdout, as before. A timeout (exit 2, or the sandbox's kill) prints nothing, and
+ * a blob it committed is the sweep's to adopt from its sidecar (GRA-189).
  *
  * `GRAFT_AGENT` (the agent id) and `GRAFT_TOOL_VERSION` (the version id of the tool running) are set
  * per exec by the run and go into the sidecar and nowhere else — never into a path — and are deleted
@@ -245,8 +259,13 @@ const blobBudgetBytes =
   readByteCount(process.env.GRAFT_BLOB_BUDGET_BYTES) ?? Number.POSITIVE_INFINITY;
 const blobQuotaBytes =
   readByteCount(process.env.GRAFT_BLOB_QUOTA_BYTES) ?? Number.POSITIVE_INFINITY;
-/** Bytes this run has committed so far: every renamed blob's size, and nothing of a refused write. */
-let blobBytesCommitted = 0;
+/**
+ * Bytes this run holds against its budget: every committed blob's size plus every byte a write in
+ * progress has landed so far. Reserved as the chunks land, not after the commit, so several writes
+ * in flight at once (`Promise.all`) share one figure and cannot each see the whole remainder
+ * (Greptile on #148); a refused or failed write gives its reservation back with its `.tmp`.
+ */
+let blobBytesReserved = 0;
 
 function readByteCount(value) {
   if (value === undefined || value === "") return null;
@@ -376,6 +395,43 @@ function fail(code, message) {
       ? `…${message.slice(message.length - STDERR_TAIL_CHARS)}`
       : message;
   process.stderr.write(`${text}\n`, () => process.exit(code));
+}
+
+/**
+ * A module's failure after it wrote a blob (the header, "A failed run's blobs"): the blob is
+ * committed and the server must learn of it, so the ledger goes out ahead of the failure as an
+ * envelope with `result: null`, behind the same `ENVELOPE_MARKER` line a result's envelope sits
+ * behind, so the server has one reader for both. On stdout it is the two lines; on the detached
+ * path it goes to the result file with `RESULT_MARKER` on stdout, as a result would. A run that
+ * wrote nothing fails exactly as it always did, with nothing on stdout. A timeout cannot come
+ * through here: the process is killed with nothing printed, and the sweep adopts the directory
+ * from its sidecar (GRA-189).
+ */
+async function failWithLedger(code, message) {
+  if (blobLedger.length === 0) {
+    fail(code, message);
+    return;
+  }
+  const json = `${ENVELOPE_MARKER}\n${JSON.stringify({ result: null, blobs: blobLedger })}`;
+  try {
+    if (resultPath) {
+      await mkdir(dirname(resultPath), { recursive: true });
+      await writeFile(`${resultPath}.tmp`, json, "utf8");
+      await rename(`${resultPath}.tmp`, resultPath);
+      await new Promise((resolve) =>
+        process.stdout.write(`${RESULT_MARKER}${resultPath}\n`, resolve),
+      );
+    } else {
+      await new Promise((resolve) => process.stdout.write(`${json}\n`, resolve));
+    }
+  } catch (error) {
+    fail(
+      code,
+      `${message}\n(the ledger of ${blobLedger.length} blob(s) written could not be reported: ${describe(error)})`,
+    );
+    return;
+  }
+  fail(code, message);
 }
 
 function describe(error) {
@@ -673,25 +729,27 @@ async function blobWrite(data, opts) {
     throw error;
   }
 
-  // The smaller of the two bounds on this write (the header): the per-blob cap, and what is left of
-  // the agent's quota after every blob this run has committed so far.
-  const remaining = blobBudgetBytes - blobBytesCommitted;
-  const limit = Math.min(MAX_BLOB_BYTES, remaining);
+  // Two bounds on this write (the header), judged per chunk as the bytes land: the per-blob cap on
+  // this write's own count, and the budget on the shared reservation, which every write in flight
+  // adds to as it goes. One chunk is one synchronous step, so the shared figure is exact.
   let bytes = 0;
   try {
     const counted = async function* () {
       for await (const chunk of source) {
         const part = bytesOf(chunk, "a stream handed to ctx.blob.write yields");
         bytes += part.byteLength;
-        if (bytes > limit) {
-          throw remaining < MAX_BLOB_BYTES
+        blobBytesReserved += part.byteLength;
+        if (blobBytesReserved > blobBudgetBytes || bytes > MAX_BLOB_BYTES) {
+          // What this write had left to it: the budget less what every other write holds.
+          const left = Math.max(0, blobBudgetBytes - (blobBytesReserved - bytes));
+          throw bytes > MAX_BLOB_BYTES && left >= MAX_BLOB_BYTES
             ? blobRefusal(
-                "blob_quota",
-                `the blob would carry this run past the ${formatMiB(remaining)} MiB left of its budget: the agent's live blobs are at the ${formatMiB(blobQuotaBytes)} MiB quota. A blob expires 24 hours after its write and stops counting then; write less, or run again once one has.`,
-              )
-            : blobRefusal(
                 "blob_too_large",
                 `the blob passed ${MAX_BLOB_BYTES} bytes (256 MiB), the cap on one blob. Write less — a page, a range, a compressed form.`,
+              )
+            : blobRefusal(
+                "blob_quota",
+                `the blob would carry this run past the ${formatMiB(left)} MiB left of its budget: the agent's live blobs are at the ${formatMiB(blobQuotaBytes)} MiB quota. A blob expires 24 hours after its write and stops counting then; write less, or run again once one has.`,
               );
         }
         yield part;
@@ -714,7 +772,6 @@ async function blobWrite(data, opts) {
     await rename(tmp, dir);
 
     const ref = `${BLOB_REF_SCHEME}${id}`;
-    blobBytesCommitted += bytes;
     blobLedger.push({
       ref,
       bytes,
@@ -724,7 +781,9 @@ async function blobWrite(data, opts) {
     });
     return ref;
   } catch (error) {
-    // A refused or failed write is nowhere: not on disk, not on the ledger, not in the total.
+    // A refused or failed write is nowhere: not on disk, not on the ledger, and its reservation
+    // goes back to the budget with its `.tmp`.
+    blobBytesReserved -= bytes;
     await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
@@ -814,7 +873,8 @@ async function main() {
   } catch (error) {
     // In a dry run a throw is part of the report, not the end of the process — see the header.
     if (!dryRun) {
-      fail(EXIT_THREW, describe(error));
+      clearTimeout(timer);
+      await failWithLedger(EXIT_THREW, describe(error));
       return;
     }
     moduleError = describe(error);
@@ -826,7 +886,10 @@ async function main() {
     json = JSON.stringify(result === undefined ? null : result);
   } catch (error) {
     if (!dryRun) {
-      fail(EXIT_THREW, `The module's result is not serialisable as JSON: ${describe(error)}`);
+      await failWithLedger(
+        EXIT_THREW,
+        `The module's result is not serialisable as JSON: ${describe(error)}`,
+      );
       return;
     }
     moduleError = `The module's result is not serialisable as JSON: ${describe(error)}`;

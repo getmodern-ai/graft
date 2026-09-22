@@ -686,7 +686,18 @@ refuses the write that would pass the budget as `blob_quota` as the bytes stream
 of the per-blob cap and the budget, removing the `.tmp` directory as `blob_too_large` does; a
 refused write is on no ledger. Unset, as under a server older than the variable or a runner run by
 hand, the per-blob cap alone bounds a write. `execute__` commands and `run_command` never pass the
-door and carry no budget.
+door and carry no budget. Three more rules from Greptile's review of #148: the runner reserves
+against the budget **as each chunk lands**, one shared figure across every write in flight, so two
+writes started together cannot both fit a remainder only one fits; the door subtracts **what it has
+already handed to this agent's runs still in flight** (`InFlightRegistry.grant` and
+`outstandingBudget`, `in-flight.ts`; a detached run's grant rides on its process name until its
+poll settles it), a per-process record as the in-flight hold is, with ADR 0023's option C as the
+shape for the day two replicas admit one agent's runs; and **a failed run reports the blobs it
+committed**: a module that writes and then throws prints the same `ENVELOPE_MARKER` line a result's
+envelope sits behind (`__GRAFT_ENVELOPE__:1`, `@graft/runner`) and `{ result: null, blobs }` on
+stdout before the error (the result file on the detached path), so `readRunnerEnvelope` is the one
+reader; `run.ts` records the rows off it and the failure names the refs, while a timeout prints
+nothing and its blobs are the sweep's to adopt (GRA-189).
 
 ### The self-hosted image
 

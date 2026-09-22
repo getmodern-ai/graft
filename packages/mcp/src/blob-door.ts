@@ -105,6 +105,16 @@ export function judgeBlobRefs(
  * own check runs once, before the run; a module could otherwise loop `ctx.blob.write` and commit
  * 256 MiB per call with nothing bounding the total inside one run (Greptile on #145). Only the door
  * knows the live figure, so the runner is told the remainder and never reads the database.
+ *
+ * The remainder is the quota less the live rows **less what the door has already handed to this
+ * agent's runs still in flight** (`InFlightRegistry.outstandingBudget`, `in-flight.ts`): two runs
+ * admitted from the same rows would otherwise each be handed the whole remainder and together
+ * commit twice it (Greptile on #148). The run holds its grant from admission until it settles, a
+ * detached run's until its poll settles it or its time is up, the same places its in-flight hold
+ * is released. The record is per process, which is the deployment shape in both forms today: this
+ * server is the only one that starts an agent's runs (`in-flight.ts`'s header). The day two
+ * replicas admit runs for one agent, the budget has to be reserved where the rows are, which is
+ * ADR 0023's option C (a server-side blob seam) rather than a second copy of this registry.
  */
 export type BlobAdmission = { budgetBytes: number };
 
@@ -122,7 +132,8 @@ export async function admitBlobs(
   const live = await liveBlobBytes(ctx, scope, deps.blob);
   const quota = judgeBlobQuota(live);
   if (quota) return { ok: false, refusal: quota };
-  const admission = { budgetBytes: BLOB_QUOTA_BYTES - live };
+  const outstanding = deps.inFlight?.outstandingBudget(scope.agentId) ?? 0;
+  const admission = { budgetBytes: Math.max(0, BLOB_QUOTA_BYTES - live - outstanding) };
   const refs = blobRefsIn(input);
   if (refs.length === 0) return { ok: true, admission };
   const ids = refs.map(blobIdOf).filter((id): id is string => id !== null);
