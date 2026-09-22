@@ -71,7 +71,12 @@ until after `/to-tickets`) so all three build on the same thinking;
 
 Four are here for completeness rather than use: `scaffold-exercises` and `migrate-to-shoehorn`
 target his course repositories, and `setup-pre-commit` and `git-guardrails-claude-code` would
-install tooling this repository has deliberately not adopted (Biome, not Prettier plus Husky).
+install tooling this repository has deliberately not adopted (Biome, not Prettier plus Husky);
+the guard script's substring match also misses `git -C <dir> push`, so it would not be the
+protection it says it is (Greptile on #137). `improve-codebase-architecture` writes an HTML report
+that loads Tailwind and Mermaid from public CDNs, so the file names and module shape it draws are
+shown to those scripts when it is opened; fine for this public repository, and worth knowing before
+running it over a private checkout that links `packages/cloud-backings/`.
 `/pr` proposes a body shape (Summary, Evidence, Merge Danger) that is a fine skeleton, but the
 body of a pull request here is the build record *Before anything else* describes, and that content
 comes first.
