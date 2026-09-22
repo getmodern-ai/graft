@@ -14,6 +14,108 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
    verified by hand and what was not, the deviations and their reasons — and is where the thing a
    later ticket trips over is written down. An ADR records a decision; Linear holds the ticket.
 
+## Skills
+
+Content lives in `.agents/skills/<name>/SKILL.md`; `.claude/skills/*` are symlinks to it, so a
+skill is authored once and Claude Code and Codex read the same copy. Always edit the file under
+`.agents/`, never through the symlink directory.
+
+Presence in `skills-lock.json` marks the boundary: a listed skill is **vendored** from an upstream
+source and pinned by content hash, so a local edit is lost on the next sync. Today every entry is
+one of [`mattpocock/skills`](https://github.com/mattpocock/skills), all thirty-eight of them,
+vendored whole under MIT (`.agents/skills/LICENSE` is his notice; GRA-179). Taking a subset was
+tried in Cando and abandoned: they cross-reference heavily, so any subset leaves the flows they
+describe dead-ending on skills nobody installed. A skill of our own would go beside them and stay
+out of the lockfile; there is none yet, and the Hermes skill under `skills/` is a product, not a
+skill for working here.
+
+Biome does **not** look inside `.agents/skills` (`biome.json`): vendored files answer to their
+upstream, and in Cando the reformatting reappeared on every sync until the exclusion.
+
+### Keeping them current
+
+```bash
+npx skills update -p -y                  # refresh everything already in the lockfile
+npx skills add mattpocock/skills         # pick up skills that did not exist when we last looked
+```
+
+`update` iterates `skills-lock.json`, so it can only refresh what is already listed; a skill
+published upstream after our last `add` is invisible to it. Two exceptions, both from Cando's
+experience of the same CLI:
+
+- **`matt-code-review` cannot auto-update.** The CLI resolves the upstream skill by its *local*
+  name rather than by `skillPath`, so it looks for `matt-code-review` in his repository, finds
+  nothing, and reports a failure. Nothing is damaged, but it receives no upstream changes. To
+  refresh it by hand, `add` it under its own name somewhere disposable and copy the file across,
+  then put the `name:` line back.
+- **`update -p` updates *every* vendored skill.** Run it deliberately, in a pull request about that.
+
+### Which to reach for
+
+**Start with `/ask-matt`.** It is the router over the rest and holds the map: which skill opens
+which flow, where the on-ramps merge, and where a phase boundary makes it safe to compact.
+Reproducing that map here would let the copy rot. The main path, for orientation:
+
+```
+grill-with-docs → to-spec → to-tickets → implement → matt-code-review
+                                           ├ tdd
+                                           └ diagnosing-bugs
+```
+
+with `/triage` on-ramping raw incoming issues, `/diagnosing-bugs` on-ramping breakage,
+`/wayfinder` for an effort too foggy to hold in a single session, and `/implement-spec` when a
+whole spec's ticket graph is to land on one branch. One rule from `ask-matt` worth knowing before
+you read it: keep grilling, spec and tickets in **one unbroken context window** (don't compact
+until after `/to-tickets`) so all three build on the same thinking;
+`.agents/skills/ask-matt/PHASE-BOUNDARIES.md` says where compaction is safe.
+
+Four are here for completeness rather than use: `scaffold-exercises` and `migrate-to-shoehorn`
+target his course repositories, and `setup-pre-commit` and `git-guardrails-claude-code` would
+install tooling this repository has deliberately not adopted (Biome, not Prettier plus Husky).
+`/pr` proposes a body shape (Summary, Evidence, Merge Danger) that is a fine skeleton, but the
+body of a pull request here is the build record *Before anything else* describes, and that content
+comes first.
+
+**Why `matt-code-review` and not `code-review`.** Claude Code ships a built-in `code-review`, and
+the built-in wins the name; his was installed and simply unreachable in Cando. So it is aliased:
+the directory, the lockfile key and the frontmatter `name` all say `matt-code-review`, while
+`skillPath` still points at `skills/engineering/code-review/SKILL.md` upstream. The two answer
+different questions: the built-in finds correctness bugs and simplifications in a diff and can post
+inline comments; his checks a branch against documented standards *and* against the ticket that
+asked for it, in parallel sub-agents. One consequence: `implement`, `implement-spec` and `ask-matt`
+end with "use `/code-review`", which resolves to the built-in. Reach for `matt-code-review` by hand
+when you want the spec axis, and do not edit the vendored files to fix it.
+
+**These skills assume an issue tracker, and ours is Linear, not GitHub Issues.** They default to
+`gh issue create`. The real workflow is recorded in `docs/agents/` (the **Agent skills** section
+below). Read it before using `triage`, `to-tickets`, `to-spec` or `wayfinder`, or they will reach
+for the wrong CLI.
+
+> **Leave "PRs as a request surface" set to `no`.** It is recorded that way in
+> `docs/agents/issue-tracker.md`. `triage` step 3 verifies a PR by checking it out and running its
+> tests, which for a PR from outside the organisation means executing contributor-controlled code
+> in a session holding credentials. This repository is public and takes outside contributions, so
+> the flag is load-bearing here in a way it was not in Cando. It cannot be fixed by editing
+> `triage/SKILL.md`; that file is vendored.
+
+## Agent skills
+
+Per-repository configuration the vendored engineering skills read. `setup-matt-pocock-skills`
+would write these; here they were written by hand from Cando's (GRA-179), so edit the files
+directly rather than running it, unless you are switching trackers outright. *Agent* in that
+directory means the coding agent; everywhere else it is `CONTEXT.md`'s word.
+
+- **Issue tracker**: Linear, in the Graft team, through the MCP server configured in the person's
+  own tooling. Work groups initiative → project → issue; a spec's tickets go in the spec's project
+  as sub-issues. `docs/agents/issue-tracker.md`, which also carries the "PRs as a request surface"
+  flag, the pull-request rules and the Linear equivalents of the wayfinding operations.
+- **Triage labels**: the five canonical roles, unaliased: `needs-triage`, `needs-info`,
+  `ready-for-agent`, `ready-for-human`, `wontfix`. All exist in the Graft team. They are a *state*
+  axis and compose with the type labels (`Bug`, `Feature`, `Improvement`, `Infra`).
+  `docs/agents/triage-labels.md`.
+- **Domain docs**: single-context, one `CONTEXT.md` and one `docs/adr/` at the root, despite the
+  monorepo. `docs/agents/domain.md`.
+
 ## Working agreement
 
 - **Every pull request has a Linear ticket** in the Graft project, and the PR references it.
@@ -987,8 +1089,7 @@ required check. `.agents/skills` is excluded from Biome because vendored files a
 upstream. `.claude/worktrees` is excluded root-relative on purpose: a `**/` pattern matches the
 *containing* path too, so running Biome inside a checkout that sits under a `worktrees/` directory
 would exclude the whole checkout and lint nothing (Cando's CAN-147; reproduced here before writing
-the pattern). Skills for the vendored engineering workflow will be added now that there is code to
-work on.
+the pattern). The vendored engineering workflow is the **Skills** section above.
 
 ## Conventions
 
