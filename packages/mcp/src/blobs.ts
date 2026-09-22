@@ -99,6 +99,16 @@ export async function withBlobTally<T>(
   return { value, tally };
 }
 
+/**
+ * Run `work` with no tally in reach, for background work started from inside a tool call — the
+ * acquire runner's kick (`acquire/runner.ts`), whose timer would otherwise inherit the call's
+ * context and claim jobs across agents under it (Greptile on #144). A job gets a tally of its own
+ * from `withBlobTally` when it starts.
+ */
+export function outsideBlobTally<T>(work: () => T): T {
+  return tallies.exit(work);
+}
+
 function tallyBlobs(written: number, dropped: number): void {
   const tally = tallies.getStore();
   if (!tally) return;

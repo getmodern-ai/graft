@@ -395,6 +395,8 @@ const acquireRunner = createAcquireRunner(mcp, {
         failure: event.failure?.split(":")[0] ?? null,
         attempts: event.attempts ?? null,
         token_spend: event.tokenSpend ?? null,
+        // The job's own count (GRA-186): its runs' blobs are reported here, never on the call that queued it.
+        blobs_written: event.blobsWritten,
       },
     });
   },
