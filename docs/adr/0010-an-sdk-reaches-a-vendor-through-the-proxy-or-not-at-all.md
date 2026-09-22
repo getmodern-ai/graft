@@ -86,3 +86,17 @@ exists because the alternative, a placeholder credential for a public API, is no
 to its paid host, and the first hosted `acquire` against it failed on that alone. A person confirms
 a `none` connection in the console as any other, and enters nothing; consent still never moves
 inside the loop.
+
+## Amended 22 September 2026
+
+**The body cap is a variable, and its default does not move** (GRA-181, GRA-183). The proxy
+buffers both legs and caps them, and the constant behind that cap becomes
+`GRAFT_PROXY_MAX_BODY_BYTES`, default the 10 MiB it always was, refused below 1 MiB, applied to a
+request body and a response body alike, named on the boot line when it is not the default. The
+buffering rationale stands: exact byte counts on the wide event, a clean refusal instead of a cut
+mid-body, redaction by value over a whole text-like body. Raising the default was considered and
+refused, since every tool would then hold larger bodies in memory per in-flight call and hand the
+model bodies it cannot use. An operator whose tools move files larger than the default raises it
+for that deployment; the blob store (ADR 0023) is what those files travel through afterwards.
+Streaming the response leg with a redaction lookback is the shape that would remove the cap, and
+is its own later decision.

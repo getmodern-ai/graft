@@ -252,7 +252,7 @@ live in a private package that is not in this repository, and its vendors are no
 
 | Seam | Self-hosted, in this repository | Hosted |
 | --- | --- | --- |
-| Sandbox | a short-lived Docker container on your daemon | the hosted form's own backing |
+| Sandbox | a Docker container per agent on your daemon | the hosted form's own backing |
 | Keyring | AES-256-GCM envelope encryption under `GRAFT_KEYRING_SECRET` | the hosted form's own backing |
 | Toolbox | a directory tree under `GRAFT_TOOLBOX_ROOT` | the hosted form's own backing |
 | Model | your own provider key | Graft's fixed model, with a person's own key routing their jobs to their provider |
