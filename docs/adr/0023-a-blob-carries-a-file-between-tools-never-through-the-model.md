@@ -43,8 +43,11 @@ the guarantee; the mount is.
 
 **A blob has one commit point.** The runner writes `data` and `meta.json` into a temporary
 directory beside the final one and renames the directory once it is whole, so a reader or the sweep
-sees the blob complete or not at all; a temporary directory left by a killed run is the one thing
-the sweep removes without a sidecar to read.
+sees the blob complete or not at all. A temporary directory is a write in progress or an abandoned
+one, and the sweep tells them apart by two rules it already keeps for the working set (ADR 0009):
+it never runs for an agent with a run in flight, and it removes a temporary directory only when it
+is older than the longest a run may live, the run's maximum timeout with a margin, so no write the
+runner could still finish is ever taken from under it.
 
 The sandbox has no route to the database; the server learns of a blob from the ledger the runner
 returns beside the result, and writes one `blob` row per file. The door refuses a dead ref before a
@@ -90,8 +93,10 @@ sandbox is touched: `blob_not_found` (missing, or another agent's, never saying 
 - **The sweep deletes.** The toolbox's rule that nothing under `tools/` is ever removed (ADR 0009)
   stands; a blob past its time is the one thing the system deletes, on the working-set sweep's
   timer, and its row stays with `removed_at` so the door can say expired rather than not found. A
-  run killed after a write leaves a directory with a sidecar and no row; the sweep adopts it or
-  removes it past the TTL.
+  run killed after its rename leaves a committed directory with a sidecar and no row, which the
+  sweep adopts or removes past the TTL; a run killed before it leaves a temporary directory, which
+  the sweep removes only past the run's maximum timeout and never while the agent has a run in
+  flight.
 - **The `blob:` scheme is also the browser's object-URL scheme.** Nothing of Graft's runs a ref
   through a browser, and the console shows a ref as text if it ever shows one. Noted so nobody
   treats the collision as a bug.
