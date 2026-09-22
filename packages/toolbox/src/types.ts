@@ -47,9 +47,50 @@ export type ToolboxStore = {
   /**
    * Remove a draft directory and everything under it. A path outside `.drafts/` is refused before
    * anything is touched (ADR 0009: nothing in the toolbox is deleted by the system), and a draft that
-   * is already gone is not an error.
+   * is already gone is not an error. A blob is not a draft and is not in a toolbox: removing one is
+   * `BlobStore.remove`, the seam beside this one.
    */
   remove(toolboxId: string, path: string): Promise<void>;
+};
+
+/**
+ * The blob store seam: where an agent's blobs live between the tool that wrote one and the tool
+ * that reads it (CONTEXT.md, "Blob store"; ADR 0023). A seam beside the toolbox store, not a
+ * widening of it: `ToolboxStore.remove` still accepts a draft and nothing else, and a blob past its
+ * time is the one thing the system deletes. Keyed by agent, because the scope is the agent's mount
+ * (`.blobs/<agentId>` mounted alone at `/blobs`, `./layout.ts`); a blob id or a `.tmp` name is the
+ * other half. `./blob-store.ts` is the backing this repository holds, the `.blobs` tree beside the
+ * toolboxes under the same root; the hosted form's is the private package's (GRA-192).
+ *
+ * Reads and removes only. The runner writes a blob from inside the sandbox (GRA-186), where the
+ * server's store is not; what the server needs of a blob is to see it, read its sidecar and remove
+ * it when the sweep says so (GRA-189).
+ */
+export type BlobStore = {
+  /**
+   * The directory names under the agent's blobs directory that are a blob id or a `<blobId>.tmp` a
+   * killed run left half-written, sorted. An agent with no directory yet has no blobs, not an error.
+   * Anything else a sandbox wrote there (a directory under a foreign name, a file, a symlink) is
+   * skipped, left in place and never removed by the store: `remove` takes only the two names, and
+   * the sweep deletes only what it can name (ADR 0023).
+   */
+  list(agentId: string): Promise<string[]>;
+  /**
+   * The text of a blob's `meta.json`. Rejects when the blob, or its sidecar, is not there, and
+   * refuses either when it is a symlink: the tree is sandbox-writable and the store follows no link
+   * out of the agent's directory (ADR 0023, "the scope is a mount").
+   */
+  readMeta(agentId: string, blobId: string): Promise<string>;
+  /** Whether the blob's directory is there. A `.tmp` directory is not yet a blob; a symlink is refused. */
+  exists(agentId: string, blobId: string): Promise<boolean>;
+  /**
+   * Remove one blob's directory, or one `<blobId>.tmp`, and everything in it; one already gone is
+   * not an error. `name` is a blob id, or a blob id with `BLOB_TMP_SUFFIX`, and nothing else: a
+   * slash, `..` or an empty name is refused before anything is touched, and a symlink under a legal
+   * name is refused and left as it is, so nothing outside the agent's own directory is reachable
+   * through this verb.
+   */
+  remove(agentId: string, name: string): Promise<void>;
 };
 
 /**

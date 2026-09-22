@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,6 +54,20 @@ describe("the open form", () => {
     expect(backings.mail.name).toBe("console");
   });
 
+  it("builds the blob store at the same root as the toolbox store, beside the toolboxes (ADR 0023)", async () => {
+    const backings = await selectBackings(base);
+
+    expect(await backings.blobStore.list("agent1")).toEqual([]);
+    // A blob the runner would have written under `<root>/.blobs/<agentId>/<blobId>/` is what the
+    // store reads back: the two name one directory.
+    await mkdir(join(toolboxRoot, ".blobs", "agent1", "blob1"), { recursive: true });
+    await writeFile(join(toolboxRoot, ".blobs", "agent1", "blob1", "meta.json"), '{"bytes":3}');
+    expect(await backings.blobStore.list("agent1")).toEqual(["blob1"]);
+    expect(await backings.blobStore.readMeta("agent1", "blob1")).toBe('{"bytes":3}');
+    // And the toolbox store never sees it: `.blobs` is no toolbox.
+    await expect(backings.store.exists(".blobs", "agent1")).rejects.toThrow(/toolbox id/);
+  });
+
   it("builds the Docker sandbox backing when the pair is set", async () => {
     const backings = await selectBackings({
       ...base,
@@ -87,8 +102,15 @@ describe("the open form", () => {
     // What the store writes is what a sandbox of the fake mounts.
     await backings.store.writeTree("person1", "tools/v/t/v1", [{ path: "a.txt", content: "one" }]);
     const { handle } = await sandbox.ensure({ name: "s" });
-    await handle.mountToolbox({ toolboxId: "person1", mountPath: "/tools" });
+    await handle.mountToolbox({
+      toolboxId: "person1",
+      mountPath: "/tools",
+      blobs: { agentId: "agent1", mountPath: "/blobs" },
+    });
     expect(await handle.read("/tools/tools/v/t/v1/a.txt")).toBe("one");
+    // And what a sandbox writes under `/blobs` is what the blob store reads (ADR 0023).
+    await handle.writeTree([{ path: "meta.json", content: '{"bytes":1}' }], "/blobs/b1");
+    expect(await backings.blobStore.readMeta("agent1", "b1")).toBe('{"bytes":1}');
   });
 
   it("refuses to build the local keyring with no secret", async () => {
@@ -289,6 +311,22 @@ describe("the cloud form", () => {
     expect(existsSync(join(toolboxRoot, "own-person"))).toBe(false);
   });
 
+  it("takes the blob store a factory answers with in place of the filesystem one, and keeps the filesystem one when it answers none", async () => {
+    const own = await selectBackings(cloud, { cloudModule: fixture("own-store") });
+    expect(JSON.parse(await own.blobStore.readMeta("agent1", "own-blob"))).toEqual({
+      marker: "written by the factory's own blob store",
+    });
+    expect(existsSync(join(toolboxRoot, ".blobs", "agent1", "own-blob"))).toBe(false);
+
+    // A different agent from the open-form test above, which writes under the same root.
+    const none = await selectBackings(cloud, { cloudModule: fixture("fake") });
+    expect(await none.blobStore.list("agent-cloud")).toEqual([]);
+    await mkdir(join(toolboxRoot, ".blobs", "agent-cloud", "fs-blob"), { recursive: true });
+    await writeFile(join(toolboxRoot, ".blobs", "agent-cloud", "fs-blob", "meta.json"), "{}");
+    expect(await none.blobStore.exists("agent-cloud", "fs-blob")).toBe(true);
+    expect(await none.blobStore.list("agent-cloud")).toEqual(["fs-blob"]);
+  });
+
   it("appends the keyring when a factory answers no providers, and keeps the console transport when it answers no mail", async () => {
     const backings = await selectBackings(cloud, { cloudModule: fixture("own-store") });
     expect(backings.providers).toEqual([keyringProvider]);
@@ -445,6 +483,18 @@ describe("assertCloudBackings", () => {
     ).toThrow(/store without remove\(\)/);
     expect(() => assertCloudBackings({ ...complete, store: null }, "m")).toThrow(
       /store that is not an object/,
+    );
+  });
+
+  it("accepts a blob store beside the seams, whole or absent, and names the first verb a partial one lacks", () => {
+    const blobStore = { list() {}, readMeta() {}, exists() {}, remove() {} };
+    expect(() => assertCloudBackings({ ...complete, blobStore }, "m")).not.toThrow();
+    expect(() => assertCloudBackings({ ...complete, blobStore: undefined }, "m")).not.toThrow();
+    expect(() =>
+      assertCloudBackings({ ...complete, blobStore: { ...blobStore, readMeta: "no" } }, "m"),
+    ).toThrow(/blob store without readMeta\(\)/);
+    expect(() => assertCloudBackings({ ...complete, blobStore: null }, "m")).toThrow(
+      /blob store that is not an object/,
     );
   });
 });

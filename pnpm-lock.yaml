@@ -823,6 +823,9 @@ importers:
       '@graft/sandbox':
         specifier: workspace:*
         version: link:../sandbox
+      '@graft/toolbox':
+        specifier: workspace:*
+        version: link:../toolbox
       tar-stream:
         specifier: 'catalog:'
         version: 3.2.1

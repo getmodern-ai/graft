@@ -4,8 +4,14 @@ import { type ModuleSources, readModuleSources, singleFileModule } from "@graft/
 import type { AgentScope } from "@graft/core";
 import { causeChain, describeLink, TRUNCATED } from "@graft/proxy/cause-chain";
 import { RESULT_MARKER, RUNNER_DIR, RUNNER_PATH, SKILLS_DIR, skillFiles } from "@graft/runner";
-import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
-import { DRAFTS_DIR, draftPath, sandboxPath, TOOLBOX_MOUNT_PATH } from "@graft/toolbox";
+import type { MountToolboxArgs, SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
+import {
+  BLOBS_MOUNT_PATH,
+  DRAFTS_DIR,
+  draftPath,
+  sandboxPath,
+  TOOLBOX_MOUNT_PATH,
+} from "@graft/toolbox";
 
 import {
   boundJson,
@@ -24,16 +30,30 @@ import type { McpDeps } from "./deps";
  * The agent's sandbox — where authored code runs (CONTEXT.md, *Sandbox*) — reached through the
  * seam (ADR 0002) and provisioned the same way on every backing.
  *
- * One sandbox per agent, found again by name on every call. The toolbox is mounted **first**, before
- * anything is written: a backing may recreate the sandbox to attach a mount and only the toolbox is
+ * One sandbox per agent, found again by name on every call. The mounts come **first**, before
+ * anything is written: a backing may recreate the sandbox to attach a mount and only the mounts are
  * guaranteed to survive that (`@graft/sandbox`'s `mountToolbox`), so the runner and the skills are
- * seeded after it, and only when they are not already there. The toolbox id is the person's id,
+ * seeded after them, and only when they are not already there. The toolbox id is the person's id,
  * because the toolbox is the person's (ADR 0007): every agent of one person mounts one volume, and a
- * tool published for one is on the disk of all.
+ * tool published for one is on the disk of all. The blobs directory is the agent's own (ADR 0023):
+ * `.blobs/<agentId>` beside the toolboxes, mounted alone at `/blobs`, so the scope of a blob is the
+ * mount and another agent's blobs are on no path this sandbox can name.
  */
 
 /** Where the person's toolbox is mounted inside every sandbox — `@graft/toolbox`'s layout. */
 export const TOOLBOX_DIR = TOOLBOX_MOUNT_PATH;
+
+/** Where the agent's own blobs directory is mounted, alone (`@graft/toolbox`'s layout; ADR 0023). */
+export const BLOBS_DIR = BLOBS_MOUNT_PATH;
+
+/** The two mounts every agent sandbox has: the person's toolbox and the agent's blobs directory. */
+export function agentMounts(scope: AgentScope): MountToolboxArgs {
+  return {
+    toolboxId: scope.personId,
+    mountPath: TOOLBOX_DIR,
+    blobs: { agentId: scope.agentId, mountPath: BLOBS_DIR },
+  };
+}
 
 /**
  * Drafts live on the toolbox so a half-written module survives the sandbox, under a directory per
@@ -76,14 +96,14 @@ export async function openAgentSandbox(deps: McpDeps, scope: AgentScope): Promis
     scope.agentId,
   );
   const { handle } = await deps.sandbox.ensure({ name });
-  await handle.mountToolbox({ toolboxId: scope.personId, mountPath: TOOLBOX_DIR });
+  await handle.mountToolbox(agentMounts(scope));
   await seedRunner(deps, handle);
   return handle;
 }
 
 /** Mount the toolbox again — the recovery when a version directory is not where the pointer says. */
 export async function remountToolbox(handle: SandboxHandle, scope: AgentScope): Promise<void> {
-  await handle.mountToolbox({ toolboxId: scope.personId, mountPath: TOOLBOX_DIR });
+  await handle.mountToolbox(agentMounts(scope));
 }
 
 async function seedRunner(deps: McpDeps, handle: SandboxHandle): Promise<void> {

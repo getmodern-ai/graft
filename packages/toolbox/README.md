@@ -1,9 +1,10 @@
 # `@graft/toolbox`
 
 The toolbox storage seam (CONTEXT.md, "Toolbox"; ADR 0002) and the backing this repository holds: a
-person's authored tools as a directory tree.
+person's authored tools as a directory tree. Beside it, the blob store seam (CONTEXT.md, "Blob
+store"; ADR 0023): an agent's blobs between the tool that wrote one and the tool that reads it.
 
-## The seam
+## The seams
 
 `ToolboxStore` — `readTree`, `writeTree`, `read`, `list`, `exists`, `remove` — over a toolbox id and a
 path relative to that toolbox. `remove` accepts a draft and nothing else: nothing under `tools/` is
@@ -13,14 +14,34 @@ after a publish, asynchronous and best-effort; the mirror here records the call 
 and the S3 mirror is the private package's (GRA-20). Neither interface names a bucket, a volume or a
 region.
 
+`BlobStore` (`list(agentId)`, `readMeta(agentId, blobId)`, `exists(agentId, blobId)`,
+`remove(agentId, name)`) is keyed by agent, reads and removes only, and is the seam a blob past its
+time is deleted through (GRA-189); a blob is written by the runner from inside the sandbox (GRA-186),
+never by the server. `remove` takes a blob id or a `<blobId>.tmp` and refuses anything else. The
+backing here is `createFilesystemBlobStore`, over the same root as the toolbox store; the hosted
+form's is the private package's (GRA-192), and `blobStoreConformance` is the suite both run.
+
 ## The layout
 
 ```
-<root>/<toolboxId>/
-  tools/<vendor>/<name>/v<N>/     a published version: the module, and when it declares packages,
-                                  its own node_modules and package-lock.json (ADR 0013)
-  .drafts/<jobId>/                what an acquire job writes before it publishes
+<root>/
+  <toolboxId>/
+    tools/<vendor>/<name>/v<N>/     a published version: the module, and when it declares packages,
+                                    its own node_modules and package-lock.json (ADR 0013)
+    .drafts/<jobId>/                what an acquire job writes before it publishes
+  .blobs/<agentId>/
+    <blobId>/                       one blob (ADR 0023): its `data` and its `meta.json` sidecar, written
+                                    by the runner (GRA-186), removed by the sweep once expired (GRA-189)
+    <blobId>.tmp/                   the same blob while it is still being written, renamed whole
 ```
+
+The blobs are beside the toolboxes, not inside one: a toolbox is the person's and every agent of the
+person mounts it, a blob is the agent's alone. **The scope is a mount** (ADR 0023): an agent's sandbox
+mounts `.blobs/<agentId>` and nothing above it at `/blobs`, the way it mounts the person's toolbox at
+`/tools` (`MountToolboxArgs.blobs` on the sandbox seam), so another agent's blobs are on no path it
+can name, whatever a vendored dependency does with `fs`. `blobSandboxPath(blobId)` is `/blobs/<blobId>`,
+with no agent id in it. No toolbox can be called `.blobs`, since a toolbox id starts with a letter or
+digit, which is what keeps the two trees apart under one root.
 
 One toolbox per person; the toolbox id is the person's id (`toolboxIdOf`), which is also the name of
 the volume a sandbox mounts. `tool_version.path` holds `tools/<vendor>/<name>/v<N>` exactly as
