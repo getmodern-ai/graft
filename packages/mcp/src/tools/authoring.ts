@@ -238,7 +238,7 @@ const runCommandTool: MetaTool = {
     );
     if (!("answer" in ran)) return answer(ran);
     // A runner the command invoked by hand wrote these (GRA-186; `../blobs.ts`): rows now, no version.
-    await recordWrittenBlobs(session.deps, session.scope, null, ran.blobs);
+    await recordWrittenBlobs(session.deps, session.scope, null, ran.blobs, ran.dropped);
     return answer(ran.answer);
   },
 };
@@ -276,7 +276,7 @@ const waitForProcess: MetaTool = {
     if (!("answer" in polled)) return answer(polled);
     // The blobs a runner inside the process wrote get their rows here, since the run that started
     // it returned before they existed (GRA-186; `../blobs.ts`). The version is not known to a poll.
-    await recordWrittenBlobs(session.deps, session.scope, null, polled.blobs);
+    await recordWrittenBlobs(session.deps, session.scope, null, polled.blobs, polled.dropped);
     // A process seen finished releases its hold; one still running keeps it (ADR 0009; `in-flight.ts`).
     if (isSettledProcess(polled.answer)) {
       session.deps.inFlight?.settle(session.scope.agentId, parsed.processName);

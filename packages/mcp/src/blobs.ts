@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { type AgentScope, recordBlobsWritten } from "@graft/core";
 import { type BlobLedgerEntry, blobIdOf } from "@graft/runner";
 
@@ -32,8 +34,12 @@ export async function recordWrittenBlobs(
   scope: AgentScope,
   versionId: string | null,
   blobs: readonly BlobLedgerEntry[],
+  dropped = 0,
 ): Promise<void> {
-  if (blobs.length === 0) return;
+  if (blobs.length === 0) {
+    tallyBlobs(0, dropped);
+    return;
+  }
   const rows = await recordBlobsWritten(
     { db: deps.db },
     scope,
@@ -59,6 +65,34 @@ export async function recordWrittenBlobs(
       contentType: row.contentType,
     });
   }
+  tallyBlobs(rows.length, dropped);
+}
+
+/**
+ * What one tool call did with blobs, for the wide event (Greptile on #144): how many rows it
+ * recorded and how many ledger lines it refused, and whether a runner's ledger was read at all.
+ * Carried as its own value from the parsed ledger, never read off the answer, whose keys are the
+ * module's to choose: a module returning `{ blobs: [...], blobsDropped: 3 }` wrote nothing.
+ */
+export type BlobTally = { seen: boolean; written: number; dropped: number };
+
+const tallies = new AsyncLocalStorage<BlobTally>();
+
+/** Run one tool call with a fresh tally in reach of every `recordWrittenBlobs` inside it. */
+export async function withBlobTally<T>(
+  work: () => Promise<T>,
+): Promise<{ value: T; tally: BlobTally }> {
+  const tally: BlobTally = { seen: false, written: 0, dropped: 0 };
+  const value = await tallies.run(tally, work);
+  return { value, tally };
+}
+
+function tallyBlobs(written: number, dropped: number): void {
+  const tally = tallies.getStore();
+  if (!tally) return;
+  tally.seen = true;
+  tally.written += written;
+  tally.dropped += dropped;
 }
 
 /**
@@ -75,8 +109,8 @@ export function blobsOnWire(
   blobsNote?: string;
   blobsDropped?: number;
 } {
-  // A ledger line the reader refused (`readRunnerEnvelope`): counted here, so it reaches the wide
-  // event through `tools.ts`'s `eventDetail`, and never a row.
+  // A ledger line the reader refused (`readRunnerEnvelope`): counted for the agent here, never a
+  // row; the wide event takes its count from the tally, not from this answer.
   const refused = dropped > 0 ? { blobsDropped: dropped } : {};
   if (blobs.length <= MAX_RESULT_BLOBS) return { blobs: [...blobs], ...refused };
   const omitted = blobs.length - MAX_RESULT_BLOBS;

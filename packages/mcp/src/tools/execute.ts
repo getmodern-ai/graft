@@ -138,7 +138,7 @@ export async function callExecuteTool(
   // A runner the command invoked wrote these blobs (GRA-186; `../blobs.ts`): their rows land here,
   // as a detached run's land at the poll, with no version since the command names none.
   const polled = isPolledProcess(ran) ? ran : null;
-  if (polled) await recordWrittenBlobs(deps, scope, null, polled.blobs);
+  if (polled) await recordWrittenBlobs(deps, scope, null, polled.blobs, polled.dropped);
   const outcome: Record<string, unknown> = polled ? polled.answer : ran;
 
   const refused = "error" in outcome && outcome.error === "refused";

@@ -679,7 +679,7 @@ async function runHeld(
   }
   // The blobs the run wrote, one row each, before the answer names them (the header; `blobs.ts`).
   // A dry run's blobs are real files under the mount and get their rows like any other.
-  await recordWrittenBlobs(deps, scope, version.id, run.blobs);
+  await recordWrittenBlobs(deps, scope, version.id, run.blobs, run.blobsDropped);
   if (args.mode.dryRun) {
     const report = readDryRunReport(run.result);
     await recordDryRun(

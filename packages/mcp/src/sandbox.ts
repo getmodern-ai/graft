@@ -252,7 +252,7 @@ export async function runCommand(
       timeoutSeconds: input.timeoutSeconds,
       prefix: "cmd",
     });
-    return { answer: describeDetachedStart(started), blobs: [] };
+    return { answer: describeDetachedStart(started), blobs: [], dropped: 0 };
   }
   const name = processName("cmd");
   await handle.execDetached(input.command, { name, timeoutSeconds: input.timeoutSeconds, env });
@@ -271,6 +271,7 @@ export async function runCommand(
       ...(blobs.length > 0 || dropped > 0 ? blobsOnWire(blobs, dropped) : {}),
     },
     blobs,
+    dropped,
   };
 }
 
@@ -326,7 +327,12 @@ export function describeProcess(
  * whole ledger for the rows the caller writes (`tools/authoring.ts`, `tools/execute.ts`), which is
  * why the two are not one object.
  */
-export type PolledProcess = { answer: Record<string, unknown>; blobs: BlobLedgerEntry[] };
+export type PolledProcess = {
+  answer: Record<string, unknown>;
+  blobs: BlobLedgerEntry[];
+  /** Ledger lines the reader refused (`RunnerEnvelope.dropped`); zero with no envelope. */
+  dropped: number;
+};
 
 /**
  * Look in on a detached process, and read the runner's result file back when the process wrote one
@@ -355,13 +361,14 @@ export async function pollProcess(handle: SandboxHandle, input: WaitInput): Prom
         note: `Still running after another ${input.maxWaitSeconds} seconds. Call wait_for_process again with the same processName; the process is killed when its timeoutSeconds elapse.`,
       },
       blobs: [],
+      dropped: 0,
     };
   }
 
   // The marker says the runner wrote a result; the path is the one this side chose at the start.
-  const runner = result.stdout.includes(RESULT_MARKER)
+  const runner: PolledProcess = result.stdout.includes(RESULT_MARKER)
     ? await readRunnerResult(handle, resultPathFor(input.processName))
-    : { answer: {}, blobs: [] };
+    : { answer: {}, blobs: [], dropped: 0 };
 
   if (result.status === "killed") {
     return {
@@ -372,10 +379,15 @@ export async function pollProcess(handle: SandboxHandle, input: WaitInput): Prom
         note: `The process was killed before it finished — usually because it ran past its timeoutSeconds. Start it again with a longer timeoutSeconds, up to ${MAX_DETACHED_TIMEOUT_SECONDS} when detached.`,
       },
       blobs: runner.blobs,
+      dropped: runner.dropped,
     };
   }
   if (result.exitCode === 0) {
-    return { answer: { status: "completed", ...base, ...runner.answer }, blobs: runner.blobs };
+    return {
+      answer: { status: "completed", ...base, ...runner.answer },
+      blobs: runner.blobs,
+      dropped: runner.dropped,
+    };
   }
   return {
     answer: {
@@ -385,6 +397,7 @@ export async function pollProcess(handle: SandboxHandle, input: WaitInput): Prom
       error: `The process exited with code ${result.exitCode}.`,
     },
     blobs: runner.blobs,
+    dropped: runner.dropped,
   };
 }
 
@@ -403,7 +416,9 @@ async function readRunnerResult(handle: SandboxHandle, resultPath: string): Prom
     const dropped = envelope?.dropped ?? 0;
     const named = blobs.length > 0 || dropped > 0 ? blobsOnWire(blobs, dropped) : {};
     const bounded = boundJson(result, MAX_FILE_CHARS);
-    if (!bounded.cut) return { answer: { resultPath, result: bounded.value, ...named }, blobs };
+    if (!bounded.cut) {
+      return { answer: { resultPath, result: bounded.value, ...named }, blobs, dropped };
+    }
     return {
       answer: {
         resultPath,
@@ -414,9 +429,10 @@ async function readRunnerResult(handle: SandboxHandle, resultPath: string): Prom
         ...named,
       },
       blobs,
+      dropped,
     };
   } catch (error) {
-    return { answer: { resultPath, resultError: errorMessage(error) }, blobs: [] };
+    return { answer: { resultPath, resultError: errorMessage(error) }, blobs: [], dropped: 0 };
   }
 }
 

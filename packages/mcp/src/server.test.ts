@@ -22,7 +22,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { NO_ELICITATION } from "./approval";
 import type { BlobWrittenEvent } from "./blobs";
-import type { McpDeps } from "./deps";
+import type { McpDeps, ToolCallEvent } from "./deps";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { revokeConnectionAndNotify } from "./revoke";
 import { runAuthoredTool } from "./run";
@@ -87,6 +87,10 @@ const DECOY_MODULE = `export default async (_input, ctx) => {
 };
 `;
 
+/** A module whose result wears the wide event's counter keys, and writes nothing (Greptile on #144). */
+const DECOY_COUNTS_MODULE = `export default async () => ({ blobs: ["vendor data"], blobsDropped: 3 });
+`;
+
 const SAVE_REPORT = authoredToolName("demo", "save-report");
 const SAVE_REPORT_MODULE = `export default async (input, ctx) => {
   const res = await ctx.fetch(\`/items?limit=\${input.limit ?? 5}\`);
@@ -103,6 +107,7 @@ let store: FakeStore;
 let deps: McpDeps;
 let checked: Parameters<ModuleCheck>[0][];
 const blobEvents: BlobWrittenEvent[] = [];
+const toolEvents: ToolCallEvent[] = [];
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
@@ -148,6 +153,9 @@ beforeAll(async () => {
   const decoy = join(sandbox.toolboxRoot(PERSON), "tools/demo/decoy/v1");
   await mkdir(decoy, { recursive: true });
   await writeFile(join(decoy, "index.ts"), DECOY_MODULE);
+  const decoyCounts = join(sandbox.toolboxRoot(PERSON), "tools/demo/decoy-counts/v1");
+  await mkdir(decoyCounts, { recursive: true });
+  await writeFile(join(decoyCounts, "index.ts"), DECOY_COUNTS_MODULE);
 
   store = createFakeStore();
   store.addConnection({
@@ -231,6 +239,18 @@ beforeAll(async () => {
     path: "tools/demo/decoy/v1",
   });
   store.addTool({
+    id: "tool_decoy_counts",
+    personId: PERSON,
+    vendor: "demo",
+    name: "decoy-counts",
+    description: "Answers a result wearing the wide event's counter keys, and writes nothing.",
+    inputSchema: { type: "object" },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/decoy-counts/v1",
+  });
+  store.addTool({
     id: "tool_other_ping",
     personId: PERSON,
     vendor: "other",
@@ -310,6 +330,7 @@ beforeAll(async () => {
     toolbox,
     publishTool: (args) => publishToolVersion(publish, args),
     onBlobWritten: (event) => blobEvents.push(event),
+    onToolCall: (event) => toolEvents.push(event),
     handoff: {
       consoleUrl: "http://console.graft.test",
       secret: "graft-mcp-test-handoff-secret-that-is-long-enough",
@@ -675,6 +696,34 @@ describe("a tool that writes a blob", () => {
       expect(answer.blobs[0]?.ref).toMatch(REF);
       expect(answer.blobs[0]?.bytes).toBe(5);
       expect(store.blobs).toHaveLength(blobsBefore + 1);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /** The wide event's counts come from the parsed ledger, never from the answer's keys (Greptile on #144). */
+  it("counts zero written and zero dropped for a module whose result wears the counter keys, and fires no blob_written", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    try {
+      const result = await a.call("run_tool", { vendor: "demo", name: "decoy-counts" });
+      expect(result.isError).toBeFalsy();
+      // The answer is the module's, keys and all: nothing was written, so nothing was wrapped.
+      expect(body(result)).toEqual({ blobs: ["vendor data"], blobsDropped: 3 });
+      const event = toolEvents.at(-1);
+      expect(event).toMatchObject({ tool: "run_tool", outcome: "ok" });
+      expect(event?.detail).toEqual({
+        tool: authoredToolName("demo", "decoy-counts"),
+        blobs: 0,
+        blobsDropped: 0,
+      });
+      expect(store.blobs).toHaveLength(blobsBefore);
+      expect(blobEvents).toHaveLength(eventsBefore);
+
+      // And a run that did write is counted from its ledger, once.
+      await a.call(SAVE_REPORT, { limit: 1 });
+      expect(toolEvents.at(-1)?.detail).toEqual({ blobs: 1, blobsDropped: 0 });
     } finally {
       await a.close();
     }

@@ -242,7 +242,9 @@ export type ToolCallEvent = {
    * What the call was about, per tool, in counts and names and never content (GRA-155): `find_tool`'s
    * `queryWords` and `hits`; `acquire`'s `goalLength`, `similarOffered` and the `jobId` it opened;
    * `acquire_status`'s `jobId` and `status`; `run_tool`'s `tool`. `tools.ts`'s `eventDetail` is the
-   * table. Absent for a tool the table does not name.
+   * table. Absent for a tool the table does not name. A call that read a runner's ledger (GRA-186)
+   * carries `blobs`, the rows it recorded, and `blobsDropped`, the ledger lines it refused, from
+   * the tally over the parsed ledger (`blobs.ts`) and never from the answer's keys.
    */
   detail?: Record<string, string | number | boolean>;
   /**
