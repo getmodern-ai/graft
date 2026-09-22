@@ -2,7 +2,7 @@ import type { BlobRow } from "@graft/db/repo/blob";
 import { BLOB_QUOTA_BYTES, BLOB_TTL_MS } from "@graft/runner";
 import { describe, expect, it } from "vitest";
 
-import { blobRefsIn, judgeBlobQuota, judgeBlobRefs } from "./blob-door";
+import { blobBudgetEnvironment, blobRefsIn, judgeBlobQuota, judgeBlobRefs } from "./blob-door";
 
 /**
  * The door's pure parts (GRA-187): which strings of an input are refs, where the quota bites, and
@@ -71,6 +71,15 @@ describe("judgeBlobQuota", () => {
     const over = judgeBlobQuota(BLOB_QUOTA_BYTES + 5 * 1024 * 1024);
     expect(over?.message).toContain("1029 MiB");
     expect(over).toMatchObject({ bytes: BLOB_QUOTA_BYTES + 5 * 1024 * 1024 });
+  });
+});
+
+describe("blobBudgetEnvironment", () => {
+  it("hands the exec the budget and the quota under the names runner.mjs reads", () => {
+    expect(blobBudgetEnvironment({ budgetBytes: 1536 * 1024 })).toEqual({
+      GRAFT_BLOB_BUDGET_BYTES: "1572864",
+      GRAFT_BLOB_QUOTA_BYTES: String(BLOB_QUOTA_BYTES),
+    });
   });
 });
 

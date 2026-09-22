@@ -81,8 +81,10 @@
  *    characters (`blob_invalid_content_type` otherwise) and a `name` that is a file name of at most
  *    255 characters with no slash and no control character (`blob_invalid_name`), mints a UUID,
  *    streams the bytes into `/blobs/<id>.tmp/data`
- *    counting them — refused as `blob_too_large` the moment they pass 256 MiB, the `.tmp` directory
- *    removed before the throw — writes `meta.json` (`bytes`, `contentType`, `name`, `writtenAt`,
+ *    counting them — refused as `blob_too_large` the moment they pass 256 MiB, or as `blob_quota`
+ *    the moment they would carry this run's committed total past `GRAFT_BLOB_BUDGET_BYTES`
+ *    (whichever bound is the smaller; the `.tmp` directory removed before either throw) — writes
+ *    `meta.json` (`bytes`, `contentType`, `name`, `writtenAt`,
  *    `expiresAt` 24 hours on, `agentId`, `toolVersion`) beside it, and renames the directory to
  *    `/blobs/<id>/` **once**. That rename is the one commit point: a reader or the sweep sees a whole
  *    blob or none, and a `.tmp` directory is a write in progress or an abandoned one. It answers the
@@ -103,6 +105,15 @@
  * an id with no directory, and a directory or a file inside it that is a symlink (`lstat`, as the
  * server's blob store judges the same tree from outside; GRA-185). Another agent's blob is one of
  * these: its directory is on no path this sandbox can name (ADR 0023: the scope is the mount).
+ *
+ * `GRAFT_BLOB_BUDGET_BYTES` is what this run may still commit under the agent's quota, set per exec
+ * by the server's door from the agent's live rows (`packages/mcp/src/blob-door.ts`; GRA-187, after
+ * Greptile on #145): the door's check runs before the run, and without this a module could loop
+ * `ctx.blob.write` and commit 256 MiB per call to the persistent mount with nothing bounding the
+ * total inside one run. The runner keeps the total of what it has committed and refuses the write
+ * that would pass the budget as `blob_quota`, as the bytes stream in, so one oversized write stops
+ * at the smaller of the cap and the budget; a refused write is on no ledger. Unset, the cap alone
+ * bounds a write. `GRAFT_BLOB_QUOTA_BYTES` rides beside it so the sentence can name the quota.
  *
  * `GRAFT_AGENT` (the agent id) and `GRAFT_TOOL_VERSION` (the version id of the tool running) are set
  * per exec by the run and go into the sidecar and nowhere else — never into a path — and are deleted
@@ -223,6 +234,25 @@ const blobsDir = process.env.GRAFT_BLOBS_DIR || BLOBS_MOUNT_PATH;
 
 /** The ledger the envelope carries: every blob this run wrote, in write order (the header). */
 const blobLedger = [];
+/**
+ * What this run may still commit under the agent's quota (the header): `GRAFT_BLOB_BUDGET_BYTES`,
+ * which the server's door sets per exec from the agent's live rows (GRA-187), since the sandbox has
+ * no route to the database. Unset, or not a number, is no budget: a server older than the variable
+ * (or a runner invoked by hand) bounds a write by the per-blob cap alone, as before the variable.
+ * The quota itself rides beside it for the sentence, and is never a bound here.
+ */
+const blobBudgetBytes =
+  readByteCount(process.env.GRAFT_BLOB_BUDGET_BYTES) ?? Number.POSITIVE_INFINITY;
+const blobQuotaBytes =
+  readByteCount(process.env.GRAFT_BLOB_QUOTA_BYTES) ?? Number.POSITIVE_INFINITY;
+/** Bytes this run has committed so far: every renamed blob's size, and nothing of a refused write. */
+let blobBytesCommitted = 0;
+
+function readByteCount(value) {
+  if (value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
 
 /** The proxy's marker on a dry-run answer and the value for a stopped write — `DRY_RUN_HEADER` in `runner-source.ts`. */
 const DRY_RUN_HEADER = "x-graft-dry-run";
@@ -643,17 +673,26 @@ async function blobWrite(data, opts) {
     throw error;
   }
 
+  // The smaller of the two bounds on this write (the header): the per-blob cap, and what is left of
+  // the agent's quota after every blob this run has committed so far.
+  const remaining = blobBudgetBytes - blobBytesCommitted;
+  const limit = Math.min(MAX_BLOB_BYTES, remaining);
   let bytes = 0;
   try {
     const counted = async function* () {
       for await (const chunk of source) {
         const part = bytesOf(chunk, "a stream handed to ctx.blob.write yields");
         bytes += part.byteLength;
-        if (bytes > MAX_BLOB_BYTES) {
-          throw blobRefusal(
-            "blob_too_large",
-            `the blob passed ${MAX_BLOB_BYTES} bytes (256 MiB), the cap on one blob. Write less — a page, a range, a compressed form.`,
-          );
+        if (bytes > limit) {
+          throw remaining < MAX_BLOB_BYTES
+            ? blobRefusal(
+                "blob_quota",
+                `the blob would carry this run past the ${formatMiB(remaining)} MiB left of its budget: the agent's live blobs are at the ${formatMiB(blobQuotaBytes)} MiB quota. A blob expires 24 hours after its write and stops counting then; write less, or run again once one has.`,
+              )
+            : blobRefusal(
+                "blob_too_large",
+                `the blob passed ${MAX_BLOB_BYTES} bytes (256 MiB), the cap on one blob. Write less — a page, a range, a compressed form.`,
+              );
         }
         yield part;
       }
@@ -675,6 +714,7 @@ async function blobWrite(data, opts) {
     await rename(tmp, dir);
 
     const ref = `${BLOB_REF_SCHEME}${id}`;
+    blobBytesCommitted += bytes;
     blobLedger.push({
       ref,
       bytes,
@@ -684,9 +724,15 @@ async function blobWrite(data, opts) {
     });
     return ref;
   } catch (error) {
+    // A refused or failed write is nowhere: not on disk, not on the ledger, not in the total.
     await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+/** A byte count in MiB for a sentence, to one decimal where it is not whole. */
+function formatMiB(bytes) {
+  return String(Math.round((bytes / (1024 * 1024)) * 10) / 10);
 }
 
 /** `ctx.blob.stat` — the sidecar, or `blob_not_found`. */

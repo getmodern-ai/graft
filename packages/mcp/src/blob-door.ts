@@ -100,21 +100,45 @@ export function judgeBlobRefs(
 }
 
 /**
+ * What the door answers when the run may go: the bytes this run may still commit under the quota,
+ * which the run hands the exec as `GRAFT_BLOB_BUDGET_BYTES` (`blobBudgetEnvironment`). The door's
+ * own check runs once, before the run; a module could otherwise loop `ctx.blob.write` and commit
+ * 256 MiB per call with nothing bounding the total inside one run (Greptile on #145). Only the door
+ * knows the live figure, so the runner is told the remainder and never reads the database.
+ */
+export type BlobAdmission = { budgetBytes: number };
+
+/**
  * The door, as `run.ts` calls it: the quota over one read, then the input's refs over one more
- * when there are any. Null lets the run go on; a refusal is answered as it stands, `isError: true`,
- * with a `refused` ledger row the caller writes.
+ * when there are any. An admission lets the run go on with its budget; a refusal is answered as it
+ * stands, `isError: true`, with a `refused` ledger row the caller writes.
  */
 export async function admitBlobs(
   deps: McpDeps,
   scope: AgentScope,
   input: unknown,
-): Promise<Refusal | null> {
+): Promise<{ ok: true; admission: BlobAdmission } | { ok: false; refusal: Refusal }> {
   const ctx: ServiceContext = { db: deps.db };
-  const quota = judgeBlobQuota(await liveBlobBytes(ctx, scope, deps.blob));
-  if (quota) return quota;
+  const live = await liveBlobBytes(ctx, scope, deps.blob);
+  const quota = judgeBlobQuota(live);
+  if (quota) return { ok: false, refusal: quota };
+  const admission = { budgetBytes: BLOB_QUOTA_BYTES - live };
   const refs = blobRefsIn(input);
-  if (refs.length === 0) return null;
+  if (refs.length === 0) return { ok: true, admission };
   const ids = refs.map(blobIdOf).filter((id): id is string => id !== null);
   const rows = await getBlobs(ctx, scope, ids, deps.blob);
-  return judgeBlobRefs(refs, rows, deps.blob.now());
+  const refusal = judgeBlobRefs(refs, rows, deps.blob.now());
+  return refusal ? { ok: false, refusal } : { ok: true, admission };
+}
+
+/**
+ * The admission as the exec's environment: the budget, and the quota beside it so the runner's
+ * `blob_quota` sentence names the same number the door's does. Both are `GRAFT_*`, so the runner
+ * deletes them with the rest before the module loads; `runner.mjs` reads them once.
+ */
+export function blobBudgetEnvironment(admission: BlobAdmission): Record<string, string> {
+  return {
+    GRAFT_BLOB_BUDGET_BYTES: String(admission.budgetBytes),
+    GRAFT_BLOB_QUOTA_BYTES: String(BLOB_QUOTA_BYTES),
+  };
 }

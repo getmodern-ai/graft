@@ -678,6 +678,15 @@ refusal in the run's own shape (`isError: true`, a `refused` ledger row) and non
 The quota lives beside the scheme, the cap and the TTL in `@graft/runner`'s `runner-source.ts`,
 the one file that spells the three numbers; `judgeBlobQuota` and `judgeBlobRefs` are pure and
 `blob-door.test.ts` pins the sentences, `server.test.ts` the loop end to end over the fake sandbox.
+**A run the door admits is handed its budget** (Greptile on #145): the door's check runs once,
+before the run, so `run.ts` puts `BLOB_QUOTA_BYTES - liveBytes` into the exec as
+`GRAFT_BLOB_BUDGET_BYTES` (the quota beside it as `GRAFT_BLOB_QUOTA_BYTES`, for the sentence), both
+deleted with the rest before the module loads, and the runner keeps the total it has committed and
+refuses the write that would pass the budget as `blob_quota` as the bytes stream in, at the smaller
+of the per-blob cap and the budget, removing the `.tmp` directory as `blob_too_large` does; a
+refused write is on no ledger. Unset, as under a server older than the variable or a runner run by
+hand, the per-blob cap alone bounds a write. `execute__` commands and `run_command` never pass the
+door and carry no budget.
 
 ### The self-hosted image
 

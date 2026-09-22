@@ -30,7 +30,7 @@ import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
 import { sandboxPath } from "@graft/toolbox";
 import { type AskChannel, gateToolCall } from "./approval";
-import { admitBlobs } from "./blob-door";
+import { admitBlobs, blobBudgetEnvironment } from "./blob-door";
 import { blobsOnWire, recordWrittenBlobs, withBlobs } from "./blobs";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
@@ -109,6 +109,10 @@ import { authoredToolName } from "./tool-names";
  * looked up under the person and the agent (`blob_not_found`, `blob_expired`), each a refusal in
  * the shape above with a `refused` ledger row. Reading a blob asks nothing (ADR 0008), and a dry
  * run passes the same door, so `acquire`'s job learns of a dead ref here rather than inside a run.
+ * A run the door admits is handed what it may still commit, `GRAFT_BLOB_BUDGET_BYTES`, beside
+ * `GRAFT_AGENT`; the runner refuses the write that would pass it as `blob_quota` as the bytes
+ * stream in, so a module looping `ctx.blob.write` cannot commit past the quota inside one run
+ * (Greptile on #145).
  */
 
 /**
@@ -622,9 +626,9 @@ async function runHeld(
   // The blob door (GRA-187; `blob-door.ts`): the quota, then every ref the input names, judged over
   // the rows before the gate asks anyone and before a sandbox is touched. A dry run passes it too.
   const door = await admitBlobs(deps, scope, verdict.value);
-  if (door) {
+  if (!door.ok) {
     await record("refused", versioned);
-    return { answer: door, isError: true };
+    return { answer: door.refusal, isError: true };
   }
 
   // The approval gate (ADR 0008): after the scope check, before the mint. A dry run passes it: reads
@@ -663,8 +667,9 @@ async function runHeld(
         scope,
         modulePath: sandboxPath(version.path),
         input: verdict.value,
-        // The version whose run this is, for the sidecar of any blob it writes (ADR 0023).
-        env: { ...env, GRAFT_TOOL_VERSION: version.id },
+        // The version whose run this is, for the sidecar of any blob it writes (ADR 0023), and
+        // what the run may still commit under the agent's quota (the header; `blob-door.ts`).
+        env: { ...env, GRAFT_TOOL_VERSION: version.id, ...blobBudgetEnvironment(door.admission) },
         mode: args.mode,
       });
     },

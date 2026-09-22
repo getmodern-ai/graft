@@ -290,6 +290,21 @@ const FIXTURES: Record<string, string> = {
     "  }",
     "};",
   ].join("\n"),
+  // Blobs of the sizes (in MiB) the input names, each streamed in 64 KiB chunks and each refusal
+  // caught, so one run shows what the budget lets through and what it stops (GRA-187).
+  "writesSizedBlobs.mjs": [
+    "export default async (input, ctx) => {",
+    "  const out = [];",
+    "  for (const mib of input.sizes) {",
+    "    const chunk = new Uint8Array(65536).fill(1);",
+    "    let left = Math.round(mib * 16);",
+    "    const stream = new ReadableStream({ pull(c) { if (left-- > 0) c.enqueue(chunk); else c.close(); } });",
+    '    try { out.push({ ref: await ctx.blob.write(stream, { contentType: "application/octet-stream" }) }); }',
+    "    catch (error) { out.push({ code: error.code ?? null, message: error.message }); }",
+    "  }",
+    "  return out;",
+    "};",
+  ].join("\n"),
   // The read half (GRA-187): every ref read, the found ones as their size and type.
   "readRefs.mjs": [
     "export default async (input, ctx) => {",
@@ -643,9 +658,12 @@ describe("a TypeScript module", () => {
     expect(source).toContain(`const ENVELOPE_MARKER = ${JSON.stringify(ENVELOPE_MARKER)};`);
     expect(source).toContain(`const MAX_BLOB_NAME_CHARS = ${MAX_BLOB_NAME_CHARS};`);
     expect(source).toContain(`const MAX_BLOB_CONTENT_TYPE_CHARS = ${MAX_BLOB_CONTENT_TYPE_CHARS};`);
-    // The quota is judged at the door over the rows (GRA-187); the runner has no copy to drift.
+    // The quota is judged at the door over the rows (GRA-187); the runner holds no copy of the
+    // number to drift, and learns its run's budget and the quota from the door's two variables.
     expect(BLOB_QUOTA_BYTES).toBe(1024 * 1024 * 1024);
-    expect(source).not.toContain("BLOB_QUOTA_BYTES");
+    expect(source).not.toMatch(/const \w*QUOTA\w* = \d/);
+    expect(source).toContain("process.env.GRAFT_BLOB_BUDGET_BYTES");
+    expect(source).toContain("process.env.GRAFT_BLOB_QUOTA_BYTES");
   });
 });
 
@@ -1314,6 +1332,85 @@ describe("ctx.blob", () => {
     }
     expect(result.missing?.message).toMatch(/names no blob this agent holds/);
     expect(result.notARef?.message).toMatch(/is not a blob ref .* takes the blob:\/\/<id> string/);
+  });
+
+  /**
+   * The run's budget under the agent's quota (GRA-187, after Greptile on #145): what the door hands
+   * the exec as GRAFT_BLOB_BUDGET_BYTES bounds the total this process commits, checked as the bytes
+   * stream in; a refused write is on no disk and no ledger.
+   */
+  describe("GRAFT_BLOB_BUDGET_BYTES", () => {
+    const MIB = 1024 * 1024;
+    type Outcome = { ref?: string; code?: string | null; message?: string };
+    const budget = (bytes: number) => ({
+      GRAFT_BLOB_BUDGET_BYTES: String(bytes),
+      GRAFT_BLOB_QUOTA_BYTES: String(1024 * MIB),
+    });
+
+    it("lets a run commit up to the budget and refuses the write that would pass it as blob_quota, naming the MiB left and the quota, with only the first on disk and on the ledger", async () => {
+      const { blobs, env } = await withBlobs(budget(1.5 * MIB));
+      const run = await runRunner({
+        module: fixture("writesSizedBlobs.mjs"),
+        stdin: JSON.stringify({ sizes: [1, 1] }),
+        env,
+      });
+
+      expect(run.code).toBe(0);
+      const envelope = envelopeOf(run);
+      const [first, second] = envelope.result as Outcome[];
+      expect(first?.ref).toMatch(REF);
+      expect(second).toEqual({
+        code: "blob_quota",
+        message:
+          "blob_quota: the blob would carry this run past the 0.5 MiB left of its budget: the agent's live blobs are at the 1024 MiB quota. A blob expires 24 hours after its write and stops counting then; write less, or run again once one has.",
+      });
+      expect((envelope.blobs as Ledger).map((line) => line.ref)).toEqual([first?.ref]);
+      expect(await readdir(blobs)).toEqual([idOf(first?.ref ?? "")]);
+    });
+
+    it("stops one oversized write at the budget as the bytes stream in, and a budget of 0 refuses the first write", async () => {
+      const oversized = await withBlobs(budget(1.5 * MIB));
+      const one = await runRunner({
+        module: fixture("writesSizedBlobs.mjs"),
+        stdin: JSON.stringify({ sizes: [2] }),
+        env: oversized.env,
+      });
+      expect(one.code).toBe(0);
+      expect(envelopeOf(one).result).toEqual([
+        { code: "blob_quota", message: expect.stringContaining("1.5 MiB left of its budget") },
+      ]);
+      expect(envelopeOf(one).blobs).toEqual([]);
+      expect(await readdir(oversized.blobs)).toEqual([]);
+
+      const none = await withBlobs(budget(0));
+      const zero = await runRunner({
+        module: fixture("writesSizedBlobs.mjs"),
+        stdin: JSON.stringify({ sizes: [1] }),
+        env: none.env,
+      });
+      expect(envelopeOf(zero).result).toEqual([
+        { code: "blob_quota", message: expect.stringContaining("the 0 MiB left of its budget") },
+      ]);
+      expect(await readdir(none.blobs)).toEqual([]);
+    });
+
+    it("without the variable, a server older than it, the per-blob cap alone bounds a write", async () => {
+      // `withBlobs` sets no budget: two writes go, as they did before the variable existed.
+      const { blobs, env } = await withBlobs();
+      const run = await runRunner({
+        module: fixture("writesSizedBlobs.mjs"),
+        stdin: JSON.stringify({ sizes: [1, 1] }),
+        env,
+      });
+      expect(run.code).toBe(0);
+      const outcomes = envelopeOf(run).result as Outcome[];
+      expect(outcomes.map((o) => o.ref)).toEqual([
+        expect.stringMatching(REF),
+        expect.stringMatching(REF),
+      ]);
+      expect(envelopeOf(run).blobs).toHaveLength(2);
+      expect(await readdir(blobs)).toHaveLength(2);
+    });
   });
 
   it("read answers the bytes and the media type the write was given", async () => {

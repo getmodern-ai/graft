@@ -132,6 +132,22 @@ const UPLOAD_FILE_MODULE = `export default async (input, ctx) => {
 };
 `;
 
+/**
+ * A module that writes two 1 MiB blobs in one run and catches the second's refusal (GRA-187, after
+ * Greptile on #145): under a budget of 1.5 MiB the first commits and the second is `blob_quota`.
+ */
+const WRITE_TWO = authoredToolName("demo", "write-two");
+const WRITE_TWO_MODULE = `export default async (_input, ctx) => {
+  const bytes = new Uint8Array(1024 * 1024).fill(2);
+  const first = await ctx.blob.write(bytes, { contentType: "application/octet-stream", name: "one.bin" });
+  try {
+    return { first, second: await ctx.blob.write(bytes, { contentType: "application/octet-stream", name: "two.bin" }) };
+  } catch (error) {
+    return { first, second: { code: error.code ?? null, message: error.message } };
+  }
+};
+`;
+
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
@@ -190,6 +206,9 @@ beforeAll(async () => {
   const uploadFile = join(sandbox.toolboxRoot(PERSON), "tools/demo/upload-file/v1");
   await mkdir(uploadFile, { recursive: true });
   await writeFile(join(uploadFile, "index.ts"), UPLOAD_FILE_MODULE);
+  const writeTwo = join(sandbox.toolboxRoot(PERSON), "tools/demo/write-two/v1");
+  await mkdir(writeTwo, { recursive: true });
+  await writeFile(join(writeTwo, "index.ts"), WRITE_TWO_MODULE);
 
   store = createFakeStore();
   store.addConnection({
@@ -327,6 +346,20 @@ beforeAll(async () => {
     path: "tools/demo/upload-file/v1",
   });
   store.promote(AGENT_A, "tool_upload_file");
+  store.addTool({
+    id: "tool_write_two",
+    personId: PERSON,
+    vendor: "demo",
+    name: "write-two",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Keeps two copies of a fixed page.",
+    inputSchema: { type: "object", additionalProperties: false },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/write-two/v1",
+  });
+  store.promote(AGENT_A, "tool_write_two");
   // Agent A may run code against Demo (the build approval, ADR 0008); the asks themselves are
   // `approval.test.ts`'s subject, and this suite is about everything that happens once they pass.
   store.grantBuild(AGENT_A, CONN_DEMO);
@@ -470,6 +503,7 @@ describe("the tool list", () => {
         LIST_ITEMS,
         SAVE_REPORT,
         UPLOAD_FILE,
+        WRITE_TWO,
       ]);
       const listItems = tools.find((tool) => tool.name === LIST_ITEMS);
       expect(listItems).toMatchObject({
@@ -1031,6 +1065,50 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
             message: `${ref} has expired: a blob lives 24 hours from its write, and this one's time has passed. Run the tool that produced it again and pass the new ref.`,
           });
         }
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("hands the run what it may still commit: with 1.5 MiB left of the quota a tool writing two 1 MiB blobs commits one, gets blob_quota on the second, and one row lands", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const already = store.blobs
+        .filter((b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date())
+        .reduce((total, b) => total + b.bytes, 0);
+      const filler = row("d0d0d0d0-0000-4000-8000-000000000001", AGENT_A, {
+        bytes: GIB - 1.5 * 1024 * 1024 - already,
+      });
+      await withRows([filler], async () => {
+        const blobsBefore = store.blobs.length;
+        const dirsBefore = (await readdir(sandbox.blobsRoot(AGENT_A))).length;
+        const result = await a.call(WRITE_TWO, {});
+        expect(result.isError).toBeFalsy();
+        const answer = body(result) as {
+          result: { first: string; second: { code: string; message: string } };
+          blobs: { ref: string; bytes: number }[];
+        };
+        expect(answer.result.first).toMatch(/^blob:\/\//);
+        expect(answer.result.second).toEqual({
+          code: "blob_quota",
+          message:
+            "blob_quota: the blob would carry this run past the 0.5 MiB left of its budget: the agent's live blobs are at the 1024 MiB quota. A blob expires 24 hours after its write and stops counting then; write less, or run again once one has.",
+        });
+        // The ledger, the rows and the disk all hold the first blob and nothing of the second.
+        expect(answer.blobs).toEqual([
+          expect.objectContaining({ ref: answer.result.first, bytes: 1024 * 1024 }),
+        ]);
+        expect(store.blobs).toHaveLength(blobsBefore + 1);
+        expect(store.blobs.at(-1)).toMatchObject({
+          id: answer.result.first.slice("blob://".length),
+          agentId: AGENT_A,
+          bytes: 1024 * 1024,
+        });
+        const entries = await readdir(sandbox.blobsRoot(AGENT_A));
+        expect(entries).toHaveLength(dirsBefore + 1);
+        expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
+        expect(store.usage.at(-1)).toMatchObject({ toolId: "tool_write_two", outcome: "ok" });
       });
     } finally {
       await a.close();
