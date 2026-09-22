@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@graft/sandbox": "workspace:*",
+    "@graft/toolbox": "workspace:*",
     "tar-stream": "catalog:"
   },
   "devDependencies": {

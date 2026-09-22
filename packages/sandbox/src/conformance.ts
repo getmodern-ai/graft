@@ -454,6 +454,68 @@ export function sandboxConformance(
       });
     });
 
+    describe("blobs", () => {
+      const BLOBS = "/blobs";
+      const agentId = (label: string) => `conf-${run}-${label}`;
+      const mountBoth = (handle: SandboxHandle, toolbox: string, agent: string) =>
+        handle.mountToolbox({
+          toolboxId: toolboxId(toolbox),
+          mountPath: "/tools",
+          blobs: { agentId: agentId(agent), mountPath: BLOBS },
+        });
+
+      it("a file written under /blobs is there for the same sandbox found again, and is nowhere under /tools", async () => {
+        const first = await ensure("blobs-a");
+        await mountBoth(first.handle, "blobs-one", "agent-a");
+        await first.handle.writeTree([{ path: "data", content: "bytes" }], `${BLOBS}/blob-1`);
+
+        const again = await ensure("blobs-a");
+
+        expect(again.existed).toBe(true);
+        expect(await again.handle.read(`${BLOBS}/blob-1/data`)).toBe("bytes");
+        expect(await again.handle.exec(`cat ${BLOBS}/blob-1/data`)).toBe("bytes");
+        // Beside the toolbox, not in it: the toolbox holds no `.blobs` and no blob.
+        expect(await again.handle.ls("/tools")).not.toContain("/tools/.blobs");
+        await expect(again.handle.read("/tools/blob-1/data")).rejects.toThrow();
+      });
+
+      it("two agents of one person share the toolbox and see only their own /blobs", async () => {
+        const a = await ensure("blobs-b");
+        const b = await ensure("blobs-c");
+        await mountBoth(a.handle, "blobs-two", "agent-b");
+        await mountBoth(b.handle, "blobs-two", "agent-c");
+        await a.handle.writeTree([{ path: "data", content: "a's" }], `${BLOBS}/only-a`);
+        await a.handle.writeTree([{ path: "shared.txt", content: "both" }], "/tools");
+
+        expect(await b.handle.read("/tools/shared.txt")).toBe("both");
+        await expect(b.handle.read(`${BLOBS}/only-a/data`)).rejects.toThrow();
+        expect(await b.handle.exec(`ls ${BLOBS}`)).toBe("");
+      });
+
+      it("mounting the toolbox again, with or without naming the blobs, leaves the blobs mount and its files in place", async () => {
+        const { handle } = await ensure("blobs-d");
+        await mountBoth(handle, "blobs-three", "agent-d");
+        await handle.writeTree([{ path: "data", content: "kept" }], `${BLOBS}/kept`);
+
+        await handle.mountToolbox({ toolboxId: toolboxId("blobs-three"), mountPath: "/tools" });
+        expect(await handle.read(`${BLOBS}/kept/data`)).toBe("kept");
+
+        await mountBoth(handle, "blobs-three", "agent-d");
+        expect(await handle.read(`${BLOBS}/kept/data`)).toBe("kept");
+      });
+
+      it("refuses an agent id that is not a legal name on every backing", async () => {
+        const { handle } = await ensure("blobs-e");
+        await expect(
+          handle.mountToolbox({
+            toolboxId: toolboxId("blobs-four"),
+            mountPath: "/tools",
+            blobs: { agentId: "../escape", mountPath: BLOBS },
+          }),
+        ).rejects.toThrow(/agent id/);
+      });
+    });
+
     describe("egress", () => {
       let handle: SandboxHandle;
       beforeAll(async () => {

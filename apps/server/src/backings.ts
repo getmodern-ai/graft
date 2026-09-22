@@ -33,6 +33,8 @@ import { createFakeSandboxBackend } from "@graft/sandbox/fake";
 import type { SandboxBackend } from "@graft/sandbox/types";
 import { createDockerSandboxBackend } from "@graft/sandbox-docker";
 import {
+  type BlobStore,
+  createFilesystemBlobStore,
   createFilesystemToolboxStore,
   createNoopToolboxMirror,
   type ToolboxMirror,
@@ -49,7 +51,10 @@ import { createLocalKeyring, type Keyring } from "@graft/vault";
  * sandbox backing sees the same directory; under `cloud` the private package may answer with a store
  * of its own — one over the drives its sandboxes mount (GRA-39) — and the selector takes that in
  * place of the filesystem store, since a version written to this machine's disk is one no hosted
- * sandbox would ever see.
+ * sandbox would ever see. The blob store (ADR 0023, GRA-185) rides beside the toolbox store under
+ * the same rule and the same root: under `open` the filesystem blob store over `.blobs/<agentId>`
+ * beside the toolboxes, where the sandbox backing mounts each agent's directory at `/blobs`; under
+ * `cloud` the private package's when it answers one (GRA-192), the filesystem one otherwise.
  *
  * The providers are a list rather than one backing, because a deployment runs several at once — a
  * broker for the vendors it has, the keyring for the rest — and a proposal is routed to the first
@@ -116,6 +121,12 @@ export type Backings = {
   /** The toolbox as the server holds it, where the sandbox backing sees the same tree. */
   store: ToolboxStore;
   /**
+   * The agents' blobs as the server sees them (ADR 0023): `.blobs/<agentId>` beside the toolboxes
+   * under the same root, each mounted alone into its agent's sandbox at `/blobs`. Read and removed
+   * here (the sweep, GRA-189), written only from inside a sandbox (GRA-186).
+   */
+  blobStore: BlobStore;
+  /**
    * How the server's one email leaves (ADR 0021): the SMTP relay the environment names when the
    * `GRAFT_SMTP_URL`/`GRAFT_MAIL_FROM` pair is set (GRA-92), else the console transport, under
    * `open`; under `cloud` the private package's transport first, then the same two. A hosted
@@ -160,6 +171,11 @@ export type CloudBackings = {
   keyring: Keyring;
   mirror: ToolboxMirror;
   store?: ToolboxStore;
+  /**
+   * The hosted form's blob store (ADR 0023; GRA-192), over wherever its sandboxes mount `/blobs`
+   * from; absent, the selector's filesystem blob store at `GRAFT_TOOLBOX_ROOT`.
+   */
+  blobStore?: BlobStore;
   providers?: ConnectionProvider[];
   /** The hosted form's mail transport (ADR 0021, GRA-90); absent, the selector keeps the console's. */
   mail?: EmailTransport;
@@ -187,6 +203,8 @@ export type CloudBackingsInput = {
   raw: Readonly<Record<string, string | undefined>>;
   /** The filesystem store at the toolbox root — what a factory that owns no store is read through. */
   store: ToolboxStore;
+  /** The filesystem blob store at the same root: what a factory that owns no blob store is read through. */
+  blobStore: BlobStore;
 };
 
 /** The specifier imported under `cloud`. Held in a variable, never written in an `import`. */
@@ -356,6 +374,9 @@ function openBackings(env: BackingsEnv): Backings {
     mirror: createNoopToolboxMirror(),
     providers: [...environmentProviders(env), keyringProvider],
     store,
+    // The same root: `.blobs/<agentId>` beside the toolboxes is what the sandbox backing above
+    // mounts at `/blobs`, by bind or by subpath (`packages/toolbox/README.md`).
+    blobStore: createFilesystemBlobStore({ root: toolboxRoot }),
     toolboxRoot: store.root,
     mail: environmentMail(env) ?? consoleTransport,
     logDrain: null,
@@ -387,15 +408,18 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
   // through. A factory that answers with its own — the hosted form's, over the drives its sandboxes
   // mount (GRA-39) — is what the publish writes to instead, and there is then no toolbox on this disk.
   const filesystem = createFilesystemToolboxStore({ root: env.GRAFT_TOOLBOX_ROOT });
+  const filesystemBlobs = createFilesystemBlobStore({ root: env.GRAFT_TOOLBOX_ROOT });
   const input: CloudBackingsInput = {
     env: { NODE_ENV: env.NODE_ENV, GRAFT_PROXY_PUBLIC_URL: env.GRAFT_PROXY_PUBLIC_URL },
     raw: deps.raw ?? process.env,
     store: filesystem,
+    blobStore: filesystemBlobs,
   };
   const created: unknown = await factory(input);
   assertCloudBackings(created, specifier);
   const {
     store: own,
+    blobStore: ownBlobs,
     providers: hosted,
     mail,
     logDrain,
@@ -417,6 +441,7 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
     ...seams,
     providers,
     store: own ?? filesystem,
+    blobStore: ownBlobs ?? filesystemBlobs,
     toolboxRoot: own ? null : filesystem.root,
     // The hosted transport when the package has one, the relay the environment names otherwise,
     // the console as the floor — the hosted tier sets no relay today, but a form is not a rule.
@@ -452,6 +477,8 @@ const SEAM_MEMBERS = {
 
 /** The store's verbs (`ToolboxStore` in `@graft/toolbox`), for the factory that answers with one. */
 const STORE_MEMBERS = ["readTree", "writeTree", "read", "list", "exists", "remove"] as const;
+/** The blob store's verbs (`BlobStore` in `@graft/toolbox`), for the factory that answers with one. */
+const BLOB_STORE_MEMBERS = ["list", "readMeta", "exists", "remove"] as const;
 
 /** A connection provider's functions (`ConnectionProvider` in `@graft/core`), and how it connects. */
 const PROVIDER_MEMBERS = ["covers", "resolve", "revoke"] as const;
@@ -505,6 +532,20 @@ export function assertCloudBackings(
     for (const member of STORE_MEMBERS) {
       if (typeof (record.store as Record<string, unknown>)[member] !== "function") {
         throw new Error(`${specifier}'s createCloudBackings returned a store without ${member}()`);
+      }
+    }
+  }
+  if (record.blobStore !== undefined) {
+    if (typeof record.blobStore !== "object" || record.blobStore === null) {
+      throw new Error(
+        `${specifier}'s createCloudBackings returned a blob store that is not an object`,
+      );
+    }
+    for (const member of BLOB_STORE_MEMBERS) {
+      if (typeof (record.blobStore as Record<string, unknown>)[member] !== "function") {
+        throw new Error(
+          `${specifier}'s createCloudBackings returned a blob store without ${member}()`,
+        );
       }
     }
   }
