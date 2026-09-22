@@ -40,8 +40,8 @@ npx skills add mattpocock/skills         # pick up skills that did not exist whe
 ```
 
 `update` iterates `skills-lock.json`, so it can only refresh what is already listed; a skill
-published upstream after our last `add` is invisible to it. Two exceptions, both from Cando's
-experience of the same CLI:
+published upstream after our last `add` is invisible to it. Three things to know, the first two
+from Cando's experience of the same CLI and the third reproduced here on 2026-09-22:
 
 - **`matt-code-review` cannot auto-update.** The CLI resolves the upstream skill by its *local*
   name rather than by `skillPath`, so it looks for `matt-code-review` in his repository, finds
@@ -49,6 +49,12 @@ experience of the same CLI:
   refresh it by hand, `add` it under its own name somewhere disposable and copy the file across,
   then put the `name:` line back.
 - **`update -p` updates *every* vendored skill.** Run it deliberately, in a pull request about that.
+- **On a laptop with `~/.openclaw`, `update` links the skills into the root `skills/` directory.**
+  The CLI relinks every agent it detects as installed, and its OpenClaw definition names the bare
+  `skills/` as that agent's project directory, which here is the Hermes skill's home (MIT,
+  `skills/LICENSE`). They show up as untracked `skills/<name>` symlinks; delete them before
+  committing (`find skills -maxdepth 1 -type l -delete`) and never commit them. Install only ever
+  named `claude-code` and `codex`, so a fresh `add` does not do this.
 
 ### Which to reach for
 
