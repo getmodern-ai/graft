@@ -1177,17 +1177,23 @@ seconds abandoned the job and ran its own code through `execute__`).
 
 ### The evals
 
-`packages/evals` (ADR 0012: the eval suite is the gate; GRA-31) runs the real loop against two fake
+`packages/evals` (ADR 0012: the eval suite is the gate; GRA-31) runs the real loop against fake
 vendors behind the real proxy with the provider-backed model and grades what it did with deterministic
 scorers: reads before publish, publish before the first write, no vendor host in the model's code, a
-dry run before any ask, the first write through the published tool, and the supporting facts. It is an
-app-like leaf nothing imports, which is what keeps it out of the server's Docker image
-(`apps/server/Dockerfile`'s `prod-deps` installs `--filter "@graft/server..."`); a server dependency on
-it would pull it in.
+dry run before any ask, the first write through the published tool, and the supporting facts. The
+`blob` scenario (GRA-191; ADR 0023) runs the loop twice on one world, a producing tool against a
+fake that serves a 3 MiB file and a consuming tool against a fake that takes a multipart upload, the
+first tool's `blob://` ref handed into the second's goal and input, and adds five scorers over the
+chain: no sentinel of the file in any model turn, the ref answered and carried, the consuming dry
+run given a blob to read and its write intercepted, the second vendor's sha256 equal to the first's,
+both modules on `ctx.blob`. It is an app-like leaf nothing imports, which is what keeps it out of
+the server's Docker image (`apps/server/Dockerfile`'s `prod-deps` installs
+`--filter "@graft/server..."`); a server dependency on it would pull it in.
 
 ```bash
 pnpm --filter @graft/evals eval                      # every scenario; needs GRAFT_MODEL_PROVIDER + GRAFT_MODEL_API_KEY
 pnpm --filter @graft/evals eval -- --scenario write  # one by name
+pnpm --filter @graft/evals eval -- --scenario blob   # the two-vendor blob chain
 pnpm --filter @graft/evals eval -- --scripted        # the harness's own test: canned answers, no key, no spend
 ```
 

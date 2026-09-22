@@ -3,18 +3,25 @@ import type { ToolVersionRow } from "@graft/db/repo/tool";
 import type { ProxyEvent } from "@graft/proxy";
 import { describe, expect, it } from "vitest";
 
-import { listItems } from "./scenarios";
+import { REPORT } from "./files-vendor";
+import { listItems, moveReport } from "./scenarios";
 import {
+  blobReadInDryRun,
+  bytesArrivedIntact,
   dryRunBeforeAnyAsk,
   firstWriteThroughPublishedTool,
+  MAX_MODEL_TURN_CHARS,
+  modulesUseCtxBlob,
+  noBlobBytesInModelTurns,
   noVendorHostInCode,
   publishBeforeFirstWrite,
   type RecordedAsk,
   readsBeforePublish,
+  refTravels,
   type ScenarioRun,
   sdkBoundToProxy,
 } from "./scorers";
-import type { TimedRequest } from "./world";
+import type { ModelTurn, TimedRequest } from "./world";
 
 /**
  * The scorers' directions on synthetic runs: each must go red on the failure it exists to catch and
@@ -144,6 +151,7 @@ const ask = (ms: number, answeredMs: number | null, position: number): RecordedA
 function run(overrides: Partial<ScenarioRun>): ScenarioRun {
   return {
     scenario: listItems,
+    stage: listItems,
     status: {
       jobId: "job_1",
       status: "succeeded",
@@ -176,6 +184,10 @@ function run(overrides: Partial<ScenarioRun>): ScenarioRun {
     use: null,
     asks: [],
     ledger: [],
+    model: [],
+    uploads: [],
+    handoff: null,
+    next: null,
     ms: 1,
     tokens: { input: 10, output: 5, total: 15 },
     ...overrides,
@@ -327,5 +339,319 @@ describe("sdk_bound_to_proxy", () => {
       ],
     });
     expect(sdkBoundToProxy(unstripped, sdk, real, "/repos/").pass).toBe(false);
+  });
+});
+
+/**
+ * The blob scorers (GRA-191) over a synthetic two-stage run: the producing stage's tool answered a
+ * ref and a ledger, the consuming stage's job read that blob in its dry run and had its upload
+ * intercepted, and the second vendor stored the fixture's bytes. Each scorer is then shown the one
+ * failure it exists to catch.
+ */
+describe("the blob scorers", () => {
+  const REF = "blob://0f6b6c4e-1111-4222-8333-444455556666";
+  const OTHER_REF = "blob://99999999-1111-4222-8333-444455556666";
+  const WRITE_MODULE =
+    'export default async (input: Input, ctx: Context) => { const res = await ctx.fetch("/files/" + input.id); const file = await ctx.blob.write(res.body, { contentType: "application/pdf" }); return { file }; };';
+  const READ_MODULE =
+    'export default async (input: Input, ctx: Context) => { const file = await ctx.blob.read(input.file); const form = new FormData(); form.append("file", file); await ctx.fetch("/uploads", { method: "POST", body: form }); return { ok: true }; };';
+  const giveUp = (reason: string) => ({ kind: "give_up", reason });
+
+  const turn = (kind: ModelTurn["kind"], output: unknown): ModelTurn =>
+    kind === "open"
+      ? {
+          jobId: "job_1",
+          kind,
+          input: {
+            jobId: "job_1",
+            personId: "person_eval",
+            goal: "move the report",
+            hints: `the file is ${REF}`,
+            connection: {
+              id: "conn_drop",
+              vendor: "drop",
+              displayName: "Drop",
+              scheme: "bearer",
+              primaryHost: "https://api.drop.example",
+              hosts: ["api.drop.example"],
+            },
+            skill: "the skill",
+            budget: { maxAttempts: 3, tokenCeiling: 400_000 },
+          },
+          output: null,
+        }
+      : { jobId: "job_1", kind, input: { kind: "goal" }, output };
+
+  const intercepted = (bytes: number, dryRun = true): ProxyEvent =>
+    ({
+      ...event("execute", dryRun),
+      outcome: dryRun ? "dry_run_intercepted" : "forwarded",
+      upstreamStatus: dryRun ? null : 201,
+      path: "/uploads",
+      requestBytes: bytes,
+    }) as ProxyEvent;
+
+  const liveTrace = (): AcquireTraceRow => ({
+    ...trace("dry_run", 350),
+    text: "The test input names 1 live blob(s); the dry run reads it.",
+    data: { refs: [REF] },
+  });
+  const fixtureTrace = (bytes: number): AcquireTraceRow => ({
+    ...trace("dry_run", 350),
+    text: `Minted fixture blob ${OTHER_REF} (${bytes} bytes, text/plain, fixture.txt) for the dry run of drop__upload-report; it expires at later.`,
+    data: { ref: OTHER_REF, bytes },
+  });
+
+  const consumer = (overrides: Partial<ScenarioRun> = {}): ScenarioRun =>
+    run({
+      stage: moveReport.chain?.stage(REF) ?? moveReport,
+      attempts: [attempt([{ path: "index.ts", content: READ_MODULE }])],
+      traces: [
+        trace("proof", 200),
+        trace("publish", 300),
+        liveTrace(),
+        trace("dry_run", 400),
+        trace("result", 500),
+      ],
+      requests: [request("GET", "/folders", 250), request("POST", "/uploads", 1_000)],
+      events: [
+        intercepted(REPORT.bytes.length + 512),
+        intercepted(REPORT.bytes.length + 512, false),
+      ],
+      version: version(400),
+      use: {
+        input: { file: REF, name: "report-2026-q3.pdf" },
+        first: {},
+        ask: null,
+        answeredAt: T0 + 950,
+        second: { id: "up_1", status: "stored" },
+        final: { id: "up_1", status: "stored" },
+      },
+      uploads: [
+        {
+          at: T0 + 1_000,
+          id: "up_1",
+          field: "file",
+          name: "report-2026-q3.pdf",
+          contentType: "application/pdf",
+          bytes: REPORT.bytes.length,
+          sha256: REPORT.sha256,
+          folder: "reports",
+        },
+      ],
+      model: [turn("open", null), turn("turn", { kind: "proceed", note: "publishing" })],
+      ...overrides,
+    });
+
+  const chain = (overrides: Partial<ScenarioRun> = {}, next: ScenarioRun | null = consumer()) =>
+    run({
+      scenario: moveReport,
+      stage: moveReport,
+      attempts: [attempt([{ path: "index.ts", content: WRITE_MODULE }])],
+      use: {
+        input: { id: "rep_2026_q3" },
+        first: {},
+        ask: null,
+        answeredAt: null,
+        second: null,
+        final: {
+          result: { file: REF, name: "report-2026-q3.pdf" },
+          blobs: [{ ref: REF, bytes: REPORT.bytes.length, contentType: "application/pdf" }],
+        },
+      },
+      model: [turn("open", null), turn("turn", { kind: "proceed", note: "publishing" })],
+      handoff: REF,
+      next,
+      ...overrides,
+    });
+
+  it("no_blob_bytes_in_model_turns: green on clean turns; red for a sentinel as text, hex or base64, an oversize turn, or no turn at all", () => {
+    expect(noBlobBytesInModelTurns(chain(), REPORT).pass).toBe(true);
+    const sentinel = REPORT.sentinels[2]?.text ?? "";
+    expect(
+      noBlobBytesInModelTurns(chain({ model: [turn("turn", giveUp(`saw ${sentinel}`))] }), REPORT)
+        .pass,
+    ).toBe(false);
+    const asText = noBlobBytesInModelTurns(
+      chain({ model: [turn("turn", giveUp(Buffer.from(REPORT.bytes).toString("latin1")))] }),
+      REPORT,
+    );
+    expect(asText.pass).toBe(false);
+    expect(asText.detail).toContain("over the");
+    expect(asText.detail).toContain("as text");
+    // A UTF-8 decode of the body mangles the random bytes and leaves the ASCII sentinels whole.
+    const utf8 = noBlobBytesInModelTurns(
+      chain({
+        model: [turn("turn", giveUp(new TextDecoder().decode(REPORT.bytes.slice(0, 1_500_000))))],
+      }),
+      REPORT,
+    );
+    expect(utf8.pass).toBe(false);
+    expect(utf8.detail).toContain("as text");
+    const base64 = noBlobBytesInModelTurns(
+      chain({
+        model: [
+          turn("turn", giveUp(Buffer.from(REPORT.bytes.slice(0, 1_500_000)).toString("base64"))),
+        ],
+      }),
+      REPORT,
+    );
+    expect(base64.pass).toBe(false);
+    expect(base64.detail).toContain("as base64");
+    const hex = noBlobBytesInModelTurns(
+      chain({
+        model: [
+          turn("turn", giveUp(Buffer.from(REPORT.bytes.slice(65_000, 66_000)).toString("hex"))),
+        ],
+      }),
+      REPORT,
+    );
+    expect(hex.pass).toBe(false);
+    expect(hex.detail).toContain("as hex");
+    expect(
+      noBlobBytesInModelTurns(
+        chain({ model: [turn("turn", giveUp("x".repeat(MAX_MODEL_TURN_CHARS)))] }),
+        REPORT,
+      ).pass,
+    ).toBe(false);
+    // The consuming stage's turns count too.
+    expect(
+      noBlobBytesInModelTurns(
+        chain({}, consumer({ model: [turn("turn", giveUp(sentinel))] })),
+        REPORT,
+      ).pass,
+    ).toBe(false);
+    expect(
+      noBlobBytesInModelTurns(chain({ model: [] }, consumer({ model: [] })), REPORT).pass,
+    ).toBe(false);
+    // The head of the file is not a sentinel: what a 4,000-character proof read shows is admitted.
+    expect(
+      noBlobBytesInModelTurns(
+        chain({
+          model: [
+            turn("turn", giveUp(Buffer.from(REPORT.bytes.slice(0, 4_000)).toString("latin1"))),
+          ],
+        }),
+        REPORT,
+      ).pass,
+    ).toBe(true);
+  });
+
+  it("ref_travels: green when the answered ref is the handoff and the second input carries it; red for a ref that does not match, no ref, or no handoff", () => {
+    expect(refTravels(chain()).pass).toBe(true);
+    const use = consumer().use;
+    expect(
+      refTravels(chain({}, consumer({ use: use ? { ...use, input: { file: OTHER_REF } } : null })))
+        .pass,
+    ).toBe(false);
+    expect(refTravels(chain({ handoff: OTHER_REF })).pass).toBe(false);
+    expect(refTravels(chain({ handoff: null }, null)).pass).toBe(false);
+    const produced = chain().use;
+    expect(
+      refTravels(
+        chain({
+          use: produced
+            ? { ...produced, final: { result: { name: "report-2026-q3.pdf" }, blobs: [] } }
+            : null,
+        }),
+      ).pass,
+    ).toBe(false);
+    expect(refTravels(chain({}, consumer({ use: null }))).pass).toBe(false);
+  });
+
+  it("blob_read_in_dry_run: green for a live or fixture blob and an intercepted write carrying it; red for no blob, an un-intercepted write, a body too small, or a failed dry run", () => {
+    const live = blobReadInDryRun(chain());
+    expect(live.pass).toBe(true);
+    expect(live.detail).toContain(`a live blob of ${REPORT.bytes.length} bytes`);
+    const fixture = blobReadInDryRun(
+      chain(
+        {},
+        consumer({
+          traces: [trace("publish", 300), fixtureTrace(611), trace("result", 500)],
+          events: [intercepted(700)],
+        }),
+      ),
+    );
+    expect(fixture.pass).toBe(true);
+    expect(fixture.detail).toContain("a fixture blob of 611 bytes");
+    expect(
+      blobReadInDryRun(
+        chain({}, consumer({ traces: [trace("publish", 300), trace("result", 500)] })),
+      ).pass,
+    ).toBe(false);
+    // The write reached the vendor instead of stopping at the proxy.
+    const forwarded = blobReadInDryRun(
+      chain({}, consumer({ events: [intercepted(REPORT.bytes.length + 512, false)] })),
+    );
+    expect(forwarded.pass).toBe(false);
+    expect(forwarded.detail).toContain("intercepted no write");
+    const small = blobReadInDryRun(chain({}, consumer({ events: [intercepted(100)] })));
+    expect(small.pass).toBe(false);
+    expect(small.detail).toContain("carried 100 byte(s)");
+    expect(blobReadInDryRun(chain({}, consumer({ version: version(null) }))).pass).toBe(false);
+    expect(blobReadInDryRun(chain({}, null)).pass).toBe(false);
+  });
+
+  it("bytes_arrived_intact: green when every upload hashes to the fixture at its size; red for another hash, another size, or no upload", () => {
+    expect(bytesArrivedIntact(chain(), REPORT).pass).toBe(true);
+    const upload = consumer().uploads[0];
+    if (!upload) throw new Error("the fixture consumer has no upload");
+    expect(
+      bytesArrivedIntact(
+        chain({}, consumer({ uploads: [{ ...upload, sha256: "0".repeat(64) }] })),
+        REPORT,
+      ).pass,
+    ).toBe(false);
+    expect(
+      bytesArrivedIntact(chain({}, consumer({ uploads: [{ ...upload, bytes: 10 }] })), REPORT).pass,
+    ).toBe(false);
+    expect(bytesArrivedIntact(chain({}, consumer({ uploads: [] })), REPORT).pass).toBe(false);
+    expect(bytesArrivedIntact(chain({}, null), REPORT).pass).toBe(false);
+  });
+
+  it("modules_use_ctx_blob: green for ctx.blob.write then ctx.blob.read with no banned import; red for fs in either, or a module on neither call", () => {
+    expect(modulesUseCtxBlob(chain()).pass).toBe(true);
+    const withFs = modulesUseCtxBlob(
+      chain({
+        attempts: [
+          attempt([
+            {
+              path: "index.ts",
+              content: `import { writeFile } from "node:fs/promises";\n${WRITE_MODULE}`,
+            },
+          ]),
+        ],
+      }),
+    );
+    expect(withFs.pass).toBe(false);
+    expect(withFs.detail).toContain("imports node:fs/promises");
+    expect(
+      modulesUseCtxBlob(
+        chain(
+          {},
+          consumer({
+            attempts: [
+              attempt([{ path: "index.ts", content: `const fs = require("fs");\n${READ_MODULE}` }]),
+            ],
+          }),
+        ),
+      ).pass,
+    ).toBe(false);
+    expect(
+      modulesUseCtxBlob(
+        chain({ attempts: [attempt([{ path: "index.ts", content: 'ctx.fetch("/files")' }])] }),
+      ).pass,
+    ).toBe(false);
+    expect(
+      modulesUseCtxBlob(
+        chain(
+          {},
+          consumer({
+            attempts: [attempt([{ path: "index.ts", content: 'ctx.fetch("/uploads")' }])],
+          }),
+        ),
+      ).pass,
+    ).toBe(false);
+    expect(modulesUseCtxBlob(chain({}, null)).pass).toBe(false);
   });
 });

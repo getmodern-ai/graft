@@ -22,7 +22,7 @@ import {
 } from "@graft/mcp";
 import { createFakeDeps, createFakeStore, type FakeStore } from "@graft/mcp/testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "@graft/mcp/testing/fake-vendor";
-import type { ModelAdapter } from "@graft/model";
+import type { ModelAdapter, ModelJobContext, ModelSituation } from "@graft/model";
 import type { UpstreamRequest } from "@graft/proxy";
 import {
   createFakeMetadataSource,
@@ -55,6 +55,28 @@ import {
   respondDemo,
 } from "./demo-vendor";
 import {
+  createDropVendor,
+  DROP_DISPLAY_NAME,
+  DROP_DOCS_PAGE,
+  DROP_DOCS_URL,
+  DROP_HOSTNAME,
+  DROP_PRIMARY_HOST,
+  DROP_TOKEN,
+  DROP_VENDOR,
+  type ReceivedUpload,
+} from "./drop-vendor";
+import {
+  FILES_API_KEY,
+  FILES_DISPLAY_NAME,
+  FILES_DOCS_PAGE,
+  FILES_DOCS_URL,
+  FILES_HOSTNAME,
+  FILES_KEY_HEADER,
+  FILES_PRIMARY_HOST,
+  FILES_VENDOR,
+  respondFiles,
+} from "./files-vendor";
+import {
   GITHUB_DISPLAY_NAME,
   GITHUB_DOCS_PAGE,
   GITHUB_DOCS_URL,
@@ -84,6 +106,22 @@ export const AGENT = "agent_eval";
 export const TOKEN = "grft_eval_token_000000000000000000000000000000";
 export const CONN_DEMO = "conn_demo";
 export const CONN_GITHUB = "conn_github";
+export const CONN_FILES = "conn_files";
+export const CONN_DROP = "conn_drop";
+
+/**
+ * One thing the model was shown or answered, as the scorers read it (GRA-191; ADR 0023: the bytes
+ * never enter a model turn): a job's opening context, or one turn's situation and the answer to it.
+ * Recorded by the world around whatever adapter it was handed, so the scripted and the
+ * provider-backed model leave the same record.
+ */
+export type ModelTurn = {
+  jobId: string;
+  kind: "open" | "turn";
+  input: ModelJobContext | ModelSituation;
+  /** The model's answer; null for the opening context, and for a turn that threw. */
+  output: unknown;
+};
 
 /** A request as it reached a vendor, stamped when the fake answered it. */
 export type TimedRequest = {
@@ -121,6 +159,10 @@ export type World = {
   store: FakeStore;
   vendor: FakeVendor;
   requests: TimedRequest[];
+  /** Every upload the Drop vendor stored, in order (GRA-191). */
+  received: ReceivedUpload[];
+  /** Everything the model was shown and answered, across every job, in order (GRA-191). */
+  turns: ModelTurn[];
   /** Every pending action and trace the loop wrote, by position; the scorers order asks by it. */
   record: WorldRecord;
   sandbox: FakeSandboxBackend;
@@ -150,9 +192,40 @@ export function body<T = Record<string, unknown>>(result: CallToolResult): T {
   return JSON.parse(first.text) as T;
 }
 
+/**
+ * The model behind a record of every turn: the scorers read what the model was shown and what it
+ * answered off `World.turns`, whichever adapter is in the seat. A turn that throws is recorded with
+ * no output and rethrown, so the job's own failure path is unchanged.
+ */
+function recordingModel(model: ModelAdapter, turns: ModelTurn[]): ModelAdapter {
+  return {
+    name: model.name,
+    open(context) {
+      turns.push({ jobId: context.jobId, kind: "open", input: context, output: null });
+      const conversation = model.open(context);
+      return {
+        async turn(situation) {
+          const turn: ModelTurn = {
+            jobId: context.jobId,
+            kind: "turn",
+            input: situation,
+            output: null,
+          };
+          turns.push(turn);
+          const reply = await conversation.turn(situation);
+          turn.output = reply.answer;
+          return reply;
+        },
+      };
+    },
+  };
+}
+
 export async function openWorld(options: WorldOptions): Promise<World> {
   const keys = await generateTestKeys();
   const requests: TimedRequest[] = [];
+  const turns: ModelTurn[] = [];
+  const drop = createDropVendor();
   const vendor = await startFakeVendor({
     keys,
     connections: [
@@ -170,6 +243,21 @@ export async function openWorld(options: WorldOptions): Promise<World> {
         primaryHost: GITHUB_PRIMARY_HOST,
         credential: { token: GITHUB_TOKEN },
       },
+      {
+        id: CONN_FILES,
+        personId: PERSON,
+        primaryHost: FILES_PRIMARY_HOST,
+        schemeConfig: { headerName: FILES_KEY_HEADER },
+        credential: { apiKey: FILES_API_KEY },
+      },
+      {
+        id: CONN_DROP,
+        personId: PERSON,
+        authScheme: "bearer",
+        schemeConfig: {},
+        primaryHost: DROP_PRIMARY_HOST,
+        credential: { token: DROP_TOKEN },
+      },
     ],
     respond: (request: UpstreamRequest) => {
       const url = new URL(request.url);
@@ -184,6 +272,8 @@ export async function openWorld(options: WorldOptions): Promise<World> {
       });
       if (url.hostname === DEMO_HOSTNAME) return respondDemo(request);
       if (url.hostname === GITHUB_HOSTNAME) return respondGithub(request);
+      if (url.hostname === FILES_HOSTNAME) return respondFiles(request);
+      if (url.hostname === DROP_HOSTNAME) return drop.respond(request);
       return Response.json({ error: "unknown vendor" }, { status: 502 });
     },
   });
@@ -206,18 +296,35 @@ export async function openWorld(options: WorldOptions): Promise<World> {
     schemeConfig: {},
     primaryHost: GITHUB_PRIMARY_HOST,
   });
+  store.addConnection({
+    id: CONN_FILES,
+    personId: PERSON,
+    vendor: FILES_VENDOR,
+    displayName: FILES_DISPLAY_NAME,
+    schemeConfig: { headerName: FILES_KEY_HEADER },
+    primaryHost: FILES_PRIMARY_HOST,
+  });
+  store.addConnection({
+    id: CONN_DROP,
+    personId: PERSON,
+    vendor: DROP_VENDOR,
+    displayName: DROP_DISPLAY_NAME,
+    scheme: "bearer",
+    schemeConfig: {},
+    primaryHost: DROP_PRIMARY_HOST,
+  });
+  const connectionIds = [CONN_DEMO, CONN_GITHUB, CONN_FILES, CONN_DROP];
   store.addAgent({
     scopeMode: "listed",
     id: AGENT,
     personId: PERSON,
     token: TOKEN,
     name: "eval Hermes",
-    connectionIds: [CONN_DEMO, CONN_GITHUB],
+    connectionIds,
   });
-  // The person has said yes to building against both connections (ADR 0008); the tool asks are
+  // The person has said yes to building against every connection (ADR 0008); the tool asks are
   // what the scenarios exercise.
-  store.grantBuild(AGENT, CONN_DEMO);
-  store.grantBuild(AGENT, CONN_GITHUB);
+  for (const connectionId of connectionIds) store.grantBuild(AGENT, connectionId);
 
   const fake = createFakeDeps(store);
 
@@ -297,6 +404,8 @@ export async function openWorld(options: WorldOptions): Promise<World> {
   const pages: Record<string, { title: string; content: string }> = {
     [DEMO_DOCS_URL]: { title: "Demo Orders API — Reference (v2)", content: DEMO_DOCS_PAGE },
     [GITHUB_DOCS_URL]: { title: "GitHub REST API — Issues", content: GITHUB_DOCS_PAGE },
+    [FILES_DOCS_URL]: { title: "Files API - Reference (v1)", content: FILES_DOCS_PAGE },
+    [DROP_DOCS_URL]: { title: "Drop API - Reference", content: DROP_DOCS_PAGE },
   };
 
   const deps: McpDeps = {
@@ -326,7 +435,7 @@ export async function openWorld(options: WorldOptions): Promise<World> {
         : {
             ok: false,
             url,
-            error: "the evals reach no network; only the two vendors' pages exist",
+            error: "the evals reach no network; only the fake vendors' pages exist",
           };
     },
     listChangedWindowMs: 50,
@@ -340,7 +449,7 @@ export async function openWorld(options: WorldOptions): Promise<World> {
     },
     notifier: createToolListChangedNotifier({ windowMs: 50 }),
     inFlight: createInFlightRegistry(),
-    model: options.model,
+    model: recordingModel(options.model, turns),
     acquire: {
       maxAttempts: options.maxAttempts ?? 3,
       tokenCeiling: options.tokenCeiling ?? 400_000,
@@ -363,6 +472,8 @@ export async function openWorld(options: WorldOptions): Promise<World> {
     store,
     vendor,
     requests,
+    received: drop.received,
+    turns,
     record,
     sandbox,
     runner,
