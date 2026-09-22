@@ -1645,6 +1645,53 @@ describe("pending actions", () => {
     expect(pendingActions[0]?.url).toBe(`http://console.graft.test/app/pending/pa_1?t=${token}`);
   });
 
+  /**
+   * GRA-164: a refusal a route means — a consumed link's 409 — is the request's answer, not its
+   * failure. Hono puts the throw on `c.error`, which evlog logs as the event's error with a stack;
+   * `api.onError` clears it and leaves the refusal readable under `refusal`. A throw that is not a
+   * `ServiceError` stays the event's error.
+   */
+  it("logs a refused handoff link as a refusal on the wide event, never as its error", async () => {
+    const drained: { event: Record<string, unknown> }[] = [];
+    initLogger({
+      silent: true,
+      drain: (ctx) => {
+        drained.push(ctx as unknown as { event: Record<string, unknown> });
+      },
+    });
+    try {
+      const { app, deps } = harness({ user: { id: "person_1" } });
+      const token = signHandoffToken(openAction, HANDOFF.secret);
+      vi.mocked(deps.pendingAction.findPendingActionForPerson).mockResolvedValueOnce({
+        ...openAction,
+        answeredAt: NOW,
+        consumedAt: NOW,
+      });
+      const reused = await app.request(`/api/pending-actions/pa_1?t=${token}`);
+      expect(reused.status).toBe(409);
+      expect(await reused.json()).toMatchObject({
+        error: "CONFLICT",
+        details: { reason: "consumed" },
+      });
+      const event = drained.at(-1)?.event;
+      expect(event).toMatchObject({
+        status: 409,
+        refusal: { code: "CONFLICT", message: expect.stringContaining("already used") },
+      });
+      expect(event).not.toHaveProperty("error");
+      expect(event?.level).not.toBe("error");
+
+      vi.mocked(deps.pendingAction.findPendingActionForPerson).mockRejectedValueOnce(
+        new Error("the pool is gone"),
+      );
+      const failed = await app.request(`/api/pending-actions/pa_1?t=${token}`);
+      expect(failed.status).toBe(500);
+      expect(drained.at(-1)?.event).toMatchObject({ status: 500, error: expect.anything() });
+    } finally {
+      initLogger({ silent: true });
+    }
+  });
+
   it("answers one action by its signed link, and refuses a tampered, reused or expired link naming which", async () => {
     const { app, deps } = harness({ user: { id: "person_1" } });
     const token = signHandoffToken(openAction, HANDOFF.secret);

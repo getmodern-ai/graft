@@ -339,6 +339,90 @@ describe("the MCP endpoint", () => {
     });
   });
 
+  /**
+   * GRA-162 (ADR 0018 as amended 2026-09-22): Claude.ai opens every session announcing the
+   * 2026-07-28 revision, which the SDK does not speak; on a fresh `initialize` the header is left
+   * to the body's negotiation rather than refused, and the result names the latest version Graft
+   * has. On a request that names a session the header must be the negotiated one, as before.
+   */
+  describe("a protocol version the SDK lacks", () => {
+    const listTools = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const lastMessage = async (response: Response) => {
+      const text = await response.text();
+      const data = text
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim());
+      return JSON.parse(data[data.length - 1] ?? text) as {
+        result?: { protocolVersion?: string };
+      };
+    };
+
+    it("negotiates a fresh initialize that announces it, and still refuses it on a live session", async () => {
+      const { app, refusals } = harness();
+      // The header and the body both announce the revision, as Claude's client does.
+      const announcing = INITIALIZE.replace('"2025-06-18"', '"2026-07-28"');
+      const opened = await app.request(
+        MCP_MOUNT_PATH,
+        post(
+          { authorization: `Bearer ${TOKEN_A_OAUTH}`, "mcp-protocol-version": "2026-07-28" },
+          announcing,
+        ),
+      );
+      expect(opened.status).toBe(200);
+      const sessionId = opened.headers.get("mcp-session-id") ?? "";
+      expect(sessionId).not.toBe("");
+      expect((await lastMessage(opened)).result?.protocolVersion).toBe("2025-11-25");
+      expect(refusals).toEqual([]);
+
+      // The negotiated version is what a later request must carry: the SDK's own 400 stands.
+      const listed = await app.request(
+        MCP_MOUNT_PATH,
+        post(
+          {
+            authorization: `Bearer ${TOKEN_A_OAUTH}`,
+            "mcp-session-id": sessionId,
+            "mcp-protocol-version": "2026-07-28",
+          },
+          listTools,
+        ),
+      );
+      expect(listed.status).toBe(400);
+      expect(refusals).toEqual([
+        expect.objectContaining({
+          status: 400,
+          code: -32000,
+          message: expect.stringContaining("Unsupported protocol version: 2026-07-28"),
+          hasSessionHeader: true,
+          agentId: "agent_a",
+        }),
+      ]);
+      const negotiated = await app.request(
+        MCP_MOUNT_PATH,
+        post(
+          {
+            authorization: `Bearer ${TOKEN_A_OAUTH}`,
+            "mcp-session-id": sessionId,
+            "mcp-protocol-version": "2025-11-25",
+          },
+          listTools,
+        ),
+      );
+      expect(negotiated.status).toBe(200);
+    });
+
+    it("leaves an initialize with a version it speaks exactly as it was", async () => {
+      const { app, refusals } = harness();
+      const opened = await app.request(
+        MCP_MOUNT_PATH,
+        post({ authorization: `Bearer ${TOKEN_A}`, "mcp-protocol-version": "2025-06-18" }),
+      );
+      expect(opened.status).toBe(200);
+      expect((await lastMessage(opened)).result?.protocolVersion).toBe("2025-06-18");
+      expect(refusals).toEqual([]);
+    });
+  });
+
   /** GRA-131: every refused request names its reason to the hook, the door's and the transport's alike. */
   describe("a refused request reaches onTransportRefusal", () => {
     const listTools = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
@@ -366,14 +450,18 @@ describe("the MCP endpoint", () => {
           code: -32001,
           message: "Session not found",
           sessionId: "nope",
+          agentId: "agent_a",
         }),
         expect.objectContaining({
           status: 400,
           code: -32000,
           method: "GET",
           hasSessionHeader: false,
+          agentId: "agent_a",
         }),
       ]);
+      // No token resolved on the 401, so it names no agent (GRA-164).
+      expect(refusals[0]).not.toHaveProperty("agentId");
     });
 
     it("never lets a hook that throws replace the client's answer", async () => {

@@ -185,7 +185,8 @@ export type McpDeps = {
    * (GRA-131): Graft's own 401, 404 and 400 in `http.ts`, and the SDK transport's 4xx — an
    * `initialize` under a live session, an unsupported protocol version, a parse error, a missing
    * session header. The reading of a 400 in the request log was a guess without it (GRA-124,
-   * GRA-129). Carries the status and the JSON-RPC error, never the body. Absent, nothing changes.
+   * GRA-129). Carries the status, the JSON-RPC error and — once the token resolved — the agent
+   * (GRA-164), never the body. Absent, nothing changes.
    */
   onTransportRefusal?: (event: TransportRefusalEvent) => void;
 };
@@ -201,6 +202,12 @@ export type TransportRefusalEvent = {
   /** Whether the request named a session, and — for a request Graft answered — which. */
   hasSessionHeader: boolean;
   sessionId?: string;
+  /**
+   * The agent the bearer token resolved to, for every refusal past the door's 401 (GRA-164): a
+   * `Session not found`, a `session_mismatch` or a protocol-version 400 is then attributable in the
+   * log without the database. Absent on the 401s, where no token resolved.
+   */
+  agentId?: string;
 };
 
 /**

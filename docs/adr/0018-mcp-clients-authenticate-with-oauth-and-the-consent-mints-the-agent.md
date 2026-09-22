@@ -152,3 +152,25 @@ its version, its protocol version beyond the header it sends — and the trace n
 `graft-reopened-session`. A client that presents an id it invented is given a session under it; that
 is the same as initialising one, under the same token.
 
+## Amendment 2026-09-22: a protocol version the SDK lacks is negotiated on a fresh `initialize`, not refused on the header
+
+The SDK's transport checks the `MCP-Protocol-Version` header against the versions it speaks before
+it reads the body, and answers 400 to one it does not. On a request that names a session that is
+right: the header must be the version the session negotiated. On a fresh `initialize` there is no
+negotiated version yet, and the specification's answer to a revision the server lacks is the
+server's latest in the `initialize` result — which the body's `params.protocolVersion` negotiates.
+Since 2026-09-20 Claude.ai has opened every session announcing the 2026-07-28 revision, been
+refused, and re-sent with an older header (GRA-162 has the count); a client that did not fall back
+would be refused outright.
+
+**The rule.** On a session-less `initialize`, an `MCP-Protocol-Version` the SDK does not support is
+removed before the transport sees the request, and the body negotiates. Nothing else changes: a
+supported header is passed through, and a request carrying a session id keeps the SDK's check.
+`packages/mcp/src/http.ts` (`withoutUnsupportedProtocolVersion`) is the implementation and
+`apps/server/src/mcp.test.ts` pins both halves.
+
+**Accepted.** A client that announces a revision Graft lacks and then ignores the negotiated
+version would now hold a session that refuses its every call, where before it was refused at the
+door and could fall back; GRA-162's live check against Claude.ai is what rules that out. Adopting
+the 2026-07-28 revision itself — which removes sessions and this handshake — is GRA-165, and waits
+on an SDK that carries it.
