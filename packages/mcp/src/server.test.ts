@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { ModuleCheck } from "@graft/check";
 import { setConnectionCredential } from "@graft/core";
+import type { BlobRow } from "@graft/db/repo/blob";
 import {
   createFakeMetadataSource,
   createPublishDeps,
@@ -101,6 +102,36 @@ const SAVE_REPORT_MODULE = `export default async (input, ctx) => {
 };
 `;
 
+/**
+ * The consuming half (GRA-187; ADR 0023): the ref one tool answered arrives in this tool's input,
+ * `ctx.blob.read` answers a `Blob`, and it goes to the vendor in a multipart body. The result
+ * names the ref, the size and the type, never a byte. The schema names where a ref may sit, a
+ * list and an object among them, so the door's walk over nested input is exercised.
+ */
+const UPLOAD_FILE = authoredToolName("demo", "upload-file");
+const UPLOAD_FILE_SCHEMA = {
+  type: "object",
+  properties: {
+    file: { type: "string" },
+    name: { type: "string" },
+    channel: { type: "string" },
+    attachments: { type: "array", items: { type: "string" } },
+    meta: { type: "object" },
+  },
+  required: ["file"],
+  additionalProperties: false,
+};
+const UPLOAD_FILE_MODULE = `export default async (input, ctx) => {
+  const file = await ctx.blob.read(input.file);
+  const form = new FormData();
+  form.append("channel", input.channel ?? "general");
+  form.append("file", file, input.name ?? "upload.bin");
+  const res = await ctx.fetch("/files/upload", { method: "POST", body: form });
+  if (!res.ok) throw new Error(\`POST /files/upload \${res.status}: \${await res.text()}\`);
+  return { uploaded: input.file, status: res.status, bytes: file.size, contentType: file.type };
+};
+`;
+
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
@@ -156,6 +187,9 @@ beforeAll(async () => {
   const decoyCounts = join(sandbox.toolboxRoot(PERSON), "tools/demo/decoy-counts/v1");
   await mkdir(decoyCounts, { recursive: true });
   await writeFile(join(decoyCounts, "index.ts"), DECOY_COUNTS_MODULE);
+  const uploadFile = join(sandbox.toolboxRoot(PERSON), "tools/demo/upload-file/v1");
+  await mkdir(uploadFile, { recursive: true });
+  await writeFile(join(uploadFile, "index.ts"), UPLOAD_FILE_MODULE);
 
   store = createFakeStore();
   store.addConnection({
@@ -277,9 +311,35 @@ beforeAll(async () => {
   // Promoted for agent A alone; agent B holds the same toolbox with an empty working set.
   store.promote(AGENT_A, "tool_list_items");
   store.promote(AGENT_A, "tool_save_report");
+  store.addTool({
+    id: "tool_upload_file",
+    personId: PERSON,
+    vendor: "demo",
+    name: "upload-file",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Send a kept file upstream as an upload.",
+    inputSchema: UPLOAD_FILE_SCHEMA,
+    // A write, as a vendor upload is: it asks once like any write (ADR 0008), and the yes is
+    // recorded below so this suite is about the run and not the ask.
+    readOnly: false,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/upload-file/v1",
+  });
+  store.promote(AGENT_A, "tool_upload_file");
   // Agent A may run code against Demo (the build approval, ADR 0008); the asks themselves are
   // `approval.test.ts`'s subject, and this suite is about everything that happens once they pass.
   store.grantBuild(AGENT_A, CONN_DEMO);
+  store.approvals.set(`${AGENT_A} tool_upload_file`, {
+    agentId: AGENT_A,
+    toolId: "tool_upload_file",
+    decision: "allow",
+    decidedAt: new Date(),
+    askEveryCall: false,
+    owner: "person",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
 
   checked = [];
   const fakeCheck: ModuleCheck = async (input) => {
@@ -409,6 +469,7 @@ describe("the tool list", () => {
         executeToolName(CONN_DEMO),
         LIST_ITEMS,
         SAVE_REPORT,
+        UPLOAD_FILE,
       ]);
       const listItems = tools.find((tool) => tool.name === LIST_ITEMS);
       expect(listItems).toMatchObject({
@@ -764,6 +825,279 @@ describe("a tool that writes a blob", () => {
       expect(blobEvents.slice(eventsBefore)).toEqual([
         expect.objectContaining({ agentId: AGENT_A, versionId: null }),
       ]);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+});
+
+/**
+ * The loop closed (GRA-187; ADR 0023): the ref one tool answered is the next tool's input, the
+ * vendor receives the bytes in a multipart body, and neither result carries a byte. Then the door:
+ * a ref that cannot be read is refused before a sandbox is touched, and so is every run of an
+ * agent at the quota. "Before a sandbox is touched" is asserted on the fake backing's process list
+ * for the agent's sandbox, which a run would grow by one.
+ */
+describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187)", () => {
+  const SANDBOX_A = `agent-${AGENT_A}`;
+  const DEAD_REF = "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21";
+  const GIB = 1024 * 1024 * 1024;
+
+  /** A row as the fake store holds it, for the door's cases that need one the runner never wrote. */
+  const row = (id: string, agentId: string, overrides: Partial<BlobRow> = {}): BlobRow => ({
+    id,
+    personId: PERSON,
+    agentId,
+    versionId: null,
+    bytes: 1024,
+    contentType: "application/octet-stream",
+    name: null,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    removedAt: null,
+    owner: "person",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  });
+  const withRows = async (rows: BlobRow[], run: () => Promise<void>) => {
+    store.blobs.push(...rows);
+    try {
+      await run();
+    } finally {
+      for (const added of rows) {
+        const at = store.blobs.indexOf(added);
+        if (at !== -1) store.blobs.splice(at, 1);
+      }
+    }
+  };
+  /**
+   * Agent B holds no approval, so a run of B's that passes the door reaches the gate and leaves an
+   * ask open (`waitMs: 0`): that ask is the evidence the door let it through, and it is taken away
+   * again so a later test's count of open asks starts where it did.
+   */
+  const askedPastTheDoor = async (run: () => Promise<CallToolResult>) => {
+    const before = new Set(store.pendingActions.keys());
+    try {
+      const result = await run();
+      expect(body(result)).toMatchObject({ error: "awaiting_approval" });
+    } finally {
+      for (const id of store.pendingActions.keys()) {
+        if (!before.has(id)) store.pendingActions.delete(id);
+      }
+    }
+  };
+  /** The refusal the door answers, checked whole: the shape, the flag, the ledger row, and no exec. */
+  const expectRefusedAtDoor = (
+    result: CallToolResult,
+    execsBefore: number,
+    expected: Record<string, unknown>,
+  ) => {
+    expect(result.isError).toBe(true);
+    expect(body(result)).toEqual({ error: "refused", ...expected });
+    expect(result.structuredContent).toEqual({ error: "refused", ...expected });
+    expect(sandbox.processNames(SANDBOX_A)).toHaveLength(execsBefore);
+    expect(store.usage.at(-1)).toMatchObject({ outcome: "refused" });
+  };
+
+  it("tool A writes a blob, tool B reads its ref from the input and the vendor receives the exact bytes as a multipart part, and no result carries a byte", async () => {
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const wrote = await a.call(SAVE_REPORT, { limit: 1 });
+      expect(wrote.isError).toBeFalsy();
+      const ref = (body(wrote) as { result: { file: string } }).result.file;
+      const id = ref.slice("blob://".length);
+      const data = await readFile(join(sandbox.blobsRoot(AGENT_A), id, "data"));
+      expect(JSON.parse(data.toString("utf8"))).toEqual(VENDOR_BODY);
+
+      const read = await a.call(UPLOAD_FILE, { file: ref, name: "items.json", channel: "ops" });
+      expect(read.isError).toBeFalsy();
+      const answer = body(read);
+      expect(answer).toEqual({
+        uploaded: ref,
+        status: 200,
+        bytes: data.length,
+        contentType: "application/json",
+      });
+      // The consuming tool wrote no blob, so its answer is the module's alone: no `blobs` key.
+      expect(read.structuredContent).toEqual(answer);
+      for (const result of [wrote, read]) {
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).not.toContain("Widget");
+        expect(text).toContain(ref);
+      }
+
+      // The vendor saw one POST with a multipart body whose file part is the blob, byte for byte.
+      const sent = vendor.requests.slice(requestsBefore).at(-1);
+      expect(sent?.method).toBe("POST");
+      expect(sent?.url).toBe("https://api.demo.example/v2/files/upload");
+      const contentType = sent?.headers.get("content-type") ?? "";
+      expect(contentType).toMatch(/^multipart\/form-data; boundary=/);
+      const form = await new Response(sent?.body, {
+        headers: { "content-type": contentType },
+      }).formData();
+      expect(form.get("channel")).toBe("ops");
+      const part = form.get("file");
+      expect(part).toBeInstanceOf(File);
+      const file = part as File;
+      expect(file.name).toBe("items.json");
+      expect(file.type).toBe("application/json");
+      expect(Buffer.from(await file.arrayBuffer()).equals(data)).toBe(true);
+      expect(store.usage.at(-1)).toMatchObject({ toolId: "tool_upload_file", outcome: "ok" });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("refuses blob_not_found for a made-up ref and for another agent's real ref with one sentence, a ref nested in an array or an object included, before any exec", async () => {
+    const a = await connect(TOKEN_A);
+    const b = await connect(TOKEN_B);
+    try {
+      // A real blob of agent B's: the row is there, and agent A is told what it is told of nothing.
+      const theirs = row("b0b0b0b0-0000-4000-8000-000000000001", AGENT_B);
+      await withRows([theirs], async () => {
+        const live = row("a1a1a1a1-0000-4000-8000-000000000001", AGENT_A);
+        await withRows([live], async () => {
+          const execs = sandbox.processNames(SANDBOX_A).length;
+          const madeUp = await a.call(UPLOAD_FILE, { file: DEAD_REF });
+          expectRefusedAtDoor(madeUp, execs, {
+            reason: "blob_not_found",
+            ref: DEAD_REF,
+            message: `${DEAD_REF} names no blob this agent holds. Run the tool that produced it again and pass the ref it answers.`,
+          });
+          const another = await a.call(UPLOAD_FILE, { file: `blob://${theirs.id}` });
+          expectRefusedAtDoor(another, execs, {
+            reason: "blob_not_found",
+            ref: `blob://${theirs.id}`,
+            message: `blob://${theirs.id} names no blob this agent holds. Run the tool that produced it again and pass the ref it answers.`,
+          });
+          expect((body(another).message as string).replace(theirs.id, "<id>")).toBe(
+            (body(madeUp).message as string).replace(DEAD_REF.slice("blob://".length), "<id>"),
+          );
+          // A live ref where the schema says, a dead one deeper: the walk finds it in a list...
+          const inList = await a.call(UPLOAD_FILE, {
+            file: `blob://${live.id}`,
+            attachments: [`blob://${live.id}`, DEAD_REF],
+          });
+          expectRefusedAtDoor(inList, execs, {
+            reason: "blob_not_found",
+            ref: DEAD_REF,
+            message: expect.stringContaining(DEAD_REF),
+          });
+          // ...and inside an object under a key no schema names.
+          const inObject = await a.call(UPLOAD_FILE, {
+            file: `blob://${live.id}`,
+            meta: { source: { previous: DEAD_REF } },
+          });
+          expectRefusedAtDoor(inObject, execs, {
+            reason: "blob_not_found",
+            ref: DEAD_REF,
+            message: expect.stringContaining(DEAD_REF),
+          });
+          // Agent B, whose row it is, is not refused at the door for its own ref: the same call
+          // passes it and reaches the approval gate, which asks (ADR 0008) since B holds no yes.
+          await askedPastTheDoor(() =>
+            b.call("run_tool", {
+              vendor: "demo",
+              name: "upload-file",
+              input: { file: `blob://${theirs.id}` },
+            }),
+          );
+        });
+      });
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  }, 30_000);
+
+  it("refuses blob_expired for a row past its expiry and for a removed one, naming the TTL, before any exec", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const expired = row("e1e1e1e1-0000-4000-8000-000000000001", AGENT_A, {
+        expiresAt: new Date(Date.now() - 1000),
+      });
+      const removed = row("e1e1e1e1-0000-4000-8000-000000000002", AGENT_A, {
+        removedAt: new Date(),
+      });
+      await withRows([expired, removed], async () => {
+        const execs = sandbox.processNames(SANDBOX_A).length;
+        for (const dead of [expired, removed]) {
+          const ref = `blob://${dead.id}`;
+          const result = await a.call(UPLOAD_FILE, { file: ref });
+          expectRefusedAtDoor(result, execs, {
+            reason: "blob_expired",
+            ref,
+            message: `${ref} has expired: a blob lives 24 hours from its write, and this one's time has passed. Run the tool that produced it again and pass the new ref.`,
+          });
+        }
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("refuses blob_quota for an agent whose live rows sum to the cap, with or without a ref in the input, and counts neither an expired nor a removed row", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      // The blobs earlier tests wrote for agent A are live too and count; the rows added here bring
+      // the live sum to one byte under the quota.
+      const already = store.blobs
+        .filter((b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date())
+        .reduce((total, b) => total + b.bytes, 0);
+      const live = [
+        row("c0c0c0c0-0000-4000-8000-000000000001", AGENT_A, { bytes: GIB / 2 }),
+        row("c0c0c0c0-0000-4000-8000-000000000002", AGENT_A, { bytes: GIB / 2 - 1 - already }),
+      ];
+      const dead = [
+        row("c0c0c0c0-0000-4000-8000-000000000003", AGENT_A, {
+          bytes: GIB,
+          expiresAt: new Date(Date.now() - 1000),
+        }),
+        row("c0c0c0c0-0000-4000-8000-000000000004", AGENT_A, { bytes: GIB, removedAt: new Date() }),
+      ];
+      // One byte under the quota, with a gibibyte of expired and removed rows beside: the run goes.
+      await withRows([...live, ...dead], async () => {
+        const under = await a.call(LIST_ITEMS, { limit: 1 });
+        expect(under.isError).toBeFalsy();
+        expect(body(under)).toEqual(VENDOR_BODY);
+      });
+      // At the quota: every run of this agent is refused, a ref in the input or not, and the number
+      // is the live sum. Another agent is not at it.
+      const topUp = row("c0c0c0c0-0000-4000-8000-000000000005", AGENT_A, { bytes: 1 });
+      await withRows([...live, ...dead, topUp], async () => {
+        const execs = sandbox.processNames(SANDBOX_A).length;
+        const refusal = {
+          reason: "blob_quota",
+          bytes: GIB,
+          quota: GIB,
+          message:
+            "This agent's live blobs come to 1024 MiB, at or over the 1024 MiB quota, so no tool can run for it until some expire: any tool may write a blob. A blob lives 24 hours from its write and stops counting once it has expired, the oldest first. Run the tool again once one has.",
+        };
+        expectRefusedAtDoor(await a.call(LIST_ITEMS, { limit: 1 }), execs, refusal);
+        expectRefusedAtDoor(
+          await a.call(UPLOAD_FILE, { file: `blob://${live[0]?.id}` }),
+          execs,
+          refusal,
+        );
+        const dry = await a.call("run_tool", {
+          vendor: "demo",
+          name: "list-items",
+          input: { limit: 1 },
+          dryRun: true,
+        });
+        expectRefusedAtDoor(dry, execs, refusal);
+        expect(store.usage.at(-1)).toMatchObject({ dryRun: true, outcome: "refused" });
+
+        const b = await connect(TOKEN_B);
+        try {
+          // A read asks nothing (ADR 0008), so B's run goes all the way to the vendor.
+          const theirs = await b.call("run_tool", { vendor: "demo", name: "list-items" });
+          expect(body(theirs)).toEqual(VENDOR_BODY);
+        } finally {
+          await b.close();
+        }
+      });
     } finally {
       await a.close();
     }

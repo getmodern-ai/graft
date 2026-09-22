@@ -77,6 +77,33 @@ export async function getBlob(
   return deps.findBlob(ctx.db, scope, blobId);
 }
 
+/**
+ * The blobs among `blobIds` that are this agent's, in one read: the door's lookup of every ref an
+ * input names (GRA-187). An id absent from the answer has no row under this scope; whether nobody
+ * wrote it or another agent did is not told apart here or anywhere (ADR 0023).
+ */
+export async function getBlobs(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  blobIds: readonly string[],
+  deps: BlobDeps,
+): Promise<BlobRow[]> {
+  return deps.findBlobs(ctx.db, scope, blobIds);
+}
+
+/**
+ * The bytes this agent holds live now: every blob not removed and not yet expired, summed in one
+ * read, which is what the door measures against the quota before a run (GRA-187). The clock is the seam's,
+ * so a suite can move it.
+ */
+export async function liveBlobBytes(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  deps: BlobDeps,
+): Promise<number> {
+  return deps.sumLiveBlobBytes(ctx.db, scope, deps.now());
+}
+
 /** This agent's blobs, newest first, removed ones included. */
 export async function listBlobs(
   ctx: ServiceContext,

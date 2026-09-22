@@ -868,10 +868,28 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         (row) =>
           row.id === blobId && row.agentId === scope.agentId && row.personId === scope.personId,
       ) ?? null,
+    findBlobs: async (_db, scope, blobIds) =>
+      store.blobs.filter(
+        (row) =>
+          blobIds.includes(row.id) &&
+          row.agentId === scope.agentId &&
+          row.personId === scope.personId,
+      ),
     listBlobs: async (_db, scope) =>
       store.blobs
         .filter((row) => row.agentId === scope.agentId && row.personId === scope.personId)
         .reverse(),
+    // The door's quota read (GRA-187): the repo's predicate, not removed and not yet expired.
+    sumLiveBlobBytes: async (_db, scope, now) =>
+      store.blobs
+        .filter(
+          (row) =>
+            row.agentId === scope.agentId &&
+            row.personId === scope.personId &&
+            row.removedAt === null &&
+            row.expiresAt.getTime() > now.getTime(),
+        )
+        .reduce((total, row) => total + row.bytes, 0),
     now: store.now,
   };
 

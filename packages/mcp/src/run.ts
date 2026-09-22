@@ -30,6 +30,7 @@ import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
 import { sandboxPath } from "@graft/toolbox";
 import { type AskChannel, gateToolCall } from "./approval";
+import { admitBlobs } from "./blob-door";
 import { blobsOnWire, recordWrittenBlobs, withBlobs } from "./blobs";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
@@ -101,6 +102,13 @@ import { authoredToolName } from "./tool-names";
  * the answer carries the same list beside the result. `GRAFT_AGENT` and `GRAFT_TOOL_VERSION` go
  * into the exec's environment for the sidecar the runner writes, and `GRAFT_BLOBS_DIR` names the
  * mount (`commandEnvironment`); the runner deletes all three before the module loads.
+ *
+ * **A ref the input names is judged at the door, before a sandbox is touched** (GRA-187;
+ * `blob-door.ts`). After the input is validated and before the approval gate, the agent's live
+ * bytes are measured against the quota (`blob_quota`) and every `blob://` leaf of the input is
+ * looked up under the person and the agent (`blob_not_found`, `blob_expired`), each a refusal in
+ * the shape above with a `refused` ledger row. Reading a blob asks nothing (ADR 0008), and a dry
+ * run passes the same door, so `acquire`'s job learns of a dead ref here rather than inside a run.
  */
 
 /**
@@ -609,6 +617,14 @@ async function runHeld(
   // `run_tool` on a client whose list never showed the tool and its schema.
   if (!verdict.ok) {
     return refuse("input_invalid", verdict.message, versioned, { inputSchema: tool.inputSchema });
+  }
+
+  // The blob door (GRA-187; `blob-door.ts`): the quota, then every ref the input names, judged over
+  // the rows before the gate asks anyone and before a sandbox is touched. A dry run passes it too.
+  const door = await admitBlobs(deps, scope, verdict.value);
+  if (door) {
+    await record("refused", versioned);
+    return { answer: door, isError: true };
   }
 
   // The approval gate (ADR 0008): after the scope check, before the mint. A dry run passes it: reads

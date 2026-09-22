@@ -30,7 +30,7 @@ import {
   findApproval,
   updateAskEveryCall,
 } from "./approval";
-import { findBlob, insertBlobs, listBlobs } from "./blob";
+import { findBlob, findBlobs, insertBlobs, listBlobs, sumLiveBlobBytes } from "./blob";
 import {
   addConnectionHosts,
   findConnection,
@@ -205,6 +205,29 @@ describe("the blob rows name the person and the agent in every statement", () =>
     const s = only();
     expect(s.sql).toMatch(BLOB_PAIR);
     expect(s.params).toEqual(["agent_1", "person_1"]);
+  });
+
+  /** The door's two reads (GRA-187): every ref an input names in one statement, and the live bytes in one. */
+  it("the blobs an input names, in one statement under the pair, and no statement for no ids", async () => {
+    await findBlobs(db, SCOPE, ["blob_1", "blob_2"]);
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "blob" where \("blob"\."id" in \(\$1, \$2\) and \(/);
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.params).toEqual(["blob_1", "blob_2", "agent_1", "person_1"]);
+    statements = [];
+    expect(await findBlobs(db, SCOPE, [])).toEqual([]);
+    expect(statements).toEqual([]);
+  });
+
+  it("the agent's live bytes: not removed and not yet expired, summed under the pair", async () => {
+    const now = new Date("2026-09-22T10:00:00Z");
+    expect(await sumLiveBlobBytes(db, SCOPE, now)).toBe(0);
+    const s = only();
+    expect(s.sql).toMatch(/^select sum\("bytes"\) from "blob" where \(/);
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.sql).toContain('"blob"."removed_at" is null');
+    expect(s.sql).toContain('"blob"."expires_at" > $');
+    expect(s.params).toEqual(["agent_1", "person_1", now.toISOString()]);
   });
 
   it("an insert carries the pair on every row, in one statement, and none for an empty ledger", async () => {

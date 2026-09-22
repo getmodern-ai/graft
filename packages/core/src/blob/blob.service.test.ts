@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { BlobDeps } from "./blob.deps";
-import { getBlob, recordBlobsWritten } from "./blob.service";
+import { getBlob, getBlobs, liveBlobBytes, recordBlobsWritten } from "./blob.service";
 
 /** The blob service over fakes: what one run's ledger becomes as rows, and what is refused first. */
 
@@ -27,7 +27,9 @@ function fakeDeps(overrides: Partial<BlobDeps> = {}): BlobDeps {
       })),
     ),
     findBlob: vi.fn(async () => null),
+    findBlobs: vi.fn(async () => []),
     listBlobs: vi.fn(async () => []),
+    sumLiveBlobBytes: vi.fn(async () => 0),
     now: () => NOW,
     ...overrides,
   };
@@ -105,5 +107,21 @@ describe("getBlob", () => {
     const deps = fakeDeps();
     expect(await getBlob(ctx, SCOPE, "b1", deps)).toBeNull();
     expect(deps.findBlob).toHaveBeenCalledWith(ctx.db, SCOPE, "b1");
+  });
+});
+
+/** The door's two reads (GRA-187): the ids an input names under the scope, and the live bytes at the seam's clock. */
+describe("getBlobs and liveBlobBytes", () => {
+  it("hand the repo the scope and the ids in one call", async () => {
+    const deps = fakeDeps();
+    expect(await getBlobs(ctx, SCOPE, ["b1", "b2"], deps)).toEqual([]);
+    expect(deps.findBlobs).toHaveBeenCalledTimes(1);
+    expect(deps.findBlobs).toHaveBeenCalledWith(ctx.db, SCOPE, ["b1", "b2"]);
+  });
+
+  it("sum the live bytes at the seam's now", async () => {
+    const deps = fakeDeps({ sumLiveBlobBytes: vi.fn(async () => 4096) });
+    expect(await liveBlobBytes(ctx, SCOPE, deps)).toBe(4096);
+    expect(deps.sumLiveBlobBytes).toHaveBeenCalledWith(ctx.db, SCOPE, NOW);
   });
 });

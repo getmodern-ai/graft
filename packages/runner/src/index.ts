@@ -1,4 +1,5 @@
 export {
+  BLOB_QUOTA_BYTES,
   BLOB_REF_SCHEME,
   BLOB_TTL_MS,
   type BlobLedgerEntry,

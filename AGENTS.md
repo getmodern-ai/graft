@@ -660,6 +660,25 @@ sync run (with the version) and the poll (without one, since a poll cannot know 
 `McpDeps.onBlobWritten`, which the server captures as `blob_written` with the size and the media type
 and never the name.
 
+**The read path and the door are GRA-187.** `ctx.blob.read(ref)` answers `fs.openAsBlob` over
+`/blobs/<id>/data`, typed from the sidecar, so `.stream()` reads the file in 64 KiB chunks and a
+`FormData` upload never holds it whole; a ref that does not resolve there is `blob_not_found` with
+the ref in the sentence, whether it is not of the scheme, fails the id rule, names a `.tmp`, names
+nothing, or reaches a symlink at the directory or either file (`lstat`, as the store judges the
+tree from outside). The runner checks no expiry: **the door is the expiry's one judge.**
+`packages/mcp/src/blob-door.ts`'s `admitBlobs` runs in `run.ts` after the input is validated and
+before the approval gate, for a dry run too, so `acquire`'s job learns of a dead ref there: the
+agent's live bytes (`sumLiveBlobBytes`: `removed_at` null and `expires_at` ahead, one statement)
+against `BLOB_QUOTA_BYTES` answers `blob_quota` with `bytes` and `quota` on every run, a ref in the
+input or not; then every `blob://` string leaf of the input, arrays and nested objects included, is
+looked up under the person and the agent in one statement (`findBlobs`) and the first without a row
+is `blob_not_found` with `ref`, another agent's row answering the same sentence, and the first past
+its expiry or with `removed_at` set is `blob_expired` with `ref`, naming the 24 hours. Each is a
+refusal in the run's own shape (`isError: true`, a `refused` ledger row) and none asks (ADR 0008).
+The quota lives beside the scheme, the cap and the TTL in `@graft/runner`'s `runner-source.ts`,
+the one file that spells the three numbers; `judgeBlobQuota` and `judgeBlobRefs` are pure and
+`blob-door.test.ts` pins the sentences, `server.test.ts` the loop end to end over the fake sandbox.
+
 ### The self-hosted image
 
 `apps/server/Dockerfile`, built from the repository root, is the one image (GRA-33). Its stages:
