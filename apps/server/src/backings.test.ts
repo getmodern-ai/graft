@@ -313,7 +313,7 @@ describe("the cloud form", () => {
 
   it("takes the blob store a factory answers with in place of the filesystem one, and keeps the filesystem one when it answers none", async () => {
     const own = await selectBackings(cloud, { cloudModule: fixture("own-store") });
-    expect(JSON.parse(await own.blobStore.readMeta("agent1", "own-blob"))).toEqual({
+    expect(JSON.parse((await own.blobStore.readMeta("agent1", "own-blob")) ?? "")).toEqual({
       marker: "written by the factory's own blob store",
     });
     expect(existsSync(join(toolboxRoot, ".blobs", "agent1", "own-blob"))).toBe(false);

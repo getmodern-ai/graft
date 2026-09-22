@@ -4,7 +4,7 @@ import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { AgentScope } from "../tenancy";
 import type { BlobDeps } from "./blob.deps";
-import type { BlobSidecar } from "./blob-sweep.decision";
+import type { AdoptedBlob } from "./blob-sweep.decision";
 
 /**
  * The blob rows (CONTEXT.md, *Blob*; ADR 0023): what the server knows of a file one tool wrote for
@@ -138,18 +138,19 @@ export async function markBlobRemoved(
 }
 
 /**
- * The row for a committed directory the sweep found no row for, written from its sidecar (ADR 0023:
- * a run killed after its rename leaves a directory with a sidecar and no row). The person is the
- * scope's, the agent the directory's (the sidecar's own `agentId` was judged by the decision), and
- * the version is the sidecar's `toolVersion`. Null when a row with that id already exists: the run
- * wrote it meanwhile, or the sweep once removed it and its directory has come back, and the caller
- * reads the null as "not mine to adopt".
+ * The row for a committed directory the sweep found no row for (ADR 0023: a run killed after its
+ * rename leaves a directory with a sidecar and no row), as the decision built it from the store's
+ * measurements and the clamped sidecar (`adoptedBlobOf`). The person is the scope's, the agent the
+ * directory's (the sidecar's own `agentId` was judged by the decision), and the version is the
+ * sidecar's `toolVersion`. Null when a row with that id already exists: the run wrote it meanwhile
+ * (its insert is idempotent on the id since #144, so the two orders agree), or the sweep once
+ * removed it and its directory has come back; the caller reads the null as "a row exists now".
  */
 export async function adoptBlob(
   ctx: ServiceContext,
   scope: AgentScope,
   blobId: string,
-  sidecar: BlobSidecar,
+  row: AdoptedBlob,
   deps: BlobDeps,
 ): Promise<BlobRow | null> {
   if (blobId.trim().length === 0) {
@@ -159,11 +160,11 @@ export async function adoptBlob(
     id: blobId,
     personId: scope.personId,
     agentId: scope.agentId,
-    versionId: sidecar.toolVersion,
-    bytes: sidecar.bytes,
-    contentType: sidecar.contentType,
-    name: sidecar.name,
-    expiresAt: sidecar.expiresAt,
-    createdAt: sidecar.writtenAt,
+    versionId: row.toolVersion,
+    bytes: row.bytes,
+    contentType: row.contentType,
+    name: row.name,
+    expiresAt: row.expiresAt,
+    createdAt: row.writtenAt,
   });
 }

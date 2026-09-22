@@ -76,11 +76,14 @@ export type BlobStore = {
    */
   list(agentId: string): Promise<string[]>;
   /**
-   * The text of a blob's `meta.json`. Rejects when the blob, or its sidecar, is not there, and
-   * refuses either when it is a symlink: the tree is sandbox-writable and the store follows no link
-   * out of the agent's directory (ADR 0023, "the scope is a mount").
+   * The text of a blob's `meta.json`, or null when the blob, or its sidecar, is confirmed not to be
+   * there. The null is the store's own not-found signal and the only one: anything else that stops
+   * the read (a symlink at the directory or the sidecar, since the tree is sandbox-writable and the
+   * store follows no link out of the agent's directory, ADR 0023 "the scope is a mount"; a
+   * permission or a backing error) rejects, so a caller deciding on a missing sidecar (the sweep's
+   * `remove_orphan`, GRA-189) never mistakes a failed read for an absent file.
    */
-  readMeta(agentId: string, blobId: string): Promise<string>;
+  readMeta(agentId: string, blobId: string): Promise<string | null>;
   /** Whether the blob's directory is there. A `.tmp` directory is not yet a blob; a symlink is refused. */
   exists(agentId: string, blobId: string): Promise<boolean>;
   /**

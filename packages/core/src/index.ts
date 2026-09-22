@@ -96,7 +96,12 @@ export {
   recordBlobsWritten,
 } from "./blob/blob.service";
 export {
+  type AdoptedBlob,
+  adoptedBlobOf,
+  BLOB_CONTENT_TYPE_RULES,
+  BLOB_NAME_RULES,
   BLOB_TMP_SUFFIX as BLOB_SWEEP_TMP_SUFFIX,
+  BLOB_TTL_MS as BLOB_SWEEP_TTL_MS,
   type BlobDirectoryAge,
   type BlobSidecar,
   type BlobSweepAction,
@@ -106,6 +111,8 @@ export {
   type BlobSweepRow,
   blobSweepDecision,
   isTmpName,
+  isValidBlobContentType,
+  isValidBlobName,
   parseBlobSidecar,
 } from "./blob/blob-sweep.decision";
 export {

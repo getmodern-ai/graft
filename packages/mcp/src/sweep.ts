@@ -66,6 +66,11 @@ export type SweepBlobCounts = {
   adopted: number;
   orphansRemoved: number;
   tmpRemoved: number;
+  /**
+   * Actions not applied because a run started for the agent after its pass began; the rest of
+   * that agent's pass waits for the next tick, and the agent is in `SweepReport.deferred`.
+   */
+  deferred: number;
   /** The bytes of every `remove`, `remove_orphan` and `remove_tmp` whose size was known. */
   bytesRemoved: number;
 };
@@ -77,6 +82,8 @@ export type SweepReport = {
   agents: number;
   /** Agents skipped for a run in flight; the next sweep decides for them. */
   skipped: string[];
+  /** Agents whose blob pass stopped part way because a run started during it; the next sweep finishes. */
+  deferred: string[];
   demoted: SweepDemotion[];
   /** The blob pass (GRA-189): the counts, and every action but a `keep`. */
   blobs: SweepBlobCounts & { actions: SweepBlobAction[] };
@@ -115,13 +122,20 @@ const EMPTY_BLOB_COUNTS: SweepBlobCounts = {
   adopted: 0,
   orphansRemoved: 0,
   tmpRemoved: 0,
+  deferred: 0,
   bytesRemoved: 0,
 };
 
 /**
  * What the decision needs of one agent's directories: the store's listing, and for every name no row
- * claims, the sidecar (a committed directory) or the age (a `.tmp`), and the size for an orphan's
- * count. A directory with a row needs nothing read: the row carries its size and its expiry.
+ * claims, the sidecar (a committed directory) and the age and size (`stat`). A directory with a row
+ * needs nothing read: the row carries its size and its expiry.
+ *
+ * A read that fails is this agent's failure, not an absence: `readMeta`'s null is the store's own
+ * not-found signal and the only thing the decision may read as "no sidecar", and `stat`'s null the
+ * only "gone". Anything else (a symlink refused, a permission, a backing's error) propagates, the
+ * agent's pass ends with the error on the report, and the blob is judged again next tick. A read
+ * error turned into an absence would be a removal.
  */
 async function readBlobEntries(
   store: BlobStore,
@@ -132,9 +146,9 @@ async function readBlobEntries(
   return Promise.all(
     names.map(async (name): Promise<BlobSweepEntry> => {
       if (rowIds.has(name)) return { name };
-      const stat = await store.stat(agentId, name).catch(() => null);
+      const stat = await store.stat(agentId, name);
       if (isTmpName(name)) return { name, stat };
-      const sidecar = await store.readMeta(agentId, name).catch(() => null);
+      const sidecar = await store.readMeta(agentId, name);
       return { name, sidecar, stat };
     }),
   );
@@ -146,6 +160,16 @@ async function readBlobEntries(
  * next sweep decides afresh, and a directory removed before the throw has its row marked or not as
  * the order here says: the directory first, then the row, so a crash between the two leaves a
  * `mark` for the next pass rather than a marked row with bytes still on disk.
+ *
+ * **A run may start while this pass is reading.** The agent was not in flight when the pass began,
+ * but the reads above are awaited and a call can arrive between them and commit a blob. Two
+ * defences, neither of which needs the run and the sweep to lock each other: every destructive
+ * action re-reads the in-flight registry first and, if a run has started, the rest of this
+ * agent's pass is deferred to the next tick and counted as such; and an adoption whose id turns out
+ * to be taken is read as "a row exists now", so the blob is kept, never removed. The run's own
+ * insert is idempotent on the id since #144 (`insertBlobs` is `on conflict ("id") do nothing`), so
+ * the other order, the sweep adopting first, leaves the run's row write a no-op rather than a
+ * failure.
  */
 async function sweepBlobs(
   ctx: ServiceContext,
@@ -176,14 +200,26 @@ async function sweepBlobs(
     counts.bytesRemoved += bytes ?? 0;
     deps.onBlobSwept?.({ agentId: scope.agentId, personId: scope.personId, blobId, bytes, cause });
   };
+  const record = (action: BlobSweepAction) => {
+    report.blobs.actions.push({ ...action, agentId: scope.agentId });
+  };
+  /** True, and the rest of the pass deferred, when a run started for this agent since the pass began. */
+  const runStarted = (remaining: number): boolean => {
+    if (!options.apply || !(deps.inFlight?.has(scope.agentId) ?? false)) return false;
+    counts.deferred += remaining;
+    if (!report.deferred.includes(scope.agentId)) report.deferred.push(scope.agentId);
+    return true;
+  };
 
-  for (const action of decision.actions) {
-    if (action.action !== "keep") report.blobs.actions.push({ ...action, agentId: scope.agentId });
+  for (const [index, action] of decision.actions.entries()) {
+    const remaining = decision.actions.length - index;
     switch (action.action) {
       case "keep":
         counts.kept += 1;
         break;
       case "remove":
+        if (runStarted(remaining)) return;
+        record(action);
         if (options.apply) {
           await store.remove(scope.agentId, action.blobId);
           if (action.mark) await markBlobRemoved(ctx, scope, action.blobId, deps.blob);
@@ -192,27 +228,30 @@ async function sweepBlobs(
         counts.removed += 1;
         break;
       case "mark":
+        record(action);
         if (options.apply) await markBlobRemoved(ctx, scope, action.blobId, deps.blob);
         counts.marked += 1;
         break;
       case "adopt": {
         if (options.apply) {
-          const row = await adoptBlob(ctx, scope, action.blobId, action.sidecar, deps.blob);
+          const row = await adoptBlob(ctx, scope, action.blobId, action.row, deps.blob);
           if (row === null) {
-            // The id is taken: the unremoved rows were read above, so this is a row the sweep once
-            // removed whose directory has come back, or a write that landed its row meanwhile. The
-            // former is junk; the latter is a live blob whose run is in flight, and this pass never
-            // runs then. So the directory goes, and the row it has stays as it is.
-            await store.remove(scope.agentId, action.blobId);
-            swept(action.blobId, action.sidecar.bytes, "orphan");
-            counts.orphansRemoved += 1;
+            // A row exists now: the run that wrote this blob landed its row between the read above
+            // and here (its run is in flight; this pass would not have started otherwise), or the
+            // sweep once removed it and its directory has come back. Neither is this pass's to
+            // remove: the blob is kept and judged as a row next tick, where a removed row's
+            // directory is `remove` again and a live one is `keep`.
+            counts.kept += 1;
             break;
           }
         }
+        record(action);
         counts.adopted += 1;
         break;
       }
       case "remove_orphan":
+        if (runStarted(remaining)) return;
+        record(action);
         if (options.apply) {
           await store.remove(scope.agentId, action.blobId);
           swept(action.blobId, action.bytes, "orphan");
@@ -220,6 +259,8 @@ async function sweepBlobs(
         counts.orphansRemoved += 1;
         break;
       case "remove_tmp":
+        if (runStarted(remaining)) return;
+        record(action);
         if (options.apply) {
           await store.remove(scope.agentId, action.name);
           counts.bytesRemoved += action.bytes ?? 0;
@@ -250,6 +291,7 @@ export async function runSweep(
     at: now.toISOString(),
     agents: agents.length,
     skipped: [],
+    deferred: [],
     demoted: [],
     blobs: { ...EMPTY_BLOB_COUNTS, actions: [] },
     failed: [],

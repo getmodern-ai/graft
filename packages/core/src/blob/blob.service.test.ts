@@ -60,7 +60,7 @@ describe("the sweep's writes", () => {
     expect(deps.markBlobRemoved).toHaveBeenCalledWith(ctx.db, SCOPE, "b1", NOW);
   });
 
-  it("adopts an orphan from its sidecar: the scope's pair, the sidecar's version, size, type, name and times", async () => {
+  it("adopts an orphan as the decision built it: the scope's pair, the version, size, type, name and times", async () => {
     const deps = fakeDeps();
     const writtenAt = new Date("2026-09-22T08:00:00Z");
     const row = await adoptBlob(
@@ -73,7 +73,6 @@ describe("the sweep's writes", () => {
         name: "rows.csv",
         writtenAt,
         expiresAt: EXPIRES,
-        agentId: "agent_1",
         toolVersion: "ver_2",
       },
       deps,
@@ -100,7 +99,6 @@ describe("the sweep's writes", () => {
       name: null,
       writtenAt: NOW,
       expiresAt: EXPIRES,
-      agentId: null,
       toolVersion: null,
     };
     expect(await adoptBlob(ctx, SCOPE, "b1", sidecar, deps)).toBeNull();

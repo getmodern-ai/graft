@@ -20,7 +20,9 @@ seam a blob past its time is deleted through (GRA-189); a blob is written by the
 the sandbox (GRA-186), never by the server. `remove` and `stat` take a blob id or a `<blobId>.tmp`
 and refuse anything else; `stat` answers when the directory was last written (the newest of its own,
 `data`'s and `meta.json`'s modification times) and how many bytes `data` holds, which is how the
-sweep tells a write still landing from one a killed run abandoned. The
+sweep tells a write still landing from one a killed run abandoned. `readMeta` answers `null` for a
+blob or a sidecar confirmed absent and rejects for anything else (a symlink, a permission, a backing
+error), so a caller never reads a failed read as a missing file. The
 backing here is `createFilesystemBlobStore`, over the same root as the toolbox store; the hosted
 form's is the private package's (GRA-192), and `blobStoreConformance` is the suite both run.
 

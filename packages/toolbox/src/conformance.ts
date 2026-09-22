@@ -213,16 +213,18 @@ export function blobStoreConformance(
       expect(await store.list(agent)).toEqual(["blob-a"]);
     });
 
-    it("reads a blob's sidecar, and rejects for a blob or a sidecar that is not there", async () => {
+    it("reads a blob's sidecar, and answers null for a blob or a sidecar that is confirmed not there", async () => {
       const agent = agentFor("read");
       const other = agentFor("read-other");
       await fixture.write(agent, "blob-b", blob("b"));
       await fixture.write(agent, "blob-a", [{ path: "data", content: "x" }]);
 
-      expect(JSON.parse(await store.readMeta(agent, "blob-b"))).toMatchObject({ name: "b" });
-      await expect(store.readMeta(agent, "blob-a")).rejects.toThrow(/no such blob/);
-      await expect(store.readMeta(agent, "nowhere")).rejects.toThrow(/no such blob/);
-      await expect(store.readMeta(other, "blob-b")).rejects.toThrow(/no such blob/);
+      expect(JSON.parse((await store.readMeta(agent, "blob-b")) ?? "")).toMatchObject({
+        name: "b",
+      });
+      expect(await store.readMeta(agent, "blob-a")).toBeNull();
+      expect(await store.readMeta(agent, "nowhere")).toBeNull();
+      expect(await store.readMeta(other, "blob-b")).toBeNull();
     });
 
     it("answers exists for a blob, and not for one that is missing, another agent's, or still .tmp", async () => {

@@ -1,5 +1,5 @@
 import { mkdtempSync } from "node:fs";
-import { lstat, mkdir, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -114,6 +114,24 @@ describe("the filesystem blob store", () => {
     expect(
       Math.abs((abandoned?.lastWrittenAt.getTime() ?? 0) - twoHoursAgo.getTime()),
     ).toBeLessThan(2_000);
+  });
+
+  it("tells a sidecar that is not there (null) from a read that failed (a rejection), so the sweep never reads a failure as an absence", async () => {
+    const agent = blobs.agentRoot("unreadable");
+    await mkdir(join(agent, "absent"), { recursive: true });
+    await mkdir(join(agent, "locked"), { recursive: true });
+    await writeFile(join(agent, "locked", "meta.json"), "{}", "utf8");
+    await chmod(join(agent, "locked", "meta.json"), 0o000);
+    try {
+      expect(await blobs.readMeta("unreadable", "absent")).toBeNull();
+      expect(await blobs.readMeta("unreadable", "nowhere")).toBeNull();
+      // A file that is there but cannot be read is an error, never null (root reads it regardless).
+      if (process.getuid?.() !== 0) {
+        await expect(blobs.readMeta("unreadable", "locked")).rejects.toThrow(/EACCES|permission/i);
+      }
+    } finally {
+      await chmod(join(agent, "locked", "meta.json"), 0o644);
+    }
   });
 
   it("resolves a relative root against the working directory, as the toolbox store does", () => {

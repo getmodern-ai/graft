@@ -713,12 +713,21 @@ write may still be landing; a `.tmp` inside the bound), `remove` (a row past its
 directory is there: the directory goes through the store, then `markBlobRemoved` sets `removed_at`,
 in that order so a throw between the two leaves a `mark` and never a marked row with bytes on disk),
 `mark` (a row past its expiry whose directory is gone), `adopt` (a directory with a readable sidecar
-and no row: `adoptBlob` writes the row from the sidecar with its `expiresAt`, `insertAdoptedBlob`
-doing nothing on a conflict, and the next pass judges it as a row), `remove_orphan` (a directory with
-no row and no readable sidecar, or one whose sidecar names another agent: junk, since the rename is
-the commit and the sidecar precedes it), and `remove_tmp` (a `<blobId>.tmp` last written to longer
-ago than `ABANDONED_BLOB_WRITE_SECONDS` in `bounds.ts`, the detached ceiling plus the sync ceiling;
-`RunSweepOptions.abandonedWriteMs` is the test seam). Expiry is strict. The counts ride on
+and no row: `adoptedBlobOf` builds the row from what the store measured and the sidecar clamped to
+it, since a sidecar is sandbox-written and untrusted: `bytes` is `data`'s real size, `writtenAt` the
+sidecar's unless missing or later than the store's last write, `expiresAt` never past `writtenAt`
+plus the TTL, `name` and `contentType` held to `BLOB_NAME_RULES` and `BLOB_CONTENT_TYPE_RULES`;
+`adoptBlob` writes it, `insertAdoptedBlob` doing nothing on a conflict, which the applier reads as
+"a row exists now" and keeps the blob; the next pass judges it as a row), `remove_orphan` (a
+directory with no row and no sidecar the sweep can adopt from: absent, unparseable, breaking a write
+rule or naming another agent; junk, since the rename is the commit and the sidecar precedes it), and
+`remove_tmp` (a `<blobId>.tmp` last written to longer ago than `ABANDONED_BLOB_WRITE_SECONDS` in
+`bounds.ts`, the detached ceiling plus the sync ceiling; `RunSweepOptions.abandonedWriteMs` is the
+test seam). Expiry is strict. Only `BlobStore.readMeta`'s `null`, the store's own not-found signal,
+reads as "no sidecar"; any other read error ends the agent's pass with the error on the report and
+the blob is judged again next tick. A run that starts after an agent's pass began is caught before
+every destructive action: the rest of that pass is deferred (`SweepBlobCounts.deferred`,
+`SweepReport.deferred`) and finished next tick. The counts ride on
 `SweepReport.blobs` and the server puts them on the sweep's wide event under `sweep.blobs`;
 `McpDeps.onBlobSwept` fires once per `remove` and `remove_orphan` and the server captures it as
 `blob_swept` with `bytes` and `cause`, never the name; a cleared `.tmp` was never a blob and fires

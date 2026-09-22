@@ -486,7 +486,12 @@ const sweep = startSweep(mcp, {
   intervalSeconds: env.GRAFT_SWEEP_INTERVAL_SECONDS,
   onReport: (report) => {
     const { actions: blobActions, ...blobs } = report.blobs;
-    if (report.demoted.length === 0 && report.failed.length === 0 && blobActions.length === 0) {
+    if (
+      report.demoted.length === 0 &&
+      report.failed.length === 0 &&
+      blobActions.length === 0 &&
+      blobs.deferred === 0
+    ) {
       return;
     }
     const skipped =
@@ -496,14 +501,18 @@ const sweep = startSweep(mcp, {
         ? `, ${report.failed.length} failed: ${report.failed.map((f) => `${f.agentId} (${f.error})`).join("; ")}`
         : "";
     const swept =
-      blobActions.length > 0
-        ? `, blobs: ${blobs.removed} removed, ${blobs.marked} marked, ${blobs.adopted} adopted, ${blobs.orphansRemoved} orphan(s) and ${blobs.tmpRemoved} abandoned write(s) cleared, ${blobs.bytesRemoved} byte(s) freed`
+      blobActions.length > 0 || blobs.deferred > 0
+        ? `, blobs: ${blobs.removed} removed, ${blobs.marked} marked, ${blobs.adopted} adopted, ${blobs.orphansRemoved} orphan(s) and ${blobs.tmpRemoved} abandoned write(s) cleared, ${blobs.bytesRemoved} byte(s) freed` +
+          (blobs.deferred > 0
+            ? `, ${blobs.deferred} deferred for a run that started during the pass (${report.deferred.join(", ")})`
+            : "")
         : "";
     log.info({
       sweep: {
         agents: report.agents,
         demoted: report.demoted.length,
         skipped: report.skipped.length,
+        deferred: report.deferred.length,
         failed: report.failed.length,
         blobs,
         message: `${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${swept}${failed}`,

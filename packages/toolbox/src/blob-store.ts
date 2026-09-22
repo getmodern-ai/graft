@@ -74,7 +74,9 @@ export function createFilesystemBlobStore(options: { root: string }): Filesystem
       const sidecar = directory?.isDirectory()
         ? await inspect(file, `the sidecar of blob ${blobId} of agent ${agentId}`)
         : null;
-      if (!sidecar?.isFile()) throw new Error(`no such blob for agent ${agentId}: ${blobId}`);
+      // Confirmed absent (no directory, or no sidecar in it) is null; a link was already refused
+      // by `inspect`, and a read that fails for any other reason rejects as itself.
+      if (!sidecar?.isFile()) return null;
       await assertBeneath(agentRoot(agentId), file);
       return readFile(file, "utf8");
     },

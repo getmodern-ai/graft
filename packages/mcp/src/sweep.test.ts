@@ -1,5 +1,6 @@
 import {
   BLOB_SWEEP_TMP_SUFFIX,
+  BLOB_SWEEP_TTL_MS,
   createAgent,
   DAY_MS,
   listWorkingSet,
@@ -9,6 +10,7 @@ import {
   touchToolUsed,
   updateAgentLimits,
 } from "@graft/core";
+import { BLOB_TTL_MS } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { BLOB_TMP_SUFFIX, type BlobStore } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -427,6 +429,7 @@ describe("the blob pass", () => {
     adopted: 0,
     orphansRemoved: 0,
     tmpRemoved: 0,
+    deferred: 0,
     bytesRemoved: 0,
   };
 
@@ -445,11 +448,8 @@ describe("the blob pass", () => {
     };
     const store: BlobStore = {
       list: async (agentId) => [...(dirs.get(agentId)?.keys() ?? [])].sort(),
-      readMeta: async (agentId, blobId) => {
-        const meta = dirs.get(agentId)?.get(blobId)?.meta;
-        if (meta === undefined) throw new Error(`no such blob for agent ${agentId}: ${blobId}`);
-        return meta;
-      },
+      // Null is the store's own not-found signal (`BlobStore.readMeta`), for a directory or a sidecar that is not there.
+      readMeta: async (agentId, blobId) => dirs.get(agentId)?.get(blobId)?.meta ?? null,
       exists: async (agentId, blobId) => dirs.get(agentId)?.has(blobId) ?? false,
       remove: async (agentId, name) => {
         if (dirs.get(agentId)?.delete(name)) removed.push({ agentId, name });
@@ -751,7 +751,167 @@ describe("the blob pass", () => {
     expect(rowOf("fine-old")?.removedAt).toEqual(clock);
   });
 
-  it("spells the .tmp suffix as the store does", () => {
+  it("reads an adoption whose id is taken as a row that exists now, keeps the blob and removes nothing (a run landed its row between the read and the adopt)", async () => {
+    const agent = addAgent("blobs-race-adopt");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    const writtenAt = new Date(clock.getTime() - HOUR);
+    fake.put(agent.id, "landed", {
+      data: "live",
+      meta: sidecarOf(agent.id, 4, writtenAt),
+      lastWrittenAt: writtenAt,
+    });
+    // The run's row lands after the sweep read the rows and before it adopts: the fake's `stat`
+    // is where the pass is mid-read, so the row is written from there.
+    const racing: BlobStore = {
+      ...fake.store,
+      stat: async (agentId, name) => {
+        if (name === "landed" && !rowOf("landed")) {
+          await recordBlobsWritten(
+            ctx,
+            scopeOf(agentId),
+            {
+              versionId: "ver_live",
+              blobs: [
+                {
+                  id: "landed",
+                  bytes: 4,
+                  contentType: "application/pdf",
+                  expiresAt: new Date(writtenAt.getTime() + 24 * HOUR),
+                },
+              ],
+            },
+            deps.blob,
+          );
+        }
+        return fake.store.stat(agentId, name);
+      },
+    };
+
+    const report = await runSweep(
+      ctx,
+      { ...deps, blobStore: racing, onBlobSwept: (event) => events.push(event) },
+      clock,
+      { abandonedWriteMs: ABANDONED_AFTER_MS },
+    );
+    expect(report.failed).toEqual([]);
+    expect(report.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([]);
+    expect(report.blobs.adopted).toBe(0);
+    expect(fake.has(agent.id, "landed")).toBe(true);
+    expect(fake.removed).toEqual([]);
+    expect(rowOf("landed")).toMatchObject({ versionId: "ver_live", removedAt: null });
+    expect(events).toEqual([]);
+  });
+
+  it("defers the rest of an agent's pass when a run starts after the pass began, says so on the report, and finishes next tick", async () => {
+    const agent = addAgent("blobs-race-run");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    await writeBlob(fake, agent.id, "expired-a", new Date(clock.getTime() - 30 * HOUR), 3);
+    await writeBlob(fake, agent.id, "expired-b", new Date(clock.getTime() - 30 * HOUR), 5);
+    fake.put(agent.id, "junk", { data: "j", lastWrittenAt: clock });
+    // A run begins while the pass is reading the directories, after the in-flight check that let it start.
+    let release: (() => void) | null = null;
+    const racing: BlobStore = {
+      ...fake.store,
+      list: async (agentId) => {
+        if (agentId === agent.id && release === null) release = inFlight.begin(agent.id);
+        return fake.store.list(agentId);
+      },
+    };
+    const sweeping = {
+      ...deps,
+      blobStore: racing,
+      onBlobSwept: (event: BlobSweptEvent) => events.push(event),
+    };
+
+    const during = await runSweep(ctx, sweeping, clock, { abandonedWriteMs: ABANDONED_AFTER_MS });
+    expect(during.skipped).not.toContain(agent.id);
+    expect(during.deferred).toEqual([agent.id]);
+    // Three actions (two removes, one orphan) were decided and none applied.
+    expect(during.blobs.deferred).toBe(3);
+    expect(during.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([]);
+    expect(fake.removed).toEqual([]);
+    expect(rowOf("expired-a")?.removedAt).toBeNull();
+    expect(events).toEqual([]);
+
+    // The run ends; the next tick applies what was deferred.
+    expect(release).not.toBeNull();
+    (release as unknown as () => void)();
+    expect(inFlight.has(agent.id)).toBe(false);
+    const after = await runSweep(ctx, sweeping, clock, { abandonedWriteMs: ABANDONED_AFTER_MS });
+    expect(after.deferred).toEqual([]);
+    expect(fake.removed.map((r) => r.name).sort()).toEqual(["expired-a", "expired-b", "junk"]);
+    expect(rowOf("expired-a")?.removedAt).toEqual(clock);
+    expect(rowOf("expired-b")?.removedAt).toEqual(clock);
+    expect(events).toHaveLength(3);
+  });
+
+  it("treats a failed sidecar read as the agent's failure, never as an absent sidecar: the directory stays and is judged next tick", async () => {
+    const agent = addAgent("blobs-unreadable");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    const writtenAt = new Date(clock.getTime() - HOUR);
+    fake.put(agent.id, "flaky", {
+      data: "ok",
+      meta: sidecarOf(agent.id, 2, writtenAt),
+      lastWrittenAt: writtenAt,
+    });
+    let failReads = true;
+    const flaky: BlobStore = {
+      ...fake.store,
+      readMeta: async (agentId, blobId) => {
+        if (failReads && agentId === agent.id) throw new Error("EIO: backing unavailable");
+        return fake.store.readMeta(agentId, blobId);
+      },
+    };
+    const sweeping = {
+      ...deps,
+      blobStore: flaky,
+      onBlobSwept: (event: BlobSweptEvent) => events.push(event),
+    };
+
+    const failed = await runSweep(ctx, sweeping, clock, { abandonedWriteMs: ABANDONED_AFTER_MS });
+    expect(failed.failed).toEqual([{ agentId: agent.id, error: "EIO: backing unavailable" }]);
+    expect(fake.has(agent.id, "flaky")).toBe(true);
+    expect(fake.removed).toEqual([]);
+    expect(rowOf("flaky")).toBeUndefined();
+    expect(events).toEqual([]);
+
+    // Once the read works, the same directory is adopted, not removed.
+    failReads = false;
+    const recovered = await runSweep(ctx, sweeping, clock, {
+      abandonedWriteMs: ABANDONED_AFTER_MS,
+    });
+    expect(recovered.failed).toEqual([]);
+    expect(rowOf("flaky")).toMatchObject({ bytes: 2, removedAt: null });
+    expect(fake.has(agent.id, "flaky")).toBe(true);
+  });
+
+  it("adopts from what the store measured, not from the sidecar: the real size, and an expiry clamped to the last write plus the TTL", async () => {
+    const agent = addAgent("blobs-forged");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    const lastWrittenAt = new Date(clock.getTime() - HOUR);
+    fake.put(agent.id, "forged", {
+      data: "x".repeat(900),
+      meta: sidecarOf(agent.id, 1, lastWrittenAt, {
+        expiresAt: new Date(clock.getTime() + 365 * 24 * HOUR).toISOString(),
+        writtenAt: new Date(clock.getTime() + 10 * 24 * HOUR).toISOString(),
+      }),
+      lastWrittenAt,
+    });
+
+    await sweepWith(fake, events);
+    expect(rowOf("forged")).toMatchObject({
+      bytes: 900,
+      createdAt: lastWrittenAt,
+      expiresAt: new Date(lastWrittenAt.getTime() + 24 * HOUR),
+    });
+  });
+
+  it("spells the .tmp suffix and the TTL as the store and the runner do", () => {
     expect(BLOB_SWEEP_TMP_SUFFIX).toBe(BLOB_TMP_SUFFIX);
+    expect(BLOB_SWEEP_TTL_MS).toBe(BLOB_TTL_MS);
   });
 });
