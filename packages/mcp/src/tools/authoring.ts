@@ -231,13 +231,15 @@ const runCommandTool: MetaTool = {
     const parsed = readCommandInput(args);
     if ("error" in parsed) return toolRefusal("input_invalid", parsed.error);
     // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
-    return answer(
-      await heldInFlight(session.deps.inFlight, session.scope.agentId, () =>
-        withSandbox(open(session), (handle) =>
-          runCommand(handle, parsed, commandEnvironment(parsed.timeoutSeconds)),
-        ),
+    const ran = await heldInFlight(session.deps.inFlight, session.scope.agentId, () =>
+      withSandbox(open(session), (handle) =>
+        runCommand(handle, parsed, commandEnvironment(parsed.timeoutSeconds)),
       ),
     );
+    if (!("answer" in ran)) return answer(ran);
+    // A runner the command invoked by hand wrote these (GRA-186; `../blobs.ts`): rows now, no version.
+    await recordWrittenBlobs(session.deps, session.scope, null, ran.blobs);
+    return answer(ran.answer);
   },
 };
 

@@ -1,7 +1,7 @@
 import { type AgentScope, recordBlobsWritten } from "@graft/core";
 import { type BlobLedgerEntry, blobIdOf } from "@graft/runner";
 
-import { MAX_RESULT_BLOBS } from "./bounds";
+import { type boundResult, MAX_RESULT_BLOBS } from "./bounds";
 import type { McpDeps } from "./deps";
 
 /**
@@ -40,7 +40,7 @@ export async function recordWrittenBlobs(
     {
       versionId,
       blobs: blobs.map((entry) => ({
-        // Non-null: `readRunnerEnvelope` admits no ledger line whose ref does not parse.
+        // Non-null: `readRunnerEnvelope` admits no ledger line whose ref is not `blob://<uuid>`.
         id: blobIdOf(entry.ref) ?? entry.ref,
         bytes: entry.bytes,
         contentType: entry.contentType,
@@ -66,40 +66,44 @@ export async function recordWrittenBlobs(
  * a count and a note when there were more. Every line is short and carries no bytes, so the bound
  * is against a module looping over a directory, not against size.
  */
-export function blobsOnWire(blobs: readonly BlobLedgerEntry[]): {
+export function blobsOnWire(
+  blobs: readonly BlobLedgerEntry[],
+  dropped = 0,
+): {
   blobs: BlobLedgerEntry[];
   blobsOmitted?: number;
   blobsNote?: string;
+  blobsDropped?: number;
 } {
-  if (blobs.length <= MAX_RESULT_BLOBS) return { blobs: [...blobs] };
+  // A ledger line the reader refused (`readRunnerEnvelope`): counted here, so it reaches the wide
+  // event through `tools.ts`'s `eventDetail`, and never a row.
+  const refused = dropped > 0 ? { blobsDropped: dropped } : {};
+  if (blobs.length <= MAX_RESULT_BLOBS) return { blobs: [...blobs], ...refused };
   const omitted = blobs.length - MAX_RESULT_BLOBS;
   return {
     blobs: blobs.slice(0, MAX_RESULT_BLOBS),
     blobsOmitted: omitted,
     blobsNote: `The run wrote ${blobs.length} blobs; the first ${MAX_RESULT_BLOBS} are listed and ${omitted} omitted. Every ref is still in the module's result, and every blob is held.`,
+    ...refused,
   };
 }
 
 /**
- * A run's answer with its blobs beside it — the wire shape (GRA-186): a run that wrote no blob
- * answers exactly what it always did, and one that did answers `{ result, blobs }` with the
- * module's result under `result`, whatever its type, so the two never collide on a key the module
- * chose. An answer that is already the server's own object (a truncated result's `{ result: null,
- * truncated, head, note }`) takes the list beside its fields.
+ * A run's answer with its blobs beside it — the wire shape (GRA-186). `bounded` is `boundResult`'s
+ * own verdict, so whether the server cut the result is the server's word and never read off a key
+ * the module chose. A run that wrote no blob answers exactly what it always did: the module's
+ * result, or the server's `{ result: null, truncated, head, note }`. One that did answers
+ * `{ result, blobs }` with the module's result under `result`, whatever its shape — a module's own
+ * `truncated` or `blobs` key stays inside it — and a cut result takes the list beside the server's
+ * own fields.
  */
-export function withBlobs(answer: unknown, blobs: readonly BlobLedgerEntry[]): unknown {
-  if (blobs.length === 0) return answer;
-  const wire = blobsOnWire(blobs);
-  if (isTruncatedResult(answer)) return { ...answer, ...wire };
-  return { result: answer, ...wire };
-}
-
-function isTruncatedResult(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    (value as { truncated?: unknown }).truncated === true &&
-    "result" in value
-  );
+export function withBlobs(
+  bounded: ReturnType<typeof boundResult>,
+  blobs: readonly BlobLedgerEntry[],
+  dropped = 0,
+): unknown {
+  const cut = "truncated" in bounded;
+  if (blobs.length === 0 && dropped === 0) return cut ? bounded : bounded.result;
+  const wire = blobsOnWire(blobs, dropped);
+  return cut ? { ...bounded, ...wire } : { result: bounded.result, ...wire };
 }

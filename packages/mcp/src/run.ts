@@ -188,8 +188,11 @@ export async function runWithCapability<T>(args: {
 }
 
 export type ModuleRunOutcome =
-  /** The module's result, and the blobs the run wrote (`[]` for a module that wrote none). */
-  | { ok: true; result: unknown; blobs: BlobLedgerEntry[] }
+  /**
+   * The module's result, the blobs the run wrote (`[]` for a module that wrote none), and how
+   * many ledger lines the reader refused (`RunnerEnvelope.dropped`; zero from this repository's runner).
+   */
+  | { ok: true; result: unknown; blobs: BlobLedgerEntry[]; blobsDropped: number }
   | { ok: true; detached: DetachedStart }
   | { ok: false; failure: RunFailure };
 
@@ -336,31 +339,40 @@ export function describeModuleRun(
   }
 
   const text = stdout.trim();
-  if (text === "") return { ok: true, result: null, blobs: [] };
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return failure(
+  if (text === "") return { ok: true, result: null, blobs: [], blobsDropped: 0 };
+  const unwrapped = unwrapEnvelope(text);
+  return (
+    unwrapped ??
+    failure(
       `The tool exited 0 but printed something that is not JSON. The runner writes only the module's result to stdout, so the module printed to stdout itself: ${text.slice(-500)}`,
-    );
-  }
-  return unwrapEnvelope(value);
+    )
+  );
 }
 
 /**
- * The runner's envelope read off the parsed JSON (`@graft/runner`'s `readRunnerEnvelope`): the
- * module's result and the blobs the run wrote. A value that is not the envelope is read as a bare
- * result with no blobs, because that is what a runner older than the envelope prints, and a
- * sandbox is seeded with the runner once (`sandbox.ts`, `seedRunner`) — the Docker backing
- * recreates every sandbox for the `/blobs` mount (GRA-185), the hosted form's until GRA-192 lands
- * keeps its copy, and a run there is exactly what it was.
+ * The runner's stdout read in its own terms: the envelope behind its marker line (`@graft/runner`'s
+ * `readRunnerEnvelope`), the module's result and the blobs the run wrote; or, with no marker, the
+ * text as the module's bare JSON result with no blobs, because that is what a runner older than the
+ * envelope prints, and a sandbox is seeded with the runner once (`sandbox.ts`, `seedRunner`) — the
+ * Docker backing recreates every sandbox for the `/blobs` mount (GRA-185), the hosted form's until
+ * GRA-192 lands keeps its copy, and a run there is exactly what it was. A bare result never yields
+ * a ledger line, whatever its shape: only the marker does. Null when the text is neither.
  */
-export function unwrapEnvelope(value: unknown): ModuleRunOutcome {
-  const envelope = readRunnerEnvelope(value);
-  return envelope
-    ? { ok: true, result: envelope.result, blobs: envelope.blobs }
-    : { ok: true, result: value, blobs: [] };
+export function unwrapEnvelope(text: string): ModuleRunOutcome | null {
+  const envelope = readRunnerEnvelope(text);
+  if (envelope) {
+    return {
+      ok: true,
+      result: envelope.result,
+      blobs: envelope.blobs,
+      blobsDropped: envelope.dropped,
+    };
+  }
+  try {
+    return { ok: true, result: JSON.parse(text), blobs: [], blobsDropped: 0 };
+  } catch {
+    return null;
+  }
 }
 
 function splitAtMarker(stdout: string): [string, string?] {
@@ -685,7 +697,12 @@ async function runHeld(
     await record(report ? "ok" : "error", versioned);
     return report
       ? {
-          answer: { dryRun: report, ...(run.blobs.length > 0 ? blobsOnWire(run.blobs) : {}) },
+          answer: {
+            dryRun: report,
+            ...(run.blobs.length > 0 || run.blobsDropped > 0
+              ? blobsOnWire(run.blobs, run.blobsDropped)
+              : {}),
+          },
           isError: false,
         }
       : {
@@ -698,9 +715,8 @@ async function runHeld(
         };
   }
   await record("ok", versioned);
-  const bounded = boundResult(run.result);
   return {
-    answer: withBlobs("truncated" in bounded ? bounded : bounded.result, run.blobs),
+    answer: withBlobs(boundResult(run.result), run.blobs, run.blobsDropped),
     isError: false,
   };
 }

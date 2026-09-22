@@ -171,6 +171,19 @@ export function eventDetail(
   args: Record<string, unknown>,
   body: Record<string, unknown>,
 ): EventDetail | undefined {
+  const merged: EventDetail = { ...toolDetail(name, args, body) };
+  // The blobs a run wrote and the ledger lines the server refused (GRA-186; `blobs.ts`): counts
+  // off the answer's own fields, for any tool whose answer carries them.
+  if (Array.isArray(body.blobs)) merged.blobs = body.blobs.length;
+  if (typeof body.blobsDropped === "number") merged.blobsDropped = body.blobsDropped;
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function toolDetail(
+  name: string,
+  args: Record<string, unknown>,
+  body: Record<string, unknown>,
+): EventDetail | undefined {
   const str = (value: unknown): string | undefined =>
     typeof value === "string" && value.length > 0 ? value : undefined;
   switch (name) {

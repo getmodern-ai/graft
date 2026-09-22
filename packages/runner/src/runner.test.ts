@@ -13,7 +13,10 @@ import {
   BLOB_TTL_MS,
   DRY_RUN_HEADER,
   DRY_RUN_INTERCEPTED,
+  ENVELOPE_MARKER,
   MAX_BLOB_BYTES,
+  MAX_BLOB_CONTENT_TYPE_CHARS,
+  MAX_BLOB_NAME_CHARS,
   MODULE_ENTRIES,
   REFUSAL_HEADER,
   RESULT_MARKER,
@@ -34,12 +37,21 @@ const RUNNER = fileURLToPath(new URL("./runner.mjs", import.meta.url));
 
 type Run = { code: number | null; stdout: string; stderr: string };
 
-/** The envelope stdout carries (the header of `runner.mjs`): the module's result beside the blob ledger. */
-const envelopeOf = (run: Run) => JSON.parse(run.stdout) as { result: unknown; blobs: unknown[] };
+/**
+ * The envelope stdout carries (the header of `runner.mjs`): the marker line, then one line of JSON
+ * with the module's result beside the blob ledger. Parsed here by hand rather than through
+ * `readRunnerEnvelope`, so the two halves of the contract are pinned independently.
+ */
+const parseEnvelope = (text: string) => {
+  expect(text.startsWith(`${ENVELOPE_MARKER}\n`)).toBe(true);
+  const json = text.slice(ENVELOPE_MARKER.length + 1);
+  expect(json).not.toContain("\n");
+  return JSON.parse(json) as { result: unknown; blobs: unknown[] };
+};
+const envelopeOf = (run: Run) => parseEnvelope(run.stdout);
 const resultOf = (run: Run) => envelopeOf(run).result;
 /** The same envelope, read back from a detached run's result file. */
-const writtenEnvelope = async (path: string) =>
-  JSON.parse(await readFile(path, "utf8")) as { result: unknown; blobs: unknown[] };
+const writtenEnvelope = async (path: string) => parseEnvelope(await readFile(path, "utf8"));
 
 function runRunner(args: {
   module: string;
@@ -254,6 +266,19 @@ const FIXTURES: Record<string, string> = {
     "  return out;",
     "};",
   ].join("\n"),
+  // A module whose result is shaped like the envelope, with a well-formed ledger line in it.
+  "decoy.mjs":
+    'export default async () => ({ result: 42, blobs: [{ ref: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21", bytes: 1, contentType: "text/plain", expiresAt: "2099-01-01T00:00:00.000Z" }] });',
+  "blobBadMeta.mjs": [
+    "export default async (input, ctx) => {",
+    "  try {",
+    "    await ctx.blob.write(new Uint8Array(1), { contentType: input.contentType, name: input.name });",
+    '    return "written";',
+    "  } catch (error) {",
+    "    return { refused: error.message, code: error.code ?? null };",
+    "  }",
+    "};",
+  ].join("\n"),
   "blobBadWrite.mjs": [
     "export default async (input, ctx) => {",
     "  try {",
@@ -441,9 +466,31 @@ describe("the stdout contract", () => {
     expect(run.code).toBe(0);
     expect(run.stderr).toBe("");
     expect(resultOf(run)).toEqual({ echoed: { a: 1, b: [true] } });
-    // Nothing but the JSON — a caller parses stdout whole. A module that wrote no blob carries an
-    // empty ledger, so everything downstream of it reads what it always did (GRA-186).
-    expect(run.stdout).toBe(JSON.stringify({ result: { echoed: { a: 1, b: [true] } }, blobs: [] }));
+    // Nothing but the envelope — the marker line, then the JSON. A module that wrote no blob carries
+    // an empty ledger, so everything downstream of it reads what it always did (GRA-186).
+    expect(run.stdout).toBe(
+      `${ENVELOPE_MARKER}\n${JSON.stringify({ result: { echoed: { a: 1, b: [true] } }, blobs: [] })}`,
+    );
+  });
+
+  /** Only the runner writes the marker, so a module's own `{ result, blobs }` is its result and nothing more. */
+  it("returns a module's envelope-shaped result untouched, behind the marker, with an empty ledger", async () => {
+    const run = await runRunner({ module: fixture("decoy.mjs") });
+
+    expect(run.code).toBe(0);
+    const envelope = envelopeOf(run);
+    expect(envelope.result).toEqual({
+      result: 42,
+      blobs: [
+        {
+          ref: "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21",
+          bytes: 1,
+          contentType: "text/plain",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(envelope.blobs).toEqual([]);
   });
 
   it("treats empty stdin as an empty input object", async () => {
@@ -543,6 +590,9 @@ describe("a TypeScript module", () => {
     expect(MAX_BLOB_BYTES).toBe(256 * 1024 * 1024);
     expect(source).toContain("const BLOB_TTL_MS = 24 * 60 * 60 * 1000;");
     expect(BLOB_TTL_MS).toBe(24 * 60 * 60 * 1000);
+    expect(source).toContain(`const ENVELOPE_MARKER = ${JSON.stringify(ENVELOPE_MARKER)};`);
+    expect(source).toContain(`const MAX_BLOB_NAME_CHARS = ${MAX_BLOB_NAME_CHARS};`);
+    expect(source).toContain(`const MAX_BLOB_CONTENT_TYPE_CHARS = ${MAX_BLOB_CONTENT_TYPE_CHARS};`);
   });
 });
 
@@ -1231,6 +1281,39 @@ describe("ctx.blob", () => {
     });
     expect(await readdir(blobs)).toEqual([]);
   });
+
+  /** The ledger the result carries is bounded by construction: a name is a file name, a content type a media type. */
+  it("refuses blob_invalid_name and blob_invalid_content_type before touching the disk, and admits a media type with parameters", async () => {
+    const { blobs, env } = await withBlobs();
+    const attempt = async (contentType: string, name?: string) =>
+      resultOf(
+        await runRunner({
+          module: fixture("blobBadMeta.mjs"),
+          stdin: JSON.stringify({ contentType, ...(name !== undefined ? { name } : {}) }),
+          env,
+        }),
+      ) as { refused?: string; code?: string | null } | string;
+
+    expect(await attempt("text/plain", "n".repeat(MAX_BLOB_NAME_CHARS + 1))).toMatchObject({
+      code: "blob_invalid_name",
+      refused: expect.stringMatching(/^blob_invalid_name: .*at most 255 characters, no slash/),
+    });
+    expect(await attempt("text/plain", "dir/file.txt")).toMatchObject({
+      code: "blob_invalid_name",
+    });
+    expect(await attempt("text/plain", "ab")).toMatchObject({ code: "blob_invalid_name" });
+    expect(await attempt(`text/${"x".repeat(MAX_BLOB_CONTENT_TYPE_CHARS)}`)).toMatchObject({
+      code: "blob_invalid_content_type",
+      refused: expect.stringMatching(/^blob_invalid_content_type: .*at most 128 characters/),
+    });
+    expect(await attempt("not a media type")).toMatchObject({ code: "blob_invalid_content_type" });
+    expect(await attempt("text\n/plain")).toMatchObject({ code: "blob_invalid_content_type" });
+    expect(await readdir(blobs)).toEqual([]);
+
+    expect(await attempt("text/csv; charset=utf-8", "report.csv")).toBe("written");
+    expect(await attempt("application/vnd.ms-excel")).toBe("written");
+    expect(await readdir(blobs)).toHaveLength(2);
+  }, 30_000);
 
   it("refuses blob_store_unavailable rather than making a blobs directory of its own when the mount is not there", async () => {
     const run = await runRunner({

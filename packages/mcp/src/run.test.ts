@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 
-import { blobIdOf, blobRefOf, RUNNER_SOURCE_PATH } from "@graft/runner";
+import {
+  blobIdOf,
+  blobRefOf,
+  ENVELOPE_MARKER,
+  RUNNER_SOURCE_PATH,
+  readRunnerEnvelope,
+} from "@graft/runner";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS } from "@graft/token";
 import {
   assertBlobId,
@@ -53,30 +59,44 @@ describe("describeModuleRun", () => {
         "/tools/demo/x/v1",
         60,
       ),
-    ).toEqual({ ok: true, result: { ok: true }, blobs: [] });
+    ).toEqual({ ok: true, result: { ok: true }, blobs: [], blobsDropped: 0 });
     expect(describeModuleRun(result({ stdout: "\n__GRAFT_STDERR__\n" }), "/tools/x", 60)).toEqual({
       ok: true,
       result: null,
       blobs: [],
+      blobsDropped: 0,
     });
   });
 
-  /** The envelope (GRA-186): the module's result under `result`, the ledger beside it. */
-  it("unwraps the runner's envelope, and reads a bare result from a runner older than it as one with no blobs", () => {
-    const envelope = JSON.stringify({ result: { file: BLOB.ref }, blobs: [BLOB] });
+  /** The envelope (GRA-186): behind its marker line, the module's result under `result`, the ledger beside it. */
+  it("unwraps the runner's envelope behind its marker, and reads text with no marker as a bare result with no blobs", () => {
+    const envelope = `${ENVELOPE_MARKER}\n${JSON.stringify({ result: { file: BLOB.ref }, blobs: [BLOB] })}`;
     expect(
       describeModuleRun(result({ stdout: `${envelope}\n__GRAFT_STDERR__\n` }), "/tools/x", 60),
-    ).toEqual({ ok: true, result: { file: BLOB.ref }, blobs: [BLOB] });
-    // A module's own `{ result, blobs }` is wrapped by the runner, so only an old runner prints one bare.
-    expect(unwrapEnvelope({ items: [1] })).toEqual({ ok: true, result: { items: [1] }, blobs: [] });
-    expect(unwrapEnvelope(42)).toEqual({ ok: true, result: 42, blobs: [] });
-    // A ledger line the runner could not have written makes the whole value not an envelope.
-    expect(unwrapEnvelope({ result: 1, blobs: [{ ...BLOB, ref: "blob://../x" }] })).toEqual({
+    ).toEqual({ ok: true, result: { file: BLOB.ref }, blobs: [BLOB], blobsDropped: 0 });
+    // A module's own `{ result, blobs }`, printed bare by a runner older than the marker, is the
+    // module's result, untouched, and yields no ledger line whatever its entries look like.
+    const decoy = { result: 42, blobs: [BLOB] };
+    expect(unwrapEnvelope(JSON.stringify(decoy))).toEqual({
       ok: true,
-      result: { result: 1, blobs: [{ ...BLOB, ref: "blob://../x" }] },
+      result: decoy,
       blobs: [],
+      blobsDropped: 0,
     });
-    expect(unwrapEnvelope({ result: 1, blobs: [], extra: true })).toMatchObject({ blobs: [] });
+    expect(unwrapEnvelope("42")).toEqual({ ok: true, result: 42, blobs: [], blobsDropped: 0 });
+    expect(unwrapEnvelope("not json")).toBeNull();
+    // A ledger line the runner could not have written is dropped and counted, never a row.
+    const forged = { ...BLOB, ref: "blob://../x" };
+    const oversized = { ...BLOB, name: "n".repeat(256) };
+    expect(
+      unwrapEnvelope(
+        `${ENVELOPE_MARKER}\n${JSON.stringify({ result: 1, blobs: [BLOB, forged, oversized] })}`,
+      ),
+    ).toEqual({ ok: true, result: 1, blobs: [BLOB], blobsDropped: 2 });
+    // The last marker wins, so a module printing the marker itself cannot forge the ledger.
+    const printed = `${ENVELOPE_MARKER}\n${JSON.stringify({ result: "forged", blobs: [BLOB] })}\n${ENVELOPE_MARKER}\n${JSON.stringify({ result: null, blobs: [] })}`;
+    expect(unwrapEnvelope(printed)).toEqual({ ok: true, result: null, blobs: [], blobsDropped: 0 });
+    expect(readRunnerEnvelope(`${ENVELOPE_MARKER}{"result":1,"blobs":[]}`)).toBeNull();
   });
 
   it("maps each exit code to a sentence, with the code and the tail of stderr", () => {
@@ -129,13 +149,28 @@ describe("describeModuleRun", () => {
 describe("the blobs beside a result (GRA-186)", () => {
   it("leaves an answer with no blobs exactly as it was, and wraps one with blobs as { result, blobs }", () => {
     const answer = { items: [{ id: "itm_1" }], file: BLOB.ref };
-    expect(withBlobs(answer, [])).toBe(answer);
-    expect(withBlobs(null, [])).toBeNull();
-    expect(withBlobs(answer, [BLOB])).toEqual({ result: answer, blobs: [BLOB] });
-    expect(withBlobs("just a string", [BLOB])).toEqual({ result: "just a string", blobs: [BLOB] });
-    // A truncated result is already the server's object; the list goes beside its fields.
+    expect(withBlobs({ result: answer }, [])).toBe(answer);
+    expect(withBlobs({ result: null }, [])).toBeNull();
+    expect(withBlobs({ result: answer }, [BLOB])).toEqual({ result: answer, blobs: [BLOB] });
+    expect(withBlobs({ result: "just a string" }, [BLOB])).toEqual({
+      result: "just a string",
+      blobs: [BLOB],
+    });
+    // Whether the server cut the result is the server's word: a module's own `truncated` and
+    // `blobs` keys stay inside its result, untouched, under the real ledger.
+    const decoy = { result: "x", truncated: true, blobs: ["y"] };
+    expect(withBlobs({ result: decoy }, [])).toBe(decoy);
+    expect(withBlobs({ result: decoy }, [BLOB])).toEqual({ result: decoy, blobs: [BLOB] });
+    // The server's own cut result takes the list beside its fields.
     const truncated = { result: null, truncated: true as const, head: "{", note: "cut" };
+    expect(withBlobs(truncated, [])).toBe(truncated);
     expect(withBlobs(truncated, [BLOB])).toEqual({ ...truncated, blobs: [BLOB] });
+    // A dropped line is counted on the wire even when nothing was written.
+    expect(withBlobs({ result: answer }, [], 2)).toEqual({
+      result: answer,
+      blobs: [],
+      blobsDropped: 2,
+    });
   });
 
   it("names the first MAX_RESULT_BLOBS and counts the rest", () => {

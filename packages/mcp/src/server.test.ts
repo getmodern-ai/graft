@@ -9,7 +9,7 @@ import {
   DEFAULT_PACKAGE_POLICY,
   publishToolVersion,
 } from "@graft/publish";
-import { loadSkills, runnerFiles } from "@graft/runner";
+import { loadSkills, readRunnerEnvelope, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -80,6 +80,13 @@ const LIST_ITEMS_MODULE = `export default async (input, ctx) => {
  * 0023): the bytes go to `ctx.blob.write`, the result carries the ref and a count, and nothing of
  * the body.
  */
+/** A module whose result wears the server's own keys, and writes one blob (Greptile on #144). */
+const DECOY_MODULE = `export default async (_input, ctx) => {
+  await ctx.blob.write(new TextEncoder().encode("decoy"), { contentType: "text/plain" });
+  return { result: "x", truncated: true, blobs: ["y"] };
+};
+`;
+
 const SAVE_REPORT = authoredToolName("demo", "save-report");
 const SAVE_REPORT_MODULE = `export default async (input, ctx) => {
   const res = await ctx.fetch(\`/items?limit=\${input.limit ?? 5}\`);
@@ -138,6 +145,9 @@ beforeAll(async () => {
   const saveReport = join(sandbox.toolboxRoot(PERSON), "tools/demo/save-report/v1");
   await mkdir(saveReport, { recursive: true });
   await writeFile(join(saveReport, "index.ts"), SAVE_REPORT_MODULE);
+  const decoy = join(sandbox.toolboxRoot(PERSON), "tools/demo/decoy/v1");
+  await mkdir(decoy, { recursive: true });
+  await writeFile(join(decoy, "index.ts"), DECOY_MODULE);
 
   store = createFakeStore();
   store.addConnection({
@@ -206,6 +216,19 @@ beforeAll(async () => {
     destructive: false,
     defaultConnectionId: CONN_DEMO,
     path: "tools/demo/save-report/v1",
+  });
+  // In the toolbox and not promoted: reached through run_tool.
+  store.addTool({
+    id: "tool_decoy",
+    personId: PERSON,
+    vendor: "demo",
+    name: "decoy",
+    description: "Answers a result shaped like the server's own, and writes a blob.",
+    inputSchema: { type: "object" },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/decoy/v1",
   });
   store.addTool({
     id: "tool_other_ping",
@@ -624,8 +647,74 @@ describe("a tool that writes a blob", () => {
         agentId: AGENT_A,
         versionId: null,
       });
-      // Polled again, the same finished process writes no second row.
-      body(await a.call("wait_for_process", { processName, maxWaitSeconds: 1 }));
+      // Polled again, the same finished process writes no second row and fires no second event:
+      // the insert is idempotent on the id (`repo/blob.ts`), and the fake mirrors it.
+      const eventsAfterFirst = blobEvents.length;
+      const again = body(await a.call("wait_for_process", { processName, maxWaitSeconds: 1 }));
+      expect(again).toMatchObject({
+        status: "completed",
+        blobs: [expect.objectContaining({ ref: file })],
+      });
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(blobEvents).toHaveLength(eventsAfterFirst);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /** Whether the server cut a result is the server's word, never read off a key the module chose. */
+  it("keeps a module's own result, truncated and blobs keys inside its result, under the real ledger", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const result = await a.call("run_tool", { vendor: "demo", name: "decoy" });
+      expect(result.isError).toBeFalsy();
+      const answer = body(result) as { result: unknown; blobs: Record<string, unknown>[] };
+      expect(answer.result).toEqual({ result: "x", truncated: true, blobs: ["y"] });
+      expect(answer.blobs).toHaveLength(1);
+      expect(answer.blobs[0]?.ref).toMatch(REF);
+      expect(answer.blobs[0]?.bytes).toBe(5);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /** The synchronous execute path reads the same envelope off the command's stdout (Greptile on #144). */
+  it("records the blobs a runner invoked through execute__<connection> wrote, with no version, and names them beside the output", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    try {
+      const ran = body(
+        await a.call(executeToolName(CONN_DEMO), {
+          command: `echo '{"limit":1}' | node /graft/runner.mjs /tools/tools/demo/save-report/v1`,
+        }),
+      );
+      expect(ran.exitCode).toBe(0);
+      const envelope = readRunnerEnvelope(String(ran.output));
+      if (!envelope) throw new Error("the command's output carries no envelope");
+      const file = (envelope.result as { file: string }).file;
+      expect(file).toMatch(REF);
+      expect(ran.blobs).toEqual([
+        {
+          ref: file,
+          bytes: expect.any(Number),
+          contentType: "application/json",
+          name: "items.json",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({
+        id: file.slice("blob://".length),
+        personId: PERSON,
+        agentId: AGENT_A,
+        versionId: null,
+      });
+      expect(blobEvents.slice(eventsBefore)).toEqual([
+        expect.objectContaining({ agentId: AGENT_A, versionId: null }),
+      ]);
     } finally {
       await a.close();
     }

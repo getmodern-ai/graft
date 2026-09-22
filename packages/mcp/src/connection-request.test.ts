@@ -17,7 +17,7 @@ import {
 import { createFakeLinkProvider } from "@graft/core/connection/testing/fake-link-provider";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import { createScriptedModel } from "@graft/model";
-import { loadSkills, runnerFiles } from "@graft/runner";
+import { loadSkills, readRunnerEnvelope, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { sandboxPath } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -607,7 +607,11 @@ describe("request_connection through a harness", () => {
       expect(run.isError, JSON.stringify(body(run))).toBeFalsy();
       expect(body(run)).toMatchObject({ exitCode: 0 });
       // The runner prints its envelope (GRA-186): the module's result beside the blobs it wrote, none here.
-      expect(JSON.parse(String(body(run).output))).toEqual({ result: VENDOR_BODY, blobs: [] });
+      expect(readRunnerEnvelope(String(body(run).output))).toEqual({
+        result: VENDOR_BODY,
+        blobs: [],
+        dropped: 0,
+      });
       const request = vendor.requests.at(-1);
       expect(request?.url).toBe("https://api.acme.example/v2/items");
       expect(request?.headers.get("x-acme-key")).toBe("sk_live_acme_1");
@@ -1414,7 +1418,11 @@ describe("request_connection through the gateway provider (GRA-58)", () => {
       const run = await a.call(executeToolName(id), { command: RUN_LIST_ITEMS });
       expect(run.isError, JSON.stringify(body(run))).toBeFalsy();
       // The runner prints its envelope (GRA-186): the module's result beside the blobs it wrote, none here.
-      expect(JSON.parse(String(body(run).output))).toEqual({ result: VENDOR_BODY, blobs: [] });
+      expect(readRunnerEnvelope(String(body(run).output))).toEqual({
+        result: VENDOR_BODY,
+        blobs: [],
+        dropped: 0,
+      });
       const request = vendor.requests.at(-1);
       expect(request?.url).toBe(`${GATEWAY_URL}/api.unleashed.example/items`);
       expect(request?.headers.get("x-deployment-token")).toBe(IDENTITY);

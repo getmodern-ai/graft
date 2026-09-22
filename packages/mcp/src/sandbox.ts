@@ -244,7 +244,7 @@ export async function runCommand(
   handle: SandboxHandle,
   input: CommandInput,
   env: Record<string, string>,
-): Promise<Record<string, unknown>> {
+): Promise<PolledProcess> {
   if (input.detached) {
     const started = await startDetached(handle, {
       command: input.command,
@@ -252,14 +252,26 @@ export async function runCommand(
       timeoutSeconds: input.timeoutSeconds,
       prefix: "cmd",
     });
-    return describeDetachedStart(started);
+    return { answer: describeDetachedStart(started), blobs: [] };
   }
   const name = processName("cmd");
   await handle.execDetached(input.command, { name, timeoutSeconds: input.timeoutSeconds, env });
   const result = await handle.waitForProcess(name, {
     maxWaitSeconds: input.timeoutSeconds + WAIT_SLACK_SECONDS,
   });
-  return describeProcess(result, input.timeoutSeconds);
+  // A runner invoked inside the command wrote its envelope onto stdout (GRA-186): read it off the
+  // whole stream before the output is bounded, so a blob a by-hand run wrote gets its row like any
+  // other, and name the ledger beside the output.
+  const envelope = readRunnerEnvelope(result.stdout);
+  const blobs = envelope?.blobs ?? [];
+  const dropped = envelope?.dropped ?? 0;
+  return {
+    answer: {
+      ...describeProcess(result, input.timeoutSeconds),
+      ...(blobs.length > 0 || dropped > 0 ? blobsOnWire(blobs, dropped) : {}),
+    },
+    blobs,
+  };
 }
 
 /** A detached start in words the model can act on. `status: "running"` so it reads like a poll's. */
@@ -309,9 +321,10 @@ export function describeProcess(
 }
 
 /**
- * What a poll answers, and — apart from it — the blobs a runner invocation inside the process wrote
- * (GRA-186): `answer` names them as the agent reads them, `blobs` is the whole ledger for the rows
- * the caller writes (`tools/authoring.ts`), which is why the two are not one object.
+ * What a poll or a waited command answers, and — apart from it — the blobs a runner invocation
+ * inside the process wrote (GRA-186): `answer` names them as the agent reads them, `blobs` is the
+ * whole ledger for the rows the caller writes (`tools/authoring.ts`, `tools/execute.ts`), which is
+ * why the two are not one object.
  */
 export type PolledProcess = { answer: Record<string, unknown>; blobs: BlobLedgerEntry[] };
 
@@ -376,17 +389,19 @@ export async function pollProcess(handle: SandboxHandle, input: WaitInput): Prom
 }
 
 /**
- * The runner's result file: the envelope (`@graft/runner`'s `readRunnerEnvelope`), or the bare
- * result a runner older than the envelope wrote (`run.ts`'s `unwrapEnvelope` says why both are
- * read). The module's result is bounded as a file is; the blobs ride beside it whole.
+ * The runner's result file: the envelope behind its marker line (`@graft/runner`'s
+ * `readRunnerEnvelope`), or the bare result a runner older than the envelope wrote (`run.ts`'s
+ * `unwrapEnvelope` says why both are read; a bare result yields no ledger line). The module's
+ * result is bounded as a file is; the blobs ride beside it whole.
  */
 async function readRunnerResult(handle: SandboxHandle, resultPath: string): Promise<PolledProcess> {
   try {
-    const value: unknown = JSON.parse(await handle.read(resultPath));
-    const envelope = readRunnerEnvelope(value);
-    const result = envelope ? envelope.result : value;
+    const text = await handle.read(resultPath);
+    const envelope = readRunnerEnvelope(text);
+    const result: unknown = envelope ? envelope.result : JSON.parse(text);
     const blobs = envelope ? envelope.blobs : [];
-    const named = blobs.length > 0 ? blobsOnWire(blobs) : {};
+    const dropped = envelope?.dropped ?? 0;
+    const named = blobs.length > 0 || dropped > 0 ? blobsOnWire(blobs, dropped) : {};
     const bounded = boundJson(result, MAX_FILE_CHARS);
     if (!bounded.cut) return { answer: { resultPath, result: bounded.value, ...named }, blobs };
     return {

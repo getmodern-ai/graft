@@ -13,6 +13,7 @@ import {
   createToolListChangedNotifier,
   executeToolName,
   openAgentSession,
+  readRunnerEnvelope,
 } from "@graft/mcp";
 import { createFakeDeps, createFakeStore, type FakeStore } from "@graft/mcp/testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "@graft/mcp/testing/fake-vendor";
@@ -508,7 +509,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       const run = body(result);
       expect(run).toMatchObject({ exitCode: 0 });
       // The runner prints its envelope (GRA-186): the module's result beside the blobs it wrote.
-      expect(JSON.parse(String(run.output))).toMatchObject({
+      expect(readRunnerEnvelope(String(run.output))).toMatchObject({
         result: { messages: [{ id: "18f1", threadId: "18f1" }] },
         blobs: [],
       });

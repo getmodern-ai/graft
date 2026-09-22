@@ -7,6 +7,7 @@ import {
   createToolListChangedNotifier,
   executeToolName,
   openAgentSession,
+  readRunnerEnvelope,
 } from "@graft/mcp";
 import { createFakeDeps, createFakeStore, type FakeStore } from "@graft/mcp/testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "@graft/mcp/testing/fake-vendor";
@@ -517,7 +518,11 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
       const run = body(await a.call(executeToolName(connectionId), { command: RUN }));
       expect(run.exitCode, JSON.stringify(run)).toBe(0);
       // The runner prints its envelope (GRA-186): the module's result beside the blobs it wrote.
-      expect(JSON.parse(String(run.output))).toEqual({ result: MESSAGES, blobs: [] });
+      expect(readRunnerEnvelope(String(run.output))).toEqual({
+        result: MESSAGES,
+        blobs: [],
+        dropped: 0,
+      });
       const request = vendor.requests.at(-1);
       expect(request?.url).toBe("https://mail.vendor.example/v1/messages");
       expect(request?.headers.get("authorization")).toBe("Bearer access-1");

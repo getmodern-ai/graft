@@ -16,11 +16,14 @@
  *    an ES module whose default export is an async function of `(input, ctx)`; it may import siblings
  *    by relative path, extension included, and the packages vendored beside it.
  *  - stdin is the JSON input. Empty stdin is `{}`.
- *  - stdout receives exactly one JSON **envelope** and nothing else, exit code 0:
- *    `{ result, blobs }` — the module's JSON result, and the ledger of every blob `ctx.blob.write`
- *    produced during the run as `[{ ref, bytes, contentType, name?, expiresAt }]`, in write order
- *    (GRA-186; ADR 0023). A module that wrote nothing has `blobs: []`. In a dry run `result` is the
- *    report described below; on the detached path the same envelope goes to the file.
+ *  - stdout receives exactly the **envelope** and nothing else, exit code 0: the marker line
+ *    `__GRAFT_ENVELOPE__:1`, a newline, then one line of JSON `{ result, blobs }` — the module's
+ *    JSON result, and the ledger of every blob `ctx.blob.write` produced during the run as
+ *    `[{ ref, bytes, contentType, name?, expiresAt }]`, in write order (GRA-186; ADR 0023). The
+ *    marker is what makes the envelope the runner's: a reader unwraps only what follows it, so a
+ *    module's own `{ result, blobs }` comes back as the module's result, untouched. A module that
+ *    wrote nothing has `blobs: []`. In a dry run `result` is the report described below; on the
+ *    detached path the same two lines go to the file.
  *  - A thrown error puts its message and the tail of its stack on stderr, then each `cause` in its
  *    chain on a line of its own — undici's `fetch failed` keeps the host and the errno there and
  *    nowhere in the stack; exit code 1.
@@ -69,7 +72,10 @@
  * this file ships to the sandbox alone; `packages/mcp/src/run.test.ts` pins the two spellings.
  *
  *  - `ctx.blob.write(data, { contentType, name? })` takes a `Uint8Array`, a `Blob` or a
- *    `ReadableStream<Uint8Array>`, mints a UUID, streams the bytes into `/blobs/<id>.tmp/data`
+ *    `ReadableStream<Uint8Array>`, a `contentType` shaped like a media type of at most 128
+ *    characters (`blob_invalid_content_type` otherwise) and a `name` that is a file name of at most
+ *    255 characters with no slash and no control character (`blob_invalid_name`), mints a UUID,
+ *    streams the bytes into `/blobs/<id>.tmp/data`
  *    counting them — refused as `blob_too_large` the moment they pass 256 MiB, the `.tmp` directory
  *    removed before the throw — writes `meta.json` (`bytes`, `contentType`, `name`, `writtenAt`,
  *    `expiresAt` 24 hours on, `agentId`, `toolVersion`) beside it, and renames the directory to
@@ -179,6 +185,24 @@ const MAX_BLOB_BYTES = 256 * 1024 * 1024;
 const BLOB_TTL_MS = 24 * 60 * 60 * 1000;
 /** What a blob id may be: `@graft/toolbox`'s segment rule (`assertBlobId`), so an id is a directory name and never a path. */
 const BLOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+/**
+ * What a blob's `name` and `contentType` may be, so the sidecar and the ledger the result carries
+ * are bounded by construction (`MAX_BLOB_NAME_CHARS`, `MAX_BLOB_CONTENT_TYPE_CHARS` in
+ * `runner-source.ts`, pinned by `runner.test.ts`; the server drops a line past either): a name is a
+ * file name, no slash and no control character; a content type is shaped like a media type, with
+ * parameters allowed after a `;`.
+ */
+const MAX_BLOB_NAME_CHARS = 255;
+const MAX_BLOB_CONTENT_TYPE_CHARS = 128;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the control characters are what is refused.
+const BLOB_NAME_REFUSED = /[ -/\\]/;
+const MEDIA_TYPE_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*(;.*)?$/i;
+/**
+ * The first line of the envelope on stdout and in the result file — `ENVELOPE_MARKER` in
+ * `runner-source.ts`, in the family of `RESULT_MARKER`. Only the runner writes it, after the module
+ * has settled, so a module's own JSON, whatever its shape, is never read as the envelope.
+ */
+const ENVELOPE_MARKER = "__GRAFT_ENVELOPE__:1";
 /**
  * Where this run's blobs live: `GRAFT_BLOBS_DIR`, which the run sets to the mount path — a backing
  * that maps the sandbox's paths (the fake, `rewriteEnvPaths`) maps this value with them, as it maps
@@ -534,10 +558,22 @@ async function blobWrite(data, opts) {
       'ctx.blob.write takes { contentType } naming the media type of the bytes, such as "application/pdf", and an optional name.',
     );
   }
+  if (contentType.length > MAX_BLOB_CONTENT_TYPE_CHARS || !MEDIA_TYPE_PATTERN.test(contentType)) {
+    throw blobRefusal(
+      "blob_invalid_content_type",
+      `ctx.blob.write's contentType is a media type such as "application/pdf" or "text/csv; charset=utf-8", at most ${MAX_BLOB_CONTENT_TYPE_CHARS} characters, not ${JSON.stringify(contentType.slice(0, 64))}.`,
+    );
+  }
   if (opts.name !== undefined && opts.name !== null && typeof opts.name !== "string") {
     throw new Error(`ctx.blob.write's name is a string, not ${describeType(opts.name)}.`);
   }
   const name = typeof opts.name === "string" && opts.name !== "" ? opts.name : undefined;
+  if (name !== undefined && (name.length > MAX_BLOB_NAME_CHARS || BLOB_NAME_REFUSED.test(name))) {
+    throw blobRefusal(
+      "blob_invalid_name",
+      `ctx.blob.write's name is a file name such as "invoice.pdf": at most ${MAX_BLOB_NAME_CHARS} characters, no slash, no control character.`,
+    );
+  }
   const source = blobSource(data);
 
   const id = randomUUID();
@@ -713,10 +749,12 @@ async function main() {
   // The envelope — see the header: the result (the dry-run report, in a dry run) beside the ledger
   // of every blob written. The result is parsed back from the JSON it was just checked to be, so
   // one object is serialised and a caller reads one.
-  json = JSON.stringify({
+  // The marker line first, then the JSON on one line: a reader unwraps only what follows the
+  // marker, and a module's own `{ result, blobs }` stays the module's.
+  json = `${ENVELOPE_MARKER}\n${JSON.stringify({
     result: dryRun ? dryRunReport(json, moduleError) : JSON.parse(json),
     blobs: blobLedger,
-  });
+  })}`;
   if (resultPath) {
     // The detached path — see the header. The directory is made here rather than assumed, because a
     // plain command started detached has written nothing under it before the runner runs.

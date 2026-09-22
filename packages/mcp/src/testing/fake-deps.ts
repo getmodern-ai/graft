@@ -834,25 +834,32 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     now: store.now,
   };
 
-  /** The blob rows (GRA-186), with the repo's predicate: the pair on every read, the pair in every row written. */
+  /**
+   * The blob rows (GRA-186), with the repo's predicate: the pair on every read, the pair in every
+   * row written, and the insert idempotent on the id as the repo's `onConflictDoNothing` is — a row
+   * already there is left, and only the rows this call added come back.
+   */
   const blob: BlobDeps = {
     insertBlobs: async (_db, rows) => {
-      const inserted = rows.map(
-        (row): BlobRow => ({
-          id: row.id,
-          personId: row.personId,
-          agentId: row.agentId,
-          versionId: row.versionId ?? null,
-          bytes: row.bytes,
-          contentType: row.contentType,
-          name: row.name ?? null,
-          expiresAt: row.expiresAt,
-          removedAt: row.removedAt ?? null,
-          owner: "person",
-          createdAt: row.createdAt ?? store.now(),
-          updatedAt: row.updatedAt ?? store.now(),
-        }),
-      );
+      const present = new Set(store.blobs.map((row) => row.id));
+      const inserted = rows
+        .filter((row) => !present.has(row.id))
+        .map(
+          (row): BlobRow => ({
+            id: row.id,
+            personId: row.personId,
+            agentId: row.agentId,
+            versionId: row.versionId ?? null,
+            bytes: row.bytes,
+            contentType: row.contentType,
+            name: row.name ?? null,
+            expiresAt: row.expiresAt,
+            removedAt: row.removedAt ?? null,
+            owner: "person",
+            createdAt: row.createdAt ?? store.now(),
+            updatedAt: row.updatedAt ?? store.now(),
+          }),
+        );
       store.blobs.push(...inserted);
       return inserted;
     },
