@@ -20,20 +20,34 @@ on:
   push:
     tags: ["v*"]
   # A tag publishes a release and cannot be rehearsed, so this file cannot be exercised by a pull
-  # request. A dispatch is how a maintainer tries a change to it before the next real tag: run it on
-  # a throwaway tag (`gh workflow run release.yml --ref v0.0.0-test1`), or from a branch with `ref`
-  # set to a tag name, which is then the ref built and the version the tags are derived from. A
-  # dispatch never moves `latest`; the tag list in the merge job below says how.
+  # request. A dispatch is how a maintainer tries a change to it before the next real tag, either
+  # way round:
+  #
+  #   gh workflow run release.yml --ref v0.0.0-test1              # on a throwaway tag
+  #   gh workflow run release.yml --ref main -f ref=v0.0.0-test1  # off a branch, no tag at all
+  #
+  # The code built is always the ref the run was dispatched on, which is what `actions/checkout`
+  # takes by default; `ref` names the version the image tags are derived from, for the second form,
+  # where the dispatched ref is a branch and there is no tag to read a version off. It is therefore
+  # a version and never resolved as a git ref, and a value that is no semver is refused by the merge
+  # job rather than published. A dispatch never moves `latest`; the tag list in that job says how.
   workflow_dispatch:
     inputs:
       ref:
-        description: "Tag or ref to build and tag from (defaults to the ref dispatched on)"
+        description: "Version tag name to publish under, e.g. v0.0.0-test1 (defaults to the dispatched ref's own tag)"
         required: false
         type: string
 
 permissions:
   contents: read
   packages: write
+
+env:
+  # How many platforms the build matrix below has, and so how many digests a manifest list must be
+  # made of. The merge job runs even when a leg of the *other* image failed, and this count is what
+  # keeps a half-built image from being published under the release's tags; keep it in step with the
+  # `platform` list in the build matrix.
+  PLATFORMS_PER_IMAGE: 2
 
 jobs:
   build:
@@ -69,10 +83,9 @@ jobs:
             arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      # Empty on a tag push, where checkout falls back to the ref that triggered the run.
+      # No `ref`: the code built is the ref the run was triggered on, which is the tag on a push and
+      # the dispatched ref otherwise. The `ref` input is a version, not a ref (the comment on it).
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref }}
 
       - uses: docker/setup-buildx-action@v4
 
@@ -132,6 +145,13 @@ jobs:
     # digests and nothing points at them.
     name: Publish the ${{ matrix.scope }} manifest list
     needs: build
+    # A failed leg fails the whole `build` job, and Actions cannot express a dependency on the two
+    # legs of one image, so a plain `needs` would have a failed server build skip the sandbox's
+    # manifest as well and lose the image-level isolation the build matrix is shaped for. Running
+    # regardless is safe because the create step below refuses to publish unless every platform of
+    # *this* image uploaded a digest: the image whose leg failed fails here too, naming why, and the
+    # other is published.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -160,8 +180,11 @@ jobs:
       # `v1.2.3` → `1.2.3`, `1.2`, `1` and `latest`; a pre-release tag (`v1.2.3-rc.1`) gets its own
       # tag and does not move `latest`. The commit SHA rides along so an image can always be traced.
       #
-      # `value` on the semver lines is the dispatch input, and is empty on a tag push, where the
-      # action reads the git tag instead. `latest` is written on a tag push alone: a dispatch is a
+      # `value` on the semver lines is the dispatch input, the version a rehearsal publishes under,
+      # and is empty on a tag push, where the action reads the git tag instead (`procSemver` in the
+      # action's `src/meta.ts`: an empty `value` means read `refs/tags/…`), so the set a real
+      # release writes is the one this file wrote before GRA-180 and is declared here alone.
+      # `latest` is written on a tag push alone: a dispatch is a
       # rehearsal and must not move the tag a self-hoster pulls, and `flavor: latest=false` is here
       # so the action's own automatic `latest` for a non-pre-release semver cannot write it either.
       # On a tag push the set is unchanged by that pair, since the raw line below wrote it already.
@@ -177,18 +200,23 @@ jobs:
             type=sha,format=long
             type=raw,value=latest,enable=${{ github.event_name == 'push' && !contains(github.ref_name, '-') }}
 
-      # Each file in the directory is one platform's digest. Both lists are built as arrays rather
-      # than interpolated into one command line, so a tag or a digest is never split on whitespace,
-      # and each is checked: an empty tag list means the ref was no semver version and would
-      # otherwise publish a manifest list nothing names.
+      # Each file in the digest directory is one platform's digest. Both lists are built as arrays
+      # rather than interpolated into one command line, so a tag or a digest is never split on
+      # whitespace, and each is checked before anything is published: an empty tag list means the
+      # version was no semver and would publish a manifest list nothing names, and a short digest
+      # list means a build leg of this image failed, where publishing would put the release's tags,
+      # `latest` among them, on an image that runs on one architecture. The directory is made here
+      # because the download above creates none when it matches no artifact, which is that case.
       - name: Create the manifest list from the platform digests
-        working-directory: ${{ runner.temp }}/digests
         env:
           IMAGE: ${{ matrix.image }}
           META_JSON: ${{ steps.meta.outputs.json }}
+          DIGEST_DIR: ${{ runner.temp }}/digests
         run: |
           set -euo pipefail
           shopt -s nullglob
+          mkdir -p "$DIGEST_DIR"
+          cd "$DIGEST_DIR"
           tags=()
           while IFS= read -r tag; do
             tags+=(--tag "$tag")
@@ -198,11 +226,11 @@ jobs:
             sources+=("${IMAGE}@sha256:${digest}")
           done
           if [ ${#tags[@]} -eq 0 ]; then
-            echo "::error::no tags were derived for ${IMAGE}; dispatch this workflow on a v* tag, or pass one as the \`ref\` input" >&2
+            echo "::error::no tags were derived for ${IMAGE}; dispatch this workflow on a v* tag, or name one in the \`ref\` input" >&2
             exit 1
           fi
-          if [ ${#sources[@]} -eq 0 ]; then
-            echo "::error::no platform digests were uploaded for ${IMAGE}" >&2
+          if [ ${#sources[@]} -ne "$PLATFORMS_PER_IMAGE" ]; then
+            echo "::error::${IMAGE} has ${#sources[@]} platform digests and needs ${PLATFORMS_PER_IMAGE}; a build leg for this image did not finish" >&2
             exit 1
           fi
           docker buildx imagetools create "${tags[@]}" "${sources[@]}"
