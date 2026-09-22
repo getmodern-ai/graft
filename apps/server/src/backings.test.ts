@@ -487,7 +487,14 @@ describe("assertCloudBackings", () => {
   });
 
   it("accepts a blob store beside the seams, whole or absent, and names the first verb a partial one lacks", () => {
-    const blobStore = { list() {}, readMeta() {}, exists() {}, remove() {}, stat() {} };
+    const blobStore = {
+      listAgents() {},
+      list() {},
+      readMeta() {},
+      exists() {},
+      remove() {},
+      stat() {},
+    };
     expect(() => assertCloudBackings({ ...complete, blobStore }, "m")).not.toThrow();
     expect(() => assertCloudBackings({ ...complete, blobStore: undefined }, "m")).not.toThrow();
     expect(() =>
@@ -497,6 +504,10 @@ describe("assertCloudBackings", () => {
     expect(() =>
       assertCloudBackings({ ...complete, blobStore: { ...blobStore, stat: undefined } }, "m"),
     ).toThrow(/blob store without stat\(\)/);
+    // The sweep's roster read (GRA-195): a revoked agent's directories are found through it.
+    expect(() =>
+      assertCloudBackings({ ...complete, blobStore: { ...blobStore, listAgents: undefined } }, "m"),
+    ).toThrow(/blob store without listAgents\(\)/);
     expect(() => assertCloudBackings({ ...complete, blobStore: null }, "m")).toThrow(
       /blob store that is not an object/,
     );

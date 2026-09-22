@@ -8,6 +8,7 @@ import {
   adoptBlob,
   getBlob,
   getBlobs,
+  listBlobSweepAgents,
   liveBlobBytes,
   markBlobRemoved,
   recordBlobsWritten,
@@ -38,6 +39,8 @@ function fakeDeps(overrides: Partial<BlobDeps> = {}): BlobDeps {
     listBlobs: vi.fn(async () => []),
     sumLiveBlobBytes: vi.fn(async () => 0),
     listUnremovedBlobs: vi.fn(async () => []),
+    listAgentsWithUnremovedBlobs: vi.fn(async () => []),
+    listAgentPersonIds: vi.fn(async () => []),
     markBlobRemoved: vi.fn(async () => true),
     insertAdoptedBlob: vi.fn(async (_db: unknown, row: NewBlobRow) => ({
       ...row,
@@ -104,6 +107,48 @@ describe("the sweep's writes", () => {
     expect(await adoptBlob(ctx, SCOPE, "b1", sidecar, deps)).toBeNull();
     await expect(adoptBlob(ctx, SCOPE, " ", sidecar, deps)).rejects.toBeInstanceOf(ServiceError);
     expect(deps.insertAdoptedBlob).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("listBlobSweepAgents (GRA-195)", () => {
+  it("unions the agents with unremoved rows and the directories the store listed, resolving a directory's person off the agent table and leaving one the table lacks with none, sorted by agent", async () => {
+    const deps = fakeDeps({
+      listAgentsWithUnremovedBlobs: vi.fn(async () => [
+        { personId: "person_1", agentId: "agent_rows" },
+        { personId: "person_2", agentId: "agent_both" },
+      ]),
+      listAgentPersonIds: vi.fn(async () => [{ agentId: "agent_revoked", personId: "person_1" }]),
+    });
+
+    const agents = await listBlobSweepAgents(
+      ctx,
+      ["agent_revoked", "agent_both", "agent_deleted", "agent_revoked"],
+      deps,
+    );
+
+    expect(agents).toEqual([
+      { agentId: "agent_both", personId: "person_2" },
+      { agentId: "agent_deleted", personId: null },
+      { agentId: "agent_revoked", personId: "person_1" },
+      { agentId: "agent_rows", personId: "person_1" },
+    ]);
+    // Only the ids the rows did not already name are asked of the agent table, once each.
+    expect(deps.listAgentPersonIds).toHaveBeenCalledWith(ctx.db, [
+      "agent_revoked",
+      "agent_deleted",
+    ]);
+  });
+
+  it("asks the agent table nothing when every directory's agent has rows", async () => {
+    const deps = fakeDeps({
+      listAgentsWithUnremovedBlobs: vi.fn(async () => [
+        { personId: "person_1", agentId: "agent_1" },
+      ]),
+    });
+    expect(await listBlobSweepAgents(ctx, ["agent_1"], deps)).toEqual([
+      { agentId: "agent_1", personId: "person_1" },
+    ]);
+    expect(deps.listAgentPersonIds).toHaveBeenCalledWith(ctx.db, []);
   });
 });
 

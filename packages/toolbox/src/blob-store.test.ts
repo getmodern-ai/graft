@@ -95,6 +95,32 @@ describe("the filesystem blob store", () => {
     expect(await blobs.readMeta("victim", "secret")).toBe('{"theirs":true}');
   });
 
+  it("lists no agent before .blobs exists, then every agent directory and nothing else: a symlink, a file and a name that is not an agent id are skipped (GRA-195)", async () => {
+    const fresh = createFilesystemBlobStore({
+      root: mkdtempSync(join(tmpdir(), "graft-blob-store-empty-")),
+    });
+    expect(await fresh.listAgents()).toEqual([]);
+
+    const blobsRoot = join(root, ".blobs");
+    await mkdir(join(blobs.agentRoot("listed-b"), "blob-1"), { recursive: true });
+    await mkdir(blobs.agentRoot("listed-a"), { recursive: true });
+    await symlink(blobs.agentRoot("listed-a"), join(blobsRoot, "linked-agent"), "dir");
+    await writeFile(join(blobsRoot, "a-file"), "", "utf8");
+    await mkdir(join(blobsRoot, "..evil"), { recursive: true });
+    await mkdir(join(blobsRoot, "with space"), { recursive: true });
+
+    const agents = await blobs.listAgents();
+    expect(agents).not.toContain("linked-agent");
+    expect(agents).not.toContain("a-file");
+    expect(agents).not.toContain("..evil");
+    expect(agents).not.toContain("with space");
+    expect(agents.filter((name) => name.startsWith("listed-"))).toEqual(["listed-a", "listed-b"]);
+    expect(agents).toEqual([...agents].sort());
+    // Skipped, not removed: the link and the directories under foreign names are left as they were.
+    expect((await lstat(join(blobsRoot, "linked-agent"))).isSymbolicLink()).toBe(true);
+    expect((await lstat(join(blobsRoot, "..evil"))).isDirectory()).toBe(true);
+  });
+
   it("reads a directory's age as the newest of its own, data's and meta.json's modification times, so a backdated directory with a fresh data file is fresh", async () => {
     const agent = blobs.agentRoot("ages");
     const dir = join(agent, `writing${BLOB_TMP_SUFFIX}`);

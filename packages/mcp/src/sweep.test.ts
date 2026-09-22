@@ -6,6 +6,7 @@ import {
   listWorkingSet,
   promoteTool,
   recordBlobsWritten,
+  revokeAgent,
   type ServiceContext,
   touchToolUsed,
   updateAgentLimits,
@@ -425,6 +426,7 @@ describe("the blob pass", () => {
   const HOUR = 60 * 60 * 1000;
   const ABANDONED_AFTER_MS = HOUR;
   const EMPTY_COUNTS = {
+    agents: 0,
     kept: 0,
     removed: 0,
     marked: 0,
@@ -437,10 +439,12 @@ describe("the blob pass", () => {
 
   type Dir = { data?: string; meta?: string; lastWrittenAt: Date };
 
-  /** An agent's blobs directory as a map of names to what each holds, with the five verbs over it. */
+  /** An agent's blobs directory as a map of names to what each holds, with the six verbs over it. */
   function fakeBlobStore() {
     const dirs = new Map<string, Map<string, Dir>>();
     const removed: { agentId: string; name: string }[] = [];
+    /** Every agent `list` was asked about, in order: who the pass walked. */
+    const listed: string[] = [];
     const agentDirs = (agentId: string) => {
       const existing = dirs.get(agentId);
       if (existing) return existing;
@@ -449,7 +453,11 @@ describe("the blob pass", () => {
       return made;
     };
     const store: BlobStore = {
-      list: async (agentId) => [...(dirs.get(agentId)?.keys() ?? [])].sort(),
+      listAgents: async () => [...dirs.keys()].sort(),
+      list: async (agentId) => {
+        listed.push(agentId);
+        return [...(dirs.get(agentId)?.keys() ?? [])].sort();
+      },
       // Null is the store's own not-found signal (`BlobStore.readMeta`), for a directory or a sidecar that is not there.
       readMeta: async (agentId, blobId) => dirs.get(agentId)?.get(blobId)?.meta ?? null,
       exists: async (agentId, blobId) => dirs.get(agentId)?.has(blobId) ?? false,
@@ -465,6 +473,7 @@ describe("the blob pass", () => {
     return {
       store,
       removed,
+      listed,
       put: (agentId: string, name: string, dir: Dir) => agentDirs(agentId).set(name, dir),
       has: (agentId: string, name: string) => dirs.get(agentId)?.has(name) ?? false,
     };
@@ -910,6 +919,109 @@ describe("the blob pass", () => {
       createdAt: lastWrittenAt,
       expiresAt: new Date(lastWrittenAt.getTime() + 24 * HOUR),
     });
+  });
+
+  it("sweeps a revoked agent's blobs on the same rule (GRA-195): an expired one is removed and marked and its junk cleared on the next pass, a live one stays until its expiry, and the roster is whoever has rows or a directory", async () => {
+    const agent = addAgent("blobs-revoked");
+    const idle = addAgent("blobs-idle");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    await writeBlob(fake, agent.id, "revoked-old", new Date(clock.getTime() - 30 * HOUR), 64);
+    await writeBlob(fake, agent.id, "revoked-live", new Date(clock.getTime() - HOUR), 16);
+    fake.put(agent.id, "revoked-junk", {
+      data: "?",
+      lastWrittenAt: new Date(clock.getTime() - 2 * HOUR),
+    });
+    expect(await revokeAgent(ctx, principal, agent.id, deps.agent)).toMatchObject({
+      id: agent.id,
+      revokedAt: clock,
+    });
+
+    const report = await sweepWith(fake, events);
+
+    // Out of the working-set roster (its token resolves to nothing), in the blob pass's.
+    expect(fake.listed).toContain(agent.id);
+    expect(report.blobs.agents).toBe(new Set(fake.listed).size);
+    // An agent with neither a row nor a directory is nobody's business this pass.
+    expect(fake.listed).not.toContain(idle.id);
+    expect(report.skipped).not.toContain(agent.id);
+    expect(report.failed).toEqual([]);
+    expect(fake.has(agent.id, "revoked-old")).toBe(false);
+    expect(rowOf("revoked-old")?.removedAt).toEqual(clock);
+    expect(fake.has(agent.id, "revoked-junk")).toBe(false);
+    expect(fake.has(agent.id, "revoked-live")).toBe(true);
+    expect(rowOf("revoked-live")?.removedAt).toBeNull();
+    expect(events).toEqual([
+      { agentId: agent.id, personId: PERSON, blobId: "revoked-old", bytes: 64, cause: "expired" },
+      { agentId: agent.id, personId: PERSON, blobId: "revoked-junk", bytes: 1, cause: "orphan" },
+    ]);
+    expect(report.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([
+      { agentId: agent.id, action: "remove", blobId: "revoked-old", bytes: 64, mark: true },
+      { agentId: agent.id, action: "remove_orphan", blobId: "revoked-junk", bytes: 1 },
+    ]);
+
+    // Past its expiry the live one goes too: the same 24 hour rule as any agent's, revoked or not.
+    const later = new Date(clock.getTime() + 25 * HOUR);
+    const after = await runSweep(
+      ctx,
+      { ...deps, blobStore: fake.store, onBlobSwept: (event) => events.push(event) },
+      later,
+      { abandonedWriteMs: ABANDONED_AFTER_MS },
+    );
+    expect(after.blobs.actions).toContainEqual({
+      agentId: agent.id,
+      action: "remove",
+      blobId: "revoked-live",
+      bytes: 16,
+      mark: true,
+    });
+    expect(fake.has(agent.id, "revoked-live")).toBe(false);
+    // Marked at the service's clock, as every mark is; the row stays for the door.
+    expect(rowOf("revoked-live")).toMatchObject({ id: "revoked-live", removedAt: clock });
+    expect(events).toHaveLength(3);
+  });
+
+  it("walks an agent the database no longer holds off the store's listing alone (GRA-195): its directories are kept inside the TTL, then cleared as junk with no row written and no event, and a stale .tmp goes by the bound", async () => {
+    const agent = addAgent("blobs-deleted");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    await writeBlob(fake, agent.id, "deleted-blob", new Date(clock.getTime() - 2 * HOUR), 32);
+    fake.put(agent.id, `deleted${BLOB_TMP_SUFFIX}`, {
+      data: "xx",
+      lastWrittenAt: new Date(clock.getTime() - 9 * HOUR),
+    });
+    // Deleted by hand: the agent row goes and, by the schema's cascade, every blob row with it.
+    store.agents.delete(agent.id);
+    for (let index = store.blobs.length - 1; index >= 0; index -= 1) {
+      if (store.blobs[index]?.agentId === agent.id) store.blobs.splice(index, 1);
+    }
+
+    const first = await sweepWith(fake, events);
+    expect(fake.listed).toContain(agent.id);
+    expect(first.failed).toEqual([]);
+    expect(first.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([
+      { agentId: agent.id, action: "remove_tmp", name: `deleted${BLOB_TMP_SUFFIX}`, bytes: 2 },
+    ]);
+    // Inside the TTL: kept, and never adopted, since there is no agent to adopt it into.
+    expect(fake.has(agent.id, "deleted-blob")).toBe(true);
+    expect(rowOf("deleted-blob")).toBeUndefined();
+
+    const later = new Date(clock.getTime() + 25 * HOUR);
+    const second = await runSweep(
+      ctx,
+      { ...deps, blobStore: fake.store, onBlobSwept: (event) => events.push(event) },
+      later,
+      { abandonedWriteMs: ABANDONED_AFTER_MS },
+    );
+    expect(second.failed).toEqual([]);
+    expect(second.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([
+      { agentId: agent.id, action: "remove_orphan", blobId: "deleted-blob", bytes: 32 },
+    ]);
+    expect(fake.has(agent.id, "deleted-blob")).toBe(false);
+    expect(rowOf("deleted-blob")).toBeUndefined();
+    // The bytes are counted; nobody is told, since the event names a person and there is none.
+    expect(second.blobs.bytesRemoved).toBeGreaterThanOrEqual(32);
+    expect(events.filter((event) => event.agentId === agent.id)).toEqual([]);
   });
 
   it("spells the .tmp suffix as the store does, and takes the TTL from the runner", () => {

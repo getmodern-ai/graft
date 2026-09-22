@@ -1,8 +1,10 @@
+import { listAgentPersonIds } from "@graft/db/repo/agent";
 import {
   findBlob,
   findBlobs,
   insertAdoptedBlob,
   insertBlobs,
+  listAgentsWithUnremovedBlobs,
   listBlobs,
   listUnremovedBlobs,
   markBlobRemoved,
@@ -20,6 +22,12 @@ export type BlobDeps = {
   listUnremovedBlobs: typeof listUnremovedBlobs;
   markBlobRemoved: typeof markBlobRemoved;
   insertAdoptedBlob: typeof insertAdoptedBlob;
+  /**
+   * The blob pass's roster (GRA-195; `listBlobSweepAgents`): the two reads with no person in
+   * them, every agent with an unremoved row, and whose an agent id the store listed is.
+   */
+  listAgentsWithUnremovedBlobs: typeof listAgentsWithUnremovedBlobs;
+  listAgentPersonIds: typeof listAgentPersonIds;
   now: () => Date;
 };
 
@@ -32,5 +40,7 @@ export const defaultBlobDeps: BlobDeps = {
   listUnremovedBlobs,
   markBlobRemoved,
   insertAdoptedBlob,
+  listAgentsWithUnremovedBlobs,
+  listAgentPersonIds,
   now: () => new Date(),
 };

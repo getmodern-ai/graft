@@ -918,6 +918,25 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       store.blobs[index] = { ...row, removedAt, updatedAt: store.now() };
       return true;
     },
+    // The blob pass's roster (GRA-195): the pair off every unremoved row, distinct; and whose an
+    // agent id is, off the agent rows, revoked ones included, nothing for an id with no row.
+    listAgentsWithUnremovedBlobs: async () => {
+      const seen = new Map<string, { personId: string; agentId: string }>();
+      for (const row of store.blobs) {
+        if (row.removedAt !== null || seen.has(row.agentId)) continue;
+        seen.set(row.agentId, { personId: row.personId, agentId: row.agentId });
+      }
+      return [...seen.values()].sort((a, b) =>
+        a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0,
+      );
+    },
+    listAgentPersonIds: async (_db, agentIds) =>
+      [...new Set(agentIds)]
+        .flatMap((agentId) => {
+          const row = store.agents.get(agentId);
+          return row ? [{ agentId, personId: row.personId }] : [];
+        })
+        .sort((a, b) => (a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0)),
     insertAdoptedBlob: async (_db, row) => {
       if (store.blobs.some((existing) => existing.id === row.id)) return null;
       const inserted: BlobRow = {

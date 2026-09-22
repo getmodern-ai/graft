@@ -189,6 +189,20 @@ export function blobStoreConformance(
       await fixture.close?.();
     });
 
+    it("lists the agents that have a blobs directory, sorted, and not one that has written nothing", async () => {
+      const first = agentFor("agents-b");
+      const second = agentFor("agents-a");
+      const never = agentFor("agents-never");
+      await fixture.write(first, "blob-a", blob("a"));
+      await fixture.write(second, `blob-b${BLOB_TMP_SUFFIX}`, [{ path: "data", content: "half" }]);
+
+      const agents = await store.listAgents();
+      expect(agents).toEqual([...agents].sort());
+      expect(agents).toContain(first);
+      expect(agents).toContain(second);
+      expect(agents).not.toContain(never);
+    });
+
     it("lists nothing for an agent that has written no blob, then blob ids and .tmp names sorted", async () => {
       const agent = agentFor("list");
       expect(await store.list(agent)).toEqual([]);

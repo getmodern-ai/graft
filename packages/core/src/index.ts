@@ -86,9 +86,11 @@ export {
 export { type BlobDeps, defaultBlobDeps } from "./blob/blob.deps";
 export {
   adoptBlob,
+  type BlobSweepAgent,
   type BlobWrittenInput,
   getBlob,
   getBlobs,
+  listBlobSweepAgents,
   listBlobs,
   listUnremovedBlobs,
   liveBlobBytes,

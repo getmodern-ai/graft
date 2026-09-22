@@ -2,12 +2,14 @@ import {
   type AgentScope,
   adoptBlob,
   type BlobSweepAction,
+  type BlobSweepAgent,
   type BlobSweepEntry,
   blobSweepDecision,
   demoteTool,
   isTmpName,
   lastUsedAtByTool,
   listActiveAgentScopes,
+  listBlobSweepAgents,
   listUnremovedBlobs,
   listWorkingSet,
   markBlobRemoved,
@@ -36,21 +38,26 @@ import { errorMessage } from "./sandbox";
  * catches an invocation the stamp missed — a run refused before it ran still says the agent reached
  * for the tool. The decision itself discounts a use older than the promotion.
  *
- * A revoked agent is not swept: its token resolves to nothing, so its list is nobody's, and its
- * working set stays as its history left it. Defaults for a new agent are the schema's (`agent`
- * table: a cap of twenty, a window of twenty-one days); the row's own values override them, which
- * is what the console edits (GRA-1, user story 22).
+ * A revoked agent's working set is not swept: its token resolves to nothing, so its list is
+ * nobody's, and the set stays as its history left it. Defaults for a new agent are the schema's
+ * (`agent` table: a cap of twenty, a window of twenty-one days); the row's own values override
+ * them, which is what the console edits (GRA-1, user story 22).
  *
  * **The second pass, on the same timer, is the blobs'** (ADR 0023, "the sweep deletes"; GRA-189).
- * After the working-set pass for an agent, and under the same in-flight skip, since a run may be
- * writing a blob, it reads the agent's unremoved rows and the names its blob store lists, reads the
- * sidecar and the age of every directory no row claims, asks `blobSweepDecision` (`@graft/core`,
- * the pure rule) what to do, and applies the plan through `McpDeps.blobStore` and the blob service:
- * an expired blob's directory goes and its row is marked `removed_at` (never deleted, so the door
- * can say expired rather than not found), an orphan with a sidecar becomes a row, an orphan without
- * one goes, a `.tmp` older than `ABANDONED_BLOB_WRITE_SECONDS` goes. Each removal of a blob fires
- * `McpDeps.onBlobSwept` once; the counts ride on the report under `blobs`, which the server puts on
- * the sweep's wide event. Nothing under `tools/` is ever in a plan: the store reaches `.blobs/` alone.
+ * Its roster is its own (GRA-195): every agent with an unremoved `blob` row, in union with every
+ * agent the blob store lists a directory for (`listBlobSweepAgents`), rather than the live agents
+ * above, so a revoked agent's blobs expire, are removed and are marked on the same 24 hour rule as
+ * any other's, and an agent deleted by hand has its directories cleared once past the TTL. Under
+ * the same in-flight skip, since a run may be writing a blob (a no-op for a revoked agent, which
+ * can have none), it reads the agent's unremoved rows and the names its blob store lists, reads
+ * the sidecar and the age of every directory no row claims, asks `blobSweepDecision`
+ * (`@graft/core`, the pure rule) what to do, and applies the plan through `McpDeps.blobStore` and
+ * the blob service: an expired blob's directory goes and its row is marked `removed_at` (never
+ * deleted, so the door can say expired rather than not found), an orphan with a sidecar becomes a
+ * row, an orphan without one goes, a `.tmp` older than `ABANDONED_BLOB_WRITE_SECONDS` goes. Each
+ * removal of a blob fires `McpDeps.onBlobSwept` once; the counts ride on the report under `blobs`,
+ * which the server puts on the sweep's wide event. Nothing under `tools/` is ever in a plan: the
+ * store reaches `.blobs/` alone.
  */
 
 export type SweepDemotion = { agentId: string; toolId: string; cause: SweepCause };
@@ -60,6 +67,11 @@ export type SweepBlobAction = BlobSweepAction & { agentId: string };
 
 /** The blob pass's counts, per outcome, and what was freed: the shape of `sweep.blobs` on the wide event. */
 export type SweepBlobCounts = {
+  /**
+   * How many agents the blob pass walked: every agent with an unremoved row or a directory, a
+   * revoked agent and one the database no longer holds included (GRA-195). Zero with no blob store.
+   */
+  agents: number;
   kept: number;
   removed: number;
   marked: number;
@@ -78,9 +90,12 @@ export type SweepBlobCounts = {
 export type SweepReport = {
   /** The clock the sweep was handed. */
   at: string;
-  /** How many agents were considered — every agent whose token still resolves, across persons. */
+  /**
+   * How many agents the working-set pass considered: every agent whose token still resolves, across
+   * persons. The blob pass counts its own under `blobs.agents`.
+   */
   agents: number;
-  /** Agents skipped for a run in flight; the next sweep decides for them. */
+  /** Agents skipped for a run in flight, by either pass; the next sweep decides for them. */
   skipped: string[];
   /** Agents whose blob pass stopped part way because a run started during it; the next sweep finishes. */
   deferred: string[];
@@ -116,6 +131,7 @@ export type BlobSweptEvent = {
 };
 
 const EMPTY_BLOB_COUNTS: SweepBlobCounts = {
+  agents: 0,
   kept: 0,
   removed: 0,
   marked: 0,
@@ -161,6 +177,13 @@ async function readBlobEntries(
  * the order here says: the directory first, then the row, so a crash between the two leaves a
  * `mark` for the next pass rather than a marked row with bytes still on disk.
  *
+ * **An agent with no person** (`BlobSweepAgent.personId` null; GRA-195) is one the database no
+ * longer holds: no rows to read (they went with the agent row), nothing to mark or adopt, and no
+ * person to tell `onBlobSwept` about. The decision is asked with `agentExists: false`, so what it
+ * answers for such an agent is a `keep`, a `remove_orphan` once a directory is past the TTL, or a
+ * `remove_tmp`; a row action for it would be the decision's bug, and `requireScope` says so rather
+ * than writing under a person it does not have.
+ *
  * **A run may start while this pass is reading.** The agent was not in flight when the pass began,
  * but the reads above are awaited and a call can arrive between them and commit a blob. Two
  * defences, neither of which needs the run and the sweep to lock each other: every destructive
@@ -175,15 +198,18 @@ async function sweepBlobs(
   ctx: ServiceContext,
   deps: McpDeps,
   store: BlobStore,
-  scope: AgentScope,
+  agent: BlobSweepAgent,
   now: Date,
   options: { apply: boolean; abandonedWriteMs: number },
   report: SweepReport,
 ): Promise<void> {
-  const rows = await listUnremovedBlobs(ctx, scope, deps.blob);
-  const entries = await readBlobEntries(store, scope.agentId, new Set(rows.map((row) => row.id)));
+  const { agentId } = agent;
+  const scope: AgentScope | null =
+    agent.personId === null ? null : { personId: agent.personId, agentId };
+  const rows = scope ? await listUnremovedBlobs(ctx, scope, deps.blob) : [];
+  const entries = await readBlobEntries(store, agentId, new Set(rows.map((row) => row.id)));
   const decision = blobSweepDecision({
-    agentId: scope.agentId,
+    agentId,
     rows: rows.map((row) => ({
       id: row.id,
       bytes: row.bytes,
@@ -193,21 +219,30 @@ async function sweepBlobs(
     entries,
     now,
     abandonedWriteMs: options.abandonedWriteMs,
+    agentExists: scope !== null,
   });
 
   const counts = report.blobs;
+  const requireScope = (action: BlobSweepAction["action"]): AgentScope => {
+    if (scope) return scope;
+    throw new Error(
+      `the blob sweep decided ${action} for agent ${agentId}, which the database no longer holds: a row action needs a person`,
+    );
+  };
   const swept = (blobId: string, bytes: number | null, cause: BlobSweptEvent["cause"]) => {
     counts.bytesRemoved += bytes ?? 0;
-    deps.onBlobSwept?.({ agentId: scope.agentId, personId: scope.personId, blobId, bytes, cause });
+    // Nobody to tell of a removal under an agent the database no longer holds: the event names a
+    // person, and there is none. The bytes still count above.
+    if (scope) deps.onBlobSwept?.({ agentId, personId: scope.personId, blobId, bytes, cause });
   };
   const record = (action: BlobSweepAction) => {
-    report.blobs.actions.push({ ...action, agentId: scope.agentId });
+    report.blobs.actions.push({ ...action, agentId });
   };
   /** True, and the rest of the pass deferred, when a run started for this agent since the pass began. */
   const runStarted = (remaining: number): boolean => {
-    if (!options.apply || !(deps.inFlight?.has(scope.agentId) ?? false)) return false;
+    if (!options.apply || !(deps.inFlight?.has(agentId) ?? false)) return false;
     counts.deferred += remaining;
-    if (!report.deferred.includes(scope.agentId)) report.deferred.push(scope.agentId);
+    if (!report.deferred.includes(agentId)) report.deferred.push(agentId);
     return true;
   };
 
@@ -221,20 +256,30 @@ async function sweepBlobs(
         if (runStarted(remaining)) return;
         record(action);
         if (options.apply) {
-          await store.remove(scope.agentId, action.blobId);
-          if (action.mark) await markBlobRemoved(ctx, scope, action.blobId, deps.blob);
+          await store.remove(agentId, action.blobId);
+          if (action.mark) {
+            await markBlobRemoved(ctx, requireScope(action.action), action.blobId, deps.blob);
+          }
           swept(action.blobId, action.bytes, "expired");
         }
         counts.removed += 1;
         break;
       case "mark":
         record(action);
-        if (options.apply) await markBlobRemoved(ctx, scope, action.blobId, deps.blob);
+        if (options.apply) {
+          await markBlobRemoved(ctx, requireScope(action.action), action.blobId, deps.blob);
+        }
         counts.marked += 1;
         break;
       case "adopt": {
         if (options.apply) {
-          const row = await adoptBlob(ctx, scope, action.blobId, action.row, deps.blob);
+          const row = await adoptBlob(
+            ctx,
+            requireScope(action.action),
+            action.blobId,
+            action.row,
+            deps.blob,
+          );
           if (row === null) {
             // A row exists now: the run that wrote this blob landed its row between the read above
             // and here (its run is in flight; this pass would not have started otherwise), or the
@@ -253,7 +298,7 @@ async function sweepBlobs(
         if (runStarted(remaining)) return;
         record(action);
         if (options.apply) {
-          await store.remove(scope.agentId, action.blobId);
+          await store.remove(agentId, action.blobId);
           swept(action.blobId, action.bytes, "orphan");
         }
         counts.orphansRemoved += 1;
@@ -262,11 +307,40 @@ async function sweepBlobs(
         if (runStarted(remaining)) return;
         record(action);
         if (options.apply) {
-          await store.remove(scope.agentId, action.name);
+          await store.remove(agentId, action.name);
           counts.bytesRemoved += action.bytes ?? 0;
         }
         counts.tmpRemoved += 1;
         break;
+    }
+  }
+}
+
+/**
+ * The blob pass over its own roster (GRA-195): the agents with unremoved rows and the agents the
+ * store lists a directory for, each under the same in-flight skip as the working-set pass and each
+ * failing alone. A revoked agent has no run in flight, so the skip never holds it; an agent the
+ * database no longer holds is walked with no person (`sweepBlobs` says what that means).
+ */
+async function sweepAllBlobs(
+  ctx: ServiceContext,
+  deps: McpDeps,
+  store: BlobStore,
+  now: Date,
+  options: { apply: boolean; abandonedWriteMs: number },
+  report: SweepReport,
+): Promise<void> {
+  const roster = await listBlobSweepAgents(ctx, await store.listAgents(), deps.blob);
+  report.blobs.agents = roster.length;
+  for (const agent of roster) {
+    try {
+      if (deps.inFlight?.has(agent.agentId) ?? false) {
+        if (!report.skipped.includes(agent.agentId)) report.skipped.push(agent.agentId);
+        continue;
+      }
+      await sweepBlobs(ctx, deps, store, agent, now, options, report);
+    } catch (error) {
+      report.failed.push({ agentId: agent.agentId, error: errorMessage(error) });
     }
   }
 }
@@ -337,22 +411,14 @@ export async function runSweep(
         report.demoted.push({ agentId: agent.agentId, toolId, cause });
       }
       if (changed > 0) deps.notifier?.changed(agent.agentId);
-
-      // The blob pass, for the same agent, under the same in-flight skip (ADR 0023).
-      if (deps.blobStore) {
-        await sweepBlobs(
-          ctx,
-          deps,
-          deps.blobStore,
-          scope,
-          now,
-          { apply, abandonedWriteMs },
-          report,
-        );
-      }
     } catch (error) {
       report.failed.push({ agentId: agent.agentId, error: errorMessage(error) });
     }
+  }
+
+  // The blob pass, over its own roster (ADR 0023; GRA-195).
+  if (deps.blobStore) {
+    await sweepAllBlobs(ctx, deps, deps.blobStore, now, { apply, abandonedWriteMs }, report);
   }
 
   return report;

@@ -41,6 +41,14 @@
  * mark; one whose directory is gone is out of the sweep's hands and is not in the plan. Expiry is
  * strict: a blob expiring exactly now is not yet past it. Nothing under `tools/` can ever be in a
  * plan, since the names come from a store that reaches `.blobs/` alone.
+ *
+ * **An agent the database no longer holds** (`agentExists: false`; GRA-195) has directories and
+ * nothing else: its rows went with the row (the `blob` table cascades on the agent), there is no
+ * row to adopt into, and no door could ever answer a ref under it. A committed directory there is
+ * junk once its last write is past the TTL (`remove_orphan`) and `keep` (reason `unclaimed`) until
+ * then, so nothing younger than a blob may live is taken on the strength of a missing row alone; a
+ * `.tmp` is judged by the bound as anywhere. A revoked agent is not this case: its row stays
+ * (ADR 0007), its rows stay, and it is judged as any other agent.
  */
 
 import { BLOB_TTL_MS, MAX_BLOB_CONTENT_TYPE_CHARS, MAX_BLOB_NAME_CHARS } from "@graft/runner";
@@ -172,10 +180,20 @@ export type BlobSweepDecisionInput = {
   now: Date;
   /** The longest a run may live, with a margin; a `.tmp` older than this is abandoned. */
   abandonedWriteMs: number;
+  /**
+   * Whether the agent row is still in the database; true unless said otherwise. False, and no
+   * directory is adopted: a committed one is junk once past the TTL from its last write and kept
+   * until then (the header's last paragraph).
+   */
+  agentExists?: boolean;
 };
 
 export type BlobSweepAction =
-  | { action: "keep"; name: string; reason: "live" | "landing" | "writing" | "unread" }
+  | {
+      action: "keep";
+      name: string;
+      reason: "live" | "landing" | "writing" | "unread" | "unclaimed";
+    }
   | { action: "remove"; blobId: string; bytes: number; mark: boolean }
   | { action: "mark"; blobId: string; bytes: number }
   | { action: "adopt"; blobId: string; row: AdoptedBlob }
@@ -305,6 +323,17 @@ export function blobSweepDecision(input: BlobSweepDecisionInput): BlobSweepDecis
     if (entry.stat === null) {
       // Gone between the listing and the read: nobody's to remove, nothing to adopt.
       actions.push({ action: "keep", name: entry.name, reason: "landing" });
+      continue;
+    }
+    if (input.agentExists === false) {
+      // No row to adopt into (the agent is gone, and its rows with it): junk once it is older than
+      // any blob may live, and left alone until then.
+      const pastTtl = entry.stat.lastWrittenAt.getTime() + BLOB_TTL_MS < now;
+      if (pastTtl) {
+        actions.push({ action: "remove_orphan", blobId: entry.name, bytes: entry.stat.bytes });
+      } else {
+        actions.push({ action: "keep", name: entry.name, reason: "unclaimed" });
+      }
       continue;
     }
     const sidecar = entry.sidecar == null ? null : parseBlobSidecar(entry.sidecar);

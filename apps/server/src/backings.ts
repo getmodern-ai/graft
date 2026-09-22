@@ -478,7 +478,7 @@ const SEAM_MEMBERS = {
 /** The store's verbs (`ToolboxStore` in `@graft/toolbox`), for the factory that answers with one. */
 const STORE_MEMBERS = ["readTree", "writeTree", "read", "list", "exists", "remove"] as const;
 /** The blob store's verbs (`BlobStore` in `@graft/toolbox`), for the factory that answers with one. */
-const BLOB_STORE_MEMBERS = ["list", "readMeta", "exists", "remove", "stat"] as const;
+const BLOB_STORE_MEMBERS = ["listAgents", "list", "readMeta", "exists", "remove", "stat"] as const;
 
 /** A connection provider's functions (`ConnectionProvider` in `@graft/core`), and how it connects. */
 const PROVIDER_MEMBERS = ["covers", "resolve", "revoke"] as const;

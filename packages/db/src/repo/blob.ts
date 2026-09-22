@@ -9,7 +9,8 @@ import type { AgentScope } from "./scope";
  * every read names the person *and* the agent directly in its predicate (ADR 0007), and every insert
  * carries them in its values: a blob is the agent's, and a read under another agent's pair, or
  * another person's, matches nothing rather than disclosing anything. `repo/scope.test.ts` pins the
- * rendered statements.
+ * rendered statements. The one read here with no scope in it is `listAgentsWithUnremovedBlobs`, the
+ * sweep's roster, and it says why.
  */
 
 export type BlobRow = typeof blob.$inferSelect;
@@ -100,6 +101,27 @@ export async function listUnremovedBlobs(db: DbOrTx, scope: AgentScope): Promise
     .from(blob)
     .where(and(inScope(scope), isNull(blob.removedAt)))
     .orderBy(asc(blob.expiresAt), asc(blob.id));
+}
+
+/** One agent the blob pass walks, with the person its rows name (GRA-195). */
+export type BlobAgent = { personId: string; agentId: string };
+
+/**
+ * Every agent with at least one blob the sweep has not yet removed, with its person, across every
+ * person: the database's half of the blob pass's roster (GRA-195; the store's half is
+ * `BlobStore.listAgents`). **Deliberately unscoped**, and pinned by name in `scope.test.ts` beside
+ * the working-set sweep's `listAllActiveAgents` and the boot's `markPersonEmailVerified`: the sweep
+ * is the system's own pass and has no person to scope by, and a revoked agent, or one whose row is
+ * gone, still has rows and bytes ADR 0023 says are removed by rule. It answers the pair and nothing
+ * of the rows; what the pass does next (`listUnremovedBlobs`, `markBlobRemoved`) is a statement
+ * under that pair, as every other read here is.
+ */
+export async function listAgentsWithUnremovedBlobs(db: DbOrTx): Promise<BlobAgent[]> {
+  return db
+    .selectDistinct({ personId: blob.personId, agentId: blob.agentId })
+    .from(blob)
+    .where(isNull(blob.removedAt))
+    .orderBy(asc(blob.agentId), asc(blob.personId));
 }
 
 /**
