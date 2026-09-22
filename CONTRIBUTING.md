@@ -1,7 +1,9 @@
 # Contributing to Graft
 
 Graft's core is Apache-2.0 (`LICENSE`) and everything under `skills/` is MIT (`skills/LICENSE`).
-ADR 0022 under `docs/adr/` is why.
+ADR 0022 under `docs/adr/` is why. `.agents/skills/` is not ours: it is
+[`mattpocock/skills`](https://github.com/mattpocock/skills), vendored for working in this
+repository under its own MIT notice (`.agents/skills/LICENSE`) and pinned in `skills-lock.json`.
 
 Everyone taking part in this repository, in issues, pull requests and review, is asked to follow
 the code of conduct in `CODE_OF_CONDUCT.md`, the Contributor Covenant 2.1.
