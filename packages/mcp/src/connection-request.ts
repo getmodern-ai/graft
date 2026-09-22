@@ -173,6 +173,12 @@ export type ConnectionProposalPayload = {
   docsUrl: string | null;
   /** The provenance sentence the card shows. */
   note: string;
+  /**
+   * A widening (GRA-167; ADR 0006 as amended 2026-09-22): the ask is about a keyless keyring row
+   * the person already holds, in this agent's scope, and `hosts` is the union it will reach; the
+   * yes adds `addedHosts` to that row and makes nothing new. `primaryHost` is the row's.
+   */
+  widens?: { connectionId: string; addedHosts: string[] };
 };
 
 /** What a `credential` ask carries: the connection, and what the vendor said. */
@@ -567,6 +573,40 @@ export function coversProposal(
   return true;
 }
 
+/**
+ * The row a keyless proposal would widen rather than duplicate (GRA-167): the person's live,
+ * usable keyring row of the vendor on the same credential-less scheme, in this agent's scope,
+ * that does not reach every proposed host. Live on 2026-09-22 a vendor's documented host answered
+ * every read with a redirect to a sibling host the row did not list; the agent re-proposed the
+ * vendor at the sibling and the person confirmed a second row for one public API. A keyed row is
+ * left alone: widening it would send its credential to a host it never went to, and that ask is
+ * not built. A row outside this agent's scope is left alone too — the scope ask is about a row as
+ * it stands — and falls through to a new ask as before.
+ */
+function widenable(
+  connections: readonly ConnectionOutput[],
+  inScope: (connection: ConnectionOutput) => boolean,
+  providers: readonly ConnectionProvider[],
+  proposal: Pick<ConnectionProposalPayload, "vendor" | "primaryHost" | "hosts"> & {
+    scheme?: string;
+  },
+): ExistingConnectionVerdict | null {
+  if (proposal.scheme !== "none") return null;
+  const row = connections.find(
+    (connection) =>
+      connection.vendor === proposal.vendor &&
+      connection.provider === KEYRING_PROVIDER &&
+      connection.scheme === "none" &&
+      inScope(connection) &&
+      isConnectionUsable(connection, providers),
+  );
+  if (!row) return null;
+  const reach = hostSetOf(row);
+  const addedHosts = [...hostSetOf(proposal)].filter((host) => !reach.has(host)).sort();
+  if (addedHosts.length === 0) return null;
+  return { kind: "widen", connection: row, addedHosts };
+}
+
 /** The reason word `request_connection` answers when the person already has the connection proposed (GRA-76). */
 export const CONNECTION_EXISTS = "connection_exists";
 
@@ -574,6 +614,12 @@ export type ExistingConnectionVerdict =
   | { kind: "connected"; connection: ConnectionOutput }
   /** A usable row of the person's this agent was not given: the `scope` ask (GRA-104). */
   | { kind: "scope"; connection: ConnectionOutput }
+  /**
+   * A keyless proposal for a vendor whose live keyless keyring row is this agent's already, at
+   * hosts the row does not all reach (GRA-167): the ask that widens the row rather than a second
+   * row for one public vendor. `addedHosts` is what the proposal reaches beyond it.
+   */
+  | { kind: "widen"; connection: ConnectionOutput; addedHosts: string[] }
   | {
       kind: "refuse";
       reason: typeof CONNECTION_EXISTS;
@@ -599,7 +645,9 @@ export function existingConnectionFor(
   connections: readonly ConnectionOutput[],
   scopeIds: readonly string[],
   providers: readonly ConnectionProvider[],
-  proposal: Pick<ConnectionProposalPayload, "vendor" | "primaryHost" | "hosts">,
+  proposal: Pick<ConnectionProposalPayload, "vendor" | "primaryHost" | "hosts"> & {
+    scheme?: string;
+  },
 ): ExistingConnectionVerdict | null {
   const candidates = connections.filter((connection) => {
     if (!coversProposal(connection, proposal)) return false;
@@ -616,7 +664,7 @@ export function existingConnectionFor(
   const rank = (connection: ConnectionOutput) =>
     (connection.revokedAt === null ? 0 : 2) + (inScope(connection) ? 0 : 1);
   const [row] = [...candidates].sort((a, b) => rank(a) - rank(b));
-  if (!row) return null;
+  if (!row) return widenable(connections, inScope, providers, proposal);
   // The person's row, working, not this agent's: the one step that grants it is theirs to take on
   // a page — so it is asked for, with a link (GRA-104), rather than described.
   if (row.revokedAt === null && !inScope(row) && isConnectionUsable(row, providers)) {
@@ -729,7 +777,14 @@ async function routeProposal(
   deps: McpDeps,
   notifier?: ToolListChangedNotifier,
 ): Promise<ConnectionRequestOutcome> {
-  const provider = await providerFor(deps.connection.providers, proposal.vendor, proposal.hosts);
+  // A keyless proposal passes every link provider by (GRA-166): the keyring's one-click confirmation
+  // beats a vendor sign-in the calls never need.
+  const provider = await providerFor(
+    deps.connection.providers,
+    proposal.vendor,
+    proposal.hosts,
+    proposal.scheme,
+  );
   if (provider.connect.kind === "none") {
     return connectWithoutPersonStep(ctx, scope, provider, proposal, deps, notifier);
   }
@@ -774,10 +829,17 @@ async function routeProposal(
       // call that follows an Allow says so rather than "already connected, no ask was made".
       const answered = await openScopeAskFor(ctx, scope, existing.connection.id, deps);
       if (answered) return awaitScope(ctx, scope, answered, existing.connection, deps, notifier);
+      // Likewise a widening the person confirmed (GRA-167): the row now covers the proposal, which
+      // is why this branch is reached, and the answer is taken so the call says what happened.
+      const widened = await answeredWideningFor(ctx, scope, existing.connection.id, deps);
+      if (widened) return awaitWidening(ctx, scope, widened, existing.connection, deps);
       return { isError: false, answer: connected(existing.connection, "already") };
     }
     if (existing?.kind === "refuse") {
       return refuse(existing.reason, existing.message, existing.details);
+    }
+    if (existing?.kind === "widen") {
+      return askToWiden(ctx, scope, existing.connection, existing.addedHosts, payload, deps);
     }
     if (existing?.kind === "scope") {
       const { connection } = existing;
@@ -882,6 +944,129 @@ async function routeProposal(
               `${handoffSentence(form, "Relay this link so they can check the hosts and confirm it", url, expiresAt)} ` +
               `${BUILD_APPROVAL_ON_THE_PAGE} ` +
               "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
+  });
+}
+
+/** The provenance sentence on a widening ask (GRA-167): the row is the person's; the hosts are the model's. */
+const WIDENING_NOTE =
+  "The added hosts were proposed by the agent's model from the documentation it read, or from where the vendor sent its calls. The connection itself is one you already made. Check the added hosts before confirming: calls for this connection will reach every host listed, and nothing else.";
+
+/**
+ * The widening ask (GRA-167; ADR 0006 as amended 2026-09-22): a `connection` ask whose payload is
+ * the row as it stands — its primary host, its name — with the hosts grown to the union and
+ * `widens` naming the row and what is added, stamped with the connection so a revoke closes it.
+ * It is the keyring's form on a scheme with nothing to enter, so the ask card answers it in place
+ * (`connectionAskAnswerable`) and the console's card draws the added hosts and no form; the yes
+ * (`confirmConnectionAsk`) adds the hosts to the row and answers `{ connectionId }`, which the
+ * waiting call reads as `connected`. One open widening per agent and row — a re-proposal while it
+ * stands re-uses it when it reaches every host proposed — under the same advisory lock the scope
+ * ask takes, since neither has a uniqueness the table enforces.
+ */
+async function askToWiden(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  connection: ConnectionOutput,
+  addedHosts: readonly string[],
+  proposal: Omit<ConnectionProposalPayload, "provider">,
+  deps: McpDeps,
+): Promise<ConnectionRequestOutcome> {
+  const union = [...new Set([...connection.hosts, ...addedHosts])];
+  const payload: ConnectionProposalPayload = {
+    provider: KEYRING_PROVIDER,
+    providerConnect: "form",
+    providerTarget: null,
+    vendor: connection.vendor,
+    displayName: connection.displayName,
+    scheme: "none",
+    schemeConfig: {},
+    primaryHost: connection.primaryHost,
+    hosts: union,
+    docsUrl: proposal.docsUrl,
+    note: WIDENING_NOTE,
+    widens: { connectionId: connection.id, addedHosts: [...addedHosts] },
+  };
+  const wanted = hostSetOf(proposal);
+  const action = await ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    await deps.lockPendingActionKey(tx, scope, CONNECTION_ASK_KIND, connection.id);
+    const open = (
+      await deps.listPendingActionsByKind(tx, scope, CONNECTION_ASK_KIND, deps.pendingAction.now())
+    ).find((row) => {
+      const asked = row.payload as unknown as Partial<ConnectionProposalPayload>;
+      if (asked.widens?.connectionId !== connection.id || !Array.isArray(asked.hosts)) return false;
+      const reach = new Set(asked.hosts.map((host) => host.toLowerCase()));
+      return [...wanted].every((host) => reach.has(host));
+    });
+    return (
+      open ??
+      createPendingAction(
+        scoped,
+        scope,
+        {
+          kind: CONNECTION_ASK_KIND,
+          payload,
+          ttlMs: deps.handoff.ttlMs,
+          connectionId: connection.id,
+        },
+        deps.pendingAction,
+      )
+    );
+  });
+  return awaitWidening(ctx, scope, action, connection, deps);
+}
+
+/**
+ * This agent's widening ask about a row that the person has answered and this agent has not taken
+ * (GRA-167), or null. Only an answered one: once the row covers the proposal an open widening
+ * would be waited on for nothing, and a call is never held for an ask it does not need.
+ */
+async function answeredWideningFor(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  connectionId: string,
+  deps: McpDeps,
+): Promise<PendingActionRow | null> {
+  const rows = await deps.listPendingActionsByKind(
+    ctx.db,
+    scope,
+    CONNECTION_ASK_KIND,
+    deps.pendingAction.now(),
+  );
+  return (
+    rows.find((row) => {
+      const asked = row.payload as unknown as Partial<ConnectionProposalPayload>;
+      return asked.widens?.connectionId === connectionId && row.answeredAt !== null;
+    }) ?? null
+  );
+}
+
+/** The widening ask's wait (GRA-167): the connection ask's, with the yes read as the row grown. */
+function awaitWidening(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  action: PendingActionRow,
+  connection: ConnectionOutput,
+  deps: McpDeps,
+): Promise<ConnectionRequestOutcome> {
+  const asked = action.payload as unknown as ConnectionProposalPayload;
+  const added = (asked.widens?.addedHosts ?? []).join(", ");
+  const what = `${connection.displayName} (${connection.vendor})`;
+  return waitForAnswer(ctx, scope, action, deps, {
+    awaiting: "awaiting_connection",
+    what,
+    card: (url, agentName) => connectionAskCard({ action, agentName, payload: asked, url }),
+    awaitingExtra: { connectionId: connection.id, provider: connection.provider },
+    settle: (taken) =>
+      settleByConnectionId(ctx, scope, taken, deps, {
+        what,
+        declinedReason: "connection_declined",
+        onConnected: (row) => connected(row, "confirmed"),
+      }),
+    awaitingMessage: (url, expiresAt, form) =>
+      `The person already has a connection to ${what}, which does not reach ${added}; Graft needs them to confirm that it may${form === "card" ? "" : " in the console"} — it is the connection they already made, on a scheme that takes no credential, so nothing is entered and no new connection is made. ` +
+      `${handoffSentence(form, "Relay this link so they can check the added hosts and confirm", url, expiresAt)} ` +
+      `${BUILD_APPROVAL_ON_THE_PAGE} ` +
+      "Call request_connection again with the same proposal once they have — the answer is kept, and the call then answers connected.",
   });
 }
 
@@ -1175,7 +1360,7 @@ export async function requestCredential(
 
 function connected(
   connection: ConnectionOutput,
-  how: "new" | "already" | "credential" | "provider" | "widened" | "scope",
+  how: "new" | "already" | "credential" | "provider" | "widened" | "confirmed" | "scope",
 ): Connected {
   const executeTool = executeToolName(connection.id);
   const what = `${connection.displayName} (${connection.vendor})`;
@@ -1186,11 +1371,13 @@ function connected(
         ? `${what} is already connected and in your scope as ${executeTool}; no new ask was made.`
         : how === "widened"
           ? `${what} is already connected and in your scope as ${executeTool}; its host set now also reaches the hosts you proposed (${connection.hosts.join(", ")}). No new ask was made.`
-          : how === "scope"
-            ? `Allowed. ${what} is now in your scope; its execute tool is ${executeTool}. It is the connection the person already had, so nothing was entered and no new connection was made. Your tool list changed; re-fetch it.`
-            : how === "provider"
-              ? `Connected with no person step. ${what} is reachable through the API gateway this deployment is configured with (the ${connection.provider} provider), which holds the credential and receives every call; nothing was entered by anyone, and the scheme you proposed is not used. It is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`
-              : `Connected. ${what} is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`;
+          : how === "confirmed"
+            ? `Confirmed. ${what} — the connection the person already had, ${executeTool} — now reaches ${connection.hosts.join(", ")}. Nothing was entered and no new connection was made; call the vendor again.`
+            : how === "scope"
+              ? `Allowed. ${what} is now in your scope; its execute tool is ${executeTool}. It is the connection the person already had, so nothing was entered and no new connection was made. Your tool list changed; re-fetch it.`
+              : how === "provider"
+                ? `Connected with no person step. ${what} is reachable through the API gateway this deployment is configured with (the ${connection.provider} provider), which holds the credential and receives every call; nothing was entered by anyone, and the scheme you proposed is not used. It is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`
+                : `Connected. ${what} is in your scope; its execute tool is ${executeTool}. Your tool list changed; re-fetch it.`;
   return {
     status: "connected",
     connectionId: connection.id,

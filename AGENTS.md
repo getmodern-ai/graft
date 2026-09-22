@@ -230,7 +230,8 @@ answers, with the keyring appended last — and the boot line names them (`provi
 provider (`packages/core/src/connection/provider.ts`) decides how a vendor gets connected (`form`
 over the proxy's schemes, `link`, or `none`), how a call resolves (`inject` the row's credential, or
 `relay` through an upstream that holds it), and what to release on revoke; `request_connection`
-routes a proposal to the first provider that covers it, and the proxy's connection read
+routes a proposal to the first provider that covers it — a `none`-scheme proposal past every link
+provider, to the keyring's keyless confirmation (GRA-166) — and the proxy's connection read
 (`apps/server/src/connections.ts`) asks the row's provider how the call resolves. **Coverage is
 async** (GRA-126): `covers(vendor, hosts)` and a link's `target` answer a promise, because a hosted
 provider decides coverage by asking its vendor's catalogue — which vendors it connects and at which
@@ -455,6 +456,16 @@ which answers `connected` naming the execute tool, or `scope_declined`. The ask 
 the same gate. `SERVER_INSTRUCTIONS` names `scope` in its handoff list, and `session.test.ts`
 pins the word across the description and the Hermes skill.
 
+**A keyless proposal for a vendor the person already holds widens that row** (GRA-167; ADR 0006 as
+amended 2026-09-22). When `existingConnectionFor` finds no row covering a `none`-scheme proposal
+but the person has a live, usable keyring row of the vendor on `none` in this agent's scope, the
+verdict is `widen` and `askToWiden` makes a `connection` ask about that row: the row's primary host
+and name, `hosts` grown to the union, `widens: { connectionId, addedHosts }` on the payload, the
+`connection_id` column set. `confirmConnectionAsk` reads `widens` and calls `@graft/core`'s
+`widenKeylessConnectionHosts` instead of registering a row; the agent's next call answers
+`connected` ("Confirmed. … now reaches …"). The console's card and the ask card draw the added
+hosts and no form. A keyed or revoked row, or one outside the scope, is never widened.
+
 **A person's connections reach every agent of theirs by default; scope is a narrowing the person
 opts into** (GRA-105; ADR 0007 as amended 2026-09-19). `agent.scope_mode` is `all` or `listed`
 (`agentScopeMode` in `packages/db/src/schema/agent.ts`; migration 0009 added the column as `listed`
@@ -614,18 +625,21 @@ table keeps its headers and a centered, muted full-width sentence, following Can
 table. Archiving is excluded from this branch; the detail page retains standalone revocation
 (ADR 0007, ADR 0018).
 
-**Agent harnesses** (GRA-135): the Harnesses column names `connectedVia.clientName`, recorded at
-OAuth consent (ADR 0018). Without a recorded harness it says "Not connected"; for an active agent
-that opens Connection details, also available in its actions menu. This label is a setup prompt,
-not a live connectivity check: static tokens carry no harness identity. The dialog shares creation's
-MCP instructions but cannot retrieve the token; the shell command uses a saved-token placeholder
-(ADR 0007). OAuth agents get the URL and consent instructions. Agent names are blue links to the
-standalone `/agents/:agentId` page. Every row's menu also has View agent, including revoked rows;
-the detail drawer is deferred. That page keeps scope and limit editors, the working set,
-approvals, history and standalone revocation reachable; revoked records are read-only.
-`GET /api/agents` includes `workingSetCount`, counted against each person-scoped agent in the same
-statement; the table shows count/cap with Cando's status dot. The dev-only `preview-agent-multiple`
-row previews three harness badges and a populated count; the API still records one OAuth origin.
+**Agent harnesses** (GRA-135, GRA-168): the Harnesses column names `connectedVia.clientName`,
+recorded at OAuth consent (ADR 0018). A static-token agent records no harness, so its cell is the
+prompt **Set up harness** while it is active and *Not recorded* once revoked — a prompt, never a
+claim about whether the harness is connected, since a Hermes that is running tools looks the same
+as one never configured. The prompt, the row's actions menu and the agent page's header button all
+open **Connect a harness** (`agent-connection-dialog.tsx`), named for what the person does: the
+word *connection* is a vendor account (CONTEXT.md) and the screen beside this one, and the dialog
+never says it. The dialog shares creation's setup (`harness-setup.tsx`: the URL, a harness
+picker, the token's place and the configuration in that harness's shape — GRA-152) but cannot
+retrieve the token; the token line carries a saved-token placeholder (ADR 0007). OAuth agents get
+the URL and consent instructions. Agent names are links to the standalone `/agents/:agentId` page,
+and every row's menu has View agent, revoked rows included; the detail drawer is deferred. That
+page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
+revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
+person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
@@ -648,7 +662,9 @@ carrying the key's behaviour as rows. A failed **query** toasts once with a work
 stacks, dismissed on the next success) beside the mutation toast; a read that fails before a screen
 draws toasts *and* shows the route boundary, as Cando's does. A screen-level empty is the `Empty`
 primitive without a frame of its own, with a sentence-case title without a full stop and short,
-concrete supporting copy; an in-card empty is one muted sentence. **Console copy has no em dashes.**
+concrete supporting copy — except where the screen *is* a table: there the empty is one muted
+full-width sentence inside the body, as Cando's connections table and the agents table (GRA-135)
+do, and the headers stay. An in-card empty is one muted sentence. **Console copy has no em dashes.**
 Text-input placeholders use sentence case and a clear prompt; examples belong in helper text.
 `PageContainer` gaps: `gap-4` under the header of a list screen, `gap-6` on a detail or settings screen
 with several regions, as Cando's connections and settings screens pass them.

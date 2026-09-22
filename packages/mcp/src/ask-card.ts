@@ -221,6 +221,7 @@ export function connectionAskCard(args: {
     answerable: connectionAskAnswerable(payload),
     provider: payload.provider,
     providerConnect,
+    ...(payload.widens ? { widens: payload.widens } : {}),
   };
 }
 
