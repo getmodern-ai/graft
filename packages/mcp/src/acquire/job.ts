@@ -1,4 +1,4 @@
-import { type ModuleFile, readModuleSources } from "@graft/check";
+import { type ModuleCheckResult, type ModuleFile, readModuleSources } from "@graft/check";
 import {
   type AgentScope,
   activateToolVersion,
@@ -49,7 +49,13 @@ import { blobIdOf } from "@graft/runner";
 import type { SandboxHandle } from "@graft/sandbox";
 import { draftPath, sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import { NO_ELICITATION } from "../approval";
-import { admitBlobs, blobBudgetEnvironment, blobRefsIn, judgeBlobRefs } from "../blob-door";
+import {
+  admitBlobs,
+  type BlobAdmission,
+  blobBudgetEnvironment,
+  blobRefsIn,
+  judgeBlobRefs,
+} from "../blob-door";
 import { recordWrittenBlobs } from "../blobs";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "../bounds";
 import type { McpDeps } from "../deps";
@@ -61,7 +67,7 @@ import {
   runModule,
   runWithCapability,
 } from "../run";
-import { commandEnvironment, errorMessage, openAgentSandbox } from "../sandbox";
+import { commandEnvironment, errorMessage, openAgentSandbox, seededRunnerPath } from "../sandbox";
 import { authoredToolName } from "../tool-names";
 import { EXECUTE_CLAIM } from "../tools/execute";
 import {
@@ -208,36 +214,6 @@ export function fixtureBlobText(jobId: string, tool: string): string {
   ].join("\n");
 }
 
-/**
- * The input fields a module reads a blob from, by a match over its source: `ctx.blob.read(input.x)`
- * or `ctx.blob.stat(input.x)`, with `input?.x` and `input["x"]` admitted too. A source match rather
- * than the check's scan, because the check records no use of a `ctx` member — it types the call and
- * moves no annotation for it (`@graft/check`) — and adding a channel from the check for one reader
- * would cost more than this regex, which is honest about what it sees: a ref read through a local
- * variable (`const ref = input.file; ctx.blob.read(ref)`) is not found, and the job says so rather
- * than guessing a field.
- */
-const BLOB_READ_FIELD =
-  /ctx\.blob\.(?:read|stat)\(\s*input(?:\?\.|\.)([A-Za-z_$][\w$]*)|ctx\.blob\.(?:read|stat)\(\s*input\[\s*["']([^"']+)["']\s*\]/g;
-const BLOB_READ_CALL = /ctx\.blob\.(?:read|stat)\(/;
-
-export function blobReadFieldsOf(files: readonly { path: string; content: string }[]): {
-  readsABlob: boolean;
-  fields: string[];
-} {
-  const fields = new Set<string>();
-  let readsABlob = false;
-  for (const file of files) {
-    if (!/\.(?:[cm]?[jt]s|[cm]?tsx?)$/.test(file.path)) continue;
-    if (BLOB_READ_CALL.test(file.content)) readsABlob = true;
-    for (const match of file.content.matchAll(BLOB_READ_FIELD)) {
-      const field = match[1] ?? match[2];
-      if (field) fields.add(field);
-    }
-  }
-  return { readsABlob, fields: [...fields] };
-}
-
 /** A copy of `value` with every string leaf in `refs` replaced by `ref`; arrays and objects walked as the door walks them. */
 export function substituteBlobRefs(
   value: unknown,
@@ -285,6 +261,13 @@ type OpenAttempt = {
   proofSummary: string | null;
   /** Whether a `proceed` over a failed read has been refused once already (GRA-72). */
   proceedRefused: boolean;
+  /**
+   * The check's result once it accepted the draft (GRA-190): what of `ctx` the module calls and
+   * which input field a blob ref is read from, read off the module's syntax by the one parser
+   * (`@graft/check`), so the dry run's fixture is decided on a call and never on a comment or a
+   * string that spells one (Greptile on #149). Null until the check has passed.
+   */
+  check: ModuleCheckResult | null;
 };
 
 /**
@@ -785,6 +768,7 @@ class AcquireLoop {
       proofFailed: false,
       proofSummary: null,
       proceedRefused: false,
+      check: null,
     };
     this.open = attempt;
     await this.trace(
@@ -820,6 +804,7 @@ class AcquireLoop {
       annotations: checked.annotations,
     };
     if (checked.refusals.length === 0) {
+      attempt.check = checked;
       await this.trace(
         "check",
         `Check passed attempt ${attempt.number}: read-only ${checked.annotations.readOnly}, destructive ${checked.annotations.destructive}${checked.advice.length ? `, ${checked.advice.length} piece(s) of advice` : ""}.`,
@@ -1289,8 +1274,9 @@ class AcquireLoop {
    *     run, so a dead ref costs no publish-and-refuse round; a live ref is used as it is, and the
    *     dry run's door judges it again. Every dead one — `blob_not_found` or `blob_expired` — is
    *     replaced by one fixture blob's ref.
-   *  2. The test input names none and the module reads a blob from `input.<field>`
-   *     (`blobReadFieldsOf`, a source match): a fixture is minted and set as each such field.
+   *  2. The test input names none and the check saw the module call `ctx.blob.read` or `stat`
+   *     (`contextMembersUsed`) on `input.<field>` (`blobReadFields`): a fixture is minted and set
+   *     as each such field. The check's syntax, never a match over the source.
    *  3. Neither: the test input, as given.
    *
    * The fixture is minted through the runner like any blob (`mintFixtureBlob`), gets its row, and
@@ -1300,8 +1286,11 @@ class AcquireLoop {
    * optimisation), so two attempts of one job write two fixtures, each swept on its TTL.
    */
   private async dryRunInput(attempt: OpenAttempt, wire: string): Promise<Record<string, unknown>> {
-    const { testInput, files } = attempt.draft;
-    const refs = blobRefsIn(testInput);
+    const { testInput } = attempt.draft;
+    const { refs, tooDeep } = blobRefsIn(testInput);
+    // Past the door's depth bound, nothing is substituted: the dry run's door refuses the input
+    // as `input_invalid`, and that is the sentence the model should read (`blob-door.ts`).
+    if (tooDeep) return testInput;
     if (refs.length > 0) {
       const ids = refs.map(blobIdOf).filter((id): id is string => id !== null);
       const rows = await getBlobs(this.ctx, this.scope, ids, this.deps.blob);
@@ -1329,26 +1318,27 @@ class AcquireLoop {
         fixture.ref,
       ) as Record<string, unknown>;
     }
-    const reads = blobReadFieldsOf(files);
-    if (!reads.readsABlob) return testInput;
-    if (reads.fields.length === 0) {
-      // The module reads a blob through something the match cannot follow, so there is no field
-      // to put a fixture in. Said, and the run goes ahead: the runner's own `blob_not_found`
-      // reaches the model as the module's error, which is true.
+    const members = attempt.check?.contextMembersUsed ?? [];
+    if (!members.includes("blob.read") && !members.includes("blob.stat")) return testInput;
+    const fields = attempt.check?.blobReadFields ?? [];
+    if (fields.length === 0) {
+      // The module reads a blob through something the check cannot follow to an input field, so
+      // there is no field to put a fixture in. Said, and the run goes ahead: the runner's own
+      // `blob_not_found` reaches the model as the module's error, which is true.
       await this.progress(
-        `Attempt ${attempt.number}: the module reads a blob, but the test input names no blob:// ref and the job cannot tell from the source which input field carries it, so the dry run runs with the test input as given.`,
+        `Attempt ${attempt.number}: the module reads a blob, but the test input names no blob:// ref and the check cannot tell which input field carries it, so the dry run runs with the test input as given.`,
       );
       return testInput;
     }
     const fixture = await this.mintFixtureBlob(attempt, wire);
     if (!fixture) return testInput;
-    const named = reads.fields.map((field) => `input.${field}`).join(", ");
+    const named = fields.map((field) => `input.${field}`).join(", ");
     await this.progress(
       `Attempt ${attempt.number}: the test input names no blob and the module reads one from ${named}, so a fixture blob (${fixture.bytes} bytes of ${FIXTURE_BLOB_CONTENT_TYPE}, ${FIXTURE_BLOB_NAME}) stands in as ${named} in the dry run's input alone; the test input itself is unchanged.`,
     );
     return {
       ...testInput,
-      ...Object.fromEntries(reads.fields.map((field) => [field, fixture.ref])),
+      ...Object.fromEntries(fields.map((field) => [field, fixture.ref])),
     };
   }
 
@@ -1374,6 +1364,23 @@ class AcquireLoop {
       );
       return null;
     }
+    // The budget is outstanding until the write has settled, as a run's is (`run.ts`; Greptile on
+    // #149): a run admitted for this agent meanwhile is handed the remainder after this grant, so
+    // two writes cannot share one remainder.
+    const releaseGrant = this.deps.inFlight?.grant(this.scope.agentId, door.admission.budgetBytes);
+    try {
+      return await this.writeFixtureBlob(attempt, wire, door.admission);
+    } finally {
+      releaseGrant?.();
+    }
+  }
+
+  /** The fixture's write under its grant: the module onto the sandbox once, one run, one row. */
+  private async writeFixtureBlob(
+    attempt: OpenAttempt,
+    wire: string,
+    admission: BlobAdmission,
+  ): Promise<{ ref: string; bytes: number } | null> {
     const handle = await this.sandbox();
     if (!this.fixtureWritten) {
       await handle.writeTree(
@@ -1393,10 +1400,10 @@ class AcquireLoop {
       modulePath: sandboxPath(fixturePath(this.job.id)),
       input: { text, contentType: FIXTURE_BLOB_CONTENT_TYPE, name: FIXTURE_BLOB_NAME },
       env: {
-        ...commandEnvironment(DEFAULT_COMMAND_TIMEOUT_SECONDS),
+        ...commandEnvironment(DEFAULT_COMMAND_TIMEOUT_SECONDS, await seededRunnerPath(this.deps)),
         // For the sidecar (the runner's header; ADR 0023), never for a path.
         GRAFT_AGENT: this.scope.agentId,
-        ...blobBudgetEnvironment(door.admission),
+        ...blobBudgetEnvironment(admission),
       },
       mode,
     });

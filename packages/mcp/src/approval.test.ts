@@ -168,6 +168,8 @@ beforeAll(async () => {
       refusals: [],
       advice: [],
       annotations: { readOnly: true, destructive: false },
+      contextMembersUsed: [],
+      blobReadFields: [],
     }),
     runnerFiles,
     skills: loadSkills,

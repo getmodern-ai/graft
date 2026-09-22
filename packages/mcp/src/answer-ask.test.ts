@@ -166,6 +166,8 @@ beforeEach(() => {
       refusals: [],
       advice: [],
       annotations: { readOnly: true, destructive: false },
+      contextMembersUsed: [],
+      blobReadFields: [],
     }),
     runnerFiles: async () => [],
     skills: async () => [],

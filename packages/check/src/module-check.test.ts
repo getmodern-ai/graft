@@ -96,12 +96,26 @@ const rules = (diagnostics: Diagnostic[]) => diagnostics.map((d) => d.rule);
 describe("a clean module", () => {
   it("passes in TypeScript with no refusals and no advice, annotated as a write", () => {
     const result = check({ "index.ts": CLEAN_TS });
-    expect(result).toEqual({ entry: "index.ts", refusals: [], advice: [], annotations: WRITE });
+    expect(result).toEqual({
+      entry: "index.ts",
+      refusals: [],
+      advice: [],
+      annotations: WRITE,
+      contextMembersUsed: ["fetch"],
+      blobReadFields: [],
+    });
   });
 
   it("passes in JavaScript, checked as JavaScript, with a JSDoc-typed helper beside it", () => {
     const result = check({ "index.mjs": CLEAN_MJS, "helper.mjs": HELPER_MJS });
-    expect(result).toEqual({ entry: "index.mjs", refusals: [], advice: [], annotations: WRITE });
+    expect(result).toEqual({
+      entry: "index.mjs",
+      refusals: [],
+      advice: [],
+      annotations: WRITE,
+      contextMembersUsed: ["fetch"],
+      blobReadFields: [],
+    });
   });
 
   it("may use Node's globals, Node's built-ins and a catch variable without ceremony", () => {
@@ -169,6 +183,138 @@ describe("a clean module", () => {
     expect(result.refusals).toEqual([]);
     expect(result.advice).toEqual([]);
     expect(result.annotations).toEqual(READ);
+    // The members called, sorted; the refs read here are locals, so no input field is named.
+    expect(result.contextMembersUsed).toEqual(["blob.read", "blob.stat", "blob.write", "fetch"]);
+    expect(result.blobReadFields).toEqual([]);
+  });
+
+  /**
+   * What `acquire`'s job decides a consuming tool's fixture on (GRA-190; Greptile on #149): a
+   * call, read off the syntax, and never a name that appears in a comment or a string.
+   */
+  it("reports the ctx members called and the input field a blob ref is read from, off calls alone: a name in a comment or a string is not one", () => {
+    const commented = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        "  // ctx.blob.read(input.notes) is what a consuming tool would do; this one posts the ref as text.",
+        '  const note = "ctx.blob.read(input.notes) and ctx.blob.stat(input.itemId)";',
+        `  const res = await ctx.fetch("/notes", { method: "POST", body: JSON.stringify({ note, ${READS_INPUT} }) });`,
+        "  return res.json();",
+        "};",
+      ].join("\n"),
+    });
+    expect(commented.refusals).toEqual([]);
+    expect(commented.contextMembersUsed).toEqual(["fetch"]);
+    expect(commented.blobReadFields).toEqual([]);
+
+    // Three refs on the input, each a required string, so the reads type-check and no field is unread.
+    const REFS_SCHEMA = {
+      type: "object",
+      properties: {
+        file: { type: "string" },
+        attachment: { type: "string" },
+        note: { type: "string" },
+      },
+      required: ["file", "attachment", "note"],
+    };
+    const reads = check(
+      {
+        "index.ts": [
+          "export default async (input: Input, ctx: Context) => {",
+          "  const file: Blob = await ctx.blob.read(input.file);",
+          '  const stat = await ctx.blob.stat(input?.["attachment"]);',
+          "  const ref = input.note;",
+          "  const again: Blob = await (ctx).blob.read((ref));",
+          "  return { size: file.size, bytes: stat.bytes, again: again.size, base: ctx.proxyBase() };",
+          "};",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(reads.refusals).toEqual([]);
+    expect(reads.contextMembersUsed).toEqual(["blob.read", "blob.stat", "proxyBase"]);
+    // `file` and `attachment` off `input`; the read through `ref` names no field.
+    expect(reads.blobReadFields).toEqual(["file", "attachment"]);
+
+    // The export's first parameter is what "input" means, whatever it is called.
+    const renamed = check(
+      {
+        "index.ts": [
+          "export default async (args: Input, ctx: Context) => {",
+          "  const file: Blob = await ctx.blob.read(args.file);",
+          "  return { size: file.size, a: args.attachment, n: args.note };",
+          "};",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(renamed.blobReadFields).toEqual(["file"]);
+
+    // Bound by symbol, not by name (Greptile on #149, the second time): a helper of the module's
+    // own with a `.blob.read`, a helper file handed `ctx`, and a nested function whose parameters
+    // shadow `ctx` and `input` all resolve to other symbols and record nothing.
+    const helpers = check(
+      {
+        "index.ts": [
+          'import { readThrough } from "./helper.ts";',
+          "export default async (input: Input, ctx: Context) => {",
+          "  const helper = { blob: { read: async (ref: string): Promise<Blob> => new Blob([ref]) } };",
+          "  const a: Blob = await helper.blob.read(input.file);",
+          "  const b: Blob = await readThrough(ctx, input);",
+          "  const inner = async (input: { note: string }, ctx: Context) => ctx.blob.stat(input.note);",
+          "  const c = await inner({ note: input.note }, ctx);",
+          "  return { a: a.size, b: b.size, c: c.bytes, attachment: input.attachment };",
+          "};",
+        ].join("\n"),
+        "helper.ts": [
+          "export async function readThrough(ctx: Context, input: Input): Promise<Blob> {",
+          "  return ctx.blob.read(input.attachment);",
+          "}",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(helpers.refusals).toEqual([]);
+    expect(helpers.contextMembersUsed).toEqual([]);
+    expect(helpers.blobReadFields).toEqual([]);
+
+    // One level of destructuring is followed on either side: the parameters, and the body.
+    const destructured = check(
+      {
+        "index.ts": [
+          "export default async ({ file, attachment }: Input, { blob, fetch: get }: Context) => {",
+          "  const a: Blob = await blob.read(file);",
+          '  const res = await get("/items");',
+          "  return { a: a.size, ok: res.ok, s: (await blob.stat(attachment)).bytes };",
+          "};",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(destructured.refusals).toEqual([]);
+    expect(destructured.contextMembersUsed).toEqual(["blob.read", "blob.stat", "fetch"]);
+    expect(destructured.blobReadFields).toEqual(["file", "attachment"]);
+
+    const inBody = check(
+      {
+        "index.ts": [
+          "export default async (input: Input, ctx: Context) => {",
+          "  const { blob } = ctx;",
+          "  const { note } = input;",
+          "  const alias = ctx.blob;",
+          "  const a: Blob = await blob.read(note);",
+          "  const b: Blob = await alias.read(input.file);",
+          "  return { a: a.size, b: b.size, attachment: input.attachment };",
+          "};",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(inBody.refusals).toEqual([]);
+    // `blob.read(note)` through the two destructurings is a read of `note`; `alias.read` through a
+    // plain variable is not followed, so `file` is not named.
+    expect(inBody.contextMembersUsed).toEqual(["blob.read"]);
+    expect(inBody.blobReadFields).toEqual(["note"]);
   });
 
   it("refuses a blob written from a string: the runner takes bytes, and the check says so first", () => {
@@ -1187,6 +1333,8 @@ describe("the entry", () => {
       refusals: [],
       advice: [],
       annotations: READ,
+      contextMembersUsed: [],
+      blobReadFields: [],
     });
   });
 });
@@ -1246,7 +1394,14 @@ describe("checkModule", () => {
       entry: "index.ts",
       inputSchema: SCHEMA,
     });
-    expect(result).toEqual({ entry: "index.ts", refusals: [], advice: [], annotations: WRITE });
+    expect(result).toEqual({
+      entry: "index.ts",
+      refusals: [],
+      advice: [],
+      annotations: WRITE,
+      contextMembersUsed: ["fetch"],
+      blobReadFields: [],
+    });
 
     const vendored = await checkModule({
       files: [
@@ -1305,6 +1460,8 @@ describe("checkModule", () => {
       refusals: [expect.objectContaining({ rule: "entry-missing", file: "a.ts" })],
       advice: [],
       annotations: UNKNOWN_ANNOTATIONS,
+      contextMembersUsed: [],
+      blobReadFields: [],
     });
   });
 });

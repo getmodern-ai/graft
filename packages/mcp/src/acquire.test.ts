@@ -19,7 +19,7 @@ import {
   type PublishOutcome,
   publishToolVersion,
 } from "@graft/publish";
-import { loadSkills, runnerFiles } from "@graft/runner";
+import { BLOB_QUOTA_BYTES, loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -29,16 +29,12 @@ import {
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import {
-  blobReadFieldsOf,
-  FIXTURE_BLOB_CONTENT_TYPE,
-  FIXTURE_BLOB_NAME,
-  substituteBlobRefs,
-} from "./acquire/job";
+import { FIXTURE_BLOB_CONTENT_TYPE, FIXTURE_BLOB_NAME, substituteBlobRefs } from "./acquire/job";
 import { type AcquireRunner, type AcquireRunnerEvent, createAcquireRunner } from "./acquire/runner";
 import type { AcquireFailure, AcquireStatus, AcquireSuccess } from "./acquire/shapes";
+import { admitBlobs } from "./blob-door";
 import type { McpDeps } from "./deps";
-import { createInFlightRegistry } from "./in-flight";
+import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier } from "./notifier";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
@@ -165,6 +161,31 @@ const UPLOAD_FILE_SCHEMA = {
 };
 const UPLOAD_FILE = authoredToolName("demo", "upload-file");
 
+/**
+ * A module that spells `ctx.blob.read(input.file)` in a comment and in a string and calls nothing
+ * of the kind (Greptile on #149): the check reads calls, so the job mints no fixture for it.
+ */
+const NOTE_ONLY_MODULE = [
+  "export default async (input: Input, ctx: Context) => {",
+  "  // ctx.blob.read(input.file) would open the blob; this draft posts the channel alone.",
+  '  const note = "ctx.blob.read(input.file)";',
+  '  const res = await ctx.fetch("/files/upload", {',
+  '    method: "POST",',
+  '    headers: { "content-type": "application/json" },',
+  "    body: JSON.stringify({ channel: input.channel, note }),",
+  "  });",
+  `  if (!res.ok) throw new Error(\`POST /files/upload ${D}{res.status}\`);`,
+  "  return { status: res.status };",
+  "};",
+  "",
+].join("\n");
+const NOTE_ONLY_SCHEMA = {
+  type: "object",
+  properties: { channel: { type: "string" } },
+  required: ["channel"],
+  additionalProperties: false,
+};
+
 function uploadDraft(testInput: Record<string, unknown>): ModuleDraft {
   return {
     name: "upload-file",
@@ -202,6 +223,8 @@ const FAKE_CHECK: ModuleCheck = async (input) => ({
   refusals: [],
   advice: [],
   annotations: { readOnly: true, destructive: false },
+  contextMembersUsed: [],
+  blobReadFields: [],
 });
 
 let sandbox: FakeSandboxBackend;
@@ -341,6 +364,8 @@ beforeAll(async () => {
     refusals: [],
     advice: [],
     annotations: { readOnly: true, destructive: false },
+    contextMembersUsed: [],
+    blobReadFields: [],
   });
 
   const fake = createFakeDeps(store);
@@ -870,6 +895,8 @@ describe("a job that fails and tries again", () => {
       ],
       advice: [],
       annotations: { readOnly: false, destructive: true },
+      contextMembersUsed: [],
+      blobReadFields: [],
     }) as never;
 
   /**
@@ -2112,6 +2139,8 @@ describe("what the rows hold", () => {
         refusals: [],
         advice: [],
         annotations: { readOnly: true, destructive: false },
+        contextMembersUsed: [],
+        blobReadFields: [],
       });
       await a.close();
     }
@@ -2201,6 +2230,8 @@ describe("what the rows hold", () => {
         refusals: [],
         advice: [],
         annotations: { readOnly: true, destructive: false },
+        contextMembersUsed: [],
+        blobReadFields: [],
       });
       await a.close();
     }
@@ -2233,29 +2264,6 @@ describe("a tool that moves a file (GRA-190)", () => {
       moduleResult: Record<string, unknown> | null;
     };
   };
-
-  it("finds the field a module reads a blob from, and only that", () => {
-    const module = (body: string) => [{ path: "index.ts", content: body }];
-    expect(blobReadFieldsOf(module(UPLOAD_FILE_MODULE))).toEqual({
-      readsABlob: true,
-      fields: ["file"],
-    });
-    expect(
-      blobReadFieldsOf(
-        module('await ctx.blob.stat(input?.attachment); await ctx.blob.read(input["report"]);'),
-      ),
-    ).toEqual({ readsABlob: true, fields: ["attachment", "report"] });
-    // Read through a variable: the module reads a blob, and the field is not the match's to name.
-    expect(blobReadFieldsOf(module("const ref = input.file; await ctx.blob.read(ref);"))).toEqual({
-      readsABlob: true,
-      fields: [],
-    });
-    expect(blobReadFieldsOf(module(EXPORT_FILE_MODULE))).toEqual({ readsABlob: false, fields: [] });
-    // A `package.json` beside the module is not source.
-    expect(
-      blobReadFieldsOf([{ path: "package.json", content: '{"x":"ctx.blob.read(input.a)"}' }]),
-    ).toEqual({ readsABlob: false, fields: [] });
-  });
 
   it("substitutes every dead ref, nested included, and nothing else", () => {
     const dead = new Set([DEAD_REF]);
@@ -2413,6 +2421,24 @@ describe("a tool that moves a file (GRA-190)", () => {
     ]);
     const a = await connect(TOKEN_A);
     const blobsBefore = store.blobs.length;
+    // Every budget grant the job takes, with what an admission made while it was held would get
+    // (Greptile on #149): the fixture's write reserves its budget as a run does.
+    const registry = deps.inFlight as InFlightRegistry;
+    const grants: { bytes: number; outstanding: number; overlapping: Promise<number> }[] = [];
+    deps.inFlight = {
+      ...registry,
+      grant: (agentId, bytes) => {
+        const release = registry.grant(agentId, bytes);
+        grants.push({
+          bytes,
+          outstanding: registry.outstandingBudget(agentId),
+          overlapping: admitBlobs(deps, { personId: PERSON, agentId }, {}).then((door) =>
+            door.ok ? door.admission.budgetBytes : -1,
+          ),
+        });
+        return release;
+      },
+    };
     try {
       const { status, jobId } = await acquireAndFinish(a, {
         connectionId: CONN_DEMO,
@@ -2424,6 +2450,23 @@ describe("a tool that moves a file (GRA-190)", () => {
       expect(line).toMatch(
         /^Attempt 1: the test input names no blob and the module reads one from input\.file, so a fixture blob \(\d+ bytes of text\/plain, fixture\.txt\) stands in as input\.file in the dry run's input alone; the test input itself is unchanged\.$/,
       );
+      // Two grants: the fixture's, then the dry run's. The fixture's was the whole remainder and
+      // outstanding while it wrote, so an admission overlapping it got what was left after it;
+      // the dry run's, taken after the release, is the remainder after the fixture's bytes alone.
+      expect(grants).toHaveLength(2);
+      const [fixtureGrant, dryRunGrant] = grants as [
+        (typeof grants)[number],
+        (typeof grants)[number],
+      ];
+      expect(fixtureGrant.outstanding).toBe(fixtureGrant.bytes);
+      expect(fixtureGrant.bytes).toBeGreaterThan(0);
+      expect(await fixtureGrant.overlapping).toBe(
+        Math.max(
+          0,
+          BLOB_QUOTA_BYTES - (BLOB_QUOTA_BYTES - fixtureGrant.bytes) - fixtureGrant.bytes,
+        ),
+      );
+      expect(dryRunGrant.outstanding).toBe(dryRunGrant.bytes);
       // One row for the fixture: the agent's, a few hundred bytes of text, no version, the normal TTL.
       const rows = store.blobs.slice(blobsBefore);
       expect(rows).toHaveLength(1);
@@ -2438,6 +2481,7 @@ describe("a tool that moves a file (GRA-190)", () => {
       });
       expect(fixture?.bytes).toBeGreaterThan(200);
       expect(fixture?.bytes).toBeLessThan(1_000);
+      expect(dryRunGrant.bytes).toBe(fixtureGrant.bytes - (fixture?.bytes ?? 0));
       expect((fixture?.expiresAt.getTime() ?? 0) - Date.now()).toBeGreaterThan(23 * 60 * 60 * 1000);
       expect(line).toContain(`(${fixture?.bytes} bytes of`);
       // Written through the same path as any blob: the directory under the agent's mount, whole.
@@ -2465,6 +2509,43 @@ describe("a tool that moves a file (GRA-190)", () => {
       ]);
       // The substitution was the dry run's alone.
       expect(draft.testInput).toEqual({ channel: "finance" });
+    } finally {
+      deps.inFlight = registry;
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+    }
+  }, 60_000);
+
+  it("(e) a module that spells ctx.blob.read in a comment and a string, and calls nothing of the kind, mints no fixture", async () => {
+    deps.checkModule = checkModule;
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        {
+          name: "post-note",
+          description: "Posts a note to a Demo Orders channel.",
+          inputSchema: NOTE_ONLY_SCHEMA,
+          files: [{ path: "index.ts", content: NOTE_ONLY_MODULE }],
+          testInput: { channel: "finance" },
+          proofReads: [],
+        },
+        "Drafted post-note; it reads no blob.",
+      ),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Post a note to a channel",
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      expect(status.progress.join("\n")).not.toContain("fixture");
+      expect(store.blobs).toHaveLength(blobsBefore);
+      const { traces } = rowsOf(jobId);
+      expect(traces.map((row) => row.text).join("\n")).not.toContain("fixture");
+      expect(dryRunOf(jobId).passed).toBe(true);
     } finally {
       deps.checkModule = FAKE_CHECK;
       await a.close();

@@ -31,24 +31,39 @@ import { type Refusal, refusal } from "./result";
  * same door so `acquire`'s job learns of a dead ref here.
  */
 
-/** Every distinct `blob://` string leaf of a value, in walk order. */
-export function blobRefsIn(input: unknown): string[] {
+/**
+ * How deep an input may nest before the door refuses it as `input_invalid` (Greptile on #149): the
+ * walk below is iterative, so a deep input can never overflow the stack, and the bound is what
+ * keeps a pathological input from being walked at all. Sixty-four levels is far past any tool's
+ * schema and far short of anything that costs.
+ */
+export const MAX_INPUT_DEPTH = 64;
+
+/**
+ * Every distinct `blob://` string leaf of a value, in walk order, and whether the walk stopped at a
+ * value nested past `MAX_INPUT_DEPTH`: an explicit stack rather than recursion, so the depth of
+ * the input is never the depth of the call stack, and `tooDeep` is the caller's to refuse
+ * (`admitBlobs` answers `input_invalid`; `acquire`'s job leaves the dry run's door to say so).
+ */
+export function blobRefsIn(input: unknown): { refs: string[]; tooDeep: boolean } {
   const refs = new Set<string>();
-  const walk = (value: unknown) => {
+  const stack: { value: unknown; depth: number }[] = [{ value: input, depth: 0 }];
+  while (stack.length > 0) {
+    const { value, depth } = stack.pop() as { value: unknown; depth: number };
     if (typeof value === "string") {
       if (value.startsWith(BLOB_REF_SCHEME)) refs.add(value);
-      return;
+      continue;
     }
-    if (Array.isArray(value)) {
-      for (const item of value) walk(item);
-      return;
+    if (typeof value !== "object" || value === null) continue;
+    if (depth >= MAX_INPUT_DEPTH) return { refs: [...refs], tooDeep: true };
+    // Pushed in reverse, so the pop order is the input's own: walk order is what the refusal's
+    // "first dead ref" means (`judgeBlobRefs`).
+    const items = Array.isArray(value) ? value : Object.values(value);
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      stack.push({ value: items[i], depth: depth + 1 });
     }
-    if (typeof value === "object" && value !== null) {
-      for (const item of Object.values(value)) walk(item);
-    }
-  };
-  walk(input);
-  return [...refs];
+  }
+  return { refs: [...refs], tooDeep: false };
 }
 
 const MIB = 1024 * 1024;
@@ -134,12 +149,22 @@ export async function admitBlobs(
   if (quota) return { ok: false, refusal: quota };
   const outstanding = deps.inFlight?.outstandingBudget(scope.agentId) ?? 0;
   const admission = { budgetBytes: Math.max(0, BLOB_QUOTA_BYTES - live - outstanding) };
-  const refs = blobRefsIn(input);
+  const { refs, tooDeep } = blobRefsIn(input);
+  if (tooDeep) {
+    return {
+      ok: false,
+      refusal: refusal(
+        "input_invalid",
+        `The input nests more than ${MAX_INPUT_DEPTH} levels deep, which no tool's schema calls for; flatten it.`,
+        { maxDepth: MAX_INPUT_DEPTH },
+      ),
+    };
+  }
   if (refs.length === 0) return { ok: true, admission };
   const ids = refs.map(blobIdOf).filter((id): id is string => id !== null);
   const rows = await getBlobs(ctx, scope, ids, deps.blob);
-  const refusal = judgeBlobRefs(refs, rows, deps.blob.now());
-  return refusal ? { ok: false, refusal } : { ok: true, admission };
+  const dead = judgeBlobRefs(refs, rows, deps.blob.now());
+  return dead ? { ok: false, refusal: dead } : { ok: true, admission };
 }
 
 /**

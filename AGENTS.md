@@ -742,11 +742,17 @@ the ref goes in the result and that a consuming input takes it as a plain string
 refusal names; `skills.test.ts` pins its sentences to the runner's constants. **A consuming tool's
 dry run has a blob to read**: `job.ts`'s `dryRunInput` judges the test input's refs with the door's
 own functions before the dry run and, for a dead one, or for none where the module reads
-`ctx.blob.read(input.<field>)` (`blobReadFieldsOf`, a source match, since the check records no use
-of a `ctx` member), mints a **fixture blob** through the runner (`FIXTURE_MODULE` beside the probe:
+`ctx.blob.read(input.<field>)` (the check's `contextMembersUsed` and `blobReadFields`, bound by the
+checker to the default export's two parameters, one level of destructuring followed, so a name in a
+comment, a helper's own `.blob.read`, a helper file or a shadowing nested function records
+nothing), mints a
+**fixture blob** through the runner under a budget grant held and released as a run's is
+(`FIXTURE_MODULE` beside the probe:
 a few hundred bytes of `text/plain` named `fixture.txt`, the agent's, the normal TTL, a row with no
 version) and substitutes its ref in the dry run's input alone, saying so in an `Attempt N:` line;
-the draft's `testInput` is never written, and fixtures are never reused across jobs. The rule on
+the draft's `testInput` is never written, and fixtures are never reused across jobs. The door's
+`blobRefsIn` walks an input with a stack, never the call stack, and one nested past
+`MAX_INPUT_DEPTH` (64) is refused `input_invalid` naming the bound. The rule on
 the wire is `session.ts`'s `BLOB_RULE`, in `run_tool`'s paragraph and word for word in the Hermes
 skill: a file moves between tools as a `blob://` ref, never as content, and the producing tool runs
 before the consuming one is acquired. The budget was measured first (2,045 of 2,048) and the clause
