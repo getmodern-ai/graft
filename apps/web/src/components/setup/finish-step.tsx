@@ -126,7 +126,7 @@ export function FinishStep({
             ? `Put ${agentName}'s token and the configuration into ${entry?.label}, then paste the prompt as your first message.`
             : variant === "oauth"
               ? `Add Graft to ${entry?.label}, connect as ${agentName}, then paste the prompt as your first message.`
-              : `${agentName} is already connected to its harness, so there is nothing to set up. Ask for what the tool does in the chat.`
+              : `${agentName} is already connected, so there is nothing to set up. Ask for what the tool does in the chat.`
         }
       />
 

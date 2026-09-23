@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError, api } from "@/lib/api";
+import { connectedSettledSentence, connectedToastDescription } from "@/lib/ask-answered-copy";
 import { type Connection, connectionKeys } from "@/lib/connection-queries";
 import { openConsentPopup } from "@/lib/oauth-consent";
 import {
@@ -65,7 +66,7 @@ export function ProviderLinkAskCard({
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
-  const decline = useAnswerAsk(action, onAnswered);
+  const decline = useAnswerAsk(action, onAnswered, origin);
   const [state, setState] = useState<LinkState>({ phase: "idle" });
   const [approveBuild, setApproveBuild] = useState(true);
   const stop = useRef<AbortController | null>(null);
@@ -81,13 +82,13 @@ export function ProviderLinkAskCard({
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       if (outcome === "connected") {
         toast.success(`${payload.displayName} is connected through ${provider}`, {
-          description: `In ${agentName}'s scope${approveBuild ? ", allowed to build tools against it" : ""}; its waiting call answers connected. The account's token stays with ${provider}.`,
+          description: connectedToastDescription({ origin, agentName, approveBuild, provider }),
         });
         onAnswered?.();
       }
       return connectionId;
     },
-    [queryClient, payload.displayName, provider, agentName, approveBuild, onAnswered],
+    [queryClient, payload.displayName, provider, agentName, approveBuild, onAnswered, origin],
   );
 
   const start = useMutation({
@@ -148,8 +149,7 @@ export function ProviderLinkAskCard({
       settled={(recorded) =>
         typeof recorded?.connectionId === "string" ? (
           <>
-            Connected through {provider}. The connection is in the agent's scope and its waiting
-            call answers connected; the account's token stays with {provider}.{" "}
+            {connectedSettledSentence({ origin, provider })}{" "}
             <Link to="/connections" className="underline underline-offset-4">
               See connections
             </Link>
