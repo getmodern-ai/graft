@@ -23,12 +23,13 @@ const PERSON = "person_1";
 const CONSOLE_ORIGIN = "http://localhost";
 
 /**
- * `hooks.beforeLock`, once armed, runs at the next `lockSetup` before the record is read, and is
- * disarmed first: how a test lands another tab's requests between a read's judgement and its move.
+ * `hooks.locks` is a queue with one entry per coming `lockSetup`: each lock shifts its entry and, when
+ * it is a function, runs it before the record is read. How a test lands another tab's requests at
+ * the moment one request takes the lock, before Postgres would have let them in.
  */
 function inMemorySetup(
   now: () => Date,
-  hooks: { beforeLock?: (() => Promise<void>) | null } = {},
+  hooks: { locks: Array<(() => Promise<void>) | null> } = { locks: [] },
 ): SetupDeps {
   let record: SetupRow | null = null;
   const save = (patch: SetupPatch): SetupRow => {
@@ -56,8 +57,7 @@ function inMemorySetup(
   return {
     findSetup: async () => record,
     lockSetup: async () => {
-      const hook = hooks.beforeLock;
-      hooks.beforeLock = null;
+      const hook = hooks.locks.shift();
       if (hook) await hook();
       return record ?? save({});
     },
@@ -80,21 +80,7 @@ function harness(
 ) {
   const store = createFakeStore();
   const fake = createFakeDeps(store);
-  const hooks: {
-    beforeLock?: (() => Promise<void>) | null;
-    /** Once armed, runs after the next take of an answer, and is disarmed first. */
-    afterConsume?: (() => Promise<void>) | null;
-  } = {};
-  const pendingAction: typeof fake.pendingAction = {
-    ...fake.pendingAction,
-    consumePendingAction: async (...args) => {
-      const taken = await fake.pendingAction.consumePendingAction(...args);
-      const hook = hooks.afterConsume;
-      hooks.afterConsume = null;
-      if (hook) await hook();
-      return taken;
-    },
-  };
+  const hooks: { locks: Array<(() => Promise<void>) | null> } = { locks: [] };
   let chain: Promise<unknown> = Promise.resolve();
   const db = options.serialTransactions
     ? {
@@ -130,7 +116,7 @@ function harness(
         tool: fake.tool,
         ledger: fake.ledger,
         approval: fake.approval,
-        pendingAction,
+        pendingAction: fake.pendingAction,
         modelKey: fakeModelKeyDeps(),
         setup: inMemorySetup(() => store.now(), hooks),
       },
@@ -471,30 +457,61 @@ describe("POST /api/setup/connect", () => {
     expect(await read(res)).toMatchObject({ step: "vendor", setup: { pendingActionId: null } });
   });
 
-  it("keeps a newer ask another tab opened while a stale answer was being routed past", async () => {
-    const h = harness();
+  /** Open-Meteo confirmed, then taken out of a listed scope before Setup reads the answer. */
+  async function staleOpenMeteo(h: ReturnType<typeof harness>) {
     const agentId = await started(h);
     const staleAskId = await openMeteoAsk(h);
     await confirmKeyless(h, staleAskId);
-    // The answer's connection leaves a listed scope before Setup reads it.
     await h.app.request(`/api/agents/${agentId}/scope`, {
       ...post({ mode: "listed", connectionIds: [] }),
       method: "PUT",
     });
-    // Choosing Open-Meteo again is handed the answered ask back, takes it as stale and routes once
-    // more; before that second routing moves the record, another tab chooses GitHub.
+    return staleAskId;
+  }
+
+  it("routes past a stale answer to a scope ask, even where a poll reopened the record first", async () => {
+    const h = harness();
+    const staleAskId = await staleOpenMeteo(h);
+    // Choosing Open-Meteo again is handed the answered ask back (the first lock, the ask's move).
+    // Before this request's reopen takes the lock, the connect step's poll reads the same answer,
+    // judges it stale, takes it and reopens the record.
+    h.hooks.locks = [
+      null,
+      async () => {
+        expect((await read(await h.app.request("/api/setup"))).step).toBe("vendor");
+      },
+    ];
+    const res = await h.app.request("/api/setup/connect", post({ starterId: "open-meteo" }));
+    expect(res.status).toBe(200);
+    const state = await read(res);
+    // The person's choice was in flight: the second routing's scope ask lands on the record.
+    expect(state.step).toBe("connect");
+    expect(state.setup.pendingActionId).not.toBe(staleAskId);
+    expect(h.store.pendingActions.get(state.setup.pendingActionId)?.kind).toBe("scope");
+    expect(h.store.pendingActions.get(staleAskId)?.consumedAt).not.toBeNull();
+  });
+
+  it("keeps a newer ask another tab opened while a stale answer was being routed past", async () => {
+    const h = harness();
+    await staleOpenMeteo(h);
+    // The ask's move, the reopen, then the second routing's move: before that one takes the lock,
+    // another tab chooses GitHub.
     let newerAskId: string | null = null;
-    h.hooks.afterConsume = async () => {
-      const other = await read(
-        await h.app.request("/api/setup/connect", post({ starterId: "github" })),
-      );
-      newerAskId = other.setup.pendingActionId;
-    };
+    h.hooks.locks = [
+      null,
+      null,
+      async () => {
+        const other = await read(
+          await h.app.request("/api/setup/connect", post({ starterId: "github" })),
+        );
+        newerAskId = other.setup.pendingActionId;
+      },
+    ];
     const res = await h.app.request("/api/setup/connect", post({ starterId: "open-meteo" }));
     expect(res.status).toBe(200);
     expect(newerAskId).toEqual(expect.any(String));
     expect(h.store.pendingActions.get(newerAskId ?? "")?.payload.vendor).toBe("github");
-    // The rerouted scope ask is tied to the stale ask it replaced, so the record keeps GitHub's.
+    // The second routing's move lands only on a record on vendor, so the record keeps GitHub's.
     expect((await read(res)).setup.pendingActionId).toBe(newerAskId);
     expect(await read(await h.app.request("/api/setup"))).toMatchObject({
       step: "connect",
@@ -513,13 +530,15 @@ describe("POST /api/setup/connect", () => {
     });
     // This read judges the connection lost; before its move takes the lock, another read takes
     // the record back to vendor and the person chooses the same connection again.
-    h.hooks.beforeLock = async () => {
-      expect((await read(await h.app.request("/api/setup"))).step).toBe("vendor");
-      const restored = await read(
-        await h.app.request("/api/setup/connect", post({ connectionId })),
-      );
-      expect(restored).toMatchObject({ step: "goal", setup: { connectionId } });
-    };
+    h.hooks.locks = [
+      async () => {
+        expect((await read(await h.app.request("/api/setup"))).step).toBe("vendor");
+        const restored = await read(
+          await h.app.request("/api/setup/connect", post({ connectionId })),
+        );
+        expect(restored).toMatchObject({ step: "goal", setup: { connectionId } });
+      },
+    ];
     const older = await read(await h.app.request("/api/setup"));
     expect(older).toMatchObject({ step: "goal", setup: { connectionId } });
     expect(await read(await h.app.request("/api/setup"))).toMatchObject({
