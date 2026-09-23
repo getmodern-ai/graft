@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { user } from "../schema/auth";
@@ -47,12 +47,24 @@ export async function lockSetup(db: DbOrTx, personId: string) {
 /**
  * Write the record: made with the patch when absent, the patch's keys set on it when present — the
  * rest keep what they held, so a skip leaves the agent and the step where they were.
+ *
+ * `updated_at` moves forward by at least a millisecond on every write, never merely to the clock:
+ * the connect route's second routing takes the value it saw as a compare-and-swap token (GRA-206,
+ * `fromVendorAt` in `@graft/core`'s `setup.service.ts`), and two writes in one millisecond, or a
+ * clock stepped back, must still differ as a JavaScript `Date` reads them.
  */
 export async function saveSetup(db: DbOrTx, personId: string, patch: SetupPatch) {
+  const now = sql.param(new Date(), setup.updatedAt);
   const [row] = await db
     .insert(setup)
     .values({ ...patch, personId })
-    .onConflictDoUpdate({ target: setup.personId, set: { ...patch, updatedAt: new Date() } })
+    .onConflictDoUpdate({
+      target: setup.personId,
+      set: {
+        ...patch,
+        updatedAt: sql`greatest(${now}, ${setup.updatedAt} + interval '1 millisecond')`,
+      },
+    })
     .returning();
   if (!row) throw new Error("Upsert of setup returned no row");
   return row;
