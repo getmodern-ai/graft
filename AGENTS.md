@@ -1073,9 +1073,10 @@ none: none and no call where Build is unavailable, the record is not on an open 
 (skipped, completed or elsewhere) or its connection is gone or revoked, none where the proposal
 declined, timed out, failed or answered nothing usable; the outcome rides on the wide event under
 `goalSuggestions`, never the goals. The route is a read, outside the `api` rate-limit bucket, so
-the model is asked **once per person and connection** inside an hour, whatever it answered, and
-the answer held in flight and after (`createGoalSuggestionMemo` in `setup-build.ts`, one per
-process; `cached: true` on the wide event). It is its own route so the goal step draws at
+the model is asked **once per person and connection** inside a window, and the answer held in
+flight and after (`createGoalSuggestionMemo` in `setup-build.ts`, one per process; `cached: true`
+on the wide event): an hour for a proposal, two minutes from when it settled for any other outcome
+or a throw, so a timeout does not hide the chips for the hour. It is its own route so the goal step draws at
 once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
 `["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
 

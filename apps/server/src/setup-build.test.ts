@@ -38,7 +38,14 @@ import { initLogger } from "evlog";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createServer } from "./app";
-import { SETUP_BUILD_UNCONFIGURED_MESSAGE, SETUP_FIRST_PROGRESS_LINE } from "./setup-build";
+import {
+  createGoalSuggestionMemo,
+  GOAL_SUGGESTION_MEMO_FAILURE_TTL_MS,
+  GOAL_SUGGESTION_MEMO_TTL_MS,
+  SETUP_BUILD_UNCONFIGURED_MESSAGE,
+  SETUP_FIRST_PROGRESS_LINE,
+  type SetupGoalSuggestionsResult,
+} from "./setup-build";
 import { fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
@@ -673,7 +680,7 @@ describe("GET /api/setup/goal/suggestions", () => {
     ]);
     expect(await suggestions()).toEqual({ suggestions: ["goal 1"] });
     expect(calls).toBe(1);
-    // A failure is held too, so a failing provider is not asked again on every read.
+    // A failure is held too, for its short window, so a failing provider is not asked on every read.
     await onGoal(true);
     mcp.model = standIn(async () => {
       calls += 1;
@@ -703,6 +710,97 @@ describe("GET /api/setup/goal/suggestions", () => {
     store.connections.set(connectionId, { ...row, revokedAt: store.now() });
     expect(await suggestions()).toEqual({ suggestions: [] });
     expect(scripted.proposals).toEqual([]);
+  });
+});
+
+describe("the goal suggestions memo", () => {
+  const clock = () => {
+    let at = 0;
+    return {
+      now: () => at,
+      advance: (ms: number) => {
+        at += ms;
+      },
+    };
+  };
+  const counting = (answer: (call: number) => Promise<SetupGoalSuggestionsResult>) => {
+    let calls = 0;
+    return {
+      propose: () => {
+        calls += 1;
+        return answer(calls);
+      },
+      calls: () => calls,
+    };
+  };
+
+  it("holds a proposal for the hour", async () => {
+    const time = clock();
+    const memo = createGoalSuggestionMemo({ now: time.now });
+    const model = counting(async (call) => ({
+      suggestions: [`goal ${call}`],
+      outcome: "proposed",
+    }));
+    expect(await memo.run("p:c", model.propose)).toEqual({
+      suggestions: ["goal 1"],
+      outcome: "proposed",
+    });
+    time.advance(GOAL_SUGGESTION_MEMO_TTL_MS - 1);
+    expect(await memo.run("p:c", model.propose)).toMatchObject({
+      suggestions: ["goal 1"],
+      cached: true,
+    });
+    expect(model.calls()).toBe(1);
+    time.advance(1);
+    expect((await memo.run("p:c", model.propose)).suggestions).toEqual(["goal 2"]);
+    expect(model.calls()).toBe(2);
+  });
+
+  it.each(["timeout", "failed", "declined", "unusable"] as const)(
+    "holds a %s outcome for the short window from when it settled, not the hour",
+    async (outcome) => {
+      const time = clock();
+      const memo = createGoalSuggestionMemo({ now: time.now });
+      let settle: () => void = () => {};
+      const model = counting((call) =>
+        call === 1
+          ? new Promise((resolve) => {
+              settle = () => resolve({ suggestions: [], outcome });
+            })
+          : Promise.resolve({ suggestions: ["later"], outcome: "proposed" }),
+      );
+      // Concurrent reads share the call in flight, however long it runs.
+      const racing = [memo.run("p:c", model.propose), memo.run("p:c", model.propose)];
+      time.advance(30_000);
+      settle();
+      expect((await Promise.all(racing)).map((answer) => answer.outcome)).toEqual([
+        outcome,
+        outcome,
+      ]);
+      // An immediate re-read, and one just inside the window, share it too.
+      expect(await memo.run("p:c", model.propose)).toMatchObject({ outcome, cached: true });
+      time.advance(GOAL_SUGGESTION_MEMO_FAILURE_TTL_MS - 1);
+      expect(await memo.run("p:c", model.propose)).toMatchObject({ outcome, cached: true });
+      expect(model.calls()).toBe(1);
+      // Past the window the model is asked again, and its proposal is the one held.
+      time.advance(1);
+      expect((await memo.run("p:c", model.propose)).suggestions).toEqual(["later"]);
+      expect(model.calls()).toBe(2);
+    },
+  );
+
+  it("holds a throw for the short window too", async () => {
+    const time = clock();
+    const memo = createGoalSuggestionMemo({ now: time.now });
+    const model = counting(async (call) => {
+      if (call === 1) throw new Error("the provider is down");
+      return { suggestions: ["back"], outcome: "proposed" };
+    });
+    await expect(memo.run("p:c", model.propose)).rejects.toThrow("the provider is down");
+    await expect(memo.run("p:c", model.propose)).rejects.toThrow("the provider is down");
+    expect(model.calls()).toBe(1);
+    time.advance(GOAL_SUGGESTION_MEMO_FAILURE_TTL_MS);
+    expect((await memo.run("p:c", model.propose)).suggestions).toEqual(["back"]);
   });
 });
 

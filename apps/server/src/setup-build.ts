@@ -142,6 +142,12 @@ export type SetupGoalSuggestionsResult = SetupGoalSuggestions & {
 
 /** How long one person's proposal for one connection is answered again without a model call. */
 export const GOAL_SUGGESTION_MEMO_TTL_MS = 60 * 60 * 1000;
+/**
+ * How long an outcome other than `proposed` is answered again: a timeout, a failure, a decline or
+ * an unusable answer. Long enough that concurrent and immediate re-reads share the one call, short
+ * enough that a provider's bad minute does not hide the chips for the hour.
+ */
+export const GOAL_SUGGESTION_MEMO_FAILURE_TTL_MS = 2 * 60 * 1000;
 /** How many proposals the memo holds before the oldest is dropped. */
 export const GOAL_SUGGESTION_MEMO_MAX = 1000;
 
@@ -149,11 +155,11 @@ export const GOAL_SUGGESTION_MEMO_MAX = 1000;
  * The server's once-per-connection bound on the model call behind the chips (Greptile on #165):
  * the route is a read, and reads are outside the `api` rate-limit bucket (`rate-limit.ts`), so
  * without it a person could make the deployment's model, or their own key, propose on every
- * request. One proposal per person and connection is held, settled or in flight, for
- * `GOAL_SUGGESTION_MEMO_TTL_MS`, whatever its outcome: a timeout or a failure is not retried
- * inside the window either, since the chips are a convenience and the step works without them.
- * Held in this process alone, as `in-flight.ts`'s registry is, so two replicas ask at most once
- * each.
+ * request. One proposal per person and connection is held, in flight or settled: a `proposed`
+ * answer for `GOAL_SUGGESTION_MEMO_TTL_MS`, any other outcome (or a throw) for
+ * `GOAL_SUGGESTION_MEMO_FAILURE_TTL_MS` from when it settled, so a timeout is asked again minutes
+ * later rather than an hour later, and still never on every read. Held in this process alone, as
+ * `in-flight.ts`'s registry is, so two replicas ask at most once each.
  */
 export type GoalSuggestionMemo = {
   run(
@@ -163,25 +169,37 @@ export type GoalSuggestionMemo = {
 };
 
 export function createGoalSuggestionMemo(
-  options: { ttlMs?: number; max?: number; now?: () => number } = {},
+  options: { ttlMs?: number; failureTtlMs?: number; max?: number; now?: () => number } = {},
 ): GoalSuggestionMemo {
   const ttlMs = options.ttlMs ?? GOAL_SUGGESTION_MEMO_TTL_MS;
+  const failureTtlMs = options.failureTtlMs ?? GOAL_SUGGESTION_MEMO_FAILURE_TTL_MS;
   const max = options.max ?? GOAL_SUGGESTION_MEMO_MAX;
   const now = options.now ?? Date.now;
-  const held = new Map<string, { at: number; answer: Promise<SetupGoalSuggestionsResult> }>();
+  const held = new Map<
+    string,
+    { expiresAt: number; answer: Promise<SetupGoalSuggestionsResult> }
+  >();
   return {
     async run(key, propose) {
       const hit = held.get(key);
-      if (hit && now() - hit.at < ttlMs) return { ...(await hit.answer), cached: true };
+      if (hit && now() < hit.expiresAt) return { ...(await hit.answer), cached: true };
       held.delete(key);
       while (held.size >= max) {
         const oldest = held.keys().next().value;
         if (oldest === undefined) break;
         held.delete(oldest);
       }
-      const answer = propose();
-      held.set(key, { at: now(), answer });
-      return answer;
+      const entry = { expiresAt: now() + ttlMs, answer: propose() };
+      held.set(key, entry);
+      // Settled short of a proposal, the entry is cut to the failure window from then, so the
+      // hour holds only goals worth showing.
+      const shorten = () => {
+        entry.expiresAt = Math.min(entry.expiresAt, now() + failureTtlMs);
+      };
+      entry.answer.then((result) => {
+        if (result.outcome !== "proposed") shorten();
+      }, shorten);
+      return entry.answer;
     },
   };
 }
