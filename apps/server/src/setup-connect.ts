@@ -158,10 +158,11 @@ function connectedBy({ state, moved }: SetupMoveResult): SetupConnectResult {
 }
 
 /**
- * Route the starter's proposal as the agent and move the record on the answer. `replaces` is the ask
- * this request opened, found answered about a connection that no longer stands, and took: every
- * move the second routing makes is tied to that ask, so a record another tab re-pointed meanwhile
- * keeps the newer ask rather than being overwritten with this request's.
+ * Route the starter's proposal as the agent and move the record on the answer. `rerouted` says the
+ * ask the first routing handed back was answered about a connection that no longer stands, was
+ * taken, and the record went back to the vendor step: this second routing's move lands only on a
+ * record still on `vendor` (`fromVendor`), so the person's choice in flight is kept over a read
+ * that reopened the record meanwhile, and another tab's newer choice is kept over this one.
  */
 async function routeStarter(
   ctx: ServiceContext,
@@ -169,7 +170,7 @@ async function routeStarter(
   agentId: string,
   starter: StarterVendor,
   deps: SetupConnectDeps,
-  replaces?: string,
+  rerouted = false,
 ): Promise<SetupConnectResult> {
   const move = (next: SetupConnectMove) =>
     moveSetupConnect(ctx, principal, next, deps.setup, deps.agent);
@@ -182,8 +183,6 @@ async function routeStarter(
   );
   switch (routing.kind) {
     case "refused":
-      // The taken ask closed without a connection: back to the vendor list with the refusal.
-      if (replaces) await move({ kind: "reopen", askId: replaces });
       throw refusal(routing);
     case "connected":
       return connectedBy(
@@ -191,24 +190,23 @@ async function routeStarter(
           kind: "connected",
           agentId,
           connectionId: routing.connection.id,
-          askId: replaces,
+          fromVendor: rerouted,
         }),
       );
     case "connection":
     case "scope": {
       const pendingActionId = routing.pendingActionId;
-      const asked = await move({ kind: "ask", agentId, pendingActionId, askId: replaces });
+      const asked = await move({ kind: "ask", agentId, pendingActionId, fromVendor: rerouted });
       if (!asked.moved) return { state: asked.state, connected: false };
       // The routing may answer an ask already answered and not yet taken (GRA-203): read it now,
       // so a person who answered it elsewhere is not shown a settled card.
-      const learned = await learnFromRecord(ctx, principal, deps, {
-        askId: pendingActionId,
-        // Once: a taken ask is never re-used, so the second routing goes past it to the person's
-        // rows as they are, and an answer it hands back is judged as an ordinary read judges it.
-        reroute: replaces === undefined,
-      });
-      if ("rerouteFrom" in learned) {
-        return routeStarter(ctx, principal, agentId, starter, deps, learned.rerouteFrom);
+      const learned = await learnFromRecord(ctx, principal, deps, pendingActionId);
+      // An answer about a connection that no longer stands is taken, by this read or another, so
+      // routing again goes past it to the person's rows as they are: once, since a taken ask is
+      // never re-used, and only where the record went back to the vendor step rather than on to
+      // another tab's choice.
+      if (learned.stale && !rerouted && learned.result.state.step === "vendor") {
+        return routeStarter(ctx, principal, agentId, starter, deps, true);
       }
       return learned.result;
     }
@@ -267,30 +265,29 @@ export async function learnSetupConnection(
   principal: Principal,
   deps: LearnDeps,
 ): Promise<SetupConnectResult> {
-  const learned = await learnFromRecord(ctx, principal, deps);
-  if ("rerouteFrom" in learned) throw new Error("A read without a reroute answered one");
-  return learned.result;
+  return (await learnFromRecord(ctx, principal, deps)).result;
 }
 
 /**
- * The read behind `learnSetupConnection`. The connect route passes `expect`: the ask it just put
- * the record on, so a record another tab re-pointed meanwhile is answered as it stands; and, with
- * `reroute`, an answer about a connection that no longer stands is taken here and handed back as
- * `rerouteFrom`, for the route to route again tied to that ask, rather than reopened.
+ * The read behind `learnSetupConnection`, saying too whether the ask it judged was answered about
+ * a connection that no longer stands (`stale`). The connect route passes `opened`, the ask it just
+ * put the record on, and that ask is judged even where another read took the record off it
+ * meanwhile, so the route learns it was stale and may route past it; a record another tab moved on
+ * is never moved by that judgement.
  */
 async function learnFromRecord(
   ctx: ServiceContext,
   principal: Principal,
   deps: LearnDeps,
-  expect?: { askId: string; reroute: boolean },
-): Promise<{ result: SetupConnectResult } | { rerouteFrom: string }> {
+  opened?: string,
+): Promise<{ result: SetupConnectResult; stale: boolean }> {
   const before = await getSetupState(ctx, principal, deps.setup, deps.agent);
   const record = before.setup;
   const agentId = before.agent?.id;
-  const unchanged = { result: { state: before, connected: false } };
+  const unchanged = { result: { state: before, connected: false }, stale: false };
   if (!record || !agentId) return unchanged;
 
-  if (!expect && record.step === "goal" && record.connectionId) {
+  if (!opened && record.step === "goal" && record.connectionId) {
     const connectionId = record.connectionId;
     if (await standsForAgent(ctx, principal, agentId, connectionId, deps)) return unchanged;
     // Judged again under the lock: a read that saw the connection gone may land after the person
@@ -304,11 +301,12 @@ async function learnFromRecord(
       deps.agent,
       async (scoped) => !(await standsForAgent(scoped, principal, agentId, connectionId, deps)),
     );
-    return { result: { state, connected: false } };
+    return { result: { state, connected: false }, stale: false };
   }
 
-  const askId = record.step === "connect" ? record.pendingActionId : null;
-  if (!askId || (expect && askId !== expect.askId)) return unchanged;
+  const waiting = record.step === "connect" ? record.pendingActionId : null;
+  const askId = opened ?? waiting;
+  if (!askId) return unchanged;
   const row = await getPendingActionForPerson(ctx, principal, askId, deps.pendingAction);
   const now = deps.pendingAction.now();
   const verdict = askVerdict(row, agentId, now);
@@ -329,9 +327,11 @@ async function learnFromRecord(
       askId,
       now,
     );
-  if (stale && expect?.reroute) {
-    await take(ctx.db);
-    return { rerouteFrom: askId };
+  if (askId !== waiting) {
+    // The connect route's own ask, which the record no longer waits on: taken if stale, so the
+    // route's second routing goes past it, and the record left as it stands.
+    if (stale) await take(ctx.db);
+    return { ...unchanged, stale };
   }
   const { state, moved } =
     verdict === "closed" || stale
@@ -361,5 +361,5 @@ async function learnFromRecord(
   // A scope ask answered in the console grew the agent's list, and no waiting call settles to
   // announce it (`awaitScope` does, for an agent's own request_connection).
   if (connected && row?.kind === SCOPE_ASK_KIND) deps.notifier?.changed(agentId);
-  return { result: { state, connected } };
+  return { result: { state, connected }, stale };
 }

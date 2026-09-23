@@ -1025,8 +1025,9 @@ connection revoked or taken out of the scope since (that answer is taken, so the
 handing it back, under the record's lock so two reads take it once), back to `vendor`, and on
 `goal` a connection that stopped standing takes it back too, judged again under the lock
 (`moveSetupConnect`'s `confirm`) so a restore meanwhile stands. The connect route that finds such
-an answer routes once more, every move of that second routing tied to the taken ask's id, so a
-record another tab re-pointed keeps the newer ask. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
+an answer (or finds a poll reopened the record for it) routes once more, and that second routing's
+move lands only on a record still on `vendor` (`fromVendor`), so the choice in flight wins over a
+poll and a record another tab moved on keeps that tab's choice. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
 captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
 one answer count once. A listed agent's scope grown by Setup (*Another vendor*, a `scope` ask
 answered in the console) is announced to its session, since no waiting call of its own does. The
