@@ -1,14 +1,20 @@
+import type { AcquireJobRow } from "@graft/db/repo/acquire-job";
 import type { AgentRow } from "@graft/db/repo/agent";
 import type { SetupPatch, SetupRow } from "@graft/db/repo/setup";
 import type { AgentScopeMode } from "@graft/db/schema/agent";
 import type { SetupHarness, SetupStep } from "@graft/db/schema/setup";
 
+import type { AcquireJobDeps } from "../acquire-job/acquire-job.deps";
+import { createAcquireJob } from "../acquire-job/acquire-job.service";
 import type { AgentDeps } from "../agent/agent.deps";
 import {
   type AgentOutput,
   createAgentAwaitingHarness,
+  getAgentScope,
   toAgentOutput,
 } from "../agent/agent.service";
+import type { ApprovalDeps } from "../approval/approval.deps";
+import { grantBuildApproval } from "../approval/approval.service";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { Principal } from "../tenancy";
@@ -326,6 +332,141 @@ export async function moveSetupConnect(
         : move.kind === "connected"
           ? { step: "goal", pendingActionId: null, connectionId: move.connectionId }
           : { step: "vendor", pendingActionId: null, connectionId: null };
+    await deps.saveSetup(tx, principal.personId, patch);
+  });
+  return getSetupState(ctx, principal, deps, agentDeps);
+}
+
+/**
+ * The build step (GRA-207; ADR 0024, *Build is the build approval*). Pressing Build is the person
+ * answering the build ask in the console, so the approval is recorded through the function the
+ * pending-action answer calls (`grantBuildApproval`, which answers the standing row on a second
+ * grant, since the connection ask's card usually granted it already) and no ask is opened; then
+ * the job is created as the record's agent against the record's connection, and the record names
+ * it and moves to `building`. One transaction under the record's lock, so a double click opens
+ * one job and a Build from a tab that moved on changes nothing. Waking the runner is the caller's,
+ * once this returns, since the runner must see the committed row.
+ *
+ * Refused `CONFLICT` unless the record stands on `goal` with its agent active and a connection
+ * named, and as `connection_not_in_scope` when the connection has left the agent's scope, the
+ * check `acquire`'s door makes before anything else.
+ */
+export type StartSetupBuildInput = {
+  goal: string;
+  hints?: string | null;
+  /** The line the job carries before its runner has said anything. */
+  firstProgressLine: string;
+};
+
+export type SetupBuildDeps = {
+  setup: SetupDeps;
+  agent: AgentDeps;
+  approval: ApprovalDeps;
+  acquireJob: AcquireJobDeps;
+};
+
+export async function startSetupBuild(
+  ctx: ServiceContext,
+  principal: Principal,
+  input: StartSetupBuildInput,
+  deps: SetupBuildDeps,
+): Promise<{ state: SetupState; job: AcquireJobRow }> {
+  const job = await ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const record = await deps.setup.lockSetup(tx, principal.personId);
+    const active = activeOf(await deps.agent.listAgents(tx, principal.personId));
+    const agent = record.agentId
+      ? active.find((candidate) => candidate.id === record.agentId)
+      : undefined;
+    if (!agent || !record.connectionId) {
+      throw new ServiceError("CONFLICT", "Setup has no agent and connection to build with yet", {
+        details: { reason: "setup_not_started" },
+      });
+    }
+    if (record.step !== "goal") {
+      throw new ServiceError("CONFLICT", "Setup is not on the goal step", {
+        details: { reason: "setup_step", step: record.step },
+      });
+    }
+    const scope = { personId: principal.personId, agentId: agent.id };
+    const connectionId = record.connectionId;
+    if (!(await getAgentScope(scoped, scope, deps.agent)).includes(connectionId)) {
+      throw new ServiceError(
+        "CONFLICT",
+        `The connection is no longer in ${agent.name}'s scope, so nothing can be built against it`,
+        { details: { reason: "connection_not_in_scope", connectionId } },
+      );
+    }
+    await grantBuildApproval(scoped, scope, connectionId, deps.approval);
+    const created = await createAcquireJob(
+      scoped,
+      scope,
+      {
+        connectionId,
+        goal: input.goal,
+        hints: input.hints ?? null,
+        firstProgressLine: input.firstProgressLine,
+      },
+      deps.acquireJob,
+    );
+    await deps.setup.saveSetup(tx, principal.personId, {
+      step: "building",
+      acquireJobId: created.id,
+      toolId: null,
+    });
+    return created;
+  });
+  return { state: await getSetupState(ctx, principal, deps.setup, deps.agent), job };
+}
+
+/**
+ * How the building step moves the record (GRA-207). Each move names the job it is about, so a
+ * move about a job the record no longer waits on (another tab pressed Build again) is stale.
+ *
+ * - `built`: the job succeeded with this tool, learned on a read. From `building` to `result`; on
+ *   `finish` (the person continued while it built) the record names the tool and stays, so the
+ *   finish step can say it arrived. A no-op when stale or already named.
+ * - `retry`: *Change the goal* after a failure, from `building` back to `goal` with the job
+ *   cleared, so the next Build starts a new one. The caller judges that the job failed.
+ * - `continue`: *Continue while it builds*, from `building` to `finish` with the job kept, so the
+ *   tool is still learned when it lands.
+ *
+ * `retry` and `continue` are requests, and refuse `CONFLICT` when stale.
+ */
+export type SetupBuildMove =
+  | { kind: "built"; acquireJobId: string; toolId: string }
+  | { kind: "retry"; acquireJobId: string }
+  | { kind: "continue"; acquireJobId: string };
+
+/** Apply a `SetupBuildMove` under the record's lock, and answer the state as it now stands. */
+export async function moveSetupBuild(
+  ctx: ServiceContext,
+  principal: Principal,
+  move: SetupBuildMove,
+  deps: SetupDeps,
+  agentDeps: Pick<AgentDeps, "listAgents">,
+): Promise<SetupState> {
+  await ctx.db.transaction(async (tx) => {
+    const record = await deps.lockSetup(tx, principal.personId);
+    const current = record.acquireJobId === move.acquireJobId;
+    if (move.kind === "built") {
+      if (!current || record.toolId !== null) return;
+      if (record.step === "building") {
+        await deps.saveSetup(tx, principal.personId, { step: "result", toolId: move.toolId });
+      } else if (record.step === "finish") {
+        await deps.saveSetup(tx, principal.personId, { toolId: move.toolId });
+      }
+      return;
+    }
+    if (!current || record.step !== "building") {
+      throw new ServiceError("CONFLICT", "Setup moved on while this tool was being built", {
+        details: { reason: "setup_step", step: record.step },
+      });
+    }
+    const patch: SetupPatch =
+      move.kind === "retry"
+        ? { step: "goal", acquireJobId: null, toolId: null }
+        : { step: "finish" };
     await deps.saveSetup(tx, principal.personId, patch);
   });
   return getSetupState(ctx, principal, deps, agentDeps);
