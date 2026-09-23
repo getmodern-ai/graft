@@ -525,7 +525,7 @@ describe("Setup's goal and build steps", () => {
     expect(retry.setup.acquireJobId).not.toBe(jobId);
   }, 60_000);
 
-  it("continues to the finish while it builds, notes the tool there once it lands, and an OAuth harness finishes with no token", async () => {
+  it("continues to the finish while it runs, notes the tool there once it lands, and an OAuth harness finishes with no token", async () => {
     mcp.model = createScriptedModel(PASSING_SCRIPT);
     const { agentId } = await onGoal(true, "claude");
     // Held queued: no kick reaches the runner until the continue has landed.

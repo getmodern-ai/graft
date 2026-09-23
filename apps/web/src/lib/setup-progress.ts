@@ -83,7 +83,7 @@ export type ExplainedProgressLine = {
 
 /**
  * Where a job stands for the building step: still working (the lines and *Continue while it
- * builds*), passed (the state read moves the record on), or failed with the job's own sentence
+ * runs*), passed (the state read moves the record on), or failed with the job's own sentence
  * and *Change the goal*. `result` is `acquire_status`'s, whose failure carries `message`.
  */
 export type BuildingView =
@@ -98,7 +98,7 @@ export function buildingView(job: { status: string; result?: unknown } | undefin
   const message =
     typeof result === "object" && result !== null && "message" in result
       ? String(result.message)
-      : "The build failed.";
+      : "The job failed.";
   return { kind: "failed", message };
 }
 
