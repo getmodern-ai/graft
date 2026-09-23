@@ -748,7 +748,32 @@ describe("banned surface", () => {
       ["fetch-absolute-url", 3],
       ["fetch-absolute-url", 4],
     ]);
+    expect(result.refusals[0]?.message).toBe(
+      "ctx.fetch is given a literal absolute URL (https://api.vendor.com/orders); the proxy supplies the host from the connection, and a host written into the module is refused. A URL a vendor hands back at run time, on one of the connection's hosts, may be passed as it is.",
+    );
     expect(result.refusals[0]?.hint).toContain('"/v1/orders"');
+    expect(result.refusals[0]?.hint).toContain("as the value you read, never as a literal");
+  });
+
+  /**
+   * GRA-197: Slack's upload flow answers an `upload_url` on `files.slack.com`, and the module passes
+   * it to `ctx.fetch` as the value it read. The check sees no literal, so the rule is silent; the
+   * runner routes the URL through the proxy's host form and the proxy judges the host. The write
+   * is still a write for the annotations.
+   */
+  it("passes a runtime value given to fetch, such as the upload URL a vendor answered, and counts the write", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  const res = await ctx.fetch("/files.getUploadURLExternal?length=" + String(input.quantity));',
+        "  const { upload_url } = (await res.json()) as { upload_url: string };",
+        '  const put = await ctx.fetch(upload_url, { method: "POST", body: input.notes });',
+        `  return { status: put.status, ${READS_INPUT} };`,
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toEqual([]);
+    expect(result.annotations).toEqual({ readOnly: false, destructive: false });
   });
 
   it("refuses a bare fetch, since a module has no route out but ctx", () => {

@@ -147,6 +147,29 @@ const UPLOAD_FILE_MODULE = `export default async (input, ctx) => {
 `;
 
 /**
+ * Slack's upload shape (GRA-197; ADR 0010 as amended 2026-09-23): a read on the primary host answers
+ * an absolute URL on a second host of the connection, and the bytes are `POST`ed to that URL as it
+ * came back, through `ctx.fetch`. The runner routes it onto the proxy's host form and the proxy
+ * judges the host. `input.url` lets a test name a host the connection does not declare instead.
+ */
+const UPLOAD_TO_HOST = authoredToolName("demo", "upload-to-host");
+const UPLOAD_TO_HOST_SCHEMA = {
+  type: "object",
+  properties: { bytes: { type: "string" }, url: { type: "string" } },
+  required: ["bytes"],
+  additionalProperties: false,
+};
+const UPLOAD_TO_HOST_MODULE = `export default async (input, ctx) => {
+  const res = await ctx.fetch("/upload-url");
+  if (!res.ok) throw new Error(\`GET /upload-url \${res.status}\`);
+  const { upload_url } = await res.json();
+  const put = await ctx.fetch(input.url ?? upload_url, { method: "POST", body: input.bytes });
+  return { status: put.status, body: await put.json() };
+};
+`;
+const UPLOAD_URL = "https://files.demo.example/upload/v1/abc?x=1";
+
+/**
  * A module that writes two 1 MiB blobs in one run and catches the second's refusal (GRA-187, after
  * Greptile on #145): under a budget of 1.5 MiB the first commits and the second is `blob_quota`.
  */
@@ -187,6 +210,8 @@ beforeAll(async () => {
         id: CONN_DEMO,
         personId: PERSON,
         primaryHost: "https://api.demo.example/v2",
+        // The second host the upload URL is on (GRA-197).
+        hosts: ["files.demo.example"],
         credential: { apiKey: API_KEY },
       },
       // Two live Rebind accounts, for the tool that follows one once its own row is revoked (GRA-122).
@@ -203,6 +228,16 @@ beforeAll(async () => {
         credential: { apiKey: "rebind-second-key" },
       },
     ],
+    // The two legs of the upload (GRA-197): the primary host answers the URL, the second host takes
+    // the bytes and says which host it is. Everything else is the default body.
+    respond: (request) => {
+      const url = new URL(request.url);
+      if (url.hostname === "files.demo.example") {
+        return Response.json({ uploaded: true, host: url.hostname, path: url.pathname });
+      }
+      if (url.pathname.endsWith("/upload-url")) return Response.json({ upload_url: UPLOAD_URL });
+      return Response.json(VENDOR_BODY, { status: 200 });
+    },
   });
   sandbox = createFakeSandboxBackend();
 
@@ -234,6 +269,9 @@ beforeAll(async () => {
   const writeThenThrow = join(sandbox.toolboxRoot(PERSON), "tools/demo/write-then-throw/v1");
   await mkdir(writeThenThrow, { recursive: true });
   await writeFile(join(writeThenThrow, "index.ts"), WRITE_THEN_THROW_MODULE);
+  const uploadToHost = join(sandbox.toolboxRoot(PERSON), "tools/demo/upload-to-host/v1");
+  await mkdir(uploadToHost, { recursive: true });
+  await writeFile(join(uploadToHost, "index.ts"), UPLOAD_TO_HOST_MODULE);
 
   store = createFakeStore();
   store.addConnection({
@@ -242,6 +280,7 @@ beforeAll(async () => {
     vendor: "demo",
     displayName: "Demo Orders",
     primaryHost: "https://api.demo.example/v2",
+    hosts: ["files.demo.example"],
   });
   // The person's, but in neither agent's scope.
   store.addConnection({
@@ -399,19 +438,35 @@ beforeAll(async () => {
     path: "tools/demo/write-then-throw/v1",
   });
   store.promote(AGENT_A, "tool_write_then_throw");
+  store.addTool({
+    id: "tool_upload_to_host",
+    personId: PERSON,
+    vendor: "demo",
+    name: "upload-to-host",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Sends bytes to the address the vendor hands back.",
+    inputSchema: UPLOAD_TO_HOST_SCHEMA,
+    readOnly: false,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/upload-to-host/v1",
+  });
+  store.promote(AGENT_A, "tool_upload_to_host");
   // Agent A may run code against Demo (the build approval, ADR 0008); the asks themselves are
   // `approval.test.ts`'s subject, and this suite is about everything that happens once they pass.
   store.grantBuild(AGENT_A, CONN_DEMO);
-  store.approvals.set(`${AGENT_A} tool_upload_file`, {
-    agentId: AGENT_A,
-    toolId: "tool_upload_file",
-    decision: "allow",
-    decidedAt: new Date(),
-    askEveryCall: false,
-    owner: "person",
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
+  for (const toolId of ["tool_upload_file", "tool_upload_to_host"]) {
+    store.approvals.set(`${AGENT_A} ${toolId}`, {
+      agentId: AGENT_A,
+      toolId,
+      decision: "allow",
+      decidedAt: new Date(),
+      askEveryCall: false,
+      owner: "person",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
 
   checked = [];
   const fakeCheck: ModuleCheck = async (input) => {
@@ -549,6 +604,7 @@ describe("the tool list", () => {
         UPLOAD_FILE,
         WRITE_TWO,
         WRITE_THEN_THROW,
+        UPLOAD_TO_HOST,
       ]);
       const listItems = tools.find((tool) => tool.name === LIST_ITEMS);
       expect(listItems).toMatchObject({
@@ -666,6 +722,82 @@ describe("a first-class call", () => {
       await a.close();
     }
   });
+});
+
+/**
+ * `ctx.fetch` with an absolute URL (GRA-197; ADR 0010 as amended 2026-09-23), end to end: the module
+ * reads an upload URL off the primary host and posts the bytes to it as it came back, on a second
+ * host of the connection. The runner rewrites it onto the proxy's host form, the proxy judges the
+ * host against the connection's set and injects the credential, and a host the connection does not
+ * declare is the proxy's existing refusal, which the module sees as a status.
+ */
+describe("ctx.fetch with an absolute URL on a second host of the connection (GRA-197)", () => {
+  it("reaches the second host through the proxy with the credential injected, the bytes intact and never the token", async () => {
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const result = await a.call(UPLOAD_TO_HOST, { bytes: "the bytes" });
+      expect(result.isError).toBeFalsy();
+      expect(body(result)).toEqual({
+        status: 200,
+        body: { uploaded: true, host: "files.demo.example", path: "/upload/v1/abc" },
+      });
+
+      const sent = vendor.requests.slice(requestsBefore);
+      expect(sent.map((request) => [request.method, request.url])).toEqual([
+        ["GET", "https://api.demo.example/v2/upload-url"],
+        ["POST", UPLOAD_URL],
+      ]);
+      const put = sent[1];
+      expect(put?.headers.get("x-demo-key")).toBe(API_KEY);
+      expect(put?.headers.get("authorization")).toBeNull();
+      for (const [, value] of put?.headers ?? []) expect(value).not.toMatch(/^eyJ/);
+      expect(Buffer.from(put?.body ?? []).toString("utf8")).toBe("the bytes");
+      expect(vendor.events.at(-1)).toMatchObject({
+        outcome: "forwarded",
+        connectionId: CONN_DEMO,
+        host: "files.demo.example",
+        path: "/upload/v1/abc",
+        dryRun: false,
+      });
+      expect(store.usage.at(-1)).toMatchObject({ toolName: UPLOAD_TO_HOST, outcome: "ok" });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("is refused by the proxy for a host the connection does not declare, with its existing host refusal, which the module sees as the status", async () => {
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const result = await a.call(UPLOAD_TO_HOST, {
+        bytes: "the bytes",
+        url: "https://files.other.example/upload/v1/abc",
+      });
+      expect(result.isError).toBeFalsy();
+      expect(body(result)).toEqual({
+        status: 403,
+        body: {
+          error: "forbidden",
+          reason: "host_not_in_set",
+          message: "The host in the path is not one the connection declares",
+        },
+      });
+
+      // The read left; the write never did.
+      expect(vendor.requests.slice(requestsBefore).map((request) => request.url)).toEqual([
+        "https://api.demo.example/v2/upload-url",
+      ]);
+      // The proxy's outcome word is the reason itself, and no vendor host was resolved.
+      expect(vendor.events.at(-1)).toMatchObject({
+        outcome: "host_not_in_set",
+        connectionId: CONN_DEMO,
+        host: null,
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
 });
 
 /**

