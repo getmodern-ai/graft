@@ -11,7 +11,8 @@ import type { ProviderDescription } from "../connection/provider";
  * One entry per vendor and nothing else to edit to add one. An entry carries what the connect step
  * proposes as the agent's own connection ask (`starterProposal`: the vendor, its hosts, the
  * documentation and the keyring's scheme and parameters for the form path), what the goal step
- * pre-fills (`goal`), what the run step asks for (`runInput`, with its default), and the one
+ * pre-fills (`goal`, the person's words) and what the model is told beside it (`hints`, the
+ * technical detail), what the run step asks for (`runInput`, with its default), and the one
  * sentence the vendor step shows under the name (`outcome`).
  *
  * `scheme` is **the keyring's path**, the one a deployment with no other provider connects
@@ -45,8 +46,19 @@ export type StarterVendor = {
   /** The keyring's scheme for the form path; `none` for a public API, which confirms with no key. */
   scheme: AuthScheme;
   schemeConfig: Readonly<Record<string, string>>;
-  /** The curated read-only goal the goal step pre-fills (GRA-207), written as `acquire` takes one. */
+  /**
+   * The curated read-only goal the goal step pre-fills (GRA-207), in the person's voice: short, in
+   * the first person, the way they would type it and the way the suggested goals beside it read
+   * (GRA-209). The technical detail is in `hints`, never here, since the person reads this as
+   * their own goal.
+   */
   goal: string;
+  /**
+   * What the model is told beside the curated goal: the input's field name, the endpoints, the
+   * fields to return, and that the tool reads only. Handed to the job as its `hints` only when the
+   * person builds with `goal` unchanged (`setupBuildHints`); a goal of their own is not this one.
+   */
+  hints: string;
   /** The run's one input, or null for a tool that takes none. */
   runInput: StarterRunInput | null;
   /** What the person will see once the tool runs, one sentence, for the vendor step. */
@@ -71,7 +83,9 @@ export const STARTER_VENDORS = [
       ...GOOGLE_OAUTH,
       scopes: "https://www.googleapis.com/auth/gmail.readonly",
     },
-    goal: "List my five most recent emails in the inbox, with the sender, the subject and the date of each. Read only.",
+    goal: "Show me my five latest emails",
+    hints:
+      "List the five most recent messages in the inbox, with the sender, the subject and the date of each. Read only.",
     runInput: null,
     outcome: "Your five latest emails, with who sent each one and its subject.",
   },
@@ -87,7 +101,9 @@ export const STARTER_VENDORS = [
       ...GOOGLE_OAUTH,
       scopes: "https://www.googleapis.com/auth/calendar.readonly",
     },
-    goal: "List the events on my primary calendar for the next seven days, with the title, the start time and the location of each. Read only.",
+    goal: "Show me what is on my calendar this week",
+    hints:
+      "List the events on the primary calendar for the next seven days, with the title, the start time and the location of each. Read only.",
     runInput: null,
     outcome: "Your week ahead: each event's title, when it starts and where.",
   },
@@ -104,7 +120,9 @@ export const STARTER_VENDORS = [
       tokenUrl: "https://slack.com/api/oauth.v2.access",
       scopes: "channels:read",
     },
-    goal: "List the public channels in my Slack workspace, with the name, the topic and the member count of each. Read only.",
+    goal: "List the public channels in my workspace",
+    hints:
+      "List the public channels in the Slack workspace, with the name, the topic and the member count of each. Read only.",
     runInput: null,
     outcome: "Your workspace's public channels, with each one's topic and member count.",
   },
@@ -117,7 +135,9 @@ export const STARTER_VENDORS = [
     docsUrl: "https://developers.notion.com/reference/intro",
     scheme: "bearer",
     schemeConfig: {},
-    goal: "List the ten Notion pages shared with this integration that were edited most recently, with the title and the last edited time of each. Read only.",
+    goal: "Show me the pages I edited most recently",
+    hints:
+      "List the ten pages shared with this integration that were edited most recently, with the title and the last edited time of each. Read only.",
     runInput: null,
     outcome: "The ten pages edited most recently, with when each one changed.",
   },
@@ -130,7 +150,9 @@ export const STARTER_VENDORS = [
     docsUrl: "https://docs.github.com/en/rest",
     scheme: "bearer",
     schemeConfig: {},
-    goal: "List my ten most recently updated repositories, with the name, the description, the main language and the star count of each. Read only.",
+    goal: "Show me the repositories I updated most recently",
+    hints:
+      "List the authenticated user's ten most recently updated repositories, with the name, the description, the main language and the star count of each. Read only.",
     runInput: null,
     outcome: "Your ten most recently updated repositories, with their language and stars.",
   },
@@ -144,7 +166,9 @@ export const STARTER_VENDORS = [
     // A personal API key goes in `Authorization` as it is, with no `Bearer` in front.
     scheme: "api_key_header",
     schemeConfig: { headerName: "Authorization" },
-    goal: "List the issues assigned to me that are not completed or cancelled, with the identifier, the title, the state and the priority of each. Read only.",
+    goal: "Show me the open issues assigned to me",
+    hints:
+      "List the issues assigned to the authenticated user that are not completed or cancelled, with the identifier, the title, the state and the priority of each. Read only.",
     runInput: null,
     outcome: "The open issues assigned to you, with each one's state and priority.",
   },
@@ -158,7 +182,9 @@ export const STARTER_VENDORS = [
     docsUrl: "https://open-meteo.com/en/docs",
     scheme: "none",
     schemeConfig: {},
-    goal: "Given a city name as the input `city`, look up the city's coordinates with Open-Meteo's geocoding API and return the current temperature, wind speed and weather there. Read only.",
+    goal: "Tell me the weather right now in a city I name",
+    hints:
+      "The tool takes a city name as the input `city`, looks up the city's coordinates with Open-Meteo's geocoding API, and returns the current temperature, wind speed and weather there. Read only.",
     runInput: { field: "city", label: "City", defaultValue: "Melbourne" },
     outcome: "The weather right now in a city you choose, with no key to enter.",
   },
@@ -188,6 +214,18 @@ export function starterVendorOf(id: string): StarterVendor | null {
  */
 export function starterVendorFor(vendor: string): StarterVendor | null {
   return STARTER_VENDORS.find((starter) => starter.vendor === vendor) ?? null;
+}
+
+/**
+ * The `hints` a Setup build hands its job, as an agent would hint one: for a starter, where its
+ * documentation starts, and before that the starter's own `hints` when the goal is its curated one
+ * unchanged, since a goal the person wrote may ask for something the curated detail would contradict.
+ * Null for another vendor, whose model finds its own documentation.
+ */
+export function setupBuildHints(starter: StarterVendor | null, goal: string): string | null {
+  if (!starter) return null;
+  const docs = `The vendor's documentation starts at ${starter.docsUrl}.`;
+  return goal.trim() === starter.goal ? `${starter.hints} ${docs}` : docs;
 }
 
 /**
