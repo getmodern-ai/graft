@@ -848,4 +848,27 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       agent: { name: "Hermes" },
     });
   });
+
+  /**
+   * A skip waits on the record's lock as a start does (Greptile on #164): a skip sent while another
+   * transaction holds the row is judged on the record that transaction commits, so a record it
+   * completed is never marked skipped, where a read outside the lock would have seen it unfinished.
+   */
+  it("serialises a skip behind the record's lock and judges it on what commits", async () => {
+    const personId = await signUp("setup-skip-race@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    let skipping: Promise<unknown> | undefined;
+    await db.transaction(async (tx) => {
+      await defaultSetupDeps.lockSetup(tx, personId);
+      await defaultSetupDeps.saveSetup(tx, personId, {
+        step: "completed",
+        completedAt: new Date(),
+      });
+      skipping = skipSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+    const skipped = await skipping;
+    expect(skipped).toMatchObject({ show: false, setup: { step: "completed", skippedAt: null } });
+  });
 });

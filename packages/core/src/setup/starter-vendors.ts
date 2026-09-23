@@ -240,12 +240,13 @@ const CONNECT_RANK: Record<SetupConnectKind, number> = { link: 0, none: 1, keyle
 function connectKindOf({ starter, provider }: CoveredStarter): SetupConnectKind | null {
   const { connect } = provider;
   if (connect.kind === "link" || connect.kind === "none") return connect.kind;
+  // A form provider that does not sign the starter's scheme cannot connect it, `none` included.
+  if (!connect.schemes.includes(starter.scheme)) return null;
   if (starter.scheme === "none") return "keyless";
   // The form over an authorization-code scheme needs a client the operator registered (ADR 0005):
   // not a first five minutes, so the starter is left off rather than offered and stalled.
   if (starter.scheme === "oauth_authorization_code") return null;
-  // A form provider that does not sign the starter's scheme cannot connect it either.
-  return connect.schemes.includes(starter.scheme) ? "form" : null;
+  return "form";
 }
 
 /**

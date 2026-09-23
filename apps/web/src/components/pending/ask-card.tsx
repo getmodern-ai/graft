@@ -2,7 +2,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type * as React from "react";
 import { toast } from "sonner";
 
+import { OpenInNewIcon } from "@/components/icons";
 import { Time } from "@/components/time";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -134,5 +136,61 @@ export function Hosts({ hosts }: { hosts: readonly string[] }) {
         </code>
       ))}
     </>
+  );
+}
+
+/**
+ * Who wrote a connection ask's proposal, for the cards that say so (GRA-206). `agent`, the
+ * default, is an ask an agent's own `request_connection` opened from what its model read: the
+ * card says so and opens the proposal for editing, since a model can be wrong. `setup` is the
+ * ask Setup's connect step opened as the agent from a curated starter entry (ADR 0024), so the
+ * card drops the model's provenance and keeps the proposal editor behind a disclosure. The ask
+ * itself is the same either way; the inbox and the handoff page never pass `setup`.
+ */
+export type AskOrigin = "agent" | "setup";
+
+/**
+ * Where a proposal came from: under `agent`, the provenance badge, the server's note and the page
+ * the agent read; under `setup`, the vendor's documentation alone, since Graft wrote the entry.
+ */
+export function ProposalSource({
+  origin,
+  note,
+  docsUrl,
+}: {
+  origin: AskOrigin;
+  note?: string | null;
+  docsUrl?: string | null;
+}) {
+  if (origin === "setup") return docsUrl ? <DocsLink href={docsUrl} origin={origin} /> : null;
+  return (
+    <figure className="flex flex-col gap-1.5">
+      <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
+        <Badge variant="outline">proposed by the agent's model</Badge>
+        {note}
+      </figcaption>
+      {docsUrl ? (
+        <DocsLink href={docsUrl} origin={origin} />
+      ) : (
+        <p className="text-muted-foreground text-xs">
+          The agent named no documentation page. Check the hosts against the vendor's own.
+        </p>
+      )}
+    </figure>
+  );
+}
+
+/** The documentation link a connection ask carries, named for who read it. */
+export function DocsLink({ href, origin }: { href: string; origin: AskOrigin }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
+    >
+      {`${origin === "setup" ? "The vendor's documentation" : "The documentation the agent read"}: ${href}`}
+      <OpenInNewIcon className="size-3" />
+    </a>
   );
 }

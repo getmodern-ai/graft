@@ -318,10 +318,11 @@ const agentPatch = agentBody.omit({ connectionIds: true, scopeMode: true }).part
 /**
  * `POST /setup/start` (ADR 0024; `startSetup` in `@graft/core` says what each field decides):
  * the harness picked, the agent to run as when the person has one or several, or the agent to mint
- * under *Advanced options*, the create dialog's body less its list. Strict, so a `connectionIds`
- * sent here is refused rather than dropped: Setup's agent is narrowed on the agent page, later.
+ * under *Advanced options*, the create dialog's body less its list. Strict at both levels, so a
+ * `connectionIds` or a `scopeMode` sent beside `agent` rather than inside it is refused rather than
+ * dropped, which would mint an agent on `all`: Setup's agent is narrowed on the agent page, later.
  */
-const setupStartBody = z.object({
+const setupStartBody = z.strictObject({
   harness: z.enum(setupHarness).optional(),
   agentId: z.string().optional(),
   agent: z
@@ -896,7 +897,9 @@ export function createApi(options: ApiOptions): Hono {
     const { state: afterConnect, connected } = await learnSetupConnection(ctx, principal, {
       setup: setupDeps,
       agent: agentDeps,
+      connection: connectionDeps,
       pendingAction: pendingActionDeps,
+      notifier: options.notifier,
     });
     if (connected) countStep(principal, afterConnect, "connect");
     const learnsBuild =
