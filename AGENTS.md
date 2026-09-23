@@ -985,7 +985,7 @@ person-scoped agent in the same statement; the table shows count/cap with Cando'
 (`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
 harness, the agent, the open connection ask, the connection, the acquire job, the tool, and
 `started_at`, `completed_at`, `skipped_at`; `repo/setup.ts` names the person in every statement,
-pinned in `repo/setup.test.ts`, and `lockSetup` makes the row and locks it so two starts serialise.
+pinned in `repo/setup.test.ts`, and `lockSetup` makes the row and locks it so two starts, or a start and a skip, serialise.
 `@graft/core/setup/` holds the service (`getSetupState`, `startSetup`, `skipSetup`), the
 browser-safe rules (`shouldShowSetup` over the record and the person's connection and tool counts,
 `isAwaitingHarness` over an agent, `currentSetupStep`) and the harness data (`SETUP_HARNESSES`:
@@ -1009,7 +1009,8 @@ offers *Set up Graft* in its empty body to a person who skipped.
 keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
 `outcome` sentence); adding one is one entry. `setupVendorOptions` is the pure filter and order over
 each starter's covering provider: a keyring form over `oauth_authorization_code` is dropped, and
-`link` leads, then `none`, then `keyless` (a `none` scheme), then `form`. `GET /api/setup/vendors`
+`link` leads, then `none`, then `keyless` (a `none` scheme the form provider lists), then `form`.
+`GET /api/setup/vendors`
 asks `providerFor` per starter in `Backings.providers` order (`apps/server/src/setup-connect.ts`);
 the console never computes coverage. `POST /api/setup/connect` (`SetupConnectBody`: `{ starterId }`
 or `{ connectionId }`) calls GRA-203's `routeConnectionProposal` as the setup's agent, through
@@ -1017,12 +1018,17 @@ or `{ connectionId }`) calls GRA-203's `routeConnectionProposal` as the setup's 
 `moveSetupConnect`: an ask to `connect` with `pendingActionId` (a repeat re-uses it by proposal
 key), a connection made or found at once, or *Another vendor*'s ordinary-form connection (added to
 the agent's scope), to `goal`. `GET /api/setup` reads the ask the record waits on and never takes
-it: answered with a connection (or a `scope` ask allowed) it moves to `goal` naming it; declined,
-expired or gone, back to `vendor`. `setup_step_completed` carries `step`: `vendor` from the
-connect route's row, `connect` captured where the connection is learned. The console's connect step
-draws the open ask from the inbox's list with `PendingActionCard` under `origin="setup"` (no
-model provenance, the proposal editor folded behind *Edit the connection*; the inbox and the
-handoff page pass nothing and draw the cards as before), and polls both reads
+a live answer: answered with a connection (or a `scope` ask allowed) that is still live, usable and
+in the agent's scope it moves to `goal` naming it; declined, expired, gone, or answered with a
+connection revoked or taken out of the scope since (that answer is taken, so the routing stops
+handing it back), back to `vendor`, and on `goal` a connection that stopped standing takes it back
+too. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
+captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
+one answer count once. A listed agent's scope grown by Setup (*Another vendor*, a `scope` ask
+answered in the console) is announced to its session, since no waiting call of its own does. The
+console's connect step draws the open ask from the inbox's list with `PendingActionCard` under
+`origin="setup"` (no model provenance, the proposal editor folded behind *Edit the connection*;
+the inbox and the handoff page pass nothing and draw the cards as before), and polls both reads
 every 3 s so an answer given in the inbox or a chat card moves it too. The goal step's starter is
 `starterVendorFor(connection.vendor)`.
 
@@ -1033,7 +1039,8 @@ connection, `starterId`, the curated `goal` (empty for another vendor) and `buil
 `acquireConfigured` (the `acquire` door's own model check) says no; the console then shows the
 message naming the variables and disables Build. `POST /api/setup/build` (`SetupBuildBody`:
 `{ goal }`) is `@graft/core`'s `startSetupBuild`, one transaction under `lockSetup`: from `goal`
-only, the connection still in the agent's scope, `grantBuildApproval` for the pair (the standing
+only, the connection not revoked (refused `connection_revoked`; a revoked row stays in a resolved
+scope) and still in the agent's scope, `grantBuildApproval` for the pair (the standing
 row answered when the connection card already granted it), `createAcquireJob` with Setup's own
 first line and the starter's documentation as `hints`, the record to `building` naming the job;
 the route then kicks the runner. No pending action is opened, and `similar_tools_exist` is not
@@ -1045,7 +1052,7 @@ to `result` with `toolId`, or the tool noted on `finish`. A failed job leaves th
 `building`; `POST /api/setup/goal` (*Change the goal*) goes back to `goal` with the job cleared,
 refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it builds*)
 goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
-`building` (captured where the tool is learned). The console's building step polls the job route
+`building` (captured by the read whose move named the tool, `SetupMoveResult.moved`). The console's building step polls the job route
 every 2 s and draws each line beside its stage's sentence on the stage's first line
 (`lib/setup-progress.ts`'s `progressStage` and `explainProgress`, keyed on `acquire/job.ts`'s
 lines; a new progress line there wants a rule and a case in `setup-progress.test.ts`).

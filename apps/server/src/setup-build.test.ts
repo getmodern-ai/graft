@@ -89,6 +89,11 @@ let mcp: ReturnType<typeof createMcpDeps>;
 let runner: AcquireRunner;
 let app: ReturnType<typeof createServer>;
 const captured: Capture[] = [];
+/**
+ * Serialise the API's top-level transactions, as the record's row lock does in Postgres, for the
+ * one test that races two reads: the in-memory store has no lock of its own.
+ */
+let serialise = false;
 /** Whose session the next request carries: each test is its own person, so records never mix. */
 let person = "person_0";
 let people = 0;
@@ -184,6 +189,15 @@ beforeAll(async () => {
     model: null,
     acquire: { maxAttempts: 2, tokenCeiling: 400_000 },
   });
+  let chain: Promise<unknown> = Promise.resolve();
+  const apiDb = {
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+      if (!serialise) return fake.db.transaction(fn);
+      const run = chain.then(() => fn(fake.db));
+      chain = run.catch(() => {});
+      return run;
+    },
+  } as typeof fake.db;
   runner = createAcquireRunner(mcp, {
     concurrency: 1,
     pollIntervalSeconds: 3600,
@@ -202,7 +216,7 @@ beforeAll(async () => {
         getSession: async () => ({ user: { id: person } }),
       },
       deps: {
-        db: fake.db,
+        db: apiDb,
         agent: fake.agent,
         connection: fake.connection,
         workingSet: fake.workingSet,
@@ -234,6 +248,7 @@ beforeAll(async () => {
 afterEach(async () => {
   await runner.idle();
   mcp.model = null;
+  serialise = false;
 });
 
 afterAll(async () => {
@@ -552,6 +567,39 @@ describe("Setup's goal and build steps", () => {
     expect(done).toMatchObject({ step: "completed", show: false, token: null });
     expect(done.agent).toMatchObject({ id: agentId, tokenPrefix: null, connectedVia: null });
   }, 60_000);
+
+  it("counts the building step once when two reads learn the same pass", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    await onGoal(true);
+    await app.request("/api/setup/build", post({ goal: "Read the current weather. Read only." }));
+    await runner.idle();
+    serialise = true;
+    // Both reads find the job passed before either moves; the lock lets one name the tool.
+    const answers = await Promise.all([app.request("/api/setup"), app.request("/api/setup")]);
+    const states = await Promise.all(answers.map(read));
+    expect(states.map((state) => state.step)).toEqual(["result", "result"]);
+    expect(stepEvents()).toEqual(["vendor", "connect", "goal", "building"]);
+  }, 60_000);
+
+  it("refuses Build on a revoked connection before any grant or job, and the read goes back", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    const { agentId, connectionId } = await onGoal(false);
+    const revoked = await app.request(`/api/connections/${connectionId}/revoke`, post());
+    expect(revoked.status).toBe(200);
+    // Build posted before the next read: the row is revoked though still in the resolved scope.
+    const refused = await app.request("/api/setup/build", post({ goal: "Read the weather." }));
+    expect(refused.status).toBe(409);
+    expect((await read(refused)).details).toMatchObject({
+      reason: "connection_revoked",
+      connectionId,
+    });
+    expect(buildApprovals(agentId)).toEqual([]);
+    expect([...store.acquireJobs.values()].filter((job) => job.agentId === agentId)).toEqual([]);
+    expect(await get("/api/setup")).toMatchObject({
+      step: "vendor",
+      setup: { connectionId: null },
+    });
+  });
 
   it("with no model, says what the operator sets and refuses Build with the door's reason", async () => {
     mcp.model = null;

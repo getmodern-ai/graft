@@ -203,6 +203,27 @@ describe("startSetup", () => {
     expect(state.setup?.agentId).toBe("agent_b");
   });
 
+  it("records no harness beside an adopted agent, whether one or named among several", async () => {
+    const one = world({ agents: [agentRow("agent_claude")] });
+    const adopted = await startSetup(
+      ctx,
+      PRINCIPAL,
+      { harness: "claude" },
+      one.deps,
+      one.agentDeps,
+    );
+    expect(adopted.setup).toMatchObject({ agentId: "agent_claude", harness: null });
+    const several = world({ agents: [agentRow("agent_a"), agentRow("agent_b")] });
+    const named = await startSetup(
+      ctx,
+      PRINCIPAL,
+      { harness: "hermes", agentId: "agent_b" },
+      several.deps,
+      several.agentDeps,
+    );
+    expect(named.setup).toMatchObject({ agentId: "agent_b", harness: null });
+  });
+
   it("refuses an agent that is not one of the person's active agents", async () => {
     const w = world({ agents: [agentRow("agent_a"), agentRow("agent_b", { revokedAt: NOW })] });
     await expect(
@@ -241,6 +262,14 @@ describe("skipSetup", () => {
     expect(state.show).toBe(false);
   });
 
+  it("judges the skip on the locked record, and leaves a completed one unmarked", async () => {
+    const w = world({});
+    await w.deps.saveSetup(fakeDb as never, "person_1", { step: "completed", completedAt: NOW });
+    const state = await skipSetup(ctx, PRINCIPAL, w.deps, w.agentDeps);
+    expect(w.deps.lockSetup).toHaveBeenCalled();
+    expect(state.setup).toMatchObject({ step: "completed", skippedAt: null });
+  });
+
   it("keeps the agent it ran as, and a start clears the skip", async () => {
     const w = world({});
     await startSetup(ctx, PRINCIPAL, { harness: "hermes" }, w.deps, w.agentDeps);
@@ -265,11 +294,18 @@ describe("the connect step's moves", () => {
     const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
       moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
     const asked = await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" });
-    expect(asked.setup).toMatchObject({ step: "connect", pendingActionId: "pa_1" });
+    expect(asked).toMatchObject({ moved: true, state: { setup: { step: "connect" } } });
+    expect(asked.state.setup).toMatchObject({ step: "connect", pendingActionId: "pa_1" });
     // A repeat, or another starter, re-points the ask while on connect.
     await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_2" });
     // A read that learned from the first ask is stale and changes nothing.
-    await move({ kind: "connected", agentId: "agent_new", connectionId: "conn_1", askId: "pa_1" });
+    const stale = await move({
+      kind: "connected",
+      agentId: "agent_new",
+      connectionId: "conn_1",
+      askId: "pa_1",
+    });
+    expect(stale.moved).toBe(false);
     expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_2" });
     const done = await move({
       kind: "connected",
@@ -277,12 +313,35 @@ describe("the connect step's moves", () => {
       connectionId: "conn_2",
       askId: "pa_2",
     });
-    expect(done.setup).toMatchObject({
+    expect(done.moved).toBe(true);
+    expect(done.state.setup).toMatchObject({
       step: "goal",
       connectionId: "conn_2",
       pendingActionId: null,
     });
-    expect(() => connectingAgentOf(done)).toThrow(ServiceError);
+    expect(() => connectingAgentOf(done.state)).toThrow(ServiceError);
+    // A second read that learned the same answer finds the record moved on: it answers the same
+    // state, and says it did not move it, so the step is counted once.
+    const again = await move({
+      kind: "connected",
+      agentId: "agent_new",
+      connectionId: "conn_2",
+      askId: "pa_2",
+    });
+    expect(again).toMatchObject({ moved: false, state: { step: "goal" } });
+  });
+
+  it("goes back to the vendor step from goal when its connection is lost, and only then", async () => {
+    const w = await onVendor();
+    const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
+      moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
+    await move({ kind: "connected", agentId: "agent_new", connectionId: "conn_1" });
+    expect((await move({ kind: "lost", connectionId: "conn_other" })).moved).toBe(false);
+    expect(w.record()).toMatchObject({ step: "goal", connectionId: "conn_1" });
+    const lost = await move({ kind: "lost", connectionId: "conn_1" });
+    expect(lost).toMatchObject({ moved: true, state: { step: "vendor" } });
+    expect(w.record()).toMatchObject({ step: "vendor", connectionId: null });
+    expect((await move({ kind: "lost", connectionId: "conn_1" })).moved).toBe(false);
   });
 
   it("goes back to the vendor step when the ask it waits on closed without a connection", async () => {
@@ -301,7 +360,7 @@ describe("the connect step's moves", () => {
       w.deps,
       w.agentDeps,
     );
-    expect(back.setup).toMatchObject({ step: "vendor", pendingActionId: null });
+    expect(back.state.setup).toMatchObject({ step: "vendor", pendingActionId: null });
   });
 
   it("refuses a move for an agent the record does not run as, and a Setup not yet started", async () => {
@@ -341,18 +400,29 @@ describe("the building step's moves", () => {
     await w.move({ kind: "built", acquireJobId: "job_0", toolId: "tool_0" });
     expect(w.record()).toMatchObject({ step: "building", toolId: null });
     const built = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
-    expect(built.setup).toMatchObject({ step: "result", toolId: "tool_1", acquireJobId: "job_1" });
-    // A second read of the same pass is a no-op.
-    await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(built.moved).toBe(true);
+    expect(built.state.setup).toMatchObject({
+      step: "result",
+      toolId: "tool_1",
+      acquireJobId: "job_1",
+    });
+    // A second read of the same pass is a no-op, and says so, so the step is counted once.
+    const again = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(again).toMatchObject({ moved: false, state: { step: "result" } });
     expect(w.record()).toMatchObject({ step: "result" });
   });
 
   it("continues to the finish while it builds, and names the tool there when it lands", async () => {
     const w = await onBuilding();
     const finish = await w.move({ kind: "continue", acquireJobId: "job_1" });
-    expect(finish.setup).toMatchObject({ step: "finish", acquireJobId: "job_1", toolId: null });
+    expect(finish.state.setup).toMatchObject({
+      step: "finish",
+      acquireJobId: "job_1",
+      toolId: null,
+    });
     const landed = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
-    expect(landed.setup).toMatchObject({ step: "finish", toolId: "tool_1" });
+    expect(landed).toMatchObject({ moved: true, state: { setup: { toolId: "tool_1" } } });
+    expect(landed.state.setup).toMatchObject({ step: "finish", toolId: "tool_1" });
   });
 
   it("goes back to the goal with the job cleared on a retry, and refuses a stale one", async () => {
@@ -361,7 +431,11 @@ describe("the building step's moves", () => {
       code: "CONFLICT",
     });
     const back = await w.move({ kind: "retry", acquireJobId: "job_1" });
-    expect(back.setup).toMatchObject({ step: "goal", acquireJobId: null, connectionId: "conn_1" });
+    expect(back.state.setup).toMatchObject({
+      step: "goal",
+      acquireJobId: null,
+      connectionId: "conn_1",
+    });
     await expect(w.move({ kind: "continue", acquireJobId: "job_1" })).rejects.toMatchObject({
       code: "CONFLICT",
     });
@@ -389,7 +463,12 @@ describe("the result and finish steps", () => {
       code: "CONFLICT",
     });
     const finish = await w.move({ kind: "finish", acquireJobId: "job_1" });
-    expect(finish.setup).toMatchObject({ step: "finish", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(finish.moved).toBe(true);
+    expect(finish.state.setup).toMatchObject({
+      step: "finish",
+      acquireJobId: "job_1",
+      toolId: "tool_1",
+    });
     await expect(w.move({ kind: "finish", acquireJobId: "job_1" })).rejects.toMatchObject({
       details: { reason: "setup_step", step: "finish" },
     });
