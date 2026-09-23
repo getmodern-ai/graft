@@ -1,6 +1,8 @@
 export {
+  BLOB_NAME_REFUSED,
   BLOB_QUOTA_BYTES,
   BLOB_REF_SCHEME,
+  BLOB_TTL_HOURS,
   BLOB_TTL_MS,
   type BlobLedgerEntry,
   blobIdOf,
@@ -16,6 +18,7 @@ export {
   MAX_BLOB_BYTES,
   MAX_BLOB_CONTENT_TYPE_CHARS,
   MAX_BLOB_NAME_CHARS,
+  MEDIA_TYPE_PATTERN,
   MODULE_ENTRIES,
   MODULE_ENTRY,
   type ModuleEntry,

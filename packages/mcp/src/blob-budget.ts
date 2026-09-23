@@ -2,6 +2,7 @@ import {
   type AgentScope,
   adoptedBlobOf,
   getBlobs,
+  isBlobExpired,
   liveBlobBytes,
   parseBlobSidecar,
   type ServiceContext,
@@ -149,8 +150,9 @@ async function recordAdopted(
     seen.add(id);
     const row = known.get(id);
     if (row) {
-      // Listed from the row, and only while the door would admit the ref (the header).
-      const live = row.removedAt === null && row.expiresAt.getTime() > now.getTime();
+      // Listed from the row, and only while the door would admit the ref (the header):
+      // `isBlobExpired` is the door's rule (GRA-199).
+      const live = row.removedAt === null && !isBlobExpired(row.expiresAt, now);
       if (live && (await store.exists(scope.agentId, id))) {
         listed.push({
           ref: blobRefOf(row.id),

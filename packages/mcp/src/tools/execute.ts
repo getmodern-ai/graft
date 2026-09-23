@@ -3,7 +3,7 @@ import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { requireBuildApproval } from "../approval";
 import { ASK_CARD_TOOL_META } from "../ask-card";
 import { recordBlobsWithinQuota, withRecordedBlobs } from "../blob-budget";
-import { admitBlobs, blobBudgetEnvironment } from "../blob-door";
+import { admitBlobs, blobRunEnvironment } from "../blob-door";
 import {
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   MAX_COMMAND_TIMEOUT_SECONDS,
@@ -172,11 +172,12 @@ export async function callExecuteTool(
           run: (env) =>
             withSandbox(
               () => openAgentSandbox(deps, scope),
-              // What the process may still commit under the agent's quota, beside the token
-              // (the header; `../blob-door.ts`). Advice on this path, since the command is the
-              // caller's and may replace the variable: the record below is the rule.
+              // The agent for a sidecar and what the process may still commit under the agent's
+              // quota, beside the token (the header; `../blob-door.ts`'s `blobRunEnvironment`).
+              // Advice on this path, since the command is the caller's and may replace a variable:
+              // the record below is the rule.
               (handle) =>
-                runCommand(handle, parsed, { ...env, ...blobBudgetEnvironment(admitted) }),
+                runCommand(handle, parsed, { ...env, ...blobRunEnvironment(scope, admitted) }),
             ),
         }),
       admitted.budgetBytes,

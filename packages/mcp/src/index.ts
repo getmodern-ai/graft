@@ -12,6 +12,7 @@ export { type BlobLedgerEntry, type RunnerEnvelope, readRunnerEnvelope } from "@
 export {
   attemptDraftPath,
   DEFAULT_HEARTBEAT_MS,
+  FIXTURE_BLOB_TRACE,
   MAX_DOCS_PER_TURN,
   MAX_PROOF_READS,
   PROBE_MODULE,
@@ -89,6 +90,22 @@ export {
   scopeAskCard,
   UI_EXTENSION_ID,
 } from "./ask-card";
+// The blob door (GRA-187, GRA-199): the walk over an input's string leaves is the one walker, which
+// `@graft/evals`'s scorers read a result through; the two environment helpers are what every run
+// that passed the door carries into its exec.
+export {
+  admitBlobs,
+  type BlobAdmission,
+  blobAgentEnvironment,
+  blobBudgetEnvironment,
+  blobRefsIn,
+  blobRunEnvironment,
+  judgeBlobQuota,
+  judgeBlobRefs,
+  MAX_INPUT_DEPTH,
+  type StringLeafVisit,
+  walkStringLeaves,
+} from "./blob-door";
 export {
   ABANDONED_BLOB_WRITE_SECONDS,
   clampTimeout,

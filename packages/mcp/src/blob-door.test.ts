@@ -9,6 +9,7 @@ import {
   judgeBlobQuota,
   judgeBlobRefs,
   MAX_INPUT_DEPTH,
+  walkStringLeaves,
 } from "./blob-door";
 import type { McpDeps } from "./deps";
 import { createInFlightRegistry } from "./in-flight";
@@ -40,6 +41,34 @@ const row = (ref: string, overrides: Partial<BlobRow> = {}): BlobRow => ({
   createdAt: NOW,
   updatedAt: NOW,
   ...overrides,
+});
+
+describe("walkStringLeaves", () => {
+  it("visits every string leaf in the input's own order and writes a replacement into its container", () => {
+    const input = { a: "x", list: ["y", { deep: "z" }, 3], n: null, b: "w" };
+    const seen: string[] = [];
+    const walk = walkStringLeaves(input, (leaf, replace) => {
+      seen.push(leaf);
+      if (leaf === "y" || leaf === "z") replace(`${leaf}!`);
+    });
+    expect(walk).toEqual({ tooDeep: false });
+    expect(seen).toEqual(["x", "y", "z", "w"]);
+    expect(input).toEqual({ a: "x", list: ["y!", { deep: "z!" }, 3], n: null, b: "w" });
+  });
+
+  it("visits a string root without a container to replace it in, and stops past the depth bound", () => {
+    const seen: string[] = [];
+    expect(
+      walkStringLeaves("alone", (leaf, replace) => {
+        seen.push(leaf);
+        replace("other");
+      }),
+    ).toEqual({ tooDeep: false });
+    expect(seen).toEqual(["alone"]);
+    let nested: unknown = "leaf";
+    for (let i = 0; i < MAX_INPUT_DEPTH + 1; i += 1) nested = { nested };
+    expect(walkStringLeaves(nested, () => {})).toEqual({ tooDeep: true });
+  });
 });
 
 describe("blobRefsIn", () => {

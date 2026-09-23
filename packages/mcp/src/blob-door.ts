@@ -1,6 +1,12 @@
-import { type AgentScope, getBlobs, liveBlobBytes, type ServiceContext } from "@graft/core";
+import {
+  type AgentScope,
+  getBlobs,
+  isBlobExpired,
+  liveBlobBytes,
+  type ServiceContext,
+} from "@graft/core";
 import type { BlobRow } from "@graft/db/repo/blob";
-import { BLOB_QUOTA_BYTES, BLOB_REF_SCHEME, BLOB_TTL_MS, blobIdOf } from "@graft/runner";
+import { BLOB_QUOTA_BYTES, BLOB_REF_SCHEME, BLOB_TTL_HOURS, blobIdOf } from "@graft/runner";
 
 import type { McpDeps } from "./deps";
 import { type Refusal, refusal } from "./result";
@@ -16,7 +22,7 @@ import { type Refusal, refusal } from "./result";
  *    `quota`. Live is not removed and not yet expired, so the quota frees itself on the TTL.
  *  - `blob_not_found`: a ref with no row under this scope. A ref that is not well formed, one nobody
  *    wrote and one another agent wrote are one answer, and the sentence never says whose it is: a
- *    ref must not be a probe into what other agents hold (GRA-181, user story 11).
+ *    ref must not be a probe into what other agents hold (GRA-181's story 11).
  *  - `blob_expired`: the row is there but its time has passed, or the sweep has removed the bytes
  *    (`removed_at`). The sentence names the TTL and says to run the producing tool again.
  *
@@ -39,35 +45,63 @@ import { type Refusal, refusal } from "./result";
  */
 export const MAX_INPUT_DEPTH = 64;
 
+/** What `walkStringLeaves` calls per leaf: the string, and a way to put another string in its place. */
+export type StringLeafVisit = (leaf: string, replace: (next: string) => void) => void;
+
+/**
+ * Every string leaf of a value, in the value's own order, visited once: an explicit stack rather
+ * than recursion, so the depth of the input is never the depth of the call stack, and a value
+ * nested past `MAX_INPUT_DEPTH` stops the walk with `tooDeep` for the caller to refuse
+ * (`admitBlobs` answers `input_invalid`; `acquire`'s job leaves the dry run's door to say so). The
+ * one walker over an input or a result (GRA-199): `blobRefsIn` reads refs off it, `acquire`'s job
+ * substitutes a fixture's ref through `replace`, which writes into the containing array or object,
+ * and `@graft/evals`'s scorers read a result's refs through it. A root that is itself a string is
+ * visited and cannot be replaced, since there is no container to write into.
+ */
+export function walkStringLeaves(value: unknown, visit: StringLeafVisit): { tooDeep: boolean } {
+  type Frame = { value: unknown; depth: number; replace: (next: string) => void };
+  const stack: Frame[] = [{ value, depth: 0, replace: () => {} }];
+  while (stack.length > 0) {
+    const frame = stack.pop() as Frame;
+    if (typeof frame.value === "string") {
+      visit(frame.value, frame.replace);
+      continue;
+    }
+    if (typeof frame.value !== "object" || frame.value === null) continue;
+    if (frame.depth >= MAX_INPUT_DEPTH) return { tooDeep: true };
+    // Pushed in reverse, so the pop order is the input's own: walk order is what the refusal's
+    // "first dead ref" means (`judgeBlobRefs`).
+    const container = frame.value as Record<string | number, unknown>;
+    const entries: [string | number, unknown][] = Array.isArray(frame.value)
+      ? frame.value.map((item, index): [number, unknown] => [index, item])
+      : Object.entries(container);
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const [key, item] = entries[i] as [string | number, unknown];
+      stack.push({
+        value: item,
+        depth: frame.depth + 1,
+        replace: (next) => {
+          container[key] = next;
+        },
+      });
+    }
+  }
+  return { tooDeep: false };
+}
+
 /**
  * Every distinct `blob://` string leaf of a value, in walk order, and whether the walk stopped at a
- * value nested past `MAX_INPUT_DEPTH`: an explicit stack rather than recursion, so the depth of
- * the input is never the depth of the call stack, and `tooDeep` is the caller's to refuse
- * (`admitBlobs` answers `input_invalid`; `acquire`'s job leaves the dry run's door to say so).
+ * value nested past `MAX_INPUT_DEPTH` (`walkStringLeaves`); `tooDeep` is the caller's to refuse.
  */
 export function blobRefsIn(input: unknown): { refs: string[]; tooDeep: boolean } {
   const refs = new Set<string>();
-  const stack: { value: unknown; depth: number }[] = [{ value: input, depth: 0 }];
-  while (stack.length > 0) {
-    const { value, depth } = stack.pop() as { value: unknown; depth: number };
-    if (typeof value === "string") {
-      if (value.startsWith(BLOB_REF_SCHEME)) refs.add(value);
-      continue;
-    }
-    if (typeof value !== "object" || value === null) continue;
-    if (depth >= MAX_INPUT_DEPTH) return { refs: [...refs], tooDeep: true };
-    // Pushed in reverse, so the pop order is the input's own: walk order is what the refusal's
-    // "first dead ref" means (`judgeBlobRefs`).
-    const items = Array.isArray(value) ? value : Object.values(value);
-    for (let i = items.length - 1; i >= 0; i -= 1) {
-      stack.push({ value: items[i], depth: depth + 1 });
-    }
-  }
-  return { refs: [...refs], tooDeep: false };
+  const { tooDeep } = walkStringLeaves(input, (leaf) => {
+    if (leaf.startsWith(BLOB_REF_SCHEME)) refs.add(leaf);
+  });
+  return { refs: [...refs], tooDeep };
 }
 
 const MIB = 1024 * 1024;
-const TTL_HOURS = BLOB_TTL_MS / (60 * 60 * 1000);
 
 /** The quota rule over the number alone, so a suite can pin the boundary without rows. */
 export function judgeBlobQuota(liveBytes: number, quota = BLOB_QUOTA_BYTES): Refusal | null {
@@ -76,7 +110,7 @@ export function judgeBlobQuota(liveBytes: number, quota = BLOB_QUOTA_BYTES): Ref
   const cap = Math.round(quota / MIB);
   return refusal(
     "blob_quota",
-    `This agent's live blobs come to ${held} MiB, at or over the ${cap} MiB quota, so no tool can run for it until some expire: any tool may write a blob. A blob lives ${TTL_HOURS} hours from its write and stops counting once it has expired, the oldest first. Run the tool again once one has.`,
+    `This agent's live blobs come to ${held} MiB, at or over the ${cap} MiB quota, so no tool can run for it until some expire: any tool may write a blob. A blob lives ${BLOB_TTL_HOURS} hours from its write and stops counting once it has expired, the oldest first. Run the tool again once one has.`,
     { bytes: liveBytes, quota },
   );
 }
@@ -103,10 +137,10 @@ export function judgeBlobRefs(
         { ref },
       );
     }
-    if (row.removedAt !== null || row.expiresAt.getTime() <= now.getTime()) {
+    if (row.removedAt !== null || isBlobExpired(row.expiresAt, now)) {
       return refusal(
         "blob_expired",
-        `${ref} has expired: a blob lives ${TTL_HOURS} hours from its write, and this one's time has passed. Run the tool that produced it again and pass the new ref.`,
+        `${ref} has expired: a blob lives ${BLOB_TTL_HOURS} hours from its write, and this one's time has passed. Run the tool that produced it again and pass the new ref.`,
         { ref },
       );
     }
@@ -177,4 +211,31 @@ export function blobBudgetEnvironment(admission: BlobAdmission): Record<string, 
     GRAFT_BLOB_BUDGET_BYTES: String(admission.budgetBytes),
     GRAFT_BLOB_QUOTA_BYTES: String(BLOB_QUOTA_BYTES),
   };
+}
+
+/**
+ * The agent, as the runner's sidecar records it (`GRAFT_AGENT`; the runner's header, ADR 0023):
+ * never for a path, since the mount already is the agent's. The one spelling (GRA-199; Greptile on
+ * #159): `run.ts`'s `runWithCapability` spreads it for every capability run, because any of them
+ * may invoke `$GRAFT_RUNNER` on a module (`execute__` on a by-hand one included) and a sidecar with
+ * no agent is a blob the sweep can only adopt by trust; `blobRunEnvironment` carries it beside the
+ * budget for a door-admitted run. `GRAFT_*`, so the runner deletes it before the module loads.
+ */
+export function blobAgentEnvironment(scope: AgentScope): Record<string, string> {
+  return { GRAFT_AGENT: scope.agentId };
+}
+
+/**
+ * The blob half of an admitted run's environment, one spelling for every run that passed the door
+ * (GRA-199; `run.ts`, `tools/execute.ts`, `run_command` in `tools/authoring.ts`, `acquire`'s
+ * fixture write): the agent for the sidecar (`blobAgentEnvironment`) beside the budget and the
+ * quota. All `GRAFT_*`, deleted by the runner before the module loads. The grant that goes with an
+ * admission is `in-flight.ts`'s `admitUnderGrant` (GRA-200), which takes the door under the
+ * agent's critical section and answers the caller its `release`.
+ */
+export function blobRunEnvironment(
+  scope: AgentScope,
+  admission: BlobAdmission,
+): Record<string, string> {
+  return { ...blobAgentEnvironment(scope), ...blobBudgetEnvironment(admission) };
 }

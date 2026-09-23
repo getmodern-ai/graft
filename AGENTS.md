@@ -643,15 +643,18 @@ the build order.
 { contentType, name? })` takes a `Uint8Array`, a `Blob` or a `ReadableStream<Uint8Array>`, streams
 it into `/blobs/<id>.tmp/`, writes the sidecar (`bytes`, `contentType`, `name`, `writtenAt`,
 `expiresAt`, `agentId`, `toolVersion`) and renames the directory once; `stat` reads the sidecar;
-`read` answers a lazy `Blob` (declared ahead of GRA-187, which adds the door). The runner's stdout
-contract is now an **envelope**, `{ result, blobs }`, on the sync, detached and dry-run paths alike
-(`readRunnerEnvelope` in `@graft/runner`; `run.ts`'s `unwrapEnvelope` reads a bare result from a
-sandbox seeded with an older runner as one with no blobs; since GRA-193 each server seeds the runner
-and the skills under `/graft/<sha256 of both>/` when that directory is absent and runs from it, handing
-every command the path as `GRAFT_RUNNER`, so a long-lived sandbox runs the server's runner on its next
-open and that tolerance is a later ticket's to narrow). Three
-per-exec variables ride beside the token and are deleted with it before the module loads:
-`GRAFT_AGENT` and `GRAFT_TOOL_VERSION` for the sidecar, never for a path, and `GRAFT_BLOBS_DIR`, the
+`read` answers a lazy `Blob` (the paragraph on GRA-187 below). The runner's stdout contract is now
+an **envelope**, `{ result, blobs }`, on the sync, detached and dry-run paths alike
+(`readRunnerEnvelope` in `@graft/runner`). Since GRA-193 each server seeds the runner and the skills
+under `/graft/<sha256 of both>/` when that directory is absent and runs from it, handing every
+command the path as `GRAFT_RUNNER`, so every sync run goes through this server's runner and
+`run.ts`'s `unwrapEnvelope` refuses stdout with no envelope as a module that printed to stdout
+itself (GRA-199); the one bare result still read is a detached run's result file written by a
+runner older than the envelope and polled after an upgrade, in `sandbox.ts`'s `readRunnerResult`.
+Three per-exec variables ride beside the token and are deleted with it before the module loads:
+`GRAFT_AGENT` and `GRAFT_TOOL_VERSION` for the sidecar, never for a path (`GRAFT_AGENT` is
+`blob-door.ts`'s `blobAgentEnvironment`, on every capability run and inside `blobRunEnvironment`,
+since an `execute__` command may invoke `$GRAFT_RUNNER` on a by-hand module), and `GRAFT_BLOBS_DIR`, the
 mount path, a variable for the reason `GRAFT_RESULT_PATH` is one (a backing that maps the sandbox's
 paths maps the environment's values; the fake does). On the wire a run that wrote nothing answers
 exactly what it did; one that wrote answers `{ result, blobs: [{ ref, bytes, contentType, name?,
@@ -677,8 +680,9 @@ against `BLOB_QUOTA_BYTES` answers `blob_quota` with `bytes` and `quota` on ever
 input or not; then every `blob://` string leaf of the input, arrays and nested objects included, is
 looked up under the person and the agent in one statement (`findBlobs`) and the first without a row
 is `blob_not_found` with `ref`, another agent's row answering the same sentence, and the first past
-its expiry or with `removed_at` set is `blob_expired` with `ref`, naming the 24 hours. Each is a
-refusal in the run's own shape (`isError: true`, a `refused` ledger row) and none asks (ADR 0008).
+its expiry (`@graft/core`'s `isBlobExpired`, `expiresAt <= now`, the sweep's and `sumLiveBlobBytes`'s
+rule too, GRA-199) or with `removed_at` set is `blob_expired` with `ref`, naming `BLOB_TTL_HOURS`.
+Each is a refusal in the run's own shape (`isError: true`, a `refused` ledger row) and none asks (ADR 0008).
 The quota lives beside the scheme, the cap and the TTL in `@graft/runner`'s `runner-source.ts`,
 the one file that spells the three numbers; `judgeBlobQuota` and `judgeBlobRefs` are pure and
 `blob-door.test.ts` pins the sentences, `server.test.ts` the loop end to end over the fake sandbox.
@@ -750,7 +754,7 @@ directory with no row and no sidecar the sweep can adopt from: absent, unparseab
 rule or naming another agent; junk, since the rename is the commit and the sidecar precedes it), and
 `remove_tmp` (a `<blobId>.tmp` last written to longer ago than `ABANDONED_BLOB_WRITE_SECONDS` in
 `bounds.ts`, the detached ceiling plus the sync ceiling; `RunSweepOptions.abandonedWriteMs` is the
-test seam). Expiry is strict. Only `BlobStore.readMeta`'s `null`, the store's own not-found signal,
+test seam). Expiry is `isBlobExpired`'s `<=` (GRA-199). Only `BlobStore.readMeta`'s `null`, the store's own not-found signal,
 reads as "no sidecar"; any other read error ends the agent's pass with the error on the report and
 the blob is judged again next tick. A run that starts after an agent's pass began is caught before
 every destructive action: the rest of that pass is deferred (`SweepBlobCounts.deferred`,
@@ -779,6 +783,36 @@ then, a `.tmp` goes by the bound, and no `blob_swept` fires, since there is no p
 `sweep -- --plan` shows a revoked agent's actions like any other's. A hosted blob store (GRA-192)
 implements `listAgents` beside the five verbs or `assertCloudBackings` refuses it at boot.
 
+**`acquire` authors both halves, and the playbook carries the one rule (GRA-190).** The authoring
+skill's *Moving a file between tools* section says when to write a blob and when to return data, how
+to pipe a response into `ctx.blob.write` (`res.body`, the type and name off the headers, base64 in
+JSON decoded with `Buffer.from(data, "base64url")` first), how to read one into a `FormData`, where
+the ref goes in the result and that a consuming input takes it as a plain string, and the four
+refusal names; `skills.test.ts` pins its sentences to the runner's constants. **A consuming tool's
+dry run has a blob to read**: `job.ts`'s `dryRunInput` judges the test input's refs with the door's
+own functions before the dry run and, for a dead one, or for none where the module reads
+`ctx.blob.read(input.<field>)` (the check's `contextMembersUsed` and `blobReadFields`, bound by the
+checker to the default export's two parameters, one level of destructuring followed, so a name in a
+comment, a helper's own `.blob.read`, a helper file or a shadowing nested function records
+nothing), mints a
+**fixture blob** through the runner under a budget grant held and released as a run's is
+(`admitUnderGrant` in `in-flight.ts`, GRA-200, and `blobRunEnvironment` in `blob-door.ts`, GRA-199;
+`FIXTURE_MODULE` beside the probe:
+a few hundred bytes of `text/plain` named `fixture.txt`, the agent's, the normal TTL, a row with no
+version) and substitutes its ref in the dry run's input alone, saying so in an `Attempt N:` line;
+the draft's `testInput` is never written, and fixtures are never reused across jobs. The door's
+`walkStringLeaves` walks an input with a stack, never the call stack, and is the one walker:
+`blobRefsIn` reads refs off it, `job.ts`'s `substituteBlobRefs` replaces through it and
+`@graft/evals`'s scorers read a result through it (GRA-199); one nested past `MAX_INPUT_DEPTH` (64)
+is refused `input_invalid` naming the bound. The rule on
+the wire is `session.ts`'s `BLOB_RULE`, in `run_tool`'s paragraph and word for word in the Hermes
+skill: a file moves between tools as a `blob://` ref, never as content, and the producing tool runs
+before the consuming one is acquired. The budget was measured first (2,045 of 2,048) and the clause
+paid for by tightening facts the descriptions carry; `SERVER_INSTRUCTIONS`'s comment lists them. The
+facts are the descriptions': `blobs.ts`'s `BLOB_RESULT_FACT` (the list's five fields, the three
+refusals) on `run_tool` and appended to every authored tool's definition in `tools.ts`, and
+`meta.ts`'s `ACQUIRE_BLOB_FACT` on `acquire`, whose `hints` may carry the ref.
+
 **`ctx.fetch` takes an absolute URL on one of the connection's hosts** (GRA-197; ADR 0010 as
 amended 2026-09-23). The runner (`packages/runner/src/runner.mjs`, `hostRoute`) rewrites an absolute
 `https://` URL onto the proxy's host form for its host, `${proxy}/c/<conn>/h/<host><path><query>`,
@@ -800,33 +834,6 @@ and the Hermes skill carry no sentence on it: the budget stood at 2,039 of 2,048
 for the model that writes the module, which is Graft's. This is what let Slack's
 `files.getUploadURLExternal` flow (a `POST` of the bytes to `files.slack.com`) be authored without
 an SDK.
-
-**`acquire` authors both halves, and the playbook carries the one rule (GRA-190).** The authoring
-skill's *Moving a file between tools* section says when to write a blob and when to return data, how
-to pipe a response into `ctx.blob.write` (`res.body`, the type and name off the headers, base64 in
-JSON decoded with `Buffer.from(data, "base64url")` first), how to read one into a `FormData`, where
-the ref goes in the result and that a consuming input takes it as a plain string, and the four
-refusal names; `skills.test.ts` pins its sentences to the runner's constants. **A consuming tool's
-dry run has a blob to read**: `job.ts`'s `dryRunInput` judges the test input's refs with the door's
-own functions before the dry run and, for a dead one, or for none where the module reads
-`ctx.blob.read(input.<field>)` (the check's `contextMembersUsed` and `blobReadFields`, bound by the
-checker to the default export's two parameters, one level of destructuring followed, so a name in a
-comment, a helper's own `.blob.read`, a helper file or a shadowing nested function records
-nothing), mints a
-**fixture blob** through the runner under a budget grant held and released as a run's is
-(`FIXTURE_MODULE` beside the probe:
-a few hundred bytes of `text/plain` named `fixture.txt`, the agent's, the normal TTL, a row with no
-version) and substitutes its ref in the dry run's input alone, saying so in an `Attempt N:` line;
-the draft's `testInput` is never written, and fixtures are never reused across jobs. The door's
-`blobRefsIn` walks an input with a stack, never the call stack, and one nested past
-`MAX_INPUT_DEPTH` (64) is refused `input_invalid` naming the bound. The rule on
-the wire is `session.ts`'s `BLOB_RULE`, in `run_tool`'s paragraph and word for word in the Hermes
-skill: a file moves between tools as a `blob://` ref, never as content, and the producing tool runs
-before the consuming one is acquired. The budget was measured first (2,045 of 2,048) and the clause
-paid for by tightening facts the descriptions carry; `SERVER_INSTRUCTIONS`'s comment lists them. The
-facts are the descriptions': `blobs.ts`'s `BLOB_RESULT_FACT` (the list's five fields, the three
-refusals) on `run_tool` and appended to every authored tool's definition in `tools.ts`, and
-`meta.ts`'s `ACQUIRE_BLOB_FACT` on `acquire`, whose `hints` may carry the ref.
 
 ### The self-hosted image
 

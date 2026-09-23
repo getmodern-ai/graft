@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { BLOB_REF_SCHEME, BLOB_TTL_MS, DRY_RUN_HEADER, MAX_BLOB_BYTES } from "./runner-source";
+import { BLOB_REF_SCHEME, BLOB_TTL_HOURS, DRY_RUN_HEADER, MAX_BLOB_BYTES } from "./runner-source";
 import { loadSkillsFrom, parseSkill, SKILLS_SOURCE_DIR, skillFiles } from "./skills";
 
 /**
@@ -202,7 +202,7 @@ describe("the shipped skills", () => {
       "takes the ref as a plain string",
       "put it in `testInput`",
       "mints a fixture blob (a few hundred bytes of `text/plain`)",
-      `lives ${BLOB_TTL_MS / 3_600_000} hours`,
+      `lives ${BLOB_TTL_HOURS} hours`,
       `past ${MAX_BLOB_BYTES / (1024 * 1024)} MiB is refused as it streams, as \`blob_too_large\``,
       "as `blob_not_found` (another agent's ref reads the same)",
       "as `blob_expired`",

@@ -84,6 +84,7 @@ export {
   setAskEveryCall,
 } from "./approval/approval.service";
 export { type BlobDeps, defaultBlobDeps } from "./blob/blob.deps";
+export { BLOB_TTL_HOURS, BLOB_TTL_MS, isBlobExpired } from "./blob/blob.rules";
 export {
   adoptBlob,
   type BlobSweepAgent,
@@ -102,8 +103,7 @@ export {
   adoptedBlobOf,
   BLOB_CONTENT_TYPE_RULES,
   BLOB_NAME_RULES,
-  BLOB_TMP_SUFFIX as BLOB_SWEEP_TMP_SUFFIX,
-  BLOB_TTL_MS as BLOB_SWEEP_TTL_MS,
+  BLOB_TMP_SUFFIX,
   type BlobDirectoryAge,
   type BlobSidecar,
   type BlobSweepAction,

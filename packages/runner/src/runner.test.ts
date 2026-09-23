@@ -19,8 +19,10 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  BLOB_NAME_REFUSED,
   BLOB_QUOTA_BYTES,
   BLOB_REF_SCHEME,
+  BLOB_TTL_HOURS,
   BLOB_TTL_MS,
   DRY_RUN_HEADER,
   DRY_RUN_INTERCEPTED,
@@ -28,6 +30,7 @@ import {
   MAX_BLOB_BYTES,
   MAX_BLOB_CONTENT_TYPE_CHARS,
   MAX_BLOB_NAME_CHARS,
+  MEDIA_TYPE_PATTERN,
   MODULE_ENTRIES,
   REFUSAL_HEADER,
   RESULT_MARKER,
@@ -736,6 +739,7 @@ describe("a TypeScript module", () => {
     expect(MAX_BLOB_BYTES).toBe(256 * 1024 * 1024);
     expect(source).toContain("const BLOB_TTL_MS = 24 * 60 * 60 * 1000;");
     expect(BLOB_TTL_MS).toBe(24 * 60 * 60 * 1000);
+    expect(BLOB_TTL_HOURS).toBe(24);
     expect(source).toContain(`const ENVELOPE_MARKER = ${JSON.stringify(ENVELOPE_MARKER)};`);
     expect(source).toContain(`const MAX_BLOB_NAME_CHARS = ${MAX_BLOB_NAME_CHARS};`);
     expect(source).toContain(`const MAX_BLOB_CONTENT_TYPE_CHARS = ${MAX_BLOB_CONTENT_TYPE_CHARS};`);
@@ -745,6 +749,29 @@ describe("a TypeScript module", () => {
     expect(source).not.toMatch(/const \w*QUOTA\w* = \d/);
     expect(source).toContain("process.env.GRAFT_BLOB_BUDGET_BYTES");
     expect(source).toContain("process.env.GRAFT_BLOB_QUOTA_BYTES");
+  });
+
+  /**
+   * The name and media-type rules, pinned as regex source so both sides change together (GRA-199):
+   * `toString()` keeps the escapes as written, so the pin holds only while both files spell
+   * `\x00-\x1f\x7f` as escapes. The second assertion is why: a raw control byte in either file makes
+   * a diff show it as binary, so no diff shows a change and no grep finds one.
+   */
+  it("spells the name and media-type rules runner-source.ts declares, with every control character as an escape", async () => {
+    const source = await readFile(RUNNER, "utf8");
+    expect(source).toContain(`const BLOB_NAME_REFUSED = ${BLOB_NAME_REFUSED.toString()};`);
+    expect(source).toContain(`const MEDIA_TYPE_PATTERN = ${MEDIA_TYPE_PATTERN.toString()};`);
+    const declared = await readFile(new URL("./runner-source.ts", import.meta.url), "utf8");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the bytes' absence is the assertion.
+    const rawControl = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
+    expect(source).not.toMatch(rawControl);
+    expect(declared).not.toMatch(rawControl);
+    expect(BLOB_NAME_REFUSED.test("bad\x00name")).toBe(true);
+    expect(BLOB_NAME_REFUSED.test("bad\x7fname")).toBe(true);
+    expect(BLOB_NAME_REFUSED.test("invoice (final).pdf")).toBe(false);
+    expect(MEDIA_TYPE_PATTERN.test("text/plain; charset=utf-8")).toBe(true);
+    expect(MEDIA_TYPE_PATTERN.test("text/plain;x")).toBe(true);
+    expect(MEDIA_TYPE_PATTERN.test("text")).toBe(false);
   });
 });
 

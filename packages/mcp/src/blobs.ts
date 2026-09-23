@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import { type AgentScope, recordBlobsWritten } from "@graft/core";
-import { BLOB_TTL_MS, type BlobLedgerEntry, blobIdOf } from "@graft/runner";
+import { BLOB_TTL_HOURS, type BlobLedgerEntry, blobIdOf } from "@graft/runner";
 
 import { type boundResult, MAX_RESULT_BLOBS } from "./bounds";
 import type { McpDeps } from "./deps";
@@ -16,7 +16,7 @@ import type { McpDeps } from "./deps";
  */
 export const BLOB_RESULT_FACT =
   "A result may carry blobs, one entry per file the tool wrote, each with ref (a blob:// string), bytes, contentType, name and expiresAt. " +
-  `An input naming a blob:// ref this agent holds no blob for is refused blob_not_found, one whose ${BLOB_TTL_MS / 3_600_000} hours have passed blob_expired, and any run while the agent's live blobs are at their quota blob_quota.`;
+  `An input naming a blob:// ref this agent holds no blob for is refused blob_not_found, one whose ${BLOB_TTL_HOURS} hours have passed blob_expired, and any run while the agent's live blobs are at their quota blob_quota.`;
 
 /**
  * What the server does with the runner's blob ledger (GRA-186; ADR 0023): the rows, the analytics
@@ -134,17 +134,20 @@ function tallyBlobs(written: number, dropped: number): void {
 /**
  * The ledger as the agent reads it beside a result: the first `MAX_RESULT_BLOBS` lines whole, and
  * a count and a note when there were more. Every line is short and carries no bytes, so the bound
- * is against a module looping over a directory, not against size.
+ * is against a module looping over a directory, not against size. Nothing at all when the run
+ * wrote nothing and the reader refused nothing, so a caller spreads it unconditionally and a run
+ * that wrote no blob answers exactly what it did (GRA-199 folded the guard here from four callers).
  */
 export function blobsOnWire(
   blobs: readonly BlobLedgerEntry[],
   dropped = 0,
 ): {
-  blobs: BlobLedgerEntry[];
+  blobs?: BlobLedgerEntry[];
   blobsOmitted?: number;
   blobsNote?: string;
   blobsDropped?: number;
 } {
+  if (blobs.length === 0 && dropped === 0) return {};
   // A ledger line the reader refused (`readRunnerEnvelope`): counted for the agent here, never a
   // row; the wide event takes its count from the tally, not from this answer.
   const refused = dropped > 0 ? { blobsDropped: dropped } : {};

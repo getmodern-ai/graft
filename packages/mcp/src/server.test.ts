@@ -1048,6 +1048,17 @@ describe("a tool that writes a blob", () => {
       expect(blobEvents.slice(eventsBefore)).toEqual([
         expect.objectContaining({ agentId: AGENT_A, versionId: null }),
       ]);
+      // The sidecar names the agent, since the command's environment carried `GRAFT_AGENT`
+      // (`blobAgentEnvironment`, on every capability run; Greptile on #159), and no version, since
+      // a by-hand invocation has none: what the sweep adopts the blob under if the row is lost.
+      const meta = JSON.parse(
+        await readFile(
+          join(sandbox.blobsRoot(AGENT_A), file.slice("blob://".length), "meta.json"),
+          "utf8",
+        ),
+      ) as { agentId?: unknown; toolVersion?: unknown };
+      expect(meta.agentId).toBe(AGENT_A);
+      expect(meta.toolVersion ?? null).toBeNull();
     } finally {
       await a.close();
     }
@@ -2688,6 +2699,32 @@ describe("the advanced set", () => {
       expect(env.NODE_USE_ENV_PROXY).toBe("1");
       expect(env.GRAFT_TOKEN).toBeUndefined();
       expect(env.GRAFT_PROXY_URL).toBeUndefined();
+      // The agent rides on every path that can invoke the runner (`blobRunEnvironment`; Greptile
+      // on #159), so a blob a by-hand module writes through `$GRAFT_RUNNER` names its agent in the
+      // sidecar, which is what the sweep adopts it under if the row is lost.
+      expect(env.GRAFT_AGENT).toBe(AGENT_A);
+      await a.call("write_file", {
+        path: "probe/blob/index.mjs",
+        content:
+          'export default async (input, ctx) => ({ ref: await ctx.blob.write(new TextEncoder().encode("by hand"), { contentType: "text/plain", name: "hand.txt" }) });',
+      });
+      const wrote = body(
+        await a.call("run_command", {
+          command: `echo '{}' | node "$GRAFT_RUNNER" /tools/.drafts/${AGENT_A}/probe/blob`,
+        }),
+      );
+      expect(wrote.exitCode).toBe(0);
+      const envelope = readRunnerEnvelope(String(wrote.output));
+      if (!envelope) throw new Error("the command's output carries no envelope");
+      const ref = (envelope.result as { ref: string }).ref;
+      const meta = JSON.parse(
+        await readFile(
+          join(sandbox.blobsRoot(AGENT_A), ref.slice("blob://".length), "meta.json"),
+          "utf8",
+        ),
+      ) as { agentId?: unknown; toolVersion?: unknown };
+      expect(meta.agentId).toBe(AGENT_A);
+      expect(meta.toolVersion ?? null).toBeNull();
 
       const escaped = await a.call("write_file", { path: "../outside.txt", content: "x" });
       expect(body(escaped)).toMatchObject({ error: "refused", reason: "input_invalid" });

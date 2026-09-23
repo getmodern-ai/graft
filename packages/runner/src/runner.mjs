@@ -243,7 +243,7 @@ const BLOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const MAX_BLOB_NAME_CHARS = 255;
 const MAX_BLOB_CONTENT_TYPE_CHARS = 128;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the control characters are what is refused.
-const BLOB_NAME_REFUSED = /[ -/\\]/;
+const BLOB_NAME_REFUSED = /[\x00-\x1f\x7f/\\]/;
 const MEDIA_TYPE_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*(;.*)?$/i;
 /**
  * The first line of the envelope on stdout and in the result file — `ENVELOPE_MARKER` in

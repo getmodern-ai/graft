@@ -1,6 +1,4 @@
 import {
-  BLOB_SWEEP_TMP_SUFFIX,
-  BLOB_SWEEP_TTL_MS,
   createAgent,
   DAY_MS,
   listWorkingSet,
@@ -8,10 +6,10 @@ import {
   recordBlobsWritten,
   revokeAgent,
   type ServiceContext,
+  BLOB_TMP_SUFFIX as SWEEP_BLOB_TMP_SUFFIX,
   touchToolUsed,
   updateAgentLimits,
 } from "@graft/core";
-import { BLOB_TTL_MS } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { BLOB_TMP_SUFFIX, type BlobStore } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -1024,8 +1022,8 @@ describe("the blob pass", () => {
     expect(events.filter((event) => event.agentId === agent.id)).toEqual([]);
   });
 
-  it("spells the .tmp suffix as the store does, and takes the TTL from the runner", () => {
-    expect(BLOB_SWEEP_TMP_SUFFIX).toBe(BLOB_TMP_SUFFIX);
-    expect(BLOB_SWEEP_TTL_MS).toBe(BLOB_TTL_MS);
+  /** The decision's copy of the suffix, pinned to the store's (`@graft/toolbox`'s `layout.ts` says why there are two). */
+  it("spells the .tmp suffix as the store does", () => {
+    expect(SWEEP_BLOB_TMP_SUFFIX).toBe(BLOB_TMP_SUFFIX);
   });
 });
