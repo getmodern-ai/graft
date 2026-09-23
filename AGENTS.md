@@ -796,8 +796,8 @@ checker to the default export's two parameters, one level of destructuring follo
 comment, a helper's own `.blob.read`, a helper file or a shadowing nested function records
 nothing), mints a
 **fixture blob** through the runner under a budget grant held and released as a run's is
-(`underBlobGrant` and `blobRunEnvironment` in `blob-door.ts`, GRA-199; `FIXTURE_MODULE` beside the
-probe:
+(`admitUnderGrant` in `in-flight.ts`, GRA-200, and `blobRunEnvironment` in `blob-door.ts`, GRA-199;
+`FIXTURE_MODULE` beside the probe:
 a few hundred bytes of `text/plain` named `fixture.txt`, the agent's, the normal TTL, a row with no
 version) and substitutes its ref in the dry run's input alone, saying so in an `Attempt N:` line;
 the draft's `testInput` is never written, and fixtures are never reused across jobs. The door's

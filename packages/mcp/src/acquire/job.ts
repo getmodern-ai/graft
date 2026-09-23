@@ -55,12 +55,12 @@ import {
   blobRefsIn,
   blobRunEnvironment,
   judgeBlobRefs,
-  underBlobGrant,
   walkStringLeaves,
 } from "../blob-door";
 import { recordWrittenBlobs } from "../blobs";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "../bounds";
 import type { McpDeps } from "../deps";
+import { admitUnderGrant } from "../in-flight";
 import { promotePublished } from "../promote";
 import {
   type DryRunReport,
@@ -1369,7 +1369,13 @@ class AcquireLoop {
     attempt: OpenAttempt,
     wire: string,
   ): Promise<{ ref: string; bytes: number } | null> {
-    const door = await admitBlobs(this.deps, this.scope, {});
+    // Admitted and granted as one step under the agent's critical section (`admitUnderGrant`,
+    // `in-flight.ts`; GRA-200 after Greptile on #157), as a run is: the budget is outstanding until
+    // the write has settled, so a run admitted for this agent meanwhile is handed the remainder
+    // after this grant and two writes cannot share one remainder.
+    const door = await admitUnderGrant(this.deps.inFlight, this.scope.agentId, () =>
+      admitBlobs(this.deps, this.scope, {}),
+    );
     if (!door.ok) {
       await this.trace(
         "dry_run",
@@ -1378,12 +1384,11 @@ class AcquireLoop {
       );
       return null;
     }
-    // The budget is outstanding until the write has settled, as a run's is (`underBlobGrant`;
-    // Greptile on #149): a run admitted for this agent meanwhile is handed the remainder after this
-    // grant, so two writes cannot share one remainder.
-    return underBlobGrant(this.deps, this.scope, door.admission, () =>
-      this.writeFixtureBlob(attempt, wire, door.admission),
-    );
+    try {
+      return await this.writeFixtureBlob(attempt, wire, door.admission);
+    } finally {
+      door.release();
+    }
   }
 
   /** The fixture's write under its grant: the module onto the sandbox once, one run, one row. */

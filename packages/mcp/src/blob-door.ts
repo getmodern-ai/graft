@@ -227,34 +227,15 @@ export function blobAgentEnvironment(scope: AgentScope): Record<string, string> 
 
 /**
  * The blob half of an admitted run's environment, one spelling for every run that passed the door
- * (GRA-199; `run.ts`, `acquire`'s fixture write): the agent for the sidecar
- * (`blobAgentEnvironment`) beside the budget and the quota. All `GRAFT_*`, deleted by the runner
- * before the module loads.
+ * (GRA-199; `run.ts`, `tools/execute.ts`, `run_command` in `tools/authoring.ts`, `acquire`'s
+ * fixture write): the agent for the sidecar (`blobAgentEnvironment`) beside the budget and the
+ * quota. All `GRAFT_*`, deleted by the runner before the module loads. The grant that goes with an
+ * admission is `in-flight.ts`'s `admitUnderGrant` (GRA-200), which takes the door under the
+ * agent's critical section and answers the caller its `release`.
  */
 export function blobRunEnvironment(
   scope: AgentScope,
   admission: BlobAdmission,
 ): Record<string, string> {
   return { ...blobAgentEnvironment(scope), ...blobBudgetEnvironment(admission) };
-}
-
-/**
- * Run `work` with the admission's budget outstanding for the agent (`InFlightRegistry.grant`,
- * `in-flight.ts`) from before it starts until it settles, so a second run admitted meanwhile is
- * handed the remainder after this one's (Greptile on #148). The release runs whatever `work` does.
- * A run that starts detached moves its grant onto the process name inside `work` (`track`), before
- * this release, so the agent is never momentarily ungranted between the two.
- */
-export async function underBlobGrant<T>(
-  deps: Pick<McpDeps, "inFlight">,
-  scope: AgentScope,
-  admission: BlobAdmission,
-  work: () => Promise<T>,
-): Promise<T> {
-  const release = deps.inFlight?.grant(scope.agentId, admission.budgetBytes);
-  try {
-    return await work();
-  } finally {
-    release?.();
-  }
 }

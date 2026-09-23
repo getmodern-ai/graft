@@ -104,7 +104,6 @@ export {
   judgeBlobRefs,
   MAX_INPUT_DEPTH,
   type StringLeafVisit,
-  underBlobGrant,
   walkStringLeaves,
 } from "./blob-door";
 export {

@@ -12,7 +12,7 @@ import type { SandboxFile } from "@graft/sandbox";
 import { sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { recordBlobsWithinQuota, withRecordedBlobs } from "../blob-budget";
-import { admitBlobs, blobBudgetEnvironment } from "../blob-door";
+import { admitBlobs, blobRunEnvironment } from "../blob-door";
 import {
   boundJson,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -256,12 +256,14 @@ const runCommandTool: MetaTool = {
     const admitted = door.admission;
     try {
       // The runner's path in the sandbox rides in the environment as GRAFT_RUNNER (GRA-193), and
-      // beside it what the process may still commit under the agent's quota (`../blob-door.ts`).
-      // Advice on this path, since the command is the caller's and may replace the variable: the
-      // record below is the rule.
+      // beside it the agent for a sidecar and what the process may still commit under the agent's
+      // quota (`../blob-door.ts`'s `blobRunEnvironment`; GRA-199 after Greptile on #159: a command
+      // may invoke `$GRAFT_RUNNER` on a by-hand module, whose blob is then the agent's on the
+      // sidecar too). Advice on this path, since the command is the caller's and may replace a
+      // variable: the record below is the rule.
       const env = {
         ...commandEnvironment(parsed.timeoutSeconds, await seededRunnerPath(deps)),
-        ...blobBudgetEnvironment(admitted),
+        ...blobRunEnvironment(scope, admitted),
       };
       // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
       const ran = await heldInFlight(
