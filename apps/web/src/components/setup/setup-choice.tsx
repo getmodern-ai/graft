@@ -15,8 +15,11 @@ export type SetupChoiceOption<T extends string> = {
  * One choice among a few, each option an `Item` in its outline frame (the connection picker's
  * shape, `connection-picker.tsx`) wrapping a native radio, so the group is a real radio group:
  * arrow keys move the choice, Tab leaves it, and a screen reader hears the label and the line
- * under it. The radio itself is visually hidden and the frame carries its state: `primary` on the
- * chosen option's border, the ring on the focused one. Composed for Setup (ADR 0017's delta): the
+ * under it. The radio is transparent and laid over the whole frame, so a press anywhere on the
+ * card, its name and its sentence included, lands on the radio itself rather than relying on the
+ * label to forward it (GRA-206's live test found a press on a vendor's name that selected
+ * nothing). The frame carries the state: `primary` on the chosen option's border, the ring on
+ * the focused one; the drawn dot beneath is decoration. Composed for Setup (ADR 0017's delta): the
  * console has no radio primitive, and a `Select` would hide the one line under each harness that
  * is the reason to show them as a list.
  */
@@ -46,18 +49,19 @@ export function SetupChoice<T extends string>({
           variant="outline"
           // biome-ignore lint/a11y/noLabelWithoutControl: the radio and the label's text are the Item's children, which the rule cannot see through `render`.
           render={<label htmlFor={`${name}-${option.value}`} />}
-          className="cursor-pointer hover:bg-muted/50 has-disabled:cursor-not-allowed has-checked:border-primary has-focus-visible:border-ring has-checked:bg-muted/50 has-disabled:opacity-50 has-focus-visible:ring-3 has-focus-visible:ring-ring/50"
+          className="relative cursor-pointer hover:bg-muted/50 has-disabled:cursor-not-allowed has-checked:border-primary has-focus-visible:border-ring has-checked:bg-muted/50 has-disabled:opacity-50 has-focus-visible:ring-3 has-focus-visible:ring-ring/50"
         >
+          {/* Out of `ItemMedia`, whose transform would otherwise be the box it covers. */}
+          <input
+            id={`${name}-${option.value}`}
+            type="radio"
+            name={name}
+            value={option.value}
+            checked={value === option.value}
+            onChange={() => onChange(option.value)}
+            className="absolute inset-0 z-10 m-0 cursor-pointer appearance-none rounded-lg opacity-0 disabled:cursor-not-allowed"
+          />
           <ItemMedia>
-            <input
-              id={`${name}-${option.value}`}
-              type="radio"
-              name={name}
-              value={option.value}
-              checked={value === option.value}
-              onChange={() => onChange(option.value)}
-              className="sr-only"
-            />
             <span
               aria-hidden="true"
               className={cn(

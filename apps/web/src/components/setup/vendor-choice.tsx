@@ -18,7 +18,8 @@ import { ANOTHER_VENDOR, SETUP_CONNECT_LABEL } from "@/lib/setup-vendors";
  * one sentence each saying what the first tool will show, and *Another vendor* last. Continue on a
  * starter opens the agent's own connection ask (`POST /api/setup/connect`), which the connect step
  * then draws; on *Another vendor* it opens the ordinary Add connection form, and the connection it
- * makes is taken on by the record.
+ * makes is taken on by the record. That connection's id is kept, so a handoff that fails after the
+ * form closed is tried again with it, rather than opening a blank form for a second connection.
  *
  * Drawn by the vendor step, and by the connect step when the person chooses another vendor there,
  * so both offer the same list the same way.
@@ -28,10 +29,14 @@ export function VendorChoice({ onChosen }: { onChosen?: () => void }) {
   const queryClient = useQueryClient();
   const [choice, setChoice] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  // The connection *Another vendor*'s form made, until the record has taken it on.
+  const [madeConnectionId, setMadeConnectionId] = useState<string | null>(null);
   const connect = useSetupMutation(connectSetup);
+  const handOff = (connectionId: string) => connect.mutate({ connectionId }, chosen);
 
   const chosen = {
     onSuccess: () => {
+      setMadeConnectionId(null);
       // The ask the connect step draws is in the inbox's list from now on.
       void queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       onChosen?.();
@@ -81,8 +86,10 @@ export function VendorChoice({ onChosen }: { onChosen?: () => void }) {
         onSubmit={(event) => {
           event.preventDefault();
           if (!choice) return;
-          if (choice === ANOTHER_VENDOR) setFormOpen(true);
-          else if (isStarterVendorId(choice)) connect.mutate({ starterId: choice }, chosen);
+          if (choice === ANOTHER_VENDOR) {
+            if (madeConnectionId) handOff(madeConnectionId);
+            else setFormOpen(true);
+          } else if (isStarterVendorId(choice)) connect.mutate({ starterId: choice }, chosen);
         }}
       >
         <SetupChoice
@@ -99,11 +106,25 @@ export function VendorChoice({ onChosen }: { onChosen?: () => void }) {
           </Button>
         </div>
       </form>
+      {madeConnectionId && connect.isError && choice === ANOTHER_VENDOR ? (
+        // Outside the form, so its Retry is never read as the form's submit.
+        <p className="text-muted-foreground text-sm">
+          <RetryNotice
+            error={connect.error}
+            message="Your connection was made, but Setup could not take it on."
+            onRetry={() => handOff(madeConnectionId)}
+            retrying={connect.isPending}
+          />
+        </p>
+      ) : null}
       {/* Outside the form: a submit inside the dialog's portal would bubble to it through React. */}
       <AddConnectionDialog
         open={formOpen}
         onOpenChange={setFormOpen}
-        onConnected={(connectionId) => connect.mutate({ connectionId }, chosen)}
+        onConnected={(connectionId) => {
+          setMadeConnectionId(connectionId);
+          handOff(connectionId);
+        }}
       />
     </>
   );

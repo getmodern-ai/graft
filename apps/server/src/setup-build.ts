@@ -249,14 +249,15 @@ export async function learnSetupBuild(
   if (!read || !toolId) {
     return { state: await getSetupState(ctx, principal, deps.setup, deps.agent), built: false };
   }
-  const state = await moveSetupBuild(
+  const { state, moved } = await moveSetupBuild(
     ctx,
     principal,
     { kind: "built", acquireJobId: read.jobId, toolId },
     deps.setup,
     deps.agent,
   );
-  return { state, built: state.setup?.toolId === toolId };
+  // Counted by the read whose move named the tool: two reads of one pass both end on `result`.
+  return { state, built: moved };
 }
 
 /** The record's job while it stands on `building`, refused `CONFLICT` otherwise. */
@@ -294,13 +295,14 @@ export async function retrySetupGoal(
       { details: { reason: "job_not_failed", status: job.status } },
     );
   }
-  return moveSetupBuild(
+  const { state } = await moveSetupBuild(
     ctx,
     principal,
     { kind: "retry", acquireJobId: jobId },
     deps.setup,
     deps.agent,
   );
+  return state;
 }
 
 /** *Continue while it builds*: on to the finish step, the job kept so its tool is still learned. */
@@ -310,13 +312,14 @@ export async function continueSetupBuild(
   deps: Pick<SetupBuildRouteDeps, "setup" | "agent" | "acquireJob">,
 ): Promise<SetupState> {
   const { jobId } = await buildingJob(ctx, principal, deps);
-  return moveSetupBuild(
+  const { state } = await moveSetupBuild(
     ctx,
     principal,
     { kind: "continue", acquireJobId: jobId },
     deps.setup,
     deps.agent,
   );
+  return state;
 }
 
 /** `GET /api/agents/:id/acquire-jobs/:jobId`: `acquire_status`'s shape, read at once, never held. */
