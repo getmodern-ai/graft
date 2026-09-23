@@ -849,17 +849,24 @@ describe("a tool that writes a blob", () => {
         toolVersion: "tool_save_report_v1",
       });
 
-      // The ledger beside the result, in the text block and in structuredContent alike, with an
-      // expiry 24 hours out; stat inside the module read the same sidecar.
-      const line = {
+      // The ledger beside the result, in the text block and in structuredContent alike: the row
+      // the server adopted from the store (GRA-200; `blob-budget.ts`), which is the sidecar's line
+      // with an expiry never later than the store's last write plus 24 hours. A Linux file's mtime
+      // is coarse-grained and can sit a few milliseconds before the runner's own clock, so the
+      // adopted expiry may be that much earlier than the sidecar's; stat inside the module read
+      // the sidecar itself.
+      const [wireLine] = answer.blobs as { expiresAt: string }[];
+      if (!wireLine) throw new Error("the answer names no blob");
+      expect(wireLine).toEqual({
         ref: answer.result.file,
         bytes: data.length,
         contentType: "application/json",
         name: "items.json",
-        expiresAt: meta.expiresAt,
-      };
-      expect(answer.blobs).toEqual([line]);
-      expect(result.structuredContent).toEqual({ result: answer.result, blobs: [line] });
+        expiresAt: wireLine.expiresAt,
+      });
+      expect(Date.parse(wireLine.expiresAt)).toBeLessThanOrEqual(Date.parse(meta.expiresAt));
+      expect(Date.parse(wireLine.expiresAt)).toBeGreaterThan(Date.parse(meta.expiresAt) - 1_000);
+      expect(result.structuredContent).toEqual({ result: answer.result, blobs: [wireLine] });
       expect(answer.result.stat).toEqual({
         bytes: data.length,
         contentType: "application/json",
@@ -882,7 +889,8 @@ describe("a tool that writes a blob", () => {
         name: "items.json",
         removedAt: null,
       });
-      expect(store.blobs.at(-1)?.expiresAt.toISOString()).toBe(meta.expiresAt);
+      // The row carries the adopted expiry, the same one the wire names.
+      expect(store.blobs.at(-1)?.expiresAt.toISOString()).toBe(wireLine.expiresAt);
       expect(blobEvents.slice(eventsBefore)).toEqual([
         {
           agentId: AGENT_A,
