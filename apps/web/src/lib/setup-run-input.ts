@@ -31,13 +31,24 @@ function reachesPast(schema: Schema): boolean {
   return "additionalProperties" in schema && schema.additionalProperties !== false;
 }
 
-/** A local `$ref` (`#/$defs/<name>` or `#/definitions/<name>`) resolved against the root. */
+/**
+ * A local `$ref` (`#/$defs/<name>` or `#/definitions/<name>`) resolved against the root. A name
+ * that is not a valid percent-encoding (a literal `%`, as in `#/$defs/discount%`) resolves to
+ * nothing rather than throwing while the step renders (Greptile on #166): the `$ref` still marks
+ * the schema as reaching past its own `properties`, so the step asks for the input as JSON.
+ */
 function resolveRef(root: Schema, ref: unknown): Schema | null {
   if (typeof ref !== "string") return null;
   const match = /^#\/(\$defs|definitions)\/([^/]+)$/.exec(ref);
   if (!match) return null;
+  let name: string;
+  try {
+    name = decodeURIComponent(match[2] as string);
+  } catch {
+    return null;
+  }
   const defs = root[match[1] as string];
-  const target = isSchema(defs) ? defs[decodeURIComponent(match[2] as string)] : undefined;
+  const target = isSchema(defs) ? defs[name] : undefined;
   return isSchema(target) ? target : null;
 }
 
