@@ -162,6 +162,15 @@ const FIXTURES: Record<string, string> = {
     "  }",
     "};",
   ].join("\n"),
+  // Two writes to one path on two declared hosts (Greptile on #156): the report must tell them apart.
+  "dryTwoHosts.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const init = { method: "POST", headers: { "content-type": "text/plain" }, body: "same" };',
+    '  const first = await ctx.fetch("https://files.example.com/upload", init);',
+    '  const second = await ctx.fetch("https://other.example.com/upload", init);',
+    "  return { first: first.status, second: second.status };",
+    "};",
+  ].join("\n"),
   // The Slack shape (GRA-197): a read on a second host answers the URL the write goes to.
   "dryAbsolute.mjs": [
     "export default async (_input, ctx) => {",
@@ -1319,9 +1328,9 @@ describe("GRAFT_DRY_RUN", () => {
     expect(result.writesPreviewed).toEqual([
       {
         method: "POST",
-        // The preview's own account names the path the proxy would have sent; the fake echoes what
-        // it received under the host segment, as the real one does for the host form.
-        path: "/upload/v1/abc",
+        // The URL the module gave, not the preview's vendor path, so the host is on the record as
+        // it is for the read above (Greptile on #156).
+        path: "https://files.example.com/upload/v1/abc?x=1",
         headerNames: expect.arrayContaining(["content-type"]),
         body: "the bytes",
       },
@@ -1332,6 +1341,33 @@ describe("GRAFT_DRY_RUN", () => {
       "/c/conn_1/h/files.example.com/upload-url",
       "/c/conn_1/h/files.example.com/upload/v1/abc?x=1",
     ]);
+  });
+
+  /** Two writes to one path on two declared hosts are two entries, and the shape is the report's four fields. */
+  it("keeps two previewed writes to the same path on two hosts apart, each by its own URL", async () => {
+    const run = await runRunner({ module: fixture("dryTwoHosts.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(true);
+    expect(result.moduleResult).toEqual({ first: 202, second: 202 });
+    expect(result.writesPreviewed).toEqual([
+      {
+        method: "POST",
+        path: "https://files.example.com/upload",
+        headerNames: expect.arrayContaining(["content-type"]),
+        body: "same",
+      },
+      {
+        method: "POST",
+        path: "https://other.example.com/upload",
+        headerNames: expect.arrayContaining(["content-type"]),
+        body: "same",
+      },
+    ]);
+    for (const entry of result.writesPreviewed) {
+      expect(Object.keys(entry).sort()).toEqual(["body", "headerNames", "method", "path"]);
+    }
+    expect(new Set(result.writesPreviewed.map((entry) => entry.path)).size).toBe(2);
   });
 
   it("writes the report to the result file on the detached path", async () => {

@@ -350,9 +350,14 @@ async function recordPreview(method, path, headers, init, response) {
     request !== null && Array.isArray(request.headerNames)
       ? request.headerNames
       : [...headers.keys()].filter((name) => name !== "authorization").sort();
+  // The proxy's account names the vendor path alone, which loses the host a write on the host route
+  // went to: two writes to one path on two declared hosts would read as one. So a write the module
+  // addressed by an absolute URL is recorded by that URL, host and all, as a read on the same route
+  // is (GRA-197; Greptile on #156); a relative one keeps the proxy's path as before.
+  const absolute = /^[a-z][a-z0-9+.-]*:/i.test(path);
   recordCall(dryRunRecord.writesPreviewed, {
     method: request !== null && typeof request.method === "string" ? request.method : method,
-    path: request !== null && typeof request.path === "string" ? request.path : path,
+    path: !absolute && request !== null && typeof request.path === "string" ? request.path : path,
     headerNames,
     body: boundBody(request !== null && "body" in request ? request.body : init.body),
   });
