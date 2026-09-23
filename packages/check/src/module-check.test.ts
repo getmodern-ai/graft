@@ -164,7 +164,8 @@ describe("a clean module", () => {
   /**
    * `ctx.blob` (GRA-186; ADR 0023): a module that writes a blob from a vendor response's body,
    * stats it and reads one back type-checks, and its annotations are its vendor methods' alone — a
-   * blob write is Graft's own scratch, not a vendor side effect, so a read-only tool stays read-only.
+   * blob write is Graft's own, scoped and swept by rule, not a vendor side effect, so a read-only tool
+   * stays read-only.
    */
   it("may write, stat and read a blob through ctx.blob, which moves no annotation", () => {
     const result = check({

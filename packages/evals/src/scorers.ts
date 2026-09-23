@@ -3,9 +3,13 @@ import type { AcquireAttemptRow, AcquireJobRow, AcquireTraceRow } from "@graft/d
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 import type { UsageLedgerRow } from "@graft/db/repo/usage";
-import type { AcquireStatus, AcquireSuccess } from "@graft/mcp";
+import {
+  type AcquireStatus,
+  type AcquireSuccess,
+  blobRefsIn as blobRefsAtDoor,
+  FIXTURE_BLOB_TRACE,
+} from "@graft/mcp";
 import type { ProxyEvent } from "@graft/proxy";
-import { BLOB_REF_SCHEME } from "@graft/runner";
 
 import type { ReceivedUpload } from "./drop-vendor";
 import type { BlobFixture } from "./files-vendor";
@@ -386,19 +390,13 @@ export function credentialNeverRecorded(run: ScenarioRun, secrets: readonly stri
   };
 }
 
-/** Every string leaf of a value, in walk order: what a ref is looked for in, since a ref is a whole string. */
-export function stringLeaves(value: unknown): string[] {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap(stringLeaves);
-  if (typeof value === "object" && value !== null) {
-    return Object.values(value).flatMap(stringLeaves);
-  }
-  return [];
-}
-
-/** The `blob://` refs among a value's string leaves (ADR 0023: a ref is a plain string, never a field). */
+/**
+ * The distinct `blob://` refs among a value's string leaves, in walk order (ADR 0023: a ref is a
+ * plain string, never a field), read with the door's own walk (`@graft/mcp`'s `blobRefsIn` over
+ * `walkStringLeaves`, GRA-199), so what the scorers count as a ref is what the door would admit.
+ */
 export function blobRefsIn(value: unknown): string[] {
-  return stringLeaves(value).filter((leaf) => leaf.startsWith(BLOB_REF_SCHEME));
+  return blobRefsAtDoor(value).refs;
 }
 
 /** Every model turn of a run and of the stages chained after it. */
@@ -490,7 +488,6 @@ export function refTravels(run: ScenarioRun): Score {
 
 const LIVE_BLOB_LINE =
   /^The test input names (\d+) live blob\(s\); the dry run reads (?:it|them)\.$/;
-const FIXTURE_BLOB_LINE = /^Minted fixture blob (blob:\/\/\S+) \((\d+) bytes, /;
 
 /** The `blobs` ledger a run's answer carries beside its result (GRA-186), or none. */
 function ledgerOf(final: unknown): { ref: string; bytes: number }[] {
@@ -531,10 +528,14 @@ export function blobReadInDryRun(run: ScenarioRun): Score {
       had = { kind: "live", bytes: Math.max(bytes, 1) };
       break;
     }
-    const fixture = FIXTURE_BLOB_LINE.exec(trace.text);
-    if (fixture) {
-      had = { kind: "fixture", bytes: Number(fixture[2]) };
-      break;
+    // The fixture's facts ride on the line's `data` as the runner's ledger entry (`job.ts`,
+    // GRA-199); the opening words only find the line.
+    if (trace.text.startsWith(FIXTURE_BLOB_TRACE)) {
+      const bytes = (trace.data as { bytes?: unknown } | null)?.bytes;
+      if (typeof bytes === "number") {
+        had = { kind: "fixture", bytes };
+        break;
+      }
     }
   }
   const outcome = consumer.version?.dryRunOutcome as { passed?: boolean } | null;

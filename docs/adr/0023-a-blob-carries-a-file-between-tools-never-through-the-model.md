@@ -87,7 +87,7 @@ sandbox is touched: `blob_not_found` (missing, or another agent's, never saying 
   action lives 24 hours (ADR 0008) and a shorter TTL would fail exactly the workflow with a human
   step in it.
 - **Writing a blob never asks.** ADR 0008's grain is about vendor side effects; a blob is Graft's
-  own scratch, scoped and swept by rule. Annotations derive from vendor methods as before, so a
+  own, scoped and swept by rule. Annotations derive from vendor methods as before, so a
   Gmail download tool that writes a blob stays read-only.
 - **Limits are constants**: 256 MiB per blob, 1 GiB live per agent. Knobs when someone hits them.
 - **The sweep deletes.** The toolbox's rule that nothing under `tools/` is ever removed (ADR 0009)

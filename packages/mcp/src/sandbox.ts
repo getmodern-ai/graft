@@ -376,10 +376,7 @@ export async function runCommand(
   const blobs = envelope?.blobs ?? [];
   const dropped = envelope?.dropped ?? 0;
   return {
-    answer: {
-      ...describeProcess(result, input.timeoutSeconds),
-      ...(blobs.length > 0 || dropped > 0 ? blobsOnWire(blobs, dropped) : {}),
-    },
+    answer: { ...describeProcess(result, input.timeoutSeconds), ...blobsOnWire(blobs, dropped) },
     blobs,
     dropped,
   };
@@ -529,9 +526,13 @@ export async function pollProcess(handle: SandboxHandle, input: WaitInput): Prom
 
 /**
  * The runner's result file: the envelope behind its marker line (`@graft/runner`'s
- * `readRunnerEnvelope`), or the bare result a runner older than the envelope wrote (`run.ts`'s
- * `unwrapEnvelope` says why both are read; a bare result yields no ledger line). The module's
- * result is bounded as a file is; the blobs ride beside it whole.
+ * `readRunnerEnvelope`), or a bare result, read as the module's with no blobs. The bare form has one
+ * source left (GRA-199): a detached run that a server older than the envelope started (`v0.1.0`'s
+ * runner printed a bare result), whose file this server polls after the upgrade, inside the
+ * detached ceiling (`MAX_DETACHED_TIMEOUT_SECONDS`). The runner a run started under is the one that
+ * writes its file, whatever this server has seeded since (GRA-193), so the window is real if short;
+ * a sync run has no such window and `run.ts`'s `unwrapEnvelope` refuses a bare result. A bare result
+ * yields no ledger line. The module's result is bounded as a file is; the blobs ride beside it whole.
  */
 async function readRunnerResult(handle: SandboxHandle, resultPath: string): Promise<PolledProcess> {
   try {
@@ -540,7 +541,7 @@ async function readRunnerResult(handle: SandboxHandle, resultPath: string): Prom
     const result: unknown = envelope ? envelope.result : JSON.parse(text);
     const blobs = envelope ? envelope.blobs : [];
     const dropped = envelope?.dropped ?? 0;
-    const named = blobs.length > 0 || dropped > 0 ? blobsOnWire(blobs, dropped) : {};
+    const named = blobsOnWire(blobs, dropped);
     const bounded = boundJson(result, MAX_FILE_CHARS);
     if (!bounded.cut) {
       return { answer: { resultPath, result: bounded.value, ...named }, blobs, dropped };

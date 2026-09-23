@@ -28,7 +28,7 @@ describe("rewriteSandboxPaths", () => {
     expect(rewriteSandboxPaths("cp '/tools/a b' '/tools/c' < '/tmp/runs/1.json'", ROOT)).toBe(
       `cp '${ROOT}/tools/a b' '${ROOT}/tools/c' < '${ROOT}/tmp/runs/1.json'`,
     );
-    expect(rewriteSandboxPaths("ls /skills", ROOT)).toBe(`ls ${ROOT}/skills`);
+    expect(rewriteSandboxPaths("ls /blobs", ROOT)).toBe(`ls ${ROOT}/blobs`);
   });
 
   it("leaves words that merely contain a root alone", () => {

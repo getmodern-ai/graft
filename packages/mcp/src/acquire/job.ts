@@ -45,16 +45,18 @@ import { hostSetOf } from "@graft/proxy/credential-source";
 import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
 import type { PublishArgs, PublishOutcome } from "@graft/publish";
-import { blobIdOf } from "@graft/runner";
+import { BLOB_TTL_HOURS, blobIdOf } from "@graft/runner";
 import type { SandboxHandle } from "@graft/sandbox";
 import { draftPath, sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import { NO_ELICITATION } from "../approval";
 import {
   admitBlobs,
   type BlobAdmission,
-  blobBudgetEnvironment,
   blobRefsIn,
+  blobRunEnvironment,
   judgeBlobRefs,
+  underBlobGrant,
+  walkStringLeaves,
 } from "../blob-door";
 import { recordWrittenBlobs } from "../blobs";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "../bounds";
@@ -201,6 +203,14 @@ export const FIXTURE_BLOB_NAME = "fixture.txt";
 export const FIXTURE_BLOB_CONTENT_TYPE = "text/plain";
 
 /**
+ * How the `dry_run` trace line for a minted fixture opens. The facts (the ref, the size, the media
+ * type, the name, the expiry) ride on the line's `data` as the runner's ledger entry, and
+ * `@graft/evals`'s `blobReadInDryRun` finds the line by this opening and reads them there rather
+ * than out of the sentence (GRA-199).
+ */
+export const FIXTURE_BLOB_TRACE = "Minted fixture blob";
+
+/**
  * A few hundred bytes of text that say what they are, so a person who finds the file under the
  * mount, or a vendor that receives it in a dry run's preview, reads why it exists. Nothing of the
  * person's is in it.
@@ -208,26 +218,30 @@ export const FIXTURE_BLOB_CONTENT_TYPE = "text/plain";
 export function fixtureBlobText(jobId: string, tool: string): string {
   return [
     `A fixture blob. Graft's acquire job ${jobId} wrote it for the dry run of ${tool}: the tool reads a blob from its input, the test input named no live one, and a dry run needs a real file to read (GRA-190; ADR 0023).`,
-    `It is ${FIXTURE_BLOB_CONTENT_TYPE}, held for the agent that asked for 24 hours like any blob, and carries nothing of the person's.`,
+    `It is ${FIXTURE_BLOB_CONTENT_TYPE}, held for the agent that asked for ${BLOB_TTL_HOURS} hours like any blob, and carries nothing of the person's.`,
     "A consuming tool proved against this fixture has shown that it reads the ref off its input, opens the blob and puts the bytes in its request; it has not shown that the vendor accepts the real file's type or size, which its first real run will.",
     "",
   ].join("\n");
 }
 
-/** A copy of `value` with every string leaf in `refs` replaced by `ref`; arrays and objects walked as the door walks them. */
+/**
+ * A copy of `value` with every string leaf in `refs` replaced by `ref`, walked as the door walks an
+ * input (`walkStringLeaves`, GRA-199: the one walker, iterative and depth-bounded; the caller has
+ * already refused an input past the bound through `blobRefsIn`). The copy is `structuredClone`'s,
+ * since the value is a draft's `testInput` read back from a JSON column; a root that is itself a
+ * string is the one leaf the walker cannot replace and is answered here.
+ */
 export function substituteBlobRefs(
   value: unknown,
   refs: ReadonlySet<string>,
   ref: string,
 ): unknown {
   if (typeof value === "string") return refs.has(value) ? ref : value;
-  if (Array.isArray(value)) return value.map((item) => substituteBlobRefs(item, refs, ref));
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, substituteBlobRefs(item, refs, ref)]),
-    );
-  }
-  return value;
+  const copy: unknown = structuredClone(value);
+  walkStringLeaves(copy, (leaf, replace) => {
+    if (refs.has(leaf)) replace(ref);
+  });
+  return copy;
 }
 
 /** Where attempt `n`'s draft is written in the toolbox. */
@@ -1364,15 +1378,12 @@ class AcquireLoop {
       );
       return null;
     }
-    // The budget is outstanding until the write has settled, as a run's is (`run.ts`; Greptile on
-    // #149): a run admitted for this agent meanwhile is handed the remainder after this grant, so
-    // two writes cannot share one remainder.
-    const releaseGrant = this.deps.inFlight?.grant(this.scope.agentId, door.admission.budgetBytes);
-    try {
-      return await this.writeFixtureBlob(attempt, wire, door.admission);
-    } finally {
-      releaseGrant?.();
-    }
+    // The budget is outstanding until the write has settled, as a run's is (`underBlobGrant`;
+    // Greptile on #149): a run admitted for this agent meanwhile is handed the remainder after this
+    // grant, so two writes cannot share one remainder.
+    return underBlobGrant(this.deps, this.scope, door.admission, () =>
+      this.writeFixtureBlob(attempt, wire, door.admission),
+    );
   }
 
   /** The fixture's write under its grant: the module onto the sandbox once, one run, one row. */
@@ -1401,9 +1412,8 @@ class AcquireLoop {
       input: { text, contentType: FIXTURE_BLOB_CONTENT_TYPE, name: FIXTURE_BLOB_NAME },
       env: {
         ...commandEnvironment(DEFAULT_COMMAND_TIMEOUT_SECONDS, await seededRunnerPath(this.deps)),
-        // For the sidecar (the runner's header; ADR 0023), never for a path.
-        GRAFT_AGENT: this.scope.agentId,
-        ...blobBudgetEnvironment(admission),
+        // The agent for the sidecar and the budget, as a door-admitted run carries them.
+        ...blobRunEnvironment(this.scope, admission),
       },
       mode,
     });
@@ -1420,7 +1430,7 @@ class AcquireLoop {
     await recordWrittenBlobs(this.deps, this.scope, null, [written]);
     await this.trace(
       "dry_run",
-      `Minted fixture blob ${written.ref} (${written.bytes} bytes, ${written.contentType}, ${written.name ?? FIXTURE_BLOB_NAME}) for the dry run of ${wire}; it expires at ${written.expiresAt}.`,
+      `${FIXTURE_BLOB_TRACE} ${written.ref} (${written.bytes} bytes, ${written.contentType}, ${written.name ?? FIXTURE_BLOB_NAME}) for the dry run of ${wire}; it expires at ${written.expiresAt}.`,
       { attempt: attempt.number, data: { ...written } },
     );
     return { ref: written.ref, bytes: written.bytes };

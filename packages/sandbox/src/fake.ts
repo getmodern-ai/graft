@@ -35,16 +35,10 @@ import {
  * The sandbox's own absolute directories, mapped under the root whether or not a call has created
  * them yet: `mkdir -p /graft/x` must land inside the root, and a dynamic list of what exists could
  * not know that. A mount path (`/tools` and `/blobs`, typically) joins this list when it is mounted.
+ * The skills live under `/graft/<hash>/skills/` beside the runner since GRA-193, so no bare
+ * `/skills` is here (GRA-199).
  */
-export const FAKE_SANDBOX_ROOTS = [
-  "/tools",
-  "/blobs",
-  "/graft",
-  "/skills",
-  "/workspace",
-  "/tmp",
-  "/home",
-];
+export const FAKE_SANDBOX_ROOTS = ["/tools", "/blobs", "/graft", "/workspace", "/tmp", "/home"];
 
 /**
  * Where the blobs live beside the toolboxes: `<root>/toolboxes/.blobs/<agentId>`, which is
