@@ -2,7 +2,16 @@ import { setupHarness, setupStep } from "@graft/db/schema/setup";
 import { describe, expect, it } from "vitest";
 
 import { readSetupHarness, SETUP_HARNESS_IDS, SETUP_HARNESSES, setupHarnessOf } from "./harness";
-import { currentSetupStep, isAwaitingHarness, SETUP_STEPS, shouldShowSetup } from "./setup.rules";
+import {
+  currentSetupStep,
+  isAwaitingHarness,
+  SETUP_AGENT_PARAM,
+  SETUP_PATH,
+  SETUP_STEPS,
+  setupUrl,
+  shouldOfferSetup,
+  shouldShowSetup,
+} from "./setup.rules";
 
 const AT = "2026-09-23T10:00:00.000Z";
 const NONE = { connections: 0, tools: 0 };
@@ -62,6 +71,37 @@ describe("isAwaitingHarness", () => {
   it("is never a revoked agent", () => {
     expect(isAwaitingHarness({ ...awaiting, revokedAt: AT })).toBe(false);
     expect(isAwaitingHarness({ ...awaiting, revokedAt: new Date(AT) })).toBe(false);
+  });
+});
+
+describe("shouldOfferSetup (find_tool's offer, GRA-210)", () => {
+  it("offers Setup to a person with no connection and no record, or one under way", () => {
+    expect(shouldOfferSetup(null, { connections: 0 })).toBe(true);
+    expect(shouldOfferSetup(record({ startedAt: AT }), { connections: 0 })).toBe(true);
+  });
+
+  it("ends the offer at the first connection, a revoked one included", () => {
+    expect(shouldOfferSetup(null, { connections: 1 })).toBe(false);
+    expect(shouldOfferSetup(record({ startedAt: AT }), { connections: 1 })).toBe(false);
+  });
+
+  it("ends the offer once Setup is completed or skipped", () => {
+    expect(shouldOfferSetup(record({ startedAt: AT, completedAt: AT }), NONE)).toBe(false);
+    expect(shouldOfferSetup(record({ skippedAt: AT }), NONE)).toBe(false);
+  });
+});
+
+describe("setupUrl", () => {
+  it("is the console's Setup page naming the agent", () => {
+    const url = new URL(setupUrl("http://console.graft.test", "agent_1"));
+    expect(url.origin + url.pathname).toBe(`http://console.graft.test${SETUP_PATH}`);
+    expect(url.searchParams.get(SETUP_AGENT_PARAM)).toBe("agent_1");
+  });
+
+  it("keeps the base's path and does not double its trailing slash", () => {
+    expect(setupUrl("https://graft.example/console/", "a b")).toBe(
+      "https://graft.example/console/setup?agent=a+b",
+    );
   });
 });
 

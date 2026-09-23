@@ -134,6 +134,19 @@ function stateOf(
   };
 }
 
+/**
+ * The person's record alone, or null: what `find_tool`'s offer reads (GRA-210), which needs the
+ * record's clocks and none of the state's agents or counts.
+ */
+export async function getSetupRecord(
+  ctx: ServiceContext,
+  principal: Principal,
+  deps: Pick<SetupDeps, "findSetup">,
+): Promise<SetupOutput | null> {
+  const row = await deps.findSetup(ctx.db, principal.personId);
+  return row ? toSetupOutput(row) : null;
+}
+
 export async function getSetupState(
   ctx: ServiceContext,
   principal: Principal,
