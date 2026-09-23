@@ -332,42 +332,45 @@ describe("the connect step's moves", () => {
     expect((await move({ kind: "lost", connectionId: "conn_1" })).moved).toBe(false);
   });
 
-  it("lands a move from vendor only on a record still on vendor", async () => {
+  it("lands a move from vendor only on the record as it was seen there", async () => {
     const w = await onVendor();
     const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
       moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
-    const landed = await move({
-      kind: "ask",
-      agentId: "agent_new",
-      pendingActionId: "pa_1",
-      fromVendor: true,
-    });
-    expect(landed.moved).toBe(true);
-    // Another choice moved the record on: a second routing's ask or connection changes nothing.
-    const late = await move({
-      kind: "ask",
-      agentId: "agent_new",
-      pendingActionId: "pa_2",
-      fromVendor: true,
-    });
-    expect(late.moved).toBe(false);
-    const lateConnection = await move({
-      kind: "connected",
-      agentId: "agent_new",
-      connectionId: "conn_1",
-      fromVendor: true,
-    });
-    expect(lateConnection.moved).toBe(false);
-    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_1" });
+    const seenAt = new Date("2026-09-23T10:00:00.001Z");
+    const at = (iso: string) => {
+      const row = w.record();
+      if (row) Object.assign(row, { updatedAt: new Date(iso) });
+    };
+    at("2026-09-23T10:00:00.001Z");
+    // Another tab chose, and that choice closed, leaving the record on vendor as a later write.
+    await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" });
     await move({ kind: "reopen", askId: "pa_1" });
-    const connected = await move({
-      kind: "connected",
-      agentId: "agent_new",
-      connectionId: "conn_1",
-      fromVendor: true,
+    at("2026-09-23T10:00:00.009Z");
+    const ask = { kind: "ask", agentId: "agent_new", pendingActionId: "pa_2" } as const;
+    expect((await move({ ...ask, fromVendorAt: seenAt })).moved).toBe(false);
+    expect(
+      (
+        await move({
+          kind: "connected",
+          agentId: "agent_new",
+          connectionId: "conn_1",
+          fromVendorAt: seenAt,
+        })
+      ).moved,
+    ).toBe(false);
+    expect(w.record()).toMatchObject({ step: "vendor", pendingActionId: null });
+    // As it was seen: the move lands.
+    const landed = await move({ ...ask, fromVendorAt: new Date("2026-09-23T10:00:00.009Z") });
+    expect(landed.moved).toBe(true);
+    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_2" });
+    // Off vendor, it never lands, whatever the instant.
+    at("2026-09-23T10:00:00.020Z");
+    const offVendor = await move({
+      ...ask,
+      pendingActionId: "pa_3",
+      fromVendorAt: new Date("2026-09-23T10:00:00.020Z"),
     });
-    expect(connected.moved).toBe(true);
-    expect(w.record()).toMatchObject({ step: "goal", connectionId: "conn_1" });
+    expect(offVendor.moved).toBe(false);
   });
 
   it("runs confirm under the lock once the guard passes, and a no leaves the record", async () => {

@@ -158,11 +158,12 @@ function connectedBy({ state, moved }: SetupMoveResult): SetupConnectResult {
 }
 
 /**
- * Route the starter's proposal as the agent and move the record on the answer. `rerouted` says the
+ * Route the starter's proposal as the agent and move the record on the answer. `vendorAt` says the
  * ask the first routing handed back was answered about a connection that no longer stands, was
- * taken, and the record went back to the vendor step: this second routing's move lands only on a
- * record still on `vendor` (`fromVendor`), so the person's choice in flight is kept over a read
- * that reopened the record meanwhile, and another tab's newer choice is kept over this one.
+ * taken, and the record went back to the vendor step, last written at that instant: this second
+ * routing's move lands only on the record as it was seen then (`fromVendorAt`), so the person's
+ * choice in flight is kept over a read that reopened the record, and any choice another tab made
+ * since is kept over this one, even one that closed and left the record on `vendor` again.
  */
 async function routeStarter(
   ctx: ServiceContext,
@@ -170,7 +171,7 @@ async function routeStarter(
   agentId: string,
   starter: StarterVendor,
   deps: SetupConnectDeps,
-  rerouted = false,
+  vendorAt?: Date,
 ): Promise<SetupConnectResult> {
   const move = (next: SetupConnectMove) =>
     moveSetupConnect(ctx, principal, next, deps.setup, deps.agent);
@@ -190,13 +191,13 @@ async function routeStarter(
           kind: "connected",
           agentId,
           connectionId: routing.connection.id,
-          fromVendor: rerouted,
+          fromVendorAt: vendorAt,
         }),
       );
     case "connection":
     case "scope": {
       const pendingActionId = routing.pendingActionId;
-      const asked = await move({ kind: "ask", agentId, pendingActionId, fromVendor: rerouted });
+      const asked = await move({ kind: "ask", agentId, pendingActionId, fromVendorAt: vendorAt });
       if (!asked.moved) return { state: asked.state, connected: false };
       // The routing may answer an ask already answered and not yet taken (GRA-203): read it now,
       // so a person who answered it elsewhere is not shown a settled card.
@@ -205,8 +206,9 @@ async function routeStarter(
       // routing again goes past it to the person's rows as they are: once, since a taken ask is
       // never re-used, and only where the record went back to the vendor step rather than on to
       // another tab's choice.
-      if (learned.stale && !rerouted && learned.result.state.step === "vendor") {
-        return routeStarter(ctx, principal, agentId, starter, deps, true);
+      const seen = learned.result.state.setup;
+      if (learned.stale && !vendorAt && seen?.step === "vendor") {
+        return routeStarter(ctx, principal, agentId, starter, deps, seen.updatedAt);
       }
       return learned.result;
     }
@@ -343,8 +345,13 @@ async function learnFromRecord(
           deps.agent,
           // Under the lock, and only while the record still waits on this ask: two reads that both
           // judged it stale take it once between them, and neither is refused for the other's take.
+          // Judged again there first: a re-consent, a new credential or a scope grant landing since
+          // makes the answer good, and it is left for the next read to learn rather than spent.
           stale
             ? async (scoped) => {
+                if (await standsForAgent(scoped, principal, agentId, verdict.connectionId, deps)) {
+                  return false;
+                }
                 await take(scoped.db);
                 return true;
               }
