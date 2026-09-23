@@ -25,6 +25,16 @@ describe("withoutNul", () => {
     expect(withoutNul({ "PK\u0000": { "a\u0000b": "\u0000" } })).toEqual({ PK: { ab: "" } });
   });
 
+  it("keeps both fields when two keys differ only by a NUL, whichever came first", () => {
+    expect(withoutNul({ a: 1, "a\u0000": 2 })).toEqual({ a: 1, "a (2)": 2 });
+    expect(withoutNul({ "a\u0000": 2, a: 1 })).toEqual({ a: 1, "a (2)": 2 });
+    expect(withoutNul({ a: 1, "a\u0000": 2, "\u0000a": 3 })).toEqual({
+      a: 1,
+      "a (2)": 2,
+      "a (3)": 3,
+    });
+  });
+
   it("leaves a value with no NUL identical, other control characters included", () => {
     const value = { text: "tab\tnewline\n\u0001\uFFFD", n: 2, ok: true, none: null };
     expect(withoutNul(value)).toEqual(value);
