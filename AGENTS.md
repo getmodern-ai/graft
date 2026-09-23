@@ -1248,7 +1248,11 @@ and the sweep's lines ride under `acquire` and `sweep`. Product events are captu
 two chokepoints and nowhere in the console: the API's mutation routes
 (`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
 does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
-`acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
+`acquire_completed`, `acquire_failed`); both name the person by id. The Setup read,
+`GET /api/setup`, is the one other place (ADR 0024; GRA-206): a step the person completes
+elsewhere, an ask answered in the inbox or a chat's card or a job that finished, is learned on the
+read, so `setup_step_completed` is captured there, once, when the guarded move of the record
+succeeds. The vendors behind the hosted
 form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
 **A sign-up is the one event the account raises itself** (GRA-157): `createAuth`'s
 `onPersonSignedUp` fires from Better Auth's own hooks when a person exists *and* is verified — the
