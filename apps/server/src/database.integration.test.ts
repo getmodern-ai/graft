@@ -9,6 +9,7 @@ import {
   createTool,
   defaultAgentDeps,
   defaultApprovalDeps,
+  defaultSetupDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
   deletePersonModelKey,
@@ -16,6 +17,7 @@ import {
   getAgentScope,
   getConnection,
   getPersonModelKey,
+  getSetupState,
   getToolById,
   listAgents,
   listConnections,
@@ -32,6 +34,8 @@ import {
   setApproval,
   setConnectionCredential,
   setPersonModelKey,
+  skipSetup,
+  startSetup,
 } from "@graft/core";
 import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
@@ -165,6 +169,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "pending_action",
       "acquire_job",
       "usage_ledger",
+      "setup",
     ]) {
       expect(names).toContain(table);
     }
@@ -192,6 +197,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "mcp_token",
       "pending_action",
       "person_model_key",
+      "setup",
       "tool_version",
       "usage_ledger",
       "working_set",
@@ -769,5 +775,77 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     });
     expect(await deletePersonModelKey(ctx, { personId }, deps)).toBe(true);
     expect(await getPersonModelKey(ctx, { personId }, deps)).toBeNull();
+  });
+  /**
+   * Setup's record over real rows (ADR 0024; GRA-204): the show rule's counts, the start that mints
+   * an agent with no token and no client, two starts at once serialised on the record's lock into
+   * one agent, a skip, and a restart once the agent it ran as is revoked.
+   */
+  it("starts Setup once per person under the lock, and counts only the person's own work", async () => {
+    const personId = await signUp("setup-owner@example.com");
+    const other = await signUp("setup-other@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+
+    expect(await getSetupState(ctx, principal, defaultSetupDeps, defaultAgentDeps)).toMatchObject({
+      setup: null,
+      step: "harness",
+      show: true,
+    });
+    // Another person's connection is not this person's work.
+    await registerConnection(
+      ctx,
+      { personId: other },
+      {
+        vendor: "demo",
+        displayName: "Demo",
+        scheme: "none",
+        primaryHost: "https://api.demo.example",
+      },
+      connectionDeps,
+    );
+    expect(
+      (await getSetupState(ctx, { personId: other }, defaultSetupDeps, defaultAgentDeps)).show,
+    ).toBe(false);
+    expect((await getSetupState(ctx, principal, defaultSetupDeps, defaultAgentDeps)).show).toBe(
+      true,
+    );
+
+    const [first, second] = await Promise.all([
+      startSetup(ctx, principal, { harness: "claude" }, defaultSetupDeps, defaultAgentDeps),
+      startSetup(ctx, principal, { harness: "claude" }, defaultSetupDeps, defaultAgentDeps),
+    ]);
+    const agents = await listAgents(ctx, principal, defaultAgentDeps);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({ name: "Claude", tokenPrefix: null, connectedVia: null });
+    expect(first.setup?.agentId).toBe(agents[0]?.id);
+    expect(second.setup?.agentId).toBe(agents[0]?.id);
+    const [row] = (
+      await db.execute<{ token_hash: string | null; connected_via_client_id: string | null }>(
+        sql`select token_hash, connected_via_client_id from agent where person_id = ${personId}`,
+      )
+    ).rows;
+    expect(row).toEqual({ token_hash: null, connected_via_client_id: null });
+
+    const skipped = await skipSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps);
+    expect(skipped).toMatchObject({ show: false, step: "vendor", setup: { harness: "claude" } });
+
+    await revokeAgent(ctx, principal, agents[0]?.id ?? "", defaultAgentDeps);
+    expect((await getSetupState(ctx, principal, defaultSetupDeps, defaultAgentDeps)).step).toBe(
+      "harness",
+    );
+    const restarted = await startSetup(
+      ctx,
+      principal,
+      { harness: "hermes" },
+      defaultSetupDeps,
+      defaultAgentDeps,
+    );
+    expect(restarted).toMatchObject({
+      show: true,
+      step: "vendor",
+      setup: { harness: "hermes", skippedAt: null },
+      agent: { name: "Hermes" },
+    });
   });
 });

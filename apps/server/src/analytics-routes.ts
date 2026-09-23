@@ -1,4 +1,4 @@
-import type { AnalyticsEvent } from "@graft/observability";
+import type { AnalyticsEvent, AnalyticsProperties } from "@graft/observability";
 
 /**
  * Which of the JSON API's mutations count as a product event (GRA-100), keyed by method and path
@@ -15,12 +15,29 @@ import type { AnalyticsEvent } from "@graft/observability";
  * *content* of any answer — `approval_answered` carries no `allow`, because whether a person trusts a tool is
  * theirs. The MCP side's events (`tool_called`, the acquire job's end) come from the MCP hook and
  * the runner, not from here.
+ *
+ * A row may name `properties`: a function over the route's JSON answer that picks the kinds the
+ * event carries, so the route still knows nothing of analytics and the event carries what the
+ * answer already said (Setup's `harness`, GRA-204). Kinds only, never content, as the vocabulary
+ * in `@graft/observability` says.
  */
-export const TRACKED_ROUTES: ReadonlyArray<{
+export type TrackedRoute = {
   method: "POST" | "PUT" | "DELETE" | "PATCH";
   path: RegExp;
   event: AnalyticsEvent;
-}> = [
+  properties?: (answer: unknown) => AnalyticsProperties;
+};
+
+/** The harness on a Setup state answer (`SetupState` in `@graft/core`), or null for none. */
+export function setupHarnessProperty(answer: unknown): AnalyticsProperties {
+  const setup =
+    typeof answer === "object" && answer !== null ? (answer as { setup?: unknown }).setup : null;
+  const harness =
+    typeof setup === "object" && setup !== null ? (setup as { harness?: unknown }).harness : null;
+  return { harness: typeof harness === "string" ? harness : null };
+}
+
+export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   { method: "POST", path: /^\/agents$/, event: "agent_created" },
   { method: "POST", path: /^\/agents\/[^/]+\/revoke$/, event: "agent_revoked" },
   { method: "PUT", path: /^\/agents\/[^/]+\/scope$/, event: "scope_changed" },
@@ -32,6 +49,18 @@ export const TRACKED_ROUTES: ReadonlyArray<{
   { method: "POST", path: /^\/pending-actions\/[^/]+\/answer$/, event: "approval_answered" },
   { method: "PUT", path: /^\/me\/model-key$/, event: "model_key_set" },
   { method: "DELETE", path: /^\/me\/model-key$/, event: "model_key_removed" },
+  {
+    method: "POST",
+    path: /^\/setup\/start$/,
+    event: "setup_started",
+    properties: setupHarnessProperty,
+  },
+  {
+    method: "POST",
+    path: /^\/setup\/skip$/,
+    event: "setup_skipped",
+    properties: setupHarnessProperty,
+  },
 ];
 
 /**
@@ -40,9 +69,14 @@ export const TRACKED_ROUTES: ReadonlyArray<{
  * not — and a query string is not part of it.
  */
 export function routeEvent(method: string, path: string): AnalyticsEvent | null {
+  return trackedRoute(method, path)?.event ?? null;
+}
+
+/** The row a request matches, for the chokepoint that also reads its `properties`; null for none. */
+export function trackedRoute(method: string, path: string): TrackedRoute | null {
   const relative = path.replace(/\?.*$/, "").replace(/^\/api(?=\/)/, "");
   for (const route of TRACKED_ROUTES) {
-    if (route.method === method && route.path.test(relative)) return route.event;
+    if (route.method === method && route.path.test(relative)) return route;
   }
   return null;
 }
