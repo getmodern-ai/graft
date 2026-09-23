@@ -18,7 +18,9 @@ _Avoid_: user (in schema and API names), customer, owner, tenant
 One harness connection to Graft, authenticating with its own token — a static bearer token the
 harness carries, or the OAuth tokens an MCP client holds for it. An agent holds a scope and a
 working set and nothing else of its own. A person with OpenClaw on a server and Hermes on a laptop
-has two agents and one toolbox; a person who connects Claude has a third.
+has two agents and one toolbox; a person who connects Claude has a third. An agent Setup mints for a
+harness the person has not yet connected is **awaiting its harness** until that harness's consent
+names it or its token is first used.
 _Avoid_: harness (that is the software), client, bot, session, assistant
 
 **Harness**:
@@ -193,3 +195,15 @@ A person's answer to a tool's ask. Reads never ask. Any other tool, destructive 
 and the answer holds; the person may set a tool to ask every time, and back. `acquire` asks once
 per agent per connection. Answerable later through the console.
 _Avoid_: grant, permission, consent (fine in prose, not as the noun for the record)
+
+**Setup**:
+The console's guided first run: a person names the harness they run, connects a first vendor,
+has Graft acquire a starter tool and run it, and leaves with the prompt that connects that harness.
+It runs as the person's first agent, and every step is one the console offers on its own.
+_Avoid_: onboarding (the word for the effort, in tickets), wizard, tour, getting started
+
+**Starter vendor**:
+One of a short list of vendors Setup offers first, each with a read-only goal known to acquire
+cleanly. A convenience for the first tool, never a catalogue (ADR 0001); a vendor not on it is
+connected the way any other is.
+_Avoid_: app, integration, catalogue, supported vendor, template
