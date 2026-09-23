@@ -487,7 +487,8 @@ where `apps/server/tsdown.config.ts` copies it and the Dockerfile's `build` stag
 Every tool that can ask carries `_meta.ui.resourceUri` unconditionally (Claude.ai declares no
 extension): `acquire`, `request_connection`, `request_credential`, and — since a host renders a card
 only for a tool whose definition names the resource (GRA-116's live check, 2026-09-20) — `run_tool`,
-every `execute__<id>` and every authored tool in the list, whose first write answers the tool ask;
+every `execute__<id>` and every authored tool in the list, whose first write answers the tool ask,
+and `find_tool`, whose answer may carry the Setup offer's card (GRA-210, the paragraph on it below);
 ChatGPT's alias `openai/outputTemplate` rides beside it, and the
 resource carries the `openai/widget*` aliases of its `ui` keys (GRA-112); their awaiting results
 carry the card's data under `structuredContent.card` beside GRA-55's unchanged `url`, `message` and
@@ -1079,6 +1080,31 @@ job runs, the state read every 3 s). The finish's answer, token included, is hel
 `routes/_auth/setup.tsx`'s state, never the query cache, so the step keeps showing it once the
 record reads `completed`. The consent card pre-selects the person's one agent awaiting its harness
 and falls back to *A new agent* with none or several (`lib/consent-default.ts`).
+
+**`find_tool` offers Setup in the chat, as a card where the client renders one** (GRA-210; GRA-202,
+*The in-chat door*; ADR 0024). For an agent whose person has no connection at all (revoked rows
+count, as the show rule counts them) and whose Setup is neither completed nor skipped
+(`@graft/core`'s `shouldOfferSetup`), `find_tool` answers `setup: { url, message }` beside `tools`
+and `connections`: `url` is `setupUrl(GRAFT_CONSOLE_URL, agentId)`, `/setup?agent=<id>`, and
+`message` is `handoff-message.ts`'s `setupOfferMessage` in the console form (GRA-55's relay
+clause). The record is read (`getSetupRecord`, `McpDeps.setup`) only when the person's connection
+count, which `find_tool` already holds, is zero; `packages/mcp/src/setup-offer.ts` is the rule's
+home. It is **not an ask**: no pending action, no signature, no expiry, `isError` unset, and
+`answer_ask` has nothing to admit. For a `clientRendersCards` session the message takes its card
+form, `cardShown: true` rides inside `setup` beside `url`, and `structuredContent.card` is a
+`SetupCard` (`@graft/ask-card/shape`: `{ kind: "setup", agentName, url }`, beside `AskCard` in
+`CardData`; `readCardData` reads either). The card (`render.ts`'s `renderSetup`, dispatched by
+`renderCard`) draws a title, a sentence, the agent, a sentence saying to ask again once done, and
+one button, *Set up your first tool*, that opens the URL with `from=card` through `ui/open-link`;
+it polls nothing. `find_tool`'s description gained one capability sentence and
+`SERVER_INSTRUCTIONS` is unchanged. The wide event counts `setupOffered: true` when it was made.
+The console's `/setup` validates `?agent=&from=` (`lib/setup-page.ts`'s `readSetupSearch`); the
+harness step starts as the named agent when it is one of the person's active agents, even among
+several (`agentToAdopt`); a page the card opened shows an `Alert` saying so and, once
+`POST /api/setup/finish` succeeds with no token, posts `{ type: "graft:ask", setup: "completed" }`
+(`card.rules.ts`'s `setupCompletedMessage`) to its opener and closes itself after
+`FROM_CARD_CLOSE_MS` (`afterSetupFinish`); a finish that issued a token stays, since the token is
+shown once. `packages/mcp/src/setup-offer.test.ts` is the suite.
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
