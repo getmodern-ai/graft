@@ -100,7 +100,7 @@ export function retrySetupGoal() {
   return api<SetupStateData>("/setup/goal", { method: "POST" });
 }
 
-/** *Continue while it builds*: on to the finish step with the job still running. */
+/** *Continue while it runs*: on to the finish step with the job still running. */
 export function continueSetupBuild() {
   return api<SetupStateData>("/setup/continue", { method: "POST" });
 }

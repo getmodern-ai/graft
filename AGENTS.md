@@ -1050,7 +1050,7 @@ asked. `ApiOptions.acquire` is the model, the job's deps and the runner (the ser
 404. `GET /api/setup` learns a succeeded job's tool through `moveSetupBuild`'s `built`: `building`
 to `result` with `toolId`, or the tool noted on `finish`. A failed job leaves the record on
 `building`; `POST /api/setup/goal` (*Change the goal*) goes back to `goal` with the job cleared,
-refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it builds*)
+refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it runs*)
 goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
 `building` (captured by the read whose move named the tool, `SetupMoveResult.moved`). The console's building step polls the job route
 every 2 s and draws each line beside its stage's sentence on the stage's first line

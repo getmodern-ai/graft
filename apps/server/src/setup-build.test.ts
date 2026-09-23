@@ -461,7 +461,7 @@ describe("Setup's goal and build steps", () => {
     expect(retry.setup.acquireJobId).not.toBe(jobId);
   }, 60_000);
 
-  it("continues to the finish while it builds, and notes the tool there once it lands", async () => {
+  it("continues to the finish while it runs, and notes the tool there once it lands", async () => {
     mcp.model = createScriptedModel(PASSING_SCRIPT);
     await onGoal(true);
     // Held queued: no kick reaches the runner until the continue has landed.
