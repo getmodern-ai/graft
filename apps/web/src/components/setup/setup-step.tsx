@@ -3,6 +3,8 @@ import { Link } from "@tanstack/react-router";
 import type * as React from "react";
 
 import { CheckCircleIcon } from "@/components/icons";
+import { ConnectStep } from "@/components/setup/connect-step";
+import { GoalStep } from "@/components/setup/goal-step";
 import { HarnessStep } from "@/components/setup/harness-step";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { VendorStep } from "@/components/setup/vendor-step";
@@ -27,9 +29,9 @@ import type { SetupStateData } from "@/lib/setup-queries";
 const STEPS: Record<SetupStep, (props: { state: SetupStateData }) => React.ReactNode> = {
   harness: HarnessStep,
   vendor: VendorStep,
-  // GRA-206 onwards: the record cannot reach these yet, and a hand-edited row lands here.
-  connect: StepNotReady,
-  goal: StepNotReady,
+  connect: ConnectStep,
+  goal: GoalStep,
+  // GRA-207 onwards: the record cannot reach these yet, and a hand-edited row lands here.
   building: StepNotReady,
   result: StepNotReady,
   finish: StepNotReady,
