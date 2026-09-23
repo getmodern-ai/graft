@@ -10,6 +10,7 @@ import {
   addConnectionToAgentScope,
   connectExistingAgentToClient,
   createAgent,
+  createAgentAwaitingHarness,
   createAgentForClient,
   revokeAgent,
   setAgentScope,
@@ -262,6 +263,40 @@ describe("revokeAgent", () => {
     const deps = fakeDeps({ revokeAgent: vi.fn(async () => null) });
     await expect(revokeAgent(ctx, PRINCIPAL, "missing", deps)).resolves.toBeNull();
     expect(deps.revokeMcpTokensForAgent).not.toHaveBeenCalled();
+  });
+});
+
+/** ADR 0024: Setup mints its agent with no token and no client, awaiting its harness. */
+describe("createAgentAwaitingHarness", () => {
+  it("inserts the row with every token and origin column null, and answers no token", async () => {
+    const deps = fakeDeps();
+    const result = await createAgentAwaitingHarness(
+      ctx,
+      PRINCIPAL,
+      { name: " Claude ", workingSetCap: 12, idleWindowDays: 7 },
+      deps,
+    );
+    expect(vi.mocked(deps.insertAgent).mock.calls[0]?.[1]).toMatchObject({
+      id: "agent_new",
+      personId: "person_1",
+      name: "Claude",
+      tokenHash: null,
+      tokenPrefix: null,
+      connectedViaClientId: null,
+      connectedViaClientName: null,
+      scopeMode: "all",
+      workingSetCap: 12,
+      idleWindowDays: 7,
+    });
+    expect(result).not.toHaveProperty("token");
+    expect(result.agent.tokenPrefix).toBeNull();
+    expect(result.agent.connectedVia).toBeNull();
+  });
+
+  it("holds the limits to the same bounds as every other mint", async () => {
+    await expect(
+      createAgentAwaitingHarness(ctx, PRINCIPAL, { name: "Claude", workingSetCap: 0 }, fakeDeps()),
+    ).rejects.toBeInstanceOf(ServiceError);
   });
 });
 
