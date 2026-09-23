@@ -24,19 +24,25 @@ export function withoutNul<T>(value: T): T {
     if (typeof node === "string") return clean(node);
     if (Array.isArray(node)) return node.map(walk);
     if (typeof node === "object" && node !== null) {
+      // Built as entries and finished with `Object.fromEntries`, which defines own properties: an
+      // own `__proto__` field parsed off a module's output stays a field, never a prototype.
       const entries = Object.entries(node as Record<string, unknown>);
-      const out: Record<string, unknown> = {};
+      const kept: [string, unknown][] = [];
+      const taken = new Set<string>();
       for (const [key, entry] of entries) {
-        if (!key.includes(NUL)) out[key] = walk(entry);
+        if (key.includes(NUL)) continue;
+        kept.push([key, walk(entry)]);
+        taken.add(key);
       }
       for (const [key, entry] of entries) {
         if (!key.includes(NUL)) continue;
         const base = clean(key);
         let name = base;
-        for (let n = 2; name in out; n += 1) name = `${base} (${n})`;
-        out[name] = walk(entry);
+        for (let n = 2; taken.has(name); n += 1) name = `${base} (${n})`;
+        taken.add(name);
+        kept.push([name, walk(entry)]);
       }
-      return out;
+      return Object.fromEntries(kept);
     }
     return node;
   };

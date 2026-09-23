@@ -35,6 +35,18 @@ describe("withoutNul", () => {
     });
   });
 
+  it("keeps an own __proto__ field a field, as JSON.parse made it, and never a prototype", () => {
+    const parsed = JSON.parse('{"__proto__":{"polluted":true},"a":"x\\u0000y"}') as Record<
+      string,
+      unknown
+    >;
+    const result = withoutNul(parsed);
+    expect(Object.hasOwn(result, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+    expect(result.a).toBe("xy");
+    expect(JSON.stringify(result)).toBe('{"__proto__":{"polluted":true},"a":"xy"}');
+  });
+
   it("leaves a value with no NUL identical, other control characters included", () => {
     const value = { text: "tab\tnewline\n\u0001\uFFFD", n: 2, ok: true, none: null };
     expect(withoutNul(value)).toEqual(value);
