@@ -119,7 +119,7 @@ export const STARTER_VENDORS = [
     schemeConfig: {},
     goal: "List the ten Notion pages shared with this integration that were edited most recently, with the title and the last edited time of each. Read only.",
     runInput: null,
-    outcome: "The ten pages you edited last, with when each one changed.",
+    outcome: "The ten pages edited most recently, with when each one changed.",
   },
   {
     id: "github",
