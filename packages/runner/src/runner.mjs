@@ -49,9 +49,10 @@
  *    connection (Slack's `files.slack.com` upload URL, GRA-197) reaches the proxy, which judges the
  *    host against the connection's set as it does an SDK's call (ADR 0010 as amended 2026-09-23).
  *    The runner adds nothing it does not have: no host list, so which hosts are allowed is the
- *    proxy's alone. A dry run records a call on this route as scheme, host and path with the query
- *    dropped and marked `?…` (`recordableTarget`): a URL a vendor hands back may carry a signature
- *    or a bearer capability in its query, and the report reaches the authoring model's prompt.
+ *    proxy's alone. A dry run records a call on this route as scheme, host and path, the query
+ *    dropped and marked `?…` and the fragment dropped (`recordableTarget`): a URL a vendor hands
+ *    back may carry a signature or a bearer capability in either, and the report reaches the
+ *    authoring model's prompt.
  *    Refused rather than bent, before any request leaves: a URL that is not `https:`,
  *    one carrying credentials (`user:pass@`), one whose host is not a host name; and a relative path
  *    that walks out of `/c/<connection>/`, so nothing can be sent for any connection but the one this
@@ -536,16 +537,27 @@ function proxyBase(host) {
 }
 
 /**
- * How a dry run's report, and a refusal's sentence, spell an absolute target: scheme, host and path,
- * with the query dropped and its presence marked `?…`. A URL a vendor hands back may carry its
- * credential in the query, a presigned URL's `X-Amz-Signature` or a bearer capability, and the
- * report goes into the acquire trace and back into the authoring model's prompt, so the values never
- * leave the sandbox that way; the host stays, so two writes to one path on two hosts stay apart
- * (Greptile on #156, twice). A relative path is recorded as given: its query is the module's own.
+ * How a dry run's report, and a refusal's sentence, spell an absolute target: the parsed URL's
+ * scheme, host and path and nothing else, with `?…` appended when there was a query. A URL a vendor
+ * hands back may carry its credential in the query (a presigned URL's `X-Amz-Signature`) or in the
+ * fragment (`#token=…`), and the report goes into the acquire trace and back into the authoring
+ * model's prompt, so neither ever leaves the sandbox that way; the host stays, so two writes to one
+ * path on two hosts stay apart (Greptile on #156, three times). Built from the parsed parts rather
+ * than cut at a character, so a fragment with no query before it cannot slip through. A URL with no
+ * host (an opaque `mailto:` or `data:`) is its scheme and `…`; one that does not parse is the text up
+ * to its first `/`, `?` or `#` and `…`. A relative path is recorded as given: its query is the
+ * module's own.
  */
 function recordableTarget(target) {
-  const at = target.indexOf("?");
-  return at === -1 ? target : `${target.slice(0, at)}?…`;
+  let url;
+  try {
+    url = new URL(target);
+  } catch {
+    const cut = target.search(/[/?#]/);
+    return `${cut === -1 ? target : target.slice(0, cut)}…`;
+  }
+  if (url.host === "") return `${url.protocol}…`;
+  return `${url.protocol}//${url.host}${url.pathname}${url.search === "" ? "" : "?…"}`;
 }
 
 /**

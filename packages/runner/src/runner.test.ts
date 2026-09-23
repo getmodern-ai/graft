@@ -172,6 +172,17 @@ const FIXTURES: Record<string, string> = {
     "  return { first: first.status, second: second.status };",
     "};",
   ].join("\n"),
+  // A capability in the fragment (Greptile on #156, third pass): alone on the read, beside a query on the write.
+  "dryFragment.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const read = await ctx.fetch("https://files.example.com/download#token=fragment-secret");',
+    '  const write = await ctx.fetch("https://uploads.example.com/upload?sig=query-secret#token=fragment-secret", {',
+    '    method: "POST",',
+    '    body: "the bytes",',
+    "  });",
+    "  return { read: read.status, write: write.status };",
+    "};",
+  ].join("\n"),
   // A presigned pair (Greptile on #156): the signature rides in the query of a read and of a write.
   "dryPresigned.mjs": [
     "export default async (_input, ctx) => {",
@@ -968,6 +979,27 @@ describe("ctx.fetch", () => {
     expect(result.refused).not.toContain("secret123");
   });
 
+  /** Nor its fragment, nor anything past the scheme of a URL that does not parse (Greptile on #156, third pass). */
+  it.each([
+    ["http://evil.example/collect#token=secret123", "not http:// (http://evil.example/collect)."],
+    [
+      "http://evil.example/collect?sig=secret123#token=secret123",
+      "not http:// (http://evil.example/collect?…).",
+    ],
+    ["mailto:secret123@evil.example", "not mailto:// (mailto:…)."],
+    ["https://exa mple.com/x?token=secret123#secret123", "could not parse: https:…"],
+  ])("names %s in a refusal without its query or fragment", async (url, sentence) => {
+    const run = await runRunner({
+      module: fixture("escapes.mjs"),
+      stdin: JSON.stringify({ path: url }),
+      env: bound(),
+    });
+
+    const result = resultOf(run) as { refused: string };
+    expect(result.refused).toContain(sentence);
+    expect(result.refused).not.toContain("secret123");
+  });
+
   it.each(["ftp://files.example.com/x", "mailto:a@b.example", "javascript:alert(1)"])(
     "refuses %s as not https",
     async (url) => {
@@ -1431,6 +1463,36 @@ describe("GRAFT_DRY_RUN", () => {
     for (const secret of ["deadbeefcafe0123", "feedface9876", "X-Amz", "AWS4-HMAC-SHA256"]) {
       expect(text).not.toContain(secret);
     }
+  });
+
+  /** A fragment is dropped whether or not a query stands before it, and the query's marker is the only trace. */
+  it("records a fragment-only read and a query-and-fragment write with neither on the report", async () => {
+    const before = received.length;
+    const run = await runRunner({ module: fixture("dryFragment.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(true);
+    expect(result.moduleResult).toEqual({ read: 200, write: 202 });
+    expect(result.reads).toEqual([
+      { method: "GET", path: "https://files.example.com/download", status: 200 },
+    ]);
+    expect(result.writesPreviewed).toEqual([
+      {
+        method: "POST",
+        path: "https://uploads.example.com/upload?…",
+        headerNames: expect.any(Array),
+        body: "the bytes",
+      },
+    ]);
+    const text = JSON.stringify(result);
+    for (const secret of ["fragment-secret", "query-secret", "token", "#"]) {
+      expect(text).not.toContain(secret);
+    }
+    // The fragment never left the module either: fetch drops it, and the query went whole.
+    expect(received.slice(before).map((r) => r.url)).toEqual([
+      "/c/conn_1/h/files.example.com/download",
+      "/c/conn_1/h/uploads.example.com/upload?sig=query-secret",
+    ]);
   });
 
   it("writes the report to the result file on the detached path", async () => {
