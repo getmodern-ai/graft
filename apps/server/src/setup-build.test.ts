@@ -718,6 +718,54 @@ describe("POST /api/agents/:id/tools/:vendor/:name/run", () => {
     expect(await openAsks()).toEqual([]);
   }, 60_000);
 
+  it("judges the tool again on the run's own read, so a republish or a demotion in between is refused", async () => {
+    const { agentId, toolId, runPath } = await onResult();
+    const tool = store.tools.get(toolId);
+    if (!tool) throw new Error("no tool");
+    const runs = () => store.usage.filter((row) => row.toolId === toolId);
+    const before = runs().length;
+
+    // Read-only for the route's read, write-capable by the run's: a republish landed between them.
+    let reads = 0;
+    const republished = { ...tool };
+    Object.defineProperty(republished, "readOnly", {
+      get: () => {
+        reads += 1;
+        return reads === 1;
+      },
+    });
+    store.tools.set(toolId, republished);
+    const write = await app.request(runPath, post({ input: { city: "Melbourne" } }));
+    expect(write.status).toBe(409);
+    expect((await read(write)).details).toMatchObject({ reason: "tool_not_read_only" });
+    store.tools.set(toolId, tool);
+
+    // Promoted for the route's read, demoted by the run's.
+    const entry = `${agentId} ${toolId}`;
+    const get = store.workingSet.get.bind(store.workingSet);
+    let lookups = 0;
+    store.workingSet.get = (key) => {
+      if (key !== entry) return get(key);
+      lookups += 1;
+      return lookups === 1 ? get(key) : undefined;
+    };
+    try {
+      const demoted = await app.request(runPath, post({ input: { city: "Melbourne" } }));
+      expect(demoted.status).toBe(409);
+      expect((await read(demoted)).details).toMatchObject({ reason: "tool_not_in_working_set" });
+    } finally {
+      store.workingSet.get = get;
+    }
+
+    // Neither reached the sandbox or the gate: two refusals on the ledger, and no ask.
+    expect(
+      runs()
+        .slice(before)
+        .map((row) => row.outcome),
+    ).toEqual(["refused", "refused"]);
+    expect(await openAsks()).toEqual([]);
+  }, 60_000);
+
   it("answers another person's agent, and a tool not in the toolbox, as not found", async () => {
     const { agentId, runPath } = await onResult();
     expect(

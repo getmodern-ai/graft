@@ -1069,7 +1069,9 @@ is the console's second caller of a run: `@graft/mcp`'s `runAuthoredTool` with t
 never a dry run, answering `AgentToolRunOutput` (`{ ok: true, result }` or `{ ok: false, reason,
 message, answer }`, the run's own refusal or failure); a tool whose annotation is not read-only is
 `409 tool_not_read_only` and one outside the agent's working set `409 tool_not_in_working_set`,
-both before the run, so no ask is ever opened from the console; another person's agent is a 404.
+both before the run and again on the run's own read of the tool inside the agent's in-flight hold
+(`AuthoredRunArgs.admit`), so a republish or a demotion in between cannot reach the gate or the
+sandbox and no ask is ever opened from the console; another person's agent is a 404.
 `POST /api/setup/result` is `moveSetupBuild`'s `finish` (`result` to `finish`), and
 `POST /api/setup/finish` is `@graft/core`'s `finishSetup`: from `finish` only, one transaction
 under `lockSetup`, the record to `completed` and, for a `token` harness whose agent is still
