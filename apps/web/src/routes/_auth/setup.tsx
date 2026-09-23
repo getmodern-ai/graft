@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 
 import { GraftWordmark } from "@/components/graft-wordmark";
 import { Loader } from "@/components/loader";
@@ -9,7 +10,7 @@ import { SetupStepView } from "@/components/setup/setup-step";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Button } from "@/components/ui/button";
 import { DEFAULT_SIGNED_IN_PATH } from "@/lib/safe-redirect";
-import { setupQuery, skipSetup } from "@/lib/setup-queries";
+import { type SetupFinish, setupQuery, skipSetup } from "@/lib/setup-queries";
 
 /**
  * **Setup** (CONTEXT.md; ADR 0024): the console's guided first run, full screen. Under the guard
@@ -35,8 +36,10 @@ function SetupRoute() {
   const setup = useQuery(setupQuery);
   const navigate = useNavigate();
   const skip = useSetupMutation(skipSetup);
+  // The finish's answer, token included, for as long as this page is open (`finish-step.tsx`).
+  const [finished, setFinished] = useState<SetupFinish | null>(null);
   const state = setup.data;
-  const step = state?.step ?? "harness";
+  const step = finished ? "completed" : (state?.step ?? "harness");
 
   return (
     <main className="flex min-h-svh flex-col">
@@ -65,7 +68,7 @@ function SetupRoute() {
         </div>
         <section className="flex min-w-0 max-w-2xl flex-1 flex-col">
           {state ? (
-            <SetupStepView state={state} />
+            <SetupStepView state={state} finished={finished} onFinished={setFinished} />
           ) : setup.isError ? (
             <p className="text-muted-foreground text-sm">
               <RetryNotice
