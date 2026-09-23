@@ -59,7 +59,10 @@ describe("the setup record's statements name the person", () => {
     expect(statements).toHaveLength(1);
     const s = statements[0];
     expect(s?.sql).toContain('on conflict ("person_id") do update set "skipped_at" = $');
-    expect(s?.sql).toMatch(/set "skipped_at" = \$\d+, "updated_at" = \$\d+ returning/);
+    // Never merely the clock: at least a millisecond past the row's own value, a CAS token.
+    expect(s?.sql).toMatch(
+      /set "skipped_at" = \$\d+, "updated_at" = greatest\(\$\d+, "setup"\."updated_at" \+ interval '1 millisecond'\) returning/,
+    );
     expect(s?.params).toContain("person_1");
   });
 
