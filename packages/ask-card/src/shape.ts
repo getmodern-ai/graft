@@ -51,8 +51,15 @@ export function withFromCard(url: string): string {
   }
 }
 
-/** The pending-action kinds a card can be about (`pending_action.kind`); it can answer `build`, `tool`, `connection` and `scope`. */
-export type AskCardKind = "build" | "connection" | "credential" | "tool" | "scope";
+/**
+ * What a card can be about: the five pending-action kinds (`pending_action.kind`), of which it can
+ * answer `build`, `tool`, `connection` and `scope`, and `setup` (GRA-210), which is no ask at all
+ * but `find_tool`'s offer of the console's Setup page, and answers nothing.
+ */
+export type AskCardKind = "build" | "connection" | "credential" | "tool" | "scope" | "setup";
+
+/** The kinds that are a pending action, with the facts `AskCard` carries. */
+export type PendingAskKind = Exclude<AskCardKind, "setup">;
 
 /**
  * The facts of the tool a `tool` ask is about (GRA-116), as the console's card shows them: the
@@ -82,7 +89,7 @@ export type AskCardTool = {
  */
 export type AskCard = {
   pendingActionId: string;
-  kind: AskCardKind;
+  kind: PendingAskKind;
   /** The agent that asked, by the name the person gave it. */
   agentName: string;
   vendor: string;
@@ -114,6 +121,25 @@ export type AskCard = {
   /** For a tool ask: the tool's facts (GRA-116). */
   tool?: AskCardTool;
 };
+
+/**
+ * The `setup` card (GRA-210; GRA-202, *The in-chat door*): `find_tool`'s offer of Setup, for an
+ * agent whose person has no connection and has neither finished nor skipped Setup, on the result's
+ * `structuredContent.card` beside the `setup` field's `url` and `message`. No pending action stands
+ * behind it, so there is nothing to answer, nothing to poll and nothing that expires: the card
+ * draws one button that opens `url` with `from=card`, and the Setup page closes itself when the
+ * person finishes. `answer_ask` never admits it, since it names no ask.
+ */
+export type SetupCard = {
+  kind: "setup";
+  /** The agent Setup runs as, by the name the person gave it. */
+  agentName: string;
+  /** The Setup page, exactly as the `setup` field's `url`: what the button opens. */
+  url: string;
+};
+
+/** Anything the card draws: an ask, or the Setup offer. */
+export type CardData = AskCard | SetupCard;
 
 /**
  * What the card sends `answer_ask`. The build approval's yes or no; the tool ask's yes or no
@@ -159,7 +185,7 @@ export type AskStatusState = "open" | "answered" | "declined" | "expired";
 /** What `ask_status` answers: the state and the sentence the card shows for it. */
 export type AskStatusResult = { state: AskStatusState; sentence: string };
 
-const KINDS: readonly AskCardKind[] = ["build", "connection", "credential", "tool", "scope"];
+const KINDS: readonly PendingAskKind[] = ["build", "connection", "credential", "tool", "scope"];
 const STATES: readonly AskStatusState[] = ["open", "answered", "declined", "expired"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -182,7 +208,7 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
   if (
     typeof card.pendingActionId !== "string" ||
     typeof card.kind !== "string" ||
-    !KINDS.includes(card.kind as AskCardKind) ||
+    !KINDS.includes(card.kind as PendingAskKind) ||
     typeof card.agentName !== "string" ||
     typeof card.vendor !== "string" ||
     typeof card.displayName !== "string" ||
@@ -196,7 +222,7 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
   }
   return {
     pendingActionId: card.pendingActionId,
-    kind: card.kind as AskCardKind,
+    kind: card.kind as PendingAskKind,
     agentName: card.agentName,
     vendor: card.vendor,
     displayName: card.displayName,
@@ -216,6 +242,23 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
     ...(isAskCardTool(card.tool) ? { tool: card.tool } : {}),
     ...(isWidening(card.widens) ? { widens: card.widens } : {}),
   };
+}
+
+/** The `setup` card off a result's `structuredContent` (GRA-210), or null when it is not one. */
+export function readSetupCard(structuredContent: unknown): SetupCard | null {
+  if (!isRecord(structuredContent)) return null;
+  const card = structuredContent.card;
+  if (!isRecord(card) || card.kind !== "setup") return null;
+  if (typeof card.agentName !== "string" || typeof card.url !== "string") return null;
+  return { kind: "setup", agentName: card.agentName, url: card.url };
+}
+
+/**
+ * Whatever the card is to draw off a result: the Setup offer, an ask, or null (a `connected`, a
+ * job started, a refusal, a `find_tool` answer with no offer), in which case it draws nothing.
+ */
+export function readCardData(structuredContent: unknown): CardData | null {
+  return readSetupCard(structuredContent) ?? readAskCard(structuredContent);
 }
 
 function isWidening(value: unknown): value is { connectionId: string; addedHosts: string[] } {
