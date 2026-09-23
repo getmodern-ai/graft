@@ -115,6 +115,17 @@ const CREATE_ORDER_SCHEMA = {
 const EXPORT_BYTES = new Uint8Array(3_000).map((_, i) => i % 251);
 
 /**
+ * A workbook as Google Drive's `alt=media` serves one (GRA-201): a ZIP, so its head is `PK\u0003\u0004`
+ * and the bytes that follow decode to NULs and replacement characters. What production's job
+ * 2cebd675 read on 2026-09-23, and what Postgres refused inside jsonb.
+ */
+const WORKBOOK_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const WORKBOOK_BYTES = new Uint8Array(2_048).map((_, i) =>
+  i < 4 ? ([0x50, 0x4b, 0x03, 0x04][i] ?? 0) : i % 7 === 0 ? 0 : (i * 131) % 256,
+);
+const WORKBOOK_SENTENCE = `The body is not text and is not shown: ${WORKBOOK_TYPE}, 2,048 bytes. A tool that needs the bytes moves them with ctx.blob.write, never through its result.`;
+
+/**
  * A producing tool (GRA-190; ADR 0023), in the authoring skill's shape: the vendor's body goes to
  * `ctx.blob.write` as the response's stream, typed and named from the headers, and the ref is
  * answered under `file`. Through the real check, since `ctx.blob` and `res.body` are what it types.
@@ -323,6 +334,15 @@ beforeAll(async () => {
       }
       if (url.pathname === "/v2/files/upload" && request.method === "POST") {
         return Response.json({ ok: true, file: { id: "F1" } }, { status: 201 });
+      }
+      // A binary download (GRA-201): a proof read of it must not carry the bytes into a row.
+      if (url.pathname === "/v2/workbook") {
+        return new Response(WORKBOOK_BYTES, {
+          headers: {
+            "content-type": WORKBOOK_TYPE,
+            "content-length": String(WORKBOOK_BYTES.byteLength),
+          },
+        });
       }
       return Response.json({ error: "not found" }, { status: 404 });
     },
@@ -2157,6 +2177,52 @@ describe("what the rows hold", () => {
       expect(proof?.kind).toBe("proof");
       expect(JSON.stringify(proof)).not.toContain(API_KEY);
       expect(JSON.stringify(proof)).toContain(CREDENTIAL_REDACTED);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("records a binary proof read as a sentence, never its bytes: the row is written and the job goes on to the model (GRA-201)", async () => {
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "read-workbook", path: "/workbook", proofReads: ["/workbook"] }),
+        "Drafted read-workbook around GET /workbook.",
+      ),
+      {
+        on: "proof",
+        answer: { kind: "give_up", reason: "The workbook is bytes, not a shape to build on." },
+      },
+    ]);
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Read the workbook",
+      });
+      // The model was asked, and answered; the job did not die on the trace write.
+      expect(status.status).toBe("failed");
+      expect(status.result).toMatchObject({ failure: "model_gave_up" });
+
+      const { job, attempts, traces } = rowsOf(jobId);
+      const proof = traces.find((row) => row.kind === "proof");
+      expect(proof?.text).toBe("Proof read GET /workbook: 200.");
+      expect(proof?.data).toEqual({ path: "/workbook", status: 200, body: WORKBOOK_SENTENCE });
+      const everything = JSON.stringify({ job, attempts, traces, status });
+      expect(everything).not.toContain("\u0000");
+      expect(everything).not.toContain("PK\u0003\u0004");
+      // A 200 still proves the path: the read passed, and the model saw the sentence in its place.
+      const model = deps.model as ReturnType<typeof createScriptedModel>;
+      const situation = model.conversations[0]?.situations[1];
+      expect(situation?.kind).toBe("proof");
+      expect(situation?.kind === "proof" ? situation.reads : []).toEqual([
+        expect.objectContaining({
+          path: "/workbook",
+          ok: true,
+          status: 200,
+          body: WORKBOOK_SENTENCE,
+        }),
+      ]);
     } finally {
       await a.close();
     }

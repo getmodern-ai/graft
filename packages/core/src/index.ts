@@ -30,6 +30,7 @@ export {
   TRACE_READ_LIMIT,
   TRACE_TEXT_MAX_LENGTH,
 } from "./acquire-job/acquire-job.service";
+export { withoutNul } from "./acquire-job/json-safe";
 export {
   GENERIC_SECRET_FIELD_NAMES,
   MIN_SECRET_LENGTH,

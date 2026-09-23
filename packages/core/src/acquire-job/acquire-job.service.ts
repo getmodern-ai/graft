@@ -14,6 +14,7 @@ import type { ServiceContext } from "../context";
 import { orNotFound, ServiceError } from "../errors";
 import type { AgentScope } from "../tenancy";
 import type { AcquireJobDeps } from "./acquire-job.deps";
+import { withoutNul } from "./json-safe";
 import { type RedactionRule, redactText, redactValue } from "./redaction";
 
 /**
@@ -153,7 +154,8 @@ export async function completeAcquireJob(
 ): Promise<AcquireJobRow | null> {
   return deps.updateAcquireJob(ctx.db, scope, id, {
     status: outcome.status,
-    result: outcome.result,
+    // The result carries the diagnostics' proof-read bodies; the same rule as the trace (GRA-201).
+    result: withoutNul(outcome.result),
     finishedAt: deps.now(),
     ...(outcome.toolId === undefined ? {} : { toolId: outcome.toolId }),
     ...(outcome.traceRef === undefined ? {} : { traceRef: outcome.traceRef }),
@@ -307,14 +309,15 @@ export async function appendAcquireTrace(
     input.data === undefined || input.data === null
       ? { value: null, redacted: false }
       : redactValue(input.data, input.redaction);
+  // No U+0000 reaches the jsonb column, whatever a vendor's body carried (GRA-201; `./json-safe.ts`).
   return deps.insertAcquireTrace(ctx.db, {
     id: deps.newId(),
     jobId,
     agentId: scope.agentId,
     attemptNumber: input.attemptNumber ?? null,
     kind: input.kind,
-    text: text.text,
-    data: data.value,
+    text: withoutNul(text.text),
+    data: withoutNul(data.value),
     redacted: text.redacted || data.redacted,
   });
 }
