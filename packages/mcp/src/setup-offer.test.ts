@@ -190,6 +190,36 @@ describe("find_tool's Setup offer (GRA-210)", () => {
     expect(setup.message).toContain(url);
   });
 
+  it("carries the card on the session's first offer alone, and setup in the console form on every later one (GRA-212)", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const url = setupUrlOf(CLAUDE);
+    const first = await claude.findTool();
+    expect(first.structuredContent?.card).toEqual({ kind: "setup", agentName: "Claude", url });
+    expect(text(first).setup).toMatchObject({ cardShown: true });
+
+    // ChatGPT's five calls in one turn: the rest carry the offer and no card.
+    const later = [];
+    for (let i = 0; i < 4; i += 1) later.push(await claude.findTool());
+    const consoleForm = { url, message: setupOfferMessage("console", url) };
+    for (const found of later) {
+      expect(found.isError).toBeFalsy();
+      expect(found.structuredContent?.card).toBeUndefined();
+      expect(text(found).setup).toEqual(consoleForm);
+      expect(found.structuredContent?.setup).toEqual(consoleForm);
+    }
+
+    // A second session of the same agent is a new session, and shows the card once more.
+    const again = await connect(TOKEN_CLAUDE);
+    expect((await again.findTool()).structuredContent?.card).toMatchObject({ kind: "setup" });
+  });
+
+  it("carries one card when a session's find_tool calls are in flight together (GRA-212)", async () => {
+    const claude = await connect(TOKEN_CLAUDE);
+    const found = await Promise.all([claude.findTool(), claude.findTool(), claude.findTool()]);
+    expect(found.filter((result) => result.structuredContent?.card !== undefined)).toHaveLength(1);
+    for (const result of found) expect(text(result).setup).toBeDefined();
+  });
+
   it("answers the console form and no card for an OAuth client nothing vouches for", async () => {
     const unknown = await connect(TOKEN_UNKNOWN);
     const found = await unknown.findTool();

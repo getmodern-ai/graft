@@ -1113,8 +1113,13 @@ form, `cardShown: true` rides inside `setup` beside `url`, and `structuredConten
 `CardData`; `readCardData` reads either). The card (`render.ts`'s `renderSetup`, dispatched by
 `renderCard`) draws a title, a sentence, the agent, a sentence saying to ask again once done, and
 one button, *Set up your first tool*, that opens the URL with `from=card` through `ui/open-link`;
-it polls nothing. `find_tool`'s description gained one capability sentence and
-`SERVER_INSTRUCTIONS` is unchanged. The wide event counts `setupOffered: true` when it was made.
+it polls nothing. **One card per session** (GRA-212): the card, the card-form message and
+`cardShown` ride on the first `find_tool` answer of an MCP session that carries the offer, held
+per session in `setup-offer.ts` as `clientRendersCards` holds its verdict; every later answer in
+that session carries `setup` in the console form and no card, since a host mounts the card for
+every result of a tool that names it and ChatGPT called `find_tool` five times in one turn. A
+session the server re-opens (GRA-129) is a new one. `find_tool`'s description gained one
+capability sentence and `SERVER_INSTRUCTIONS` is unchanged. The wide event counts `setupOffered: true` when it was made.
 The console's `/setup` validates `?agent=&from=` (`lib/setup-page.ts`'s `readSetupSearch`); the
 harness step starts as the named agent when it is one of the person's active agents, even among
 several (`agentToAdopt`); a page the card opened shows an `Alert` saying so and, once
