@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import type * as React from "react";
 
 import { CheckCircleIcon } from "@/components/icons";
+import { BuildingStep } from "@/components/setup/building-step";
 import { ConnectStep } from "@/components/setup/connect-step";
 import { GoalStep } from "@/components/setup/goal-step";
 import { HarnessStep } from "@/components/setup/harness-step";
@@ -31,8 +32,8 @@ const STEPS: Record<SetupStep, (props: { state: SetupStateData }) => React.React
   vendor: VendorStep,
   connect: ConnectStep,
   goal: GoalStep,
-  // GRA-207 onwards: the record cannot reach these yet, and a hand-edited row lands here.
-  building: StepNotReady,
+  building: BuildingStep,
+  // GRA-208: the result and the finish, which a pass and Continue while it builds reach.
   result: StepNotReady,
   finish: StepNotReady,
   completed: SetupCompleted,
