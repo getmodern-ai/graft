@@ -568,6 +568,33 @@ describe("Setup's goal and build steps", () => {
     expect(done.agent).toMatchObject({ id: agentId, tokenPrefix: null, connectedVia: null });
   }, 60_000);
 
+  it("records the tool that lands after Finish Setup, and the finish's context names it", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    await onGoal(true, "claude");
+    const kick = runner.kick;
+    runner.kick = () => {};
+    try {
+      await app.request("/api/setup/build", post({ goal: "Read the current weather. Read only." }));
+      await app.request("/api/setup/continue", post());
+      // Finished while the job is still queued: completed with no tool yet.
+      const done = await read(await app.request("/api/setup/finish", post()));
+      expect(done).toMatchObject({ step: "completed", setup: { toolId: null } });
+    } finally {
+      runner.kick = kick;
+    }
+    runner.kick();
+    await runner.idle();
+    const landed = await get("/api/setup");
+    expect(landed).toMatchObject({ step: "completed", setup: { toolId: expect.any(String) } });
+    expect(await get("/api/setup/tool")).toMatchObject({
+      goal: "Read the current weather. Read only.",
+      tool: { wireName: "open-meteo__current-weather" },
+    });
+    // Counted once, when it landed, on the completed record as on the finish step.
+    await get("/api/setup");
+    expect(stepEvents().filter((step) => step === "building")).toEqual(["building"]);
+  }, 60_000);
+
   it("counts the building step once when two reads learn the same pass", async () => {
     mcp.model = createScriptedModel(PASSING_SCRIPT);
     await onGoal(true);

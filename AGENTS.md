@@ -1048,8 +1048,9 @@ asked. `ApiOptions.acquire` is the model, the job's deps and the runner (the ser
 `McpDeps`). `GET /api/agents/:id/acquire-jobs/:jobId` answers `acquire_status`'s shape
 (`acquireStatusOf`) for one of the person's agents, never held; another person's agent or job is a
 404. `GET /api/setup` learns a succeeded job's tool through `moveSetupBuild`'s `built`: `building`
-to `result` with `toolId`, or the tool noted on `finish`. A failed job leaves the record on
-`building`; `POST /api/setup/goal` (*Change the goal*) goes back to `goal` with the job cleared,
+to `result` with `toolId`, or the tool noted on `finish`, or on `completed` when Finish Setup
+came first. A failed job leaves the record on `building`; `POST /api/setup/goal` (*Change the
+goal*) goes back to `goal` with the job cleared,
 refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it builds*)
 goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
 `building` (captured by the read whose move named the tool, `SetupMoveResult.moved`). The console's building step polls the job route

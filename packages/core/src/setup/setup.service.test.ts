@@ -425,6 +425,21 @@ describe("the building step's moves", () => {
     expect(landed.state.setup).toMatchObject({ step: "finish", toolId: "tool_1" });
   });
 
+  it("names the tool on a record completed before it landed, and stays completed", async () => {
+    const w = await onBuilding();
+    await w.move({ kind: "continue", acquireJobId: "job_1" });
+    await finishSetup(ctx, PRINCIPAL, w.deps, w.agentDeps);
+    expect(w.record()).toMatchObject({ step: "completed", toolId: null });
+    const landed = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(landed.moved).toBe(true);
+    expect(landed.state).toMatchObject({
+      show: false,
+      setup: { step: "completed", toolId: "tool_1" },
+    });
+    const again = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(again.moved).toBe(false);
+  });
+
   it("goes back to the goal with the job cleared on a retry, and refuses a stale one", async () => {
     const w = await onBuilding();
     await expect(w.move({ kind: "retry", acquireJobId: "job_0" })).rejects.toMatchObject({

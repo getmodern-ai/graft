@@ -462,7 +462,9 @@ export async function startSetupBuild(
  *
  * - `built`: the job succeeded with this tool, learned on a read. From `building` to `result`; on
  *   `finish` (the person continued while it built) the record names the tool and stays, so the
- *   finish step can say it arrived. A no-op when stale or already named.
+ *   finish step can say it arrived, and on `completed` too (the person finished before it landed,
+ *   Greptile on #166), so the tool is still recorded and the finish they are looking at names it.
+ *   A no-op when stale or already named.
  * - `retry`: *Change the goal* after a failure, from `building` back to `goal` with the job
  *   cleared, so the next Build starts a new one. The caller judges that the job failed.
  * - `continue`: *Continue while it builds*, from `building` to `finish` with the job kept, so the
@@ -495,7 +497,7 @@ export async function moveSetupBuild(
         await deps.saveSetup(tx, principal.personId, { step: "result", toolId: move.toolId });
         return true;
       }
-      if (record.step === "finish") {
+      if (record.step === "finish" || record.step === "completed") {
         await deps.saveSetup(tx, principal.personId, { toolId: move.toolId });
         return true;
       }
