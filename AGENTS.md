@@ -1036,7 +1036,8 @@ message naming the variables and disables Build. `POST /api/setup/build` (`Setup
 `{ goal }`) is `@graft/core`'s `startSetupBuild`, one transaction under `lockSetup`: from `goal`
 only, the connection still in the agent's scope, `grantBuildApproval` for the pair (the standing
 row answered when the connection card already granted it), `createAcquireJob` with Setup's own
-first line and the starter's documentation as `hints`, the record to `building` naming the job;
+first line and `setupBuildHints` as `hints` (the starter's documentation, after the starter's own
+`hints` when the goal is its curated one unchanged; GRA-209), the record to `building` naming the job;
 the route then kicks the runner. No pending action is opened, and `similar_tools_exist` is not
 asked. `ApiOptions.acquire` is the model, the job's deps and the runner (the server binds its
 `McpDeps`). `GET /api/agents/:id/acquire-jobs/:jobId` answers `acquire_status`'s shape
@@ -1050,7 +1051,23 @@ goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the buil
 every 2 s and draws each line beside its stage's sentence on the stage's first line
 (`lib/setup-progress.ts`'s `progressStage` and `explainProgress`, keyed on `acquire/job.ts`'s
 lines; a new progress line there wants a rule and a case in `setup-progress.test.ts`).
-`components/setup/goal-suggestions.tsx` is the chips row, empty until GRA-209.
+
+**The goal step's chips come from the triage model, and the curated goal is in the person's
+voice** (GRA-209). A starter's `goal` is what the person reads as their own, short and in the
+first person; the detail the model needs (the input's field, the endpoints, *Read only*) is the
+starter's `hints`, which reaches the job only beside the curated goal unchanged. `ModelAdapter`
+carries an optional `proposeGoals` (`@graft/model`'s `propose-goals.ts`, shaped as `triage.ts`'s
+calls: the triage model, a strict output, one attempt, traced with `situation: "propose_goals"`
+and the request's `traceId`, `setup:<personId>`, where a job's id would be; bounded at
+`GOAL_PROPOSAL_TIMEOUT_MS`, 8 s, and never throwing). The provider's adapter implements it, the
+scripted one answers `scriptedGoals(displayName)`, and the router sends it where the person's jobs
+go, so a person's own key carries their vendor's name to their provider alone. `GET
+/api/setup/goal/suggestions` answers `SetupGoalSuggestions`, `{ suggestions }`, up to three or
+none: none and no call where Build is unavailable or the record names no connection, none where
+the proposal declined, timed out, failed or answered nothing usable; the outcome rides on the wide
+event under `goalSuggestions`, never the goals. It is its own route so the goal step draws at
+once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
+`["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
 
 **The result step runs the tool, and the finish step connects the harness** (GRA-208; ADR 0024,
 `apps/server/src/setup-finish.ts` and `tool-run.ts`). `GET /api/setup/tool` answers

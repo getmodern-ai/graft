@@ -66,11 +66,20 @@ function keyRow(personId: string, provider: PersonModelKeyRow["provider"]): Pers
 function recordingFactory() {
   const built: { config: ProviderModelConfig; deps: ProviderModelDeps }[] = [];
   const opened: { adapter: string; jobId: string; personId: string }[] = [];
+  const proposed: { adapter: string; personId: string; vendor: string }[] = [];
   const factory = (config: ProviderModelConfig, deps: ProviderModelDeps): ModelAdapter => {
     built.push({ config, deps });
     const name = `${config.provider}:${config.apiKey}`;
     return {
       name,
+      async proposeGoals(request) {
+        proposed.push({ adapter: name, personId: request.personId, vendor: request.vendor });
+        return {
+          goals: [`${name} goal`],
+          outcome: "proposed",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        };
+      },
       open(context) {
         opened.push({ adapter: name, jobId: context.jobId, personId: context.personId });
         return {
@@ -82,7 +91,7 @@ function recordingFactory() {
       },
     };
   };
-  return { factory, built, opened };
+  return { factory, built, opened, proposed };
 }
 
 function harness(env: ModelEnv, rows: PersonModelKeyRow[]) {
@@ -97,7 +106,7 @@ function harness(env: ModelEnv, rows: PersonModelKeyRow[]) {
       return { [MODEL_KEY_FIELD]: `key-of-${scope.personId}` };
     },
   );
-  const { factory, built, opened } = recordingFactory();
+  const { factory, built, opened, proposed } = recordingFactory();
   const routes: ModelRoute[] = [];
   const setup = createModel({
     env,
@@ -107,8 +116,19 @@ function harness(env: ModelEnv, rows: PersonModelKeyRow[]) {
     providerFactory: factory,
     onRoute: (route) => routes.push(route),
   });
-  return { setup, decrypt, built, opened, routes };
+  return { setup, decrypt, built, opened, proposed, routes };
 }
+
+/** Setup's goal proposal for a person (GRA-209), as `setup-build.ts` asks it. */
+const proposal = (personId: string) => ({
+  personId,
+  traceId: `setup:${personId}`,
+  vendor: "demo",
+  displayName: "Demo",
+  primaryHost: "https://api.demo.example",
+  docsUrl: null,
+  curatedGoal: null,
+});
 
 const job = (jobId: string, personId: string) => ({
   jobId,
@@ -200,6 +220,40 @@ describe("createModel", () => {
       { adapter: "openai:key-of-person_b", jobId: "job_b", personId: "person_b" },
       { adapter: "anthropic:key-of-person_a", jobId: "job_a", personId: "person_a" },
     ]);
+  });
+
+  it("routes Setup's goal proposal as it routes jobs: A's own key for A, the fixed model for B", async () => {
+    const { setup, decrypt, built, proposed } = harness(FIXED, [keyRow("person_a", "anthropic")]);
+    const { model } = await setup;
+    if (!model?.proposeGoals) throw new Error("a fixed model means a proposer");
+
+    const a = await model.proposeGoals(proposal("person_a"));
+    const b = await model.proposeGoals(proposal("person_b"));
+
+    expect(a.goals).toEqual(["anthropic:key-of-person_a goal"]);
+    expect(b.goals).toEqual(["openai:sk-deployment goal"]);
+    // A's vendor's name went to A's provider alone; B's to the deployment's.
+    expect(proposed).toEqual([
+      { adapter: "anthropic:key-of-person_a", personId: "person_a", vendor: "demo" },
+      { adapter: "openai:sk-deployment", personId: "person_b", vendor: "demo" },
+    ]);
+    expect(built[1]?.config.apiKey).toBe("key-of-person_a");
+    expect(decrypt).toHaveBeenCalledTimes(1);
+    expect(decrypt.mock.calls[0]?.[1]).toEqual({
+      personId: "person_a",
+      connectionId: MODEL_KEY_SCOPE,
+    });
+  });
+
+  it("proposes nothing under the hosted form for a person with no key and no fixed model", async () => {
+    const { setup, proposed } = harness({ ...base, GRAFT_BACKINGS: "cloud" }, []);
+    const { model } = await setup;
+    if (!model?.proposeGoals) throw new Error("the hosted form routes");
+    expect(await model.proposeGoals(proposal("person_z"))).toMatchObject({
+      goals: [],
+      outcome: "unavailable",
+    });
+    expect(proposed).toEqual([]);
   });
 
   it("configures no model under the open form when none is set, so acquire refuses at the door", async () => {

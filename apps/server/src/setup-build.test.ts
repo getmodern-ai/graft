@@ -1,6 +1,11 @@
 import { join } from "node:path";
 
-import { type SetupDeps, toProxyConnection } from "@graft/core";
+import {
+  type SetupDeps,
+  type StarterVendor,
+  starterVendorOf,
+  toProxyConnection,
+} from "@graft/core";
 import type { SetupPatch, SetupRow } from "@graft/db/repo/setup";
 import {
   type AcquireRunner,
@@ -11,7 +16,12 @@ import {
 } from "@graft/mcp";
 import { createFakeDeps, createFakeStore, type FakeStore } from "@graft/mcp/testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "@graft/mcp/testing/fake-vendor";
-import { createScriptedModel, type ScriptedStep } from "@graft/model";
+import {
+  createScriptedModel,
+  type ModelAdapter,
+  type ScriptedStep,
+  scriptedGoals,
+} from "@graft/model";
 import type { Capture } from "@graft/observability";
 import {
   createFakeMetadataSource,
@@ -42,6 +52,12 @@ import { fakeModelKeyDeps } from "./testing/fake-model-key";
  */
 
 initLogger({ silent: true });
+
+const OPEN_METEO: StarterVendor = (() => {
+  const starter = starterVendorOf("open-meteo");
+  if (!starter) throw new Error("no open-meteo starter");
+  return starter;
+})();
 
 const CONSOLE_ORIGIN = "http://localhost";
 const FORECAST = { current: { temperature_2m: 14.2 }, latitude: -37.81, longitude: 144.96 };
@@ -340,7 +356,7 @@ describe("Setup's goal and build steps", () => {
     expect(goal).toEqual({
       connection: { id: connectionId, vendor: "open-meteo", displayName: expect.any(String) },
       starterId: "open-meteo",
-      goal: expect.stringMatching(/Read only\.$/),
+      goal: OPEN_METEO.goal,
       build: { available: true },
     });
 
@@ -359,7 +375,8 @@ describe("Setup's goal and build steps", () => {
       agentId,
       connectionId,
       goal: goal.goal,
-      hints: expect.stringContaining("https://open-meteo.com/en/docs"),
+      // The curated goal unchanged carries the starter's detail for the model, then the docs.
+      hints: `${OPEN_METEO.hints} The vendor's documentation starts at https://open-meteo.com/en/docs.`,
     });
 
     // The job route, polled to the end, in acquire_status's shape.
@@ -471,8 +488,14 @@ describe("Setup's goal and build steps", () => {
     const { agentId } = await onGoal(true);
     const granted = buildApprovals(agentId);
     expect(granted).toHaveLength(1);
-    await app.request("/api/setup/build", post({ goal: "Read the current weather. Read only." }));
+    const own = await read(
+      await app.request("/api/setup/build", post({ goal: "Read the current weather. Read only." })),
+    );
     expect(buildApprovals(agentId)).toEqual(granted);
+    // A goal of the person's own carries the docs and not the curated goal's detail.
+    expect(store.acquireJobs.get(own.setup.acquireJobId)?.hints).toBe(
+      "The vendor's documentation starts at https://open-meteo.com/en/docs.",
+    );
     // A second Build from a tab that did not move on opens no second job.
     const second = await app.request("/api/setup/build", post({ goal: "Again." }));
     expect(second.status).toBe(409);
@@ -580,6 +603,78 @@ describe("Setup's goal and build steps", () => {
     expect(early.status).toBe(409);
     await onGoal(true);
     expect((await app.request("/api/setup/build", post({ goal: "   " }))).status).toBe(400);
+  });
+});
+
+describe("GET /api/setup/goal/suggestions", () => {
+  const suggestions = async () => {
+    const res = await app.request("/api/setup/goal/suggestions");
+    expect(res.status).toBe(200);
+    return read(res);
+  };
+
+  it("answers the scripted model's fixed set, asked with the connection and the curated goal", async () => {
+    const scripted = createScriptedModel(PASSING_SCRIPT);
+    mcp.model = scripted;
+    const { connectionId } = await onGoal(true);
+    const connection = store.connections.get(connectionId);
+    if (!connection) throw new Error("the keyless confirmation made the row");
+
+    expect(await suggestions()).toEqual({ suggestions: scriptedGoals(connection.displayName) });
+    expect(scripted.proposals).toEqual([
+      {
+        personId: person,
+        traceId: `setup:${person}`,
+        vendor: "open-meteo",
+        displayName: connection.displayName,
+        primaryHost: OPEN_METEO.primaryHost,
+        docsUrl: OPEN_METEO.docsUrl,
+        curatedGoal: OPEN_METEO.goal,
+      },
+    ]);
+  });
+
+  it("answers none with no model, and asks nothing", async () => {
+    mcp.model = null;
+    await onGoal(true);
+    expect(await suggestions()).toEqual({ suggestions: [] });
+  });
+
+  it("answers none, asking nothing, before the record names a connection", async () => {
+    const scripted = createScriptedModel(PASSING_SCRIPT);
+    mcp.model = scripted;
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "hermes" }));
+    expect(await suggestions()).toEqual({ suggestions: [] });
+    expect(scripted.proposals).toEqual([]);
+  });
+
+  it("answers none when the proposal answers none, or throws, and never more than three", async () => {
+    await onGoal(true);
+    const model = (proposeGoals: ModelAdapter["proposeGoals"]): ModelAdapter => ({
+      name: "stand-in",
+      open: () => {
+        throw new Error("no job here");
+      },
+      proposeGoals,
+    });
+    const usage = { inputTokens: 0, outputTokens: 0 };
+    mcp.model = model(async () => ({ goals: [], outcome: "timeout", usage }));
+    expect(await suggestions()).toEqual({ suggestions: [] });
+    mcp.model = model(async () => {
+      throw new Error("the person's key would not decrypt");
+    });
+    expect(await suggestions()).toEqual({ suggestions: [] });
+    mcp.model = model(async () => ({
+      goals: ["one", "two", "three", "four"],
+      outcome: "proposed",
+      usage,
+    }));
+    expect(await suggestions()).toEqual({ suggestions: ["one", "two", "three"] });
+    // An adapter that cannot propose answers none rather than failing the step.
+    mcp.model = model(undefined);
+    expect(await suggestions()).toEqual({ suggestions: [] });
   });
 });
 
