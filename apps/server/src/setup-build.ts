@@ -16,6 +16,7 @@ import {
   type SetupDeps,
   type SetupState,
   type StarterVendorId,
+  setupBuildHints,
   starterVendorFor,
   startSetupBuild,
 } from "@graft/core";
@@ -27,6 +28,7 @@ import {
   acquireStatusOf,
   type McpDeps,
 } from "@graft/mcp";
+import { GOAL_PROPOSAL_MAX, type GoalProposalOutcome } from "@graft/model";
 
 /**
  * Setup's goal, build and building steps on the server (GRA-207; ADR 0024, *The console is a
@@ -36,6 +38,8 @@ import {
  * - `setupGoalContext`: what the goal step draws, the connection the record names, the starter's
  *   curated goal (`starterVendorFor`, empty for another vendor), and whether Build is available at
  *   all, which is the `acquire` door's own model check (`acquireConfigured`).
+ * - `setupGoalSuggestions`: the chips above the goal field (GRA-209), the model's `proposeGoals`
+ *   through the same per-person routing, on a route of its own so the step draws at once.
  * - `buildSetupTool`: Build, as `@graft/core`'s `startSetupBuild` (the build approval, the job, the
  *   record, one transaction), then the runner woken. Refused with the door's reason when no model
  *   can author, so the console's sentence and the MCP refusal are one decision. Unlike `acquire`,
@@ -78,7 +82,10 @@ export type SetupBuildAvailability =
   | { available: true }
   | { available: false; reason: typeof ACQUIRE_UNCONFIGURED; message: string };
 
-/** `GET /api/setup/goal`: what the goal step draws. GRA-209 adds the suggested goals beside `goal`. */
+/**
+ * `GET /api/setup/goal`: what the goal step draws, at once. The suggested goals are a model call
+ * and arrive after, from `GET /api/setup/goal/suggestions` (`SetupGoalSuggestions`).
+ */
 export type SetupGoalContext = {
   connection: { id: string; vendor: string; displayName: string } | null;
   /** The starter vendor the connection's vendor is, or null for another vendor. */
@@ -122,6 +129,61 @@ export async function setupGoalContext(
   };
 }
 
+/** `GET /api/setup/goal/suggestions`: the goal step's chips, up to three, or none. */
+export type SetupGoalSuggestions = { suggestions: string[] };
+
+/** What a proposal did, for the request's wide event; never the goals or the vendor's words. */
+export type SetupGoalSuggestionsResult = SetupGoalSuggestions & {
+  outcome: GoalProposalOutcome | "not_asked";
+  error?: string;
+};
+
+/**
+ * The goal step's suggested goals (GRA-209; GRA-202, *The goal step*): the deployment's model's
+ * `proposeGoals`, given the record's connection and the starter's curated goal, routed as the
+ * person's jobs are (`@graft/model`'s router, ADR 0014), so a person's own key sends their
+ * vendor's name to their provider and nobody else's. None, and no call, where Build is
+ * unavailable (no model), where the record names no connection, or where the adapter cannot
+ * propose; none where the proposal answered none or threw. It never refuses: the step is never
+ * blocked on it.
+ */
+export async function setupGoalSuggestions(
+  ctx: ServiceContext,
+  principal: Principal,
+  deps: Pick<SetupBuildRouteDeps, "setup" | "connection" | "model">,
+): Promise<SetupGoalSuggestionsResult> {
+  const notAsked: SetupGoalSuggestionsResult = { suggestions: [], outcome: "not_asked" };
+  const model = deps.model;
+  if (!acquireConfigured(deps) || !model?.proposeGoals) return notAsked;
+  const record = await deps.setup.findSetup(ctx.db, principal.personId);
+  const connection = await recordConnection(ctx, principal, record?.connectionId, deps);
+  if (!connection) return notAsked;
+  const starter = starterVendorFor(connection.vendor);
+  try {
+    const proposal = await model.proposeGoals({
+      personId: principal.personId,
+      traceId: `setup:${principal.personId}`,
+      vendor: connection.vendor,
+      displayName: connection.displayName,
+      primaryHost: connection.primaryHost,
+      docsUrl: starter?.docsUrl ?? null,
+      curatedGoal: starter?.goal ?? null,
+    });
+    return {
+      suggestions: proposal.goals.slice(0, GOAL_PROPOSAL_MAX),
+      outcome: proposal.outcome,
+      ...(proposal.error ? { error: proposal.error } : {}),
+    };
+  } catch (error) {
+    // Reading the person's key, or a backing that throws: the step goes on without chips.
+    return {
+      suggestions: [],
+      outcome: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export async function buildSetupTool(
   ctx: ServiceContext,
   principal: Principal,
@@ -140,8 +202,9 @@ export async function buildSetupTool(
     principal,
     {
       goal: input.goal,
-      // The starter's documentation, as an agent would hint it; another vendor's model finds its own.
-      hints: starter ? `The vendor's documentation starts at ${starter.docsUrl}.` : null,
+      // The starter's documentation, and its curated detail for its curated goal unchanged, as an
+      // agent would hint them; another vendor's model finds its own.
+      hints: setupBuildHints(starter, input.goal),
       firstProgressLine: SETUP_FIRST_PROGRESS_LINE,
     },
     deps,

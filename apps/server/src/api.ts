@@ -108,7 +108,9 @@ import {
   retrySetupGoal,
   type SetupAcquireDeps,
   type SetupBuildRouteDeps,
+  type SetupGoalSuggestions,
   setupGoalContext,
+  setupGoalSuggestions,
 } from "./setup-build";
 import {
   connectSetupVendor,
@@ -117,7 +119,11 @@ import {
   type SetupConnectDeps,
 } from "./setup-connect";
 
-export type { SetupBuildAvailability, SetupGoalContext } from "./setup-build";
+export type {
+  SetupBuildAvailability,
+  SetupGoalContext,
+  SetupGoalSuggestions,
+} from "./setup-build";
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -912,6 +918,25 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/setup/goal", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json(await setupGoalContext(ctx, principal, setupBuildDeps));
+  });
+
+  /**
+   * The goal step's chips (`SetupGoalSuggestions`, GRA-209): the model's proposal, routed per
+   * person, or none. Never refused past the session; the outcome goes on the wide event, the goals
+   * do not.
+   */
+  api.get("/setup/goal/suggestions", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const { suggestions, outcome, error } = await setupGoalSuggestions(
+      ctx,
+      principal,
+      setupBuildDeps,
+    );
+    useLogger().set({
+      goalSuggestions: { outcome, count: suggestions.length, ...(error ? { error } : {}) },
+    });
+    const body: SetupGoalSuggestions = { suggestions };
+    return c.json(body);
   });
 
   /** Build: the build approval, the job, the record on `building`, and the runner woken. */
