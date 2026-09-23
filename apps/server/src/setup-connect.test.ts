@@ -32,8 +32,12 @@ function inMemorySetup(
   hooks: { locks: Array<(() => Promise<void>) | null> } = { locks: [] },
 ): SetupDeps {
   let record: SetupRow | null = null;
+  // Every write moves `updatedAt` by at least a millisecond, as two person-driven writes in
+  // Postgres do: the connect route's second routing tells the record it saw from a later one by it.
+  let last = 0;
   const save = (patch: SetupPatch): SetupRow => {
-    const at = now();
+    const at = new Date(Math.max(now().getTime(), last + 1));
+    last = at.getTime();
     record = {
       personId: PERSON,
       step: "harness",
@@ -48,9 +52,10 @@ function inMemorySetup(
       skippedAt: null,
       owner: "person",
       createdAt: at,
-      updatedAt: at,
       ...record,
       ...patch,
+      // Set on every write, as the repository's upsert sets it.
+      updatedAt: at,
     } as SetupRow;
     return record;
   };
@@ -516,6 +521,65 @@ describe("POST /api/setup/connect", () => {
     expect(await read(await h.app.request("/api/setup"))).toMatchObject({
       step: "connect",
       setup: { pendingActionId: newerAskId },
+    });
+  });
+
+  it("keeps the vendor step when another tab chose, declined and polled back before the reroute landed", async () => {
+    const h = harness();
+    await staleOpenMeteo(h);
+    // The ask's move, the reopen, then the second routing's move: before that one takes the lock,
+    // another tab chooses GitHub, declines its ask, and its poll takes the record back to vendor.
+    h.hooks.locks = [
+      null,
+      null,
+      async () => {
+        const other = await read(
+          await h.app.request("/api/setup/connect", post({ starterId: "github" })),
+        );
+        const declined = await h.app.request(
+          `/api/pending-actions/${other.setup.pendingActionId}/answer`,
+          post({ allow: false }),
+        );
+        expect(declined.status).toBe(200);
+        expect((await read(await h.app.request("/api/setup"))).step).toBe("vendor");
+      },
+    ];
+    const res = await h.app.request("/api/setup/connect", post({ starterId: "open-meteo" }));
+    expect(res.status).toBe(200);
+    // The record is on vendor again, but not as this request saw it: the older choice stays out.
+    expect(await read(res)).toMatchObject({ step: "vendor", setup: { pendingActionId: null } });
+    expect(await read(await h.app.request("/api/setup"))).toMatchObject({
+      step: "vendor",
+      setup: { pendingActionId: null },
+    });
+  });
+
+  it("leaves an answer that became good again before the reopen took the lock", async () => {
+    const h = harness();
+    const agentId = await started(h);
+    const askId = await openMeteoAsk(h);
+    const connectionId = await confirmKeyless(h, askId);
+    await h.app.request(`/api/agents/${agentId}/scope`, {
+      ...post({ mode: "listed", connectionIds: [] }),
+      method: "PUT",
+    });
+    // The read judges the answer stale; before its reopen takes the lock, the connection is given
+    // back to the agent.
+    h.hooks.locks = [
+      async () => {
+        const granted = await h.app.request(`/api/agents/${agentId}/scope`, {
+          ...post({ mode: "listed", connectionIds: [connectionId] }),
+          method: "PUT",
+        });
+        expect(granted.status).toBe(200);
+      },
+    ];
+    expect((await read(await h.app.request("/api/setup"))).step).toBe("connect");
+    expect(h.store.pendingActions.get(askId)?.consumedAt).toBeNull();
+    // The next read learns it.
+    expect(await read(await h.app.request("/api/setup"))).toMatchObject({
+      step: "goal",
+      setup: { connectionId },
     });
   });
 
