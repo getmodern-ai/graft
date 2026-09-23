@@ -1020,6 +1020,31 @@ draws the open ask from the inbox's list with `PendingActionCard`, unchanged, an
 every 3 s so an answer given in the inbox or a chat card moves it too. The goal step's starter is
 `starterVendorFor(connection.vendor)`.
 
+**Build is the build approval, and the building step reads the job** (GRA-207; ADR 0024,
+`apps/server/src/setup-build.ts`). `GET /api/setup/goal` answers `SetupGoalContext`: the record's
+connection, `starterId`, the curated `goal` (empty for another vendor) and `build`, which is
+`{ available: false, reason: "acquire_unconfigured", message }` whenever `@graft/mcp`'s
+`acquireConfigured` (the `acquire` door's own model check) says no; the console then shows the
+message naming the variables and disables Build. `POST /api/setup/build` (`SetupBuildBody`:
+`{ goal }`) is `@graft/core`'s `startSetupBuild`, one transaction under `lockSetup`: from `goal`
+only, the connection still in the agent's scope, `grantBuildApproval` for the pair (the standing
+row answered when the connection card already granted it), `createAcquireJob` with Setup's own
+first line and the starter's documentation as `hints`, the record to `building` naming the job;
+the route then kicks the runner. No pending action is opened, and `similar_tools_exist` is not
+asked. `ApiOptions.acquire` is the model, the job's deps and the runner (the server binds its
+`McpDeps`). `GET /api/agents/:id/acquire-jobs/:jobId` answers `acquire_status`'s shape
+(`acquireStatusOf`) for one of the person's agents, never held; another person's agent or job is a
+404. `GET /api/setup` learns a succeeded job's tool through `moveSetupBuild`'s `built`: `building`
+to `result` with `toolId`, or the tool noted on `finish`. A failed job leaves the record on
+`building`; `POST /api/setup/goal` (*Change the goal*) goes back to `goal` with the job cleared,
+refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it builds*)
+goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
+`building` (captured where the tool is learned). The console's building step polls the job route
+every 2 s and draws each line beside its stage's sentence on the stage's first line
+(`lib/setup-progress.ts`'s `progressStage` and `explainProgress`, keyed on `acquire/job.ts`'s
+lines; a new progress line there wants a rule and a case in `setup-progress.test.ts`).
+`components/setup/goal-suggestions.tsx` is the chips row, empty until GRA-209.
+
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
 auto — and `DataTableRow` for the 40px rhythm; a column the row cannot afford at 390px steps out
