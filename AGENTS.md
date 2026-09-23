@@ -14,6 +14,119 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
    verified by hand and what was not, the deviations and their reasons — and is where the thing a
    later ticket trips over is written down. An ADR records a decision; Linear holds the ticket.
 
+## Skills
+
+Content lives in `.agents/skills/<name>/SKILL.md`; `.claude/skills/*` are symlinks to it, so a
+skill is authored once and Claude Code and Codex read the same copy. Always edit the file under
+`.agents/`, never through the symlink directory.
+
+Presence in `skills-lock.json` marks the boundary: a listed skill is **vendored** from an upstream
+source and pinned by content hash, so a local edit is lost on the next sync. Today every entry is
+one of [`mattpocock/skills`](https://github.com/mattpocock/skills), all thirty-eight of them,
+vendored whole under MIT (`.agents/skills/LICENSE` is his notice; GRA-179). Taking a subset was
+tried in Cando and abandoned: they cross-reference heavily, so any subset leaves the flows they
+describe dead-ending on skills nobody installed. A skill of our own would go beside them and stay
+out of the lockfile; there is none yet, and the Hermes skill under `skills/` is a product, not a
+skill for working here.
+
+Biome does **not** look inside `.agents/skills` (`biome.json`): vendored files answer to their
+upstream, and in Cando the reformatting reappeared on every sync until the exclusion.
+
+### Keeping them current
+
+```bash
+npx skills update -p -y                  # refresh everything already in the lockfile
+npx skills add mattpocock/skills         # pick up skills that did not exist when we last looked
+```
+
+`update` iterates `skills-lock.json`, so it can only refresh what is already listed; a skill
+published upstream after our last `add` is invisible to it. Three things to know, the first two
+from Cando's experience of the same CLI and the third reproduced here on 2026-09-22:
+
+- **`matt-code-review` cannot auto-update.** The CLI resolves the upstream skill by its *local*
+  name rather than by `skillPath`, so it looks for `matt-code-review` in his repository, finds
+  nothing, and reports a failure. Nothing is damaged, but it receives no upstream changes. To
+  refresh it by hand, `add` it under its own name somewhere disposable and copy the file across,
+  then put the `name:` line back.
+- **`update -p` updates *every* vendored skill.** Run it deliberately, in a pull request about that.
+- **On a laptop with `~/.openclaw`, `update` links the skills into the root `skills/` directory.**
+  The CLI relinks every agent it detects as installed, and its OpenClaw definition names the bare
+  `skills/` as that agent's project directory, which here is the Hermes skill's home (MIT,
+  `skills/LICENSE`). They show up as untracked `skills/<name>` symlinks; delete them before
+  committing (`find skills -maxdepth 1 -type l -delete`) and never commit them. Install only ever
+  named `claude-code` and `codex`, so a fresh `add` does not do this.
+
+### Which to reach for
+
+**Start with `/ask-matt`.** It is the router over the rest and holds the map: which skill opens
+which flow, where the on-ramps merge, and where a phase boundary makes it safe to compact.
+Reproducing that map here would let the copy rot. The main path, for orientation:
+
+```
+grill-with-docs → to-spec → to-tickets → implement → matt-code-review
+                                           ├ tdd
+                                           └ diagnosing-bugs
+```
+
+with `/triage` on-ramping raw incoming issues, `/diagnosing-bugs` on-ramping breakage,
+`/wayfinder` for an effort too foggy to hold in a single session, and `/implement-spec` when a
+whole spec's ticket graph is to land on one branch. One rule from `ask-matt` worth knowing before
+you read it: keep grilling, spec and tickets in **one unbroken context window** (don't compact
+until after `/to-tickets`) so all three build on the same thinking;
+`.agents/skills/ask-matt/PHASE-BOUNDARIES.md` says where compaction is safe.
+
+Four are here for completeness rather than use: `scaffold-exercises` and `migrate-to-shoehorn`
+target his course repositories, and `setup-pre-commit` and `git-guardrails-claude-code` would
+install tooling this repository has deliberately not adopted (Biome, not Prettier plus Husky);
+the guard script's substring match also misses `git -C <dir> push`, so it would not be the
+protection it says it is (Greptile on #137). `improve-codebase-architecture` writes an HTML report
+that loads Tailwind and Mermaid from public CDNs, so the file names and module shape it draws are
+shown to those scripts when it is opened; fine for this public repository, and worth knowing before
+running it over a private checkout that links `packages/cloud-backings/`.
+`/pr` proposes a body shape (Summary, Evidence, Merge Danger) that is a fine skeleton, but the
+body of a pull request here is the build record *Before anything else* describes, and that content
+comes first.
+
+**Why `matt-code-review` and not `code-review`.** Claude Code ships a built-in `code-review`, and
+the built-in wins the name; his was installed and simply unreachable in Cando. So it is aliased:
+the directory, the lockfile key and the frontmatter `name` all say `matt-code-review`, while
+`skillPath` still points at `skills/engineering/code-review/SKILL.md` upstream. The two answer
+different questions: the built-in finds correctness bugs and simplifications in a diff and can post
+inline comments; his checks a branch against documented standards *and* against the ticket that
+asked for it, in parallel sub-agents. One consequence: `implement`, `implement-spec` and `ask-matt`
+end with "use `/code-review`", which resolves to the built-in. Reach for `matt-code-review` by hand
+when you want the spec axis, and do not edit the vendored files to fix it.
+
+**These skills assume an issue tracker, and ours is Linear, not GitHub Issues.** They default to
+`gh issue create`. The real workflow is recorded in `docs/agents/` (the **Agent skills** section
+below). Read it before using `triage`, `to-tickets`, `to-spec` or `wayfinder`, or they will reach
+for the wrong CLI.
+
+> **Leave "PRs as a request surface" set to `no`.** It is recorded that way in
+> `docs/agents/issue-tracker.md`. `triage` step 3 verifies a PR by checking it out and running its
+> tests, which for a PR from outside the organisation means executing contributor-controlled code
+> in a session holding credentials. This repository is public and takes outside contributions, so
+> the flag is load-bearing here in a way it was not in Cando. It cannot be fixed by editing
+> `triage/SKILL.md`; that file is vendored.
+
+## Agent skills
+
+Per-repository configuration the vendored engineering skills read. `setup-matt-pocock-skills`
+would write these; here they were written by hand from Cando's (GRA-179), so edit the files
+directly rather than running it, unless you are switching trackers outright. *Agent* in that
+directory means the coding agent; everywhere else it is `CONTEXT.md`'s word.
+
+- **Issue tracker**: Linear, in the Graft team, through the MCP server configured in the person's
+  own tooling. Work groups initiative → project → issue; a spec's tickets go in the spec's project
+  as sub-issues. `docs/agents/issue-tracker.md`, which also carries the "PRs as a request surface"
+  flag, the pull-request rules and the Linear equivalents of the wayfinding operations.
+- **Triage labels**: the five canonical roles, unaliased: `needs-triage`, `needs-info`,
+  `ready-for-agent`, `ready-for-human`, `wontfix`. All exist in the Graft team. They are a *state*
+  axis and compose with the type labels (`Bug`, `Feature`, `Improvement`, `Infra`).
+  `docs/agents/triage-labels.md`.
+- **Domain docs**: single-context, one `CONTEXT.md` and one `docs/adr/` at the root, despite the
+  monorepo. `docs/agents/domain.md`.
+
 ## Working agreement
 
 - **Every pull request has a Linear ticket** in the Graft project, and the PR references it.
@@ -187,7 +300,10 @@ handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTIO
 24) how long that action stays answerable (ADR 0006, ADR 0008). `GRAFT_CARD_HOSTS` (default
 `claude.ai,chatgpt.com`) names the chat products whose OAuth clients may answer the ask card, by the
 host of their registered redirect URIs, and is the whole of that rule (GRA-84, GRA-150; the
-paragraph on the card below). `packages/env/src/schema.ts` is the rules as code.
+paragraph on the card below). `GRAFT_PROXY_MAX_BODY_BYTES` (default 10 MiB, floor 1 MiB) is the
+proxy's body cap on both legs, passed into the proxy's options beside `followRedirects` and named on
+the boot line only when raised (GRA-183; ADR 0010). `packages/env/src/schema.ts` is the rules as
+code.
 
 **An OAuth consent (ADR 0005) adds no variable, two server routes and one console route.**
 `GET /api/oauth/redirect-uri` is `GRAFT_AUTH_URL` plus `/api/oauth/callback`, computed by one function
@@ -504,6 +620,221 @@ where it was (`packages/publish`, step 8). The job's "did not run" progress line
 refusal's `reason: message` rather than the word `refused`. `packages/mcp/src/server.test.ts` (the
 GRA-122 describe), `acquire.test.ts` and `publish.service.test.ts` are the suites.
 
+**A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
+directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
+`.blobs/<agentId>/` beside the toolboxes on the toolbox volume (the Agent Drive in the hosted form),
+which the agent's sandbox mounts alone at `/blobs` as it mounts the toolbox at `/tools`; the scope
+is that mount, since a vendored dependency runs in-process and the check never reads it. The runner's
+`ctx.blob.write` writes into a temporary directory and renames it once, `ctx.blob.read` answers a
+`Blob`; the ref `blob://<id>` is a plain string in a tool's result and the next tool's input, and the
+runner's ledger comes back beside the result as `blobs` so the server writes one `blob` row per file
+through a blob store seam beside the toolbox store. The check bans `fs`, `fs/promises`,
+`worker_threads`, `vm`, `module`, `cluster` and `inspector` as defence in depth, the runner refuses a
+ref that does not resolve under `/blobs`, and the door refuses `blob_not_found`, `blob_expired` and
+`blob_quota` before a sandbox is touched, on every path that invokes the runner for an agent:
+`run_tool`, every authored tool in the list, `execute__<connection>` and `run_command` (GRA-200). 24
+hours, 256 MiB per blob, 1 GiB live per agent, all constants; writing one never asks. The working-set sweep's timer runs a second pass that removes
+expired blobs through the blob store and keeps the row with `removed_at`. The proxy's cap is
+`GRAFT_PROXY_MAX_BODY_BYTES` (default 10 MiB; ADR 0010 as amended 2026-09-22), so a self-host moves
+a file larger than that only once its operator raises it. The spec is GRA-181 and its sub-issues are
+the build order.
+
+**The write path is GRA-186.** `ctx` is five frozen names, `blob` the fifth: `ctx.blob.write(data,
+{ contentType, name? })` takes a `Uint8Array`, a `Blob` or a `ReadableStream<Uint8Array>`, streams
+it into `/blobs/<id>.tmp/`, writes the sidecar (`bytes`, `contentType`, `name`, `writtenAt`,
+`expiresAt`, `agentId`, `toolVersion`) and renames the directory once; `stat` reads the sidecar;
+`read` answers a lazy `Blob` (the paragraph on GRA-187 below). The runner's stdout contract is now
+an **envelope**, `{ result, blobs }`, on the sync, detached and dry-run paths alike
+(`readRunnerEnvelope` in `@graft/runner`). Since GRA-193 each server seeds the runner and the skills
+under `/graft/<sha256 of both>/` when that directory is absent and runs from it, handing every
+command the path as `GRAFT_RUNNER`, so every sync run goes through this server's runner and
+`run.ts`'s `unwrapEnvelope` refuses stdout with no envelope as a module that printed to stdout
+itself (GRA-199); the one bare result still read is a detached run's result file written by a
+runner older than the envelope and polled after an upgrade, in `sandbox.ts`'s `readRunnerResult`.
+Three per-exec variables ride beside the token and are deleted with it before the module loads:
+`GRAFT_AGENT` and `GRAFT_TOOL_VERSION` for the sidecar, never for a path (`GRAFT_AGENT` is
+`blob-door.ts`'s `blobAgentEnvironment`, on every capability run and inside `blobRunEnvironment`,
+since an `execute__` command may invoke `$GRAFT_RUNNER` on a by-hand module), and `GRAFT_BLOBS_DIR`, the
+mount path, a variable for the reason `GRAFT_RESULT_PATH` is one (a backing that maps the sandbox's
+paths maps the environment's values; the fake does). On the wire a run that wrote nothing answers
+exactly what it did; one that wrote answers `{ result, blobs: [{ ref, bytes, contentType, name?,
+expiresAt }] }` in the text block and `structuredContent`, the list cut at `MAX_RESULT_BLOBS` (32)
+with a count and a note; `wait_for_process` puts the same list beside a detached run's `result`. The
+`blob` table (`packages/db/src/schema/blob.ts`, migration 0011) is keyed by the id inside the ref and
+carries the person and the agent, so `repo/blob.ts` names both in every statement; `@graft/core`'s
+`recordBlobsWritten` writes the rows from the ledger, `packages/mcp/src/blobs.ts` calls it from the
+sync run (with the version) and the poll (without one, since a poll cannot know it) and fires
+`McpDeps.onBlobWritten`, which the server captures as `blob_written` with the size and the media type
+and never the name.
+
+**The read path and the door are GRA-187.** `ctx.blob.read(ref)` answers `fs.openAsBlob` over
+`/blobs/<id>/data`, typed from the sidecar, so `.stream()` reads the file in 64 KiB chunks and a
+`FormData` upload never holds it whole; a ref that does not resolve there is `blob_not_found` with
+the ref in the sentence, whether it is not of the scheme, fails the id rule, names a `.tmp`, names
+nothing, or reaches a symlink at the directory or either file (`lstat`, as the store judges the
+tree from outside). The runner checks no expiry: **the door is the expiry's one judge.**
+`packages/mcp/src/blob-door.ts`'s `admitBlobs` runs in `run.ts` after the input is validated and
+before the approval gate, for a dry run too, so `acquire`'s job learns of a dead ref there: the
+agent's live bytes (`sumLiveBlobBytes`: `removed_at` null and `expires_at` ahead, one statement)
+against `BLOB_QUOTA_BYTES` answers `blob_quota` with `bytes` and `quota` on every run, a ref in the
+input or not; then every `blob://` string leaf of the input, arrays and nested objects included, is
+looked up under the person and the agent in one statement (`findBlobs`) and the first without a row
+is `blob_not_found` with `ref`, another agent's row answering the same sentence, and the first past
+its expiry (`@graft/core`'s `isBlobExpired`, `expiresAt <= now`, the sweep's and `sumLiveBlobBytes`'s
+rule too, GRA-199) or with `removed_at` set is `blob_expired` with `ref`, naming `BLOB_TTL_HOURS`.
+Each is a refusal in the run's own shape (`isError: true`, a `refused` ledger row) and none asks (ADR 0008).
+The quota lives beside the scheme, the cap and the TTL in `@graft/runner`'s `runner-source.ts`,
+the one file that spells the three numbers; `judgeBlobQuota` and `judgeBlobRefs` are pure and
+`blob-door.test.ts` pins the sentences, `server.test.ts` the loop end to end over the fake sandbox.
+**A run the door admits is handed its budget** (Greptile on #145): the door's check runs once,
+before the run, so `run.ts` puts `BLOB_QUOTA_BYTES - liveBytes` into the exec as
+`GRAFT_BLOB_BUDGET_BYTES` (the quota beside it as `GRAFT_BLOB_QUOTA_BYTES`, for the sentence), both
+deleted with the rest before the module loads, and the runner keeps the total it has committed and
+refuses the write that would pass the budget as `blob_quota` as the bytes stream in, at the smaller
+of the per-blob cap and the budget, removing the `.tmp` directory as `blob_too_large` does; a
+refused write is on no ledger. Unset, as under a server older than the variable or a runner run by
+hand, the per-blob cap alone bounds a write. **`execute__` commands and `run_command` pass the same
+door** (GRA-200): `tools/execute.ts` and `tools/authoring.ts` call `admitBlobs` before the exec (the
+quota alone, since a shell command is not JSON the runner reads), refuse `blob_quota` in their own
+shape with no exec, put the two variables into the process's environment beside the runner's path,
+and hold the grant on the in-flight registry until the process settles, a detached one's on its
+process name through `heldInFlight`'s `budgetBytes`; `isPolledProcess` in `sandbox.ts` is the one
+spelling of the runner-answer shape the three readers of a ledger share. Two rules from Greptile's
+review of #157: **the admission and its grant are one step** (`admitUnderGrant` in `in-flight.ts`,
+serialised per agent through `InFlightRegistry.admit`, on `run.ts`'s path too), since two
+admissions interleaved across the door's await both read the remainder before either reserved it;
+and **the record of a run's blobs is an adoption from the store** (`blob-budget.ts`): a by-hand
+command can hand the runner any `GRAFT_BLOB_BUDGET_BYTES` it likes, print any ledger and edit any
+sidecar, so when the server records a run's ledger (`recordBlobsWithinQuota`, at the three record
+sites and at `wait_for_process`) it takes nothing from the ledger but the ids and builds each row as
+the sweep builds an orphan's (`adoptedBlobOf`, `parseBlobSidecar`): `bytes` as the store measured,
+name and media type from the sidecar under the write rules, `expiresAt` never past the write plus
+the TTL with the store's last write capped at now, the version the caller's; an entry the store
+cannot `stat`, whose sidecar fails the rules or names another agent, is dropped; an entry naming a
+blob with a row already is listed from its row alone while the row is live and the directory is
+there (never removed or re-recorded; a second poll of a finished process names the same blob) and
+dropped otherwise. The quota is then judged over the live rows plus this run's measured bytes; past
+it the newest are removed through the `BlobStore` until the rest fit, get no row, and the run is
+answered a `blob_quota` failure naming the overshoot (`blobQuotaOvershoot`, `withRecordedBlobs`
+putting the recorded list in place of the declared one). The whole record is one step per agent
+under `InFlightRegistry.exclusive`, the critical section admissions take, so two runs finishing
+together cannot both find room. The record reads nothing off the grant, which expires with a
+detached hold while the result stays pollable; the quota is the promise. The newest go because the
+earlier writes are what an honest runner would have committed. Three more rules from Greptile's review of #148: the runner reserves
+against the budget **as each chunk lands**, one shared figure across every write in flight, so two
+writes started together cannot both fit a remainder only one fits; the door subtracts **what it has
+already handed to this agent's runs still in flight** (`InFlightRegistry.grant` and
+`outstandingBudget`, `in-flight.ts`; a detached run's grant rides on its process name until its
+poll settles it), a per-process record as the in-flight hold is, with ADR 0023's option C as the
+shape for the day two replicas admit one agent's runs; and **a failed run reports the blobs it
+committed**: a module that writes and then throws prints the same `ENVELOPE_MARKER` line a result's
+envelope sits behind (`__GRAFT_ENVELOPE__:1`, `@graft/runner`) and `{ result: null, blobs }` on
+stdout before the error (the result file on the detached path), so `readRunnerEnvelope` is the one
+reader; `run.ts` records the rows off it and the failure names the refs, while a timeout prints
+nothing and its blobs are the sweep's to adopt (GRA-189).
+
+**The sweep's blob pass is GRA-189** (ADR 0023, "the sweep deletes"). On the working-set timer,
+after the working-set pass for an agent and under the same in-flight skip, `packages/mcp/src/sweep.ts`
+reads the agent's unremoved rows (`listUnremovedBlobs`) and what `McpDeps.blobStore` lists, reads the
+sidecar and the age (`BlobStore.stat`, new here: the newest modification time among the directory,
+`data` and `meta.json`, and `data`'s size) of every directory no row claims, and applies what
+`packages/core/src/blob/blob-sweep.decision.ts` decides, a pure function in the working-set
+decision's shape with seven outcomes: `keep` (a live row, with or without its directory, since a
+write may still be landing; a `.tmp` inside the bound), `remove` (a row past its expiry whose
+directory is there: the directory goes through the store, then `markBlobRemoved` sets `removed_at`,
+in that order so a throw between the two leaves a `mark` and never a marked row with bytes on disk),
+`mark` (a row past its expiry whose directory is gone), `adopt` (a directory with a readable sidecar
+and no row: `adoptedBlobOf` builds the row from what the store measured and the sidecar clamped to
+it, since a sidecar is sandbox-written and untrusted: `bytes` is `data`'s real size, `writtenAt` the
+sidecar's unless missing or later than the store's last write, `expiresAt` never past `writtenAt`
+plus the TTL, `name` and `contentType` held to `BLOB_NAME_RULES` and `BLOB_CONTENT_TYPE_RULES`;
+`adoptBlob` writes it, `insertAdoptedBlob` doing nothing on a conflict, which the applier reads as
+"a row exists now" and keeps the blob; the next pass judges it as a row), `remove_orphan` (a
+directory with no row and no sidecar the sweep can adopt from: absent, unparseable, breaking a write
+rule or naming another agent; junk, since the rename is the commit and the sidecar precedes it), and
+`remove_tmp` (a `<blobId>.tmp` last written to longer ago than `ABANDONED_BLOB_WRITE_SECONDS` in
+`bounds.ts`, the detached ceiling plus the sync ceiling; `RunSweepOptions.abandonedWriteMs` is the
+test seam). Expiry is `isBlobExpired`'s `<=` (GRA-199). Only `BlobStore.readMeta`'s `null`, the store's own not-found signal,
+reads as "no sidecar"; any other read error ends the agent's pass with the error on the report and
+the blob is judged again next tick. A run that starts after an agent's pass began is caught before
+every destructive action: the rest of that pass is deferred (`SweepBlobCounts.deferred`,
+`SweepReport.deferred`) and finished next tick. The counts ride on
+`SweepReport.blobs` and the server puts them on the sweep's wide event under `sweep.blobs`;
+`McpDeps.onBlobSwept` fires once per `remove` and `remove_orphan` and the server captures it as
+`blob_swept` with `bytes` and `cause`, never the name; a cleared `.tmp` was never a blob and fires
+nothing. `sweep -- --plan` prints the blob actions under `blobs.actions` beside the demotions.
+
+**The blob pass's roster is its own, not the working-set sweep's** (GRA-195). The working-set pass
+walks the live agents (`listActiveAgentScopes`); the blob pass walks the union of every agent with
+at least one unremoved `blob` row (`listAgentsWithUnremovedBlobs` in `packages/db/src/repo/blob.ts`,
+the person off the rows) and every agent the blob store lists a directory for
+(`BlobStore.listAgents()`, new here: the agent ids under `.blobs/`, sorted, a symlink or a name that
+is not an agent id skipped), with the person of a directory-only agent read off the agent table
+(`listAgentPersonIds` in `repo/agent.ts`, revoked agents included); `@graft/core`'s
+`listBlobSweepAgents` is the union, and both reads are deliberately unscoped and pinned by name in
+`repo/scope.test.ts` beside `listAllActiveAgents`, since the sweep has no person to scope by. So a
+revoked agent's blobs expire, are removed and are marked on the same 24 hour rule as any other's
+and its bytes stop counting; the in-flight skip is a no-op for it, since it can have no run. An
+agent the database no longer holds (deleted by hand, its blob rows cascaded away) is walked with no
+person: the decision is asked with `agentExists: false`, nothing is adopted, a committed directory
+is junk once its last write is past the TTL (`remove_orphan`) and `keep` (reason `unclaimed`) until
+then, a `.tmp` goes by the bound, and no `blob_swept` fires, since there is no person to name.
+`SweepBlobCounts.agents` counts the agents the pass walked, on the wide event under `sweep.blobs`;
+`sweep -- --plan` shows a revoked agent's actions like any other's. A hosted blob store (GRA-192)
+implements `listAgents` beside the five verbs or `assertCloudBackings` refuses it at boot.
+
+**`acquire` authors both halves, and the playbook carries the one rule (GRA-190).** The authoring
+skill's *Moving a file between tools* section says when to write a blob and when to return data, how
+to pipe a response into `ctx.blob.write` (`res.body`, the type and name off the headers, base64 in
+JSON decoded with `Buffer.from(data, "base64url")` first), how to read one into a `FormData`, where
+the ref goes in the result and that a consuming input takes it as a plain string, and the four
+refusal names; `skills.test.ts` pins its sentences to the runner's constants. **A consuming tool's
+dry run has a blob to read**: `job.ts`'s `dryRunInput` judges the test input's refs with the door's
+own functions before the dry run and, for a dead one, or for none where the module reads
+`ctx.blob.read(input.<field>)` (the check's `contextMembersUsed` and `blobReadFields`, bound by the
+checker to the default export's two parameters, one level of destructuring followed, so a name in a
+comment, a helper's own `.blob.read`, a helper file or a shadowing nested function records
+nothing), mints a
+**fixture blob** through the runner under a budget grant held and released as a run's is
+(`admitUnderGrant` in `in-flight.ts`, GRA-200, and `blobRunEnvironment` in `blob-door.ts`, GRA-199;
+`FIXTURE_MODULE` beside the probe:
+a few hundred bytes of `text/plain` named `fixture.txt`, the agent's, the normal TTL, a row with no
+version) and substitutes its ref in the dry run's input alone, saying so in an `Attempt N:` line;
+the draft's `testInput` is never written, and fixtures are never reused across jobs. The door's
+`walkStringLeaves` walks an input with a stack, never the call stack, and is the one walker:
+`blobRefsIn` reads refs off it, `job.ts`'s `substituteBlobRefs` replaces through it and
+`@graft/evals`'s scorers read a result through it (GRA-199); one nested past `MAX_INPUT_DEPTH` (64)
+is refused `input_invalid` naming the bound. The rule on
+the wire is `session.ts`'s `BLOB_RULE`, in `run_tool`'s paragraph and word for word in the Hermes
+skill: a file moves between tools as a `blob://` ref, never as content, and the producing tool runs
+before the consuming one is acquired. The budget was measured first (2,045 of 2,048) and the clause
+paid for by tightening facts the descriptions carry; `SERVER_INSTRUCTIONS`'s comment lists them. The
+facts are the descriptions': `blobs.ts`'s `BLOB_RESULT_FACT` (the list's five fields, the three
+refusals) on `run_tool` and appended to every authored tool's definition in `tools.ts`, and
+`meta.ts`'s `ACQUIRE_BLOB_FACT` on `acquire`, whose `hints` may carry the ref.
+
+**`ctx.fetch` takes an absolute URL on one of the connection's hosts** (GRA-197; ADR 0010 as
+amended 2026-09-23). The runner (`packages/runner/src/runner.mjs`, `hostRoute`) rewrites an absolute
+`https://` URL onto the proxy's host form for its host, `${proxy}/c/<conn>/h/<host><path><query>`,
+the same route `ctx.proxyBase(host)` names, so the proxy judges the host against the connection's
+`hosts` as it does an SDK's call and refuses one the person did not confirm with its existing
+`403 host_not_in_set`; the runner holds no host list and adds no variable. Refused in the runner
+before any request leaves, each with a sentence: a URL that is not `https:`, one carrying
+credentials (`user:pass@`, the host named and the credentials not), one whose host fails
+`HOST_PATTERN`. A relative path resolves as before, `redirect: "manual"` stays, and a dry run
+records such a call as the parsed URL's scheme, host and path only, the query dropped and marked
+`?…` and the fragment dropped (`recordableTarget`), since a vendor-issued URL may carry a signature
+or a capability in either and the report reaches the authoring model's prompt. The check's `fetch-absolute-url`
+still refuses a *literal* absolute URL at a `.fetch(` call and its sentence says a URL a vendor
+hands back at run time may be passed as it is; `global-fetch` and `sdk-not-bound` are unchanged.
+The authoring skill's `ctx.fetch` bullet says so, and says to prefer `ctx.fetch` over a vendor SDK
+for a write flow, since an SDK that retries on a body it does not expect times out against the dry
+run's 202 preview (GRA-198 decides whether the preview changes shape instead). `SERVER_INSTRUCTIONS`
+and the Hermes skill carry no sentence on it: the budget stood at 2,039 of 2,048, and the rule is
+for the model that writes the module, which is Graft's. This is what let Slack's
+`files.getUploadURLExternal` flow (a `POST` of the bytes to `files.slack.com`) be authored without
+an SDK.
+
 ### The self-hosted image
 
 `apps/server/Dockerfile`, built from the repository root, is the one image (GRA-33). Its stages:
@@ -541,7 +872,12 @@ which only runs once every field is present; run with every field under `GRAFT_B
 sentence that `@graft/cloud-backings` is not installed — the open image's proof that it carries no
 hosted backings (GRA-38), which needs no database because the selector runs before the pool is opened.
 `.github/workflows/release.yml` pushes `ghcr.io/getmodern-ai/graft` and `graft-sandbox` on a `v*` tag,
-for `linux/amd64` and `linux/arm64`. The conformance suite against a running compose project is
+for `linux/amd64` and `linux/arm64`: one build leg per image and platform, amd64 on `ubuntu-latest`
+and arm64 on GitHub's native `ubuntu-24.04-arm`, each pushing by digest, and a merge job per image
+writing the tags over one manifest list (GRA-180). Nothing emulates an architecture; the QEMU
+cross-build this replaced cost the first tag over two and a half hours on the server image. A
+`workflow_dispatch` with an optional `ref` is how the file is exercised without cutting a release.
+The conformance suite against a running compose project is
 `packages/sandbox-docker/src/compose.test.ts`, opt-in by `GRAFT_COMPOSE_NETWORK` and
 `GRAFT_SANDBOX_IMAGE`; its header has the command.
 
@@ -551,10 +887,12 @@ window, then the least recently used beyond the cap — never a tool used inside
 while the agent has a run in flight — and fires `tools/list_changed`. Each demotion is a
 `working_set_change` row with cause `idle` or `cap`, which `GET /api/agents/:id/working-set/changes`
 reads for the console. The rule itself is `packages/core/src/working-set/sweep.decision.ts`, a pure
-function; `packages/mcp/src/sweep.ts` applies it. `pnpm --filter @graft/server sweep -- --plan`
-prints what a sweep would do without doing it; without `--plan` it demotes, from a process that can
-neither see a running server's in-flight runs nor notify its sessions, so use that form with the
-server stopped.
+function; `packages/mcp/src/sweep.ts` applies it, and on the same tick runs the blob pass over its
+own roster, revoked agents included (the paragraphs *The sweep's blob pass is GRA-189* and *The blob
+pass's roster is its own* above). `pnpm --filter @graft/server sweep -- --plan`
+prints what a sweep would do without doing it; without `--plan` it demotes and removes, from a
+process that can neither see a running server's in-flight runs nor notify its sessions, so use that
+form with the server stopped.
 
 ### The console
 
@@ -914,17 +1252,23 @@ seconds abandoned the job and ran its own code through `execute__`).
 
 ### The evals
 
-`packages/evals` (ADR 0012: the eval suite is the gate; GRA-31) runs the real loop against two fake
+`packages/evals` (ADR 0012: the eval suite is the gate; GRA-31) runs the real loop against fake
 vendors behind the real proxy with the provider-backed model and grades what it did with deterministic
 scorers: reads before publish, publish before the first write, no vendor host in the model's code, a
-dry run before any ask, the first write through the published tool, and the supporting facts. It is an
-app-like leaf nothing imports, which is what keeps it out of the server's Docker image
-(`apps/server/Dockerfile`'s `prod-deps` installs `--filter "@graft/server..."`); a server dependency on
-it would pull it in.
+dry run before any ask, the first write through the published tool, and the supporting facts. The
+`blob` scenario (GRA-191; ADR 0023) runs the loop twice on one world, a producing tool against a
+fake that serves a 3 MiB file and a consuming tool against a fake that takes a multipart upload, the
+first tool's `blob://` ref handed into the second's goal and input, and adds five scorers over the
+chain: no sentinel of the file in any model turn, the ref answered and carried, the consuming dry
+run given a blob to read and its write intercepted, the second vendor's sha256 equal to the first's,
+both modules on `ctx.blob`. It is an app-like leaf nothing imports, which is what keeps it out of
+the server's Docker image (`apps/server/Dockerfile`'s `prod-deps` installs
+`--filter "@graft/server..."`); a server dependency on it would pull it in.
 
 ```bash
 pnpm --filter @graft/evals eval                      # every scenario; needs GRAFT_MODEL_PROVIDER + GRAFT_MODEL_API_KEY
 pnpm --filter @graft/evals eval -- --scenario write  # one by name
+pnpm --filter @graft/evals eval -- --scenario blob   # the two-vendor blob chain
 pnpm --filter @graft/evals eval -- --scripted        # the harness's own test: canned answers, no key, no spend
 ```
 
@@ -987,8 +1331,7 @@ required check. `.agents/skills` is excluded from Biome because vendored files a
 upstream. `.claude/worktrees` is excluded root-relative on purpose: a `**/` pattern matches the
 *containing* path too, so running Biome inside a checkout that sits under a `worktrees/` directory
 would exclude the whole checkout and lint nothing (Cando's CAN-147; reproduced here before writing
-the pattern). Skills for the vendored engineering workflow will be added now that there is code to
-work on.
+the pattern). The vendored engineering workflow is the **Skills** section above.
 
 ## Conventions
 

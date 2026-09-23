@@ -20,6 +20,7 @@ import { awaitJobNews, STATUS_WAIT_MS } from "../acquire/await";
 import { acquireStatusOf } from "../acquire/shapes";
 import { requireBuildApproval } from "../approval";
 import { ASK_CARD_TOOL_META } from "../ask-card";
+import { BLOB_RESULT_FACT } from "../blobs";
 import {
   clampTimeout,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -256,6 +257,7 @@ const runTool: MetaTool = {
       "A tool that changes something may answer awaiting_approval with a url on its first call: a handoff whose next step is the person's, in the console; the same call with the same arguments, once they have answered, runs the tool. " +
       "With dryRun: true reads reach the vendor and every other method stops at the proxy with a preview of the request; the answer is a dry-run report and nothing changes at the vendor. " +
       `A call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds takes detached: true and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}), and answers a processName that wait_for_process polls; a dry run is waited for whatever detached says. ` +
+      `${BLOB_RESULT_FACT} ` +
       "Marked destructive because the hint is the carried tool's, which the host cannot know per call: the tool's own annotations are in find_tool's hit and the acquire result.",
     inputSchema: {
       type: "object",
@@ -320,6 +322,15 @@ function toolNotFound(key: { vendor: string; name: string }): CallToolResult {
   );
 }
 
+/**
+ * What `acquire`'s description says of a tool that reads a blob (GRA-190; ADR 0023): where the
+ * ref the job dry-runs against comes from, and what the job does with none. A fact about the job
+ * (`../acquire/job.ts`'s fixture blob), in the third person; the rule that the producing tool runs
+ * first is the instructions' (`../session.ts`'s `BLOB_RULE`).
+ */
+export const ACQUIRE_BLOB_FACT =
+  "For a tool that reads a file, the goal or hints may name the blob:// ref an earlier tool answered: the model puts it in the draft's test input and the dry run reads that blob; with no ref, or a dead one, the job mints a fixture blob of text for the dry run alone and says so in a progress line.";
+
 /** The line a job carries before its runner has said anything — what `acquire` answers with at once. */
 export const FIRST_PROGRESS_LINE =
   "Queued: Graft's model will read the vendor's documentation, draft the tool, prove it with reads, publish and dry-run it, then promote it into your working set. acquire_status with the jobId answers when there is news.";
@@ -331,7 +342,8 @@ const acquire: MetaTool = {
       "Used when find_tool found nothing that covers the task and the vendor has a connection in the agent's scope: starts the job in which Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into the agent's working set. " +
       "Waits a short while for the job: a job that finishes in time answers with result, as acquire_status does; otherwise answers { jobId, status, progress } and acquire_status reads the job from then on, itself waiting for news. " +
       "The first acquire against a connection may instead answer awaiting_approval with a url, unless the person granted the build approval when they confirmed the connection: a handoff whose next step is the person's, in the console or on the ask card; the same call with the same arguments, once they have answered, starts the job. " +
-      "When the toolbox already holds a tool of the vendor whose name and description cover the goal, answers similar_tools_exist naming those tools with the inputSchema run_tool takes, and starts no job; the same call with ignoreExisting: true starts one.",
+      "When the toolbox already holds a tool of the vendor whose name and description cover the goal, answers similar_tools_exist naming those tools with the inputSchema run_tool takes, and starts no job; the same call with ignoreExisting: true starts one. " +
+      `${ACQUIRE_BLOB_FACT}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -342,7 +354,8 @@ const acquire: MetaTool = {
         goal: { type: "string", description: "What the tool must do, in a sentence or two." },
         hints: {
           type: "string",
-          description: "Anything already known: an endpoint, a documentation URL, a field name.",
+          description:
+            "Anything already known: an endpoint, a documentation URL, a field name, or the blob:// ref an earlier tool answered when the tool is to read that file.",
         },
         ignoreExisting: {
           type: "boolean",

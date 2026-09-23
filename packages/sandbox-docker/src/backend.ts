@@ -11,6 +11,7 @@ import {
   type SandboxProcessResult,
   type SandboxSummary,
 } from "@graft/sandbox/types";
+import { agentBlobsPath } from "@graft/toolbox/layout";
 
 import { DockerEngine, DockerEngineError, demux, resolveDockerHost } from "./engine";
 import { filesUnder, packTree, readTar } from "./tar";
@@ -22,7 +23,9 @@ import { filesUnder, packTree, readTar } from "./tar";
  * execs; `ensure` creates it on the internal network named in the options, whose only other member is
  * the proxy, so a process inside reaches the proxy by name and nothing else — the daemon gives an
  * internal network no gateway and forwards it no DNS. The toolbox is a named volume mounted where the
- * caller asks — one per toolbox, or a subpath of one shared volume (`toolboxVolume`). A per-exec environment goes on the exec, so it is that process's alone. A detached
+ * caller asks, one per toolbox or a subpath of one shared volume (`toolboxVolume`), and an agent's
+ * blobs directory, `.blobs/<agentId>` beside the toolboxes (ADR 0023), is mounted the same way when
+ * `mountToolbox` is given `blobs`. A per-exec environment goes on the exec, so it is that process's alone. A detached
  * exec is a background process whose stdout, stderr and exit code are files under its name, which is
  * how a later call, holding any handle to the sandbox, finds it. `install` is its own container from
  * the same image on a network with the registry in reach, as root with npm on its path, which no
@@ -46,25 +49,31 @@ export type DockerSandboxBackendOptions = {
    * `graft-sandbox`.
    */
   prefix?: string;
-  /** Prefixes every toolbox volume name. Default `graft-toolbox`. Shared by every backing of one deployment. */
+  /**
+   * Prefixes every toolbox volume name, and every blobs volume name (`<prefix>-.blobs-<agentId>`).
+   * Default `graft-toolbox`. Shared by every backing of one deployment.
+   */
   toolboxVolumePrefix?: string;
   /**
    * The directory the server keeps toolboxes in as files — `@graft/toolbox`'s filesystem store,
    * `GRAFT_TOOLBOX_ROOT`. Set, every toolbox volume is a bind of `<toolboxHostRoot>/<toolboxId>`,
    * created here when missing, so what the publish writes through the store is what the install step
-   * installs into and what a run mounts (GRA-18). The path is read by the daemon, not by this
+   * installs into and what a run mounts (GRA-18); an agent's blobs volume is a bind of
+   * `<toolboxHostRoot>/.blobs/<agentId>` the same way, so the blob store beside that toolbox store
+   * sees what a run wrote under `/blobs` (ADR 0023). The path is read by the daemon, not by this
    * process: with a mounted socket the compose file mounts the same host directory into the server
-   * at the same path, and with a sibling daemon the option has no meaning. Unset, a toolbox volume is
-   * a plain named volume this process cannot read. A volume that already exists keeps whatever
-   * backing it was created with — `POST /volumes/create` returns the existing volume by name.
+   * at the same path, and with a sibling daemon the option has no meaning. Unset, a volume is a plain
+   * named volume this process cannot read. A volume that already exists keeps whatever backing it
+   * was created with: `POST /volumes/create` returns the existing volume by name.
    */
   toolboxHostRoot?: string;
   /**
    * The other way the server and the sandboxes come to share one tree, for a server that itself
    * runs in a container beside the daemon — the compose file (GRA-33): **one named volume holding
    * every toolbox as a subdirectory**, mounted whole into the server at `GRAFT_TOOLBOX_ROOT` and into
-   * each sandbox by its own subpath (`VolumeOptions.Subpath`, Engine API 1.45, Docker 26 and later).
-   * A sandbox sees its toolbox and nothing beside it, as with a volume of its own. The subdirectory
+   * each sandbox by its own subpath (`VolumeOptions.Subpath`, Engine API 1.45, Docker 26 and later);
+   * an agent's blobs directory is the subpath `.blobs/<agentId>` of the same volume. A sandbox sees
+   * its toolbox and its blobs and nothing beside them, as with volumes of their own. A subdirectory
    * has to exist before the daemon will mount it, and this process may not have the volume in reach,
    * so it is made by a short-lived container from the image, owned by the sandbox user. Mutually
    * exclusive with `toolboxHostRoot`; the volume is the deployment's to create and to remove.
@@ -89,7 +98,12 @@ export type DockerSandboxBackend = SandboxBackend & {
   containerName(name: string): string;
   /** The volume name a toolbox id maps to. */
   toolboxVolumeName(toolboxId: string): string;
-  /** Remove every toolbox volume this backing's prefix names. For tests; a deployment never does this. */
+  /**
+   * The volume name an agent's blobs directory maps to: `<prefix>-.blobs-<agentId>`. No toolbox id
+   * starts with a dot, so the two names cannot collide under one prefix.
+   */
+  blobsVolumeName(agentId: string): string;
+  /** Remove every toolbox and blobs volume this backing's prefix names. For tests; a deployment never does this. */
   removeToolboxVolumes(): Promise<void>;
 };
 
@@ -116,8 +130,13 @@ const LABEL_INSTALL = "graft.sandbox.install";
 const LABEL_SETUP = "graft.sandbox.setup";
 /** Where the shared toolbox volume is mounted inside the container that prepares a subdirectory of it. */
 const SETUP_VOLUME_MOUNT = "/toolboxes";
-/** `$0` the toolbox id, `$1` the owner — `ensureToolboxDirectory`. */
-const TOOLBOX_DIRECTORY_SCRIPT = `set -e; mkdir -p "${SETUP_VOLUME_MOUNT}/$0"; chown "$1" "${SETUP_VOLUME_MOUNT}/$0"`;
+/**
+ * `$0` the directory relative to the volume (a toolbox id, or `.blobs/<agentId>`), `$1` the owner:
+ * `ensureVolumeDirectory`. `mkdir -p` makes the parents; only the leaf is chowned, so `.blobs`
+ * itself stays root's and world-readable, which is all the server needs of it: it lists it, and
+ * removes inside `.blobs/<agentId>`, which the sandbox user owns.
+ */
+const VOLUME_DIRECTORY_SCRIPT = `set -e; mkdir -p "${SETUP_VOLUME_MOUNT}/$0"; chown "$1" "${SETUP_VOLUME_MOUNT}/$0"`;
 
 const DEFAULT_EXEC_TIMEOUT_SECONDS = 30;
 const DEFAULT_DETACHED_TIMEOUT_SECONDS = 600;
@@ -227,8 +246,8 @@ type VolumeMount = {
   VolumeOptions?: { Subpath?: string };
 };
 
-/** What a toolbox mounts as: a volume of its own, or a subpath of the shared one. */
-type ToolboxMount = Pick<VolumeMount, "Source" | "VolumeOptions">;
+/** What a toolbox, or an agent's blobs directory, mounts as: a volume of its own, or a subpath of the shared one. */
+type MountSource = Pick<VolumeMount, "Source" | "VolumeOptions">;
 
 export function createDockerSandboxBackend(
   options: DockerSandboxBackendOptions,
@@ -256,6 +275,9 @@ export function createDockerSandboxBackend(
 
   const containerName = (name: string) => `${prefix}-${name}`;
   const toolboxVolumeName = (toolboxId: string) => `${volumePrefix}-${toolboxId}`;
+  // `.blobs-<agentId>` is not a legal toolbox id (a toolbox id starts with a letter or digit), so a
+  // blobs volume and a toolbox volume never share a name under one prefix.
+  const blobsVolumeName = (agentId: string) => `${volumePrefix}-.blobs-${agentId}`;
 
   /** Checked once per backend: the network exists and has no way out. */
   let networkChecked: Promise<void> | undefined;
@@ -286,18 +308,39 @@ export function createDockerSandboxBackend(
   };
 
   /**
-   * The mount a toolbox takes, made ready: in the shared-volume arrangement its subdirectory, made
-   * by a container that has the whole volume because this process may not (`toolboxVolume`);
-   * otherwise its own volume, created or found by name.
+   * The mount a directory of the toolbox tree takes, made ready: in the shared-volume arrangement
+   * the subdirectory, made by a container that has the whole volume because this process may not
+   * (`toolboxVolume`); otherwise a volume of its own by `volumeName`, created or found by name, and a
+   * bind of `<toolboxHostRoot>/<relativePath>` when the host root is set. `relativePath` is where
+   * the directory is under the tree the server's stores see: a toolbox id, or `.blobs/<agentId>`.
    */
-  async function ensureToolboxMount(toolboxId: string): Promise<ToolboxMount> {
+  async function ensureMountSource(
+    relativePath: string,
+    volumeName: string,
+    labels: Record<string, string>,
+  ): Promise<MountSource> {
     if (options.toolboxVolume !== undefined) {
-      assertSandboxName("a toolbox id", toolboxId);
       await assertSharedVolume(options.toolboxVolume);
-      await ensureToolboxDirectory(options.toolboxVolume, toolboxId);
-      return { Source: options.toolboxVolume, VolumeOptions: { Subpath: toolboxId } };
+      await ensureVolumeDirectory(options.toolboxVolume, relativePath);
+      return { Source: options.toolboxVolume, VolumeOptions: { Subpath: relativePath } };
     }
-    return { Source: await ensureVolume(toolboxId) };
+    return { Source: await ensureVolume(volumeName, relativePath, labels) };
+  }
+
+  /** The person's toolbox: `<toolboxId>` under the tree. */
+  function ensureToolboxMount(toolboxId: string): Promise<MountSource> {
+    assertSandboxName("a toolbox id", toolboxId);
+    return ensureMountSource(toolboxId, toolboxVolumeName(toolboxId), {
+      "graft.toolbox.id": toolboxId,
+    });
+  }
+
+  /** The agent's blobs directory: `.blobs/<agentId>` under the tree, beside the toolboxes (ADR 0023). */
+  function ensureBlobsMount(agentId: string): Promise<MountSource> {
+    assertSandboxName("an agent id", agentId);
+    return ensureMountSource(agentBlobsPath(agentId), blobsVolumeName(agentId), {
+      "graft.blobs.agent": agentId,
+    });
   }
 
   /**
@@ -328,15 +371,16 @@ export function createDockerSandboxBackend(
    * `mkdir -p` and `chown` inside the shared volume, as root, from a throwaway container on no
    * network. Idempotent, and the one place a directory in that volume is made by the backing: the
    * daemon refuses to mount a subpath that is not there, and it would not be there for a toolbox
-   * nothing has written to yet — a run's first `mountToolbox` precedes its first draft.
+   * nothing has written to yet (a run's first `mountToolbox` precedes its first draft), nor for an
+   * agent that has written no blob.
    */
-  async function ensureToolboxDirectory(volume: string, toolboxId: string): Promise<void> {
+  async function ensureVolumeDirectory(volume: string, relativePath: string): Promise<void> {
     const { Id } = await engine.json<{ Id: string }>("POST", "/containers/create", {
       body: {
         Image: options.image,
         User: "root",
-        Cmd: ["sh", "-c", TOOLBOX_DIRECTORY_SCRIPT, toolboxId, owner],
-        Labels: { [LABEL_PREFIX]: prefix, [LABEL_SETUP]: toolboxId },
+        Cmd: ["sh", "-c", VOLUME_DIRECTORY_SCRIPT, relativePath, owner],
+        Labels: { [LABEL_PREFIX]: prefix, [LABEL_SETUP]: relativePath },
         HostConfig: {
           ...hardening(),
           NetworkMode: "none",
@@ -357,7 +401,7 @@ export function createDockerSandboxBackend(
           }),
         );
         throw new Error(
-          `could not prepare toolbox ${toolboxId} in volume ${volume}: ${logs.logs.trim()}`,
+          `could not prepare ${relativePath} in volume ${volume}: ${logs.logs.trim()}`,
         );
       }
     } finally {
@@ -365,22 +409,24 @@ export function createDockerSandboxBackend(
     }
   }
 
-  async function ensureVolume(toolboxId: string): Promise<string> {
-    assertSandboxName("a toolbox id", toolboxId);
-    const name = toolboxVolumeName(toolboxId);
-    // A bind of the store's directory when the server holds the toolbox as files
-    // (`toolboxHostRoot`); the directory has to exist before the daemon mounts it.
+  async function ensureVolume(
+    name: string,
+    relativePath: string,
+    labels: Record<string, string>,
+  ): Promise<string> {
+    // A bind of the store's directory when the server holds the tree as files (`toolboxHostRoot`);
+    // the directory has to exist before the daemon mounts it.
     const device =
       options.toolboxHostRoot === undefined
         ? null
-        : join(resolve(options.toolboxHostRoot), toolboxId);
+        : join(resolve(options.toolboxHostRoot), ...relativePath.split("/"));
     if (device !== null) await mkdir(device, { recursive: true });
     // `POST /volumes/create` returns the existing volume when the name is taken: the idempotence
     // that makes "one toolbox, many sandboxes" one call per sandbox.
     await engine.json("POST", "/volumes/create", {
       body: {
         Name: name,
-        Labels: { [LABEL_PREFIX]: prefix, "graft.toolbox.id": toolboxId },
+        Labels: { [LABEL_PREFIX]: prefix, ...labels },
         ...(device === null
           ? {}
           : { Driver: "local", DriverOpts: { type: "none", o: "bind", device } }),
@@ -586,31 +632,54 @@ export function createDockerSandboxBackend(
         }
       },
 
-      mountToolbox: async ({ toolboxId, mountPath }) => {
+      mountToolbox: async ({ toolboxId, mountPath, blobs }) => {
         assertAbsolute("mountPath", mountPath);
-        const target = normaliseDir(mountPath);
-        const wanted = await ensureToolboxMount(toolboxId);
+        if (blobs) assertAbsolute("blobs.mountPath", blobs.mountPath);
+        if (blobs && normaliseDir(blobs.mountPath) === normaliseDir(mountPath)) {
+          throw new Error(
+            `the toolbox and the blobs cannot share a mount path: ${normaliseDir(mountPath)}`,
+          );
+        }
+        // Both mounts made ready first, so one recreate below attaches both (ADR 0023: the blobs
+        // directory rides on the toolbox's call for exactly this reason).
+        const wanted: VolumeMount[] = [
+          {
+            Type: "volume",
+            Target: normaliseDir(mountPath),
+            ...(await ensureToolboxMount(toolboxId)),
+          },
+        ];
+        if (blobs) {
+          wanted.push({
+            Type: "volume",
+            Target: normaliseDir(blobs.mountPath),
+            ...(await ensureBlobsMount(blobs.agentId)),
+          });
+        }
         const current = await inspect(state.id);
         if (!current) throw new Error(`sandbox ${name} no longer exists`);
         // The specs the container was created with, read back as given — `HostConfig.Mounts` keeps
         // the subpath, which the flattened `Mounts` list does not.
         const mounts = (current.HostConfig.Mounts ?? []).filter((mount) => mount.Type === "volume");
-        const same = (mount: VolumeMount) =>
-          mount.Source === wanted.Source &&
-          mount.VolumeOptions?.Subpath === wanted.VolumeOptions?.Subpath;
-        if (mounts.some((mount) => same(mount) && normaliseDir(mount.Target) === target)) {
-          return;
-        }
+        const present = (want: VolumeMount) =>
+          mounts.some(
+            (mount) =>
+              mount.Source === want.Source &&
+              mount.VolumeOptions?.Subpath === want.VolumeOptions?.Subpath &&
+              normaliseDir(mount.Target) === want.Target,
+          );
+        if (wanted.every(present)) return;
         // A running container cannot take a new mount, so the sandbox is recreated around it: same
-        // name, same network, same memory, every other toolbox it had, plus this one. Only the
-        // volumes survive — the container's own filesystem, and any detached process, do not. That
-        // is why `SandboxHandle.mountToolbox` says to mount first.
-        const kept = mounts.filter((mount) => normaliseDir(mount.Target) !== target);
+        // name, same network, same memory, every other mount it had, plus these. Only the volumes
+        // survive: the container's own filesystem, and any detached process, do not. That is why
+        // `SandboxHandle.mountToolbox` says to mount first.
+        const targets = new Set(wanted.map((want) => want.Target));
+        const kept = mounts.filter((mount) => !targets.has(normaliseDir(mount.Target)));
         const memory = current.HostConfig.Memory;
         await remove(state.id);
         state.id = await createContainer(name, {
           ...(memory ? { memoryMb: memory / (1024 * 1024) } : {}),
-          mounts: [...kept, { Type: "volume", Target: target, ...wanted }],
+          mounts: [...kept, ...wanted],
         });
       },
 
@@ -657,6 +726,7 @@ export function createDockerSandboxBackend(
     engine,
     containerName,
     toolboxVolumeName,
+    blobsVolumeName,
 
     ensure: async ({ name, memoryMb }: EnsureSandboxArgs) => {
       assertSandboxName("a sandbox name", name);

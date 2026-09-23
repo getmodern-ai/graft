@@ -1,4 +1,4 @@
-import { type ModuleFile, readModuleSources } from "@graft/check";
+import { type ModuleCheckResult, type ModuleFile, readModuleSources } from "@graft/check";
 import {
   type AgentScope,
   activateToolVersion,
@@ -7,6 +7,7 @@ import {
   completeAcquireJob,
   finishAcquireAttempt,
   getAgentScope,
+  getBlobs,
   getBuildApproval,
   getConnection,
   getToolById,
@@ -44,11 +45,22 @@ import { hostSetOf } from "@graft/proxy/credential-source";
 import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
 import type { PublishArgs, PublishOutcome } from "@graft/publish";
+import { BLOB_TTL_HOURS, blobIdOf } from "@graft/runner";
 import type { SandboxHandle } from "@graft/sandbox";
 import { draftPath, sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import { NO_ELICITATION } from "../approval";
+import {
+  admitBlobs,
+  type BlobAdmission,
+  blobRefsIn,
+  blobRunEnvironment,
+  judgeBlobRefs,
+  walkStringLeaves,
+} from "../blob-door";
+import { recordWrittenBlobs } from "../blobs";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "../bounds";
 import type { McpDeps } from "../deps";
+import { admitUnderGrant } from "../in-flight";
 import { promotePublished } from "../promote";
 import {
   type DryRunReport,
@@ -57,7 +69,7 @@ import {
   runModule,
   runWithCapability,
 } from "../run";
-import { errorMessage, openAgentSandbox } from "../sandbox";
+import { commandEnvironment, errorMessage, openAgentSandbox, seededRunnerPath } from "../sandbox";
 import { authoredToolName } from "../tool-names";
 import { EXECUTE_CLAIM } from "../tools/execute";
 import {
@@ -164,6 +176,74 @@ export function probePath(jobId: string): string {
   return `${draftPath(jobId)}/.probe`;
 }
 
+/**
+ * The module that mints a **fixture blob** (GRA-190; ADR 0023): one `ctx.blob.write` of the text it
+ * is handed, so the fixture takes the same path as any blob a tool writes — the runner's `.tmp`
+ * directory and rename, the sidecar, the ledger the envelope carries, and a `blob` row from that
+ * ledger — and nothing on the server writes under the mount by hand. Beside the probe in the job's
+ * drafts, under a name no attempt takes.
+ */
+export const FIXTURE_MODULE = [
+  "export default async (input, ctx) => {",
+  "  const ref = await ctx.blob.write(new TextEncoder().encode(input.text), {",
+  "    contentType: input.contentType,",
+  "    name: input.name,",
+  "  });",
+  "  return { ref };",
+  "};",
+  "",
+].join("\n");
+
+export function fixturePath(jobId: string): string {
+  return `${draftPath(jobId)}/.fixture`;
+}
+
+/** The fixture's name and media type, as its sidecar, its row and the progress line carry them. */
+export const FIXTURE_BLOB_NAME = "fixture.txt";
+export const FIXTURE_BLOB_CONTENT_TYPE = "text/plain";
+
+/**
+ * How the `dry_run` trace line for a minted fixture opens. The facts (the ref, the size, the media
+ * type, the name, the expiry) ride on the line's `data` as the runner's ledger entry, and
+ * `@graft/evals`'s `blobReadInDryRun` finds the line by this opening and reads them there rather
+ * than out of the sentence (GRA-199).
+ */
+export const FIXTURE_BLOB_TRACE = "Minted fixture blob";
+
+/**
+ * A few hundred bytes of text that say what they are, so a person who finds the file under the
+ * mount, or a vendor that receives it in a dry run's preview, reads why it exists. Nothing of the
+ * person's is in it.
+ */
+export function fixtureBlobText(jobId: string, tool: string): string {
+  return [
+    `A fixture blob. Graft's acquire job ${jobId} wrote it for the dry run of ${tool}: the tool reads a blob from its input, the test input named no live one, and a dry run needs a real file to read (GRA-190; ADR 0023).`,
+    `It is ${FIXTURE_BLOB_CONTENT_TYPE}, held for the agent that asked for ${BLOB_TTL_HOURS} hours like any blob, and carries nothing of the person's.`,
+    "A consuming tool proved against this fixture has shown that it reads the ref off its input, opens the blob and puts the bytes in its request; it has not shown that the vendor accepts the real file's type or size, which its first real run will.",
+    "",
+  ].join("\n");
+}
+
+/**
+ * A copy of `value` with every string leaf in `refs` replaced by `ref`, walked as the door walks an
+ * input (`walkStringLeaves`, GRA-199: the one walker, iterative and depth-bounded; the caller has
+ * already refused an input past the bound through `blobRefsIn`). The copy is `structuredClone`'s,
+ * since the value is a draft's `testInput` read back from a JSON column; a root that is itself a
+ * string is the one leaf the walker cannot replace and is answered here.
+ */
+export function substituteBlobRefs(
+  value: unknown,
+  refs: ReadonlySet<string>,
+  ref: string,
+): unknown {
+  if (typeof value === "string") return refs.has(value) ? ref : value;
+  const copy: unknown = structuredClone(value);
+  walkStringLeaves(copy, (leaf, replace) => {
+    if (refs.has(leaf)) replace(ref);
+  });
+  return copy;
+}
+
 /** Where attempt `n`'s draft is written in the toolbox. */
 export function attemptDraftPath(jobId: string, attemptNumber: number): string {
   return `${draftPath(jobId)}/a${attemptNumber}`;
@@ -195,6 +275,13 @@ type OpenAttempt = {
   proofSummary: string | null;
   /** Whether a `proceed` over a failed read has been refused once already (GRA-72). */
   proceedRefused: boolean;
+  /**
+   * The check's result once it accepted the draft (GRA-190): what of `ctx` the module calls and
+   * which input field a blob ref is read from, read off the module's syntax by the one parser
+   * (`@graft/check`), so the dry run's fixture is decided on a call and never on a comment or a
+   * string that spells one (Greptile on #149). Null until the check has passed.
+   */
+  check: ModuleCheckResult | null;
 };
 
 /**
@@ -263,6 +350,7 @@ class AcquireLoop {
   private open: OpenAttempt | null = null;
   private handle: SandboxHandle | null = null;
   private probeWritten = false;
+  private fixtureWritten = false;
 
   constructor(
     private readonly deps: McpDeps,
@@ -694,6 +782,7 @@ class AcquireLoop {
       proofFailed: false,
       proofSummary: null,
       proceedRefused: false,
+      check: null,
     };
     this.open = attempt;
     await this.trace(
@@ -729,6 +818,7 @@ class AcquireLoop {
       annotations: checked.annotations,
     };
     if (checked.refusals.length === 0) {
+      attempt.check = checked;
       await this.trace(
         "check",
         `Check passed attempt ${attempt.number}: read-only ${checked.annotations.readOnly}, destructive ${checked.annotations.destructive}${checked.advice.length ? `, ${checked.advice.length} piece(s) of advice` : ""}.`,
@@ -1027,6 +1117,10 @@ class AcquireLoop {
       `Attempt ${attempt.number}: published ${wire} v${version.versionNumber}; dry-running it with the test input.`,
     );
 
+    // The dry run's input: the test input as the model gave it, or with a fixture blob's ref in
+    // place of a dead one or a missing one (GRA-190; `dryRunInput`). The draft's own test input is
+    // never changed: the substitution is this run's alone.
+    const input = await this.dryRunInput(attempt, wire);
     const dry = await runAuthoredTool(this.deps, this.scope, {
       vendor,
       name: draft.name,
@@ -1035,7 +1129,7 @@ class AcquireLoop {
       // tool leaves the default where the pass will move it, and a default the person revoked
       // since would refuse the dry run of every version this job publishes.
       connectionId,
-      input: draft.testInput,
+      input,
       mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true },
       channel: NO_ELICITATION,
     });
@@ -1182,6 +1276,169 @@ class AcquireLoop {
         next: acquireNextStep(vendor, draft.name),
       },
     };
+  }
+
+  /**
+   * What the dry run reads as its input (GRA-190; ADR 0023). A consuming tool's dry run has to
+   * have a blob to read, or the code path a first-write approval is about to be asked for is never
+   * exercised. In order:
+   *
+   *  1. The test input names `blob://` refs. Each is judged with the door's own functions
+   *     (`blob-door.ts`: the rows under the person and the agent, `judgeBlobRefs`) before the dry
+   *     run, so a dead ref costs no publish-and-refuse round; a live ref is used as it is, and the
+   *     dry run's door judges it again. Every dead one — `blob_not_found` or `blob_expired` — is
+   *     replaced by one fixture blob's ref.
+   *  2. The test input names none and the check saw the module call `ctx.blob.read` or `stat`
+   *     (`contextMembersUsed`) on `input.<field>` (`blobReadFields`): a fixture is minted and set
+   *     as each such field. The check's syntax, never a match over the source.
+   *  3. Neither: the test input, as given.
+   *
+   * The fixture is minted through the runner like any blob (`mintFixtureBlob`), gets its row, and
+   * is said in a progress line. The draft's `testInput` is never written: the substitution is the
+   * dry run's alone, so what the version was published with stays what the model gave. A fixture
+   * is minted per dry run and never reused across jobs (GRA-181, out of scope: a later
+   * optimisation), so two attempts of one job write two fixtures, each swept on its TTL.
+   */
+  private async dryRunInput(attempt: OpenAttempt, wire: string): Promise<Record<string, unknown>> {
+    const { testInput } = attempt.draft;
+    const { refs, tooDeep } = blobRefsIn(testInput);
+    // Past the door's depth bound, nothing is substituted: the dry run's door refuses the input
+    // as `input_invalid`, and that is the sentence the model should read (`blob-door.ts`).
+    if (tooDeep) return testInput;
+    if (refs.length > 0) {
+      const ids = refs.map(blobIdOf).filter((id): id is string => id !== null);
+      const rows = await getBlobs(this.ctx, this.scope, ids, this.deps.blob);
+      const now = this.deps.blob.now();
+      const dead = refs
+        .map((ref) => ({ ref, refusal: judgeBlobRefs([ref], rows, now) }))
+        .filter((entry) => entry.refusal !== null);
+      if (dead.length === 0) {
+        await this.trace(
+          "dry_run",
+          `The test input names ${refs.length} live blob(s); the dry run reads ${refs.length === 1 ? "it" : "them"}.`,
+          { attempt: attempt.number, data: { refs } },
+        );
+        return testInput;
+      }
+      const fixture = await this.mintFixtureBlob(attempt, wire);
+      if (!fixture) return testInput;
+      const reasons = dead.map((entry) => `${entry.ref} ${entry.refusal?.reason}`).join(", ");
+      await this.progress(
+        `Attempt ${attempt.number}: ${dead.length === 1 ? "the test input's ref is" : `${dead.length} of the test input's refs are`} dead at the door (${reasons}), so a fixture blob (${fixture.bytes} bytes of ${FIXTURE_BLOB_CONTENT_TYPE}, ${FIXTURE_BLOB_NAME}) stands in for ${dead.length === 1 ? "it" : "them"} in the dry run's input alone; the test input itself is unchanged.`,
+      );
+      return substituteBlobRefs(
+        testInput,
+        new Set(dead.map((entry) => entry.ref)),
+        fixture.ref,
+      ) as Record<string, unknown>;
+    }
+    const members = attempt.check?.contextMembersUsed ?? [];
+    if (!members.includes("blob.read") && !members.includes("blob.stat")) return testInput;
+    const fields = attempt.check?.blobReadFields ?? [];
+    if (fields.length === 0) {
+      // The module reads a blob through something the check cannot follow to an input field, so
+      // there is no field to put a fixture in. Said, and the run goes ahead: the runner's own
+      // `blob_not_found` reaches the model as the module's error, which is true.
+      await this.progress(
+        `Attempt ${attempt.number}: the module reads a blob, but the test input names no blob:// ref and the check cannot tell which input field carries it, so the dry run runs with the test input as given.`,
+      );
+      return testInput;
+    }
+    const fixture = await this.mintFixtureBlob(attempt, wire);
+    if (!fixture) return testInput;
+    const named = fields.map((field) => `input.${field}`).join(", ");
+    await this.progress(
+      `Attempt ${attempt.number}: the test input names no blob and the module reads one from ${named}, so a fixture blob (${fixture.bytes} bytes of ${FIXTURE_BLOB_CONTENT_TYPE}, ${FIXTURE_BLOB_NAME}) stands in as ${named} in the dry run's input alone; the test input itself is unchanged.`,
+    );
+    return {
+      ...testInput,
+      ...Object.fromEntries(fields.map((field) => [field, fixture.ref])),
+    };
+  }
+
+  /**
+   * Mint the fixture blob through the runner (`FIXTURE_MODULE`), on the agent's own sandbox and
+   * under its own mount, with the door's quota read first so the write is held to the same budget
+   * a tool's is (`blob-door.ts`). No capability token: the module reaches no vendor, so the exec
+   * carries the runner's environment, the agent for the sidecar and the budget, and nothing else.
+   * The ledger the envelope answers becomes the row, with no version, as a detached run's blob does
+   * (`blobs.ts`). Null, with a trace, when the quota is full or the write failed: the dry run then
+   * goes ahead with the test input as given, and its own door or the module says what is wrong.
+   */
+  private async mintFixtureBlob(
+    attempt: OpenAttempt,
+    wire: string,
+  ): Promise<{ ref: string; bytes: number } | null> {
+    // Admitted and granted as one step under the agent's critical section (`admitUnderGrant`,
+    // `in-flight.ts`; GRA-200 after Greptile on #157), as a run is: the budget is outstanding until
+    // the write has settled, so a run admitted for this agent meanwhile is handed the remainder
+    // after this grant and two writes cannot share one remainder.
+    const door = await admitUnderGrant(this.deps.inFlight, this.scope.agentId, () =>
+      admitBlobs(this.deps, this.scope, {}),
+    );
+    if (!door.ok) {
+      await this.trace(
+        "dry_run",
+        `No fixture blob for attempt ${attempt.number}: ${door.refusal.reason}: ${door.refusal.message}`,
+        { attempt: attempt.number, data: { refusal: door.refusal } },
+      );
+      return null;
+    }
+    try {
+      return await this.writeFixtureBlob(attempt, wire, door.admission);
+    } finally {
+      door.release();
+    }
+  }
+
+  /** The fixture's write under its grant: the module onto the sandbox once, one run, one row. */
+  private async writeFixtureBlob(
+    attempt: OpenAttempt,
+    wire: string,
+    admission: BlobAdmission,
+  ): Promise<{ ref: string; bytes: number } | null> {
+    const handle = await this.sandbox();
+    if (!this.fixtureWritten) {
+      await handle.writeTree(
+        [{ path: "index.mjs", content: FIXTURE_MODULE }],
+        sandboxPath(fixturePath(this.job.id)),
+      );
+      this.fixtureWritten = true;
+    }
+    const mode = {
+      detached: false,
+      timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS,
+      dryRun: false,
+    };
+    const text = fixtureBlobText(this.job.id, wire);
+    const outcome = await runModule(handle, {
+      scope: this.scope,
+      modulePath: sandboxPath(fixturePath(this.job.id)),
+      input: { text, contentType: FIXTURE_BLOB_CONTENT_TYPE, name: FIXTURE_BLOB_NAME },
+      env: {
+        ...commandEnvironment(DEFAULT_COMMAND_TIMEOUT_SECONDS, await seededRunnerPath(this.deps)),
+        // The agent for the sidecar and the budget, as a door-admitted run carries them.
+        ...blobRunEnvironment(this.scope, admission),
+      },
+      mode,
+    });
+    const written = outcome.ok && "blobs" in outcome ? outcome.blobs[0] : undefined;
+    if (!written) {
+      const failure = !outcome.ok ? outcome.failure : { error: "the runner reported no blob" };
+      await this.trace(
+        "dry_run",
+        `No fixture blob for attempt ${attempt.number}: the write failed: ${describeRunFailure(failure)}`,
+        { attempt: attempt.number, data: { failure } },
+      );
+      return null;
+    }
+    await recordWrittenBlobs(this.deps, this.scope, null, [written]);
+    await this.trace(
+      "dry_run",
+      `${FIXTURE_BLOB_TRACE} ${written.ref} (${written.bytes} bytes, ${written.contentType}, ${written.name ?? FIXTURE_BLOB_NAME}) for the dry run of ${wire}; it expires at ${written.expiresAt}.`,
+      { attempt: attempt.number, data: { ...written } },
+    );
+    return { ref: written.ref, bytes: written.bytes };
   }
 
   /**

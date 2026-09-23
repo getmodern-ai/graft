@@ -36,6 +36,7 @@ describe("every owned table", () => {
       "agent_connection",
       "approval",
       "authored_tool",
+      "blob",
       "build_approval",
       "connection",
       "mcp_authorization_code",

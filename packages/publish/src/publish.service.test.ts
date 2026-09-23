@@ -3,7 +3,8 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { checkModule } from "@graft/check";
+import { checkModule, readModuleSources } from "@graft/check";
+import { TOOL_DESCRIPTION_MAX_LENGTH } from "@graft/core";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox/fake";
 import type { InstallArgs, SandboxProcessResult } from "@graft/sandbox/types";
 import {
@@ -205,6 +206,24 @@ describe("a module with no dependencies", () => {
     expect((await h.store.readTree(TOOLBOX, "tools/demo/hello/v1")).map((f) => f.path)).toEqual([
       "index.ts",
     ]);
+  });
+
+  /**
+   * The toolbox keeps a description whole at the row's maximum (GRA-200): the wire cuts a long one
+   * so the composed definition holds the per-description cap (`@graft/mcp`'s `tools.ts`), and that
+   * cut must never reach the row, which is what the approval and the console show.
+   */
+  it("stores a description at the row's maximum whole", async () => {
+    const description = "d".repeat(TOOL_DESCRIPTION_MAX_LENGTH);
+    const result = await publish({
+      draftPath: await draft("job1", await readFixture("hello")),
+      description,
+    });
+
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) return;
+    expect(result.tool.description).toBe(description);
+    expect(h.tool.tools[0]?.description).toHaveLength(TOOL_DESCRIPTION_MAX_LENGTH);
   });
 
   it("a second publish writes v2 and moves the pointer, and v1 stays on disk and in the rows", async () => {
@@ -806,5 +825,33 @@ describe("the mirror", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(unhandled).not.toHaveBeenCalled();
     process.off("unhandledRejection", unhandled);
+  });
+});
+
+/**
+ * Every fixture under `fixtures/` passes the check as the publish would run it: the files read
+ * whole, the schema beside them, the dependencies off the manifest. The check's banned list grows
+ * (GRA-188 added the filesystem modules, ADR 0023), and a fixture the suites above publish must keep
+ * clearing it, or the by-hand publish in AGENTS.md ("Publishing a tool by hand") stops working.
+ */
+describe("the fixtures", () => {
+  it("every one passes the check with no refusals", async () => {
+    const names = (await readdir(FIXTURES, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    expect(names).toEqual(["hello", "left-pad"]);
+
+    for (const name of names) {
+      const files = await readFixture(name);
+      const schema: unknown = JSON.parse(
+        await readFile(join(FIXTURES, name, "schema.json"), "utf8"),
+      );
+      const result = await checkModule({
+        ...readModuleSources(files),
+        inputSchema: schema as Record<string, unknown>,
+      });
+      expect(result.refusals, name).toEqual([]);
+    }
   });
 });

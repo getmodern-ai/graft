@@ -18,6 +18,7 @@ import {
   findAgentForUpdate,
   listAgentConnectionIds,
   listAgentIdsForConnection,
+  listAgentPersonIds,
   listAgents,
   listAllActiveAgents,
   listScopeConnectionIds,
@@ -30,6 +31,17 @@ import {
   findApproval,
   updateAskEveryCall,
 } from "./approval";
+import {
+  findBlob,
+  findBlobs,
+  insertAdoptedBlob,
+  insertBlobs,
+  listAgentsWithUnremovedBlobs,
+  listBlobs,
+  listUnremovedBlobs,
+  markBlobRemoved,
+  sumLiveBlobBytes,
+} from "./blob";
 import {
   addConnectionHosts,
   findConnection,
@@ -181,6 +193,130 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     expect(traces.sql).toMatch(SCOPED_AGENT);
     expect(traces.sql).toContain('"acquire_trace"."job_id" = $');
     expect(traces.sql).toMatch(/order by "acquire_trace"\."sequence" asc limit \$\d+$/);
+  });
+});
+
+/**
+ * The blob rows (ADR 0023, GRA-186) carry both ids of the scope, so the predicate names the pair
+ * directly rather than through `scopedAgentIds`; a write carries the pair in its values.
+ */
+describe("the blob rows name the person and the agent in every statement", () => {
+  const BLOB_PAIR = /"blob"\."agent_id" = \$\d+ and "blob"\."person_id" = \$\d+/;
+
+  it("a blob read by id", async () => {
+    await findBlob(db, SCOPE, "blob_1");
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "blob" where \("blob"\."id" = \$1 and \(/);
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.params).toEqual(["blob_1", "agent_1", "person_1", 1]);
+  });
+
+  it("the agent's blobs", async () => {
+    await listBlobs(db, SCOPE);
+    const s = only();
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.params).toEqual(["agent_1", "person_1"]);
+  });
+
+  /** The door's two reads (GRA-187): every ref an input names in one statement, and the live bytes in one. */
+  it("the blobs an input names, in one statement under the pair, and no statement for no ids", async () => {
+    await findBlobs(db, SCOPE, ["blob_1", "blob_2"]);
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "blob" where \("blob"\."id" in \(\$1, \$2\) and \(/);
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.params).toEqual(["blob_1", "blob_2", "agent_1", "person_1"]);
+    statements = [];
+    expect(await findBlobs(db, SCOPE, [])).toEqual([]);
+    expect(statements).toEqual([]);
+  });
+
+  it("the agent's live bytes: not removed and not yet expired, summed under the pair", async () => {
+    const now = new Date("2026-09-22T10:00:00Z");
+    expect(await sumLiveBlobBytes(db, SCOPE, now)).toBe(0);
+    const s = only();
+    expect(s.sql).toMatch(/^select sum\("bytes"\) from "blob" where \(/);
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.sql).toContain('"blob"."removed_at" is null');
+    expect(s.sql).toContain('"blob"."expires_at" > $');
+    expect(s.params).toEqual(["agent_1", "person_1", now.toISOString()]);
+  });
+
+  it("the sweep's read: the agent's unremoved blobs, soonest to expire first", async () => {
+    await listUnremovedBlobs(db, SCOPE);
+    const s = only();
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.sql).toContain('"blob"."removed_at" is null');
+    expect(s.sql).toMatch(/order by "blob"\."expires_at" asc, "blob"\."id" asc$/);
+    expect(s.params).toEqual(["agent_1", "person_1"]);
+  });
+
+  it("the sweep's mark takes the id, the pair and an unmarked row", async () => {
+    const at = new Date("2026-09-23T10:00:00Z");
+    await markBlobRemoved(db, SCOPE, "blob_1", at);
+    const s = only();
+    expect(s.sql).toMatch(/^update "blob" set "removed_at" = \$1, "updated_at" = \$2 where \(/);
+    expect(s.sql).toContain('"blob"."id" = $3');
+    expect(s.sql).toMatch(BLOB_PAIR);
+    expect(s.sql).toContain('"blob"."removed_at" is null');
+    expect(s.params.slice(2)).toEqual(["blob_1", "agent_1", "person_1"]);
+  });
+
+  it("an adoption carries the pair in its values and does nothing on a conflict", async () => {
+    const at = new Date("2026-09-22T10:00:00Z");
+    await insertAdoptedBlob(db, {
+      id: "blob_1",
+      personId: "person_1",
+      agentId: "agent_1",
+      versionId: null,
+      bytes: 11,
+      contentType: "text/plain",
+      name: null,
+      expiresAt: at,
+      createdAt: at,
+    });
+    const s = only();
+    expect(s.sql).toMatch(
+      /^insert into "blob" \(.*"person_id".*"agent_id".*\) values \(.*\) on conflict do nothing returning/,
+    );
+    expect(s.params).toContain("person_1");
+    expect(s.params).toContain("agent_1");
+  });
+
+  it("an insert carries the pair on every row, in one statement, and none for an empty ledger", async () => {
+    const at = new Date("2026-09-22T10:00:00Z");
+    await insertBlobs(db, [
+      {
+        id: "blob_1",
+        personId: "person_1",
+        agentId: "agent_1",
+        versionId: "ver_1",
+        bytes: 11,
+        contentType: "text/plain",
+        name: "a.txt",
+        expiresAt: at,
+        createdAt: at,
+      },
+      {
+        id: "blob_2",
+        personId: "person_1",
+        agentId: "agent_1",
+        versionId: null,
+        bytes: 5,
+        contentType: "application/pdf",
+        name: null,
+        expiresAt: at,
+        createdAt: at,
+      },
+    ]);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^insert into "blob" \(.*"person_id".*"agent_id".*\) values \(.*\), \(.*\) on conflict \("id"\) do nothing returning/,
+    );
+    expect(s.params.filter((p) => p === "person_1")).toHaveLength(2);
+    expect(s.params.filter((p) => p === "agent_1")).toHaveLength(2);
+    statements = [];
+    expect(await insertBlobs(db, [])).toEqual([]);
+    expect(statements).toEqual([]);
   });
 });
 
@@ -374,6 +510,43 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toMatch(/^select .* from "agent" where "agent"\."revoked_at" is null order by/);
     expect(s.sql).not.toContain('person_id" =');
     expect(s.params).toEqual([]);
+  });
+
+  /**
+   * The blob pass's roster (GRA-195; ADR 0023, "the sweep deletes"): every agent with an unremoved
+   * blob, with its person off the rows, so a revoked agent's blobs are judged too. Unscoped by
+   * nature, as the working-set roster is, and recognisable as such.
+   */
+  it("the blob pass's roster of agents with unremoved blobs is unscoped, by name, and takes only the removed filter", async () => {
+    await listAgentsWithUnremovedBlobs(db);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select distinct "person_id", "agent_id" from "blob" where "blob"\."removed_at" is null order by "blob"\."agent_id" asc, "blob"\."person_id" asc$/,
+    );
+    expect(s.sql).not.toContain('person_id" =');
+    expect(s.params).toEqual([]);
+  });
+
+  /**
+   * The blob pass's other read (GRA-195): whose the directories the store lists under an agent with
+   * no unremoved row are, revoked agents included, so the pass has a person to act under; an id
+   * with no row is an agent deleted by hand. Unscoped by nature, and no statement for no ids.
+   */
+  it("the blob pass's read of whose an agent directory is, is unscoped, by id as one array parameter, revoked agents included, and no statement for no ids", async () => {
+    await listAgentPersonIds(db, ["agent_1", "agent_2"]);
+    const s = only();
+    // `= any($1)` with the ids as one array, never `in ($1, $2, ...)`: the list is unbounded and a
+    // statement past Postgres's parameter limit is refused (Greptile on #152).
+    expect(s.sql).toMatch(
+      /^select "id", "person_id" from "agent" where "agent"\."id" = any\(\$1\) order by "agent"\."id" asc$/,
+    );
+    expect(s.sql).not.toContain("revoked_at");
+    expect(s.sql).not.toContain('person_id" =');
+    expect(s.params).toEqual([["agent_1", "agent_2"]]);
+
+    statements = [];
+    expect(await listAgentPersonIds(db, [])).toEqual([]);
+    expect(statements).toEqual([]);
   });
 
   /** The boot's other write (GRA-94): the bootstrapped admin is verified by address, before any person has signed in. */

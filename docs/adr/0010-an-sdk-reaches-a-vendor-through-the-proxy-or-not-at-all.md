@@ -86,3 +86,42 @@ exists because the alternative, a placeholder credential for a public API, is no
 to its paid host, and the first hosted `acquire` against it failed on that alone. A person confirms
 a `none` connection in the console as any other, and enters nothing; consent still never moves
 inside the loop.
+
+## Amended 22 September 2026
+
+**The body cap is a variable, and its default does not move** (GRA-181, GRA-183). The proxy
+buffers both legs and caps them, and the constant behind that cap becomes
+`GRAFT_PROXY_MAX_BODY_BYTES`, default the 10 MiB it always was, refused below 1 MiB, applied to a
+request body and a response body alike, named on the boot line when it is not the default. The
+buffering rationale stands: exact byte counts on the wide event, a clean refusal instead of a cut
+mid-body, redaction by value over a whole text-like body. Raising the default was considered and
+refused, since every tool would then hold larger bodies in memory per in-flight call and hand the
+model bodies it cannot use. An operator whose tools move files larger than the default raises it
+for that deployment; the blob store (ADR 0023) is what those files travel through afterwards.
+Streaming the response leg with a redaction lookback is the shape that would remove the cap, and
+is its own later decision.
+
+## Amended 23 September 2026
+
+**`ctx.fetch` takes an absolute URL on one of the connection's hosts, and the route is still the
+proxy** (GRA-197). The contract above says a module's only route out is `ctx.fetch` with a
+vendor-relative path, and the runner refused every absolute URL. A vendor whose write flow hands the
+module an absolute URL on a second confirmed host could then not be authored without an SDK: Slack's
+`files.getUploadURLExternal` answers an `upload_url` on `files.slack.com` for the bytes to be posted
+to, the host was in the connection's set, and on 2026-09-23 three `acquire` jobs gave up on it (the
+ticket has the three lines), one after `@slack/web-api`, bound as this decision says, retried the dry
+run's 202 preview until the run timed out. Now the runner rewrites an absolute `https://` URL onto
+the proxy's host form for its host, `/c/<connection>/h/<host>/<path>?<query>`, the same route
+`ctx.proxyBase(host)` names for an SDK, so the proxy judges the host against the connection's
+`hosts` exactly as it did and refuses one the person did not confirm with its existing
+`host_not_in_set`. Nothing this decision rests on moves: the host set is still the connection's,
+egress is still the proxy or nothing, the token still travels to the proxy alone, a redirect is
+still handed back, and a relative path resolves as before. The runner refuses, before any request
+leaves, a URL that is not `https:`, one carrying credentials, and one whose host is not a host name,
+each with a sentence naming what was refused. The checker keeps refusing a *literal* absolute URL at
+a `.fetch(` call, the smell it was; a presigned URL is a run-time value the check never sees, and
+its sentence now says one may be passed as it is. What "hand-written calls are the default" gains: a
+write flow across two of a connection's hosts is `ctx.fetch` twice, and the authoring skill says to
+prefer that over an SDK for a write, since an SDK that retries on a body it does not expect times
+out against the preview. Whether the preview should instead answer in a shape the common SDKs
+accept is GRA-198's decision, not this amendment's.

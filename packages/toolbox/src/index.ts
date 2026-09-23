@@ -1,6 +1,21 @@
+export {
+  assertBlobName,
+  createFilesystemBlobStore,
+  type FilesystemBlobStore,
+} from "./blob-store";
 export { createFilesystemToolboxStore, type FilesystemToolboxStore } from "./filesystem";
 export {
+  agentBlobsPath,
+  assertAgentId,
+  assertBlobId,
   assertToolboxPath,
+  BLOB_DATA_FILE,
+  BLOB_META_FILE,
+  BLOB_TMP_SUFFIX,
+  BLOBS_MOUNT_PATH,
+  BLOBS_ROOT,
+  blobPath,
+  blobSandboxPath,
   DRAFTS_DIR,
   draftPath,
   isDraftPath,
@@ -12,4 +27,10 @@ export {
   versionPath,
 } from "./layout";
 export { createNoopToolboxMirror, type RecordingToolboxMirror } from "./mirror";
-export type { ToolboxFile, ToolboxMirror, ToolboxStore } from "./types";
+export type {
+  BlobDirectoryStat,
+  BlobStore,
+  ToolboxFile,
+  ToolboxMirror,
+  ToolboxStore,
+} from "./types";

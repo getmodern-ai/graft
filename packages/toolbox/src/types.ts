@@ -47,9 +47,78 @@ export type ToolboxStore = {
   /**
    * Remove a draft directory and everything under it. A path outside `.drafts/` is refused before
    * anything is touched (ADR 0009: nothing in the toolbox is deleted by the system), and a draft that
-   * is already gone is not an error.
+   * is already gone is not an error. A blob is not a draft and is not in a toolbox: removing one is
+   * `BlobStore.remove`, the seam beside this one.
    */
   remove(toolboxId: string, path: string): Promise<void>;
+};
+
+/**
+ * The blob store seam: where an agent's blobs live between the tool that wrote one and the tool
+ * that reads it (CONTEXT.md, "Blob store"; ADR 0023). A seam beside the toolbox store, not a
+ * widening of it: `ToolboxStore.remove` still accepts a draft and nothing else, and a blob past its
+ * time is the one thing the system deletes. Keyed by agent, because the scope is the agent's mount
+ * (`.blobs/<agentId>` mounted alone at `/blobs`, `./layout.ts`); a blob id or a `.tmp` name is the
+ * other half. `./blob-store.ts` is the backing this repository holds, the `.blobs` tree beside the
+ * toolboxes under the same root; the hosted form's is the private package's (GRA-192).
+ *
+ * Reads and removes only. The runner writes a blob from inside the sandbox (GRA-186), where the
+ * server's store is not; what the server needs of a blob is to see it, read its sidecar and remove
+ * it when the sweep says so (GRA-189), and to know which agents have any (GRA-195).
+ */
+export type BlobStore = {
+  /**
+   * The agent ids that have a blobs directory, sorted: the store's half of the sweep's roster
+   * (GRA-195), so an agent whose token no longer resolves, or whose row is gone, still has its
+   * directories judged. A name under `.blobs/` that is not an agent id, a file or a symlink is
+   * skipped and left in place, as `list` does with a foreign name; no `.blobs/` yet is no agents.
+   */
+  listAgents(): Promise<string[]>;
+  /**
+   * The directory names under the agent's blobs directory that are a blob id or a `<blobId>.tmp` a
+   * killed run left half-written, sorted. An agent with no directory yet has no blobs, not an error.
+   * Anything else a sandbox wrote there (a directory under a foreign name, a file, a symlink) is
+   * skipped, left in place and never removed by the store: `remove` takes only the two names, and
+   * the sweep deletes only what it can name (ADR 0023).
+   */
+  list(agentId: string): Promise<string[]>;
+  /**
+   * The text of a blob's `meta.json`, or null when the blob, or its sidecar, is confirmed not to be
+   * there. The null is the store's own not-found signal and the only one: anything else that stops
+   * the read (a symlink at the directory or the sidecar, since the tree is sandbox-writable and the
+   * store follows no link out of the agent's directory, ADR 0023 "the scope is a mount"; a
+   * permission or a backing error) rejects, so a caller deciding on a missing sidecar (the sweep's
+   * `remove_orphan`, GRA-189) never mistakes a failed read for an absent file.
+   */
+  readMeta(agentId: string, blobId: string): Promise<string | null>;
+  /** Whether the blob's directory is there. A `.tmp` directory is not yet a blob; a symlink is refused. */
+  exists(agentId: string, blobId: string): Promise<boolean>;
+  /**
+   * Remove one blob's directory, or one `<blobId>.tmp`, and everything in it; one already gone is
+   * not an error. `name` is a blob id, or a blob id with `BLOB_TMP_SUFFIX`, and nothing else: a
+   * slash, `..` or an empty name is refused before anything is touched, and a symlink under a legal
+   * name is refused and left as it is, so nothing outside the agent's own directory is reachable
+   * through this verb.
+   */
+  remove(agentId: string, name: string): Promise<void>;
+  /**
+   * When a directory under the agent's blobs directory was last written to, and how many bytes its
+   * `data` holds; null when nothing is there. `name` is a blob id or a `<blobId>.tmp`, as `remove`
+   * takes. The sweep's two reads past the sidecar (GRA-189): whether a `.tmp` is a write still
+   * landing or one a killed run abandoned, and what a committed directory it found no row and no
+   * readable sidecar for held. `lastWrittenAt` is the newest modification time among the directory,
+   * `data` and `meta.json`, so a write still streaming into `data` reads as now; `bytes` is null
+   * when there is no `data` yet. A symlink at any of the three is refused, as everywhere here.
+   */
+  stat(agentId: string, name: string): Promise<BlobDirectoryStat | null>;
+};
+
+/** What `BlobStore.stat` answers for a directory that is there. */
+export type BlobDirectoryStat = {
+  /** The newest of the directory's, `data`'s and `meta.json`'s modification times. */
+  lastWrittenAt: Date;
+  /** The size of `data`, or null when the directory holds none yet. */
+  bytes: number | null;
 };
 
 /**

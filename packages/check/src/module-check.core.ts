@@ -22,7 +22,7 @@ import { type ToolAnnotations, UNKNOWN_ANNOTATIONS } from "./annotations.ts";
  *
  * A virtual TypeScript program: the module's files mounted under `/module`, three ambient declarations
  * under `/graft` — `Input`, generated from the tool's JSON Schema (`inputTypeFromSchema`); `Context`,
- * the four names the runner's `ctx` carries (`CONTEXT_DECLARATION`, matched by `runner.mjs`) with a
+ * the five names the runner's `ctx` carries (`CONTEXT_DECLARATION`, matched by `runner.mjs`) with a
  * DOM-free `Response` and the Node globals a module may lean on (`RUNTIME_DECLARATIONS`); and a
  * shorthand `declare module` for every package the version vendors — and a wrapper that imports the
  * entry's default export and assigns it to `(input: Input, ctx: Context) => Promise<unknown>`. The
@@ -121,21 +121,67 @@ export type ModuleCheckResult = {
   refusals: Diagnostic[];
   advice: Diagnostic[];
   annotations: ToolAnnotations;
+  /**
+   * The `Context` members the tool's own function calls: `fetch`, `proxyBase`, `blob.write`,
+   * `blob.read`, `blob.stat`, distinct and sorted (GRA-190). Read off call expressions whose
+   * receiver the checker resolves to the default export's second parameter (`scanContextUse`), so
+   * a name in a comment or a string, a helper of the module's own that happens to carry `.blob.read`,
+   * a call in another file and a nested function that shadows `ctx` all record nothing (Greptile
+   * on #149, twice). What `acquire`'s job reads to tell a tool that reads a blob
+   * (`packages/mcp/src/acquire/job.ts`).
+   */
+  contextMembersUsed: string[];
+  /**
+   * The input fields a blob ref is read from: `input.<field>`, `input?.<field>` or
+   * `input["<field>"]` as the first argument of `ctx.blob.read` or `ctx.blob.stat`, where `input`
+   * resolves to the default export's first parameter; distinct, in source order. One level of
+   * destructuring is followed on either side (`({ file }: Input, { blob }: Context)`, or
+   * `const { blob } = ctx` in the body); a ref read through any other local names no field, and
+   * the job says so rather than guess one.
+   */
+  blobReadFields: string[];
 };
 
 /**
  * The module's whole route out, as a type: exactly what the runner's `ctx` carries (`runner.mjs`,
- * `Object.freeze({ fetch, proxyBase, proxyKey, connection })`). `proxyBase` and `proxyKey` are the two
- * an SDK is bound with (ADR 0010).
+ * `Object.freeze({ fetch, proxyBase, proxyKey, connection, blob })`). `fetch` takes a vendor-relative
+ * path on the connection's primary host, or an absolute `https://` URL on another of the connection's
+ * hosts, which the runner routes through the proxy's host form (GRA-197; ADR 0010 as amended
+ * 2026-09-23); the `fetch-absolute-url` rule below still refuses a literal one. `proxyBase` and
+ * `proxyKey` are the two an SDK is bound with (ADR 0010); `blob` is the module's one route to a file
+ * (ADR 0023, GRA-186), and a call on it is not a vendor method, so it moves no annotation.
  */
 export const CONTEXT_DECLARATION =
-  "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null }";
+  "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }";
 
 /** The type the default export must satisfy; declared globally so the entry can be re-typed in place. */
 const TOOL_TYPE = "__GraftTool";
 
-/** Bare or `node:`-prefixed, these are refused outright: a tool makes one HTTP call, nothing else. */
-export const BANNED_MODULES = ["child_process", "net", "dgram"] as const;
+/**
+ * Bare or `node:`-prefixed, these are refused outright, and none has an ambient declaration below, so
+ * a type reference to one is a type error rather than `any`. The first three: a tool makes one HTTP
+ * call, nothing else. The rest are the filesystem and process-hosting modules, refused as defence in
+ * depth over the authored code: a file a tool writes for another is a blob, reached through
+ * `ctx.blob`, and the scope that holds is the mount the agent's sandbox is given, not this list,
+ * since a vendored dependency runs in-process and the check never reads it (ADR 0023). The authoring
+ * skill's refusal list (`packages/runner/skills/authoring-a-tool/SKILL.md`) and the runner's contract
+ * comment (`runner.mjs`) name the same ten.
+ */
+export const BANNED_MODULES = [
+  "child_process",
+  "net",
+  "dgram",
+  "fs",
+  "fs/promises",
+  "worker_threads",
+  "vm",
+  "module",
+  "cluster",
+  "inspector",
+] as const;
+
+/** The root the blob route replaces (ADR 0023): `fs` and `fs/promises` are told about `ctx.blob`. */
+const FILESYSTEM_MODULES: ReadonlySet<string> = new Set(["fs"]);
 
 /**
  * The option names an SDK takes its credential and its base URL under, across the SDKs the recipe was
@@ -228,6 +274,31 @@ const NODE_BUILTINS: ReadonlySet<string> = new Set(
   builtinModules.map((name) => name.replace(/^node:/, "")),
 );
 const BANNED: ReadonlySet<string> = new Set(BANNED_MODULES);
+
+/** The first path segment, `node:` stripped: `node:fs/promises` → `fs`, the name `BANNED` is keyed on. */
+function builtinRootOf(specifier: string): string {
+  const bare = specifier.replace(/^node:/, "");
+  return bare.split("/")[0] ?? bare;
+}
+
+/**
+ * The `banned-module` sentence for a specifier, from an import, a `require`, an `import()` or a type
+ * reference alike. `fs` and `fs/promises` are told the route to a file; the rest that there is none.
+ */
+function bannedModuleDiagnostic(rel: string, specifier: string): { message: string; hint: string } {
+  const root = builtinRootOf(specifier);
+  if (FILESYSTEM_MODULES.has(root)) {
+    return {
+      message: `${rel} imports ${specifier}; a tool has no filesystem of its own, and a file it writes for another tool, or reads from one, is a blob: ctx.blob.write and ctx.blob.read are the route.`,
+      hint: "Remove the import. Write the file with ctx.blob.write(data, { contentType, name }) and return the blob://<id> ref it answers; read one the tool was given with ctx.blob.read(ref), which answers a Blob.",
+    };
+  }
+  return {
+    message: `${rel} imports ${specifier}; a tool makes one HTTP call through the proxy and does not start processes or open sockets.`,
+    hint: `Remove the import; whatever ${root} was for is outside what a published tool may do.`,
+  };
+}
+
 const CREDENTIAL_OPTIONS: ReadonlySet<string> = new Set(SDK_CREDENTIAL_OPTIONS);
 const BASE_OPTIONS: ReadonlySet<string> = new Set(SDK_BASE_OPTIONS);
 
@@ -355,6 +426,15 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
   const rootNames = [...module.codeFiles, CONTRACT_FILE, RUNTIME_FILE, VENDORED_FILE, WRAPPER_FILE];
   const program = ts.createProgram(rootNames, OPTIONS, createHost(virtual));
   const checker = program.getTypeChecker();
+  // What of `ctx` the tool's function calls, bound by the checker to its two parameters (GRA-190).
+  const use = scanContextUse(
+    program,
+    checker,
+    entryAbs,
+    exported,
+    entrySource,
+    rewritten.insertions,
+  );
   const mapBack = (abs: string, pos: number) =>
     abs === entryAbs ? originalPosition(pos, rewritten.insertions) : pos;
 
@@ -426,7 +506,7 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
   }
 
   // Advice is read off a program that parsed; under a syntax error it would describe the wrong one.
-  if (bag.has("syntax")) return bag.result(entryRel, annotations);
+  if (bag.has("syntax")) return bag.result(entryRel, annotations, use);
 
   // Advice: what the module never reads, what it returns, what it was not told.
   if (schema === null) {
@@ -449,7 +529,7 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
   }
   describeReturn(program, checker, bag, entryAbs, exportPos);
 
-  return bag.result(entryRel, annotations);
+  return bag.result(entryRel, annotations, use);
 }
 
 /** The compiler's `__GraftTool` is our `(input: Input, ctx: Context) => Promise<unknown>`. */
@@ -730,6 +810,18 @@ function scanText(
           dependencies,
         );
       }
+    } else if (ts.isImportTypeNode(node)) {
+      // `import("node:fs").Stats` in a type position is erased at run time and resolves nothing, but a
+      // banned module has no ambient declaration (`BANNED_MODULES`), so this is the refusal the model
+      // reads instead of TypeScript's "install @types/node". An admitted built-in is left to the compiler.
+      const argument = node.argument;
+      if (
+        ts.isLiteralTypeNode(argument) &&
+        ts.isStringLiteral(argument.literal) &&
+        BANNED.has(builtinRootOf(argument.literal.text))
+      ) {
+        checkSpecifier(argument.literal.text, argument.literal, abs, bag, module, dependencies);
+      }
     } else if (ts.isCallExpression(node)) {
       const callee = node.expression;
       const isRequire = ts.isIdentifier(callee) && callee.text === "require";
@@ -752,9 +844,13 @@ function scanText(
           head !== null &&
           (/^[a-z][a-z0-9+.-]*:/i.test(head) || head.startsWith("//") || /^http/i.test(head))
         ) {
+          // A host written into the module is the smell this refuses; a URL a vendor hands back at
+          // run time is a value the check never sees, and the runner routes it through the proxy's
+          // host form, where the connection's host set is judged (GRA-197; ADR 0010 as amended
+          // 2026-09-23).
           bag.at("fetch-absolute-url", abs, argument?.getStart(sf) ?? node.getStart(sf), {
-            message: `ctx.fetch is given an absolute URL (${head.slice(0, 60)}); the proxy supplies the host from the connection, and the runner refuses any other.`,
-            hint: 'Pass the vendor-relative path — "/v1/orders" — and nothing before it.',
+            message: `ctx.fetch is given a literal absolute URL (${head.slice(0, 60)}); the proxy supplies the host from the connection, and a host written into the module is refused. A URL a vendor hands back at run time, on one of the connection's hosts, may be passed as it is.`,
+            hint: 'Pass the vendor-relative path, "/v1/orders", with nothing before it; pass a URL the vendor answered (an upload_url, a presigned URL) as the value you read, never as a literal.',
           });
         }
       }
@@ -806,14 +902,10 @@ function checkSpecifier(
 ): void {
   const rel = abs.slice(MODULE_ROOT.length + 1);
   const sf = node.getSourceFile();
-  const bare = specifier.replace(/^node:/, "");
-  const root = bare.split("/")[0] ?? bare;
+  const root = builtinRootOf(specifier);
 
   if (BANNED.has(root)) {
-    bag.at("banned-module", abs, node.getStart(sf), {
-      message: `${rel} imports ${specifier}; a tool makes one HTTP call through the proxy and does not start processes or open sockets.`,
-      hint: `Remove the import; whatever ${root} was for is outside what a published tool may do.`,
-    });
+    bag.at("banned-module", abs, node.getStart(sf), bannedModuleDiagnostic(rel, specifier));
     return;
   }
   if (specifier.startsWith("node:") || NODE_BUILTINS.has(root)) return;
@@ -1098,6 +1190,181 @@ function rootPackageOf(expression: ts.Expression, locals: SdkBindings): string |
 
 /** What the annotations are decided on; a read leaves no mark, so only the two that do are counted. */
 type MethodTally = { writes: number; deletes: number };
+
+/** What of `ctx` the tool's function calls (`ModuleCheckResult.contextMembersUsed`, `blobReadFields`). */
+type ContextUse = { members: Set<string>; blobReadFields: Set<string> };
+
+/** The `Context` members that are calls (`CONTEXT_DECLARATION`); `proxyKey` and `connection` are read, not called. */
+const CONTEXT_MEMBERS = new Set(["fetch", "proxyBase", "blob.write", "blob.read", "blob.stat"]);
+
+function emptyContextUse(): ContextUse {
+  return { members: new Set(), blobReadFields: new Set() };
+}
+
+/**
+ * What of `ctx` the tool's own function calls, bound by symbol and never by name (Greptile on
+ * #149, twice): the default export's two parameters are found in the program's entry file, and a
+ * call is recorded only when its receiver's root identifier resolves, by the checker, to the
+ * second (`ctx`), a blob read's field only when its first argument resolves to the first
+ * (`input`). A helper of the module's own with a `.blob.read` of its own, a call in another file
+ * and a nested function whose parameters shadow `ctx` or `input` resolve to other symbols and
+ * record nothing. One level of destructuring is followed on either side, since the checker names a
+ * binding's symbol as readily as a parameter's: `({ file }: Input, { blob }: Context)`, and
+ * `const { blob } = ctx` or `const { file } = input` in the body. An alias through a plain variable
+ * (`const b = ctx.blob`, `const ref = input.file`) is not followed, and records nothing.
+ */
+function scanContextUse(
+  program: ts.Program,
+  checker: ts.TypeChecker,
+  entryAbs: string,
+  exported: DefaultExport | null,
+  entrySource: ts.SourceFile,
+  insertions: readonly Insertion[],
+): ContextUse {
+  const use = emptyContextUse();
+  const sf = program.getSourceFile(entryAbs);
+  const original = exported?.fn;
+  if (!sf || !original) return use;
+  // The same function in the re-typed entry: the one whose start maps back to the original's.
+  const originalStart = original.getStart(entrySource);
+  const fn = findFunction(
+    sf,
+    (node) => originalPosition(node.getStart(sf), insertions) === originalStart,
+  );
+  if (!fn) return use;
+  const [inputParam, ctxParam] = fn.parameters;
+  // Symbol → what it stands for: "" for the parameter itself, a member or field name for a binding.
+  const contexts = new Map<ts.Symbol, string>();
+  const inputs = new Map<ts.Symbol, string>();
+  if (ctxParam) bindNames(ctxParam.name, checker, contexts);
+  if (inputParam) bindNames(inputParam.name, checker, inputs);
+  const symbolOf = (node: ts.Node) => checker.getSymbolAtLocation(node);
+  const rootOf = (aliases: Map<ts.Symbol, string>, expr: ts.Expression) => {
+    const symbol = ts.isIdentifier(expr) ? symbolOf(expr) : undefined;
+    return symbol === undefined ? undefined : aliases.get(symbol);
+  };
+
+  // Pass one: `const { blob } = ctx`, `const { file } = input`, anywhere in the file.
+  const collectBindings = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer !== undefined
+    ) {
+      const initializer = unwrapParentheses(node.initializer);
+      if (rootOf(contexts, initializer) === "") bindNames(node.name, checker, contexts);
+      if (rootOf(inputs, initializer) === "") bindNames(node.name, checker, inputs);
+    }
+    ts.forEachChild(node, collectBindings);
+  };
+  collectBindings(sf);
+
+  // Pass two: the calls.
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const member = contextMemberOf(node.expression, contexts, rootOf);
+      if (member !== null) {
+        use.members.add(member);
+        if (member === "blob.read" || member === "blob.stat") {
+          const field = inputFieldOf(node.arguments[0], inputs, rootOf);
+          if (field !== null) use.blobReadFields.add(field);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return use;
+}
+
+/** The first function-like node the predicate admits, depth first. */
+function findFunction(root: ts.Node, admit: (node: FunctionLike) => boolean): FunctionLike | null {
+  let found: FunctionLike | null = null;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      (ts.isArrowFunction(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isFunctionDeclaration(node)) &&
+      admit(node)
+    ) {
+      found = node;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return found;
+}
+
+/**
+ * A parameter's or a declaration's name into the alias map: an identifier stands for the whole
+ * (`""`); each element of an object pattern stands for the property it takes (`{ blob }`,
+ * `{ fetch: f }`). A rest element or a nested pattern binds nothing.
+ */
+function bindNames(
+  name: ts.BindingName,
+  checker: ts.TypeChecker,
+  into: Map<ts.Symbol, string>,
+): void {
+  if (ts.isIdentifier(name)) {
+    const symbol = checker.getSymbolAtLocation(name);
+    if (symbol) into.set(symbol, "");
+    return;
+  }
+  if (!ts.isObjectBindingPattern(name)) return;
+  for (const element of name.elements) {
+    if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
+    const property = element.propertyName ?? element.name;
+    if (!ts.isIdentifier(property) && !ts.isStringLiteralLike(property)) continue;
+    const symbol = checker.getSymbolAtLocation(element.name);
+    if (symbol) into.set(symbol, property.text);
+  }
+}
+
+type RootOf = (aliases: Map<ts.Symbol, string>, expr: ts.Expression) => string | undefined;
+
+/** `ctx.blob.read` is `blob.read` and, after `const { blob } = ctx`, so is `blob.read`: the member a call reaches from `ctx`, when it is one. */
+function contextMemberOf(
+  callee: ts.Expression,
+  contexts: Map<ts.Symbol, string>,
+  rootOf: RootOf,
+): string | null {
+  let current = unwrapParentheses(callee);
+  const parts: string[] = [];
+  while (ts.isPropertyAccessExpression(current)) {
+    parts.unshift(current.name.text);
+    current = unwrapParentheses(current.expression);
+  }
+  const prefix = rootOf(contexts, current);
+  if (prefix === undefined) return null;
+  const member = [prefix, ...parts].filter((part) => part !== "").join(".");
+  return CONTEXT_MEMBERS.has(member) ? member : null;
+}
+
+/** `input.x`, `input?.x`, `input["x"]`, or `x` after `({ x }: Input)`: the field a blob read takes off the input; null for anything else. */
+function inputFieldOf(
+  argument: ts.Expression | undefined,
+  inputs: Map<ts.Symbol, string>,
+  rootOf: RootOf,
+): string | null {
+  if (argument === undefined) return null;
+  const expr = unwrapParentheses(argument);
+  if (ts.isIdentifier(expr)) {
+    const bound = rootOf(inputs, expr);
+    return bound === undefined || bound === "" ? null : bound;
+  }
+  if (ts.isPropertyAccessExpression(expr)) {
+    return rootOf(inputs, unwrapParentheses(expr.expression)) === "" ? expr.name.text : null;
+  }
+  if (ts.isElementAccessExpression(expr)) {
+    const key = unwrapParentheses(expr.argumentExpression);
+    return rootOf(inputs, unwrapParentheses(expr.expression)) === "" && ts.isStringLiteralLike(key)
+      ? key.text
+      : null;
+  }
+  return null;
+}
 
 /**
  * One walk per file for the two SDK-aware rules. Every `new X(…)` of a bound identifier — and every
@@ -1443,7 +1710,7 @@ function classify(
     return {
       rule: "type-error",
       message,
-      hint: `ctx carries fetch, proxyBase, proxyKey and connection, and nothing else: Context is ${CONTEXT_DECLARATION}.`,
+      hint: `ctx carries fetch, proxyBase, proxyKey, connection and blob, and nothing else: Context is ${CONTEXT_DECLARATION}.`,
       advice: false,
     };
   }
@@ -1797,7 +2064,9 @@ export const RUNTIME_DECLARATIONS = `${[
   "interface Headers { append(name: string, value: string): void; delete(name: string): void; get(name: string): string | null; has(name: string): boolean; set(name: string, value: string): void; forEach(callback: (value: string, key: string) => void): void; entries(): IterableIterator<[string, string]>; keys(): IterableIterator<string>; values(): IterableIterator<string>; [Symbol.iterator](): IterableIterator<[string, string]>; }",
   "declare var Headers: { prototype: Headers; new (init?: HeadersInit): Headers };",
   "type BodyInit = string | ArrayBuffer | ArrayBufferView | URLSearchParams | FormData | Blob;",
-  "interface Blob { readonly size: number; readonly type: string; arrayBuffer(): Promise<ArrayBuffer>; text(): Promise<string>; slice(start?: number, end?: number, contentType?: string): Blob; }",
+  "interface ReadableStream<R = any> { readonly locked: boolean; cancel(reason?: unknown): Promise<void>; getReader(): { read(): Promise<{ done: false; value: R } | { done: true; value?: undefined }>; releaseLock(): void; cancel(reason?: unknown): Promise<void> }; [Symbol.asyncIterator](): AsyncIterableIterator<R>; }",
+  "declare var ReadableStream: { prototype: ReadableStream; new <R = any>(underlyingSource?: { start?(controller: { enqueue(chunk: R): void; close(): void; error(reason?: unknown): void }): void | Promise<void>; pull?(controller: { enqueue(chunk: R): void; close(): void; error(reason?: unknown): void }): void | Promise<void>; cancel?(reason?: unknown): void | Promise<void> }): ReadableStream<R> };",
+  "interface Blob { readonly size: number; readonly type: string; arrayBuffer(): Promise<ArrayBuffer>; bytes(): Promise<Uint8Array>; text(): Promise<string>; stream(): ReadableStream<Uint8Array>; slice(start?: number, end?: number, contentType?: string): Blob; }",
   "declare var Blob: { prototype: Blob; new (parts?: readonly (string | ArrayBuffer | ArrayBufferView | Blob)[], options?: { type?: string }): Blob };",
   "interface FormData { append(name: string, value: string | Blob, fileName?: string): void; delete(name: string): void; get(name: string): string | Blob | null; getAll(name: string): (string | Blob)[]; has(name: string): boolean; set(name: string, value: string | Blob, fileName?: string): void; }",
   "declare var FormData: { prototype: FormData; new (): FormData };",
@@ -1806,7 +2075,7 @@ export const RUNTIME_DECLARATIONS = `${[
   "interface AbortController { readonly signal: AbortSignal; abort(reason?: unknown): void; }",
   "declare var AbortController: { prototype: AbortController; new (): AbortController };",
   "interface RequestInit { method?: string; headers?: HeadersInit; body?: BodyInit | null; signal?: AbortSignal | null; redirect?: 'follow' | 'error' | 'manual'; }",
-  "interface Response { readonly ok: boolean; readonly status: number; readonly statusText: string; readonly headers: Headers; readonly url: string; readonly redirected: boolean; readonly bodyUsed: boolean; json(): Promise<any>; text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer>; blob(): Promise<Blob>; formData(): Promise<FormData>; clone(): Response; }",
+  "interface Response { readonly ok: boolean; readonly status: number; readonly statusText: string; readonly headers: Headers; readonly url: string; readonly redirected: boolean; readonly body: ReadableStream<Uint8Array> | null; readonly bodyUsed: boolean; json(): Promise<any>; text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer>; blob(): Promise<Blob>; formData(): Promise<FormData>; clone(): Response; }",
   "declare var Response: { prototype: Response; new (body?: BodyInit | null, init?: { status?: number; statusText?: string; headers?: HeadersInit }): Response; json(data: unknown, init?: { status?: number; headers?: HeadersInit }): Response };",
   "interface URLSearchParams { readonly size: number; append(name: string, value: string): void; delete(name: string, value?: string): void; get(name: string): string | null; getAll(name: string): string[]; has(name: string, value?: string): boolean; set(name: string, value: string): void; sort(): void; toString(): string; forEach(callback: (value: string, key: string) => void): void; entries(): IterableIterator<[string, string]>; keys(): IterableIterator<string>; values(): IterableIterator<string>; [Symbol.iterator](): IterableIterator<[string, string]>; }",
   "declare var URLSearchParams: { prototype: URLSearchParams; new (init?: string | Record<string, string> | readonly (readonly [string, string])[] | URLSearchParams): URLSearchParams };",
@@ -1839,6 +2108,9 @@ export const RUNTIME_DECLARATIONS = `${[
   "declare var process: { readonly env: Record<string, string | undefined>; readonly argv: readonly string[]; readonly platform: string; readonly version: string; readonly pid: number; hrtime: { bigint(): bigint }; nextTick(callback: (...args: any[]) => void, ...args: any[]): void; cwd(): string; uptime(): number; memoryUsage(): { rss: number; heapTotal: number; heapUsed: number; external: number } };",
   "interface ImportMeta { url: string; dirname: string; filename: string; resolve(specifier: string): string; }",
 ].join("\n")}\n${[...NODE_BUILTINS]
+  // A banned built-in is left undeclared on purpose (`BANNED_MODULES`); `fs/promises` and
+  // `inspector/promises` go with their roots, as `checkSpecifier` refuses them.
+  .filter((name) => !BANNED.has(builtinRootOf(name)))
   .sort()
   .flatMap((name) => [`declare module "${name}";`, `declare module "node:${name}";`])
   .join("\n")}\n`;
@@ -1895,7 +2167,11 @@ class DiagnosticBag {
     this.push(this.refusals, { file, line: 1, column: 1, text: "", ...body, rule });
   }
 
-  result(entry: string, annotations: ToolAnnotations): ModuleCheckResult {
+  result(
+    entry: string,
+    annotations: ToolAnnotations,
+    use: ContextUse = emptyContextUse(),
+  ): ModuleCheckResult {
     const order = (a: Diagnostic, b: Diagnostic) =>
       (a.file === entry ? 0 : 1) - (b.file === entry ? 0 : 1) ||
       a.file.localeCompare(b.file) ||
@@ -1906,6 +2182,8 @@ class DiagnosticBag {
       refusals: this.refusals.sort(order).slice(0, MAX_DIAGNOSTICS),
       advice: this.advice.sort(order).slice(0, MAX_DIAGNOSTICS),
       annotations,
+      contextMembersUsed: [...use.members].sort(),
+      blobReadFields: [...use.blobReadFields],
     };
   }
 

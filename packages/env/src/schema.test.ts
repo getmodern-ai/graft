@@ -30,11 +30,14 @@ import {
   migrateOnStart,
   modelBackend,
   modelProvider,
+  PROXY_MAX_BODY_BYTES_DEFAULT,
+  PROXY_MAX_BODY_BYTES_FLOOR,
   packageAllowlist,
   packageMinAgeDays,
   packageMinWeeklyDownloads,
   pendingActionTtlHours,
   port,
+  proxyMaxBodyBytes,
   RETIRED_ADMIN_PASSWORD,
   rateLimitWindow,
   sandboxBackend,
@@ -359,6 +362,7 @@ describe("finalServerSchema", () => {
       GRAFT_BACKINGS: "open",
       GRAFT_KEYRING_SECRET: minimal.GRAFT_KEYRING_SECRET,
       GRAFT_PROXY_FOLLOW_REDIRECTS: false,
+      GRAFT_PROXY_MAX_BODY_BYTES: 10 * 1024 * 1024,
       GRAFT_PROXY_PUBLIC_URL: "http://localhost:3000/api/proxy",
       GRAFT_SANDBOX_BACKEND: "docker",
       GRAFT_TOOLBOX_ROOT: "./.graft/toolboxes",
@@ -437,6 +441,29 @@ describe("finalServerSchema", () => {
         GRAFT_DEV_SEED: "seed.json",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("GRAFT_PROXY_MAX_BODY_BYTES (GRA-183)", () => {
+  it("is ten mebibytes unless set, which is the proxy's own constant", () => {
+    expect(proxyMaxBodyBytes.parse(undefined)).toBe(10 * 1024 * 1024);
+    expect(PROXY_MAX_BODY_BYTES_DEFAULT).toBe(10 * 1024 * 1024);
+  });
+
+  it("coerces a whole number of bytes, the floor included", () => {
+    expect(proxyMaxBodyBytes.parse(String(20 * 1024 * 1024))).toBe(20 * 1024 * 1024);
+    expect(proxyMaxBodyBytes.parse("15000000")).toBe(15_000_000);
+    expect(proxyMaxBodyBytes.parse(String(PROXY_MAX_BODY_BYTES_FLOOR))).toBe(1024 * 1024);
+  });
+
+  it("refuses a cap under one mebibyte, zero included, naming the variable and the floor", () => {
+    for (const bad of ["0", "1048575", "-1", "1024", "1.5", "big"]) {
+      const result = proxyMaxBodyBytes.safeParse(bad);
+      expect(result.success, bad).toBe(false);
+      expect(result.error?.issues[0]?.message).toContain("GRAFT_PROXY_MAX_BODY_BYTES");
+    }
+    const low = proxyMaxBodyBytes.safeParse("1024");
+    expect(low.error?.issues[0]?.message).toContain("at least 1048576 (1 MiB)");
   });
 });
 

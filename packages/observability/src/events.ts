@@ -45,6 +45,17 @@ export type AnalyticsEvent =
   | "provider_link_returned"
   // Over MCP
   | "tool_called"
+  // A blob a tool wrote (ADR 0023; GRA-186), once per blob, beside the `tool_called` of the run
+  // that wrote it: `bytes`, `content_type` (a kind), `agent_id`, `version_id`. Never the name the
+  // module gave it and never a byte of it.
+  | "blob_written"
+  // A blob directory the sweep removed (ADR 0023, "the sweep deletes"; GRA-189), once per removal:
+  // `bytes` (null when an orphan held no data), `cause` (`expired` for a row past its time,
+  // `orphan` for a committed directory with no row and no readable sidecar), `agent_id`. Never the
+  // name and never a byte; a `.tmp` an abandoned write left is cleared without an event, since it
+  // was never a blob, and junk under an agent the database no longer holds (GRA-195) is cleared
+  // without one too, since there is no person to name.
+  | "blob_swept"
   | "acquire_completed"
   | "acquire_failed";
 

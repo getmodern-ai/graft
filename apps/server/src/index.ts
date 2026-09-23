@@ -35,7 +35,13 @@ import { serve } from "@hono/node-server";
 import { initLogger, log } from "evlog";
 import { useLogger } from "evlog/hono";
 
-import { API_MOUNT_PATH, createServer, MCP_MOUNT_PATH, PROXY_MOUNT_PATH } from "./app";
+import {
+  API_MOUNT_PATH,
+  createServer,
+  MCP_MOUNT_PATH,
+  PROXY_MOUNT_PATH,
+  proxyBodyCapClause,
+} from "./app";
 import { selectBackings } from "./backings";
 import { bootstrapAdmin, MigrationChainBrokenError, migrateOnStart } from "./boot";
 import {
@@ -316,6 +322,36 @@ const mcp = createMcpDeps({
       },
     });
   },
+  /**
+   * Every blob a run wrote, once per blob as its row lands (GRA-186; ADR 0023): the size and the
+   * media type on the person's profile beside the `tool_called` of the run, and never the name the
+   * module gave the file or a byte of it.
+   */
+  onBlobWritten: (event) => {
+    backings.analytics.capture({
+      distinctId: event.personId,
+      event: "blob_written",
+      properties: {
+        agent_id: event.agentId,
+        version_id: event.versionId,
+        bytes: event.bytes,
+        content_type: event.contentType,
+      },
+    });
+  },
+  /**
+   * The agents' blobs as this server sees them, for the sweep's second pass (ADR 0023, "the sweep
+   * deletes"; GRA-189): the same store the selector chose beside the toolbox store.
+   */
+  blobStore: backings.blobStore,
+  /** Every blob directory the sweep removed, once (GRA-189): the size and the cause, never the name. */
+  onBlobSwept: (event) => {
+    backings.analytics.capture({
+      distinctId: event.personId,
+      event: "blob_swept",
+      properties: { agent_id: event.agentId, bytes: event.bytes, cause: event.cause },
+    });
+  },
 });
 
 /**
@@ -341,7 +377,13 @@ const acquireRunner = createAcquireRunner(mcp, {
       backings.analytics.capture({
         distinctId: event.personId,
         event: "acquire_failed",
-        properties: { job_id: event.jobId, agent_id: event.agentId, status: "crashed" },
+        properties: {
+          job_id: event.jobId,
+          agent_id: event.agentId,
+          status: "crashed",
+          // A crash after a write still wrote it: the same tally the finished event reports.
+          blobs_written: event.blobsWritten,
+        },
       });
       return;
     }
@@ -359,6 +401,8 @@ const acquireRunner = createAcquireRunner(mcp, {
         failure: event.failure?.split(":")[0] ?? null,
         attempts: event.attempts ?? null,
         token_spend: event.tokenSpend ?? null,
+        // The job's own count (GRA-186): its runs' blobs are reported here, never on the call that queued it.
+        blobs_written: event.blobsWritten,
       },
     });
   },
@@ -401,6 +445,8 @@ const app = createServer({
   // An authorization-code token the proxy refreshes goes back into the row it came from (ADR 0005).
   credentialRotation: createDatabaseCredentialRotation(db, connectionDeps),
   followRedirects: env.GRAFT_PROXY_FOLLOW_REDIRECTS,
+  // The body cap on both legs, the environment's over the proxy's default (GRA-183).
+  maxBodyBytes: env.GRAFT_PROXY_MAX_BODY_BYTES,
   api: {
     auth: {
       handler: (request) => auth.handler(request),
@@ -439,26 +485,45 @@ const app = createServer({
 });
 
 /**
- * The working-set sweep (ADR 0009) on a plain timer — GRA-1's "no durable engine for the alpha". A
- * sweep that demoted something, or failed for some agent, is one log line; a quiet one is silent.
+ * The working-set sweep (ADR 0009) on a plain timer, GRA-1's "no durable engine for the alpha",
+ * and, on the same tick, the blob pass (ADR 0023; GRA-189). A sweep that demoted something, removed,
+ * marked or adopted a blob, or failed for some agent, is one log line with the blob counts under
+ * `sweep.blobs`; a quiet one is silent.
  */
 const sweep = startSweep(mcp, {
   intervalSeconds: env.GRAFT_SWEEP_INTERVAL_SECONDS,
   onReport: (report) => {
-    if (report.demoted.length === 0 && report.failed.length === 0) return;
+    const { actions: blobActions, ...blobs } = report.blobs;
+    if (
+      report.demoted.length === 0 &&
+      report.failed.length === 0 &&
+      blobActions.length === 0 &&
+      blobs.deferred === 0
+    ) {
+      return;
+    }
     const skipped =
       report.skipped.length > 0 ? `, ${report.skipped.length} skipped for a run in flight` : "";
     const failed =
       report.failed.length > 0
         ? `, ${report.failed.length} failed: ${report.failed.map((f) => `${f.agentId} (${f.error})`).join("; ")}`
         : "";
+    const swept =
+      blobActions.length > 0 || blobs.deferred > 0
+        ? `, blobs: ${blobs.removed} removed, ${blobs.marked} marked, ${blobs.adopted} adopted, ${blobs.orphansRemoved} orphan(s) and ${blobs.tmpRemoved} abandoned write(s) cleared, ${blobs.bytesRemoved} byte(s) freed` +
+          (blobs.deferred > 0
+            ? `, ${blobs.deferred} deferred for a run that started during the pass (${report.deferred.join(", ")})`
+            : "")
+        : "";
     log.info({
       sweep: {
         agents: report.agents,
         demoted: report.demoted.length,
         skipped: report.skipped.length,
+        deferred: report.deferred.length,
         failed: report.failed.length,
-        message: `${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${failed}`,
+        blobs,
+        message: `${report.demoted.length} demotion(s) across ${report.agents} agent(s)${skipped}${swept}${failed}`,
       },
     });
   },
@@ -481,6 +546,7 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
       modelSetup.summary +
       `, ${describeObservability(backings)}` +
       `, rate limit ${backings.rateLimiter.name}` +
+      proxyBodyCapClause(env.GRAFT_PROXY_MAX_BODY_BYTES) +
       `, acquire runner: ${env.GRAFT_ACQUIRE_CONCURRENCY} job(s) at once, ` +
       `console ${existsSync(join(env.GRAFT_CONSOLE_DIR, "index.html")) ? `served from ${env.GRAFT_CONSOLE_DIR}` : `not built at ${env.GRAFT_CONSOLE_DIR} (console paths answer 404)`}`,
   );

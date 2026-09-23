@@ -79,8 +79,9 @@ whether this is a dry run. Verified statelessly by the proxy.
 _Avoid_: API key, session token, bearer (the per-agent token the harness holds is a different thing)
 
 **Sandbox**:
-Where authored code runs: a short-lived Docker container in the self-hosted form, a Blaxel sandbox
-in the hosted form. Its only egress is the proxy. Packages are never installed inside it.
+Where authored code runs: one per agent, found again by name on every run, a Docker container in
+the self-hosted form and a Blaxel sandbox in the hosted form. Its only egress is the proxy.
+Packages are never installed inside it.
 _Avoid_: container, VM, worker, isolate (as the name of the thing)
 
 ### Tools and the toolbox
@@ -109,6 +110,18 @@ _Avoid_: custom tool, generated tool, function, integration, script
 A person's store of authored tools, every version kept, demoted ones included. Nothing is ever
 deleted by the system.
 _Avoid_: library, registry, catalog, archive (the archived part of the toolbox is still the toolbox)
+
+**Blob**:
+A file one tool writes for another to read, held for the agent that wrote it for a bounded time
+and never shown to the model. The ref on the wire, `blob://<id>`, is the whole of what a model,
+a harness or a person sees of it.
+_Avoid_: file, artifact, attachment (the vendor's word for its own thing), upload, temp file
+
+**Blob store**:
+Where an agent's blobs live between the tool that wrote one and the tool that reads it; a seam
+beside the toolbox. A blob past its time is removed by rule, which is the one thing the system
+deletes.
+_Avoid_: file store, scratch, cache, bucket
 
 **Working set**:
 The authored tools currently promoted for one agent, and therefore present in its MCP tool list.

@@ -224,6 +224,8 @@ function refusal(
     refusals: [{ line: 1, column: 1, text: "", ...diagnostic }],
     advice: [],
     annotations: UNKNOWN_ANNOTATIONS,
+    contextMembersUsed: [],
+    blobReadFields: [],
   };
 }
 

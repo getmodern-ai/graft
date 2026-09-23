@@ -5,9 +5,14 @@
  * `McpDeps` from its environment; a test drives `createAgentSession` over the SDK's in-memory
  * transport.
  */
+
+// The runner's envelope, read where a caller of this server sees a run's stdout (GRA-186): the
+// server's suites drive `execute__` and read the ledger back through it.
+export { type BlobLedgerEntry, type RunnerEnvelope, readRunnerEnvelope } from "@graft/runner";
 export {
   attemptDraftPath,
   DEFAULT_HEARTBEAT_MS,
+  FIXTURE_BLOB_TRACE,
   MAX_DOCS_PER_TURN,
   MAX_PROOF_READS,
   PROBE_MODULE,
@@ -85,7 +90,24 @@ export {
   scopeAskCard,
   UI_EXTENSION_ID,
 } from "./ask-card";
+// The blob door (GRA-187, GRA-199): the walk over an input's string leaves is the one walker, which
+// `@graft/evals`'s scorers read a result through; the two environment helpers are what every run
+// that passed the door carries into its exec.
 export {
+  admitBlobs,
+  type BlobAdmission,
+  blobAgentEnvironment,
+  blobBudgetEnvironment,
+  blobRefsIn,
+  blobRunEnvironment,
+  judgeBlobQuota,
+  judgeBlobRefs,
+  MAX_INPUT_DEPTH,
+  type StringLeafVisit,
+  walkStringLeaves,
+} from "./blob-door";
+export {
+  ABANDONED_BLOB_WRITE_SECONDS,
   clampTimeout,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   DEFAULT_DETACHED_TIMEOUT_SECONDS,
@@ -193,9 +215,12 @@ export {
   SERVER_INSTRUCTIONS,
 } from "./session";
 export {
+  type BlobSweptEvent,
   type RunSweepOptions,
   runSweep,
   type StartSweepOptions,
+  type SweepBlobAction,
+  type SweepBlobCounts,
   type SweepDemotion,
   type SweepHandle,
   type SweepReport,

@@ -2,6 +2,7 @@ import {
   type AcquireJobDeps,
   type AgentDeps,
   type ApprovalDeps,
+  type BlobDeps,
   type ConnectionDeps,
   DEFAULT_PROVIDERS,
   hashAgentToken,
@@ -14,6 +15,7 @@ import type { DbOrTx } from "@graft/db";
 import type { AcquireAttemptRow, AcquireJobRow, AcquireTraceRow } from "@graft/db/repo/acquire-job";
 import type { AgentRow } from "@graft/db/repo/agent";
 import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
+import type { BlobRow } from "@graft/db/repo/blob";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import type { findMcpClient, McpClientRow } from "@graft/db/repo/mcp-oauth";
 import type {
@@ -46,6 +48,8 @@ export type FakeStore = {
   workingSet: Map<string, WorkingSetRow>;
   changes: WorkingSetChangeRow[];
   usage: UsageLedgerRow[];
+  /** One row per blob a run wrote (ADR 0023; GRA-186), in write order. */
+  blobs: BlobRow[];
   /** `<agentId> <toolId>` -> row (ADR 0008) */
   approvals: Map<string, ApprovalRow>;
   /** `<agentId> <connectionId>` -> row */
@@ -119,6 +123,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     workingSet: new Map(),
     changes: [],
     usage: [],
+    blobs: [],
     approvals: new Map(),
     buildApprovals: new Map(),
     pendingActions: new Map(),
@@ -276,6 +281,7 @@ export type FakeDeps = {
   tool: ToolDeps;
   workingSet: WorkingSetDeps;
   ledger: LedgerDeps;
+  blob: BlobDeps;
   approval: ApprovalDeps;
   pendingAction: PendingActionDeps;
   listPendingActionsByKind: typeof listPendingActionsByKind;
@@ -828,6 +834,131 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     now: store.now,
   };
 
+  /**
+   * The blob rows (GRA-186), with the repo's predicate: the pair on every read, the pair in every
+   * row written, and the insert idempotent on the id as the repo's `onConflictDoNothing` is — a row
+   * already there is left, and only the rows this call added come back.
+   */
+  const blob: BlobDeps = {
+    insertBlobs: async (_db, rows) => {
+      const present = new Set(store.blobs.map((row) => row.id));
+      const inserted = rows
+        .filter((row) => !present.has(row.id))
+        .map(
+          (row): BlobRow => ({
+            id: row.id,
+            personId: row.personId,
+            agentId: row.agentId,
+            versionId: row.versionId ?? null,
+            bytes: row.bytes,
+            contentType: row.contentType,
+            name: row.name ?? null,
+            expiresAt: row.expiresAt,
+            removedAt: row.removedAt ?? null,
+            owner: "person",
+            createdAt: row.createdAt ?? store.now(),
+            updatedAt: row.updatedAt ?? store.now(),
+          }),
+        );
+      store.blobs.push(...inserted);
+      return inserted;
+    },
+    findBlob: async (_db, scope, blobId) =>
+      store.blobs.find(
+        (row) =>
+          row.id === blobId && row.agentId === scope.agentId && row.personId === scope.personId,
+      ) ?? null,
+    findBlobs: async (_db, scope, blobIds) =>
+      store.blobs.filter(
+        (row) =>
+          blobIds.includes(row.id) &&
+          row.agentId === scope.agentId &&
+          row.personId === scope.personId,
+      ),
+    listBlobs: async (_db, scope) =>
+      store.blobs
+        .filter((row) => row.agentId === scope.agentId && row.personId === scope.personId)
+        .reverse(),
+    // The door's quota read (GRA-187): the repo's predicate, not removed and not yet expired.
+    sumLiveBlobBytes: async (_db, scope, now) =>
+      store.blobs
+        .filter(
+          (row) =>
+            row.agentId === scope.agentId &&
+            row.personId === scope.personId &&
+            row.removedAt === null &&
+            row.expiresAt.getTime() > now.getTime(),
+        )
+        .reduce((total, row) => total + row.bytes, 0),
+    // The sweep's three (GRA-189): the unremoved rows soonest to expire first, the one-shot mark
+    // under the pair, and the adoption that writes nothing when the id is taken.
+    listUnremovedBlobs: async (_db, scope) =>
+      store.blobs
+        .filter(
+          (row) =>
+            row.agentId === scope.agentId &&
+            row.personId === scope.personId &&
+            row.removedAt === null,
+        )
+        .sort(
+          (a, b) =>
+            a.expiresAt.getTime() - b.expiresAt.getTime() ||
+            (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        ),
+    markBlobRemoved: async (_db, scope, blobId, removedAt) => {
+      const index = store.blobs.findIndex(
+        (row) =>
+          row.id === blobId &&
+          row.agentId === scope.agentId &&
+          row.personId === scope.personId &&
+          row.removedAt === null,
+      );
+      const row = store.blobs[index];
+      if (!row) return false;
+      store.blobs[index] = { ...row, removedAt, updatedAt: store.now() };
+      return true;
+    },
+    // The blob pass's roster (GRA-195): the pair off every unremoved row, distinct; and whose an
+    // agent id is, off the agent rows, revoked ones included, nothing for an id with no row.
+    listAgentsWithUnremovedBlobs: async () => {
+      const seen = new Map<string, { personId: string; agentId: string }>();
+      for (const row of store.blobs) {
+        if (row.removedAt !== null || seen.has(row.agentId)) continue;
+        seen.set(row.agentId, { personId: row.personId, agentId: row.agentId });
+      }
+      return [...seen.values()].sort((a, b) =>
+        a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0,
+      );
+    },
+    listAgentPersonIds: async (_db, agentIds) =>
+      [...new Set(agentIds)]
+        .flatMap((agentId) => {
+          const row = store.agents.get(agentId);
+          return row ? [{ agentId, personId: row.personId }] : [];
+        })
+        .sort((a, b) => (a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0)),
+    insertAdoptedBlob: async (_db, row) => {
+      if (store.blobs.some((existing) => existing.id === row.id)) return null;
+      const inserted: BlobRow = {
+        id: row.id,
+        personId: row.personId,
+        agentId: row.agentId,
+        versionId: row.versionId ?? null,
+        bytes: row.bytes,
+        contentType: row.contentType,
+        name: row.name ?? null,
+        expiresAt: row.expiresAt,
+        removedAt: row.removedAt ?? null,
+        owner: "person",
+        createdAt: row.createdAt ?? store.now(),
+        updatedAt: row.updatedAt ?? store.now(),
+      };
+      store.blobs.push(inserted);
+      return inserted;
+    },
+    now: store.now,
+  };
+
   /** The approval rows, with the repo's predicates: the scope on every read and write, the upsert's kept ask-every-call setting. */
   const approval: ApprovalDeps = {
     findApproval: async (_db, scope, toolId) =>
@@ -1184,6 +1315,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     tool,
     workingSet,
     ledger,
+    blob,
     approval,
     pendingAction,
     listPendingActionsByKind,

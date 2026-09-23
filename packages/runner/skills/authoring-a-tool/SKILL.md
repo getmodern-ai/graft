@@ -111,7 +111,7 @@ export default async (input: Input, ctx: Context) => {
 from the input schema you pass to `check_tool` and `publish_tool`, and `Context` is exactly
 
 ```ts
-{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null }
+{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }
 ```
 
 Annotate the export with both, so a read of a field the schema does not declare — `input.quanity`
@@ -122,8 +122,13 @@ for `quantity` — fails the check at its line rather than the run.
 - **`ctx.fetch(path, init)`** is how the module calls the vendor, and the path is vendor-relative —
   `/orders`, not `https://api.vendor.com/orders`. The proxy supplies the connection's primary host
   and injects the credential on the way out. A module never names a host, never holds a key, never
-  sets an `Authorization` header of its own: the runner refuses an absolute URL before any request
-  is made.
+  sets an `Authorization` header of its own: the check refuses an absolute URL written into the
+  module. A URL the vendor answers at run time on another of the connection's hosts (Slack's
+  `upload_url` on `files.slack.com`, a presigned upload URL) goes to `ctx.fetch` as it is: the runner
+  routes it through the proxy, which admits the host only if the connection declares it and refuses
+  it otherwise, so the module still names no host of its own. Prefer `ctx.fetch` over a vendor SDK
+  for a write flow: an SDK that retries on a body it does not expect will time out against the dry
+  run's 202 preview.
 - **`ctx.proxyBase(host?)`** is the base URL an SDK is pointed at, and nothing else uses it. Without
   an argument it is the connection's primary host; with one — `ctx.proxyBase("www.googleapis.com")`
   — it is another host the connection declares. It is a call, never a string you assemble.
@@ -132,6 +137,8 @@ for `quantity` — fails the check at its line rather than the run.
   connection only: never cache it, log it, return it, or send it anywhere but through an SDK bound
   to `ctx.proxyBase`.
 - **`ctx.connection`** is the connection id, for a message; it is null when no connection is bound.
+- **`ctx.blob`** is `{ write, read, stat }`: the module's one route to a file, for a file one tool
+  writes and another reads (*Moving a file between tools*, below). Nothing else touches a disk.
 
 The rules, and why each holds:
 
@@ -159,6 +166,75 @@ Write it with `write_file`. A relative path — `demo-orders/index.ts` — lands
 for this job on the toolbox; that directory survives the sandbox, so a half-finished module is still
 there next attempt. The entry file is `index.ts`; helpers sit beside it. A module written as
 `index.mjs` still runs and is checked as JavaScript; write new ones in TypeScript.
+
+## Moving a file between tools
+
+A tool is one call against one connection, so a file that goes from one vendor to another goes
+through two tools, and the model between them never needs to read it. A **blob** is how it crosses:
+one tool writes the bytes with `ctx.blob.write` and answers the ref, `blob://<id>`, where a caller
+would look for the file; the next tool takes that ref as a plain string in its input and reads the
+bytes back with `ctx.blob.read`. The bytes never enter a model turn and never sit in a result; the
+ref is the whole of what a model sees of the file.
+
+**When to write a blob**: a binary body (a PDF, an image, an archive), or any body the next tool
+needs and the model does not (a CSV export, an attachment to forward). **When to return data
+instead**: a small JSON answer the agent is going to read (an id, a status, a list of names). One
+file, one write, the ref in the result; a blob is not scratch space and not a cache.
+
+Writing one from a vendor response, without holding the body:
+
+```ts
+export default async (input: Input, ctx: Context) => {
+  const res = await ctx.fetch(`/messages/${input.messageId}/attachments/${input.attachmentId}`);
+  if (!res.ok || !res.body) throw new Error(`GET attachment ${res.status}: ${await res.text()}`);
+  const name =
+    res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? input.filename;
+  const file = await ctx.blob.write(res.body, {
+    contentType: res.headers.get("content-type") ?? "application/octet-stream",
+    name,
+  });
+  return { file, name };
+};
+```
+
+`res.body` is the response's stream, so the bytes go to disk as they arrive; `contentType` is the
+response's, or the vendor's own field where its JSON names one; `name` is the vendor's filename
+where there is one. A vendor that answers a file as base64 inside JSON, as Gmail's attachment
+endpoint does, is decoded before the write: `ctx.blob.write(Buffer.from(data, "base64url"), {
+contentType, name })`. The ref goes in the result under a field named for what it is, `file` or
+`attachment`, so the agent finds it where it would look for the file.
+
+Reading one into a `FormData` or a request body:
+
+```ts
+export default async (input: Input, ctx: Context) => {
+  const file = await ctx.blob.read(input.file);
+  const form = new FormData();
+  form.append("channels", input.channel);
+  form.append("file", file, input.filename ?? "upload.bin");
+  const res = await ctx.fetch("/files.upload", { method: "POST", body: form });
+  if (!res.ok) throw new Error(`POST /files.upload ${res.status}: ${await res.text()}`);
+  return { uploaded: input.file, channel: input.channel };
+};
+```
+
+`ctx.blob.read` answers a `Blob` that holds a handle and none of the bytes: as a `FormData` part or
+as a request `body` it streams, and only `.arrayBuffer()`, `.bytes()` or `.text()` on your side
+holds it whole. A consuming tool's input takes the ref as a plain string (`file: { type: "string" }`
+in the schema, no marker); `ctx.blob.stat(ref)` answers its `bytes`, `contentType`, `name` and
+`expiresAt`. When the goal or the hints carry a `blob://` ref, put it in `testInput`: the dry run
+then reads a real file, and the door judges the ref before the run. With no live ref in the test
+input, `acquire` mints a fixture blob (a few hundred bytes of `text/plain`) and substitutes it for
+the dry run alone; a fixture proves the code path, not the vendor's handling of the real file.
+
+What a blob is held to. `fs` and `fs/promises` are refused by the check, so `ctx.blob` is the
+module's only route to a file. A blob belongs to the agent that wrote it and lives 24 hours; a write
+past 256 MiB is refused as it streams, as `blob_too_large`. Before a run, the door refuses a ref the
+agent holds no blob for as `blob_not_found` (another agent's ref reads the same), one past its 24
+hours as `blob_expired`, and any run while the agent's live blobs are at their quota as `blob_quota`;
+inside the run, `ctx.blob.read` and `stat` answer `blob_not_found` for a ref that does not resolve.
+Writing a blob asks nothing and moves no annotation: a tool that downloads a file and writes it as a
+blob stays read-only.
 
 ## When to use an SDK, and how
 
@@ -193,7 +269,10 @@ Two SDKs need a word each:
 - **Slack** (`@slack/web-api`): `new WebClient(ctx.proxyKey, { slackApiUrl: ctx.proxyBase(),
   allowAbsoluteUrls: false })`. `allowAbsoluteUrls: false` is required — the SDK otherwise treats a
   method name that is an absolute URL as the URL to call — and the check refuses a `WebClient`
-  without it.
+  without it. For a write, and for the file upload in particular, do not use it: the SDK reads the
+  dry run's 202 preview as a protocol error and retries until the run times out. Write the three
+  calls with `ctx.fetch`, `files.getUploadURLExternal`, then a `POST` of the bytes to the
+  `upload_url` it answered, then `files.completeUploadExternal`.
 - **Stripe**: its SDK has no base-path option, so it cannot be pointed at the proxy. Write Stripe
   calls with `ctx.fetch` for now.
 
@@ -205,7 +284,8 @@ and only when it clears the package policy** — the allowlist of official vendo
 provenance with an age and download threshold. A refused package is a diagnostic, not a blocked
 tool: write the calls by hand with `ctx.fetch`. `check_tool` refuses an import of a package that
 `dependencies` does not declare, and nothing installs on a run. Node's built-ins (`node:crypto`,
-`node:url`) and siblings by relative path are always there.
+`node:url`) and siblings by relative path are always there, less the ten the check refuses (the
+list under *Checking it*).
 
 ## Checking it
 
@@ -213,9 +293,12 @@ tool: write the calls by hand with `ctx.fetch`. `check_tool` refuses an import o
 **refusals** — what `publish_tool` will refuse on — and **advice**, each naming the file, line and
 column, quoting the line, and saying what to change. Refusals: a syntax error; no default export,
 or one that is not an async function of two parameters; a type error against `Input` or `Context`;
-the exec's environment; `child_process`, `net` or `dgram`; an import from outside the module, or of
-a package `dependencies` does not declare; an absolute URL passed to `ctx.fetch`; an SDK not bound
-to `ctx.proxyKey` and `ctx.proxyBase`; syntax Node cannot strip. Advice: an implicit `any`, a
+the exec's environment; `child_process`, `net`, `dgram`, `fs`, `fs/promises`, `worker_threads`,
+`vm`, `module`, `cluster` or `inspector`, bare or `node:`-prefixed, however imported (a tool has no
+filesystem of its own: a file it writes for another tool, or reads from one, is a blob, and
+`ctx.blob.write` and `ctx.blob.read` are the route); an import from outside the module, or of
+a package `dependencies` does not declare; a literal absolute URL passed to `ctx.fetch`; an SDK not
+bound to `ctx.proxyKey` and `ctx.proxyBase`; syntax Node cannot strip. Advice: an implicit `any`, a
 declared input field the module never reads, a result JSON would lose (a function, a `Map`).
 
 The check also answers with the tool's **annotations**, `readOnly` and `destructive`, read off the
@@ -235,7 +318,7 @@ Run the module through the connection's **execute tool** — `execute__<connecti
 whose description begins "Run code against <connection>":
 
 ```sh
-echo '{"itemId":"itm_a","quantity":2}' | node /graft/runner.mjs /tools/.drafts/<job>/demo-orders
+echo '{"itemId":"itm_a","quantity":2}' | node "$GRAFT_RUNNER" /tools/.drafts/<job>/demo-orders
 ```
 
 The runner takes the module's directory — running its `index.ts`, or `index.mjs` — or the file
@@ -307,14 +390,14 @@ Read it in this order:
   reading an `id` off the response, checking for `201` — ran against the preview, not a vendor
   answer, so it proves nothing. A `moduleError` there (the module threw on the preview) does not
   fail the dry run; a `moduleError` with no write previewed does.
-- **`writesRefused`** is a write that never became a preview: an absolute URL, a path that left the
-  connection, or a refusal from the proxy (a host the connection does not declare, an expired
-  token). Fix the module.
+- **`writesRefused`** is a write that never became a preview: a URL that is not `https://` or that
+  carries credentials, a path that left the connection, or a refusal from the proxy (a host the
+  connection does not declare, an expired token). Fix the module.
 - **`reads`** with a status of `400` or more failed the dry run — the credential, the path or the
   query is wrong, and the docs say which. A `3xx` failed it too: the proxy hands a vendor redirect
   back and `ctx.fetch` does not follow it, so the vendor did not answer the read where you asked.
-  Its `Location` says where it points; a host the connection declares is yours to call through
-  `ctx.proxyBase(host)`, and one it does not is a connection question, not a code one.
+  Its `Location` says where it points; a host the connection declares is yours to call with
+  `ctx.fetch` on that URL as it is, and one it does not is a connection question, not a code one.
 
 An SDK's calls cross the proxy with the same token, so writes through an SDK are stopped and
 previewed all the same — but they do not pass through `ctx.fetch`, so they are absent from `reads`

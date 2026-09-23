@@ -22,6 +22,17 @@ export const MAX_COMMAND_TIMEOUT_SECONDS = 300;
 export const DEFAULT_DETACHED_TIMEOUT_SECONDS = 600;
 export const MAX_DETACHED_TIMEOUT_SECONDS = 3600;
 
+/**
+ * How long a `<blobId>.tmp` directory may stand before the sweep reads it as a write a killed run
+ * abandoned rather than one in progress (ADR 0023, "a blob has one commit point"; GRA-189): the
+ * longest any run may live (the detached ceiling, since a detached `run_tool` writes blobs too)
+ * plus one sync ceiling as the margin. A `.tmp` younger than this is never touched, and the sweep
+ * never runs for an agent with a run in flight at all; this bound is for a process that restarted
+ * with a detached run still in a sandbox, and for the by-hand `sweep` script.
+ */
+export const ABANDONED_BLOB_WRITE_SECONDS =
+  MAX_DETACHED_TIMEOUT_SECONDS + MAX_COMMAND_TIMEOUT_SECONDS;
+
 /** Past about this long, a command should be started detached. The one number the descriptions carry. */
 export const DETACHED_ADVICE_SECONDS = 45;
 
@@ -32,10 +43,27 @@ export const MAX_WAIT_SECONDS = 600;
 /** Extra seconds a wait outlasts the kill bound, so a killed process is seen killed rather than running. */
 export const WAIT_SLACK_SECONDS = 5;
 
+/**
+ * How long any one tool description may be on the wire, and `SERVER_INSTRUCTIONS` with it: Claude
+ * Code caps both at 2KB per server (its CHANGELOG, 2.1.84: "MCP tool descriptions and server
+ * instructions are now capped at 2KB"), the one documented cap; ChatGPT and Claude.ai publish none.
+ * GRA-54's 1,800 was a guess under it; the research on GRA-111 is the source for this figure.
+ * `session.ts` reads it as `INSTRUCTIONS_BUDGET` for the other field; `tools.ts` holds an authored
+ * tool's composed description to it (GRA-200), which is why the number lives beside the other bounds
+ * on the wire rather than in `session.ts`, which `tools.ts` cannot import.
+ */
+export const DESCRIPTION_BUDGET = 2_048;
+
 /** Bounds on what one call puts into the model's context — a file or an output is unbounded by nature. */
 export const MAX_OUTPUT_CHARS = 16_000;
 export const MAX_FILE_CHARS = 64_000;
 export const MAX_RESULT_CHARS = 64_000;
+/**
+ * How many of a run's blobs the result names beside the module's result (GRA-186). A ledger line is
+ * short, so the bound is a count rather than characters; past it the list is cut with a note, and
+ * every blob still has its row — the wire is what is bounded, not the record.
+ */
+export const MAX_RESULT_BLOBS = 32;
 
 /** Bounds on what one call accepts, protecting the request rather than the context. */
 export const MAX_WRITE_BYTES = 256 * 1024;

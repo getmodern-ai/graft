@@ -1,12 +1,21 @@
+import { BANNED_MODULES } from "@graft/check/module-check.core";
 import type { AcquireAttemptRow, AcquireJobRow, AcquireTraceRow } from "@graft/db/repo/acquire-job";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 import type { UsageLedgerRow } from "@graft/db/repo/usage";
-import type { AcquireStatus, AcquireSuccess } from "@graft/mcp";
+import {
+  type AcquireStatus,
+  type AcquireSuccess,
+  blobRefsIn as blobRefsAtDoor,
+  FIXTURE_BLOB_TRACE,
+  MAX_INPUT_DEPTH,
+} from "@graft/mcp";
 import type { ProxyEvent } from "@graft/proxy";
 
-import type { Scenario } from "./scenarios";
-import type { TimedRequest } from "./world";
+import type { ReceivedUpload } from "./drop-vendor";
+import type { BlobFixture } from "./files-vendor";
+import type { Scenario, Stage } from "./scenarios";
+import type { ModelTurn, TimedRequest } from "./world";
 
 /**
  * Deterministic scorers: what the run did, never how it read. Every one asserts on evidence the
@@ -20,6 +29,11 @@ import type { TimedRequest } from "./world";
  * publish before the first write, no vendor host in the model's code, a dry run before any ask, the
  * first write through the published tool. The rest are the supporting facts a green scorecard needs
  * to mean something — the job succeeded, the check accepted, the tool works, nothing leaked.
+ *
+ * The blob scorers (GRA-191; ADR 0023) read a two-stage run, `ScenarioRun.next` being the consuming
+ * stage: no byte of the file in any model turn, the ref answered by the first tool and carried into
+ * the second's input, the consuming tool's dry run given a blob to read and its write intercepted,
+ * the second vendor holding the exact bytes the first served, and both modules on `ctx.blob`.
  */
 
 export type Score = { name: string; pass: boolean; detail?: string };
@@ -30,9 +44,15 @@ export type Score = { name: string; pass: boolean; detail?: string };
  */
 export type RecordedAsk = PendingActionRow & { position: number };
 
-/** One scenario's run, as the scorers read it. Every collection is the slice the scenario produced. */
+/**
+ * One stage's run, as the scorers read it. Every collection is the slice the stage produced. A
+ * chained scenario (GRA-191) is two of these: the first stage's `next` is the second's, run on the
+ * same world after the first tool's answer handed it `handoff`.
+ */
 export type ScenarioRun = {
   scenario: Scenario;
+  /** The stage this run is of: the scenario itself, or the stage its chain made from the handoff. */
+  stage: Stage;
   status: AcquireStatus;
   job: AcquireJobRow | null;
   attempts: AcquireAttemptRow[];
@@ -54,6 +74,14 @@ export type ScenarioRun = {
   /** Every tool-kind pending action created for the tool, in the order the world recorded them. */
   asks: RecordedAsk[];
   ledger: UsageLedgerRow[];
+  /** What the model was shown and answered during this stage, in order (GRA-191). */
+  model: ModelTurn[];
+  /** What the Drop vendor stored during this stage, in order (GRA-191). */
+  uploads: ReceivedUpload[];
+  /** What the first tool's answer handed the next stage; null when the scenario has no chain, or it answered none. */
+  handoff: string | null;
+  /** The chained stage's run; null when the scenario has no chain, or the chain never started. */
+  next: ScenarioRun | null;
   ms: number;
   /** The attempts' split, and the job's total as charged against the ceiling. */
   tokens: { input: number; output: number; total: number };
@@ -269,7 +297,7 @@ export function writePreviewed(
 
 /** The tool's use answered what the vendor holds — the scenario's own expectation of the final answer. */
 export function toolWorks(run: ScenarioRun): Score {
-  const problem = run.use ? run.scenario.use.expect(run.use.final) : "the tool was never used";
+  const problem = run.use ? run.stage.use.expect(run.use.final) : "the tool was never used";
   return {
     name: "tool_works",
     pass: problem === null,
@@ -360,6 +388,276 @@ export function credentialNeverRecorded(run: ScenarioRun, secrets: readonly stri
     detail: leaked.length
       ? `${leaked.length} secret(s) found in the job's records`
       : "no secret in traces, attempts, status or report",
+  };
+}
+
+/**
+ * The distinct `blob://` refs among a value's string leaves, in walk order (ADR 0023: a ref is a
+ * plain string, never a field), read with the door's own walk (`@graft/mcp`'s `blobRefsIn` over
+ * `walkStringLeaves`, GRA-199), so what the scorers count as a ref is what the door would admit.
+ * The walk stops past `MAX_INPUT_DEPTH` and says so in `tooDeep`, which a scorer turns into a
+ * sentence rather than a missing ref (Greptile on #159): the server bounds a result by characters,
+ * not depth, so a value that deep is not one this suite can judge and must not pass or fail by
+ * silence.
+ */
+export function blobRefsIn(value: unknown): { refs: string[]; tooDeep: boolean } {
+  return blobRefsAtDoor(value);
+}
+
+/** The sentence a scorer answers for a value the walk could not finish. */
+export function tooDeepDetail(what: string): string {
+  return `${what} nests past the ${MAX_INPUT_DEPTH} levels the walk reads, so its refs were not read; no tool's schema nests so deep, and a result that does is the tool's own problem to name`;
+}
+
+/** Every model turn of a run and of the stages chained after it. */
+function turnsOf(run: ScenarioRun): ModelTurn[] {
+  return run.next ? [...run.model, ...turnsOf(run.next)] : run.model;
+}
+
+/**
+ * The most one model turn may serialise to: a proof read's 4,000 characters, a tool result's 64,000,
+ * and a margin. The opening context with the skill is about 33 KiB; a turn carrying a slice of the
+ * file that holds no sentinel and still passes this is under 96 KiB in its encoding, which the
+ * loop's own cuts admit.
+ */
+export const MAX_MODEL_TURN_CHARS = 96 * 1024;
+
+/**
+ * No blob bytes in any model turn (ADR 0023: the bytes never enter a model turn). Every model input
+ * and output, across both jobs, is searched for every sentinel of the fixture in the text forms
+ * bytes take on a wire (the bytes as text, hex in either case, base64 at each of its three
+ * alignments), and bounded at `MAX_MODEL_TURN_CHARS`.
+ *
+ * The guarantee, at a stated granularity: a sentinel sits every `SENTINEL_PERIOD` bytes of the
+ * fixture (`files-vendor.ts`), so **any contiguous slice of `SENTINEL_GRANULARITY` bytes (under
+ * 16 KiB) or more, from any offset, in any of those encodings, is caught**; a smaller slice is
+ * within what the loop shows the model by design, since a proof read or a previewed body carries
+ * the first 4,000 characters of a response, and no sentinel sits inside that head.
+ */
+export function noBlobBytesInModelTurns(run: ScenarioRun, fixture: BlobFixture): Score {
+  const turns = turnsOf(run);
+  const offenders: string[] = [];
+  const forms = fixture.sentinels.flatMap((sentinel) => {
+    const hex = Buffer.from(sentinel.text, "ascii").toString("hex");
+    return [
+      { form: "text", needle: sentinel.text },
+      { form: "hex", needle: hex },
+      { form: "hex", needle: hex.toUpperCase() },
+      // base64 groups bytes in threes from wherever the encoded slice began, so a sentinel's
+      // encoding depends on the slice's start modulo three: one needle per phase, over the 27
+      // bytes of the sentinel that fall in whole groups at that phase.
+      ...[0, 1, 2].map((phase) => ({
+        form: "base64",
+        needle: Buffer.from(sentinel.text.slice(phase, phase + 27), "ascii").toString("base64"),
+      })),
+    ];
+  });
+  turns.forEach((turn, index) => {
+    const text = JSON.stringify(turn);
+    const where = `turn ${index + 1} (${"kind" in turn.input ? turn.input.kind : "context"})`;
+    if (text.length > MAX_MODEL_TURN_CHARS) {
+      offenders.push(
+        `${where} is ${text.length} characters, over the ${MAX_MODEL_TURN_CHARS} bound`,
+      );
+    }
+    const hit = forms.find(({ needle }) => text.includes(needle));
+    if (hit) offenders.push(`${where} carries a sentinel of the file as ${hit.form}`);
+  });
+  return {
+    name: "no_blob_bytes_in_model_turns",
+    pass: turns.length > 0 && offenders.length === 0,
+    detail: offenders.length
+      ? offenders.join("; ")
+      : turns.length
+        ? `${turns.length} model turn(s), none carrying a sentinel of the ${fixture.bytes.length}-byte file`
+        : "no model turn was recorded",
+  };
+}
+
+/**
+ * The ref travels: the producing tool's answer carries a `blob://` ref, the harness handed exactly
+ * that ref on, and the consuming tool's input carries the same ref, a plain string in both places.
+ */
+export function refTravels(run: ScenarioRun): Score {
+  const name = "ref_travels";
+  const produced = run.use ? blobRefsIn(run.use.final) : { refs: [], tooDeep: false };
+  const consumed = run.next?.use ? blobRefsIn(run.next.use.input) : { refs: [], tooDeep: false };
+  if (produced.tooDeep) {
+    return { name, pass: false, detail: tooDeepDetail("the producing tool's answer") };
+  }
+  if (consumed.tooDeep) {
+    return { name, pass: false, detail: tooDeepDetail("the consuming tool's input") };
+  }
+  const answered = produced.refs;
+  const carried = consumed.refs;
+  const handoff = run.handoff;
+  const pass = handoff !== null && answered.includes(handoff) && carried.includes(handoff);
+  let detail: string;
+  if (answered.length === 0) detail = "the producing tool's answer carries no blob:// ref";
+  else if (handoff === null) detail = "the harness handed nothing on";
+  else if (!answered.includes(handoff)) {
+    detail = `the handoff ${handoff} is not the ref the producing tool answered (${answered.join(", ")})`;
+  } else if (carried.includes(handoff)) {
+    detail = `${handoff} answered by the first tool and carried into the second's input`;
+  } else {
+    detail = `the consuming tool's input carries ${carried.length ? carried.join(", ") : "no ref"}, not ${handoff}`;
+  }
+  return { name, pass, detail };
+}
+
+const LIVE_BLOB_LINE =
+  /^The test input names (\d+) live blob\(s\); the dry run reads (?:it|them)\.$/;
+
+/** The `blobs` ledger a run's answer carries beside its result (GRA-186), or none. */
+function ledgerOf(final: unknown): { ref: string; bytes: number }[] {
+  const blobs = (final as { blobs?: unknown } | null)?.blobs;
+  if (!Array.isArray(blobs)) return [];
+  return blobs.filter(
+    (entry): entry is { ref: string; bytes: number } =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { ref?: unknown }).ref === "string" &&
+      typeof (entry as { bytes?: unknown }).bytes === "number",
+  );
+}
+
+/**
+ * The consuming tool's dry run had a blob to read and its write was intercepted: the job's own
+ * record says the dry run's input named a live blob (the one the first tool wrote) or a fixture the
+ * job minted (GRA-190), the version's dry run passed, and the proxy intercepted a write in that dry
+ * run whose body was at least the blob's size, so the bytes were read and left in the request that
+ * stopped at the proxy. A write that reached the vendor instead is `publish_before_first_write`'s.
+ */
+export function blobReadInDryRun(run: ScenarioRun): Score {
+  const name = "blob_read_in_dry_run";
+  const consumer = run.next;
+  if (!consumer) return { name, pass: false, detail: "the consuming stage never ran" };
+  let had: { kind: "live" | "fixture"; bytes: number } | null = null;
+  for (const trace of consumer.traces.filter((row) => row.kind === "dry_run")) {
+    const live = LIVE_BLOB_LINE.exec(trace.text);
+    if (live) {
+      const refs = (trace.data as { refs?: unknown } | null)?.refs;
+      const named = Array.isArray(refs)
+        ? refs.filter((r): r is string => typeof r === "string")
+        : [];
+      // The blob's size is on the producing tool's ledger, beside the ref it answered.
+      const bytes = (run.use ? ledgerOf(run.use.final) : [])
+        .filter((entry) => named.includes(entry.ref))
+        .reduce((sum, entry) => sum + entry.bytes, 0);
+      had = { kind: "live", bytes: Math.max(bytes, 1) };
+      break;
+    }
+    // The fixture's facts ride on the line's `data` as the runner's ledger entry (`job.ts`,
+    // GRA-199); the opening words only find the line.
+    if (trace.text.startsWith(FIXTURE_BLOB_TRACE)) {
+      const bytes = (trace.data as { bytes?: unknown } | null)?.bytes;
+      if (typeof bytes === "number") {
+        had = { kind: "fixture", bytes };
+        break;
+      }
+    }
+  }
+  const outcome = consumer.version?.dryRunOutcome as { passed?: boolean } | null;
+  const passed = outcome?.passed === true;
+  const intercepted = consumer.events.filter(
+    (event) => event.outcome === "dry_run_intercepted" && !READS.has(event.method),
+  );
+  const needed = had?.bytes ?? Number.POSITIVE_INFINITY;
+  const carrying = intercepted.filter((event) => (event.requestBytes ?? 0) >= needed);
+  let detail: string;
+  if (!had) detail = "the job's record names no blob for the dry run to read";
+  else if (!passed) {
+    detail = `the dry run had a ${had.kind} blob of ${had.bytes} bytes to read but did not pass`;
+  } else if (intercepted.length === 0) {
+    detail = `the dry run had a ${had.kind} blob of ${had.bytes} bytes to read, but the proxy intercepted no write`;
+  } else if (carrying.length === 0) {
+    detail = `the dry run had a ${had.kind} blob of ${had.bytes} bytes to read; the intercepted write(s) carried ${intercepted.map((e) => e.requestBytes ?? 0).join(", ")} byte(s)`;
+  } else {
+    detail = `a ${had.kind} blob of ${had.bytes} bytes; ${carrying.map((e) => `${e.method} ${e.path} intercepted with ${e.requestBytes} bytes`).join(", ")}`;
+  }
+  return { name, pass: had !== null && passed && carrying.length > 0, detail };
+}
+
+/**
+ * The second vendor received the exact bytes the first served: every upload Drop stored during the
+ * consuming stage hashes to the fixture's sha256 at the fixture's size, and there was at least one.
+ */
+export function bytesArrivedIntact(run: ScenarioRun, fixture: BlobFixture): Score {
+  const name = "bytes_arrived_intact";
+  const consumer = run.next;
+  if (!consumer) return { name, pass: false, detail: "the consuming stage never ran" };
+  const uploads = consumer.uploads;
+  const intact = uploads.filter(
+    (upload) => upload.sha256 === fixture.sha256 && upload.bytes === fixture.bytes.length,
+  );
+  const short = (hash: string) => hash.slice(0, 12);
+  let detail: string;
+  if (uploads.length === 0) detail = "the second vendor stored no upload";
+  else if (intact.length === uploads.length) {
+    detail = `${uploads.length} upload(s) of ${fixture.bytes.length} bytes, sha256 ${short(fixture.sha256)} as served`;
+  } else {
+    detail = uploads
+      .filter((upload) => !intact.includes(upload))
+      .map(
+        (upload) =>
+          `${upload.name}: ${upload.bytes} bytes, sha256 ${short(upload.sha256)} (served ${fixture.bytes.length} bytes, ${short(fixture.sha256)})`,
+      )
+      .join("; ");
+  }
+  return { name, pass: uploads.length > 0 && intact.length === uploads.length, detail };
+}
+
+const IMPORT_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["']([^"']+)["']/g;
+const BANNED_ROOTS: ReadonlySet<string> = new Set(
+  BANNED_MODULES.map((name) => name.split("/")[0] ?? name),
+);
+
+/** The source files of the attempt that passed, or the last one, `package.json` left out. */
+function sourceOf(run: ScenarioRun): { path: string; content: string }[] {
+  const attempt = run.attempts.find((a) => a.outcome === "passed") ?? run.attempts.at(-1);
+  return (attempt?.files ?? []).filter((file) => file.path !== "package.json");
+}
+
+/** The banned built-ins a source imports, by the check's own list, `node:` stripped and a subpath folded onto its root. */
+function bannedImportsOf(files: { path: string; content: string }[]): string[] {
+  const found: string[] = [];
+  for (const file of files) {
+    for (const match of file.content.matchAll(IMPORT_SPECIFIER)) {
+      const specifier = match[1] ?? "";
+      const root = specifier.replace(/^node:/, "").split("/")[0] ?? "";
+      if (BANNED_ROOTS.has(root)) found.push(`${file.path} imports ${specifier}`);
+    }
+  }
+  return found;
+}
+
+/**
+ * The producing module writes its blob with `ctx.blob.write` and imports no module the check bans;
+ * the consuming module reads its blob with `ctx.blob.read` and imports none either (ADR 0023:
+ * `ctx.blob` is the module's one route to a file, the ban its defence in depth).
+ */
+export function modulesUseCtxBlob(run: ScenarioRun): Score {
+  const problems: string[] = [];
+  const producer = sourceOf(run);
+  if (!producer.some((file) => file.content.includes("ctx.blob.write"))) {
+    problems.push("the producing module does not call ctx.blob.write");
+  }
+  problems.push(...bannedImportsOf(producer).map((p) => `producing ${p}`));
+  if (!run.next) {
+    problems.push("the consuming stage never ran");
+  } else {
+    const consumer = sourceOf(run.next);
+    if (!consumer.some((file) => file.content.includes("ctx.blob.read"))) {
+      problems.push("the consuming module does not call ctx.blob.read");
+    }
+    problems.push(...bannedImportsOf(consumer).map((p) => `consuming ${p}`));
+  }
+  return {
+    name: "modules_use_ctx_blob",
+    pass: problems.length === 0,
+    detail: problems.length
+      ? problems.join("; ")
+      : "ctx.blob.write in the producing module, ctx.blob.read in the consuming one, no banned import in either",
   };
 }
 

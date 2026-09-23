@@ -96,12 +96,26 @@ const rules = (diagnostics: Diagnostic[]) => diagnostics.map((d) => d.rule);
 describe("a clean module", () => {
   it("passes in TypeScript with no refusals and no advice, annotated as a write", () => {
     const result = check({ "index.ts": CLEAN_TS });
-    expect(result).toEqual({ entry: "index.ts", refusals: [], advice: [], annotations: WRITE });
+    expect(result).toEqual({
+      entry: "index.ts",
+      refusals: [],
+      advice: [],
+      annotations: WRITE,
+      contextMembersUsed: ["fetch"],
+      blobReadFields: [],
+    });
   });
 
   it("passes in JavaScript, checked as JavaScript, with a JSDoc-typed helper beside it", () => {
     const result = check({ "index.mjs": CLEAN_MJS, "helper.mjs": HELPER_MJS });
-    expect(result).toEqual({ entry: "index.mjs", refusals: [], advice: [], annotations: WRITE });
+    expect(result).toEqual({
+      entry: "index.mjs",
+      refusals: [],
+      advice: [],
+      annotations: WRITE,
+      contextMembersUsed: ["fetch"],
+      blobReadFields: [],
+    });
   });
 
   it("may use Node's globals, Node's built-ins and a catch variable without ceremony", () => {
@@ -143,8 +157,178 @@ describe("a clean module", () => {
     });
     expect(result.refusals).toEqual([]);
     expect(CONTEXT_DECLARATION).toBe(
-      "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null }",
+      "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }",
     );
+  });
+
+  /**
+   * `ctx.blob` (GRA-186; ADR 0023): a module that writes a blob from a vendor response's body,
+   * stats it and reads one back type-checks, and its annotations are its vendor methods' alone — a
+   * blob write is Graft's own, scoped and swept by rule, not a vendor side effect, so a read-only tool
+   * stays read-only.
+   */
+  it("may write, stat and read a blob through ctx.blob, which moves no annotation", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        "  const res = await ctx.fetch(`/attachments/${input.itemId}`);",
+        "  if (!res.body) throw new Error(`GET attachment ${res.status}`);",
+        '  const file: string = await ctx.blob.write(res.body, { contentType: res.headers.get("content-type") ?? "application/octet-stream", name: input.notes });',
+        '  const again: string = await ctx.blob.write(new TextEncoder().encode(input.notes ?? ""), { contentType: "text/plain" });',
+        "  const stat: { bytes: number; contentType: string; name?: string; expiresAt: string } = await ctx.blob.stat(file);",
+        "  const blob: Blob = await ctx.blob.read(again);",
+        `  return { file, again, bytes: stat.bytes, size: blob.size, ${READS_INPUT} };`,
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toEqual([]);
+    expect(result.advice).toEqual([]);
+    expect(result.annotations).toEqual(READ);
+    // The members called, sorted; the refs read here are locals, so no input field is named.
+    expect(result.contextMembersUsed).toEqual(["blob.read", "blob.stat", "blob.write", "fetch"]);
+    expect(result.blobReadFields).toEqual([]);
+  });
+
+  /**
+   * What `acquire`'s job decides a consuming tool's fixture on (GRA-190; Greptile on #149): a
+   * call, read off the syntax, and never a name that appears in a comment or a string.
+   */
+  it("reports the ctx members called and the input field a blob ref is read from, off calls alone: a name in a comment or a string is not one", () => {
+    const commented = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        "  // ctx.blob.read(input.notes) is what a consuming tool would do; this one posts the ref as text.",
+        '  const note = "ctx.blob.read(input.notes) and ctx.blob.stat(input.itemId)";',
+        `  const res = await ctx.fetch("/notes", { method: "POST", body: JSON.stringify({ note, ${READS_INPUT} }) });`,
+        "  return res.json();",
+        "};",
+      ].join("\n"),
+    });
+    expect(commented.refusals).toEqual([]);
+    expect(commented.contextMembersUsed).toEqual(["fetch"]);
+    expect(commented.blobReadFields).toEqual([]);
+
+    // Three refs on the input, each a required string, so the reads type-check and no field is unread.
+    const REFS_SCHEMA = {
+      type: "object",
+      properties: {
+        file: { type: "string" },
+        attachment: { type: "string" },
+        note: { type: "string" },
+      },
+      required: ["file", "attachment", "note"],
+    };
+    const reads = check(
+      {
+        "index.ts": [
+          "export default async (input: Input, ctx: Context) => {",
+          "  const file: Blob = await ctx.blob.read(input.file);",
+          '  const stat = await ctx.blob.stat(input?.["attachment"]);',
+          "  const ref = input.note;",
+          "  const again: Blob = await (ctx).blob.read((ref));",
+          "  return { size: file.size, bytes: stat.bytes, again: again.size, base: ctx.proxyBase() };",
+          "};",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(reads.refusals).toEqual([]);
+    expect(reads.contextMembersUsed).toEqual(["blob.read", "blob.stat", "proxyBase"]);
+    // `file` and `attachment` off `input`; the read through `ref` names no field.
+    expect(reads.blobReadFields).toEqual(["file", "attachment"]);
+
+    // The export's first parameter is what "input" means, whatever it is called.
+    const renamed = check(
+      {
+        "index.ts": [
+          "export default async (args: Input, ctx: Context) => {",
+          "  const file: Blob = await ctx.blob.read(args.file);",
+          "  return { size: file.size, a: args.attachment, n: args.note };",
+          "};",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(renamed.blobReadFields).toEqual(["file"]);
+
+    // Bound by symbol, not by name (Greptile on #149, the second time): a helper of the module's
+    // own with a `.blob.read`, a helper file handed `ctx`, and a nested function whose parameters
+    // shadow `ctx` and `input` all resolve to other symbols and record nothing.
+    const helpers = check(
+      {
+        "index.ts": [
+          'import { readThrough } from "./helper.ts";',
+          "export default async (input: Input, ctx: Context) => {",
+          "  const helper = { blob: { read: async (ref: string): Promise<Blob> => new Blob([ref]) } };",
+          "  const a: Blob = await helper.blob.read(input.file);",
+          "  const b: Blob = await readThrough(ctx, input);",
+          "  const inner = async (input: { note: string }, ctx: Context) => ctx.blob.stat(input.note);",
+          "  const c = await inner({ note: input.note }, ctx);",
+          "  return { a: a.size, b: b.size, c: c.bytes, attachment: input.attachment };",
+          "};",
+        ].join("\n"),
+        "helper.ts": [
+          "export async function readThrough(ctx: Context, input: Input): Promise<Blob> {",
+          "  return ctx.blob.read(input.attachment);",
+          "}",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(helpers.refusals).toEqual([]);
+    expect(helpers.contextMembersUsed).toEqual([]);
+    expect(helpers.blobReadFields).toEqual([]);
+
+    // One level of destructuring is followed on either side: the parameters, and the body.
+    const destructured = check(
+      {
+        "index.ts": [
+          "export default async ({ file, attachment }: Input, { blob, fetch: get }: Context) => {",
+          "  const a: Blob = await blob.read(file);",
+          '  const res = await get("/items");',
+          "  return { a: a.size, ok: res.ok, s: (await blob.stat(attachment)).bytes };",
+          "};",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(destructured.refusals).toEqual([]);
+    expect(destructured.contextMembersUsed).toEqual(["blob.read", "blob.stat", "fetch"]);
+    expect(destructured.blobReadFields).toEqual(["file", "attachment"]);
+
+    const inBody = check(
+      {
+        "index.ts": [
+          "export default async (input: Input, ctx: Context) => {",
+          "  const { blob } = ctx;",
+          "  const { note } = input;",
+          "  const alias = ctx.blob;",
+          "  const a: Blob = await blob.read(note);",
+          "  const b: Blob = await alias.read(input.file);",
+          "  return { a: a.size, b: b.size, attachment: input.attachment };",
+          "};",
+        ].join("\n"),
+      },
+      { schema: REFS_SCHEMA },
+    );
+    expect(inBody.refusals).toEqual([]);
+    // `blob.read(note)` through the two destructurings is a read of `note`; `alias.read` through a
+    // plain variable is not followed, so `file` is not named.
+    expect(inBody.contextMembersUsed).toEqual(["blob.read"]);
+    expect(inBody.blobReadFields).toEqual(["note"]);
+  });
+
+  it("refuses a blob written from a string: the runner takes bytes, and the check says so first", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  const file = await ctx.blob.write("plain text", { contentType: "text/plain" });',
+        `  return { file, ${READS_INPUT} };`,
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toHaveLength(1);
+    expect(result.refusals[0]).toMatchObject({ rule: "type-error", line: 2 });
   });
 });
 
@@ -316,7 +500,7 @@ describe("a read of a field the schema does not declare", () => {
       "index.ts": `export default async (input: Input, ctx: Context) => ({ t: ctx.token, ${READS_INPUT} });`,
     });
     expect(rules(result.refusals)).toEqual(["type-error"]);
-    expect(result.refusals[0]?.hint).toContain("fetch, proxyBase, proxyKey and connection");
+    expect(result.refusals[0]?.hint).toContain("fetch, proxyBase, proxyKey, connection and blob");
     expect(result.refusals[0]?.hint).toContain(CONTEXT_DECLARATION);
   });
 });
@@ -395,6 +579,123 @@ describe("banned surface", () => {
     },
   );
 
+  /** ADR 0023: the ten, in the ticket's order; the skill and the runner header name the same list. */
+  it("bans the filesystem and process-hosting modules beside the three sockets-and-processes ones", () => {
+    expect(BANNED_MODULES).toEqual([
+      "child_process",
+      "net",
+      "dgram",
+      "fs",
+      "fs/promises",
+      "worker_threads",
+      "vm",
+      "module",
+      "cluster",
+      "inspector",
+    ]);
+  });
+
+  /** The route to a file is `ctx.blob` (ADR 0023); the sentence says so for `fs` and for nothing else. */
+  it.each(["fs", "fs/promises", "node:fs", "node:fs/promises"])(
+    "names ctx.blob.write and ctx.blob.read as the route when %s is imported",
+    (specifier) => {
+      const result = check({
+        "index.ts": [
+          `import { readFile } from "${specifier}";`,
+          `export default async (input: Input, ctx: Context) => ({ readFile, ${READS_INPUT} });`,
+        ].join("\n"),
+      });
+      expect(rules(result.refusals)).toEqual(["banned-module"]);
+      expect(result.refusals[0]?.message).toContain(`imports ${specifier}`);
+      expect(result.refusals[0]?.message).toContain("ctx.blob.write and ctx.blob.read");
+      expect(result.refusals[0]?.hint).toContain("ctx.blob.write(");
+      expect(result.refusals[0]?.hint).toContain("ctx.blob.read(");
+      expect(result.refusals[0]?.hint).toContain("blob://<id>");
+    },
+  );
+
+  it.each(["worker_threads", "vm", "module", "cluster", "inspector", "child_process"])(
+    "keeps the processes-and-sockets sentence for %s, with no word of ctx.blob",
+    (name) => {
+      const result = check({
+        "index.ts": [
+          `import x from "node:${name}";`,
+          `export default async (input: Input, ctx: Context) => ({ x, ${READS_INPUT} });`,
+        ].join("\n"),
+      });
+      expect(rules(result.refusals)).toEqual(["banned-module"]);
+      expect(result.refusals[0]?.message).toContain("does not start processes or open sockets");
+      expect(result.refusals[0]?.message).not.toContain("ctx.blob");
+      expect(result.refusals[0]?.hint).toContain(`whatever ${name} was for`);
+    },
+  );
+
+  /** Left alone on purpose (GRA-188): the built-ins a module leans on for bytes, paths and streams. */
+  it("still admits path, stream, stream/promises, crypto, buffer, zlib, url, util, events, string_decoder and timers", () => {
+    const result = check({
+      "index.ts": [
+        'import { basename } from "node:path";',
+        'import { Readable } from "stream";',
+        'import { pipeline } from "node:stream/promises";',
+        'import { createHash } from "node:crypto";',
+        'import { Buffer as B } from "node:buffer";',
+        'import { gzipSync } from "node:zlib";',
+        'import { fileURLToPath } from "node:url";',
+        'import { inspect } from "node:util";',
+        'import { EventEmitter } from "node:events";',
+        'import { StringDecoder } from "node:string_decoder";',
+        'import { setTimeout as sleep } from "node:timers/promises";',
+        "export default async (input: Input, ctx: Context) => {",
+        "  await sleep(1);",
+        "  const res = await ctx.fetch(`/items/${input.itemId}`);",
+        "  return { basename, Readable, pipeline, createHash, B, gzipSync, fileURLToPath, inspect, EventEmitter, StringDecoder, ok: res.ok, q: input.quantity, n: input.notes };",
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toEqual([]);
+  });
+
+  /**
+   * A banned module has no ambient declaration, so a reference in a type position, erased at run
+   * time and seen by no import rule, is refused with the sentence an import gets rather than typed
+   * `any` or answered with TypeScript's "install @types/node".
+   */
+  it("refuses a type reference to fs, and one to worker_threads, as banned-module rather than typing it any", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  let stats: import("node:fs").Stats | null = null;',
+        '  let worker: import("worker_threads").Worker | null = null;',
+        "  const res = await ctx.fetch(`/items/${input.itemId}`);",
+        "  return { stats, worker, ok: res.ok, q: input.quantity, n: input.notes };",
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals.map((r) => [r.rule, r.line])).toEqual([
+      ["banned-module", 2],
+      ["banned-module", 3],
+    ]);
+    expect(result.refusals[0]?.message).toContain("index.ts imports node:fs;");
+    expect(result.refusals[0]?.message).toContain("ctx.blob.write and ctx.blob.read");
+    expect(result.refusals[1]?.message).toContain("index.ts imports worker_threads;");
+    expect(result.refusals[1]?.message).not.toContain("ctx.blob");
+  });
+
+  /** The shorthand declaration types the whole module `any`, which is what an admitted built-in keeps. */
+  it("still types a reference to an admitted built-in as any, as before", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  let r: typeof import("node:stream") | null = null;',
+        '  let p: typeof import("path") | null = null;',
+        "  const res = await ctx.fetch(`/items/${input.itemId}`);",
+        "  return { r, p, ok: res.ok, q: input.quantity, n: input.notes };",
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toEqual([]);
+  });
+
   it("refuses an import from outside the module, by relative path, by absolute path, or by a computed name", () => {
     const result = check({
       "index.ts": [
@@ -448,7 +749,32 @@ describe("banned surface", () => {
       ["fetch-absolute-url", 3],
       ["fetch-absolute-url", 4],
     ]);
+    expect(result.refusals[0]?.message).toBe(
+      "ctx.fetch is given a literal absolute URL (https://api.vendor.com/orders); the proxy supplies the host from the connection, and a host written into the module is refused. A URL a vendor hands back at run time, on one of the connection's hosts, may be passed as it is.",
+    );
     expect(result.refusals[0]?.hint).toContain('"/v1/orders"');
+    expect(result.refusals[0]?.hint).toContain("as the value you read, never as a literal");
+  });
+
+  /**
+   * GRA-197: Slack's upload flow answers an `upload_url` on `files.slack.com`, and the module passes
+   * it to `ctx.fetch` as the value it read. The check sees no literal, so the rule is silent; the
+   * runner routes the URL through the proxy's host form and the proxy judges the host. The write
+   * is still a write for the annotations.
+   */
+  it("passes a runtime value given to fetch, such as the upload URL a vendor answered, and counts the write", () => {
+    const result = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  const res = await ctx.fetch("/files.getUploadURLExternal?length=" + String(input.quantity));',
+        "  const { upload_url } = (await res.json()) as { upload_url: string };",
+        '  const put = await ctx.fetch(upload_url, { method: "POST", body: input.notes });',
+        `  return { status: put.status, ${READS_INPUT} };`,
+        "};",
+      ].join("\n"),
+    });
+    expect(result.refusals).toEqual([]);
+    expect(result.annotations).toEqual({ readOnly: false, destructive: false });
   });
 
   it("refuses a bare fetch, since a module has no route out but ctx", () => {
@@ -903,12 +1229,12 @@ describe("TypeScript that Node cannot strip", () => {
         "enum Status { Open }",
         "namespace NS { export const a = 1; }",
         "class C { constructor(public x: number) {} }",
-        'import fs = require("node:fs");',
+        'import path = require("node:path");',
         "function dec(target: unknown, key: string) {}",
         "class D { @dec method() {} }",
         "declare enum Fine { A }",
         "declare namespace AlsoFine { const b: number; }",
-        "export default async (input: Input, ctx: Context) => ({ s: Status.Open, a: NS.a, c: new C(1), fs, d: new D(), i: input.itemId, q: input.quantity, n: input.notes });",
+        "export default async (input: Input, ctx: Context) => ({ s: Status.Open, a: NS.a, c: new C(1), path, d: new D(), i: input.itemId, q: input.quantity, n: input.notes });",
       ].join("\n"),
     });
     expect(result.refusals.map((r) => [r.rule, r.line])).toEqual([
@@ -1033,6 +1359,8 @@ describe("the entry", () => {
       refusals: [],
       advice: [],
       annotations: READ,
+      contextMembersUsed: [],
+      blobReadFields: [],
     });
   });
 });
@@ -1092,7 +1420,14 @@ describe("checkModule", () => {
       entry: "index.ts",
       inputSchema: SCHEMA,
     });
-    expect(result).toEqual({ entry: "index.ts", refusals: [], advice: [], annotations: WRITE });
+    expect(result).toEqual({
+      entry: "index.ts",
+      refusals: [],
+      advice: [],
+      annotations: WRITE,
+      contextMembersUsed: ["fetch"],
+      blobReadFields: [],
+    });
 
     const vendored = await checkModule({
       files: [
@@ -1151,6 +1486,8 @@ describe("checkModule", () => {
       refusals: [expect.objectContaining({ rule: "entry-missing", file: "a.ts" })],
       advice: [],
       annotations: UNKNOWN_ANNOTATIONS,
+      contextMembersUsed: [],
+      blobReadFields: [],
     });
   });
 });

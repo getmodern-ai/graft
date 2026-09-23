@@ -438,6 +438,9 @@ importers:
       '@graft/proxy':
         specifier: workspace:*
         version: link:../proxy
+      '@graft/runner':
+        specifier: workspace:*
+        version: link:../runner
       '@graft/vault':
         specifier: workspace:*
         version: link:../vault
@@ -823,6 +826,9 @@ importers:
       '@graft/sandbox':
         specifier: workspace:*
         version: link:../sandbox
+      '@graft/toolbox':
+        specifier: workspace:*
+        version: link:../toolbox
       tar-stream:
         specifier: 'catalog:'
         version: 3.2.1

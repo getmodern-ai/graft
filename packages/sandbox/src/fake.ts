@@ -34,9 +34,18 @@ import {
 /**
  * The sandbox's own absolute directories, mapped under the root whether or not a call has created
  * them yet: `mkdir -p /graft/x` must land inside the root, and a dynamic list of what exists could
- * not know that. A mount path (`/tools`, typically) joins this list when it is mounted.
+ * not know that. A mount path (`/tools` and `/blobs`, typically) joins this list when it is mounted.
+ * The skills live under `/graft/<hash>/skills/` beside the runner since GRA-193, so no bare
+ * `/skills` is here (GRA-199).
  */
-export const FAKE_SANDBOX_ROOTS = ["/tools", "/graft", "/skills", "/workspace", "/tmp", "/home"];
+export const FAKE_SANDBOX_ROOTS = ["/tools", "/blobs", "/graft", "/workspace", "/tmp", "/home"];
+
+/**
+ * Where the blobs live beside the toolboxes: `<root>/toolboxes/.blobs/<agentId>`, which is
+ * `@graft/toolbox`'s `agentBlobsPath` under the store's root (ADR 0023). Spelt here because this
+ * package cannot import that one; `packages/toolbox/src/filesystem.test.ts` pins the two together.
+ */
+const BLOBS_DIR = ".blobs";
 
 /** Where a command runs when `workingDir` is not given, as in the Docker image. */
 const DEFAULT_WORKING_DIR = "/workspace";
@@ -255,18 +264,30 @@ type FakeSandbox = {
   root: string;
   createdAt: string;
   processes: Map<string, Running>;
-  /** Mount path → toolbox id, so a second mount of the same pair is a no-op and the roots list knows it. */
-  mounts: Map<string, string>;
+  /** Mount path → what is there, so a second mount of the same pair is a no-op and the roots list knows it. */
+  mounts: Map<string, FakeMount>;
   handle: SandboxHandle;
 };
 
+/** A toolbox by id, or an agent's blobs directory by agent id. */
+type FakeMount = { kind: "toolbox" | "blobs"; id: string };
+
 export type FakeSandboxBackend = SandboxBackend & {
-  /** The host directory everything lives under: `sandboxes/<name>` and `toolboxes/<toolboxId>`. */
+  /** The host directory everything lives under: `sandboxes/<name>`, `toolboxes/<toolboxId>` and `toolboxes/.blobs/<agentId>`. */
   root: string;
   /** The host directory a sandbox's `/` maps to, for a test that wants to look behind the seam. */
   sandboxRoot(name: string): string;
   /** The host directory a toolbox lives in. */
   toolboxRoot(toolboxId: string): string;
+  /** The host directory an agent's blobs live in, beside the toolboxes; what `/blobs` is a symlink to. */
+  blobsRoot(agentId: string): string;
+  /**
+   * The names of every process `execDetached` started in a sandbox, finished ones included, in
+   * start order; `[]` for a sandbox never opened. For a suite asserting that a refusal happened
+   * before anything ran (GRA-187's door): a run is one such process, so the list not growing is
+   * the fact.
+   */
+  processNames(name: string): string[];
   /** Kill every process still running and delete the directory. */
   close(): Promise<void>;
 };
@@ -277,6 +298,7 @@ export function createFakeSandboxBackend(): FakeSandboxBackend {
   const sandboxes = new Map<string, FakeSandbox>();
   const sandboxRoot = (name: string) => join(root, "sandboxes", name);
   const toolboxRoot = (toolboxId: string) => join(root, "toolboxes", toolboxId);
+  const blobsRoot = (agentId: string) => join(root, "toolboxes", BLOBS_DIR, agentId);
 
   async function create(name: string): Promise<FakeSandbox> {
     const sandbox = {
@@ -284,13 +306,30 @@ export function createFakeSandboxBackend(): FakeSandboxBackend {
       root: sandboxRoot(name),
       createdAt: new Date().toISOString(),
       processes: new Map<string, Running>(),
-      mounts: new Map<string, string>(),
+      mounts: new Map<string, FakeMount>(),
     };
     for (const dir of FAKE_SANDBOX_ROOTS) {
       await mkdir(join(sandbox.root, dir), { recursive: true });
     }
     const hostPath = (path: string) => join(sandbox.root, posix.normalize(`/${path}`));
     const roots = () => [...FAKE_SANDBOX_ROOTS, ...sandbox.mounts.keys()];
+    /**
+     * A mount is a symlink from the sandbox path to the host directory, made once per pair. Whatever
+     * was at the path goes, as it does when a container is recreated around a new mount
+     * (`SandboxHandle.mountToolbox`); the target directory itself is never touched here.
+     */
+    const link = async (mount: FakeMount, target: string, mountPath: string) => {
+      if (!mountPath.startsWith("/")) throw new Error(`mountPath must be absolute: ${mountPath}`);
+      const normalised = posix.normalize(mountPath).replace(/\/+$/, "") || "/";
+      const current = sandbox.mounts.get(normalised);
+      if (current?.kind === mount.kind && current.id === mount.id) return;
+      await mkdir(target, { recursive: true });
+      const at = hostPath(normalised);
+      await rm(at, { recursive: true, force: true });
+      await mkdir(dirname(at), { recursive: true });
+      await symlink(target, at, "dir");
+      sandbox.mounts.set(normalised, mount);
+    };
     const startHere = (
       command: string,
       options: { env?: Record<string, string>; timeoutSeconds: number; workingDir?: string },
@@ -352,20 +391,20 @@ export function createFakeSandboxBackend(): FakeSandboxBackend {
           clearTimeout(timer);
         }
       },
-      mountToolbox: async ({ toolboxId, mountPath }) => {
+      mountToolbox: async ({ toolboxId, mountPath, blobs }) => {
         assertSandboxName("a toolbox id", toolboxId);
-        if (!mountPath.startsWith("/")) throw new Error(`mountPath must be absolute: ${mountPath}`);
-        const normalised = posix.normalize(mountPath).replace(/\/+$/, "") || "/";
-        if (sandbox.mounts.get(normalised) === toolboxId) return;
-        const target = toolboxRoot(toolboxId);
-        await mkdir(target, { recursive: true });
-        const link = hostPath(normalised);
-        // Whatever was at the path goes, as it does when a container is recreated around a new
-        // mount (`SandboxHandle.mountToolbox`). The toolbox itself is never touched here.
-        await rm(link, { recursive: true, force: true });
-        await mkdir(dirname(link), { recursive: true });
-        await symlink(target, link, "dir");
-        sandbox.mounts.set(normalised, toolboxId);
+        if (blobs) assertSandboxName("an agent id", blobs.agentId);
+        if (blobs && posix.normalize(blobs.mountPath) === posix.normalize(mountPath)) {
+          throw new Error(`the toolbox and the blobs cannot share a mount path: ${mountPath}`);
+        }
+        await link({ kind: "toolbox", id: toolboxId }, toolboxRoot(toolboxId), mountPath);
+        if (blobs) {
+          await link(
+            { kind: "blobs", id: blobs.agentId },
+            blobsRoot(blobs.agentId),
+            blobs.mountPath,
+          );
+        }
       },
       downloadDirectory: (path) => walk(hostPath(path)),
       ls: async (path) => {
@@ -388,6 +427,8 @@ export function createFakeSandboxBackend(): FakeSandboxBackend {
     root,
     sandboxRoot,
     toolboxRoot,
+    blobsRoot,
+    processNames: (name) => [...(sandboxes.get(name)?.processes.keys() ?? [])],
     ensure: async ({ name }) => {
       assertSandboxName("a sandbox name", name);
       const existing = sandboxes.get(name);

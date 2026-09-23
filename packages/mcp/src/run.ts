@@ -18,14 +18,23 @@ import {
   touchToolUsed,
 } from "@graft/core";
 import type { UsageOutcome } from "@graft/db/schema/usage";
-import { EXIT_TIMEOUT, EXIT_USAGE, MODULE_ENTRIES, RUNNER_PATH } from "@graft/runner";
+import {
+  type BlobLedgerEntry,
+  EXIT_TIMEOUT,
+  EXIT_USAGE,
+  MODULE_ENTRIES,
+  readRunnerEnvelope,
+} from "@graft/runner";
 import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
 import { sandboxPath } from "@graft/toolbox";
 import { type AskChannel, gateToolCall } from "./approval";
+import { blobQuotaOvershoot, recordBlobsWithinQuota } from "./blob-budget";
+import { admitBlobs, blobAgentEnvironment, blobRunEnvironment } from "./blob-door";
+import { blobsOnWire, withBlobs } from "./blobs";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
-import { detachedHoldMs, heldInFlight } from "./in-flight";
+import { admitUnderGrant, detachedHoldMs, heldInFlight } from "./in-flight";
 import { type Refusal, refusal } from "./result";
 import { revokedConnectionRefusal } from "./revoke";
 import {
@@ -36,6 +45,8 @@ import {
   openAgentSandbox,
   RUN_SCRATCH_DIR,
   remountToolbox,
+  runnerPathIn,
+  seededRunnerPath,
   startDetached,
 } from "./sandbox";
 import { compileInputSchema } from "./schema";
@@ -85,6 +96,26 @@ import { authoredToolName } from "./tool-names";
  * scope is read before the choice, so a live row the agent was never given is never followed; the
  * approval gate still sits after the choice, so a write asks on the connection it will run against
  * (ADR 0008). A caller that names the connection (`connectionId`) gets no following: it said which.
+ *
+ * **A blob the module wrote comes back on the runner's ledger, never through the model** (GRA-186;
+ * ADR 0023). The runner prints an envelope, `{ result, blobs }`, and this file is where it is read
+ * (`describeModuleRun`): the module's result goes on as it always did — bounded, wrapped as a
+ * dry-run report, recorded — and the ledger becomes one `blob` row per line (`blobs.ts`) before
+ * the answer carries the same list beside the result. `GRAFT_AGENT` (`blob-door.ts`'s
+ * `blobAgentEnvironment`, on every capability run) and `GRAFT_TOOL_VERSION` go into the exec's
+ * environment for the sidecar the runner writes, and `GRAFT_BLOBS_DIR` names the mount
+ * (`commandEnvironment`); the runner deletes all three before the module loads.
+ *
+ * **A ref the input names is judged at the door, before a sandbox is touched** (GRA-187;
+ * `blob-door.ts`). After the input is validated and before the approval gate, the agent's live
+ * bytes are measured against the quota (`blob_quota`) and every `blob://` leaf of the input is
+ * looked up under the person and the agent (`blob_not_found`, `blob_expired`), each a refusal in
+ * the shape above with a `refused` ledger row. Reading a blob asks nothing (ADR 0008), and a dry
+ * run passes the same door, so `acquire`'s job learns of a dead ref here rather than inside a run.
+ * A run the door admits is handed what it may still commit, `GRAFT_BLOB_BUDGET_BYTES`, beside
+ * `GRAFT_AGENT`; the runner refuses the write that would pass it as `blob_quota` as the bytes
+ * stream in, so a module looping `ctx.blob.write` cannot commit past the quota inside one run
+ * (Greptile on #145).
  */
 
 /**
@@ -160,19 +191,33 @@ export async function runWithCapability<T>(args: {
     );
   }
   return args.run({
-    ...commandEnvironment(mode.timeoutSeconds),
+    ...commandEnvironment(mode.timeoutSeconds, await seededRunnerPath(deps)),
     GRAFT_PROXY_URL: deps.proxyPublicUrl,
     GRAFT_CONNECTION: args.connectionId,
     GRAFT_TOKEN: token,
+    // The agent for the sidecar of any blob the run writes: on every capability run, since an
+    // `execute__` command may invoke `$GRAFT_RUNNER` on a by-hand module (Greptile on #159).
+    ...blobAgentEnvironment(scope),
     // The runner's own switch into dry-run mode; the claim on the token is what the proxy enforces.
     ...(mode.dryRun ? { GRAFT_DRY_RUN: "1" } : {}),
   });
 }
 
 export type ModuleRunOutcome =
-  | { ok: true; result: unknown }
+  /**
+   * The module's result, the blobs the run wrote (`[]` for a module that wrote none), and how
+   * many ledger lines the reader refused (`RunnerEnvelope.dropped`; zero from this repository's runner).
+   */
+  | { ok: true; result: unknown; blobs: BlobLedgerEntry[]; blobsDropped: number }
   | { ok: true; detached: DetachedStart }
-  | { ok: false; failure: RunFailure };
+  /**
+   * The runner's failure, and the blobs the module committed before it failed (GRA-187): a module
+   * that writes and then throws has bytes on the mount, and the runner prints their ledger behind
+   * the same `ENVELOPE_MARKER` line a result's envelope sits behind, before the error, so
+   * `readRunnerEnvelope` reads both. `[]` for every other failure, a timeout included, whose
+   * committed blobs are the sweep's to adopt (GRA-189).
+   */
+  | { ok: false; failure: RunFailure; blobs: BlobLedgerEntry[]; blobsDropped: number };
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -216,6 +261,8 @@ export async function runModule(
   );
 
   const module = shellQuote(args.modulePath);
+  // This server's runner, `/graft/<hash>/runner.mjs`, as the environment carries it (GRA-193).
+  const runner = shellQuote(runnerPathIn(args.env));
   const absent = moduleAbsent(module);
   // A dry run is always waited: the report is the point.
   const detached = args.mode.detached && !args.mode.dryRun;
@@ -231,12 +278,14 @@ export async function runModule(
             exitCode: EXIT_MODULE_MISSING,
             stderrTail: "",
           },
+          blobs: [],
+          blobsDropped: 0,
         };
       }
     }
     const script = [
       `if ${absent}; then exit ${EXIT_MODULE_MISSING}; fi;`,
-      `node ${shellQuote(RUNNER_PATH)} ${module} < ${shellQuote(inputFile)}; code=$?;`,
+      `node ${runner} ${module} < ${shellQuote(inputFile)}; code=$?;`,
       `rm -f ${shellQuote(inputFile)}; exit $code`,
     ].join(" ");
     const started = await startDetached(handle, {
@@ -250,7 +299,7 @@ export async function runModule(
 
   const script = [
     `if ${absent}; then exit ${EXIT_MODULE_MISSING}; fi;`,
-    `node ${shellQuote(RUNNER_PATH)} ${module} < ${shellQuote(inputFile)} 2> ${shellQuote(stderrFile)}; code=$?;`,
+    `node ${runner} ${module} < ${shellQuote(inputFile)} 2> ${shellQuote(stderrFile)}; code=$?;`,
     `printf '\\n${STDERR_MARKER}\\n'; tail -c ${STDERR_TAIL_BYTES} ${shellQuote(stderrFile)};`,
     `rm -f ${shellQuote(inputFile)} ${shellQuote(stderrFile)}; exit $code`,
   ].join(" ");
@@ -290,10 +339,17 @@ export function describeModuleRun(
 ): ModuleRunOutcome {
   const [stdout, stderrTail = ""] = splitAtMarker(result.stdout);
   const stderr = stderrTail.trim();
-  const failure = (error: string): ModuleRunOutcome => ({
-    ok: false,
-    failure: { error, exitCode: result.exitCode, stderrTail: stderr },
-  });
+  // A failure that followed a write carries the ledger behind the runner's marker (the outcome
+  // type); a killed or timed-out process printed nothing, so its list is empty.
+  const failure = (error: string): ModuleRunOutcome => {
+    const envelope = readRunnerEnvelope(stdout);
+    return {
+      ok: false,
+      failure: { error, exitCode: result.exitCode, stderrTail: stderr },
+      blobs: envelope?.blobs ?? [],
+      blobsDropped: envelope?.dropped ?? 0,
+    };
+  };
 
   if (result.status === "running") {
     return failure(
@@ -317,14 +373,36 @@ export function describeModuleRun(
   }
 
   const text = stdout.trim();
-  if (text === "") return { ok: true, result: null };
-  try {
-    return { ok: true, result: JSON.parse(text) };
-  } catch {
-    return failure(
-      `The tool exited 0 but printed something that is not JSON. The runner writes only the module's result to stdout, so the module printed to stdout itself: ${text.slice(-500)}`,
-    );
-  }
+  if (text === "") return { ok: true, result: null, blobs: [], blobsDropped: 0 };
+  const unwrapped = unwrapEnvelope(text);
+  return (
+    unwrapped ??
+    failure(
+      `The tool exited 0 but its stdout carries no runner envelope. The runner prints the module's result behind its marker line and nothing else, so the module printed to stdout itself: ${text.slice(-500)}`,
+    )
+  );
+}
+
+/**
+ * The runner's stdout read in its own terms: the envelope behind its marker line (`@graft/runner`'s
+ * `readRunnerEnvelope`), the module's result and the blobs the run wrote. Text with no marker is
+ * null, for the caller to word as a failure. Every run on this path goes through the runner this
+ * server seeded (`sandbox.ts`'s `seedRunner`, GRA-193: under `/graft/<hash>/`, handed to the
+ * command as `GRAFT_RUNNER`), and that runner prints the envelope on every exit that prints
+ * anything, so a bare JSON result here is a module that printed to stdout itself and never an
+ * older runner; GRA-186 read one as a result with no blobs for a sandbox seeded before it, GRA-193
+ * closed the case for a sync run, and GRA-199 took the tolerance out. The detached result file
+ * keeps one, narrower, for the reason `sandbox.ts`'s `readRunnerResult` gives.
+ */
+export function unwrapEnvelope(text: string): ModuleRunOutcome | null {
+  const envelope = readRunnerEnvelope(text);
+  if (!envelope) return null;
+  return {
+    ok: true,
+    result: envelope.result,
+    blobs: envelope.blobs,
+    blobsDropped: envelope.dropped,
+  };
 }
 
 function splitAtMarker(stdout: string): [string, string?] {
@@ -563,100 +641,196 @@ async function runHeld(
     return refuse("input_invalid", verdict.message, versioned, { inputSchema: tool.inputSchema });
   }
 
-  // The approval gate (ADR 0008): after the scope check, before the mint. A dry run passes it: reads
-  // reach the vendor as they would for a read-only tool and every write stops at the proxy on the
-  // token's claim, so nothing changes at the vendor and no trust is spent — publishing's dry run
-  // (`publish_tool`) asks nothing for the same reason.
-  if (!args.mode.dryRun) {
-    const gate = await gateToolCall(ctx, scope, { tool: gated, connectionId }, deps, args.channel);
-    if (!gate.pass) {
-      await record("refused", versioned);
-      return { answer: gate.answer, isError: true, card: gate.card, cardMessage: gate.cardMessage };
-    }
+  // The blob door (GRA-187; `blob-door.ts`): the quota, then every ref the input names, judged over
+  // the rows before the gate asks anyone and before a sandbox is touched. A dry run passes it too.
+  // Admitted and granted as one step (`admitUnderGrant`, `in-flight.ts`; GRA-200 after Greptile on
+  // #157): the budget is outstanding from the admission until the run settles, so a second run
+  // admitted meanwhile is handed the remainder after this one's; a detached start moves the grant
+  // onto its process name below before this release runs.
+  const door = await admitUnderGrant(deps.inFlight, scope.agentId, () =>
+    admitBlobs(deps, scope, verdict.value),
+  );
+  if (!door.ok) {
+    await record("refused", versioned);
+    return { answer: door.refusal, isError: true };
+  }
+  const admitted = door.admission;
+  const releaseGrant = door.release;
+  // The narrowed values the admitted run reads, captured once for the function below.
+  const runVersion = version;
+  const runTool = tool;
+  const input = verdict.value;
+  try {
+    return await runAdmitted();
+  } finally {
+    releaseGrant();
   }
 
-  const outcome = await runWithCapability({
-    deps,
-    scope,
-    connectionId,
-    claim: wireName,
-    mode: args.mode,
-    run: async (env): Promise<ModuleRunOutcome> => {
-      let handle: SandboxHandle;
-      try {
-        handle = await openAgentSandbox(deps, scope);
-      } catch (error) {
+  async function runAdmitted(): Promise<AuthoredRunAnswer> {
+    // The approval gate (ADR 0008): after the scope check, before the mint. A dry run passes it: reads
+    // reach the vendor as they would for a read-only tool and every write stops at the proxy on the
+    // token's claim, so nothing changes at the vendor and no trust is spent — publishing's dry run
+    // (`publish_tool`) asks nothing for the same reason.
+    if (!args.mode.dryRun) {
+      const gate = await gateToolCall(
+        ctx,
+        scope,
+        { tool: gated, connectionId },
+        deps,
+        args.channel,
+      );
+      if (!gate.pass) {
+        await record("refused", versioned);
         return {
-          ok: false,
-          failure: {
-            error: `The sandbox is unavailable right now: ${errorMessage(error)}`,
-            exitCode: null,
-            stderrTail: "",
-          },
+          answer: gate.answer,
+          isError: true,
+          card: gate.card,
+          cardMessage: gate.cardMessage,
         };
       }
-      return runModule(handle, {
-        scope,
-        modulePath: sandboxPath(version.path),
-        input: verdict.value,
-        env,
-        mode: args.mode,
-      });
-    },
-  });
+    }
 
-  if ("error" in outcome && outcome.error === "refused") {
-    await record("refused", versioned);
-    return { answer: outcome, isError: true };
-  }
-  const run = outcome as ModuleRunOutcome;
-
-  // A capability was issued and the runner ran: the clock moves whatever the module said (ADR 0009).
-  await touchToolUsed(ctx, scope, tool.id, deps.workingSet);
-
-  if (!run.ok) {
-    await record("error", versioned);
-    return { answer: run.failure, isError: true };
-  }
-  if ("detached" in run) {
-    // Before the call's own hold releases, so the agent is never momentarily unheld.
-    deps.inFlight?.track(
-      scope.agentId,
-      run.detached.processName,
-      detachedHoldMs(run.detached.timeoutSeconds),
-    );
-    await record("ok", versioned);
-    return { answer: describeDetachedStart(run.detached), isError: false };
-  }
-  if (args.mode.dryRun) {
-    const report = readDryRunReport(run.result);
-    await recordDryRun(
-      ctx,
-      principal,
-      version.id,
-      {
-        report: report ?? { dryRun: true, passed: false, missing: true },
-        writesInvolved: report
-          ? report.writesPreviewed.length + report.writesRefused.length > 0
-          : false,
-      },
-      deps.tool,
-    );
-    await record(report ? "ok" : "error", versioned);
-    return report
-      ? { answer: { dryRun: report }, isError: false }
-      : {
-          answer: {
-            error: "The run produced no dry-run report; the runner did not run in dry-run mode.",
-            exitCode: 0,
-            stderrTail: "",
+    const outcome = await runWithCapability({
+      deps,
+      scope,
+      connectionId,
+      claim: wireName,
+      mode: args.mode,
+      run: async (env): Promise<ModuleRunOutcome> => {
+        let handle: SandboxHandle;
+        try {
+          handle = await openAgentSandbox(deps, scope);
+        } catch (error) {
+          return {
+            ok: false,
+            failure: {
+              error: `The sandbox is unavailable right now: ${errorMessage(error)}`,
+              exitCode: null,
+              stderrTail: "",
+            },
+            blobs: [],
+            blobsDropped: 0,
+          };
+        }
+        return runModule(handle, {
+          scope,
+          modulePath: sandboxPath(runVersion.path),
+          input: input,
+          // The version whose run this is, for the sidecar of any blob it writes (ADR 0023), and
+          // the agent with what the run may still commit under its quota (the header; `blob-door.ts`).
+          env: {
+            ...env,
+            GRAFT_TOOL_VERSION: runVersion.id,
+            ...blobRunEnvironment(scope, admitted),
           },
-          isError: true,
-        };
+          mode: args.mode,
+        });
+      },
+    });
+
+    if ("error" in outcome && outcome.error === "refused") {
+      await record("refused", versioned);
+      return { answer: outcome, isError: true };
+    }
+    const run = outcome as ModuleRunOutcome;
+
+    // A capability was issued and the runner ran: the clock moves whatever the module said (ADR 0009).
+    await touchToolUsed(ctx, scope, runTool.id, deps.workingSet);
+
+    if (!run.ok) {
+      // A module that wrote and then failed committed its blobs all the same (the outcome type): the
+      // rows land as they do on a success, and the failure names the refs beside its own fields.
+      // Measured against the store and held to the quota as every ledger is (`blob-budget.ts`;
+      // GRA-200): this runner honours the budget, so the check is defence in depth here.
+      const recorded = await recordBlobsWithinQuota(
+        deps,
+        scope,
+        runVersion.id,
+        run.blobs,
+        run.blobsDropped,
+      );
+      const overshoot = blobQuotaOvershoot(recorded);
+      await record("error", versioned);
+      return {
+        answer: {
+          ...run.failure,
+          ...blobsOnWire(recorded.listed, recorded.dropped),
+          ...(overshoot ? { ...overshoot, error: `${run.failure.error} ${overshoot.error}` } : {}),
+        },
+        isError: true,
+      };
+    }
+    if ("detached" in run) {
+      // Before the call's own hold and grant release, so the agent is never momentarily unheld or
+      // ungranted: the process carries both until its poll settles it or its time is up.
+      deps.inFlight?.track(
+        scope.agentId,
+        run.detached.processName,
+        detachedHoldMs(run.detached.timeoutSeconds),
+        admitted.budgetBytes,
+      );
+      await record("ok", versioned);
+      return { answer: describeDetachedStart(run.detached), isError: false };
+    }
+    // The blobs the run wrote, one row each, before the answer names them (the header; `blobs.ts`).
+    // A dry run's blobs are real files under the mount and get their rows like any other. Measured
+    // against the store and held to the quota (`blob-budget.ts`; GRA-200, after Greptile on #157):
+    // the record is the rule on every path, and a run past the quota is answered a failure.
+    const recorded = await recordBlobsWithinQuota(
+      deps,
+      scope,
+      runVersion.id,
+      run.blobs,
+      run.blobsDropped,
+    );
+    const overshoot = blobQuotaOvershoot(recorded);
+    if (overshoot) {
+      await record("error", versioned);
+      return {
+        answer: {
+          ...overshoot,
+          exitCode: 0,
+          stderrTail: "",
+          ...blobsOnWire(recorded.listed, recorded.dropped),
+        },
+        isError: true,
+      };
+    }
+    if (args.mode.dryRun) {
+      const report = readDryRunReport(run.result);
+      await recordDryRun(
+        ctx,
+        principal,
+        runVersion.id,
+        {
+          report: report ?? { dryRun: true, passed: false, missing: true },
+          writesInvolved: report
+            ? report.writesPreviewed.length + report.writesRefused.length > 0
+            : false,
+        },
+        deps.tool,
+      );
+      await record(report ? "ok" : "error", versioned);
+      return report
+        ? {
+            answer: { dryRun: report, ...blobsOnWire(recorded.listed, recorded.dropped) },
+            isError: false,
+          }
+        : {
+            answer: {
+              error: "The run produced no dry-run report; the runner did not run in dry-run mode.",
+              exitCode: 0,
+              stderrTail: "",
+            },
+            isError: true,
+          };
+    }
+    await record("ok", versioned);
+    return {
+      answer: withBlobs(boundResult(run.result), recorded.listed, recorded.dropped),
+      isError: false,
+    };
   }
-  await record("ok", versioned);
-  const bounded = boundResult(run.result);
-  return { answer: "truncated" in bounded ? bounded : bounded.result, isError: false };
 }
 
 /**
