@@ -21,6 +21,12 @@ export {
   wireOf,
 } from "./answer";
 export {
+  GOAL_PROPOSAL_MAX,
+  GOAL_PROPOSAL_MAX_LENGTH,
+  GOAL_PROPOSAL_TIMEOUT_MS,
+  type GoalProposalOptions,
+} from "./propose-goals";
+export {
   AUTHORING_MAX_OUTPUT_TOKENS,
   createProviderModel,
   MODEL_PROVIDERS,
@@ -52,8 +58,10 @@ export {
   type ScriptedModel,
   type ScriptedStep,
   ScriptMismatchError,
+  scriptedGoals,
 } from "./scripted";
 export {
+  type ModelCallSituation,
   type ModelCallTrace,
   type ModelRole,
   type ModelTelemetry,
@@ -66,6 +74,9 @@ export {
   type ConnectionBrief,
   type DocPage,
   type DryRunSummary,
+  type GoalProposal,
+  type GoalProposalOutcome,
+  type GoalProposalRequest,
   isValidUsage,
   type ModelAdapter,
   type ModelAnswer,
