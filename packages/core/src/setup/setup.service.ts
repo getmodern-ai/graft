@@ -286,11 +286,12 @@ export async function skipSetup(
  *   `vendor` or `connect`, for a connection the request made or found (a no-step provider, a row
  *   already in the agent's scope, the ordinary form). With `askId`, learned from that ask's answer
  *   on a read, and only while the record still waits on that ask.
- * - `fromVendor`, on `ask` and `connected`: the move lands only on a record on `vendor`. The connect
- *   route's second routing carries it, made after the ask the first handed back was found answered
- *   about a connection that no longer stands and the record went back to `vendor`: the person's
- *   choice is still in flight, so it lands over a read that reopened the record, and never over
- *   another tab's choice that moved the record on meanwhile.
+ * - `fromVendorAt`, on `ask` and `connected`: the move lands only on the record as it was seen on
+ *   `vendor`, its `updatedAt` unchanged. The connect route's second routing carries it, made after
+ *   the ask the first handed back was found answered about a connection that no longer stands and
+ *   the record went back to `vendor`: the person's choice is still in flight, so it lands over a
+ *   read that reopened the record, and never over a choice another tab made meanwhile, even one
+ *   that has since closed and left the record on `vendor` again (every write moves `updatedAt`).
  * - `reopen`: the ask was declined, expired or is gone, or its answer names a connection that is no
  *   longer live and in the agent's scope; back to `vendor` with no ask, only while the record
  *   still waits on it.
@@ -298,13 +299,13 @@ export async function skipSetup(
  *   anything was built with it; back to `vendor`, only while the record is still on `goal` with it.
  */
 export type SetupConnectMove =
-  | { kind: "ask"; agentId: string; pendingActionId: string; fromVendor?: boolean }
+  | { kind: "ask"; agentId: string; pendingActionId: string; fromVendorAt?: Date }
   | {
       kind: "connected";
       agentId: string;
       connectionId: string;
       askId?: string;
-      fromVendor?: boolean;
+      fromVendorAt?: Date;
     }
   | { kind: "reopen"; askId: string }
   | { kind: "lost"; connectionId: string };
@@ -361,8 +362,14 @@ export async function moveSetupConnect(
     } else if (askId) {
       // Learned on a read, so a stale read (another tab moved on) changes nothing.
       if (record.step !== "connect" || record.pendingActionId !== askId) return false;
-    } else if (move.kind !== "reopen" && move.fromVendor) {
-      if (record.agentId !== move.agentId || record.step !== "vendor") return false;
+    } else if (move.kind !== "reopen" && move.fromVendorAt) {
+      if (
+        record.agentId !== move.agentId ||
+        record.step !== "vendor" ||
+        record.updatedAt.getTime() !== move.fromVendorAt.getTime()
+      ) {
+        return false;
+      }
     } else if (
       move.kind !== "reopen" &&
       (record.agentId !== move.agentId || (record.step !== "vendor" && record.step !== "connect"))
