@@ -49,7 +49,10 @@
  *    connection (Slack's `files.slack.com` upload URL, GRA-197) reaches the proxy, which judges the
  *    host against the connection's set as it does an SDK's call (ADR 0010 as amended 2026-09-23).
  *    The runner adds nothing it does not have: no host list, so which hosts are allowed is the
- *    proxy's alone. Refused rather than bent, before any request leaves: a URL that is not `https:`,
+ *    proxy's alone. A dry run records a call on this route as scheme, host and path with the query
+ *    dropped and marked `?…` (`recordableTarget`): a URL a vendor hands back may carry a signature
+ *    or a bearer capability in its query, and the report reaches the authoring model's prompt.
+ *    Refused rather than bent, before any request leaves: a URL that is not `https:`,
  *    one carrying credentials (`user:pass@`), one whose host is not a host name; and a relative path
  *    that walks out of `/c/<connection>/`, so nothing can be sent for any connection but the one this
  *    run was minted for. The token travels to the proxy and nowhere else under either form. It
@@ -352,8 +355,9 @@ async function recordPreview(method, path, headers, init, response) {
       : [...headers.keys()].filter((name) => name !== "authorization").sort();
   // The proxy's account names the vendor path alone, which loses the host a write on the host route
   // went to: two writes to one path on two declared hosts would read as one. So a write the module
-  // addressed by an absolute URL is recorded by that URL, host and all, as a read on the same route
-  // is (GRA-197; Greptile on #156); a relative one keeps the proxy's path as before.
+  // addressed by an absolute URL is recorded by that URL as `recordableTarget` spells it, host kept
+  // and query dropped, as a read on the same route is (GRA-197; Greptile on #156); a relative one
+  // keeps the proxy's path as before.
   const absolute = /^[a-z][a-z0-9+.-]*:/i.test(path);
   recordCall(dryRunRecord.writesPreviewed, {
     method: request !== null && typeof request.method === "string" ? request.method : method,
@@ -532,6 +536,19 @@ function proxyBase(host) {
 }
 
 /**
+ * How a dry run's report, and a refusal's sentence, spell an absolute target: scheme, host and path,
+ * with the query dropped and its presence marked `?…`. A URL a vendor hands back may carry its
+ * credential in the query, a presigned URL's `X-Amz-Signature` or a bearer capability, and the
+ * report goes into the acquire trace and back into the authoring model's prompt, so the values never
+ * leave the sandbox that way; the host stays, so two writes to one path on two hosts stay apart
+ * (Greptile on #156, twice). A relative path is recorded as given: its query is the module's own.
+ */
+function recordableTarget(target) {
+  const at = target.indexOf("?");
+  return at === -1 ? target : `${target.slice(0, at)}?…`;
+}
+
+/**
  * An absolute URL given to `ctx.fetch`, rewritten onto the proxy's host form (the header):
  * `https://files.slack.com/upload/v1/abc?x=1` becomes `${prefix}h/files.slack.com/upload/v1/abc?x=1`,
  * the same route `ctx.proxyBase("files.slack.com")` names, so the proxy judges the host against the
@@ -539,18 +556,19 @@ function proxyBase(host) {
  * what would make the rewrite a lie: a scheme other than `https:` (the proxy speaks only that to a
  * vendor), credentials in the URL (the proxy supplies the credential, and a module never holds one),
  * and a host that is not a host name (so it cannot become a path). The fragment is dropped, as fetch
- * drops it. `refuse` is the caller's, so a refused write is on the dry run's report as before.
+ * drops it. `refuse` is the caller's, so a refused write is on the dry run's report as before, and
+ * `shown` is the target as the report and a refusal's sentence may spell it (`recordableTarget`).
  */
-function hostRoute(target, prefix, refuse) {
+function hostRoute(target, prefix, refuse, shown) {
   let given;
   try {
     given = new URL(target);
   } catch {
-    throw refuse(`ctx.fetch refused a URL it could not parse: ${target}`);
+    throw refuse(`ctx.fetch refused a URL it could not parse: ${shown}`);
   }
   if (given.protocol !== "https:") {
     throw refuse(
-      `ctx.fetch takes an https:// URL on one of the connection's hosts, or a vendor-relative path such as "/v1/orders", not ${given.protocol}// (${target}).`,
+      `ctx.fetch takes an https:// URL on one of the connection's hosts, or a vendor-relative path such as "/v1/orders", not ${given.protocol}// (${shown}).`,
     );
   }
   if (given.username !== "" || given.password !== "") {
@@ -570,13 +588,16 @@ function boundFetch(path, init = {}) {
   if (!proxyUrl || !connection) throw unbound("ctx.fetch");
   const target = String(path);
   const method = String(init.method ?? "GET").toUpperCase();
+  const absolute = /^[a-z][a-z0-9+.-]*:/i.test(target);
+  // What the report and a refusal's sentence may say of the target: an absolute URL less its query.
+  const recorded = absolute ? recordableTarget(target) : target;
   // A refusal here never reaches the proxy; in a dry run it is still part of the report, because a
   // write the module could not even address is a write request that was not well-formed.
   const refuse = (message) => {
     if (dryRun && !READ_METHODS.has(method)) {
       recordCall(dryRunRecord.writesRefused, {
         method,
-        path: target,
+        path: recorded,
         status: null,
         error: message,
       });
@@ -585,8 +606,8 @@ function boundFetch(path, init = {}) {
   };
   const prefix = connectionPrefix();
   let url;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) {
-    url = hostRoute(target, prefix, refuse);
+  if (absolute) {
+    url = hostRoute(target, prefix, refuse, recorded);
   } else {
     url = new URL(target.replace(/^\/+/, ""), prefix);
     if (!url.href.startsWith(prefix.href)) {
@@ -600,7 +621,7 @@ function boundFetch(path, init = {}) {
   // sandbox can reach is the proxy — see the header.
   const request = { ...init, headers, redirect: "manual" };
   if (!dryRun) return fetch(url, request);
-  return dryRunFetch(url, request, { method, path: target, headers, init });
+  return dryRunFetch(url, request, { method, path: recorded, headers, init });
 }
 
 /**

