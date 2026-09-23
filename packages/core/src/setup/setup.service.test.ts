@@ -6,7 +6,13 @@ import type { AgentDeps } from "../agent/agent.deps";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { SetupDeps } from "./setup.deps";
-import { getSetupState, skipSetup, startSetup } from "./setup.service";
+import {
+  connectingAgentOf,
+  getSetupState,
+  moveSetupConnect,
+  skipSetup,
+  startSetup,
+} from "./setup.service";
 
 /**
  * The Setup service over fakes: an in-memory record and agent table, so what is asserted is what a
@@ -232,5 +238,73 @@ describe("skipSetup", () => {
     expect(resumed.setup?.skippedAt).toBeNull();
     expect(resumed.show).toBe(true);
     expect(w.agentDeps.insertAgent).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the connect step's moves", () => {
+  async function onVendor() {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness: "claude" }, w.deps, w.agentDeps);
+    return w;
+  }
+
+  it("names the ask on connect, then the connection on goal once the ask is answered", async () => {
+    const w = await onVendor();
+    const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
+      moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
+    const asked = await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" });
+    expect(asked.setup).toMatchObject({ step: "connect", pendingActionId: "pa_1" });
+    // A repeat, or another starter, re-points the ask while on connect.
+    await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_2" });
+    // A read that learned from the first ask is stale and changes nothing.
+    await move({ kind: "connected", agentId: "agent_new", connectionId: "conn_1", askId: "pa_1" });
+    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_2" });
+    const done = await move({
+      kind: "connected",
+      agentId: "agent_new",
+      connectionId: "conn_2",
+      askId: "pa_2",
+    });
+    expect(done.setup).toMatchObject({
+      step: "goal",
+      connectionId: "conn_2",
+      pendingActionId: null,
+    });
+    expect(() => connectingAgentOf(done)).toThrow(ServiceError);
+  });
+
+  it("goes back to the vendor step when the ask it waits on closed without a connection", async () => {
+    const w = await onVendor();
+    await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" },
+      w.deps,
+      w.agentDeps,
+    );
+    const back = await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "reopen", askId: "pa_1" },
+      w.deps,
+      w.agentDeps,
+    );
+    expect(back.setup).toMatchObject({ step: "vendor", pendingActionId: null });
+  });
+
+  it("refuses a move for an agent the record does not run as, and a Setup not yet started", async () => {
+    const w = await onVendor();
+    await expect(
+      moveSetupConnect(
+        ctx,
+        PRINCIPAL,
+        { kind: "connected", agentId: "agent_other", connectionId: "conn_1" },
+        w.deps,
+        w.agentDeps,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const fresh = world({});
+    const state = await getSetupState(ctx, PRINCIPAL, fresh.deps, fresh.agentDeps);
+    expect(() => connectingAgentOf(state)).toThrow("Setup has not started");
   });
 });

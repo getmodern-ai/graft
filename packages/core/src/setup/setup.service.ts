@@ -258,3 +258,75 @@ export async function skipSetup(
   }
   return getSetupState(ctx, principal, deps, agentDeps);
 }
+
+/**
+ * How the connect step moves the record (GRA-206; GRA-202, *The connect step is the agent's own
+ * connection ask*). The server decides which move a request or an answered ask makes, since the
+ * routing and the ask's answer are `@graft/mcp`'s; this function holds the record to its steps.
+ *
+ * - `ask`: the agent's own connection (or scope) ask is open; the record names it and is on
+ *   `connect`. From `vendor` or `connect`, so a repeat or another starter re-points it.
+ * - `connected`: the record names the connection and moves to `goal`. Without `askId`, from
+ *   `vendor` or `connect`, for a connection the request made or found (a no-step provider, a row
+ *   already in the agent's scope, the ordinary form). With `askId`, learned from that ask's answer
+ *   on a read, and only while the record still waits on that ask.
+ * - `reopen`: the ask was declined, expired or is gone; back to `vendor` with no ask, only while
+ *   the record still waits on it.
+ */
+export type SetupConnectMove =
+  | { kind: "ask"; agentId: string; pendingActionId: string }
+  | { kind: "connected"; agentId: string; connectionId: string; askId?: string }
+  | { kind: "reopen"; askId: string };
+
+/**
+ * The agent the connect step acts as: the record's, while it stands, on the vendor or connect
+ * step. Refused `CONFLICT` otherwise, so no ask is opened for a Setup that has not started, has
+ * moved past connecting, or runs as an agent that was revoked.
+ */
+export function connectingAgentOf(state: SetupState): AgentOutput {
+  if (!state.agent || !state.setup) {
+    throw new ServiceError("CONFLICT", "Setup has not started; choose a harness first", {
+      details: { reason: "setup_not_started" },
+    });
+  }
+  if (state.step !== "vendor" && state.step !== "connect") {
+    throw new ServiceError("CONFLICT", "Setup is past connecting a vendor", {
+      details: { reason: "setup_step", step: state.step },
+    });
+  }
+  return state.agent;
+}
+
+/** Apply a `SetupConnectMove` under the record's lock, and answer the state as it now stands. */
+export async function moveSetupConnect(
+  ctx: ServiceContext,
+  principal: Principal,
+  move: SetupConnectMove,
+  deps: SetupDeps,
+  agentDeps: Pick<AgentDeps, "listAgents">,
+): Promise<SetupState> {
+  await ctx.db.transaction(async (tx) => {
+    const record = await deps.lockSetup(tx, principal.personId);
+    const askId =
+      move.kind === "reopen" ? move.askId : move.kind === "connected" ? move.askId : null;
+    if (askId) {
+      // Learned on a read, so a stale read (another tab moved on) changes nothing.
+      if (record.step !== "connect" || record.pendingActionId !== askId) return;
+    } else if (
+      move.kind !== "reopen" &&
+      (record.agentId !== move.agentId || (record.step !== "vendor" && record.step !== "connect"))
+    ) {
+      throw new ServiceError("CONFLICT", "Setup moved on while this vendor was being connected", {
+        details: { reason: "setup_step", step: record.step },
+      });
+    }
+    const patch: SetupPatch =
+      move.kind === "ask"
+        ? { step: "connect", pendingActionId: move.pendingActionId, connectionId: null }
+        : move.kind === "connected"
+          ? { step: "goal", pendingActionId: null, connectionId: move.connectionId }
+          : { step: "vendor", pendingActionId: null, connectionId: null };
+    await deps.saveSetup(tx, principal.personId, patch);
+  });
+  return getSetupState(ctx, principal, deps, agentDeps);
+}
