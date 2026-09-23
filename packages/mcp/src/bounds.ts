@@ -43,6 +43,17 @@ export const MAX_WAIT_SECONDS = 600;
 /** Extra seconds a wait outlasts the kill bound, so a killed process is seen killed rather than running. */
 export const WAIT_SLACK_SECONDS = 5;
 
+/**
+ * How long any one tool description may be on the wire, and `SERVER_INSTRUCTIONS` with it: Claude
+ * Code caps both at 2KB per server (its CHANGELOG, 2.1.84: "MCP tool descriptions and server
+ * instructions are now capped at 2KB"), the one documented cap; ChatGPT and Claude.ai publish none.
+ * GRA-54's 1,800 was a guess under it; the research on GRA-111 is the source for this figure.
+ * `session.ts` reads it as `INSTRUCTIONS_BUDGET` for the other field; `tools.ts` holds an authored
+ * tool's composed description to it (GRA-200), which is why the number lives beside the other bounds
+ * on the wire rather than in `session.ts`, which `tools.ts` cannot import.
+ */
+export const DESCRIPTION_BUDGET = 2_048;
+
 /** Bounds on what one call puts into the model's context — a file or an output is unbounded by nature. */
 export const MAX_OUTPUT_CHARS = 16_000;
 export const MAX_FILE_CHARS = 64_000;

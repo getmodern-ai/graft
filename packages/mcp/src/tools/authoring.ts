@@ -11,6 +11,7 @@ import {
 import type { SandboxFile } from "@graft/sandbox";
 import { sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { admitBlobs, blobBudgetEnvironment } from "../blob-door";
 import { recordWrittenBlobs } from "../blobs";
 import {
   boundJson,
@@ -37,6 +38,7 @@ import { runAuthoredTool } from "../run";
 import {
   commandEnvironment,
   errorMessage,
+  isPolledProcess,
   openAgentSandbox,
   pollProcess,
   readModuleFromSandbox,
@@ -56,11 +58,17 @@ import type { MetaTool } from "./meta";
  * Graft's terms (ADR 0011).
  *
  * **No vendor reach and no token here, on purpose.** A command run through `run_command` carries
- * `NODE_USE_ENV_PROXY=1` and the runner's timeout and nothing else; the sandbox reaches only the
- * proxy, and a capability token arrives only with a connection's execute tool (`execute.ts`) or an
- * authored tool's run (`run.ts`), per process (ADR 0010). So nothing on a documentation page can be
- * talked into sending anything anywhere: the worst a prompt injection through `read_web_page` can
- * do with these is write a file the agent then declines to publish.
+ * `NODE_USE_ENV_PROXY=1`, the runner's timeout, the runner's path, the blobs mount and the blob
+ * budget, and nothing else; the sandbox reaches only the proxy, and a capability token arrives only
+ * with a connection's execute tool (`execute.ts`) or an authored tool's run (`run.ts`), per process
+ * (ADR 0010). So nothing on a documentation page can be talked into sending anything anywhere: the
+ * worst a prompt injection through `read_web_page` can do with these is write a file the agent then
+ * declines to publish.
+ *
+ * **`run_command` passes the blob door** (GRA-200; ADR 0023): a command may run the runner and the
+ * module it loads may write a blob, so the agent's quota is judged before the exec as a
+ * `run_tool`'s is, the process is handed its budget, and the grant is held on the in-flight
+ * registry until the process settles, a detached one's on its process name (`../blob-door.ts`).
  */
 
 export const WRITE_FILE = "write_file";
@@ -229,17 +237,42 @@ const runCommandTool: MetaTool = {
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   handle: async (args, session) => {
+    const { deps, scope } = session;
     const parsed = readCommandInput(args);
     if ("error" in parsed) return toolRefusal("input_invalid", parsed.error);
-    // The runner's path in the sandbox rides in the environment as GRAFT_RUNNER (GRA-193).
-    const env = commandEnvironment(parsed.timeoutSeconds, await seededRunnerPath(session.deps));
-    // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
-    const ran = await heldInFlight(session.deps.inFlight, session.scope.agentId, () =>
-      withSandbox(open(session), (handle) => runCommand(handle, parsed, env)),
-    );
-    if (!("answer" in ran)) return answer(ran);
+    // The blob door (GRA-200; ADR 0023): a by-hand agent is under the same quota as a `run_tool`.
+    // A command may run the runner, and the module it loads may write a blob, so an agent at its
+    // quota is refused `blob_quota` here, before a sandbox is touched, in the door's own shape.
+    // The command is not JSON the runner reads, so the quota alone is judged (`../blob-door.ts`).
+    const door = await admitBlobs(deps, scope, null);
+    if (!door.ok) return toolError(door.refusal);
+    const admitted = door.admission;
+    // The runner's path in the sandbox rides in the environment as GRAFT_RUNNER (GRA-193), and
+    // beside it what the process may still commit under the agent's quota (`../blob-door.ts`),
+    // which the runner holds a write to.
+    const env = {
+      ...commandEnvironment(parsed.timeoutSeconds, await seededRunnerPath(deps)),
+      ...blobBudgetEnvironment(admitted),
+    };
+    // The budget is outstanding until the process settles (`in-flight.ts`): released below once a
+    // waited command has returned, whatever it exited with, and carried on the process name past
+    // that for a detached start, which `heldInFlight` tracks before this release runs.
+    const releaseGrant = deps.inFlight?.grant(scope.agentId, admitted.budgetBytes);
+    let ran: Awaited<ReturnType<typeof runCommand>> | { error: string };
+    try {
+      // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
+      ran = await heldInFlight(
+        deps.inFlight,
+        scope.agentId,
+        () => withSandbox(open(session), (handle) => runCommand(handle, parsed, env)),
+        admitted.budgetBytes,
+      );
+    } finally {
+      releaseGrant?.();
+    }
+    if (!isPolledProcess(ran)) return answer(ran);
     // A runner the command invoked by hand wrote these (GRA-186; `../blobs.ts`): rows now, no version.
-    await recordWrittenBlobs(session.deps, session.scope, null, ran.blobs, ran.dropped);
+    await recordWrittenBlobs(deps, scope, null, ran.blobs, ran.dropped);
     return answer(ran.answer);
   },
 };

@@ -631,8 +631,9 @@ runner's ledger comes back beside the result as `blobs` so the server writes one
 through a blob store seam beside the toolbox store. The check bans `fs`, `fs/promises`,
 `worker_threads`, `vm`, `module`, `cluster` and `inspector` as defence in depth, the runner refuses a
 ref that does not resolve under `/blobs`, and the door refuses `blob_not_found`, `blob_expired` and
-`blob_quota` before a sandbox is touched. 24 hours, 256 MiB per blob, 1 GiB live per agent, all
-constants; writing one never asks. The working-set sweep's timer runs a second pass that removes
+`blob_quota` before a sandbox is touched, on every path that invokes the runner for an agent:
+`run_tool`, every authored tool in the list, `execute__<connection>` and `run_command` (GRA-200). 24
+hours, 256 MiB per blob, 1 GiB live per agent, all constants; writing one never asks. The working-set sweep's timer runs a second pass that removes
 expired blobs through the blob store and keeps the row with `removed_at`. The proxy's cap is
 `GRAFT_PROXY_MAX_BODY_BYTES` (default 10 MiB; ADR 0010 as amended 2026-09-22), so a self-host moves
 a file larger than that only once its operator raises it. The spec is GRA-181 and its sub-issues are
@@ -688,8 +689,13 @@ deleted with the rest before the module loads, and the runner keeps the total it
 refuses the write that would pass the budget as `blob_quota` as the bytes stream in, at the smaller
 of the per-blob cap and the budget, removing the `.tmp` directory as `blob_too_large` does; a
 refused write is on no ledger. Unset, as under a server older than the variable or a runner run by
-hand, the per-blob cap alone bounds a write. `execute__` commands and `run_command` never pass the
-door and carry no budget. Three more rules from Greptile's review of #148: the runner reserves
+hand, the per-blob cap alone bounds a write. **`execute__` commands and `run_command` pass the same
+door** (GRA-200): `tools/execute.ts` and `tools/authoring.ts` call `admitBlobs` before the exec (the
+quota alone, since a shell command is not JSON the runner reads), refuse `blob_quota` in their own
+shape with no exec, put the two variables into the process's environment beside the runner's path,
+and hold the grant on the in-flight registry until the process settles, a detached one's on its
+process name through `heldInFlight`'s `budgetBytes`; `isPolledProcess` in `sandbox.ts` is the one
+spelling of the runner-answer shape the three readers of a ledger share. Three more rules from Greptile's review of #148: the runner reserves
 against the budget **as each chunk lands**, one shared figure across every write in flight, so two
 writes started together cannot both fit a remainder only one fits; the door subtracts **what it has
 already handed to this agent's runs still in flight** (`InFlightRegistry.grant` and

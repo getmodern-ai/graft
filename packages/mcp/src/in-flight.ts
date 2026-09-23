@@ -1,5 +1,6 @@
 import { WAIT_SLACK_SECONDS } from "./bounds";
 import { isPlainObject } from "./result";
+import { isPolledProcess } from "./sandbox";
 
 /**
  * Which agents have a run in flight — the guard ADR 0009 puts on the rule: demotion is deferred
@@ -152,38 +153,42 @@ export function detachedHoldMs(timeoutSeconds: number): number {
  * shape (`sandbox.ts`): `status: "running"` with a `processName` and its `timeoutSeconds`. Anything
  * else — a waited command's result, a refusal, a failure — holds nothing, because the call's own hold
  * covered it. Called before the call's release, so the agent is never momentarily unheld between the
- * two.
+ * two. `budgetBytes` is the blob budget the door handed the call (GRA-200; `blob-door.ts`): a
+ * detached start carries it on the process name, as `run.ts`'s does, so the by-hand paths' grant
+ * outlives the call for as long as the process may write.
  */
 export function trackDetachedStart(
   registry: InFlightRegistry | undefined,
   agentId: string,
   answer: unknown,
+  budgetBytes?: number,
 ): void {
   // `runCommand` answers `{ answer, blobs }` since GRA-186 (`sandbox.ts`'s `PolledProcess`); the
   // detached start is the `answer` inside it.
-  const start =
-    isPlainObject(answer) && "answer" in answer && Array.isArray(answer.blobs)
-      ? answer.answer
-      : answer;
+  const start = isPolledProcess(answer) ? answer.answer : answer;
   if (!registry || !isPlainObject(start) || start.status !== "running") return;
   if (typeof start.processName !== "string" || typeof start.timeoutSeconds !== "number") return;
-  registry.track(agentId, start.processName, detachedHoldMs(start.timeoutSeconds));
+  registry.track(agentId, start.processName, detachedHoldMs(start.timeoutSeconds), budgetBytes);
 }
 
 /**
  * Run `work` with the agent held, and keep the hold by process name when the answer is a detached
  * start — the one wrapper the call paths share (`run.ts`, `tools/execute.ts`, `run_command`), so
- * none can hold and forget to release, or release before the detached hold is in place.
+ * none can hold and forget to release, or release before the detached hold is in place. A caller
+ * that took a budget grant for the call passes `budgetBytes`, and a detached start keeps it too
+ * (`trackDetachedStart`); the caller releases its own grant once this returns, so the two never
+ * leave a gap.
  */
 export async function heldInFlight<T>(
   registry: InFlightRegistry | undefined,
   agentId: string,
   work: () => Promise<T>,
+  budgetBytes?: number,
 ): Promise<T> {
   const release = registry?.begin(agentId);
   try {
     const answer = await work();
-    trackDetachedStart(registry, agentId, answer);
+    trackDetachedStart(registry, agentId, answer, budgetBytes);
     return answer;
   } finally {
     release?.();

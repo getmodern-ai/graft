@@ -16,12 +16,51 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   commandEnvironment,
   errorMessage,
+  isPolledProcess,
   openAgentSandbox,
   runnerPathIn,
   type SandboxDeps,
   seedDigest,
   seededRunnerPath,
 } from "./sandbox";
+
+/**
+ * The one spelling of "a runner answer with its ledger" (GRA-200): what `runCommand` and
+ * `pollProcess` return, as against the two other things a call path holds at that point, which
+ * `tools/execute.ts`, `tools/authoring.ts` and `in-flight.ts` each tell apart with this.
+ */
+describe("isPolledProcess", () => {
+  it("is a polled process with an answer and a ledger, empty ledger included", () => {
+    expect(isPolledProcess({ answer: { exitCode: 0, output: "" }, blobs: [], dropped: 0 })).toBe(
+      true,
+    );
+    expect(
+      isPolledProcess({
+        answer: { status: "running", processName: "cmd-1", timeoutSeconds: 60 },
+        blobs: [{ ref: "blob://x", bytes: 1, contentType: "text/plain", expiresAt: "" }],
+        dropped: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("is not withSandbox's failure, a refusal, a bare answer, or nothing", () => {
+    expect(isPolledProcess({ error: "The sandbox is unavailable right now: no daemon" })).toBe(
+      false,
+    );
+    expect(isPolledProcess({ error: "refused", reason: "blob_quota", message: "" })).toBe(false);
+    // A detached start on its own, as `describeDetachedStart` answers it, is not the wrapped shape.
+    expect(isPolledProcess({ status: "running", processName: "cmd-1", timeoutSeconds: 60 })).toBe(
+      false,
+    );
+    // The two halves alone: an answer with no ledger, a ledger with no answer.
+    expect(isPolledProcess({ answer: { exitCode: 0 } })).toBe(false);
+    expect(isPolledProcess({ answer: "done", blobs: [] })).toBe(false);
+    expect(isPolledProcess({ blobs: [], dropped: 0 })).toBe(false);
+    expect(isPolledProcess(null)).toBe(false);
+    expect(isPolledProcess(undefined)).toBe(false);
+    expect(isPolledProcess("answer")).toBe(false);
+  });
+});
 
 describe("errorMessage", () => {
   it("is an Error's message, then each cause as name [code]: message", () => {

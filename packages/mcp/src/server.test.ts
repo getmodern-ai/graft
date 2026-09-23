@@ -1444,6 +1444,166 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
   }, 30_000);
 
   /**
+   * The by-hand paths pass the same door (GRA-200; ADR 0023, "1 GiB live per agent, refused at the
+   * door as `blob_quota` before the run"): `execute__<connection>` and `run_command` may run the
+   * runner, and the module it loads may write a blob, so an agent at its quota is refused before
+   * any exec, an admitted command is handed the budget and the quota in its environment, and the
+   * grant is outstanding until the process settles: a waited command's when it returns, whatever it
+   * exited with, a detached one's until `wait_for_process` sees it finish.
+   */
+  describe("execute__<connection> and run_command pass the door too (GRA-200)", () => {
+    const MIB = 1024 * 1024;
+    const EXECUTE_DEMO = executeToolName(CONN_DEMO);
+    /** A command that prints what the runner would read: the budget, then the quota. */
+    const PRINT_BUDGET = 'echo "$GRAFT_BLOB_BUDGET_BYTES $GRAFT_BLOB_QUOTA_BYTES"';
+    const RUN_SAVE_REPORT = `echo '{"limit":1}' | node "$GRAFT_RUNNER" /tools/tools/demo/save-report/v1`;
+    const RUN_WRITE_TWO = `echo '{}' | node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1`;
+    const liveBytesOfA = () =>
+      store.blobs
+        .filter((b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date())
+        .reduce((total, b) => total + b.bytes, 0);
+    /** A row that leaves agent A exactly `left` bytes under the quota. */
+    const leaving = (id: string, left: number) =>
+      row(`e0e0e0e0-0000-4000-8000-${id.padStart(12, "0")}`, AGENT_A, {
+        bytes: GIB - left - liveBytesOfA(),
+      });
+
+    it("refuses both blob_quota at the cap, in the door's shape, with no exec and no grant left behind", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("1", 0)], async () => {
+          const execs = sandbox.processNames(SANDBOX_A).length;
+          const blobsBefore = store.blobs.length;
+          const refusal = {
+            reason: "blob_quota",
+            bytes: GIB,
+            quota: GIB,
+            message:
+              "This agent's live blobs come to 1024 MiB, at or over the 1024 MiB quota, so no tool can run for it until some expire: any tool may write a blob. A blob lives 24 hours from its write and stops counting once it has expired, the oldest first. Run the tool again once one has.",
+          };
+          // The execute tool: the refusal, a `refused` ledger row under its name, no process.
+          expectRefusedAtDoor(
+            await a.call(EXECUTE_DEMO, { command: RUN_SAVE_REPORT }),
+            execs,
+            refusal,
+          );
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, toolId: null });
+          // run_command: the same refusal and no process; it writes no ledger row on any outcome.
+          const usageRows = store.usage.length;
+          const ran = await a.call("run_command", { command: RUN_SAVE_REPORT });
+          expect(ran.isError).toBe(true);
+          expect(body(ran)).toEqual({ error: "refused", ...refusal });
+          expect(ran.structuredContent).toEqual({ error: "refused", ...refusal });
+          expect(sandbox.processNames(SANDBOX_A)).toHaveLength(execs);
+          expect(store.usage).toHaveLength(usageRows);
+          // Detached is judged at the same door: nothing to poll, nothing outstanding.
+          const detached = await a.call("run_command", { command: "sleep 30", detached: true });
+          expect(body(detached)).toMatchObject({ error: "refused", reason: "blob_quota" });
+          expect(sandbox.processNames(SANDBOX_A)).toHaveLength(execs);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(store.blobs).toHaveLength(blobsBefore);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("under the cap, hands both processes the budget and the quota, and a waited command's grant is back when it returns, a failing one's too", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("2", 3 * MIB)], async () => {
+          const printed = body(await a.call("run_command", { command: PRINT_BUDGET }));
+          expect(printed.exitCode).toBe(0);
+          expect(String(printed.output).trim()).toBe(`${3 * MIB} ${GIB}`);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+
+          const executed = body(await a.call(EXECUTE_DEMO, { command: PRINT_BUDGET }));
+          expect(executed.exitCode).toBe(0);
+          expect(String(executed.output).trim()).toBe(`${3 * MIB} ${GIB}`);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, outcome: "ok" });
+
+          // A command that fails releases in `finally` all the same, on both paths.
+          const failed = body(await a.call("run_command", { command: "echo nope >&2; exit 3" }));
+          expect(failed.exitCode).toBe(3);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          const executeFailed = await a.call(EXECUTE_DEMO, { command: "exit 4" });
+          expect(body(executeFailed)).toMatchObject({ exitCode: 4 });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, outcome: "error" });
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("the runner holds a by-hand write to the budget: with 0.5 MiB left, write-two through execute__ commits nothing and the output names the remainder", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("3", 0.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          const ran = body(await a.call(EXECUTE_DEMO, { command: RUN_WRITE_TWO }));
+          expect(ran.exitCode).toBe(1);
+          expect(String(ran.output)).toContain(
+            "blob_quota: the blob would carry this run past the 0.5 MiB left of its budget",
+          );
+          expect(ran.blobs).toBeUndefined();
+          expect(store.blobs).toHaveLength(blobsBefore);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("a detached command on either path holds its grant on the process name until wait_for_process settles it", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("4", 3 * MIB)], async () => {
+          const started = body(
+            await a.call("run_command", { command: "sleep 1; echo done", detached: true }),
+          );
+          expect(started).toMatchObject({ status: "running" });
+          // The call's own grant is released; the process carries the same figure.
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(3 * MIB);
+          // A second detached start meanwhile is handed what is left of the remainder: nothing.
+          const executed = body(
+            await a.call(EXECUTE_DEMO, {
+              command: `sleep 1; ${PRINT_BUDGET} > /tmp/gra-200-budget.txt`,
+              detached: true,
+            }),
+          );
+          expect(executed).toMatchObject({ status: "running" });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(3 * MIB);
+
+          const first = body(
+            await a.call("wait_for_process", {
+              processName: started.processName,
+              maxWaitSeconds: 10,
+            }),
+          );
+          expect(first).toMatchObject({ status: "completed", exitCode: 0 });
+          // The first's 3 MiB is back; what remains outstanding is the second's grant, the 0 it
+          // was handed while the first held the remainder.
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          const second = body(
+            await a.call("wait_for_process", {
+              processName: executed.processName,
+              maxWaitSeconds: 10,
+            }),
+          );
+          expect(second).toMatchObject({ status: "completed", exitCode: 0 });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          const budgetSeen = body(await a.call("read_file", { path: "/tmp/gra-200-budget.txt" }));
+          expect(String(budgetSeen.content).trim()).toBe(`0 ${GIB}`);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+  });
+
+  /**
    * The sweep's blob pass over what a real run wrote (GRA-189; ADR 0023, "the sweep deletes"): the
    * filesystem blob store over the fake sandbox's own toolbox root, which is the tree `/blobs` is a
    * link into, and a clock a day on. The door's `blob_expired` reading of the row is GRA-187's.

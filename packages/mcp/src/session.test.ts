@@ -14,7 +14,7 @@ import type { McpDeps } from "./deps";
 import { createToolListChangedNotifier } from "./notifier";
 import { BLOB_RULE, INSTRUCTIONS_BUDGET, openAgentSession, SERVER_INSTRUCTIONS } from "./session";
 import { createFakeDeps, createFakeStore } from "./testing/fake-deps";
-import { authoredToolDefinition, META_TOOL_NAMES } from "./tools";
+import { authoredToolDefinition, composeAuthoredDescription, META_TOOL_NAMES } from "./tools";
 import { ADVANCED_WHEN, AUTHORING_TOOLS } from "./tools/authoring";
 import { executeToolDefinition } from "./tools/execute";
 import { ACQUIRE_BLOB_FACT, META_TOOLS } from "./tools/meta";
@@ -731,6 +731,48 @@ describe("the blob facts in the descriptions", () => {
     for (const marker of CONDUCT_MARKERS) {
       expect(text, String(marker)).not.toMatch(marker);
     }
+  });
+
+  /**
+   * The composed description holds the per-description cap (GRA-200): the row's prose may run to
+   * 2,000 characters and the fact adds 337, so a long one is cut on the wire with the fact whole at
+   * its end, while a short one and one that exactly fits are as they were. The row is untouched.
+   */
+  it("a 3,000-character description composes to exactly the cap with the fact intact at its end, a short one is unchanged, and the row keeps its words", () => {
+    const room = INSTRUCTIONS_BUDGET - BLOB_RESULT_FACT.length - 1;
+    const long = "x".repeat(3_000);
+    const composed = composeAuthoredDescription(long);
+    expect(composed).toHaveLength(INSTRUCTIONS_BUDGET);
+    expect(composed.endsWith(` ${BLOB_RESULT_FACT}`)).toBe(true);
+    // The prose fills what is left, less one for the mark.
+    expect(composed.slice(0, room)).toMatch(/^x+…$/);
+
+    // Exactly fitting: no mark, nothing cut; one past: cut, and the extra character is gone.
+    const exact = "y".repeat(room);
+    expect(composeAuthoredDescription(exact)).toBe(`${exact} ${BLOB_RESULT_FACT}`);
+    const past = `${exact}z`;
+    expect(composeAuthoredDescription(past)).toHaveLength(INSTRUCTIONS_BUDGET);
+    expect(composeAuthoredDescription(past)).not.toContain("z");
+    expect(composeAuthoredDescription(past)).toContain("… ");
+
+    // Through the definition: the cut is the wire's, the row keeps the model's words whole.
+    const store = createFakeStore();
+    const { tool } = store.addTool({
+      id: "tool_long_description",
+      personId: "person_1",
+      vendor: "demo",
+      name: "long-description",
+      description: long,
+      inputSchema: { type: "object", properties: {} },
+      readOnly: true,
+      destructive: false,
+      defaultConnectionId: null,
+      path: "/tools/demo",
+    });
+    const definition = authoredToolDefinition(tool);
+    expect(definition.description).toHaveLength(INSTRUCTIONS_BUDGET);
+    expect(definition.description?.endsWith(BLOB_RESULT_FACT)).toBe(true);
+    expect(tool.description).toBe(long);
   });
 
   it("acquire says a test input may name a blob:// ref and that the job mints a fixture without one", () => {

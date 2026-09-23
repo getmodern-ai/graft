@@ -445,6 +445,22 @@ export type PolledProcess = {
 };
 
 /**
+ * Whether a value is `runCommand`'s or `pollProcess`'s answer with its ledger, as against
+ * `withSandbox`'s `{ error }`, a refusal or a bare answer. The one spelling of the test (GRA-200):
+ * `tools/execute.ts`, `tools/authoring.ts` and `in-flight.ts` each read the ledger off one of
+ * these, and three private spellings of the same shape had drifted a word apart.
+ */
+export function isPolledProcess(value: unknown): value is PolledProcess {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { answer?: unknown; blobs?: unknown };
+  return (
+    typeof candidate.answer === "object" &&
+    candidate.answer !== null &&
+    Array.isArray(candidate.blobs)
+  );
+}
+
+/**
  * Look in on a detached process, and read the runner's result file back when the process wrote one
  * — stdout carries `RESULT_MARKER` followed by the path, which is the runner's detached contract.
  */
