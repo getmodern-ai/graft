@@ -31,6 +31,7 @@ export {
 } from "./acquire/runner";
 export {
   ACQUIRE_FAILURES,
+  ACQUIRE_UNCONFIGURED,
   type AcquireAttemptSummary,
   type AcquireConfig,
   type AcquireFailure,
@@ -39,6 +40,7 @@ export {
   type AcquireStarted,
   type AcquireStatus,
   type AcquireSuccess,
+  acquireConfigured,
   acquireStatusOf,
   DEFAULT_ACQUIRE_CONFIG,
   isAcquireFailure,
