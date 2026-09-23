@@ -2,9 +2,8 @@ import { type ConnectionOutput, getConnection, recordUsage } from "@graft/core";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { requireBuildApproval } from "../approval";
 import { ASK_CARD_TOOL_META } from "../ask-card";
-import { blobBudgetOvershoot, recordBlobsWithinBudget } from "../blob-budget";
+import { recordBlobsWithinQuota, withRecordedBlobs } from "../blob-budget";
 import { admitBlobs, blobBudgetEnvironment } from "../blob-door";
-import { blobsOnWire } from "../blobs";
 import {
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   MAX_COMMAND_TIMEOUT_SECONDS,
@@ -52,7 +51,9 @@ import { commandTimingProperties, detachedAdvice } from "./authoring";
  * `GRAFT_BLOB_BUDGET_BYTES` and `GRAFT_BLOB_QUOTA_BYTES` and holds its grant on the in-flight
  * registry until the process settles, the detached one on its process name. The quota alone is
  * judged: the input is a shell command, not JSON the runner reads, so a ref inside it is the
- * runner's own `blob_not_found` to answer inside the run.
+ * runner's own `blob_not_found` to answer inside the run. The command's output is the caller's
+ * too, so the ledger it prints is held to the store and the quota when it is recorded
+ * (`../blob-budget.ts`).
  */
 
 export const EXECUTE_CLAIM = "execute";
@@ -181,27 +182,17 @@ export async function callExecuteTool(
       admitted.budgetBytes,
     );
     // A runner the command invoked wrote these blobs (GRA-186; `../blobs.ts`): their rows land here,
-    // as a detached run's land at the poll, with no version since the command names none, and held
-    // to the budget the door admitted (`../blob-budget.ts`; ADR 0023; Greptile on #157): the
-    // environment is advisory on a by-hand path, and what is recorded is what counts.
+    // as a detached run's land at the poll, with no version since the command names none. The
+    // envelope is the command's own output and nothing in it is evidence (`../blob-budget.ts`;
+    // ADR 0023; Greptile on #157): the ledger's ids are measured against the store and the rows,
+    // the quota is judged over what was measured, and the answer names what was recorded.
     const polled = isPolledProcess(ran) ? ran : null;
-    const recorded = polled
-      ? await recordBlobsWithinBudget(
-          deps,
-          scope,
-          null,
-          polled.blobs,
-          polled.dropped,
-          admitted.budgetBytes,
+    const outcome: Record<string, unknown> = polled
+      ? withRecordedBlobs(
+          polled.answer,
+          await recordBlobsWithinQuota(deps, scope, null, polled.blobs, polled.dropped),
         )
-      : null;
-    const overshoot = recorded ? blobBudgetOvershoot(recorded) : null;
-    const outcome: Record<string, unknown> =
-      polled && recorded && overshoot
-        ? { ...polled.answer, ...blobsOnWire(recorded.kept, polled.dropped), ...overshoot }
-        : polled
-          ? polled.answer
-          : ran;
+      : ran;
 
     const refused = "error" in outcome && outcome.error === "refused";
     const failed = !refused && "error" in outcome;

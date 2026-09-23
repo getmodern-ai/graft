@@ -58,22 +58,15 @@ describe("a budget grant", () => {
     registry.close();
   });
 
-  it("rides on a detached process until it is settled or its time is up, and is readable by name meanwhile", async () => {
+  it("rides on a detached process until it is settled or its time is up", async () => {
     const registry = createInFlightRegistry();
     registry.track("a", "tool-1", 60_000, 2048);
     registry.track("a", "tool-2", 20, 1024);
     expect(registry.outstandingBudget("a")).toBe(3072);
-    // The poll that records the process's ledger reads its budget off the name (GRA-200).
-    expect(registry.budgetOf("a", "tool-1")).toBe(2048);
-    expect(registry.budgetOf("a", "tool-2")).toBe(1024);
-    expect(registry.budgetOf("a", "tool-9")).toBeUndefined();
-    expect(registry.budgetOf("b", "tool-1")).toBeUndefined();
     registry.settle("a", "tool-1");
     expect(registry.outstandingBudget("a")).toBe(1024);
-    expect(registry.budgetOf("a", "tool-1")).toBeUndefined();
     await tick(40);
     expect(registry.outstandingBudget("a")).toBe(0);
-    expect(registry.budgetOf("a", "tool-2")).toBeUndefined();
     expect(registry.has("a")).toBe(false);
     registry.close();
   });

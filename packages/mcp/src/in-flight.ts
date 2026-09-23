@@ -48,12 +48,6 @@ export type InFlightRegistry = {
    * the door handed its run, when it has one, is outstanding for as long.
    */
   track(agentId: string, processName: string, ttlMs: number, budgetBytes?: number): void;
-  /**
-   * The budget a tracked process was handed, for the poll that records its ledger to hold it to
-   * (GRA-200; `blob-budget.ts`); undefined for a name not tracked, which is a process this server
-   * did not start or one whose time is up, and whose budget nobody can know.
-   */
-  budgetOf(agentId: string, processName: string): number | undefined;
   /** `wait_for_process` saw the process finish. A name not tracked is ignored. */
   settle(agentId: string, processName: string): void;
   has(agentId: string): boolean;
@@ -153,9 +147,6 @@ export function createInFlightRegistry(): InFlightRegistry {
       // A tracked process must not hold the server open past its last session.
       timer.unref?.();
       holds.detached.set(processName, { timer, budgetBytes: Math.max(0, budgetBytes) });
-    },
-    budgetOf(agentId, processName) {
-      return agents.get(agentId)?.detached.get(processName)?.budgetBytes;
     },
     settle,
     has(agentId) {

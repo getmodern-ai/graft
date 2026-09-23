@@ -1584,11 +1584,12 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
     }, 30_000);
 
     /**
-     * The record is the rule (Greptile on #157; `blob-budget.ts`): a by-hand command may hand the
-     * runner any budget it likes, so the ledger it prints is held to the admitted budget when the
-     * server records it, the newest blobs removed from the mount and given no row until the rest
-     * fit, and the run answered a `blob_quota` failure. The first write stands: it is what an honest
-     * runner would have committed under the same budget.
+     * The record is the rule and the envelope is a claim (Greptile on #157; `blob-budget.ts`): a
+     * by-hand command may hand the runner any budget it likes and print any ledger, so the ledger
+     * is measured against the store and the rows when the server records it and judged against the
+     * quota over the measured bytes, the newest blobs removed from the mount and given no row until
+     * the rest fit, and the run answered a `blob_quota` failure. The first write stands: it is what
+     * an honest runner would have committed under the same budget.
      */
     const OVERRIDE_WRITE_TWO = `echo '{}' | GRAFT_BLOB_BUDGET_BYTES=${GIB} node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1`;
     const expectHeldToBudget = async (result: CallToolResult, blobsBefore: number) => {
@@ -1596,9 +1597,9 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
       const ran = body(result);
       expect(ran.exitCode).toBe(0);
       expect(String(ran.error)).toBe(
-        "blob_quota: the run committed 2 MiB of blobs against the 1.5 MiB its budget allowed, 0.5 MiB past it. The newest 1 (1 MiB) were removed and have no ref; the 1 before them stand. The budget is what the agent's quota leaves, and a blob stops counting 24 hours after its write.",
+        "blob_quota: this run committed 2 MiB of blobs, and with the agent's 1022.5 MiB live before it that comes to 1024.5 MiB, 0.5 MiB past the 1024 MiB quota. The newest 1 (1 MiB) were removed and have no ref; the 1 before them stand. A blob stops counting 24 hours after its write.",
       );
-      expect(ran).toMatchObject({ blobsRemoved: 1, removedBytes: MIB, budgetBytes: 1.5 * MIB });
+      expect(ran).toMatchObject({ blobsRemoved: 1, removedBytes: MIB, quota: GIB });
       // The runner, told a gibibyte, committed both; the server kept the first and removed the second.
       const written = (ran.result ?? readRunnerEnvelope(String(ran.output))?.result) as {
         first: string;
@@ -1610,7 +1611,8 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
       const secondId = written.second.slice("blob://".length);
       expect(ran.blobs).toEqual([expect.objectContaining({ ref: written.first, bytes: MIB })]);
       expect(store.blobs).toHaveLength(blobsBefore + 1);
-      expect(store.blobs.some((b) => b.id === firstId)).toBe(true);
+      // The row carries what the store measured, whatever the ledger said of it.
+      expect(store.blobs.find((b) => b.id === firstId)).toMatchObject({ bytes: MIB });
       expect(store.blobs.some((b) => b.id === secondId)).toBe(false);
       await expect(stat(join(sandbox.blobsRoot(AGENT_A), firstId, "data"))).resolves.toBeDefined();
       await expect(stat(join(sandbox.blobsRoot(AGENT_A), secondId))).rejects.toThrow();
@@ -1641,7 +1643,13 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
       }
     }, 30_000);
 
-    it("holds a detached by-hand ledger to the budget on its process name when wait_for_process records it", async () => {
+    /**
+     * A detached start's grant lives on the registry until its hold's time is up, and the result
+     * stays pollable after that (Greptile on #157, the second review): the poll reads nothing off
+     * the grant and judges the quota itself, so a late poll is held all the same. The hold's
+     * expiry is stood in for by `settle`, which is what the hold's own timer calls.
+     */
+    it("holds a detached by-hand ledger to the quota when wait_for_process records it, polled after the registry's hold has expired", async () => {
       const a = await connect(TOKEN_A);
       try {
         await withRows([leaving("8", 1.5 * MIB)], async () => {
@@ -1650,15 +1658,97 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
             await a.call(EXECUTE_DEMO, { command: OVERRIDE_WRITE_TWO, detached: true }),
           );
           expect(started).toMatchObject({ status: "running" });
-          expect(deps.inFlight?.budgetOf(AGENT_A, started.processName as string)).toBe(1.5 * MIB);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(1.5 * MIB);
+          // The hold's time is up: the grant is gone and nothing on the registry knows the start.
+          deps.inFlight?.settle(AGENT_A, started.processName as string);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(deps.inFlight?.has(AGENT_A)).toBe(false);
           const waited = await a.call("wait_for_process", {
             processName: started.processName,
             maxWaitSeconds: 10,
           });
           expect(body(waited)).toMatchObject({ status: "completed" });
           await expectHeldToBudget(waited, blobsBefore);
-          expect(deps.inFlight?.budgetOf(AGENT_A, started.processName as string)).toBeUndefined();
         });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * Nothing declared in the envelope is evidence (Greptile on #157, the second review): the store
+     * measures the bytes, the rows say whose a blob is, and a directory that is not there is
+     * nothing.
+     */
+    it("measures a by-hand ledger against the store: declared zero bytes are recorded at the measured 1 MiB and judged on that", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("9", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          // The runner's true envelope, with every size rewritten to zero on the way out.
+          const forged = `${OVERRIDE_WRITE_TWO} | sed 's/"bytes":${MIB}/"bytes":0/g'`;
+          const result = await a.call("run_command", { command: forged });
+          expect(String(body(result).output)).toContain('"bytes":0');
+          await expectHeldToBudget(result, blobsBefore);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("lists a forged entry naming another blob at 900 MiB from its row and drops one naming no directory, touching neither the blob nor its row and recording nothing", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const theirs = store.blobs.find(
+          (b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date(),
+        );
+        if (!theirs) throw new Error("an earlier test left agent A no live blob");
+        const rowBefore = { ...theirs };
+        const blobsBefore = store.blobs.length;
+        const missing = "0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a22";
+        const envelope = JSON.stringify({
+          result: null,
+          blobs: [
+            {
+              ref: `blob://${theirs.id}`,
+              bytes: 900 * MIB,
+              contentType: "application/octet-stream",
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            },
+            {
+              ref: `blob://${missing}`,
+              bytes: MIB,
+              contentType: "application/octet-stream",
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        });
+        const result = await a.call(EXECUTE_DEMO, {
+          command: `printf '%s\\n%s\\n' '__GRAFT_ENVELOPE__:1' '${envelope}'`,
+        });
+        expect(result.isError).toBeFalsy();
+        const ran = body(result);
+        expect(ran.exitCode).toBe(0);
+        // Nothing of the declared ledger reaches the agent as fact: the known blob at its row's
+        // bytes, not 900 MiB, and the one that names no directory dropped.
+        expect(ran.blobs).toEqual([
+          {
+            ref: `blob://${theirs.id}`,
+            bytes: theirs.bytes,
+            contentType: theirs.contentType,
+            ...(theirs.name !== null ? { name: theirs.name } : {}),
+            expiresAt: theirs.expiresAt.toISOString(),
+          },
+        ]);
+        expect(ran.blobsDropped).toBe(1);
+        expect(ran.error).toBeUndefined();
+        expect(store.blobs).toHaveLength(blobsBefore);
+        expect(store.blobs.find((b) => b.id === theirs.id)).toEqual(rowBefore);
+        expect(store.blobs.some((b) => b.id === missing)).toBe(false);
+        await expect(
+          stat(join(sandbox.blobsRoot(AGENT_A), theirs.id, "data")),
+        ).resolves.toBeDefined();
+        expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
       } finally {
         await a.close();
       }

@@ -29,7 +29,7 @@ import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
 import { sandboxPath } from "@graft/toolbox";
 import { type AskChannel, gateToolCall } from "./approval";
-import { blobBudgetOvershoot, recordBlobsWithinBudget } from "./blob-budget";
+import { blobQuotaOvershoot, recordBlobsWithinQuota } from "./blob-budget";
 import { admitBlobs, blobBudgetEnvironment } from "./blob-door";
 import { blobsOnWire, withBlobs } from "./blobs";
 import { boundResult } from "./bounds";
@@ -738,24 +738,23 @@ async function runHeld(
     if (!run.ok) {
       // A module that wrote and then failed committed its blobs all the same (the outcome type): the
       // rows land as they do on a success, and the failure names the refs beside its own fields.
-      // Held to the admitted budget as every ledger is (`blob-budget.ts`; GRA-200): this runner
-      // honours the variable, so the check is defence in depth here and costs one sum.
-      const recorded = await recordBlobsWithinBudget(
+      // Measured against the store and held to the quota as every ledger is (`blob-budget.ts`;
+      // GRA-200): this runner honours the budget, so the check is defence in depth here.
+      const recorded = await recordBlobsWithinQuota(
         deps,
         scope,
         runVersion.id,
         run.blobs,
         run.blobsDropped,
-        admitted.budgetBytes,
       );
-      const overshoot = blobBudgetOvershoot(recorded);
+      const overshoot = blobQuotaOvershoot(recorded);
       await record("error", versioned);
       return {
         answer:
-          recorded.kept.length > 0 || run.blobsDropped > 0 || overshoot
+          recorded.listed.length > 0 || recorded.dropped > 0 || overshoot
             ? {
                 ...run.failure,
-                ...blobsOnWire(recorded.kept, run.blobsDropped),
+                ...blobsOnWire(recorded.listed, recorded.dropped),
                 ...(overshoot
                   ? { ...overshoot, error: `${run.failure.error} ${overshoot.error}` }
                   : {}),
@@ -777,18 +776,17 @@ async function runHeld(
       return { answer: describeDetachedStart(run.detached), isError: false };
     }
     // The blobs the run wrote, one row each, before the answer names them (the header; `blobs.ts`).
-    // A dry run's blobs are real files under the mount and get their rows like any other. Held to
-    // the admitted budget (`blob-budget.ts`; GRA-200, after Greptile on #157): the record is the
-    // rule on every path, and a run this runner let past the budget is answered a failure.
-    const recorded = await recordBlobsWithinBudget(
+    // A dry run's blobs are real files under the mount and get their rows like any other. Measured
+    // against the store and held to the quota (`blob-budget.ts`; GRA-200, after Greptile on #157):
+    // the record is the rule on every path, and a run past the quota is answered a failure.
+    const recorded = await recordBlobsWithinQuota(
       deps,
       scope,
       runVersion.id,
       run.blobs,
       run.blobsDropped,
-      admitted.budgetBytes,
     );
-    const overshoot = blobBudgetOvershoot(recorded);
+    const overshoot = blobQuotaOvershoot(recorded);
     if (overshoot) {
       await record("error", versioned);
       return {
@@ -796,7 +794,7 @@ async function runHeld(
           ...overshoot,
           exitCode: 0,
           stderrTail: "",
-          ...blobsOnWire(recorded.kept, run.blobsDropped),
+          ...blobsOnWire(recorded.listed, recorded.dropped),
         },
         isError: true,
       };
@@ -820,8 +818,8 @@ async function runHeld(
         ? {
             answer: {
               dryRun: report,
-              ...(recorded.kept.length > 0 || run.blobsDropped > 0
-                ? blobsOnWire(recorded.kept, run.blobsDropped)
+              ...(recorded.listed.length > 0 || recorded.dropped > 0
+                ? blobsOnWire(recorded.listed, recorded.dropped)
                 : {}),
             },
             isError: false,
@@ -837,7 +835,7 @@ async function runHeld(
     }
     await record("ok", versioned);
     return {
-      answer: withBlobs(boundResult(run.result), recorded.kept, run.blobsDropped),
+      answer: withBlobs(boundResult(run.result), recorded.listed, recorded.dropped),
       isError: false,
     };
   }

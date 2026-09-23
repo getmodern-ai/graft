@@ -11,9 +11,8 @@ import {
 import type { SandboxFile } from "@graft/sandbox";
 import { sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { blobBudgetOvershoot, recordBlobsWithinBudget } from "../blob-budget";
+import { recordBlobsWithinQuota, withRecordedBlobs } from "../blob-budget";
 import { admitBlobs, blobBudgetEnvironment } from "../blob-door";
-import { blobsOnWire } from "../blobs";
 import {
   boundJson,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -273,25 +272,13 @@ const runCommandTool: MetaTool = {
       );
       if (!isPolledProcess(ran)) return answer(ran);
       // A runner the command invoked by hand wrote these (GRA-186; `../blobs.ts`): rows now, no
-      // version, held to the budget the door admitted (`../blob-budget.ts`; ADR 0023; Greptile on
-      // #157): the environment is advisory on a by-hand path, and what is recorded is what counts.
-      const recorded = await recordBlobsWithinBudget(
-        deps,
-        scope,
-        null,
-        ran.blobs,
-        ran.dropped,
-        admitted.budgetBytes,
-      );
-      const overshoot = blobBudgetOvershoot(recorded);
-      if (overshoot) {
-        return toolError({
-          ...ran.answer,
-          ...blobsOnWire(recorded.kept, ran.dropped),
-          ...overshoot,
-        });
-      }
-      return answer(ran.answer);
+      // version. The envelope is the command's own output and nothing in it is evidence
+      // (`../blob-budget.ts`; ADR 0023; Greptile on #157): the ledger's ids are measured against
+      // the store and the rows, the quota is judged over what was measured, and a run past it is
+      // answered the failure.
+      const recorded = await recordBlobsWithinQuota(deps, scope, null, ran.blobs, ran.dropped);
+      const outcome = withRecordedBlobs(ran.answer, recorded);
+      return recorded.removed.length > 0 ? toolError(outcome) : answer(outcome);
     } finally {
       door.release();
     }
@@ -330,34 +317,24 @@ const waitForProcess: MetaTool = {
     const polled = await withSandbox(open(session), (handle) => pollProcess(handle, parsed));
     if (!isPolledProcess(polled)) return answer(polled);
     // The blobs a runner inside the process wrote get their rows here, since the run that started
-    // it returned before they existed (GRA-186; `../blobs.ts`). The version is not known to a poll.
-    // The budget is: the start put it on the process name (`in-flight.ts`'s `track`), and the
-    // ledger is held to it here as a waited command's is (`../blob-budget.ts`; ADR 0023; Greptile
-    // on #157), read before the settle below takes the name off the registry. A name the registry
-    // does not hold (a start this server did not make, or one whose time is up) has no budget to
-    // check against, and its ledger is recorded as it stands.
-    const budget = session.deps.inFlight?.budgetOf(session.scope.agentId, parsed.processName);
-    const recorded = await recordBlobsWithinBudget(
+    // it returned before they existed (GRA-186; `../blobs.ts`). The version is not known to a poll,
+    // and neither is the budget the start was handed: its grant on the registry expires with the
+    // hold while the result stays pollable, so the record reads nothing off the grant and judges
+    // the quota itself over what the store measures (`../blob-budget.ts`; ADR 0023; Greptile on
+    // #157), for a by-hand start and a `run_tool`'s alike.
+    const recorded = await recordBlobsWithinQuota(
       session.deps,
       session.scope,
       null,
       polled.blobs,
       polled.dropped,
-      budget,
     );
     // A process seen finished releases its hold; one still running keeps it (ADR 0009; `in-flight.ts`).
     if (isSettledProcess(polled.answer)) {
       session.deps.inFlight?.settle(session.scope.agentId, parsed.processName);
     }
-    const overshoot = blobBudgetOvershoot(recorded);
-    if (overshoot) {
-      return toolError({
-        ...polled.answer,
-        ...blobsOnWire(recorded.kept, polled.dropped),
-        ...overshoot,
-      });
-    }
-    return answer(polled.answer);
+    const outcome = withRecordedBlobs(polled.answer, recorded);
+    return recorded.removed.length > 0 ? toolError(outcome) : answer(outcome);
   },
 };
 
