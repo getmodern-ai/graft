@@ -50,8 +50,8 @@ export function handoffSentence(
  */
 export function setupOfferMessage(form: HandoffForm, url: string): string {
   const lead =
-    "The person has no vendor connected yet: Setup, in the console, connects a first vendor and has Graft build a first tool for this agent in a few clicks, and once it is done find_tool lists that tool.";
+    "The person has no vendor connected yet: Setup, in the console, connects a first vendor and has Graft acquire a first tool for this agent in a few clicks, and once it is done find_tool lists that tool.";
   return form === "card"
-    ? `${lead} Setup is offered as a card in this conversation, and the person opens it from there, so do not send them a link. If they say they cannot see the card, this url opens Setup: ${url}`
+    ? `${lead} Setup is offered as a card in this conversation, and the person opens it from there, so do not send them a link. If they say they cannot see the card, or that it could not open Setup, give them this url, which opens Setup: ${url}`
     : `${lead} Relay this link so they can open Setup: ${url}`;
 }

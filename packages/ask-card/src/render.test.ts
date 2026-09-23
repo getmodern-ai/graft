@@ -764,15 +764,24 @@ describe("the Setup offer", () => {
     h.stop();
   });
 
-  it("says where the link is when the host refuses to open the window", async () => {
+  it("shows Setup's address to copy when the host refuses to open the window", async () => {
     const h = handlers();
     h.openLink.mockRejectedValueOnce(new Error("blocked"));
     const root = renderCard(SETUP, h, document);
+    expect(root.querySelector(".ask-address")).toBeNull();
     root.querySelector("button")?.click();
     await until(() => status(root)?.dataset.tone === "refused");
     expect(status(root)?.textContent).toBe(
-      "The chat could not open the window (blocked). The link the agent relayed opens Setup.",
+      `The chat could not open the window (blocked). Setup opens at this address in a browser, and ${SETUP.agentName} can give it to you too:`,
     );
+    const address = root.querySelector<HTMLElement>(".ask-address");
+    // The bare address: a browser tab has no card to tell, so it carries no from=card.
+    expect(address?.textContent).toBe(SETUP.url);
+    expect(address?.hidden).toBe(false);
+    // A later click the host allows hides it again.
+    root.querySelector("button")?.click();
+    await until(() => status(root)?.dataset.tone === "waiting");
+    expect(address?.hidden).toBe(true);
   });
 
   it("renders an ask through the same entry, unchanged", () => {

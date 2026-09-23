@@ -561,7 +561,7 @@ export const SETUP_BUTTON = "Set up your first tool";
 
 /** What the Setup card says under its title: what Setup does, and where it happens. */
 export function setupDescriptionOf(card: SetupCard): string {
-  return `${card.agentName} has no vendor connected yet. Setup, in Graft's console, connects one and builds a first tool for this agent in a few clicks. It opens in a new window, and nothing is typed in the chat.`;
+  return `${card.agentName} has no vendor connected yet. Setup, in Graft's console, connects one and has Graft acquire a first tool for this agent in a few clicks. It opens in a new window, and nothing is typed in the chat.`;
 }
 
 /** The sentence the Setup card always carries: there is nothing to wait for here, so ask again. */
@@ -574,10 +574,21 @@ export const SETUP_OPENED_SENTENCE =
   "Setup is open in the window that opened. Ask again here once you have finished.";
 
 /**
+ * What the Setup card says when the host refuses to open the window, above Setup's address drawn
+ * on the card to copy. The agent was told not to send a link while the card is shown, so the card
+ * carries the address itself, and the agent gives the same one when asked
+ * (`@graft/mcp`'s `setupOfferMessage`).
+ */
+export function setupOpenRefusedOf(card: SetupCard, reason: string): string {
+  return `The chat could not open the window (${reason}). Setup opens at this address in a browser, and ${card.agentName} can give it to you too:`;
+}
+
+/**
  * Render the Setup offer (GRA-210) into a fresh element: the title, the sentence, the agent, the
  * ask-again sentence and one primary button that opens the Setup page with `from=card` through the
  * host's link opener. Nothing is answered and nothing is polled; the button stays enabled after a
- * click, so a window the person closed early can be opened again.
+ * click, so a window the person closed early can be opened again. Where the host refuses to open
+ * it, the card shows Setup's address to copy (`setupOpenRefusedOf`).
  */
 export function renderSetup(
   card: SetupCard,
@@ -613,6 +624,10 @@ export function renderSetup(
     status.hidden = false;
     if (!status.isConnected) actions.after(status);
   };
+  // The address a browser opens Setup at, shown only when the host refused the window: without
+  // `from=card`, since that page has no card to tell and should not close itself.
+  const address = el(doc, "p", "ask-mono ask-address", card.url);
+  address.hidden = true;
 
   const open = button(doc, SETUP_BUTTON, "primary", () => {
     void (async () => {
@@ -620,11 +635,14 @@ export function renderSetup(
         await handlers.openLink(withFromCard(card.url));
       } catch (error) {
         note(
-          `The chat could not open the window (${error instanceof Error ? error.message : String(error)}). The link the agent relayed opens Setup.`,
+          setupOpenRefusedOf(card, error instanceof Error ? error.message : String(error)),
           "refused",
         );
+        address.hidden = false;
+        if (!address.isConnected) status.after(address);
         return;
       }
+      address.hidden = true;
       note(SETUP_OPENED_SENTENCE, "waiting");
     })();
   });
