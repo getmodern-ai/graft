@@ -631,8 +631,9 @@ runner's ledger comes back beside the result as `blobs` so the server writes one
 through a blob store seam beside the toolbox store. The check bans `fs`, `fs/promises`,
 `worker_threads`, `vm`, `module`, `cluster` and `inspector` as defence in depth, the runner refuses a
 ref that does not resolve under `/blobs`, and the door refuses `blob_not_found`, `blob_expired` and
-`blob_quota` before a sandbox is touched. 24 hours, 256 MiB per blob, 1 GiB live per agent, all
-constants; writing one never asks. The working-set sweep's timer runs a second pass that removes
+`blob_quota` before a sandbox is touched, on every path that invokes the runner for an agent:
+`run_tool`, every authored tool in the list, `execute__<connection>` and `run_command` (GRA-200). 24
+hours, 256 MiB per blob, 1 GiB live per agent, all constants; writing one never asks. The working-set sweep's timer runs a second pass that removes
 expired blobs through the blob store and keeps the row with `removed_at`. The proxy's cap is
 `GRAFT_PROXY_MAX_BODY_BYTES` (default 10 MiB; ADR 0010 as amended 2026-09-22), so a self-host moves
 a file larger than that only once its operator raises it. The spec is GRA-181 and its sub-issues are
@@ -688,8 +689,34 @@ deleted with the rest before the module loads, and the runner keeps the total it
 refuses the write that would pass the budget as `blob_quota` as the bytes stream in, at the smaller
 of the per-blob cap and the budget, removing the `.tmp` directory as `blob_too_large` does; a
 refused write is on no ledger. Unset, as under a server older than the variable or a runner run by
-hand, the per-blob cap alone bounds a write. `execute__` commands and `run_command` never pass the
-door and carry no budget. Three more rules from Greptile's review of #148: the runner reserves
+hand, the per-blob cap alone bounds a write. **`execute__` commands and `run_command` pass the same
+door** (GRA-200): `tools/execute.ts` and `tools/authoring.ts` call `admitBlobs` before the exec (the
+quota alone, since a shell command is not JSON the runner reads), refuse `blob_quota` in their own
+shape with no exec, put the two variables into the process's environment beside the runner's path,
+and hold the grant on the in-flight registry until the process settles, a detached one's on its
+process name through `heldInFlight`'s `budgetBytes`; `isPolledProcess` in `sandbox.ts` is the one
+spelling of the runner-answer shape the three readers of a ledger share. Two rules from Greptile's
+review of #157: **the admission and its grant are one step** (`admitUnderGrant` in `in-flight.ts`,
+serialised per agent through `InFlightRegistry.admit`, on `run.ts`'s path too), since two
+admissions interleaved across the door's await both read the remainder before either reserved it;
+and **the record of a run's blobs is an adoption from the store** (`blob-budget.ts`): a by-hand
+command can hand the runner any `GRAFT_BLOB_BUDGET_BYTES` it likes, print any ledger and edit any
+sidecar, so when the server records a run's ledger (`recordBlobsWithinQuota`, at the three record
+sites and at `wait_for_process`) it takes nothing from the ledger but the ids and builds each row as
+the sweep builds an orphan's (`adoptedBlobOf`, `parseBlobSidecar`): `bytes` as the store measured,
+name and media type from the sidecar under the write rules, `expiresAt` never past the write plus
+the TTL with the store's last write capped at now, the version the caller's; an entry the store
+cannot `stat`, whose sidecar fails the rules or names another agent, is dropped; an entry naming a
+blob with a row already is listed from its row alone while the row is live and the directory is
+there (never removed or re-recorded; a second poll of a finished process names the same blob) and
+dropped otherwise. The quota is then judged over the live rows plus this run's measured bytes; past
+it the newest are removed through the `BlobStore` until the rest fit, get no row, and the run is
+answered a `blob_quota` failure naming the overshoot (`blobQuotaOvershoot`, `withRecordedBlobs`
+putting the recorded list in place of the declared one). The whole record is one step per agent
+under `InFlightRegistry.exclusive`, the critical section admissions take, so two runs finishing
+together cannot both find room. The record reads nothing off the grant, which expires with a
+detached hold while the result stays pollable; the quota is the promise. The newest go because the
+earlier writes are what an honest runner would have committed. Three more rules from Greptile's review of #148: the runner reserves
 against the budget **as each chunk lands**, one shared figure across every write in flight, so two
 writes started together cannot both fit a remainder only one fits; the door subtracts **what it has
 already handed to this agent's runs still in flight** (`InFlightRegistry.grant` and

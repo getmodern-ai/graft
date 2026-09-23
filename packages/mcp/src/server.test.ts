@@ -519,6 +519,9 @@ beforeAll(async () => {
       }),
     listChangedWindowMs: 300,
     toolbox,
+    // The store the record-time budget check removes through (GRA-200; `blob-budget.ts`), over the
+    // same tree the sandbox's `/blobs` links into.
+    blobStore: createFilesystemBlobStore({ root: join(sandbox.root, "toolboxes") }),
     publishTool: (args) => publishToolVersion(publish, args),
     onBlobWritten: (event) => blobEvents.push(event),
     onToolCall: (event) => toolEvents.push(event),
@@ -846,17 +849,24 @@ describe("a tool that writes a blob", () => {
         toolVersion: "tool_save_report_v1",
       });
 
-      // The ledger beside the result, in the text block and in structuredContent alike, with an
-      // expiry 24 hours out; stat inside the module read the same sidecar.
-      const line = {
+      // The ledger beside the result, in the text block and in structuredContent alike: the row
+      // the server adopted from the store (GRA-200; `blob-budget.ts`), which is the sidecar's line
+      // with an expiry never later than the store's last write plus 24 hours. A Linux file's mtime
+      // is coarse-grained and can sit a few milliseconds before the runner's own clock, so the
+      // adopted expiry may be that much earlier than the sidecar's; stat inside the module read
+      // the sidecar itself.
+      const [wireLine] = answer.blobs as { expiresAt: string }[];
+      if (!wireLine) throw new Error("the answer names no blob");
+      expect(wireLine).toEqual({
         ref: answer.result.file,
         bytes: data.length,
         contentType: "application/json",
         name: "items.json",
-        expiresAt: meta.expiresAt,
-      };
-      expect(answer.blobs).toEqual([line]);
-      expect(result.structuredContent).toEqual({ result: answer.result, blobs: [line] });
+        expiresAt: wireLine.expiresAt,
+      });
+      expect(Date.parse(wireLine.expiresAt)).toBeLessThanOrEqual(Date.parse(meta.expiresAt));
+      expect(Date.parse(wireLine.expiresAt)).toBeGreaterThan(Date.parse(meta.expiresAt) - 1_000);
+      expect(result.structuredContent).toEqual({ result: answer.result, blobs: [wireLine] });
       expect(answer.result.stat).toEqual({
         bytes: data.length,
         contentType: "application/json",
@@ -879,7 +889,8 @@ describe("a tool that writes a blob", () => {
         name: "items.json",
         removedAt: null,
       });
-      expect(store.blobs.at(-1)?.expiresAt.toISOString()).toBe(meta.expiresAt);
+      // The row carries the adopted expiry, the same one the wire names.
+      expect(store.blobs.at(-1)?.expiresAt.toISOString()).toBe(wireLine.expiresAt);
       expect(blobEvents.slice(eventsBefore)).toEqual([
         {
           agentId: AGENT_A,
@@ -1442,6 +1453,403 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
       await a.close();
     }
   }, 30_000);
+
+  /**
+   * The by-hand paths pass the same door (GRA-200; ADR 0023, "1 GiB live per agent, refused at the
+   * door as `blob_quota` before the run"): `execute__<connection>` and `run_command` may run the
+   * runner, and the module it loads may write a blob, so an agent at its quota is refused before
+   * any exec, an admitted command is handed the budget and the quota in its environment, and the
+   * grant is outstanding until the process settles: a waited command's when it returns, whatever it
+   * exited with, a detached one's until `wait_for_process` sees it finish.
+   */
+  describe("execute__<connection> and run_command pass the door too (GRA-200)", () => {
+    const MIB = 1024 * 1024;
+    const REF = /^blob:\/\/[0-9a-f-]{36}$/;
+    const EXECUTE_DEMO = executeToolName(CONN_DEMO);
+    /** A command that prints what the runner would read: the budget, then the quota. */
+    const PRINT_BUDGET = 'echo "$GRAFT_BLOB_BUDGET_BYTES $GRAFT_BLOB_QUOTA_BYTES"';
+    const RUN_SAVE_REPORT = `echo '{"limit":1}' | node "$GRAFT_RUNNER" /tools/tools/demo/save-report/v1`;
+    const RUN_WRITE_TWO = `echo '{}' | node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1`;
+    const liveBytesOfA = () =>
+      store.blobs
+        .filter((b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date())
+        .reduce((total, b) => total + b.bytes, 0);
+    /** A row that leaves agent A exactly `left` bytes under the quota. */
+    const leaving = (id: string, left: number) =>
+      row(`e0e0e0e0-0000-4000-8000-${id.padStart(12, "0")}`, AGENT_A, {
+        bytes: GIB - left - liveBytesOfA(),
+      });
+
+    it("refuses both blob_quota at the cap, in the door's shape, with no exec and no grant left behind", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("1", 0)], async () => {
+          const execs = sandbox.processNames(SANDBOX_A).length;
+          const blobsBefore = store.blobs.length;
+          const refusal = {
+            reason: "blob_quota",
+            bytes: GIB,
+            quota: GIB,
+            message:
+              "This agent's live blobs come to 1024 MiB, at or over the 1024 MiB quota, so no tool can run for it until some expire: any tool may write a blob. A blob lives 24 hours from its write and stops counting once it has expired, the oldest first. Run the tool again once one has.",
+          };
+          // The execute tool: the refusal, a `refused` ledger row under its name, no process.
+          expectRefusedAtDoor(
+            await a.call(EXECUTE_DEMO, { command: RUN_SAVE_REPORT }),
+            execs,
+            refusal,
+          );
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, toolId: null });
+          // run_command: the same refusal and no process; it writes no ledger row on any outcome.
+          const usageRows = store.usage.length;
+          const ran = await a.call("run_command", { command: RUN_SAVE_REPORT });
+          expect(ran.isError).toBe(true);
+          expect(body(ran)).toEqual({ error: "refused", ...refusal });
+          expect(ran.structuredContent).toEqual({ error: "refused", ...refusal });
+          expect(sandbox.processNames(SANDBOX_A)).toHaveLength(execs);
+          expect(store.usage).toHaveLength(usageRows);
+          // Detached is judged at the same door: nothing to poll, nothing outstanding.
+          const detached = await a.call("run_command", { command: "sleep 30", detached: true });
+          expect(body(detached)).toMatchObject({ error: "refused", reason: "blob_quota" });
+          expect(sandbox.processNames(SANDBOX_A)).toHaveLength(execs);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(store.blobs).toHaveLength(blobsBefore);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("under the cap, hands both processes the budget and the quota, and a waited command's grant is back when it returns, a failing one's too", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("2", 3 * MIB)], async () => {
+          const printed = body(await a.call("run_command", { command: PRINT_BUDGET }));
+          expect(printed.exitCode).toBe(0);
+          expect(String(printed.output).trim()).toBe(`${3 * MIB} ${GIB}`);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+
+          const executed = body(await a.call(EXECUTE_DEMO, { command: PRINT_BUDGET }));
+          expect(executed.exitCode).toBe(0);
+          expect(String(executed.output).trim()).toBe(`${3 * MIB} ${GIB}`);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, outcome: "ok" });
+
+          // A command that fails releases in `finally` all the same, on both paths.
+          const failed = body(await a.call("run_command", { command: "echo nope >&2; exit 3" }));
+          expect(failed.exitCode).toBe(3);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          const executeFailed = await a.call(EXECUTE_DEMO, { command: "exit 4" });
+          expect(body(executeFailed)).toMatchObject({ exitCode: 4 });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, outcome: "error" });
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("the runner holds a by-hand write to the budget: with 0.5 MiB left, write-two through execute__ commits nothing and the output names the remainder", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("3", 0.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          const ran = body(await a.call(EXECUTE_DEMO, { command: RUN_WRITE_TWO }));
+          expect(ran.exitCode).toBe(1);
+          expect(String(ran.output)).toContain(
+            "blob_quota: the blob would carry this run past the 0.5 MiB left of its budget",
+          );
+          expect(ran.blobs).toBeUndefined();
+          expect(store.blobs).toHaveLength(blobsBefore);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * The admission is reserved before anything else is awaited (Greptile on #157): two calls of
+     * one agent overlapping under 1.5 MiB left are handed 1.5 MiB and then 0, never 1.5 MiB twice.
+     */
+    it("reserves the admission at once: two overlapping execute__ calls are handed the remainder and then nothing", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("5", 1.5 * MIB)], async () => {
+          const [first, second] = await Promise.all([
+            a.call(EXECUTE_DEMO, { command: `sleep 1; ${PRINT_BUDGET}` }),
+            a.call(EXECUTE_DEMO, { command: PRINT_BUDGET }),
+          ]);
+          const budgets = [first, second]
+            .map((result) => Number(String(body(result).output).trim().split(" ")[0]))
+            .sort((x, y) => y - x);
+          expect(budgets).toEqual([1.5 * MIB, 0]);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * The record is the rule and the envelope is a claim (Greptile on #157; `blob-budget.ts`): a
+     * by-hand command may hand the runner any budget it likes and print any ledger, so the ledger
+     * is measured against the store and the rows when the server records it and judged against the
+     * quota over the measured bytes, the newest blobs removed from the mount and given no row until
+     * the rest fit, and the run answered a `blob_quota` failure. The first write stands: it is what
+     * an honest runner would have committed under the same budget.
+     */
+    const OVERRIDE_WRITE_TWO = `echo '{}' | GRAFT_BLOB_BUDGET_BYTES=${GIB} node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1`;
+    const expectHeldToBudget = async (result: CallToolResult, blobsBefore: number) => {
+      expect(result.isError).toBe(true);
+      const ran = body(result);
+      expect(ran.exitCode).toBe(0);
+      expect(String(ran.error)).toBe(
+        "blob_quota: this run committed 2 MiB of blobs, and with the agent's 1022.5 MiB live before it that comes to 1024.5 MiB, 0.5 MiB past the 1024 MiB quota. The newest 1 (1 MiB) were removed and have no ref; the 1 before them stand. A blob stops counting 24 hours after its write.",
+      );
+      expect(ran).toMatchObject({ blobsRemoved: 1, removedBytes: MIB, quota: GIB });
+      // The runner, told a gibibyte, committed both; the server kept the first and removed the second.
+      const written = (ran.result ?? readRunnerEnvelope(String(ran.output))?.result) as {
+        first: string;
+        second: string;
+      };
+      expect(written.first).toMatch(REF);
+      expect(written.second).toMatch(REF);
+      const firstId = written.first.slice("blob://".length);
+      const secondId = written.second.slice("blob://".length);
+      expect(ran.blobs).toEqual([expect.objectContaining({ ref: written.first, bytes: MIB })]);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      // The row carries what the store measured, whatever the ledger said of it.
+      expect(store.blobs.find((b) => b.id === firstId)).toMatchObject({ bytes: MIB });
+      expect(store.blobs.some((b) => b.id === secondId)).toBe(false);
+      await expect(stat(join(sandbox.blobsRoot(AGENT_A), firstId, "data"))).resolves.toBeDefined();
+      await expect(stat(join(sandbox.blobsRoot(AGENT_A), secondId))).rejects.toThrow();
+      expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+    };
+
+    it("holds a by-hand ledger to the admitted budget: a command overriding the variable writes 2 MiB against 1.5 MiB, keeps the first blob, loses the second from /blobs and the rows, and is answered a blob_quota failure", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("6", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          await expectHeldToBudget(
+            await a.call(EXECUTE_DEMO, { command: OVERRIDE_WRITE_TWO }),
+            blobsBefore,
+          );
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, outcome: "error" });
+        });
+        // The same through run_command, which carries no token but runs the runner all the same.
+        await withRows([leaving("7", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          await expectHeldToBudget(
+            await a.call("run_command", { command: OVERRIDE_WRITE_TWO }),
+            blobsBefore,
+          );
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * A detached start's grant lives on the registry until its hold's time is up, and the result
+     * stays pollable after that (Greptile on #157, the second review): the poll reads nothing off
+     * the grant and judges the quota itself, so a late poll is held all the same. The hold's
+     * expiry is stood in for by `settle`, which is what the hold's own timer calls.
+     */
+    it("holds a detached by-hand ledger to the quota when wait_for_process records it, polled after the registry's hold has expired", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("8", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          const started = body(
+            await a.call(EXECUTE_DEMO, { command: OVERRIDE_WRITE_TWO, detached: true }),
+          );
+          expect(started).toMatchObject({ status: "running" });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(1.5 * MIB);
+          // The hold's time is up: the grant is gone and nothing on the registry knows the start.
+          deps.inFlight?.settle(AGENT_A, started.processName as string);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(deps.inFlight?.has(AGENT_A)).toBe(false);
+          const waited = await a.call("wait_for_process", {
+            processName: started.processName,
+            maxWaitSeconds: 10,
+          });
+          expect(body(waited)).toMatchObject({ status: "completed" });
+          await expectHeldToBudget(waited, blobsBefore);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * Nothing declared in the envelope is evidence (Greptile on #157, the second review): the store
+     * measures the bytes, the rows say whose a blob is, and a directory that is not there is
+     * nothing.
+     */
+    it("measures a by-hand ledger against the store: declared zero bytes are recorded at the measured 1 MiB and judged on that", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("9", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          // The runner's true envelope, with every size rewritten to zero on the way out.
+          const forged = `${OVERRIDE_WRITE_TWO} | sed 's/"bytes":${MIB}/"bytes":0/g'`;
+          const result = await a.call("run_command", { command: forged });
+          expect(String(body(result).output)).toContain('"bytes":0');
+          await expectHeldToBudget(result, blobsBefore);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * The sidecar is a file the command can edit (Greptile on #157, the third review): the row is
+     * adopted from it under the sweep's rules, so a far-future expiry is clamped to the write plus
+     * the TTL and the envelope's copy of it is never read.
+     */
+    it("adopts a by-hand blob's row from the store under the sweep's rules: a sidecar and envelope forged to expire in 2099 are recorded to expire in 24 hours", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const blobsBefore = store.blobs.length;
+        // The runner's true run, then every sidecar it wrote and the envelope rewritten to 2099.
+        const forge = [
+          'const fs=require("fs");',
+          'const text=fs.readFileSync("/tmp/gra200-forge.out","utf8");',
+          'const json=JSON.parse(text.slice(text.indexOf("\\n")+1));',
+          "for(const b of json.blobs){",
+          'const p="/blobs/"+b.ref.slice(7)+"/meta.json";',
+          'const m=JSON.parse(fs.readFileSync(p,"utf8"));',
+          'm.expiresAt="2099-01-01T00:00:00.000Z";b.expiresAt=m.expiresAt;',
+          "fs.writeFileSync(p,JSON.stringify(m));}",
+          'process.stdout.write("__GRAFT_ENVELOPE__:1\\n"+JSON.stringify(json)+"\\n");',
+        ].join("");
+        const command = `echo '{}' | node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1 > /tmp/gra200-forge.out && node -e '${forge}'`;
+        const result = await a.call("run_command", { command });
+        expect(result.isError).toBeFalsy();
+        const ran = body(result);
+        expect(ran.exitCode).toBe(0);
+        expect(String(ran.output)).toContain("2099-01-01");
+        const blobs = ran.blobs as { ref: string; expiresAt: string }[];
+        expect(blobs).toHaveLength(2);
+        expect(store.blobs).toHaveLength(blobsBefore + 2);
+        const latest = Date.now() + 24 * 60 * 60 * 1000 + 60_000;
+        for (const blob of blobs) {
+          expect(Date.parse(blob.expiresAt)).toBeLessThanOrEqual(latest);
+          const stored = store.blobs.find((b) => b.id === blob.ref.slice("blob://".length));
+          expect(stored?.expiresAt.getTime()).toBeLessThanOrEqual(latest);
+          expect(stored?.bytes).toBe(MIB);
+        }
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("lists a forged entry naming another blob at 900 MiB from its row and drops one naming no directory, touching neither the blob nor its row and recording nothing", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const theirs = store.blobs.find(
+          (b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date(),
+        );
+        if (!theirs) throw new Error("an earlier test left agent A no live blob");
+        const rowBefore = { ...theirs };
+        const blobsBefore = store.blobs.length;
+        const missing = "0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a22";
+        const envelope = JSON.stringify({
+          result: null,
+          blobs: [
+            {
+              ref: `blob://${theirs.id}`,
+              bytes: 900 * MIB,
+              contentType: "application/octet-stream",
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            },
+            {
+              ref: `blob://${missing}`,
+              bytes: MIB,
+              contentType: "application/octet-stream",
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        });
+        const result = await a.call(EXECUTE_DEMO, {
+          command: `printf '%s\\n%s\\n' '__GRAFT_ENVELOPE__:1' '${envelope}'`,
+        });
+        expect(result.isError).toBeFalsy();
+        const ran = body(result);
+        expect(ran.exitCode).toBe(0);
+        // Nothing of the declared ledger reaches the agent as fact: the known blob at its row's
+        // bytes, not 900 MiB, and the one that names no directory dropped.
+        expect(ran.blobs).toEqual([
+          {
+            ref: `blob://${theirs.id}`,
+            bytes: theirs.bytes,
+            contentType: theirs.contentType,
+            ...(theirs.name !== null ? { name: theirs.name } : {}),
+            expiresAt: theirs.expiresAt.toISOString(),
+          },
+        ]);
+        expect(ran.blobsDropped).toBe(1);
+        expect(ran.error).toBeUndefined();
+        expect(store.blobs).toHaveLength(blobsBefore);
+        expect(store.blobs.find((b) => b.id === theirs.id)).toEqual(rowBefore);
+        expect(store.blobs.some((b) => b.id === missing)).toBe(false);
+        await expect(
+          stat(join(sandbox.blobsRoot(AGENT_A), theirs.id, "data")),
+        ).resolves.toBeDefined();
+        expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("a detached command on either path holds its grant on the process name until wait_for_process settles it", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("4", 3 * MIB)], async () => {
+          const started = body(
+            await a.call("run_command", { command: "sleep 1; echo done", detached: true }),
+          );
+          expect(started).toMatchObject({ status: "running" });
+          // The call's own grant is released; the process carries the same figure.
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(3 * MIB);
+          // A second detached start meanwhile is handed what is left of the remainder: nothing.
+          const executed = body(
+            await a.call(EXECUTE_DEMO, {
+              command: `sleep 1; ${PRINT_BUDGET} > /tmp/gra-200-budget.txt`,
+              detached: true,
+            }),
+          );
+          expect(executed).toMatchObject({ status: "running" });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(3 * MIB);
+
+          const first = body(
+            await a.call("wait_for_process", {
+              processName: started.processName,
+              maxWaitSeconds: 10,
+            }),
+          );
+          expect(first).toMatchObject({ status: "completed", exitCode: 0 });
+          // The first's 3 MiB is back; what remains outstanding is the second's grant, the 0 it
+          // was handed while the first held the remainder.
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          const second = body(
+            await a.call("wait_for_process", {
+              processName: executed.processName,
+              maxWaitSeconds: 10,
+            }),
+          );
+          expect(second).toMatchObject({ status: "completed", exitCode: 0 });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          const budgetSeen = body(await a.call("read_file", { path: "/tmp/gra-200-budget.txt" }));
+          expect(String(budgetSeen.content).trim()).toBe(`0 ${GIB}`);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+  });
 
   /**
    * The sweep's blob pass over what a real run wrote (GRA-189; ADR 0023, "the sweep deletes"): the

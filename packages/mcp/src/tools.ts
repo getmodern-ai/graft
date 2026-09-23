@@ -15,7 +15,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { ASK_CARD_TOOL_META } from "./ask-card";
 import { BLOB_RESULT_FACT, type BlobTally, withBlobTally } from "./blobs";
-import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "./bounds";
+import { DEFAULT_COMMAND_TIMEOUT_SECONDS, DESCRIPTION_BUDGET } from "./bounds";
 import { agentDrivesByHand, hiddenToolRefusal } from "./by-hand";
 import { toolAskResult } from "./card-client";
 import type { SessionContext } from "./context";
@@ -56,12 +56,33 @@ export const META_TOOL_NAMES: readonly string[] = FIXED_TOOLS.map((tool) => tool
 export function authoredToolDefinition(tool: AuthoredToolRow): Tool {
   return {
     name: authoredToolName(tool.vendor, tool.name),
-    description: `${tool.description} ${BLOB_RESULT_FACT}`,
+    description: composeAuthoredDescription(tool.description),
     // Stored as `type: "object"` — the tool service refuses anything else at create.
     inputSchema: tool.inputSchema as Tool["inputSchema"],
     annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
     _meta: ASK_CARD_TOOL_META,
   };
+}
+
+/** The mark a cut description ends on: one character, so the cut costs the fact nothing. */
+const CUT_MARK = "…";
+
+/**
+ * The row's prose and the blob fact as one description, held to `DESCRIPTION_BUDGET` (GRA-200):
+ * Claude Code caps a tool description at 2KB per server (AGENTS.md, *The `initialize` result
+ * carries the playbook*), and the row's prose may run to `TOOL_DESCRIPTION_MAX_LENGTH` (2,000)
+ * before the fact's 337 characters are added. The fact always fits whole and last, since it is
+ * where the model reads what comes back and what is refused; the prose is cut to what is left,
+ * less one for the mark. The cut is on the wire alone: the toolbox row keeps the words whole,
+ * which is what the approval and the console show.
+ */
+export function composeAuthoredDescription(description: string): string {
+  const room = DESCRIPTION_BUDGET - BLOB_RESULT_FACT.length - 1;
+  const prose =
+    description.length > room
+      ? `${description.slice(0, room - CUT_MARK.length)}${CUT_MARK}`
+      : description;
+  return `${prose} ${BLOB_RESULT_FACT}`;
 }
 
 export async function listToolsFor(session: SessionContext): Promise<Tool[]> {
