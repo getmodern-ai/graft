@@ -14,6 +14,7 @@ import type { ServiceContext } from "../context";
 import { orNotFound, ServiceError } from "../errors";
 import type { AgentScope } from "../tenancy";
 import type { AcquireJobDeps } from "./acquire-job.deps";
+import { withoutNul } from "./json-safe";
 import { type RedactionRule, redactText, redactValue } from "./redaction";
 
 /**
@@ -85,7 +86,8 @@ export async function appendAcquireJobProgress(
   deps: AcquireJobDeps,
 ): Promise<AcquireJobRow | null> {
   if (lines.length === 0) return deps.findAcquireJob(ctx.db, scope, id);
-  return deps.appendAcquireJobProgress(ctx.db, scope, id, lines);
+  // `progress` is jsonb; a line may quote a vendor's body (GRA-201; `./json-safe.ts`).
+  return deps.appendAcquireJobProgress(ctx.db, scope, id, withoutNul([...lines]));
 }
 
 export async function startAcquireJob(
@@ -153,7 +155,8 @@ export async function completeAcquireJob(
 ): Promise<AcquireJobRow | null> {
   return deps.updateAcquireJob(ctx.db, scope, id, {
     status: outcome.status,
-    result: outcome.result,
+    // `result` is jsonb, and the diagnostics carry proof-read bodies (GRA-201; `./json-safe.ts`).
+    result: withoutNul(outcome.result),
     finishedAt: deps.now(),
     ...(outcome.toolId === undefined ? {} : { toolId: outcome.toolId }),
     ...(outcome.traceRef === undefined ? {} : { traceRef: outcome.traceRef }),
@@ -215,7 +218,8 @@ export async function startAcquireAttempt(
       agentId: scope.agentId,
       attemptNumber,
       draftPath: input.draftPath(attemptNumber),
-      files: redactValue([...input.files], input.redaction).value,
+      // `files` is jsonb, and the model wrote them (GRA-201; `./json-safe.ts`).
+      files: withoutNul(redactValue([...input.files], input.redaction).value),
       diagnosis,
     });
   });
@@ -248,10 +252,11 @@ export async function finishAcquireAttempt(
     ...(input.checkOutput === undefined
       ? {}
       : {
+          // `check_output` is jsonb, and a diagnostic quotes the module (GRA-201; `./json-safe.ts`).
           checkOutput:
             input.checkOutput === null
               ? null
-              : redactValue(input.checkOutput, input.redaction).value,
+              : withoutNul(redactValue(input.checkOutput, input.redaction).value),
         }),
     ...(input.versionId === undefined ? {} : { versionId: input.versionId }),
     ...(input.diagnosis === undefined
@@ -307,14 +312,15 @@ export async function appendAcquireTrace(
     input.data === undefined || input.data === null
       ? { value: null, redacted: false }
       : redactValue(input.data, input.redaction);
+  // `data` is jsonb, and a vendor's body rides on it (GRA-201; `./json-safe.ts`).
   return deps.insertAcquireTrace(ctx.db, {
     id: deps.newId(),
     jobId,
     agentId: scope.agentId,
     attemptNumber: input.attemptNumber ?? null,
     kind: input.kind,
-    text: text.text,
-    data: data.value,
+    text: withoutNul(text.text),
+    data: withoutNul(data.value),
     redacted: text.redacted || data.redacted,
   });
 }

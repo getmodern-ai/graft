@@ -70,6 +70,7 @@ import {
 import { commandEnvironment, errorMessage, openAgentSandbox, seededRunnerPath } from "../sandbox";
 import { authoredToolName } from "../tool-names";
 import { EXECUTE_CLAIM } from "../tools/execute";
+import { recordableProofBody } from "./proof-body";
 import {
   type AcquireAttemptSummary,
   type AcquireConfig,
@@ -163,6 +164,8 @@ export const PROBE_MODULE = [
   '    location: res.headers.get("location"),',
   '    contentType: res.headers.get("content-type"),',
   `    reason: res.headers.get(${JSON.stringify(REFUSAL_HEADER)}),`,
+  '    contentLength: res.headers.get("content-length"),',
+  "    length: text.length,",
   `    body: text.slice(0, ${PROOF_BODY_CHARS}),`,
   "  };",
   "};",
@@ -1683,6 +1686,9 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     body?: string;
     location?: string | null;
     reason?: string | null;
+    contentType?: string | null;
+    contentLength?: string | null;
+    length?: number;
   } | null;
   if (report?.moduleError) {
     return {
@@ -1706,7 +1712,13 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       reason: null,
     };
   }
-  const body = typeof probe.body === "string" ? probe.body : null;
+  // A binary body is recorded as a sentence, not its bytes (GRA-201; `./proof-body.ts`).
+  const body = recordableProofBody({
+    body: typeof probe.body === "string" ? probe.body : null,
+    contentType: typeof probe.contentType === "string" ? probe.contentType : null,
+    contentLength: typeof probe.contentLength === "string" ? probe.contentLength : null,
+    length: typeof probe.length === "number" ? probe.length : null,
+  });
   // The proxy's mark (GRA-79): only a refusal made for want of a vendor response carries one.
   const reason = isVendorUnreachedReason(probe.reason) ? probe.reason : null;
   if (reason) {
