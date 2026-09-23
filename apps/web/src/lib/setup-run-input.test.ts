@@ -58,6 +58,23 @@ describe("runInputView", () => {
     expect(runInputView(cyclic, null)).toEqual(json);
   });
 
+  it("asks for JSON rather than throwing on a $ref name that is not a valid percent-encoding", () => {
+    const percent = {
+      type: "object",
+      $ref: "#/$defs/discount%",
+      $defs: { "discount%": { properties: { city: { type: "string" } } } },
+    };
+    expect(() => runInputView(percent, CITY)).not.toThrow();
+    expect(runInputView(percent, CITY)).toEqual({ kind: "json", initial: "{}" });
+    // A valid encoding still resolves.
+    const encoded = {
+      type: "object",
+      $ref: "#/$defs/discount%25",
+      $defs: { "discount%": { properties: { city: { type: "string" } } } },
+    };
+    expect(runInputView(encoded, CITY)).toMatchObject({ kind: "field", field: "city" });
+  });
+
   it("lays out the schema's fields as JSON when no starter field fits", () => {
     const view = runInputView(
       {
