@@ -15,9 +15,11 @@ const CONNECT_POLL_MS = 3_000;
 
 /**
  * The connect step (GRA-206; GRA-202, *The connect step is the agent's own connection ask*): the
- * ask the vendor step opened, drawn with the pending-action card for its kind, unchanged: the
- * provider's link, the keyless confirmation, or the secret form pre-filled with the host and the
- * scheme, with the build choice pre-ticked as on every connection ask. It is an ask like any
+ * ask the vendor step opened, drawn with the pending-action card for its kind: the provider's
+ * link, the keyless confirmation, or the secret form pre-filled with the host and the scheme, with
+ * the build choice pre-ticked as on every connection ask. The card is told `origin="setup"`, so it
+ * drops the model's provenance (Graft wrote the proposal from the starter entry) and folds the
+ * proposal editor behind *Edit the connection*; the secret inputs stay open. It is an ask like any
  * other, so it is in the inbox too, and an answer given there or in a chat's card counts the same:
  * the step re-reads the state while the ask is open, and the server moves the record to the goal
  * step on the read after the answer (`GET /api/setup`). A decline or an expiry takes it back to
@@ -61,6 +63,7 @@ export function ConnectStep({ state }: { state: SetupStateData }) {
       {view.kind === "card" ? (
         <PendingActionCard
           action={view.action}
+          origin="setup"
           onAnswered={() => void queryClient.invalidateQueries({ queryKey: setupKeys.current })}
         />
       ) : (

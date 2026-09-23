@@ -4,7 +4,13 @@ import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { OpenInNewIcon, WarningIcon } from "@/components/icons";
-import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
+import {
+  AskCard,
+  type AskOrigin,
+  Hosts,
+  ProposalSource,
+  useAnswerAsk,
+} from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -50,9 +56,12 @@ import {
 export function ProviderLinkAskCard({
   ask,
   onAnswered,
+  origin = "agent",
 }: {
   ask: Extract<Ask, { kind: "connection-link" }>;
   onAnswered?: () => void;
+  /** Setup's connect step passes `setup`: no model provenance (`ask-card.tsx`, `AskOrigin`). */
+  origin?: AskOrigin;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
@@ -88,7 +97,7 @@ export function ProviderLinkAskCard({
         // The provider could not start its sign-in and the ask is the keyring's form now
         // (GRA-147): re-read it, and this card gives way to the form in place.
         toast.message(`${started.provider} could not start the sign-in`, {
-          description: `${payload.displayName} is connected on Graft's own page instead — the form is below.`,
+          description: `${payload.displayName} is connected on Graft's own page instead. The form is below.`,
         });
         await queryClient.invalidateQueries({ queryKey: pendingKeys.all });
         return;
@@ -154,27 +163,7 @@ export function ProviderLinkAskCard({
       pending={busy}
       onAnswer={(allow) => (allow ? start.mutate() : decline.mutate({ allow: false }))}
     >
-      <figure className="flex flex-col gap-1.5">
-        <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-          <Badge variant="outline">proposed by the agent's model</Badge>
-          {payload.note}
-        </figcaption>
-        {payload.docsUrl ? (
-          <a
-            href={payload.docsUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
-          >
-            The documentation the agent read: {payload.docsUrl}
-            <OpenInNewIcon className="size-3" />
-          </a>
-        ) : (
-          <p className="text-muted-foreground text-xs">
-            The agent named no documentation page. Check the hosts against the vendor's own.
-          </p>
-        )}
-      </figure>
+      <ProposalSource origin={origin} note={payload.note} docsUrl={payload.docsUrl} />
 
       <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
         <dt className="text-muted-foreground">Primary host</dt>
