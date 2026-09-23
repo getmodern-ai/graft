@@ -24,6 +24,8 @@ const LINES: ReadonlyArray<readonly [string, SetupBuildStage | null]> = [
   ["Resumed after an interruption: 1 of 4 attempts used, 600 tokens spent.", null],
   ["Asking the model for a first draft, or the documentation to read first.", "model"],
   ["Reading the documentation: The forecast page names the current fields.", "docs"],
+  // The provider's note when the goal names its own pages (`@graft/model`'s `provider.ts`, GRA-212).
+  ["Reading the documentation: https://open-meteo.com/en/docs, named with the goal", "docs"],
   ["Asking the model what to make of the pages.", "model"],
   ["Attempt 1: Drafted current-weather around GET /forecast.", "write"],
   ["Attempt 1: checking the module.", "check"],
@@ -33,7 +35,7 @@ const LINES: ReadonlyArray<readonly [string, SetupBuildStage | null]> = [
   ["Attempt 1: proof read 1 of 2: GET /forecast?latitude=1&longitude=2.", "prove"],
   ["Attempt 1: 2 proof read(s) answered as the documentation said.", "prove"],
   ["Attempt 1: 1 of 2 proof read(s) failed; asking the model what to change.", "prove"],
-  ["Attempt 1: 1 more proof read(s) — Checking the hourly field too.", "prove"],
+  ["Attempt 1: 1 more proof read(s): Checking the hourly field too.", "prove"],
   [
     "Attempt 1: a proof read failed, so the draft is not published; asking the model what to change.",
     "prove",
@@ -61,6 +63,10 @@ const LINES: ReadonlyArray<readonly [string, SetupBuildStage | null]> = [
   ],
   [
     "Attempt 2: the dry run passed. open-meteo__current-weather v2 runs read-only and is promoted into your working set; its first real use is yours to make.",
+    "done",
+  ],
+  [
+    "Attempt 2: the dry run passed. v2 is not current, since a later job made v3 current first, so open-meteo__current-weather runs as v3 and is already in your working set; its first real use is yours to make.",
     "done",
   ],
 ];

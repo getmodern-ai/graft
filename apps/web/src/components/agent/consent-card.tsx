@@ -105,8 +105,8 @@ export function ConsentCard({
       <CardHeader>
         <CardTitle>Connect {client} to Graft</CardTitle>
         <CardDescription>
-          {client} asked to connect over MCP. It will act as one agent of yours — with that agent's
-          scope, working set and approvals — and when you connect it is sent back to{" "}
+          {client} asked to connect over MCP. It will act as one agent of yours, with that agent's
+          scope, working set and approvals, and when you connect it is sent back to{" "}
           <code className="font-mono text-xs">{request.redirectTarget}</code>.
           {/* Where this client's asks will reach you (ADR 0006 as amended 2026-09-21): the gate is
               the callback host it registered, and the server has judged it (`rendersCards`). */}

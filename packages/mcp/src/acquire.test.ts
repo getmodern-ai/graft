@@ -841,6 +841,11 @@ describe("a proof-only answer (GRA-153)", () => {
           (row) => row.kind === "model" && row.text.startsWith("Proving attempt 1 further:"),
         ),
       ).toBe(true);
+      // Setup's building step shows the lines verbatim, and console copy has no em dash (GRA-212).
+      expect(status.progress).toContain(
+        "Attempt 1: 1 more proof read(s): The list answered; one more page.",
+      );
+      for (const line of status.progress) expect(line).not.toContain("\u2014");
     } finally {
       await a.close();
       await runner.idle();
@@ -1682,6 +1687,7 @@ describe("a job that fails and tries again", () => {
         expect.stringContaining("v2 is already current"),
       );
       expect(status.progress.at(-1)).toContain("so demo__list-raced runs as v2");
+      expect(status.progress.at(-1)).not.toContain("\u2014");
     } finally {
       deps.tool.recordToolVersionDryRun = record;
       await a.close();

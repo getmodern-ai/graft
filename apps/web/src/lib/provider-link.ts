@@ -90,7 +90,7 @@ export function linkOutcomeOf(read: Extract<LinkSettled, { settled: true }>): {
     ? { outcome: "connected", message: "", connectionId: read.connectionId }
     : {
         outcome: "declined",
-        message: "This ask was declined — nothing was connected.",
+        message: "This ask was declined, and nothing was connected.",
         connectionId: null,
       };
 }

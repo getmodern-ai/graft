@@ -596,7 +596,7 @@ class AcquireLoop {
             data: { paths: answer.proofReads },
           });
           await this.progress(
-            `Attempt ${attempt.number}: ${answer.proofReads.length} more proof read(s) — ${answer.note}`,
+            `Attempt ${attempt.number}: ${answer.proofReads.length} more proof read(s): ${answer.note}`,
           );
           situation = {
             kind: "proof",
@@ -1235,7 +1235,7 @@ class AcquireLoop {
       currentVersion = later;
       await this.trace(
         "publish",
-        `${wire} v${version.versionNumber} passed its dry run but v${later} is already current — a later job activated it — so the pointer stays there.`,
+        `${wire} v${version.versionNumber} passed its dry run but v${later} is already current, since a later job activated it, so the pointer stays there.`,
         {
           attempt: attempt.number,
           data: { versionId: version.id, version: version.versionNumber, currentVersion: later },
@@ -1253,7 +1253,7 @@ class AcquireLoop {
     const runsAs =
       currentVersion === version.versionNumber
         ? `${wire} now runs as v${version.versionNumber}`
-        : `v${version.versionNumber} is not current — a later job made v${currentVersion} current first — so ${wire} runs as v${currentVersion}`;
+        : `v${version.versionNumber} is not current, since a later job made v${currentVersion} current first, so ${wire} runs as v${currentVersion}`;
     await this.progress(
       `Attempt ${attempt.number}: the dry run passed. ${runsAs} and is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
     );

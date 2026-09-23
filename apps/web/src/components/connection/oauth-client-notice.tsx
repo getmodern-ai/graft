@@ -38,8 +38,8 @@ function RedirectUriNotice() {
     <Alert>
       <KeyIcon />
       <AlertTitle>
-        Register an OAuth client at the vendor — a web application — and paste this redirect URI
-        into it
+        Register an OAuth client of the web application type at the vendor, and paste this redirect
+        URI into it
       </AlertTitle>
       <AlertDescription>
         {isPending ? (
