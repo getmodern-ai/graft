@@ -280,7 +280,10 @@ export async function skipSetup(
  * routing and the ask's answer are `@graft/mcp`'s; this function holds the record to its steps.
  *
  * - `ask`: the agent's own connection (or scope) ask is open; the record names it and is on
- *   `connect`. From `vendor` or `connect`, so a repeat or another starter re-points it.
+ *   `connect`. From `vendor` or `connect`, so a repeat or another starter re-points it. With
+ *   `askId`, it replaces that ask (the request found it answered about a connection that no
+ *   longer stands, took it and routed again), and only while the record still waits on it, so a
+ *   record another tab re-pointed meanwhile keeps the newer ask.
  * - `connected`: the record names the connection and moves to `goal`. Without `askId`, from
  *   `vendor` or `connect`, for a connection the request made or found (a no-step provider, a row
  *   already in the agent's scope, the ordinary form). With `askId`, learned from that ask's answer
@@ -292,7 +295,7 @@ export async function skipSetup(
  *   anything was built with it; back to `vendor`, only while the record is still on `goal` with it.
  */
 export type SetupConnectMove =
-  | { kind: "ask"; agentId: string; pendingActionId: string }
+  | { kind: "ask"; agentId: string; pendingActionId: string; askId?: string }
   | { kind: "connected"; agentId: string; connectionId: string; askId?: string }
   | { kind: "reopen"; askId: string }
   | { kind: "lost"; connectionId: string };
@@ -323,18 +326,26 @@ export function connectingAgentOf(state: SetupState): AgentOutput {
   return state.agent;
 }
 
-/** Apply a `SetupConnectMove` under the record's lock, and answer the state and whether it moved. */
+/**
+ * Apply a `SetupConnectMove` under the record's lock, and answer the state and whether it moved.
+ *
+ * `confirm`, when given, runs under the lock once the move's own guard has passed and before the
+ * record is written, with the transaction; answering false leaves the record as it is. It is how a
+ * move a read decided is judged again, or its side effect made, against the record as it now
+ * stands: a `lost` that a later restore of the same connection has made untrue, or the taking of a
+ * stale answer, which two reads would otherwise both attempt.
+ */
 export async function moveSetupConnect(
   ctx: ServiceContext,
   principal: Principal,
   move: SetupConnectMove,
   deps: SetupDeps,
   agentDeps: Pick<AgentDeps, "listAgents">,
+  confirm?: (scoped: ServiceContext) => Promise<boolean>,
 ): Promise<SetupMoveResult> {
   const moved = await ctx.db.transaction(async (tx) => {
     const record = await deps.lockSetup(tx, principal.personId);
-    const askId =
-      move.kind === "reopen" ? move.askId : move.kind === "connected" ? move.askId : null;
+    const askId = move.kind === "lost" ? null : (move.askId ?? null);
     if (move.kind === "lost") {
       if (record.step !== "goal" || record.connectionId !== move.connectionId) return false;
     } else if (askId) {
@@ -348,6 +359,7 @@ export async function moveSetupConnect(
         details: { reason: "setup_step", step: record.step },
       });
     }
+    if (confirm && !(await confirm({ db: tx }))) return false;
     const patch: SetupPatch =
       move.kind === "ask"
         ? { step: "connect", pendingActionId: move.pendingActionId, connectionId: null }
