@@ -1696,6 +1696,48 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
       }
     }, 30_000);
 
+    /**
+     * The sidecar is a file the command can edit (Greptile on #157, the third review): the row is
+     * adopted from it under the sweep's rules, so a far-future expiry is clamped to the write plus
+     * the TTL and the envelope's copy of it is never read.
+     */
+    it("adopts a by-hand blob's row from the store under the sweep's rules: a sidecar and envelope forged to expire in 2099 are recorded to expire in 24 hours", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const blobsBefore = store.blobs.length;
+        // The runner's true run, then every sidecar it wrote and the envelope rewritten to 2099.
+        const forge = [
+          'const fs=require("fs");',
+          'const text=fs.readFileSync("/tmp/gra200-forge.out","utf8");',
+          'const json=JSON.parse(text.slice(text.indexOf("\\n")+1));',
+          "for(const b of json.blobs){",
+          'const p="/blobs/"+b.ref.slice(7)+"/meta.json";',
+          'const m=JSON.parse(fs.readFileSync(p,"utf8"));',
+          'm.expiresAt="2099-01-01T00:00:00.000Z";b.expiresAt=m.expiresAt;',
+          "fs.writeFileSync(p,JSON.stringify(m));}",
+          'process.stdout.write("__GRAFT_ENVELOPE__:1\\n"+JSON.stringify(json)+"\\n");',
+        ].join("");
+        const command = `echo '{}' | node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1 > /tmp/gra200-forge.out && node -e '${forge}'`;
+        const result = await a.call("run_command", { command });
+        expect(result.isError).toBeFalsy();
+        const ran = body(result);
+        expect(ran.exitCode).toBe(0);
+        expect(String(ran.output)).toContain("2099-01-01");
+        const blobs = ran.blobs as { ref: string; expiresAt: string }[];
+        expect(blobs).toHaveLength(2);
+        expect(store.blobs).toHaveLength(blobsBefore + 2);
+        const latest = Date.now() + 24 * 60 * 60 * 1000 + 60_000;
+        for (const blob of blobs) {
+          expect(Date.parse(blob.expiresAt)).toBeLessThanOrEqual(latest);
+          const stored = store.blobs.find((b) => b.id === blob.ref.slice("blob://".length));
+          expect(stored?.expiresAt.getTime()).toBeLessThanOrEqual(latest);
+          expect(stored?.bytes).toBe(MIB);
+        }
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
     it("lists a forged entry naming another blob at 900 MiB from its row and drops one naming no directory, touching neither the blob nor its row and recording nothing", async () => {
       const a = await connect(TOKEN_A);
       try {

@@ -699,19 +699,24 @@ spelling of the runner-answer shape the three readers of a ledger share. Two rul
 review of #157: **the admission and its grant are one step** (`admitUnderGrant` in `in-flight.ts`,
 serialised per agent through `InFlightRegistry.admit`, on `run.ts`'s path too), since two
 admissions interleaved across the door's await both read the remainder before either reserved it;
-and **the record is the rule, the envelope is a claim** (`blob-budget.ts`): a by-hand command can
-hand the runner any `GRAFT_BLOB_BUDGET_BYTES` it likes and print any ledger, so when the server
-records a run's ledger (`recordBlobsWithinQuota`, at the three record sites and at
-`wait_for_process`) it takes nothing from the ledger but the ids, drops an entry the store cannot
-`stat` under the agent, lists an entry that names a blob with a row already from its row alone (not
-this run's, so never removed or re-recorded; a second poll of a finished process names the same
-blob), records the rest at the bytes the store measured, and judges the quota itself over them, live
-rows plus this run's; past it the newest are removed through the `BlobStore` until the rest fit, get
-no row, and the run is answered a `blob_quota` failure naming the overshoot (`blobQuotaOvershoot`,
-`withRecordedBlobs` putting the recorded list in place of the declared one).
-The record reads nothing off the grant, which expires with a detached hold while the result stays
-pollable; the quota is the promise. The newest go because the earlier writes are what an honest
-runner would have committed. Three more rules from Greptile's review of #148: the runner reserves
+and **the record of a run's blobs is an adoption from the store** (`blob-budget.ts`): a by-hand
+command can hand the runner any `GRAFT_BLOB_BUDGET_BYTES` it likes, print any ledger and edit any
+sidecar, so when the server records a run's ledger (`recordBlobsWithinQuota`, at the three record
+sites and at `wait_for_process`) it takes nothing from the ledger but the ids and builds each row as
+the sweep builds an orphan's (`adoptedBlobOf`, `parseBlobSidecar`): `bytes` as the store measured,
+name and media type from the sidecar under the write rules, `expiresAt` never past the write plus
+the TTL with the store's last write capped at now, the version the caller's; an entry the store
+cannot `stat`, whose sidecar fails the rules or names another agent, is dropped; an entry naming a
+blob with a row already is listed from its row alone while the row is live and the directory is
+there (never removed or re-recorded; a second poll of a finished process names the same blob) and
+dropped otherwise. The quota is then judged over the live rows plus this run's measured bytes; past
+it the newest are removed through the `BlobStore` until the rest fit, get no row, and the run is
+answered a `blob_quota` failure naming the overshoot (`blobQuotaOvershoot`, `withRecordedBlobs`
+putting the recorded list in place of the declared one). The whole record is one step per agent
+under `InFlightRegistry.exclusive`, the critical section admissions take, so two runs finishing
+together cannot both find room. The record reads nothing off the grant, which expires with a
+detached hold while the result stays pollable; the quota is the promise. The newest go because the
+earlier writes are what an honest runner would have committed. Three more rules from Greptile's review of #148: the runner reserves
 against the budget **as each chunk lands**, one shared figure across every write in flight, so two
 writes started together cannot both fit a remainder only one fits; the door subtracts **what it has
 already handed to this agent's runs still in flight** (`InFlightRegistry.grant` and

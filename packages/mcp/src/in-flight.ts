@@ -36,13 +36,15 @@ export type InFlightRegistry = {
   /** Bytes granted to this agent's runs still in flight: every open grant and every tracked process's. */
   outstandingBudget(agentId: string): number;
   /**
-   * Run `work` after every earlier `admit` of this agent's has settled, and before any later one
-   * starts: the door's admission and its grant as one step (`admitUnderGrant`; GRA-200, after
-   * Greptile on #157). The door reads `outstandingBudget` and answers a budget, and the caller
-   * grants it one await later; two admissions of one agent interleaved across that await both read
-   * the remainder before either reserved it, and were both handed the whole of it.
+   * The agent's critical section: run `work` after every earlier `exclusive` of this agent's has
+   * settled, and before any later one starts (GRA-200, after Greptile on #157). Two steps take it.
+   * The door's admission and its grant (`admitUnderGrant`): the door reads `outstandingBudget` and
+   * answers a budget, the caller grants it one await later, and two admissions interleaved across
+   * that await both read the remainder before either reserved it. And the record of a run's blobs
+   * (`blob-budget.ts`): two runs finishing together would each read the same live total, each find
+   * room, and together pass the quota. Neither step nests inside the other.
    */
-  admit<T>(agentId: string, work: () => Promise<T>): Promise<T>;
+  exclusive<T>(agentId: string, work: () => Promise<T>): Promise<T>;
   /**
    * A detached process is in flight by name until settled, or until `ttlMs` has passed; the budget
    * the door handed its run, when it has one, is outstanding for as long.
@@ -66,8 +68,8 @@ type AgentHolds = {
 
 export function createInFlightRegistry(): InFlightRegistry {
   const agents = new Map<string, AgentHolds>();
-  /** The tail of each agent's admission chain (`admit`); an entry is dropped once its chain drains. */
-  const admissions = new Map<string, Promise<void>>();
+  /** The tail of each agent's critical-section chain (`exclusive`); dropped once its chain drains. */
+  const chains = new Map<string, Promise<void>>();
 
   const holdsOf = (agentId: string): AgentHolds => {
     let holds = agents.get(agentId);
@@ -125,17 +127,17 @@ export function createInFlightRegistry(): InFlightRegistry {
       for (const entry of holds.detached.values()) total += entry.budgetBytes;
       return total;
     },
-    admit(agentId, work) {
-      const previous = admissions.get(agentId) ?? Promise.resolve();
-      // A failed admission ahead of this one is that caller's to answer; the chain goes on.
+    exclusive(agentId, work) {
+      const previous = chains.get(agentId) ?? Promise.resolve();
+      // A step that threw ahead of this one is that caller's to answer; the chain goes on.
       const result = previous.then(work);
       const settled = result.then(
         () => undefined,
         () => undefined,
       );
-      admissions.set(agentId, settled);
+      chains.set(agentId, settled);
       settled.then(() => {
-        if (admissions.get(agentId) === settled) admissions.delete(agentId);
+        if (chains.get(agentId) === settled) chains.delete(agentId);
       });
       return result;
     },
@@ -166,11 +168,11 @@ export function createInFlightRegistry(): InFlightRegistry {
 /**
  * The door's admission and its grant as one step for the agent (GRA-200, after Greptile on #157):
  * `admit` is the door (`blob-door.ts`'s `admitBlobs`, over whatever input the path carries), run
- * under the agent's admission chain, and an admission's budget is granted before the chain moves
- * on, so the next admission reads it in `outstandingBudget`. A refusal grants nothing. The
- * returned `release` is the grant's, for the caller's `finally`; with no registry there is nothing
- * to reserve against and it is a no-op. Every path that passes the door takes it through here
- * (`run.ts`, `tools/execute.ts`, `run_command`).
+ * under the agent's critical section (`exclusive`), and an admission's budget is granted before
+ * the section is left, so the next admission reads it in `outstandingBudget`. A refusal grants
+ * nothing. The returned `release` is the grant's, for the caller's `finally`; with no registry
+ * there is nothing to reserve against and it is a no-op. Every path that passes the door takes it
+ * through here (`run.ts`, `tools/execute.ts`, `run_command`).
  */
 export async function admitUnderGrant<A extends { budgetBytes: number }, R>(
   registry: InFlightRegistry | undefined,
@@ -183,7 +185,7 @@ export async function admitUnderGrant<A extends { budgetBytes: number }, R>(
     const release = registry?.grant(agentId, door.admission.budgetBytes) ?? (() => {});
     return { ok: true as const, admission: door.admission, release };
   };
-  return registry ? registry.admit(agentId, step) : step();
+  return registry ? registry.exclusive(agentId, step) : step();
 }
 
 /**
