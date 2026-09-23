@@ -954,7 +954,7 @@ export function createApi(options: ApiOptions): Hono {
       notifier: options.notifier,
     });
     if (connected) countStep(principal, afterConnect, "connect");
-    // A tool still arriving past the building step, *Continue while it builds* and then, perhaps,
+    // A tool still arriving past the building step, *Continue while it runs* and then, perhaps,
     // Finish Setup before it landed, is learned on the record as it would have been on `building`.
     const record = afterConnect.setup;
     const learnsBuild =
@@ -1012,7 +1012,7 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(await retrySetupGoal(ctx, principal, setupBuildDeps));
   });
 
-  /** *Continue while it builds*: on to the finish step with the job still running. */
+  /** *Continue while it runs*: on to the finish step with the job still running. */
   api.post("/setup/continue", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     await parseBody(c.req.raw, z.object({}), { emptyIs: {} });

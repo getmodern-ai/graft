@@ -27,7 +27,7 @@ import { authoredToolName } from "@graft/mcp";
  * these:
  *
  * - `setupToolContext` (`GET /api/setup/tool`): what both steps draw, the record's agent, harness,
- *   connection, the goal the job was built for, where the job stands, the tool once it landed (its
+ *   connection, the goal the job was started with, where the job stands, the tool once it landed (its
  *   input schema and annotation, which the result step runs it with) and the starter's run input.
  *   The run itself is the agent's route, `POST /api/agents/:id/tools/:vendor/:name/run`
  *   (`tool-run.ts`), since running a tool is not Setup's.
@@ -52,11 +52,11 @@ export type SetupToolContext = {
   /** Null when Setup adopted an agent whose harness was already connected. */
   harness: SetupHarness | null;
   connection: { id: string; vendor: string; displayName: string } | null;
-  /** The goal the job was built for; null with no job on the record. */
+  /** The goal the job was started with; null with no job on the record. */
   goal: string | null;
   /** Where the job stands, with the failure's sentence once it failed. */
   job: { id: string; status: AcquireJobStatus; failure: string | null } | null;
-  /** The tool once it landed; null while the job runs (*Continue while it builds*) or after it failed. */
+  /** The tool once it landed; null while the job runs (*Continue while it runs*) or after it failed. */
   tool: {
     id: string;
     vendor: string;

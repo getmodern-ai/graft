@@ -93,7 +93,7 @@ describe("buildingView", () => {
     ).toEqual({ kind: "failed", message: "The model gave up: no such read." });
     expect(buildingView({ status: "failed" })).toEqual({
       kind: "failed",
-      message: "The build failed.",
+      message: "The job failed.",
     });
   });
 });

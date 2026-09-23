@@ -26,7 +26,7 @@ const JOB_POLL_MS = 2_000;
  * The building step (GRA-207; GRA-202, *Building and result*): the acquire job Build started, read
  * through the agent's job route every two seconds while it works. Each progress line is the job's
  * own, and the first line of each stage carries one sentence saying what that stage is for
- * (`explainProgress`), so the wait teaches the loop once. *Continue while it builds* goes on to
+ * (`explainProgress`), so the wait teaches the loop once. *Continue while it runs* goes on to
  * the finish step with the job still running. On a pass the state is read again and the server
  * moves the record to the result; on a failure the job's own sentence is shown with *Change the
  * goal*, which goes back to the goal step, where Build starts a new job.
@@ -72,14 +72,14 @@ function BuildingJob({
   return (
     <div className="flex flex-col gap-6">
       <SetupStepHeader
-        title="Building the tool"
-        description={`Graft's model is building a read-only tool for ${agentName}. These are the job's own lines, with what each stage is for.`}
+        title="Acquiring the tool"
+        description={`Graft's model is authoring a read-only tool for ${agentName}. These are the job's own lines, with what each stage is for.`}
       />
 
       {view.kind === "failed" ? (
         <Alert variant="destructive">
           <WarningIcon />
-          <AlertTitle>The build did not pass</AlertTitle>
+          <AlertTitle>The tool did not pass</AlertTitle>
           <AlertDescription>{view.message}</AlertDescription>
         </Alert>
       ) : null}
@@ -111,7 +111,7 @@ function BuildingJob({
             <p className="text-muted-foreground text-sm">
               <RetryNotice
                 error={job.error}
-                message="Could not read the build."
+                message="Could not read the job."
                 onRetry={() => void job.refetch()}
                 retrying={job.isFetching}
               />
@@ -143,7 +143,7 @@ function BuildingJob({
             onClick={() => onward.mutate(undefined)}
             disabled={onward.isPending}
           >
-            {onward.isPending ? "Continuing…" : "Continue while it builds"}
+            {onward.isPending ? "Continuing…" : "Continue while it runs"}
           </Button>
         ) : null}
       </div>

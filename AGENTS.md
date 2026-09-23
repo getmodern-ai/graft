@@ -1059,7 +1059,7 @@ asked. `ApiOptions.acquire` is the model, the job's deps and the runner (the ser
 to `result` with `toolId`, or the tool noted on `finish`, or on `completed` when Finish Setup
 came first. A failed job leaves the record on `building`; `POST /api/setup/goal` (*Change the
 goal*) goes back to `goal` with the job cleared,
-refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it builds*)
+refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it runs*)
 goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
 `building` (captured by the read whose move named the tool, `SetupMoveResult.moved`). The console's building step polls the job route
 every 2 s and draws each line beside its stage's sentence on the stage's first line
@@ -1133,7 +1133,10 @@ form, `cardShown: true` rides inside `setup` beside `url`, and `structuredConten
 `CardData`; `readCardData` reads either). The card (`render.ts`'s `renderSetup`, dispatched by
 `renderCard`) draws a title, a sentence, the agent, a sentence saying to ask again once done, and
 one button, *Set up your first tool*, that opens the URL with `from=card` through `ui/open-link`;
-it polls nothing. **One card per session** (GRA-212): the card, the card-form message and
+it polls nothing. Where the host refuses the window, the card shows the bare URL to copy
+(`setupOpenRefusedOf`), since the card-form message tells the model not to send a link and to
+give that URL only when the person says they cannot see the card or it could not open Setup.
+**One card per session** (GRA-212): the card, the card-form message and
 `cardShown` ride on the first `find_tool` answer of an MCP session that carries the offer, held
 per session in `setup-offer.ts` as `clientRendersCards` holds its verdict; every later answer in
 that session carries `setup` in the console form and no card, since a host mounts the card for
@@ -1364,7 +1367,11 @@ and the sweep's lines ride under `acquire` and `sweep`. Product events are captu
 two chokepoints and nowhere in the console: the API's mutation routes
 (`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
 does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
-`acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
+`acquire_completed`, `acquire_failed`); both name the person by id. The Setup read,
+`GET /api/setup`, is the one other place (ADR 0024; GRA-206): a step the person completes
+elsewhere, an ask answered in the inbox or a chat's card or a job that finished, is learned on the
+read, so `setup_step_completed` is captured there, once, when the guarded move of the record
+succeeds. The vendors behind the hosted
 form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
 **A sign-up is the one event the account raises itself** (GRA-157): `createAuth`'s
 `onPersonSignedUp` fires from Better Auth's own hooks when a person exists *and* is verified — the

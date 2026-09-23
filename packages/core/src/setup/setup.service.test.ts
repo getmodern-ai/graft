@@ -486,7 +486,7 @@ describe("the building step's moves", () => {
     expect(w.record()).toMatchObject({ step: "result" });
   });
 
-  it("continues to the finish while it builds, and names the tool there when it lands", async () => {
+  it("continues to the finish while it runs, and names the tool there when it lands", async () => {
     const w = await onBuilding();
     const finish = await w.move({ kind: "continue", acquireJobId: "job_1" });
     expect(finish.state.setup).toMatchObject({

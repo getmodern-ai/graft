@@ -4,7 +4,7 @@ import type { StarterRunInput } from "@graft/core/setup/starter-vendors";
  * What Setup's result step asks for before it runs the tool (GRA-208; GRA-202, user story 21): the
  * starter's one input with its default (the city for Open-Meteo), when the tool's schema has that
  * field; nothing, for a tool that takes no input; otherwise the input as JSON, with the schema's
- * fields laid out empty, since a tool built for another vendor has fields no starter describes. The
+ * fields laid out empty, since a tool for another vendor has fields no starter describes. The
  * server holds the input to the tool's own schema whatever is sent, and answers the run's own
  * sentence when it refuses.
  */
