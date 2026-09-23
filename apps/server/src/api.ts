@@ -103,6 +103,7 @@ import {
 import {
   buildSetupTool,
   continueSetupBuild,
+  createGoalSuggestionMemo,
   learnSetupBuild,
   readAgentAcquireJob,
   retrySetupGoal,
@@ -925,18 +926,23 @@ export function createApi(options: ApiOptions): Hono {
 
   /**
    * The goal step's chips (`SetupGoalSuggestions`, GRA-209): the model's proposal, routed per
-   * person, or none. Never refused past the session; the outcome goes on the wide event, the goals
-   * do not.
+   * person, or none, asked once per person and connection inside the memo's window. Never refused
+   * past the session; the outcome goes on the wide event, the goals do not.
    */
+  const goalSuggestions = createGoalSuggestionMemo();
   api.get("/setup/goal/suggestions", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const { suggestions, outcome, error } = await setupGoalSuggestions(
-      ctx,
-      principal,
-      setupBuildDeps,
-    );
+    const { suggestions, outcome, error, cached } = await setupGoalSuggestions(ctx, principal, {
+      ...setupBuildDeps,
+      goalSuggestions,
+    });
     useLogger().set({
-      goalSuggestions: { outcome, count: suggestions.length, ...(error ? { error } : {}) },
+      goalSuggestions: {
+        outcome,
+        count: suggestions.length,
+        ...(cached ? { cached } : {}),
+        ...(error ? { error } : {}),
+      },
     });
     const body: SetupGoalSuggestions = { suggestions };
     return c.json(body);

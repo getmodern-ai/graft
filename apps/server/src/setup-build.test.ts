@@ -621,31 +621,88 @@ describe("GET /api/setup/goal/suggestions", () => {
     expect(scripted.proposals).toEqual([]);
   });
 
+  const standIn = (proposeGoals: ModelAdapter["proposeGoals"]): ModelAdapter => ({
+    name: "stand-in",
+    open: () => {
+      throw new Error("no job here");
+    },
+    proposeGoals,
+  });
+  const usage = { inputTokens: 0, outputTokens: 0 };
+
   it("answers none when the proposal answers none, or throws, and never more than three", async () => {
+    // A fresh person per case: the memo holds each person's first answer for the connection.
     await onGoal(true);
-    const model = (proposeGoals: ModelAdapter["proposeGoals"]): ModelAdapter => ({
-      name: "stand-in",
-      open: () => {
-        throw new Error("no job here");
-      },
-      proposeGoals,
-    });
-    const usage = { inputTokens: 0, outputTokens: 0 };
-    mcp.model = model(async () => ({ goals: [], outcome: "timeout", usage }));
+    mcp.model = standIn(async () => ({ goals: [], outcome: "timeout", usage }));
     expect(await suggestions()).toEqual({ suggestions: [] });
-    mcp.model = model(async () => {
+    await onGoal(true);
+    mcp.model = standIn(async () => {
       throw new Error("the person's key would not decrypt");
     });
     expect(await suggestions()).toEqual({ suggestions: [] });
-    mcp.model = model(async () => ({
+    await onGoal(true);
+    mcp.model = standIn(async () => ({
       goals: ["one", "two", "three", "four"],
       outcome: "proposed",
       usage,
     }));
     expect(await suggestions()).toEqual({ suggestions: ["one", "two", "three"] });
     // An adapter that cannot propose answers none rather than failing the step.
-    mcp.model = model(undefined);
+    await onGoal(true);
+    mcp.model = standIn(undefined);
     expect(await suggestions()).toEqual({ suggestions: [] });
+  });
+
+  it("asks the model once per person and connection, however often or concurrently it is read", async () => {
+    await onGoal(true);
+    let calls = 0;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mcp.model = standIn(async () => {
+      calls += 1;
+      await held;
+      return { goals: [`goal ${calls}`], outcome: "proposed", usage };
+    });
+    const racing = [suggestions(), suggestions()];
+    release();
+    expect(await Promise.all(racing)).toEqual([
+      { suggestions: ["goal 1"] },
+      { suggestions: ["goal 1"] },
+    ]);
+    expect(await suggestions()).toEqual({ suggestions: ["goal 1"] });
+    expect(calls).toBe(1);
+    // A failure is held too, so a failing provider is not asked again on every read.
+    await onGoal(true);
+    mcp.model = standIn(async () => {
+      calls += 1;
+      throw new Error("the provider is down");
+    });
+    await suggestions();
+    await suggestions();
+    expect(calls).toBe(2);
+  });
+
+  it("asks nothing once the record has left the goal step, is skipped, or its connection is revoked", async () => {
+    const scripted = createScriptedModel(PASSING_SCRIPT);
+    mcp.model = scripted;
+    await onGoal(true);
+    const built = await app.request("/api/setup/build", post({ goal: "Show me the weather" }));
+    expect(built.status).toBe(200);
+    await runner.idle();
+    expect(await suggestions()).toEqual({ suggestions: [] });
+
+    await onGoal(true);
+    expect((await app.request("/api/setup/skip", post())).status).toBe(200);
+    expect(await suggestions()).toEqual({ suggestions: [] });
+
+    const { connectionId } = await onGoal(true);
+    const row = store.connections.get(connectionId);
+    if (!row) throw new Error("the keyless confirmation made the row");
+    store.connections.set(connectionId, { ...row, revokedAt: store.now() });
+    expect(await suggestions()).toEqual({ suggestions: [] });
+    expect(scripted.proposals).toEqual([]);
   });
 });
 
