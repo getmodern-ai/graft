@@ -408,6 +408,7 @@ export {
   type SetupBuildDeps,
   type SetupBuildMove,
   type SetupConnectMove,
+  type SetupMoveResult,
   type SetupOutput,
   type SetupState,
   type StartSetupAgentInput,

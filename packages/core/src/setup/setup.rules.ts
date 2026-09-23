@@ -57,11 +57,22 @@ export function shouldShowSetup(setup: SetupClocks | null, work: SetupWorkCounts
 export const SETUP_AGENT_PARAM = "agent";
 
 /**
+ * A URL with its trailing slashes trimmed, by index rather than by a regular expression over
+ * caller input: `/\/+$/` backtracks polynomially on a long run of slashes (CodeQL's
+ * polynomial-regex rule, on #167). `setupUrl` and `setup-prompt.ts` read it.
+ */
+export function withoutTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47) end -= 1;
+  return url.slice(0, end);
+}
+
+/**
  * The console URL of the Setup page for one agent: `<GRAFT_CONSOLE_URL>/setup?agent=<id>`, the
  * base's own path kept and a trailing slash not doubled, as `handoffUrl` builds a handoff's.
  */
 export function setupUrl(consoleUrl: string, agentId: string): string {
-  const base = consoleUrl.replace(/\/+$/, "");
+  const base = withoutTrailingSlashes(consoleUrl);
   const query = new URLSearchParams({ [SETUP_AGENT_PARAM]: agentId });
   return `${base}${SETUP_PATH}?${query}`;
 }

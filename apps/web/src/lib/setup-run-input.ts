@@ -13,11 +13,67 @@ export type RunInputView =
   | { kind: "field"; field: string; label: string; defaultValue: string }
   | { kind: "json"; initial: string };
 
-function propertiesOf(schema: Record<string, unknown>): Record<string, unknown> {
-  const properties = schema.properties;
-  return typeof properties === "object" && properties !== null && !Array.isArray(properties)
-    ? (properties as Record<string, unknown>)
-    : {};
+type Schema = Record<string, unknown>;
+
+function isSchema(value: unknown): value is Schema {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether a schema takes input past its own `properties`: composition, a conditional, or keys it
+ * admits by pattern or beyond its listed ones. `additionalProperties: false`, which a zod-built
+ * schema carries, admits nothing more.
+ */
+function reachesPast(schema: Schema): boolean {
+  if (["$ref", "allOf", "anyOf", "oneOf", "if", "patternProperties"].some((key) => key in schema)) {
+    return true;
+  }
+  return "additionalProperties" in schema && schema.additionalProperties !== false;
+}
+
+/** A local `$ref` (`#/$defs/<name>` or `#/definitions/<name>`) resolved against the root. */
+function resolveRef(root: Schema, ref: unknown): Schema | null {
+  if (typeof ref !== "string") return null;
+  const match = /^#\/(\$defs|definitions)\/([^/]+)$/.exec(ref);
+  if (!match) return null;
+  const defs = root[match[1] as string];
+  const target = isSchema(defs) ? defs[decodeURIComponent(match[2] as string)] : undefined;
+  return isSchema(target) ? target : null;
+}
+
+/**
+ * The fields a schema lays out, following composition (Greptile on #166): the root's
+ * `properties`, a local `$ref`'s, every `allOf` branch's, and the first `anyOf` or `oneOf`
+ * branch's, since an authored tool's schema need only be `type: "object"` at the root. `composed`
+ * says the schema reaches past its own `properties`, so a tool with no field found is still asked
+ * for input as JSON rather than run with `{}`.
+ */
+function fieldsOf(root: Schema): { properties: Schema; composed: boolean } {
+  const properties: Schema = {};
+  let composed = false;
+  const seen = new Set<Schema>();
+  const walk = (schema: Schema, depth: number) => {
+    if (depth > 8 || seen.has(schema)) return;
+    seen.add(schema);
+    if (reachesPast(schema)) composed = true;
+    if (isSchema(schema.properties)) {
+      for (const [field, property] of Object.entries(schema.properties)) {
+        if (!(field in properties)) properties[field] = property;
+      }
+    }
+    const ref = resolveRef(root, schema.$ref);
+    if (ref) walk(ref, depth + 1);
+    if (Array.isArray(schema.allOf)) {
+      for (const branch of schema.allOf) if (isSchema(branch)) walk(branch, depth + 1);
+    }
+    for (const keyword of ["anyOf", "oneOf"] as const) {
+      const branches = schema[keyword];
+      const first = Array.isArray(branches) ? branches.find(isSchema) : undefined;
+      if (first) walk(first, depth + 1);
+    }
+  };
+  walk(root, 0);
+  return { properties, composed };
 }
 
 /** An empty value of a property's declared type, for the JSON skeleton. */
@@ -37,7 +93,7 @@ export function runInputView(
   inputSchema: Record<string, unknown>,
   runInput: StarterRunInput | null,
 ): RunInputView {
-  const properties = propertiesOf(inputSchema);
+  const { properties, composed } = fieldsOf(inputSchema);
   const fields = Object.keys(properties);
   if (runInput && fields.includes(runInput.field)) {
     return {
@@ -47,7 +103,7 @@ export function runInputView(
       defaultValue: runInput.defaultValue,
     };
   }
-  if (fields.length === 0) return { kind: "none" };
+  if (fields.length === 0 && !composed) return { kind: "none" };
   const skeleton = Object.fromEntries(fields.map((field) => [field, emptyOf(properties[field])]));
   return { kind: "json", initial: JSON.stringify(skeleton, null, 2) };
 }

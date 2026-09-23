@@ -144,8 +144,13 @@ describe("setupVendorOptions", () => {
       connect: { kind: "form", schemes: ["basic"] },
     };
     const list = setupVendorOptions(
-      covered((starter) => (starter.vendor === "github" ? narrow : KEYRING)),
+      covered((starter) =>
+        starter.vendor === "github" || starter.vendor === "open-meteo" ? narrow : KEYRING,
+      ),
     );
     expect(ids(list)).not.toContain("github");
+    // Keyless is a scheme like any other: a form provider that does not list `none` drops it.
+    expect(ids(list)).not.toContain("open-meteo");
+    expect(ids(list)).toContain("notion");
   });
 });

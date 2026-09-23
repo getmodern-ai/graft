@@ -11,6 +11,7 @@ import {
   setupUrl,
   shouldOfferSetup,
   shouldShowSetup,
+  withoutTrailingSlashes,
 } from "./setup.rules";
 
 const AT = "2026-09-23T10:00:00.000Z";
@@ -102,6 +103,16 @@ describe("setupUrl", () => {
     expect(setupUrl("https://graft.example/console/", "a b")).toBe(
       "https://graft.example/console/setup?agent=a+b",
     );
+  });
+
+  it("trims a long run of trailing slashes in linear time, and nothing else", () => {
+    expect(withoutTrailingSlashes("https://graft.example///")).toBe("https://graft.example");
+    expect(withoutTrailingSlashes("///")).toBe("");
+    expect(withoutTrailingSlashes("https://graft.example/a//b")).toBe("https://graft.example/a//b");
+    const hostile = `https://graft.example/${"/".repeat(100_000)}x`;
+    const started = performance.now();
+    expect(setupUrl(hostile, "a")).toBe(`${hostile}/setup?agent=a`);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });
 

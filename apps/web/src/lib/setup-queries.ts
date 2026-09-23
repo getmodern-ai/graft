@@ -11,7 +11,7 @@ import type {
   SetupToolContext,
   ToolRunBody,
 } from "@graft/server/api";
-import { queryOptions } from "@tanstack/react-query";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
 
@@ -37,6 +37,16 @@ export const setupQuery = queryOptions({
   queryKey: setupKeys.current,
   queryFn: () => api<SetupStateData>("/setup"),
 });
+
+/**
+ * Install a verb's answer as the state. A read of the state in flight (the connect step polls it)
+ * may have left before the verb committed, and landing after it would put back the step the verb
+ * left, so it is cancelled first; a read that starts after this sees the verb's answer anyway.
+ */
+export async function installSetupState(queryClient: QueryClient, state: SetupStateData) {
+  await queryClient.cancelQueries({ queryKey: setupKeys.current, exact: true });
+  queryClient.setQueryData(setupKeys.current, state);
+}
 
 /** The body is the server's own shape (`SetupStartBody`). */
 export function startSetup(body: SetupStartBody) {

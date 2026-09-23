@@ -16,6 +16,7 @@ import {
 } from "../agent/agent.service";
 import type { ApprovalDeps } from "../approval/approval.deps";
 import { grantBuildApproval } from "../approval/approval.service";
+import type { ConnectionDeps } from "../connection/connection.deps";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { Principal } from "../tenancy";
@@ -102,9 +103,9 @@ export type StartSetupAgentInput = {
 };
 
 /**
- * `POST /api/setup/start`. `harness` is required when the person has no active agent, and recorded
- * when given otherwise; `agentId` names the agent to adopt, and is required among several;
- * `agent` describes the one to mint, and only a start that mints takes it.
+ * `POST /api/setup/start`. `harness` is required when the person has no active agent, and ignored
+ * otherwise, since an adopted agent records no harness; `agentId` names the agent to adopt, and is
+ * required among several; `agent` describes the one to mint, and only a start that mints takes it.
  */
 export type StartSetupInput = {
   harness?: SetupHarness;
@@ -206,6 +207,9 @@ export async function startSetup(
     }
 
     let agentId: string;
+    // The harness is recorded only beside the agent minted for it: an adopted agent's harness
+    // was connected before Setup showed, and null is what tells the finish step so (the header).
+    let harness: SetupHarness | null = null;
     if (input.agentId !== undefined) {
       const named = active.find((candidate) => candidate.id === input.agentId);
       if (!named) throw new ServiceError("NOT_FOUND", "Agent not found, or revoked");
@@ -227,6 +231,7 @@ export async function startSetup(
         agentDeps,
       );
       agentId = minted.id;
+      harness = input.harness;
     } else if (input.agent !== undefined) {
       throw new ServiceError(
         "BAD_REQUEST",
@@ -245,7 +250,7 @@ export async function startSetup(
 
     const patch: SetupPatch = {
       step: "vendor",
-      harness: input.harness ?? null,
+      harness,
       agentId,
       pendingActionId: null,
       connectionId: null,
@@ -264,7 +269,9 @@ export async function startSetup(
  * *Skip for now* (GRA-202, user story 26): the record is marked skipped, made first when the person
  * skipped before starting, and the show rule answers no from then on. Whatever the record held is
  * kept, so *Set up Graft* resumes rather than restarts where it can. A completed record is left
- * as it is.
+ * as it is. The skip takes the record's lock as the start does, so it is judged against the record
+ * as a start in flight leaves it: a start that lands first is skipped after it, the person's later
+ * word, and a record completed meanwhile is never marked.
  */
 export async function skipSetup(
   ctx: ServiceContext,
@@ -272,10 +279,12 @@ export async function skipSetup(
   deps: SetupDeps,
   agentDeps: Pick<AgentDeps, "listAgents">,
 ): Promise<SetupState> {
-  const record = await deps.findSetup(ctx.db, principal.personId);
-  if (record?.step !== "completed") {
-    await deps.saveSetup(ctx.db, principal.personId, { skippedAt: deps.now() });
-  }
+  await ctx.db.transaction(async (tx) => {
+    const record = await deps.lockSetup(tx, principal.personId);
+    if (record.step !== "completed") {
+      await deps.saveSetup(tx, principal.personId, { skippedAt: deps.now() });
+    }
+  });
   return getSetupState(ctx, principal, deps, agentDeps);
 }
 
@@ -290,13 +299,24 @@ export async function skipSetup(
  *   `vendor` or `connect`, for a connection the request made or found (a no-step provider, a row
  *   already in the agent's scope, the ordinary form). With `askId`, learned from that ask's answer
  *   on a read, and only while the record still waits on that ask.
- * - `reopen`: the ask was declined, expired or is gone; back to `vendor` with no ask, only while
- *   the record still waits on it.
+ * - `reopen`: the ask was declined, expired or is gone, or its answer names a connection that is no
+ *   longer live and in the agent's scope; back to `vendor` with no ask, only while the record
+ *   still waits on it.
+ * - `lost`: the connection the record names on `goal` was revoked or left the agent's scope before
+ *   anything was built with it; back to `vendor`, only while the record is still on `goal` with it.
  */
 export type SetupConnectMove =
   | { kind: "ask"; agentId: string; pendingActionId: string }
   | { kind: "connected"; agentId: string; connectionId: string; askId?: string }
-  | { kind: "reopen"; askId: string };
+  | { kind: "reopen"; askId: string }
+  | { kind: "lost"; connectionId: string };
+
+/**
+ * What a move answers: the state as it now stands, and whether this call changed the record. A move
+ * learned on a read is a no-op when another read got there first, and the state alone cannot say
+ * which of two reads made it, so a caller that counts the step reads `moved`.
+ */
+export type SetupMoveResult = { state: SetupState; moved: boolean };
 
 /**
  * The agent the connect step acts as: the record's, while it stands, on the vendor or connect
@@ -317,21 +337,23 @@ export function connectingAgentOf(state: SetupState): AgentOutput {
   return state.agent;
 }
 
-/** Apply a `SetupConnectMove` under the record's lock, and answer the state as it now stands. */
+/** Apply a `SetupConnectMove` under the record's lock, and answer the state and whether it moved. */
 export async function moveSetupConnect(
   ctx: ServiceContext,
   principal: Principal,
   move: SetupConnectMove,
   deps: SetupDeps,
   agentDeps: Pick<AgentDeps, "listAgents">,
-): Promise<SetupState> {
-  await ctx.db.transaction(async (tx) => {
+): Promise<SetupMoveResult> {
+  const moved = await ctx.db.transaction(async (tx) => {
     const record = await deps.lockSetup(tx, principal.personId);
     const askId =
       move.kind === "reopen" ? move.askId : move.kind === "connected" ? move.askId : null;
-    if (askId) {
+    if (move.kind === "lost") {
+      if (record.step !== "goal" || record.connectionId !== move.connectionId) return false;
+    } else if (askId) {
       // Learned on a read, so a stale read (another tab moved on) changes nothing.
-      if (record.step !== "connect" || record.pendingActionId !== askId) return;
+      if (record.step !== "connect" || record.pendingActionId !== askId) return false;
     } else if (
       move.kind !== "reopen" &&
       (record.agentId !== move.agentId || (record.step !== "vendor" && record.step !== "connect"))
@@ -347,8 +369,9 @@ export async function moveSetupConnect(
           ? { step: "goal", pendingActionId: null, connectionId: move.connectionId }
           : { step: "vendor", pendingActionId: null, connectionId: null };
     await deps.saveSetup(tx, principal.personId, patch);
+    return true;
   });
-  return getSetupState(ctx, principal, deps, agentDeps);
+  return { state: await getSetupState(ctx, principal, deps, agentDeps), moved };
 }
 
 /**
@@ -375,6 +398,8 @@ export type StartSetupBuildInput = {
 export type SetupBuildDeps = {
   setup: SetupDeps;
   agent: AgentDeps;
+  /** The connection's row, read under the lock: a revoked row stays in a resolved scope. */
+  connection: Pick<ConnectionDeps, "findConnection">;
   approval: ApprovalDeps;
   acquireJob: AcquireJobDeps;
 };
@@ -404,6 +429,17 @@ export async function startSetupBuild(
     }
     const scope = { personId: principal.personId, agentId: agent.id };
     const connectionId = record.connectionId;
+    // Revoked rows stay in a resolved scope (`getAgentScope`), so the row's own state is read too:
+    // a job against a revoked connection would only fail in the runner. The next read of the
+    // state takes the record back to the vendor step (`SetupConnectMove`'s `lost`).
+    const connection = await deps.connection.findConnection(tx, principal.personId, connectionId);
+    if (!connection || connection.revokedAt) {
+      throw new ServiceError(
+        "CONFLICT",
+        `${connection?.displayName ?? "The connection"} is revoked, so nothing can be built against it; choose a vendor again`,
+        { details: { reason: "connection_revoked", connectionId } },
+      );
+    }
     if (!(await getAgentScope(scoped, scope, deps.agent)).includes(connectionId)) {
       throw new ServiceError(
         "CONFLICT",
@@ -439,7 +475,9 @@ export async function startSetupBuild(
  *
  * - `built`: the job succeeded with this tool, learned on a read. From `building` to `result`; on
  *   `finish` (the person continued while it built) the record names the tool and stays, so the
- *   finish step can say it arrived. A no-op when stale or already named.
+ *   finish step can say it arrived, and on `completed` too (the person finished before it landed,
+ *   Greptile on #166), so the tool is still recorded and the finish they are looking at names it.
+ *   A no-op when stale or already named.
  * - `retry`: *Change the goal* after a failure, from `building` back to `goal` with the job
  *   cleared, so the next Build starts a new one. The caller judges that the job failed.
  * - `continue`: *Continue while it builds*, from `building` to `finish` with the job kept, so the
@@ -462,18 +500,21 @@ export async function moveSetupBuild(
   move: SetupBuildMove,
   deps: SetupDeps,
   agentDeps: Pick<AgentDeps, "listAgents">,
-): Promise<SetupState> {
-  await ctx.db.transaction(async (tx) => {
+): Promise<SetupMoveResult> {
+  const moved = await ctx.db.transaction(async (tx) => {
     const record = await deps.lockSetup(tx, principal.personId);
     const current = record.acquireJobId === move.acquireJobId;
     if (move.kind === "built") {
-      if (!current || record.toolId !== null) return;
+      if (!current || record.toolId !== null) return false;
       if (record.step === "building") {
         await deps.saveSetup(tx, principal.personId, { step: "result", toolId: move.toolId });
-      } else if (record.step === "finish") {
-        await deps.saveSetup(tx, principal.personId, { toolId: move.toolId });
+        return true;
       }
-      return;
+      if (record.step === "finish" || record.step === "completed") {
+        await deps.saveSetup(tx, principal.personId, { toolId: move.toolId });
+        return true;
+      }
+      return false;
     }
     const from = move.kind === "finish" ? "result" : "building";
     if (!current || record.step !== from) {
@@ -486,8 +527,9 @@ export async function moveSetupBuild(
         ? { step: "goal", acquireJobId: null, toolId: null }
         : { step: "finish" };
     await deps.saveSetup(tx, principal.personId, patch);
+    return true;
   });
-  return getSetupState(ctx, principal, deps, agentDeps);
+  return { state: await getSetupState(ctx, principal, deps, agentDeps), moved };
 }
 
 /**
