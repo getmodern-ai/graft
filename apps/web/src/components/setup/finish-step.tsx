@@ -34,7 +34,7 @@ import {
   setupToolQuery,
 } from "@/lib/setup-queries";
 
-/** How often the step reads the state again while the tool is still being built. */
+/** How often the step reads the state again while the job is still acquiring the tool. */
 const ARRIVING_POLL_MS = 3_000;
 
 /**
@@ -52,7 +52,7 @@ const ARRIVING_POLL_MS = 3_000;
  * - A Setup that **adopted** an agent (no harness on the record): its harness is connected, so the
  *   step says what to ask in the chat instead.
  *
- * While the build the person continued past still runs, the prompt names the tool as arriving and
+ * While the job the person continued past still runs, the prompt names the tool as arriving and
  * the state is read every three seconds, so the tool is named once it lands.
  */
 export function FinishStep({
@@ -224,9 +224,9 @@ function ToolStatus({ arrival, agentName }: { arrival: ToolArrival | null; agent
     return (
       <Alert>
         <Spinner />
-        <AlertTitle>The tool is still being built</AlertTitle>
+        <AlertTitle>The tool is still on its way</AlertTitle>
         <AlertDescription>
-          It joins {agentName}'s tools when the build passes, and the prompt says so. You can finish
+          It joins {agentName}'s tools when the job passes, and the prompt says so. You can finish
           now.
         </AlertDescription>
       </Alert>
@@ -235,10 +235,10 @@ function ToolStatus({ arrival, agentName }: { arrival: ToolArrival | null; agent
   return (
     <Alert variant="destructive">
       <WarningIcon />
-      <AlertTitle>The build did not pass</AlertTitle>
+      <AlertTitle>The tool did not pass</AlertTitle>
       <AlertDescription>
         {arrival.message} The prompt leaves the tool out; once your harness is connected, ask it for
-        what you wanted and Graft builds it there.
+        what you wanted and Graft acquires it there.
       </AlertDescription>
     </Alert>
   );
@@ -311,7 +311,7 @@ function AskInChat({ context }: { context: SetupTool }) {
       hint={
         tool.wireName
           ? `Your harness finds ${tool.wireName} among Graft's tools. If its list has not refreshed, ask it again in a new chat.`
-          : "The tool is still being built. Ask once it has joined the agent's tools, and the harness finds it there."
+          : "The tool is still on its way. Ask once it has joined the agent's tools, and the harness finds it there."
       }
     />
   );

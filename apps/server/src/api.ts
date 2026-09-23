@@ -947,7 +947,7 @@ export function createApi(options: ApiOptions): Hono {
       notifier: options.notifier,
     });
     if (connected) countStep(principal, afterConnect, "connect");
-    // A tool still arriving past the building step, *Continue while it builds* and then, perhaps,
+    // A tool still arriving past the building step, *Continue while it runs* and then, perhaps,
     // Finish Setup before it landed, is learned on the record as it would have been on `building`.
     const record = afterConnect.setup;
     const learnsBuild =

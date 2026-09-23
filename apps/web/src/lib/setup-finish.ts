@@ -37,7 +37,7 @@ export type FinishToolFields = {
 
 /**
  * Where the tool stands on the finish step: `landed` once the record names it; `arriving` while the
- * job the person continued past still runs (*Continue while it builds*); `failed` when that job
+ * job the person continued past still runs (*Continue while it runs*); `failed` when that job
  * failed after they continued, with its sentence; `none` with no job at all.
  */
 export type ToolArrival =
@@ -50,7 +50,7 @@ export function toolArrival(context: FinishToolFields): ToolArrival {
   if (context.tool) return { kind: "landed", wireName: context.tool.wireName };
   if (!context.job) return { kind: "none" };
   if (context.job.status === "failed") {
-    return { kind: "failed", message: context.job.failure ?? "The build did not pass." };
+    return { kind: "failed", message: context.job.failure ?? "The tool did not pass." };
   }
   // Queued, running, or passed and not yet learned by the record's next read.
   return { kind: "arriving" };
@@ -58,8 +58,8 @@ export function toolArrival(context: FinishToolFields): ToolArrival {
 
 /**
  * The tool as the setup prompt names it (`setupPrompt`'s `tool`): the goal and the wire name once
- * it landed, the goal alone while it is arriving, so the prompt says it is still being built, and
- * nothing when the build failed or there was none.
+ * it landed, the goal alone while it is arriving, so the prompt says it is still on its way, and
+ * nothing when the job failed or there was none.
  */
 export function promptToolOf(
   context: FinishToolFields,
