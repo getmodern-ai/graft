@@ -332,29 +332,42 @@ describe("the connect step's moves", () => {
     expect((await move({ kind: "lost", connectionId: "conn_1" })).moved).toBe(false);
   });
 
-  it("replaces an ask only while the record still waits on it", async () => {
+  it("lands a move from vendor only on a record still on vendor", async () => {
     const w = await onVendor();
     const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
       moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
-    await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" });
-    // Another tab re-pointed the record: a replacement of the first ask changes nothing.
-    await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_2" });
+    const landed = await move({
+      kind: "ask",
+      agentId: "agent_new",
+      pendingActionId: "pa_1",
+      fromVendor: true,
+    });
+    expect(landed.moved).toBe(true);
+    // Another choice moved the record on: a second routing's ask or connection changes nothing.
     const late = await move({
       kind: "ask",
       agentId: "agent_new",
-      pendingActionId: "pa_3",
-      askId: "pa_1",
+      pendingActionId: "pa_2",
+      fromVendor: true,
     });
     expect(late.moved).toBe(false);
-    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_2" });
-    const replaced = await move({
-      kind: "ask",
+    const lateConnection = await move({
+      kind: "connected",
       agentId: "agent_new",
-      pendingActionId: "pa_3",
-      askId: "pa_2",
+      connectionId: "conn_1",
+      fromVendor: true,
     });
-    expect(replaced.moved).toBe(true);
-    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_3" });
+    expect(lateConnection.moved).toBe(false);
+    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_1" });
+    await move({ kind: "reopen", askId: "pa_1" });
+    const connected = await move({
+      kind: "connected",
+      agentId: "agent_new",
+      connectionId: "conn_1",
+      fromVendor: true,
+    });
+    expect(connected.moved).toBe(true);
+    expect(w.record()).toMatchObject({ step: "goal", connectionId: "conn_1" });
   });
 
   it("runs confirm under the lock once the guard passes, and a no leaves the record", async () => {

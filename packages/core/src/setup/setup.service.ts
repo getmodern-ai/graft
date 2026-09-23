@@ -273,14 +273,16 @@ export async function skipSetup(
  * routing and the ask's answer are `@graft/mcp`'s; this function holds the record to its steps.
  *
  * - `ask`: the agent's own connection (or scope) ask is open; the record names it and is on
- *   `connect`. From `vendor` or `connect`, so a repeat or another starter re-points it. With
- *   `askId`, it replaces that ask (the request found it answered about a connection that no
- *   longer stands, took it and routed again), and only while the record still waits on it, so a
- *   record another tab re-pointed meanwhile keeps the newer ask.
+ *   `connect`. From `vendor` or `connect`, so a repeat or another starter re-points it.
  * - `connected`: the record names the connection and moves to `goal`. Without `askId`, from
  *   `vendor` or `connect`, for a connection the request made or found (a no-step provider, a row
  *   already in the agent's scope, the ordinary form). With `askId`, learned from that ask's answer
  *   on a read, and only while the record still waits on that ask.
+ * - `fromVendor`, on `ask` and `connected`: the move lands only on a record on `vendor`. The connect
+ *   route's second routing carries it, made after the ask the first handed back was found answered
+ *   about a connection that no longer stands and the record went back to `vendor`: the person's
+ *   choice is still in flight, so it lands over a read that reopened the record, and never over
+ *   another tab's choice that moved the record on meanwhile.
  * - `reopen`: the ask was declined, expired or is gone, or its answer names a connection that is no
  *   longer live and in the agent's scope; back to `vendor` with no ask, only while the record
  *   still waits on it.
@@ -288,8 +290,14 @@ export async function skipSetup(
  *   anything was built with it; back to `vendor`, only while the record is still on `goal` with it.
  */
 export type SetupConnectMove =
-  | { kind: "ask"; agentId: string; pendingActionId: string; askId?: string }
-  | { kind: "connected"; agentId: string; connectionId: string; askId?: string }
+  | { kind: "ask"; agentId: string; pendingActionId: string; fromVendor?: boolean }
+  | {
+      kind: "connected";
+      agentId: string;
+      connectionId: string;
+      askId?: string;
+      fromVendor?: boolean;
+    }
   | { kind: "reopen"; askId: string }
   | { kind: "lost"; connectionId: string };
 
@@ -338,12 +346,15 @@ export async function moveSetupConnect(
 ): Promise<SetupMoveResult> {
   const moved = await ctx.db.transaction(async (tx) => {
     const record = await deps.lockSetup(tx, principal.personId);
-    const askId = move.kind === "lost" ? null : (move.askId ?? null);
+    const askId =
+      move.kind === "reopen" ? move.askId : move.kind === "connected" ? move.askId : null;
     if (move.kind === "lost") {
       if (record.step !== "goal" || record.connectionId !== move.connectionId) return false;
     } else if (askId) {
       // Learned on a read, so a stale read (another tab moved on) changes nothing.
       if (record.step !== "connect" || record.pendingActionId !== askId) return false;
+    } else if (move.kind !== "reopen" && move.fromVendor) {
+      if (record.agentId !== move.agentId || record.step !== "vendor") return false;
     } else if (
       move.kind !== "reopen" &&
       (record.agentId !== move.agentId || (record.step !== "vendor" && record.step !== "connect"))
