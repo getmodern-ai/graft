@@ -1027,7 +1027,7 @@ handing it back, under the record's lock so two reads take it once), back to `ve
 (`moveSetupConnect`'s `confirm`) so a restore meanwhile stands. The connect route that finds such
 an answer (or finds a poll reopened the record for it) routes once more, and that second routing's
 move lands only on the record as it was seen on `vendor`, its `updatedAt` unchanged
-(`fromVendorAt`), so the choice in flight wins over a poll and any choice another tab made since
+(`fromVendorAt`; `saveSetup` moves it forward by at least a millisecond on every write), so the choice in flight wins over a poll and any choice another tab made since
 stands, even one that closed and left the record on `vendor` again. A stale answer is judged again
 under the lock before it is taken, so one made good meanwhile is left for the next read. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
 captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
