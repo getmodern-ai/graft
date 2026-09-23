@@ -787,7 +787,7 @@ class AcquireLoop {
     this.open = attempt;
     await this.trace(
       "edit",
-      `Attempt ${attempt.number}: drafted ${draft.name} — ${draft.files.map((f) => f.path).join(", ")} — at ${row.draftPath}.`,
+      `Attempt ${attempt.number}: drafted ${draft.name} (${draft.files.map((f) => f.path).join(", ")}) at ${row.draftPath}.`,
       {
         attempt: attempt.number,
         data: {
@@ -1685,7 +1685,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
       status: null,
       body: null,
       error: failure
-        ? `${failure.error}${failure.stderrTail ? ` — ${failure.stderrTail}` : ""}`
+        ? `${failure.error}${failure.stderrTail ? `: ${failure.stderrTail}` : ""}`
         : "the run failed",
       redirectTo: null,
       reason: null,

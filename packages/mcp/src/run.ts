@@ -358,7 +358,7 @@ export function describeModuleRun(
   }
   if (result.status === "killed") {
     return failure(
-      `The tool was killed before it finished — it ran past the ${timeoutSeconds}-second limit.`,
+      `The tool was killed before it finished: it ran past the ${timeoutSeconds}-second limit.`,
     );
   }
   if (result.exitCode === EXIT_MODULE_MISSING) return failure(moduleMissingMessage(modulePath));
