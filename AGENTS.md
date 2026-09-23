@@ -1000,6 +1000,26 @@ record through `useSetupMutation`, which writes the answered state into the one 
 The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline) and
 offers *Set up Graft* in its empty body to a person who skipped.
 
+**The vendor and connect steps are the agent's own connection ask** (GRA-206). The starters are
+`@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs, the
+keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
+`outcome` sentence); adding one is one entry. `setupVendorOptions` is the pure filter and order over
+each starter's covering provider: a keyring form over `oauth_authorization_code` is dropped, and
+`link` leads, then `none`, then `keyless` (a `none` scheme), then `form`. `GET /api/setup/vendors`
+asks `providerFor` per starter in `Backings.providers` order (`apps/server/src/setup-connect.ts`);
+the console never computes coverage. `POST /api/setup/connect` (`SetupConnectBody`: `{ starterId }`
+or `{ connectionId }`) calls GRA-203's `routeConnectionProposal` as the setup's agent, through
+`ApiOptions.connectionRouting` (the server binds its `McpDeps`), and moves the record through
+`moveSetupConnect`: an ask to `connect` with `pendingActionId` (a repeat re-uses it by proposal
+key), a connection made or found at once, or *Another vendor*'s ordinary-form connection (added to
+the agent's scope), to `goal`. `GET /api/setup` reads the ask the record waits on and never takes
+it: answered with a connection (or a `scope` ask allowed) it moves to `goal` naming it; declined,
+expired or gone, back to `vendor`. `setup_step_completed` carries `step`: `vendor` from the
+connect route's row, `connect` captured where the connection is learned. The console's connect step
+draws the open ask from the inbox's list with `PendingActionCard`, unchanged, and polls both reads
+every 3 s so an answer given in the inbox or a chat card moves it too. The goal step's starter is
+`starterVendorFor(connection.vendor)`.
+
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
 auto — and `DataTableRow` for the 40px rhythm; a column the row cannot afford at 390px steps out
