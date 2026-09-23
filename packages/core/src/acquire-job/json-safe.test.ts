@@ -21,6 +21,10 @@ describe("withoutNul", () => {
     });
   });
 
+  it("cleans a key as it cleans a value, since a JSON object name is a string too", () => {
+    expect(withoutNul({ "PK\u0000": { "a\u0000b": "\u0000" } })).toEqual({ PK: { ab: "" } });
+  });
+
   it("leaves a value with no NUL identical, other control characters included", () => {
     const value = { text: "tab\tnewline\n\u0001\uFFFD", n: 2, ok: true, none: null };
     expect(withoutNul(value)).toEqual(value);

@@ -13,12 +13,16 @@
  * Two judges, either of which decides. The declared type, when it is one of the families that is
  * never text; and the content, when it carries a NUL or a run of control and replacement characters.
  * `application/octet-stream` is on neither list on purpose: it is the type a vendor declares when it
- * has not decided, JSON included, so its content decides.
+ * has not decided, JSON included, so its content decides. A structured-syntax suffix wins over the
+ * family (RFC 6838 §4.2.8): `application/vnd.api+json` is JSON, whatever `vnd.` says.
  */
 
 /** Media type families no proof read shows: the bytes are never a vendor's shape. */
 const BINARY_TYPE =
   /^(image|audio|video|font)\/|^application\/(zip|gzip|x-gzip|x-tar|x-bzip2|x-7z-compressed|pdf|vnd\.)/i;
+
+/** A suffix that says the type is text whatever its family: `+json`, `+xml`, `+yaml`, `+csv`, `+text`. */
+const STRUCTURED_TEXT_SUFFIX = /\+(json|xml|yaml|csv|text)$/;
 
 /** How much of the body the content judge reads; the head of a binary body settles it. */
 const SAMPLE_CHARS = 1_000;
@@ -69,7 +73,9 @@ export type ProofBodyInput = {
 export function recordableProofBody(input: ProofBodyInput): string | null {
   if (input.body === null) return null;
   const type = mediaTypeOf(input.contentType);
-  const binary = (type !== null && BINARY_TYPE.test(type)) || looksBinary(input.body);
+  const typeSaysBinary =
+    type !== null && !STRUCTURED_TEXT_SUFFIX.test(type) && BINARY_TYPE.test(type);
+  const binary = typeSaysBinary || looksBinary(input.body);
   if (!binary) return input.body;
   const size = describeSize(input.contentLength, input.length);
   return `The body is not text and is not shown: ${type ?? "no content-type"}, ${size}. A tool that needs the bytes moves them with ctx.blob.write, never through its result.`;

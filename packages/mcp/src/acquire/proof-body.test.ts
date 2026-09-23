@@ -78,6 +78,27 @@ describe("recordableProofBody", () => {
     );
   });
 
+  it("keeps a vendor type with a structured-syntax suffix as text: +json and +xml over vnd.", () => {
+    for (const contentType of [
+      "application/vnd.api+json",
+      "application/vnd.github.v3+json; charset=utf-8",
+      "application/vnd.example+xml",
+    ]) {
+      expect(
+        recordableProofBody({ body: JSON_BODY, contentType, contentLength: null, length: 55 }),
+      ).toBe(JSON_BODY);
+    }
+    // The suffix says text; the content still has the last word.
+    expect(
+      recordableProofBody({
+        body: ZIP_HEAD,
+        contentType: "application/vnd.api+json",
+        contentLength: null,
+        length: 2_048,
+      }),
+    ).toContain("The body is not text and is not shown: application/vnd.api+json");
+  });
+
   it("judges an undeclared octet-stream by its content: a ZIP under it is binary, JSON under it is text", () => {
     expect(
       recordableProofBody({
