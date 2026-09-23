@@ -267,6 +267,13 @@ function originOf(url: string): string {
   }
 }
 
+/** Trims trailing slashes by index, not by a regular expression over caller input (CodeQL's polynomial-regex rule). */
+function withoutTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47) end -= 1;
+  return url.slice(0, end);
+}
+
 /**
  * The setup prompt for one harness on one deployment. With only `harness` and Graft Cloud's
  * `mcpUrl` it is the marketing site's text word for word; with `agent`, `connection` or `tool` it is
@@ -274,7 +281,7 @@ function originOf(url: string): string {
  */
 export function setupPrompt(input: SetupPromptInput): string {
   const cloud = isCloud(input.mcpUrl);
-  const consoleUrl = (input.consoleUrl ?? originOf(input.mcpUrl)).replace(/\/+$/, "");
+  const consoleUrl = withoutTrailingSlashes(input.consoleUrl ?? originOf(input.mcpUrl));
   const terms: Terms = {
     mcp: input.mcpUrl,
     console: consoleUrl,
