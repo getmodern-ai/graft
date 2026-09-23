@@ -41,6 +41,7 @@ import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
 import { addConnectionHosts } from "@graft/db/repo/connection";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
+import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
 import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
 import {
   CAPABILITY_TOKEN_ALG,
@@ -56,7 +57,7 @@ import {
 import { sql } from "drizzle-orm";
 import { initLogger } from "evlog";
 import { exportPKCS8, exportSPKI, generateKeyPair } from "jose";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "./app";
 import { createDatabaseConnections } from "./connections";
@@ -847,6 +848,26 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       setup: { harness: "hermes", skippedAt: null },
       agent: { name: "Hermes" },
     });
+  });
+
+  it("moves the Setup record's updated_at forward on every write, even within one millisecond", async () => {
+    const personId = await signUp("setup-clock@example.com");
+    const first = await lockSetup(db, personId);
+    // The clock held still, and then stepped back: each write still reads as a later instant.
+    const held = new Date(first.updatedAt.getTime());
+    vi.setSystemTime(held);
+    try {
+      const a = await saveSetup(db, personId, { step: "vendor" });
+      const b = await saveSetup(db, personId, { step: "connect" });
+      vi.setSystemTime(new Date(held.getTime() - 60_000));
+      const c = await saveSetup(db, personId, { step: "vendor" });
+      expect(a.updatedAt.getTime()).toBeGreaterThan(first.updatedAt.getTime());
+      expect(b.updatedAt.getTime()).toBeGreaterThan(a.updatedAt.getTime());
+      expect(c.updatedAt.getTime()).toBeGreaterThan(b.updatedAt.getTime());
+      expect((await findSetup(db, personId))?.updatedAt.getTime()).toBe(c.updatedAt.getTime());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /**
