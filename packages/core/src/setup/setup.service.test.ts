@@ -390,18 +390,29 @@ describe("the building step's moves", () => {
     await w.move({ kind: "built", acquireJobId: "job_0", toolId: "tool_0" });
     expect(w.record()).toMatchObject({ step: "building", toolId: null });
     const built = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
-    expect(built.setup).toMatchObject({ step: "result", toolId: "tool_1", acquireJobId: "job_1" });
-    // A second read of the same pass is a no-op.
-    await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(built.moved).toBe(true);
+    expect(built.state.setup).toMatchObject({
+      step: "result",
+      toolId: "tool_1",
+      acquireJobId: "job_1",
+    });
+    // A second read of the same pass is a no-op, and says so, so the step is counted once.
+    const again = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(again).toMatchObject({ moved: false, state: { step: "result" } });
     expect(w.record()).toMatchObject({ step: "result" });
   });
 
   it("continues to the finish while it builds, and names the tool there when it lands", async () => {
     const w = await onBuilding();
     const finish = await w.move({ kind: "continue", acquireJobId: "job_1" });
-    expect(finish.setup).toMatchObject({ step: "finish", acquireJobId: "job_1", toolId: null });
+    expect(finish.state.setup).toMatchObject({
+      step: "finish",
+      acquireJobId: "job_1",
+      toolId: null,
+    });
     const landed = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
-    expect(landed.setup).toMatchObject({ step: "finish", toolId: "tool_1" });
+    expect(landed).toMatchObject({ moved: true, state: { setup: { toolId: "tool_1" } } });
+    expect(landed.state.setup).toMatchObject({ step: "finish", toolId: "tool_1" });
   });
 
   it("goes back to the goal with the job cleared on a retry, and refuses a stale one", async () => {
@@ -410,7 +421,11 @@ describe("the building step's moves", () => {
       code: "CONFLICT",
     });
     const back = await w.move({ kind: "retry", acquireJobId: "job_1" });
-    expect(back.setup).toMatchObject({ step: "goal", acquireJobId: null, connectionId: "conn_1" });
+    expect(back.state.setup).toMatchObject({
+      step: "goal",
+      acquireJobId: null,
+      connectionId: "conn_1",
+    });
     await expect(w.move({ kind: "continue", acquireJobId: "job_1" })).rejects.toMatchObject({
       code: "CONFLICT",
     });

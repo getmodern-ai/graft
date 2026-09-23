@@ -1033,7 +1033,8 @@ connection, `starterId`, the curated `goal` (empty for another vendor) and `buil
 `acquireConfigured` (the `acquire` door's own model check) says no; the console then shows the
 message naming the variables and disables Build. `POST /api/setup/build` (`SetupBuildBody`:
 `{ goal }`) is `@graft/core`'s `startSetupBuild`, one transaction under `lockSetup`: from `goal`
-only, the connection still in the agent's scope, `grantBuildApproval` for the pair (the standing
+only, the connection not revoked (refused `connection_revoked`; a revoked row stays in a resolved
+scope) and still in the agent's scope, `grantBuildApproval` for the pair (the standing
 row answered when the connection card already granted it), `createAcquireJob` with Setup's own
 first line and the starter's documentation as `hints`, the record to `building` naming the job;
 the route then kicks the runner. No pending action is opened, and `similar_tools_exist` is not
@@ -1045,7 +1046,7 @@ to `result` with `toolId`, or the tool noted on `finish`. A failed job leaves th
 `building`; `POST /api/setup/goal` (*Change the goal*) goes back to `goal` with the job cleared,
 refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it builds*)
 goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
-`building` (captured where the tool is learned). The console's building step polls the job route
+`building` (captured by the read whose move named the tool, `SetupMoveResult.moved`). The console's building step polls the job route
 every 2 s and draws each line beside its stage's sentence on the stage's first line
 (`lib/setup-progress.ts`'s `progressStage` and `explainProgress`, keyed on `acquire/job.ts`'s
 lines; a new progress line there wants a rule and a case in `setup-progress.test.ts`).

@@ -15,6 +15,7 @@ import {
 } from "../agent/agent.service";
 import type { ApprovalDeps } from "../approval/approval.deps";
 import { grantBuildApproval } from "../approval/approval.service";
+import type { ConnectionDeps } from "../connection/connection.deps";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { Principal } from "../tenancy";
@@ -383,6 +384,8 @@ export type StartSetupBuildInput = {
 export type SetupBuildDeps = {
   setup: SetupDeps;
   agent: AgentDeps;
+  /** The connection's row, read under the lock: a revoked row stays in a resolved scope. */
+  connection: Pick<ConnectionDeps, "findConnection">;
   approval: ApprovalDeps;
   acquireJob: AcquireJobDeps;
 };
@@ -412,6 +415,17 @@ export async function startSetupBuild(
     }
     const scope = { personId: principal.personId, agentId: agent.id };
     const connectionId = record.connectionId;
+    // Revoked rows stay in a resolved scope (`getAgentScope`), so the row's own state is read too:
+    // a job against a revoked connection would only fail in the runner. The next read of the
+    // state takes the record back to the vendor step (`SetupConnectMove`'s `lost`).
+    const connection = await deps.connection.findConnection(tx, principal.personId, connectionId);
+    if (!connection || connection.revokedAt) {
+      throw new ServiceError(
+        "CONFLICT",
+        `${connection?.displayName ?? "The connection"} is revoked, so nothing can be built against it; choose a vendor again`,
+        { details: { reason: "connection_revoked", connectionId } },
+      );
+    }
     if (!(await getAgentScope(scoped, scope, deps.agent)).includes(connectionId)) {
       throw new ServiceError(
         "CONFLICT",
@@ -467,18 +481,21 @@ export async function moveSetupBuild(
   move: SetupBuildMove,
   deps: SetupDeps,
   agentDeps: Pick<AgentDeps, "listAgents">,
-): Promise<SetupState> {
-  await ctx.db.transaction(async (tx) => {
+): Promise<SetupMoveResult> {
+  const moved = await ctx.db.transaction(async (tx) => {
     const record = await deps.lockSetup(tx, principal.personId);
     const current = record.acquireJobId === move.acquireJobId;
     if (move.kind === "built") {
-      if (!current || record.toolId !== null) return;
+      if (!current || record.toolId !== null) return false;
       if (record.step === "building") {
         await deps.saveSetup(tx, principal.personId, { step: "result", toolId: move.toolId });
-      } else if (record.step === "finish") {
-        await deps.saveSetup(tx, principal.personId, { toolId: move.toolId });
+        return true;
       }
-      return;
+      if (record.step === "finish") {
+        await deps.saveSetup(tx, principal.personId, { toolId: move.toolId });
+        return true;
+      }
+      return false;
     }
     if (!current || record.step !== "building") {
       throw new ServiceError("CONFLICT", "Setup moved on while this tool was being built", {
@@ -490,6 +507,7 @@ export async function moveSetupBuild(
         ? { step: "goal", acquireJobId: null, toolId: null }
         : { step: "finish" };
     await deps.saveSetup(tx, principal.personId, patch);
+    return true;
   });
-  return getSetupState(ctx, principal, deps, agentDeps);
+  return { state: await getSetupState(ctx, principal, deps, agentDeps), moved };
 }
