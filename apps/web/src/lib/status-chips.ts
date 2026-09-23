@@ -1,3 +1,5 @@
+import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
+
 import type { Agent, WorkingSetChange } from "./agent-queries";
 import type { Approval } from "./approval-queries";
 import type { Connection, ConnectionCall, ConnectionStatus } from "./connection-queries";
@@ -23,13 +25,23 @@ export type StatusChip = {
   label: string;
 };
 
+/**
+ * An agent is `active`, `revoked`, or **awaiting its harness** (CONTEXT.md, *Agent*; ADR 0024):
+ * minted by Setup with no token and no client, waiting on the harness it was minted for, so the
+ * waiting tone. `@graft/core`'s `isAwaitingHarness` decides it, the one predicate the server reads
+ * too.
+ */
 export const AGENT_STATUS_CHIP = {
   active: { variant: "success", label: "Active" },
+  awaiting_harness: { variant: "outline", label: "Awaiting harness" },
   revoked: { variant: "destructive", label: "Revoked" },
-} as const satisfies Record<"active" | "revoked", StatusChip>;
+} as const satisfies Record<"active" | "awaiting_harness" | "revoked", StatusChip>;
 
-export function agentStatusChip(agent: Pick<Agent, "revokedAt">): StatusChip {
-  return agent.revokedAt ? AGENT_STATUS_CHIP.revoked : AGENT_STATUS_CHIP.active;
+export function agentStatusChip(
+  agent: Pick<Agent, "revokedAt" | "tokenPrefix" | "connectedVia">,
+): StatusChip {
+  if (agent.revokedAt) return AGENT_STATUS_CHIP.revoked;
+  return isAwaitingHarness(agent) ? AGENT_STATUS_CHIP.awaiting_harness : AGENT_STATUS_CHIP.active;
 }
 
 export const CONNECTION_STATUS_CHIP = {
