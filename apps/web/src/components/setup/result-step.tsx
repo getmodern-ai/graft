@@ -6,8 +6,8 @@ import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
+import { StatusChip } from "@/components/status-chip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -21,10 +21,11 @@ import {
   setupToolQuery,
 } from "@/lib/setup-queries";
 import { type RunInputView, runInputOf, runInputView, runResultText } from "@/lib/setup-run-input";
+import { TOOL_ANNOTATION_CHIP } from "@/lib/status-chips";
 
 /**
  * The result step (GRA-208; GRA-202, *Building and result*, user stories 20 and 21): the tool the
- * job built, run as the setup's agent through the agent's run route, and its answer shown in the
+ * job acquired, run as the setup's agent through the agent's run route, and its answer shown in the
  * console's code block. The input is the starter's with its default (the city for Open-Meteo),
  * editable, or nothing for a tool that takes none, or the schema's fields as JSON for another
  * vendor's tool. The run starts once on arrival with that input, so the answer is on screen before
@@ -111,7 +112,7 @@ function ToolRun({
         <ItemContent>
           <ItemTitle>
             {tool.wireName}
-            <Badge variant="outline">Read-only</Badge>
+            {tool.readOnly ? <StatusChip chip={TOOL_ANNOTATION_CHIP["read-only"]} /> : null}
           </ItemTitle>
           <ItemDescription>{tool.description}</ItemDescription>
         </ItemContent>
