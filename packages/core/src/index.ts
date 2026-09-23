@@ -397,6 +397,7 @@ export {
   getSetupState,
   moveSetupConnect,
   type SetupConnectMove,
+  type SetupMoveResult,
   type SetupOutput,
   type SetupState,
   type StartSetupAgentInput,

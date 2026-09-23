@@ -1005,7 +1005,8 @@ offers *Set up Graft* in its empty body to a person who skipped.
 keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
 `outcome` sentence); adding one is one entry. `setupVendorOptions` is the pure filter and order over
 each starter's covering provider: a keyring form over `oauth_authorization_code` is dropped, and
-`link` leads, then `none`, then `keyless` (a `none` scheme), then `form`. `GET /api/setup/vendors`
+`link` leads, then `none`, then `keyless` (a `none` scheme the form provider lists), then `form`.
+`GET /api/setup/vendors`
 asks `providerFor` per starter in `Backings.providers` order (`apps/server/src/setup-connect.ts`);
 the console never computes coverage. `POST /api/setup/connect` (`SetupConnectBody`: `{ starterId }`
 or `{ connectionId }`) calls GRA-203's `routeConnectionProposal` as the setup's agent, through
@@ -1013,9 +1014,14 @@ or `{ connectionId }`) calls GRA-203's `routeConnectionProposal` as the setup's 
 `moveSetupConnect`: an ask to `connect` with `pendingActionId` (a repeat re-uses it by proposal
 key), a connection made or found at once, or *Another vendor*'s ordinary-form connection (added to
 the agent's scope), to `goal`. `GET /api/setup` reads the ask the record waits on and never takes
-it: answered with a connection (or a `scope` ask allowed) it moves to `goal` naming it; declined,
-expired or gone, back to `vendor`. `setup_step_completed` carries `step`: `vendor` from the
-connect route's row, `connect` captured where the connection is learned. The console's connect step
+a live answer: answered with a connection (or a `scope` ask allowed) that is still live, usable and
+in the agent's scope it moves to `goal` naming it; declined, expired, gone, or answered with a
+connection revoked or taken out of the scope since (that answer is taken, so the routing stops
+handing it back), back to `vendor`, and on `goal` a connection that stopped standing takes it back
+too. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
+captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
+one answer count once. A listed agent's scope grown by Setup (*Another vendor*, a `scope` ask
+answered in the console) is announced to its session, since no waiting call of its own does. The console's connect step
 draws the open ask from the inbox's list with `PendingActionCard`, unchanged, and polls both reads
 every 3 s so an answer given in the inbox or a chat card moves it too. The goal step's starter is
 `starterVendorFor(connection.vendor)`.

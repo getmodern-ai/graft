@@ -55,9 +55,30 @@ function inMemorySetup(now: () => Date): SetupDeps {
   };
 }
 
-function harness(options: { providers?: readonly ConnectionProvider[] } = {}) {
+function harness(
+  options: {
+    providers?: readonly ConnectionProvider[];
+    /**
+     * Serialise every top-level transaction, as the record's row lock does in Postgres: the
+     * in-memory store has no lock, so two reads racing on one answered ask would otherwise both
+     * move the record.
+     */
+    serialTransactions?: boolean;
+  } = {},
+) {
   const store = createFakeStore();
   const fake = createFakeDeps(store);
+  let chain: Promise<unknown> = Promise.resolve();
+  const db = options.serialTransactions
+    ? {
+        transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+          const run = chain.then(() => fn(fake.db));
+          chain = run.catch(() => {});
+          return run;
+        },
+      }
+    : fake.db;
+  const notified: string[] = [];
   const connection = { ...fake.connection, providers: options.providers ?? [keyringProvider] };
   const handoff = {
     consoleUrl: "http://console.graft.test",
@@ -75,7 +96,7 @@ function harness(options: { providers?: readonly ConnectionProvider[] } = {}) {
         getSession: async () => ({ user: { id: PERSON } }),
       },
       deps: {
-        db: fake.db,
+        db: db as typeof fake.db,
         agent: fake.agent,
         connection,
         workingSet: fake.workingSet,
@@ -97,6 +118,7 @@ function harness(options: { providers?: readonly ConnectionProvider[] } = {}) {
         lockPendingActionKey: fake.lockPendingActionKey,
         handoff: { ttlMs: 60_000 },
       },
+      notifier: { changed: (agentId: string) => void notified.push(agentId) },
       analytics: {
         name: "recorder",
         shutdown: async () => {},
@@ -106,7 +128,7 @@ function harness(options: { providers?: readonly ConnectionProvider[] } = {}) {
       },
     },
   });
-  return { app, store, captured };
+  return { app, store, captured, notified };
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: a test reads the JSON answer by field.
@@ -129,6 +151,34 @@ async function started(h: ReturnType<typeof harness>): Promise<string> {
   const state = await read(await h.app.request("/api/setup/start", post({ harness: "hermes" })));
   expect(state.step).toBe("vendor");
   return state.agent.id;
+}
+
+/** Open-Meteo's keyless ask, opened as the agent: answers its id. */
+async function openMeteoAsk(h: ReturnType<typeof harness>): Promise<string> {
+  const asked = await read(
+    await h.app.request("/api/setup/connect", post({ starterId: "open-meteo" })),
+  );
+  expect(asked.step).toBe("connect");
+  return asked.setup.pendingActionId;
+}
+
+/** The keyless confirmation the card posts, answering the connection it made. */
+async function confirmKeyless(h: ReturnType<typeof harness>, askId: string): Promise<string> {
+  const payload = h.store.pendingActions.get(askId)?.payload ?? {};
+  const res = await h.app.request(
+    `/api/pending-actions/${askId}/connection`,
+    post({
+      vendor: payload.vendor,
+      displayName: payload.displayName,
+      primaryHost: payload.primaryHost,
+      hosts: payload.hosts,
+      scheme: payload.scheme,
+      schemeConfig: payload.schemeConfig,
+      credential: {},
+    }),
+  );
+  expect(res.status).toBe(201);
+  return (await read(res)).connection.id;
 }
 
 const stepEvents = (captured: Capture[]) =>
@@ -319,14 +369,85 @@ describe("POST /api/setup/connect", () => {
     );
     expect(made.status).toBe(201);
     const connectionId: string = (await read(made)).connection.id;
+    h.notified.length = 0;
     const state = await read(await h.app.request("/api/setup/connect", post({ connectionId })));
     expect(state).toMatchObject({ step: "goal", setup: { connectionId } });
     expect((await read(await h.app.request(`/api/agents/${agentId}`))).connectionIds).toEqual([
       connectionId,
     ]);
+    // The row's own announcement went to the agents that reached it when it was made; this listed
+    // agent reaches it only now, and its live session is told so.
+    expect(h.notified).toEqual([agentId]);
     // Both steps complete in this one request: the vendor step's row in the mutation table, and the
     // connect step counted by the route, which fires first since the table's middleware runs last.
     expect(stepEvents(h.captured).sort()).toEqual(["connect", "vendor"]);
+  });
+
+  it("counts the connect step once when two reads learn the same answer", async () => {
+    const h = harness({ serialTransactions: true });
+    await started(h);
+    const askId = await openMeteoAsk(h);
+    await confirmKeyless(h, askId);
+    // Both reads find the ask answered before either moves; the lock lets one move the record.
+    const answers = await Promise.all([h.app.request("/api/setup"), h.app.request("/api/setup")]);
+    const [first, second] = await Promise.all(answers.map(read));
+    expect([first.step, second.step]).toEqual(["goal", "goal"]);
+    expect(stepEvents(h.captured)).toEqual(["vendor", "connect"]);
+  });
+
+  it("goes back to the vendor step when the answered connection was revoked before the read", async () => {
+    const h = harness();
+    await started(h);
+    const askId = await openMeteoAsk(h);
+    const connectionId = await confirmKeyless(h, askId);
+    const revoked = await h.app.request(`/api/connections/${connectionId}/revoke`, post());
+    expect(revoked.status).toBe(200);
+    expect(await read(await h.app.request("/api/setup"))).toMatchObject({
+      step: "vendor",
+      setup: { pendingActionId: null, connectionId: null },
+    });
+    expect(stepEvents(h.captured)).toEqual(["vendor"]);
+    // The stale answer was taken, so choosing Open-Meteo again routes past it to the revoked row,
+    // whose refusal names the console's Reconnect, rather than handing the same answer back.
+    expect(h.store.pendingActions.get(askId)?.consumedAt).not.toBeNull();
+    const again = await h.app.request("/api/setup/connect", post({ starterId: "open-meteo" }));
+    expect(again.status).toBe(409);
+    expect(await read(again)).toMatchObject({ details: { reason: "connection_exists" } });
+  });
+
+  it("goes back to the vendor step from goal once the connection leaves the agent's scope", async () => {
+    const h = harness();
+    const agentId = await started(h);
+    const connectionId = await confirmKeyless(h, await openMeteoAsk(h));
+    expect((await read(await h.app.request("/api/setup"))).step).toBe("goal");
+    // Still standing: the read leaves it on goal.
+    expect((await read(await h.app.request("/api/setup"))).step).toBe("goal");
+    await h.app.request(`/api/agents/${agentId}/scope`, {
+      ...post({ mode: "listed", connectionIds: [] }),
+      method: "PUT",
+    });
+    expect(await read(await h.app.request("/api/setup"))).toMatchObject({
+      step: "vendor",
+      setup: { connectionId: null },
+    });
+    // Chosen again, the connection the person holds is a scope ask, answered in the console; the
+    // agent's live session is told its list grew, since no waiting call of its own announces it.
+    const asked = await read(
+      await h.app.request("/api/setup/connect", post({ starterId: "open-meteo" })),
+    );
+    const scopeAskId: string = asked.setup.pendingActionId;
+    expect(h.store.pendingActions.get(scopeAskId)?.kind).toBe("scope");
+    h.notified.length = 0;
+    const allowed = await h.app.request(
+      `/api/pending-actions/${scopeAskId}/answer`,
+      post({ allow: true }),
+    );
+    expect(allowed.status).toBe(200);
+    expect(await read(await h.app.request("/api/setup"))).toMatchObject({
+      step: "goal",
+      setup: { connectionId },
+    });
+    expect(h.notified).toEqual([agentId]);
   });
 
   it("refuses before Setup has started, an unknown starter, and a body with both", async () => {

@@ -848,7 +848,9 @@ export function createApi(options: ApiOptions): Hono {
     const { state, connected } = await learnSetupConnection(ctx, principal, {
       setup: setupDeps,
       agent: agentDeps,
+      connection: connectionDeps,
       pendingAction: pendingActionDeps,
+      notifier: options.notifier,
     });
     if (connected) countConnectStep(principal, state);
     return c.json(state);

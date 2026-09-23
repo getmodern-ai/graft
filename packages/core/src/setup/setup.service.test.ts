@@ -282,11 +282,18 @@ describe("the connect step's moves", () => {
     const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
       moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
     const asked = await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" });
-    expect(asked.setup).toMatchObject({ step: "connect", pendingActionId: "pa_1" });
+    expect(asked).toMatchObject({ moved: true, state: { setup: { step: "connect" } } });
+    expect(asked.state.setup).toMatchObject({ step: "connect", pendingActionId: "pa_1" });
     // A repeat, or another starter, re-points the ask while on connect.
     await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_2" });
     // A read that learned from the first ask is stale and changes nothing.
-    await move({ kind: "connected", agentId: "agent_new", connectionId: "conn_1", askId: "pa_1" });
+    const stale = await move({
+      kind: "connected",
+      agentId: "agent_new",
+      connectionId: "conn_1",
+      askId: "pa_1",
+    });
+    expect(stale.moved).toBe(false);
     expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_2" });
     const done = await move({
       kind: "connected",
@@ -294,12 +301,35 @@ describe("the connect step's moves", () => {
       connectionId: "conn_2",
       askId: "pa_2",
     });
-    expect(done.setup).toMatchObject({
+    expect(done.moved).toBe(true);
+    expect(done.state.setup).toMatchObject({
       step: "goal",
       connectionId: "conn_2",
       pendingActionId: null,
     });
-    expect(() => connectingAgentOf(done)).toThrow(ServiceError);
+    expect(() => connectingAgentOf(done.state)).toThrow(ServiceError);
+    // A second read that learned the same answer finds the record moved on: it answers the same
+    // state, and says it did not move it, so the step is counted once.
+    const again = await move({
+      kind: "connected",
+      agentId: "agent_new",
+      connectionId: "conn_2",
+      askId: "pa_2",
+    });
+    expect(again).toMatchObject({ moved: false, state: { step: "goal" } });
+  });
+
+  it("goes back to the vendor step from goal when its connection is lost, and only then", async () => {
+    const w = await onVendor();
+    const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
+      moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
+    await move({ kind: "connected", agentId: "agent_new", connectionId: "conn_1" });
+    expect((await move({ kind: "lost", connectionId: "conn_other" })).moved).toBe(false);
+    expect(w.record()).toMatchObject({ step: "goal", connectionId: "conn_1" });
+    const lost = await move({ kind: "lost", connectionId: "conn_1" });
+    expect(lost).toMatchObject({ moved: true, state: { step: "vendor" } });
+    expect(w.record()).toMatchObject({ step: "vendor", connectionId: null });
+    expect((await move({ kind: "lost", connectionId: "conn_1" })).moved).toBe(false);
   });
 
   it("goes back to the vendor step when the ask it waits on closed without a connection", async () => {
@@ -318,7 +348,7 @@ describe("the connect step's moves", () => {
       w.deps,
       w.agentDeps,
     );
-    expect(back.setup).toMatchObject({ step: "vendor", pendingActionId: null });
+    expect(back.state.setup).toMatchObject({ step: "vendor", pendingActionId: null });
   });
 
   it("refuses a move for an agent the record does not run as, and a Setup not yet started", async () => {
