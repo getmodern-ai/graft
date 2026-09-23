@@ -19,6 +19,7 @@ export function CodeBlock({
   code,
   copyLabel = "Copy",
   hint,
+  wrap = false,
   className,
 }: {
   /** What the block holds, in the person's words — "The agent's token". */
@@ -28,6 +29,11 @@ export function CodeBlock({
   copyLabel?: string;
   /** One sentence under the block about what to do with it, if the label is not enough. */
   hint?: React.ReactNode;
+  /**
+   * Prose to be pasted as a message rather than code to be pasted into a file (the setup prompt,
+   * GRA-205): its lines wrap, and the band holds a scrolling height instead of growing the dialog.
+   */
+  wrap?: boolean;
   className?: string;
 }) {
   return (
@@ -36,7 +42,12 @@ export function CodeBlock({
         <span className="font-medium text-sm">{label}</span>
         <CopyButton text={code} label={copyLabel} />
       </div>
-      <pre className="overflow-x-auto rounded-lg border bg-muted/50 p-3 font-mono text-xs leading-relaxed">
+      <pre
+        className={cn(
+          "overflow-x-auto rounded-lg border bg-muted/50 p-3 font-mono text-xs leading-relaxed",
+          wrap && "max-h-64 overflow-y-auto whitespace-pre-wrap break-words",
+        )}
+      >
         <code>{code}</code>
       </pre>
       {hint ? <p className="text-muted-foreground text-xs">{hint}</p> : null}

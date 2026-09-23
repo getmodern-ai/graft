@@ -426,6 +426,15 @@ export {
   starterVendorOf,
 } from "./setup/starter-vendors";
 export {
+  GRAFT_CLOUD_ORIGIN,
+  isSetupPromptHarness,
+  SETUP_PROMPT_HARNESSES,
+  type SetupPromptHarness,
+  type SetupPromptInput,
+  setupPrompt,
+  suggestedFirstSentence,
+} from "./setup/setup-prompt";
+export {
   AGENT_TOKEN_DISPLAY_LENGTH,
   AGENT_TOKEN_PREFIX,
   type AgentScope,

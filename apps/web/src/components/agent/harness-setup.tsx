@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 
+import { SetupPromptBlock } from "@/components/agent/setup-prompt-block";
 import { CodeBlock } from "@/components/code-block";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import {
@@ -16,15 +17,17 @@ import {
   mcpEndpointUrl,
   readHarness,
 } from "@/lib/mcp-snippet";
+import { promptHarnessOfShape } from "@/lib/setup-prompt-harness";
 
 /**
  * Shared by creation and the saved-token instructions (ADR 0007). The harness is a `Select` with
  * `items` on the root, as every fixed choice in the console is (AGENTS.md), Hermes first (ADR 0016),
  * and the two blocks under it take the harness's own shape (GRA-152: Hermes wants YAML under
  * `mcp_servers` and the token in `~/.hermes/.env`, not the JSON block a person then rewrites by
- * hand). The URL is the same for every harness and stays above the choice.
+ * hand). The URL is the same for every harness and stays above the choice. Under the configuration,
+ * the setup prompt for the same harness (GRA-205), naming the agent and never the token.
  */
-export function HarnessSetup({ token }: { token?: string }) {
+export function HarnessSetup({ token, agentName }: { token?: string; agentName: string }) {
   const origin = window.location.origin;
   const id = useId();
   const [harness, setHarness] = useState<Harness>("hermes");
@@ -74,6 +77,7 @@ export function HarnessSetup({ token }: { token?: string }) {
         copyLabel={blocks.config.copyLabel}
         hint={blocks.config.hint}
       />
+      <SetupPromptBlock harness={promptHarnessOfShape(harness)} agentName={agentName} />
     </>
   );
 }
