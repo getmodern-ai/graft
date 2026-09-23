@@ -4,6 +4,7 @@ import type {
   SetupBuildBody,
   SetupConnectBody,
   SetupGoalContext,
+  SetupGoalSuggestions,
   SetupStartBody,
 } from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
@@ -72,6 +73,25 @@ export const setupGoalQuery = queryOptions({
   queryKey: setupKeys.goal,
   queryFn: () => api<SetupGoal>("/setup/goal"),
 });
+
+export type SetupGoalSuggestionList = Jsonified<SetupGoalSuggestions>;
+
+/**
+ * The goal step's chips (`GET /api/setup/goal/suggestions`, GRA-209): up to three read-only goals
+ * the deployment's model proposes for the connection, or none. A model call, so it is keyed by the
+ * connection outside `["setup"]` and never refetched with the state. A failed read answers none
+ * rather than an error, as a failed proposal does on the server: the chips are a convenience, so
+ * they raise no toast and the step never waits on them.
+ */
+export function setupGoalSuggestionsQuery(connectionId: string) {
+  return queryOptions({
+    queryKey: ["setup-goal-suggestions", connectionId] as const,
+    queryFn: (): Promise<SetupGoalSuggestionList> =>
+      api<SetupGoalSuggestionList>("/setup/goal/suggestions").catch(() => ({ suggestions: [] })),
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  });
+}
 
 /**
  * The goal the person last pressed Build with, held in the cache alone (never fetched), so *Change
