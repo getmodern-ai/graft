@@ -214,16 +214,28 @@ export function blobBudgetEnvironment(admission: BlobAdmission): Record<string, 
 }
 
 /**
+ * The agent, as the runner's sidecar records it (`GRAFT_AGENT`; the runner's header, ADR 0023):
+ * never for a path, since the mount already is the agent's. The one spelling (GRA-199; Greptile on
+ * #159): `run.ts`'s `runWithCapability` spreads it for every capability run, because any of them
+ * may invoke `$GRAFT_RUNNER` on a module (`execute__` on a by-hand one included) and a sidecar with
+ * no agent is a blob the sweep can only adopt by trust; `blobRunEnvironment` carries it beside the
+ * budget for a door-admitted run. `GRAFT_*`, so the runner deletes it before the module loads.
+ */
+export function blobAgentEnvironment(scope: AgentScope): Record<string, string> {
+  return { GRAFT_AGENT: scope.agentId };
+}
+
+/**
  * The blob half of an admitted run's environment, one spelling for every run that passed the door
- * (GRA-199; `run.ts`, `acquire`'s fixture write): `GRAFT_AGENT` for the sidecar the runner writes
- * (the runner's header; ADR 0023), never for a path, since the mount already is the agent's, beside
- * the budget and the quota. All `GRAFT_*`, deleted by the runner before the module loads.
+ * (GRA-199; `run.ts`, `acquire`'s fixture write): the agent for the sidecar
+ * (`blobAgentEnvironment`) beside the budget and the quota. All `GRAFT_*`, deleted by the runner
+ * before the module loads.
  */
 export function blobRunEnvironment(
   scope: AgentScope,
   admission: BlobAdmission,
 ): Record<string, string> {
-  return { GRAFT_AGENT: scope.agentId, ...blobBudgetEnvironment(admission) };
+  return { ...blobAgentEnvironment(scope), ...blobBudgetEnvironment(admission) };
 }
 
 /**

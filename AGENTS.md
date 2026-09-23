@@ -652,8 +652,9 @@ command the path as `GRAFT_RUNNER`, so every sync run goes through this server's
 itself (GRA-199); the one bare result still read is a detached run's result file written by a
 runner older than the envelope and polled after an upgrade, in `sandbox.ts`'s `readRunnerResult`.
 Three per-exec variables ride beside the token and are deleted with it before the module loads:
-`GRAFT_AGENT` and `GRAFT_TOOL_VERSION` for the sidecar, never for a path (`GRAFT_AGENT` rides in
-with the door's admission, `blob-door.ts`'s `blobRunEnvironment`), and `GRAFT_BLOBS_DIR`, the
+`GRAFT_AGENT` and `GRAFT_TOOL_VERSION` for the sidecar, never for a path (`GRAFT_AGENT` is
+`blob-door.ts`'s `blobAgentEnvironment`, on every capability run and inside `blobRunEnvironment`,
+since an `execute__` command may invoke `$GRAFT_RUNNER` on a by-hand module), and `GRAFT_BLOBS_DIR`, the
 mount path, a variable for the reason `GRAFT_RESULT_PATH` is one (a backing that maps the sandbox's
 paths maps the environment's values; the fake does). On the wire a run that wrote nothing answers
 exactly what it did; one that wrote answers `{ result, blobs: [{ ref, bytes, contentType, name?,

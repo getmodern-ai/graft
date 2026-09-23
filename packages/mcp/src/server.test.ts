@@ -1048,6 +1048,17 @@ describe("a tool that writes a blob", () => {
       expect(blobEvents.slice(eventsBefore)).toEqual([
         expect.objectContaining({ agentId: AGENT_A, versionId: null }),
       ]);
+      // The sidecar names the agent, since the command's environment carried `GRAFT_AGENT`
+      // (`blobAgentEnvironment`, on every capability run; Greptile on #159), and no version, since
+      // a by-hand invocation has none: what the sweep adopts the blob under if the row is lost.
+      const meta = JSON.parse(
+        await readFile(
+          join(sandbox.blobsRoot(AGENT_A), file.slice("blob://".length), "meta.json"),
+          "utf8",
+        ),
+      ) as { agentId?: unknown; toolVersion?: unknown };
+      expect(meta.agentId).toBe(AGENT_A);
+      expect(meta.toolVersion ?? null).toBeNull();
     } finally {
       await a.close();
     }

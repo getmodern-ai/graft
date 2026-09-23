@@ -96,6 +96,7 @@ export {
 export {
   admitBlobs,
   type BlobAdmission,
+  blobAgentEnvironment,
   blobBudgetEnvironment,
   blobRefsIn,
   blobRunEnvironment,

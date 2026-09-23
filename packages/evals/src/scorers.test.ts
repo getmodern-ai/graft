@@ -1,5 +1,6 @@
 import type { AcquireAttemptRow, AcquireTraceRow } from "@graft/db/repo/acquire-job";
 import type { ToolVersionRow } from "@graft/db/repo/tool";
+import { MAX_INPUT_DEPTH } from "@graft/mcp";
 import type { ProxyEvent } from "@graft/proxy";
 import { describe, expect, it } from "vitest";
 
@@ -589,6 +590,27 @@ describe("the blob scorers", () => {
       ).pass,
     ).toBe(false);
     expect(refTravels(chain({}, consumer({ use: null }))).pass).toBe(false);
+  });
+
+  /** The walk is bounded (the door's `MAX_INPUT_DEPTH`); a result past it is said, never read as no ref (Greptile on #159). */
+  it("ref_travels: red with a sentence naming the depth when the answer or the input nests past the walk's bound", () => {
+    let deep: Record<string, unknown> = { file: REF };
+    for (let i = 0; i < MAX_INPUT_DEPTH + 1; i += 1) deep = { deep };
+    const produced = chain().use;
+    const answer = refTravels(chain({ use: produced ? { ...produced, final: deep } : null }));
+    expect(answer.pass).toBe(false);
+    expect(answer.detail).toContain("the producing tool's answer nests past");
+    expect(answer.detail).toContain(`${MAX_INPUT_DEPTH} levels`);
+    const use = consumer().use;
+    const input = refTravels(chain({}, consumer({ use: use ? { ...use, input: deep } : null })));
+    expect(input.pass).toBe(false);
+    expect(input.detail).toContain("the consuming tool's input nests past");
+    // One level inside the bound reads as before.
+    let shallow: Record<string, unknown> = { file: REF };
+    for (let i = 0; i < MAX_INPUT_DEPTH - 2; i += 1) shallow = { shallow };
+    expect(refTravels(chain({ use: produced ? { ...produced, final: shallow } : null })).pass).toBe(
+      true,
+    );
   });
 
   it("blob_read_in_dry_run: green for a live or fixture blob and an intercepted write carrying it; red for no blob, an un-intercepted write, a body too small, or a failed dry run", () => {

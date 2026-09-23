@@ -30,7 +30,7 @@ import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/to
 import { sandboxPath } from "@graft/toolbox";
 import { type AskChannel, gateToolCall } from "./approval";
 import { blobQuotaOvershoot, recordBlobsWithinQuota } from "./blob-budget";
-import { admitBlobs, blobRunEnvironment } from "./blob-door";
+import { admitBlobs, blobAgentEnvironment, blobRunEnvironment } from "./blob-door";
 import { blobsOnWire, withBlobs } from "./blobs";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
@@ -101,10 +101,10 @@ import { authoredToolName } from "./tool-names";
  * ADR 0023). The runner prints an envelope, `{ result, blobs }`, and this file is where it is read
  * (`describeModuleRun`): the module's result goes on as it always did — bounded, wrapped as a
  * dry-run report, recorded — and the ledger becomes one `blob` row per line (`blobs.ts`) before
- * the answer carries the same list beside the result. `GRAFT_AGENT` (with the budget below,
- * `blob-door.ts`'s `blobRunEnvironment`) and `GRAFT_TOOL_VERSION` go into the exec's environment
- * for the sidecar the runner writes, and `GRAFT_BLOBS_DIR` names the mount (`commandEnvironment`);
- * the runner deletes all three before the module loads.
+ * the answer carries the same list beside the result. `GRAFT_AGENT` (`blob-door.ts`'s
+ * `blobAgentEnvironment`, on every capability run) and `GRAFT_TOOL_VERSION` go into the exec's
+ * environment for the sidecar the runner writes, and `GRAFT_BLOBS_DIR` names the mount
+ * (`commandEnvironment`); the runner deletes all three before the module loads.
  *
  * **A ref the input names is judged at the door, before a sandbox is touched** (GRA-187;
  * `blob-door.ts`). After the input is validated and before the approval gate, the agent's live
@@ -195,9 +195,9 @@ export async function runWithCapability<T>(args: {
     GRAFT_PROXY_URL: deps.proxyPublicUrl,
     GRAFT_CONNECTION: args.connectionId,
     GRAFT_TOKEN: token,
-    // No `GRAFT_AGENT` here: the agent for a blob's sidecar rides in with the door's admission
-    // (`blobRunEnvironment`), which every run that may write a blob passes; `acquire`'s probe and
-    // proof reads (`acquire/job.ts`) come through here too and write none.
+    // The agent for the sidecar of any blob the run writes: on every capability run, since an
+    // `execute__` command may invoke `$GRAFT_RUNNER` on a by-hand module (Greptile on #159).
+    ...blobAgentEnvironment(scope),
     // The runner's own switch into dry-run mode; the claim on the token is what the proxy enforces.
     ...(mode.dryRun ? { GRAFT_DRY_RUN: "1" } : {}),
   });
