@@ -62,6 +62,9 @@ export function ConnectStep({ state }: { state: SetupStateData }) {
       />
       {view.kind === "card" ? (
         <PendingActionCard
+          // Keyed by the ask: another tab choosing another starter replaces the ask under this card,
+          // and a card's draft is made once, so a new ask gets a fresh card rather than the old one's.
+          key={view.action.id}
           action={view.action}
           origin="setup"
           onAnswered={() => void queryClient.invalidateQueries({ queryKey: setupKeys.current })}

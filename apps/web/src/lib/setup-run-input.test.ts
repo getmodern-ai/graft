@@ -20,6 +20,44 @@ describe("runInputView", () => {
     expect(runInputView({ type: "object" }, CITY)).toEqual({ kind: "none" });
   });
 
+  it("finds a composed schema's fields through a local $ref, allOf and the first anyOf or oneOf", () => {
+    const viaRef = {
+      type: "object",
+      $ref: "#/$defs/Input",
+      $defs: { Input: { type: "object", properties: { city: { type: "string" } } } },
+    };
+    expect(runInputView(viaRef, CITY)).toMatchObject({ kind: "field", field: "city" });
+    const composed = {
+      type: "object",
+      allOf: [{ properties: { query: { type: "string" } } }],
+      oneOf: [{ properties: { limit: { type: "integer" } } }, { properties: { page: {} } }],
+      anyOf: [{ $ref: "#/definitions/Flag" }],
+      definitions: { Flag: { properties: { unread: { type: "boolean" } } } },
+    };
+    expect(runInputView(composed, null)).toEqual({
+      kind: "json",
+      initial: JSON.stringify({ query: "", unread: false, limit: 0 }, null, 2),
+    });
+  });
+
+  it("asks for JSON, never runs with {}, where a schema takes input it does not list", () => {
+    const json = { kind: "json", initial: "{}" };
+    expect(runInputView({ type: "object", $ref: "https://example.com/input.json" }, null)).toEqual(
+      json,
+    );
+    expect(runInputView({ type: "object", oneOf: [true] }, null)).toEqual(json);
+    expect(
+      runInputView({ type: "object", additionalProperties: { type: "string" } }, null),
+    ).toEqual(json);
+    // A zod-built schema's `additionalProperties: false` admits nothing more.
+    expect(
+      runInputView({ type: "object", properties: {}, additionalProperties: false }, null),
+    ).toEqual({ kind: "none" });
+    // A cycle through $defs is walked once.
+    const cyclic = { $ref: "#/$defs/A", $defs: { A: { $ref: "#/$defs/A" } } };
+    expect(runInputView(cyclic, null)).toEqual(json);
+  });
+
   it("lays out the schema's fields as JSON when no starter field fits", () => {
     const view = runInputView(
       {

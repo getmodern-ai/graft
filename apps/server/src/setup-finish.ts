@@ -136,13 +136,14 @@ export async function completeSetupResult(
       details: { reason: "setup_step", step: record?.step ?? null },
     });
   }
-  return moveSetupBuild(
+  const { state } = await moveSetupBuild(
     ctx,
     principal,
     { kind: "finish", acquireJobId: record.acquireJobId },
     deps.setup,
     deps.agent,
   );
+  return state;
 }
 
 /** `POST /api/setup/finish`'s answer: the state, completed, and the token when one was issued. */

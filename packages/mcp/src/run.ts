@@ -469,6 +469,18 @@ export type AuthoredRunArgs = {
    * cannot use follows the one live connection of the vendor in its scope (the header).
    */
   connectionId?: string;
+  /**
+   * A caller's own check on the tool and the version as this run reads them, made inside the
+   * agent's in-flight hold, before the connection, the input and the gate (GRA-208, Greptile on
+   * #166). The console's run (`apps/server/src/tool-run.ts`) refuses a tool that is not read-only
+   * or not promoted; judged on its own read, a republish or a demotion landing before this one
+   * would slip past it, and the working-set sweep demotes nothing while a run is held. A refusal
+   * is recorded `refused` and answered as the run's own.
+   */
+  admit?: (
+    tool: NonNullable<Awaited<ReturnType<typeof getToolByName>>>,
+    versionId: string,
+  ) => Promise<{ reason: string; message: string } | null>;
 };
 
 /**
@@ -566,6 +578,8 @@ async function runHeld(
         );
   }
   const versioned = { toolId: tool.id, versionId: version.id };
+  const admission = args.admit ? await args.admit(tool, version.id) : null;
+  if (admission) return refuse(admission.reason, admission.message, versioned);
 
   const bound = args.connectionId ?? tool.defaultConnectionId;
   if (!bound) {

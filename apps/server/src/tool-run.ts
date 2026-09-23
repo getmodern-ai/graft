@@ -34,6 +34,9 @@ import {
  * person made here; the channel is `NO_ELICITATION` besides. A tool outside the agent's working set
  * is refused too, as `/mcp` refuses a first-class call to a tool the agent does not list. Both are
  * `CONFLICT` with a reason; another person's agent, or a tool not in the toolbox, is not found.
+ * Both are judged twice: here, for the answer, and again on the run's own read of the tool through
+ * `AuthoredRunArgs.admit`, inside the agent's in-flight hold, so a republish or a demotion landing
+ * between the two reads is refused the same way.
  */
 
 /** The route's answer: the run's own result, or the run's refusal or failure with its sentence. */
@@ -85,27 +88,43 @@ export async function runAgentTool(
     await getToolByName(ctx, principal, { vendor: ids.vendor, name: ids.name }, deps.tool),
     `No tool named ${wire} is in this toolbox`,
   );
-  if (!tool.readOnly) {
-    throw new ServiceError(
-      "CONFLICT",
-      `${wire} is not read-only, so running it asks for your approval first; the console runs read-only tools only, so run it from the harness, where the ask reaches you`,
-      { details: { reason: "tool_not_read_only", tool: wire } },
-    );
-  }
-  if (!(await isPromoted(ctx, scope, tool.id, deps.workingSet))) {
-    throw new ServiceError(
-      "CONFLICT",
-      `${wire} is not in ${agent.name}'s working set; promote it first, as the harness would`,
-      { details: { reason: "tool_not_in_working_set", tool: wire } },
-    );
-  }
+  /** Why the console will not run this tool as it stands: not read-only, or not promoted. */
+  const unrunnable = async (subject: { id: string; readOnly: boolean }) => {
+    if (!subject.readOnly) {
+      return new ServiceError(
+        "CONFLICT",
+        `${wire} is not read-only, so running it asks for your approval first; the console runs read-only tools only, so run it from the harness, where the ask reaches you`,
+        { details: { reason: "tool_not_read_only", tool: wire } },
+      );
+    }
+    if (!(await isPromoted(ctx, scope, subject.id, deps.workingSet))) {
+      return new ServiceError(
+        "CONFLICT",
+        `${wire} is not in ${agent.name}'s working set; promote it first, as the harness would`,
+        { details: { reason: "tool_not_in_working_set", tool: wire } },
+      );
+    }
+    return null;
+  };
+  const early = await unrunnable(tool);
+  if (early) throw early;
+  // Judged again on the run's own read of the tool, inside the agent's in-flight hold (Greptile on
+  // #166): a republish that made it write-capable, or a demotion, between this read and the run's
+  // is refused the same way rather than reaching the approval gate or the sandbox.
+  const judged: { refusal: ServiceError | null } = { refusal: null };
   const run = await runAuthoredTool(deps.mcp, scope, {
     vendor: tool.vendor,
     name: tool.name,
     input,
     mode: { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: false },
     channel: NO_ELICITATION,
+    admit: async (current) => {
+      const refusal = await unrunnable(current);
+      judged.refusal = refusal;
+      return refusal ? { reason: String(refusal.details?.reason), message: refusal.message } : null;
+    },
   });
+  if (judged.refusal) throw judged.refusal;
   if (!run.isError) return { ok: true, result: run.answer };
   const reason = typeof run.answer.reason === "string" ? run.answer.reason : null;
   return { ok: false, reason, message: sentenceOf(run.answer), answer: run.answer };
