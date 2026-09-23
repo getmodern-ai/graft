@@ -137,52 +137,108 @@ export type SetupGoalSuggestions = { suggestions: string[] };
 export type SetupGoalSuggestionsResult = SetupGoalSuggestions & {
   outcome: GoalProposalOutcome | "not_asked";
   error?: string;
+  /** True when the answer is the memo's, from an earlier call for the same connection. */
+  cached?: boolean;
 };
+
+/** How long one person's proposal for one connection is answered again without a model call. */
+export const GOAL_SUGGESTION_MEMO_TTL_MS = 60 * 60 * 1000;
+/** How many proposals the memo holds before the oldest is dropped. */
+export const GOAL_SUGGESTION_MEMO_MAX = 1000;
+
+/**
+ * The server's once-per-connection bound on the model call behind the chips (Greptile on #165):
+ * the route is a read, and reads are outside the `api` rate-limit bucket (`rate-limit.ts`), so
+ * without it a person could make the deployment's model, or their own key, propose on every
+ * request. One proposal per person and connection is held, settled or in flight, for
+ * `GOAL_SUGGESTION_MEMO_TTL_MS`, whatever its outcome: a timeout or a failure is not retried
+ * inside the window either, since the chips are a convenience and the step works without them.
+ * Held in this process alone, as `in-flight.ts`'s registry is, so two replicas ask at most once
+ * each.
+ */
+export type GoalSuggestionMemo = {
+  run(
+    key: string,
+    propose: () => Promise<SetupGoalSuggestionsResult>,
+  ): Promise<SetupGoalSuggestionsResult>;
+};
+
+export function createGoalSuggestionMemo(
+  options: { ttlMs?: number; max?: number; now?: () => number } = {},
+): GoalSuggestionMemo {
+  const ttlMs = options.ttlMs ?? GOAL_SUGGESTION_MEMO_TTL_MS;
+  const max = options.max ?? GOAL_SUGGESTION_MEMO_MAX;
+  const now = options.now ?? Date.now;
+  const held = new Map<string, { at: number; answer: Promise<SetupGoalSuggestionsResult> }>();
+  return {
+    async run(key, propose) {
+      const hit = held.get(key);
+      if (hit && now() - hit.at < ttlMs) return { ...(await hit.answer), cached: true };
+      held.delete(key);
+      while (held.size >= max) {
+        const oldest = held.keys().next().value;
+        if (oldest === undefined) break;
+        held.delete(oldest);
+      }
+      const answer = propose();
+      held.set(key, { at: now(), answer });
+      return answer;
+    },
+  };
+}
 
 /**
  * The goal step's suggested goals (GRA-209; GRA-202, *The goal step*): the deployment's model's
  * `proposeGoals`, given the record's connection and the starter's curated goal, routed as the
  * person's jobs are (`@graft/model`'s router, ADR 0014), so a person's own key sends their
  * vendor's name to their provider and nobody else's. None, and no call, where Build is
- * unavailable (no model), where the record names no connection, or where the adapter cannot
- * propose; none where the proposal answered none or threw. It never refuses: the step is never
- * blocked on it.
+ * unavailable (no model), where the record is not on an open goal step (skipped, completed or on
+ * another step: the chips are drawn there alone), where its connection is gone or revoked, or
+ * where the adapter cannot propose; none where the proposal answered none or threw. Asked once
+ * per person and connection inside the memo's window (`GoalSuggestionMemo`). It never refuses:
+ * the step is never blocked on it.
  */
 export async function setupGoalSuggestions(
   ctx: ServiceContext,
   principal: Principal,
-  deps: Pick<SetupBuildRouteDeps, "setup" | "connection" | "model">,
+  deps: Pick<SetupBuildRouteDeps, "setup" | "connection" | "model"> & {
+    goalSuggestions: GoalSuggestionMemo;
+  },
 ): Promise<SetupGoalSuggestionsResult> {
   const notAsked: SetupGoalSuggestionsResult = { suggestions: [], outcome: "not_asked" };
   const model = deps.model;
-  if (!acquireConfigured(deps) || !model?.proposeGoals) return notAsked;
+  const propose = model?.proposeGoals?.bind(model);
+  if (!acquireConfigured(deps) || !propose) return notAsked;
   const record = await deps.setup.findSetup(ctx.db, principal.personId);
-  const connection = await recordConnection(ctx, principal, record?.connectionId, deps);
-  if (!connection) return notAsked;
+  if (record?.step !== "goal" || record.skippedAt || record.completedAt) return notAsked;
+  const connection = await recordConnection(ctx, principal, record.connectionId, deps);
+  if (!connection || connection.revokedAt) return notAsked;
   const starter = starterVendorFor(connection.vendor);
-  try {
-    const proposal = await model.proposeGoals({
-      personId: principal.personId,
-      traceId: `setup:${principal.personId}`,
-      vendor: connection.vendor,
-      displayName: connection.displayName,
-      primaryHost: connection.primaryHost,
-      docsUrl: starter?.docsUrl ?? null,
-      curatedGoal: starter?.goal ?? null,
-    });
-    return {
-      suggestions: proposal.goals.slice(0, GOAL_PROPOSAL_MAX),
-      outcome: proposal.outcome,
-      ...(proposal.error ? { error: proposal.error } : {}),
-    };
-  } catch (error) {
-    // Reading the person's key, or a backing that throws: the step goes on without chips.
-    return {
-      suggestions: [],
-      outcome: "failed",
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return deps.goalSuggestions.run(`${principal.personId}:${connection.id}`, async () => {
+    try {
+      const proposal = await propose({
+        personId: principal.personId,
+        traceId: `setup:${principal.personId}`,
+        vendor: connection.vendor,
+        displayName: connection.displayName,
+        primaryHost: connection.primaryHost,
+        docsUrl: starter?.docsUrl ?? null,
+        curatedGoal: starter?.goal ?? null,
+      });
+      return {
+        suggestions: proposal.goals.slice(0, GOAL_PROPOSAL_MAX),
+        outcome: proposal.outcome,
+        ...(proposal.error ? { error: proposal.error } : {}),
+      };
+    } catch (error) {
+      // Reading the person's key, or a backing that throws: the step goes on without chips.
+      return {
+        suggestions: [],
+        outcome: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
 }
 
 export async function buildSetupTool(
