@@ -1022,8 +1022,11 @@ the agent's scope), to `goal`. `GET /api/setup` reads the ask the record waits o
 a live answer: answered with a connection (or a `scope` ask allowed) that is still live, usable and
 in the agent's scope it moves to `goal` naming it; declined, expired, gone, or answered with a
 connection revoked or taken out of the scope since (that answer is taken, so the routing stops
-handing it back), back to `vendor`, and on `goal` a connection that stopped standing takes it back
-too. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
+handing it back, under the record's lock so two reads take it once), back to `vendor`, and on
+`goal` a connection that stopped standing takes it back too, judged again under the lock
+(`moveSetupConnect`'s `confirm`) so a restore meanwhile stands. The connect route that finds such
+an answer routes once more, every move of that second routing tied to the taken ask's id, so a
+record another tab re-pointed keeps the newer ask. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
 captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
 one answer count once. A listed agent's scope grown by Setup (*Another vendor*, a `scope` ask
 answered in the console) is announced to its session, since no waiting call of its own does. The
