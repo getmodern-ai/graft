@@ -68,6 +68,14 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
     event: "setup_step_completed",
     properties: setupStepProperties("vendor"),
   },
+  // The goal step completes when Build is pressed (GRA-207); the building step's completion is
+  // counted where the record learns the tool, since that is a read, as the connect step's is.
+  {
+    method: "POST",
+    path: /^\/setup\/build$/,
+    event: "setup_step_completed",
+    properties: setupStepProperties("goal"),
+  },
   {
     method: "POST",
     path: /^\/setup\/skip$/,
