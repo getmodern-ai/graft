@@ -182,6 +182,16 @@ describe("POST /api/setup/start", () => {
       post({ harness: "hermes", agent: { scopeMode: "listed", connectionIds: ["conn_1"] } }),
     );
     expect(refused.status).toBe(400);
+    // The create dialog's shape, the list and the mode at the top level, is refused too rather
+    // than stripped, which would mint the agent on `all` (Greptile on #162).
+    for (const body of [
+      { harness: "hermes", connectionIds: ["conn_1"] },
+      { harness: "hermes", scopeMode: "listed" },
+    ]) {
+      const topLevel = await h.app.request("/api/setup/start", post(body));
+      expect(topLevel.status).toBe(400);
+    }
+    expect(h.agent.insertAgent).not.toHaveBeenCalled();
     const res = await h.app.request(
       "/api/setup/start",
       post({ harness: "hermes", agent: { name: "laptop Hermes", workingSetCap: 8 } }),
@@ -211,7 +221,10 @@ describe("POST /api/setup/start", () => {
         }),
       ],
     });
-    const state = await (await h.app.request("/api/setup/start", post({}))).json();
+    // A harness sent anyway is not recorded: the agent's harness connected before Setup showed.
+    const state = await (
+      await h.app.request("/api/setup/start", post({ harness: "codex" }))
+    ).json();
     expect(state).toMatchObject({
       step: "vendor",
       setup: { agentId: "agent_claude", harness: null },

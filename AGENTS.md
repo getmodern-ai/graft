@@ -983,7 +983,7 @@ person-scoped agent in the same statement; the table shows count/cap with Cando'
 (`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
 harness, the agent, the open connection ask, the connection, the acquire job, the tool, and
 `started_at`, `completed_at`, `skipped_at`; `repo/setup.ts` names the person in every statement,
-pinned in `repo/setup.test.ts`, and `lockSetup` makes the row and locks it so two starts serialise.
+pinned in `repo/setup.test.ts`, and `lockSetup` makes the row and locks it so two starts, or a start and a skip, serialise.
 `@graft/core/setup/` holds the service (`getSetupState`, `startSetup`, `skipSetup`), the
 browser-safe rules (`shouldShowSetup` over the record and the person's connection and tool counts,
 `isAwaitingHarness` over an agent, `currentSetupStep`) and the harness data (`SETUP_HARNESSES`:

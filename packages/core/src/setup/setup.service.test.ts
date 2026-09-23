@@ -185,6 +185,27 @@ describe("startSetup", () => {
     expect(state.setup?.agentId).toBe("agent_b");
   });
 
+  it("records no harness beside an adopted agent, whether one or named among several", async () => {
+    const one = world({ agents: [agentRow("agent_claude")] });
+    const adopted = await startSetup(
+      ctx,
+      PRINCIPAL,
+      { harness: "claude" },
+      one.deps,
+      one.agentDeps,
+    );
+    expect(adopted.setup).toMatchObject({ agentId: "agent_claude", harness: null });
+    const several = world({ agents: [agentRow("agent_a"), agentRow("agent_b")] });
+    const named = await startSetup(
+      ctx,
+      PRINCIPAL,
+      { harness: "hermes", agentId: "agent_b" },
+      several.deps,
+      several.agentDeps,
+    );
+    expect(named.setup).toMatchObject({ agentId: "agent_b", harness: null });
+  });
+
   it("refuses an agent that is not one of the person's active agents", async () => {
     const w = world({ agents: [agentRow("agent_a"), agentRow("agent_b", { revokedAt: NOW })] });
     await expect(
@@ -221,6 +242,14 @@ describe("skipSetup", () => {
     const state = await skipSetup(ctx, PRINCIPAL, w.deps, w.agentDeps);
     expect(state.setup).toMatchObject({ skippedAt: NOW, startedAt: null });
     expect(state.show).toBe(false);
+  });
+
+  it("judges the skip on the locked record, and leaves a completed one unmarked", async () => {
+    const w = world({});
+    await w.deps.saveSetup(fakeDb as never, "person_1", { step: "completed", completedAt: NOW });
+    const state = await skipSetup(ctx, PRINCIPAL, w.deps, w.agentDeps);
+    expect(w.deps.lockSetup).toHaveBeenCalled();
+    expect(state.setup).toMatchObject({ step: "completed", skippedAt: null });
   });
 
   it("keeps the agent it ran as, and a start clears the skip", async () => {

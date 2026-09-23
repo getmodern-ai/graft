@@ -95,9 +95,9 @@ export type StartSetupAgentInput = {
 };
 
 /**
- * `POST /api/setup/start`. `harness` is required when the person has no active agent, and recorded
- * when given otherwise; `agentId` names the agent to adopt, and is required among several;
- * `agent` describes the one to mint, and only a start that mints takes it.
+ * `POST /api/setup/start`. `harness` is required when the person has no active agent, and ignored
+ * otherwise, since an adopted agent records no harness; `agentId` names the agent to adopt, and is
+ * required among several; `agent` describes the one to mint, and only a start that mints takes it.
  */
 export type StartSetupInput = {
   harness?: SetupHarness;
@@ -186,6 +186,9 @@ export async function startSetup(
     }
 
     let agentId: string;
+    // The harness is recorded only beside the agent minted for it: an adopted agent's harness
+    // was connected before Setup showed, and null is what tells the finish step so (the header).
+    let harness: SetupHarness | null = null;
     if (input.agentId !== undefined) {
       const named = active.find((candidate) => candidate.id === input.agentId);
       if (!named) throw new ServiceError("NOT_FOUND", "Agent not found, or revoked");
@@ -207,6 +210,7 @@ export async function startSetup(
         agentDeps,
       );
       agentId = minted.id;
+      harness = input.harness;
     } else if (input.agent !== undefined) {
       throw new ServiceError(
         "BAD_REQUEST",
@@ -225,7 +229,7 @@ export async function startSetup(
 
     const patch: SetupPatch = {
       step: "vendor",
-      harness: input.harness ?? null,
+      harness,
       agentId,
       pendingActionId: null,
       connectionId: null,
@@ -244,7 +248,9 @@ export async function startSetup(
  * *Skip for now* (GRA-202, user story 26): the record is marked skipped, made first when the person
  * skipped before starting, and the show rule answers no from then on. Whatever the record held is
  * kept, so *Set up Graft* resumes rather than restarts where it can. A completed record is left
- * as it is.
+ * as it is. The skip takes the record's lock as the start does, so it is judged against the record
+ * as a start in flight leaves it: a start that lands first is skipped after it, the person's later
+ * word, and a record completed meanwhile is never marked.
  */
 export async function skipSetup(
   ctx: ServiceContext,
@@ -252,9 +258,11 @@ export async function skipSetup(
   deps: SetupDeps,
   agentDeps: Pick<AgentDeps, "listAgents">,
 ): Promise<SetupState> {
-  const record = await deps.findSetup(ctx.db, principal.personId);
-  if (record?.step !== "completed") {
-    await deps.saveSetup(ctx.db, principal.personId, { skippedAt: deps.now() });
-  }
+  await ctx.db.transaction(async (tx) => {
+    const record = await deps.lockSetup(tx, principal.personId);
+    if (record.step !== "completed") {
+      await deps.saveSetup(tx, principal.personId, { skippedAt: deps.now() });
+    }
+  });
   return getSetupState(ctx, principal, deps, agentDeps);
 }
