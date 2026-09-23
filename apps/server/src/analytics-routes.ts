@@ -76,6 +76,19 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
     event: "setup_step_completed",
     properties: setupStepProperties("goal"),
   },
+  // The result step completes on its Continue; the finish completes Setup (GRA-208).
+  {
+    method: "POST",
+    path: /^\/setup\/result$/,
+    event: "setup_step_completed",
+    properties: setupStepProperties("result"),
+  },
+  {
+    method: "POST",
+    path: /^\/setup\/finish$/,
+    event: "setup_completed",
+    properties: setupHarnessProperty,
+  },
   {
     method: "POST",
     path: /^\/setup\/skip$/,

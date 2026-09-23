@@ -15,6 +15,7 @@ import {
   getPendingActionForPerson,
   getPersonModelKey,
   isOAuthAuthorizationCode,
+  issueAwaitingAgentToken,
   type LedgerDeps,
   listAgents,
   listApprovals,
@@ -67,6 +68,7 @@ import {
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
   handoffUrl,
+  type McpDeps,
   notifyAgentsReachingConnection,
   openAskOfKind,
   recordApprovalAnswer,
@@ -116,14 +118,18 @@ import {
   listSetupVendors,
   type SetupConnectDeps,
 } from "./setup-connect";
+import { completeSetup, completeSetupResult, setupToolContext } from "./setup-finish";
 import {
   createSetupPromptRoutes,
   isSetupPromptPath,
   SETUP_PROMPT_PATH,
   setupPromptCors,
 } from "./setup-prompt";
+import { runAgentTool } from "./tool-run";
 
 export type { SetupBuildAvailability, SetupGoalContext } from "./setup-build";
+export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
+export type { AgentToolRunOutput } from "./tool-run";
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -261,6 +267,12 @@ export type ApiOptions = {
    */
   acquire?: SetupAcquireDeps;
   /**
+   * The MCP endpoint's deps, for the console's run of an authored tool (GRA-208; ADR 0024;
+   * `tool-run.ts`), which runs exactly what a first-class call over `/mcp` runs. `index.ts` binds
+   * `mcp`; absent, the run route refuses with a sentence saying so.
+   */
+  run?: McpDeps;
+  /**
    * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two doors under `/api`:
    * `sign_in` over Better Auth's writes and `api` over this app's mutations. `createServer` hands
    * it down; absent, `NO_RATE_LIMITING` and every door open, which is the default in both forms.
@@ -358,6 +370,14 @@ export type SetupConnectBody = z.input<typeof setupConnectBody>;
 const setupBuildBody = z.strictObject({ goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH) });
 /** The build's wire shape, as the console posts it. */
 export type SetupBuildBody = z.input<typeof setupBuildBody>;
+
+/**
+ * `POST /agents/:id/tools/:vendor/:name/run` (GRA-208): the tool's input, which the run holds to
+ * the tool's own schema; absent, an empty object, for a tool that takes none.
+ */
+const toolRunBody = z.strictObject({ input: z.unknown().optional() });
+/** The run's wire shape, as the console posts it. */
+export type ToolRunBody = z.input<typeof toolRunBody>;
 
 /**
  * `PUT /agents/:id/scope`: every connection, or a list — `SetAgentScopeInput` in `@graft/core`
@@ -960,6 +980,39 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(await continueSetupBuild(ctx, principal, setupBuildDeps));
   });
 
+  /**
+   * The result and finish steps (GRA-208; `setup-finish.ts`). `GET /setup/tool` is what both draw;
+   * the run is the agent's route below. `POST /setup/result` is the result step's Continue, a row in
+   * the mutation table as `step: "result"`; `POST /setup/finish` completes the record and, for a
+   * static-token harness whose agent still awaits it, answers the token once beside the state,
+   * counted as `setup_completed` with the harness.
+   */
+  const setupFinishDeps = {
+    setup: setupDeps,
+    agent: agentDeps,
+    connection: connectionDeps,
+    tool: toolDeps,
+    acquireJob: acquireJobDeps,
+  };
+
+  api.get("/setup/tool", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(await setupToolContext(ctx, principal, setupFinishDeps));
+  });
+
+  api.post("/setup/result", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await completeSetupResult(ctx, principal, setupFinishDeps));
+  });
+
+  api.post("/setup/finish", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    // The token, when one is issued, is in this answer and nowhere else, as `POST /agents`'s is.
+    return c.json(await completeSetup(ctx, principal, setupFinishDeps));
+  });
+
   /** The vendor step's list for this deployment (`listSetupVendors`): each starter, its provider and what connecting takes. */
   api.get("/setup/vendors", async (c) => {
     await principalOf(c.req.raw.headers);
@@ -1027,6 +1080,44 @@ export function createApi(options: ApiOptions): Hono {
       "Agent not found, or already revoked",
     );
     return c.json({ agent });
+  });
+
+  /**
+   * The static token of an agent **awaiting its harness** (ADR 0024; GRA-208), for *Connect a
+   * harness* on such an agent; Setup's finish issues it through `POST /setup/finish` instead, in the
+   * transaction that completes the record. Answered once, `201 { agent, token }`, as `POST /agents`
+   * answers; any other agent is `409 agent_not_awaiting_harness` (revoked, a token already, a client
+   * connected), another person's a 404 (`issueAwaitingAgentToken`).
+   */
+  api.post("/agents/:id/token", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await issueAwaitingAgentToken(ctx, principal, c.req.param("id"), agentDeps), 201);
+  });
+
+  /**
+   * Run an authored tool as one of the person's agents (GRA-208; ADR 0024; `tool-run.ts`): read-only
+   * tools in the agent's working set only, synchronous, `AgentToolRunOutput`. Setup's result step is
+   * the only caller; the route is the agent's, not Setup's.
+   */
+  api.post("/agents/:id/tools/:vendor/:name/run", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, toolRunBody, { emptyIs: {} });
+    if (!options.run) {
+      throw new ServiceError(
+        "BAD_REQUEST",
+        "This server has no MCP endpoint configured, so the console cannot run a tool",
+      );
+    }
+    return c.json(
+      await runAgentTool(
+        ctx,
+        principal,
+        { agentId: c.req.param("id"), vendor: c.req.param("vendor"), name: c.req.param("name") },
+        body.input ?? {},
+        { agent: agentDeps, tool: toolDeps, workingSet: workingSetDeps, mcp: options.run },
+      ),
+    );
   });
 
   /**
