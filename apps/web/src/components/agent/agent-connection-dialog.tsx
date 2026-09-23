@@ -1,6 +1,6 @@
 import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type RefObject, useState } from "react";
+import { type ReactNode, type RefObject, useState } from "react";
 
 import { HarnessSetup } from "@/components/agent/harness-setup";
 import { SetupPromptBlock } from "@/components/agent/setup-prompt-block";
@@ -40,6 +40,9 @@ export function AgentConnectionDialog({
   returnFocus: RefObject<HTMLButtonElement | null>;
 }) {
   const [open, setOpen] = useState(true);
+  // Held here, not in the branch that issued it: the agents list refetched after the issue reads
+  // the agent with a token, which would otherwise swap the branch and drop the one view of it.
+  const [issued, setIssued] = useState<string | null>(null);
 
   return (
     <Dialog
@@ -57,10 +60,12 @@ export function AgentConnectionDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex min-w-0 flex-col gap-4">
-          {agent.tokenPrefix ? (
+          {issued ? (
+            <TokenOnce token={issued} agentName={agent.name} />
+          ) : agent.tokenPrefix ? (
             <HarnessSetup agentName={agent.name} />
           ) : isAwaitingHarness(agent) ? (
-            <AwaitingHarness agent={agent} />
+            <AwaitingHarness agent={agent} onIssued={setIssued} />
           ) : (
             <OAuthSetup agent={agent} />
           )}
@@ -73,7 +78,16 @@ export function AgentConnectionDialog({
   );
 }
 
-function OAuthSetup({ agent, awaiting = false }: { agent: Agent; awaiting?: boolean }) {
+function OAuthSetup({
+  agent,
+  awaiting = false,
+  children,
+}: {
+  agent: Agent;
+  awaiting?: boolean;
+  /** Drawn between the consent sentence and the setup prompt. */
+  children?: ReactNode;
+}) {
   return (
     <>
       <CodeBlock
@@ -86,6 +100,7 @@ function OAuthSetup({ agent, awaiting = false }: { agent: Agent; awaiting?: bool
           ? `For a harness that signs in with OAuth (Claude, ChatGPT, Claude Code, Codex): add this URL, then sign in to Graft; ${agent.name} is already chosen on the consent page. OAuth manages the token for you.`
           : `Add this URL to your harness, then sign in to Graft and choose ${agent.name} on the connection screen. OAuth manages the token for you.`}
       </p>
+      {children}
       <SetupPromptBlock
         harness={promptHarnessOfClient(agent.connectedVia?.clientName)}
         agentName={agent.name}
@@ -94,21 +109,18 @@ function OAuthSetup({ agent, awaiting = false }: { agent: Agent; awaiting?: bool
   );
 }
 
-function AwaitingHarness({ agent }: { agent: Agent }) {
+function AwaitingHarness({ agent, onIssued }: { agent: Agent; onIssued: (token: string) => void }) {
   const queryClient = useQueryClient();
-  const [token, setToken] = useState<string | null>(null);
   const issue = useMutation({
     mutationFn: () => issueAgentToken(agent.id),
     onSuccess: (issued) => {
-      setToken(issued.token);
+      onIssued(issued.token);
       void queryClient.invalidateQueries({ queryKey: agentKeys.all });
     },
   });
 
-  if (token) return <TokenOnce token={token} agentName={agent.name} />;
   return (
-    <>
-      <OAuthSetup agent={agent} awaiting />
+    <OAuthSetup agent={agent} awaiting>
       <div className="flex flex-col gap-2">
         <p className="text-muted-foreground">
           For a harness that takes a static token (Hermes, OpenClaw, another MCP client), issue{" "}
@@ -120,6 +132,6 @@ function AwaitingHarness({ agent }: { agent: Agent }) {
           </Button>
         </div>
       </div>
-    </>
+    </OAuthSetup>
   );
 }
