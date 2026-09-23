@@ -2,8 +2,9 @@ import { type ConnectionOutput, getConnection, recordUsage } from "@graft/core";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { requireBuildApproval } from "../approval";
 import { ASK_CARD_TOOL_META } from "../ask-card";
+import { blobBudgetOvershoot, recordBlobsWithinBudget } from "../blob-budget";
 import { admitBlobs, blobBudgetEnvironment } from "../blob-door";
-import { recordWrittenBlobs } from "../blobs";
+import { blobsOnWire } from "../blobs";
 import {
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   MAX_COMMAND_TIMEOUT_SECONDS,
@@ -12,7 +13,7 @@ import {
 } from "../bounds";
 import { toolAskResult } from "../card-client";
 import type { SessionContext } from "../context";
-import { heldInFlight } from "../in-flight";
+import { admitUnderGrant, heldInFlight } from "../in-flight";
 import { type Refusal, toolError, toolRefusal, toolResult } from "../result";
 import { revokedConnectionRefusal } from "../revoke";
 import { runWithCapability } from "../run";
@@ -136,27 +137,28 @@ export async function callExecuteTool(
   // The blob door (GRA-200; the header): a by-hand agent is under the same quota as a `run_tool`,
   // judged before the gate asks anyone and before a sandbox is touched (ADR 0023). The command is
   // not JSON the runner reads, so the quota alone is judged here.
-  const door = await admitBlobs(deps, scope, null);
+  // Admitted and granted as one step (`admitUnderGrant`, `in-flight.ts`; Greptile on #157): a
+  // second call of this agent's admitted while this one runs is handed the remainder after this
+  // one's. Outstanding until the process settles: released in `finally` whatever happens below, and
+  // carried on the process name past that for a detached start, which `heldInFlight` tracks with
+  // the same figure before this release runs.
+  const door = await admitUnderGrant(deps.inFlight, scope.agentId, () =>
+    admitBlobs(deps, scope, null),
+  );
   if (!door.ok) {
     await record("refused");
     return toolError(door.refusal);
   }
   const admitted = door.admission;
-
-  const gate = await requireBuildApproval(ctx, scope, connectionId, deps, session.channel);
-  if (!gate.pass) {
-    await record("refused");
-    return toolAskResult(session, gate);
-  }
-
-  // The budget is outstanding from here until the process settles (`in-flight.ts`): released below
-  // once a waited command has returned, and carried on the process name past that for a detached
-  // start, which `heldInFlight` tracks with the same figure before this release runs.
-  const releaseGrant = deps.inFlight?.grant(scope.agentId, admitted.budgetBytes);
-  let ran: PolledProcess | { error: string } | Refusal;
   try {
+    const gate = await requireBuildApproval(ctx, scope, connectionId, deps, session.channel);
+    if (!gate.pass) {
+      await record("refused");
+      return toolAskResult(session, gate);
+    }
+
     // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
-    ran = await heldInFlight(
+    const ran: PolledProcess | { error: string } | Refusal = await heldInFlight(
       deps.inFlight,
       scope.agentId,
       () =>
@@ -170,25 +172,43 @@ export async function callExecuteTool(
             withSandbox(
               () => openAgentSandbox(deps, scope),
               // What the process may still commit under the agent's quota, beside the token
-              // (the header; `../blob-door.ts`): the runner refuses the write that would pass it.
+              // (the header; `../blob-door.ts`). Advice on this path, since the command is the
+              // caller's and may replace the variable: the record below is the rule.
               (handle) =>
                 runCommand(handle, parsed, { ...env, ...blobBudgetEnvironment(admitted) }),
             ),
         }),
       admitted.budgetBytes,
     );
-  } finally {
-    releaseGrant?.();
-  }
-  // A runner the command invoked wrote these blobs (GRA-186; `../blobs.ts`): their rows land here,
-  // as a detached run's land at the poll, with no version since the command names none.
-  const polled = isPolledProcess(ran) ? ran : null;
-  if (polled) await recordWrittenBlobs(deps, scope, null, polled.blobs, polled.dropped);
-  const outcome: Record<string, unknown> = polled ? polled.answer : ran;
+    // A runner the command invoked wrote these blobs (GRA-186; `../blobs.ts`): their rows land here,
+    // as a detached run's land at the poll, with no version since the command names none, and held
+    // to the budget the door admitted (`../blob-budget.ts`; ADR 0023; Greptile on #157): the
+    // environment is advisory on a by-hand path, and what is recorded is what counts.
+    const polled = isPolledProcess(ran) ? ran : null;
+    const recorded = polled
+      ? await recordBlobsWithinBudget(
+          deps,
+          scope,
+          null,
+          polled.blobs,
+          polled.dropped,
+          admitted.budgetBytes,
+        )
+      : null;
+    const overshoot = recorded ? blobBudgetOvershoot(recorded) : null;
+    const outcome: Record<string, unknown> =
+      polled && recorded && overshoot
+        ? { ...polled.answer, ...blobsOnWire(recorded.kept, polled.dropped), ...overshoot }
+        : polled
+          ? polled.answer
+          : ran;
 
-  const refused = "error" in outcome && outcome.error === "refused";
-  const failed = !refused && "error" in outcome;
-  const ok = !refused && !failed && (!("exitCode" in outcome) || outcome.exitCode === 0);
-  await record(refused ? "refused" : ok ? "ok" : "error");
-  return refused || failed ? toolError(outcome as Record<string, unknown>) : toolResult(outcome);
+    const refused = "error" in outcome && outcome.error === "refused";
+    const failed = !refused && "error" in outcome;
+    const ok = !refused && !failed && (!("exitCode" in outcome) || outcome.exitCode === 0);
+    await record(refused ? "refused" : ok ? "ok" : "error");
+    return refused || failed ? toolError(outcome) : toolResult(outcome);
+  } finally {
+    door.release();
+  }
 }

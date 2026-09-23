@@ -29,11 +29,12 @@ import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
 import { sandboxPath } from "@graft/toolbox";
 import { type AskChannel, gateToolCall } from "./approval";
+import { blobBudgetOvershoot, recordBlobsWithinBudget } from "./blob-budget";
 import { admitBlobs, blobBudgetEnvironment } from "./blob-door";
-import { blobsOnWire, recordWrittenBlobs, withBlobs } from "./blobs";
+import { blobsOnWire, withBlobs } from "./blobs";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
-import { detachedHoldMs, heldInFlight } from "./in-flight";
+import { admitUnderGrant, detachedHoldMs, heldInFlight } from "./in-flight";
 import { type Refusal, refusal } from "./result";
 import { revokedConnectionRefusal } from "./revoke";
 import {
@@ -644,16 +645,19 @@ async function runHeld(
 
   // The blob door (GRA-187; `blob-door.ts`): the quota, then every ref the input names, judged over
   // the rows before the gate asks anyone and before a sandbox is touched. A dry run passes it too.
-  const door = await admitBlobs(deps, scope, verdict.value);
+  // Admitted and granted as one step (`admitUnderGrant`, `in-flight.ts`; GRA-200 after Greptile on
+  // #157): the budget is outstanding from the admission until the run settles, so a second run
+  // admitted meanwhile is handed the remainder after this one's; a detached start moves the grant
+  // onto its process name below before this release runs.
+  const door = await admitUnderGrant(deps.inFlight, scope.agentId, () =>
+    admitBlobs(deps, scope, verdict.value),
+  );
   if (!door.ok) {
     await record("refused", versioned);
     return { answer: door.refusal, isError: true };
   }
-  // The budget is outstanding from here until the run settles (`in-flight.ts`), so a second run
-  // admitted meanwhile is handed the remainder after this one's; a detached start moves the grant
-  // onto its process name below before this release runs.
   const admitted = door.admission;
-  const releaseGrant = deps.inFlight?.grant(scope.agentId, admitted.budgetBytes);
+  const releaseGrant = door.release;
   // The narrowed values the admitted run reads, captured once for the function below.
   const runVersion = version;
   const runTool = tool;
@@ -661,7 +665,7 @@ async function runHeld(
   try {
     return await runAdmitted();
   } finally {
-    releaseGrant?.();
+    releaseGrant();
   }
 
   async function runAdmitted(): Promise<AuthoredRunAnswer> {
@@ -734,12 +738,28 @@ async function runHeld(
     if (!run.ok) {
       // A module that wrote and then failed committed its blobs all the same (the outcome type): the
       // rows land as they do on a success, and the failure names the refs beside its own fields.
-      await recordWrittenBlobs(deps, scope, runVersion.id, run.blobs, run.blobsDropped);
+      // Held to the admitted budget as every ledger is (`blob-budget.ts`; GRA-200): this runner
+      // honours the variable, so the check is defence in depth here and costs one sum.
+      const recorded = await recordBlobsWithinBudget(
+        deps,
+        scope,
+        runVersion.id,
+        run.blobs,
+        run.blobsDropped,
+        admitted.budgetBytes,
+      );
+      const overshoot = blobBudgetOvershoot(recorded);
       await record("error", versioned);
       return {
         answer:
-          run.blobs.length > 0 || run.blobsDropped > 0
-            ? { ...run.failure, ...blobsOnWire(run.blobs, run.blobsDropped) }
+          recorded.kept.length > 0 || run.blobsDropped > 0 || overshoot
+            ? {
+                ...run.failure,
+                ...blobsOnWire(recorded.kept, run.blobsDropped),
+                ...(overshoot
+                  ? { ...overshoot, error: `${run.failure.error} ${overshoot.error}` }
+                  : {}),
+              }
             : run.failure,
         isError: true,
       };
@@ -757,8 +777,30 @@ async function runHeld(
       return { answer: describeDetachedStart(run.detached), isError: false };
     }
     // The blobs the run wrote, one row each, before the answer names them (the header; `blobs.ts`).
-    // A dry run's blobs are real files under the mount and get their rows like any other.
-    await recordWrittenBlobs(deps, scope, runVersion.id, run.blobs, run.blobsDropped);
+    // A dry run's blobs are real files under the mount and get their rows like any other. Held to
+    // the admitted budget (`blob-budget.ts`; GRA-200, after Greptile on #157): the record is the
+    // rule on every path, and a run this runner let past the budget is answered a failure.
+    const recorded = await recordBlobsWithinBudget(
+      deps,
+      scope,
+      runVersion.id,
+      run.blobs,
+      run.blobsDropped,
+      admitted.budgetBytes,
+    );
+    const overshoot = blobBudgetOvershoot(recorded);
+    if (overshoot) {
+      await record("error", versioned);
+      return {
+        answer: {
+          ...overshoot,
+          exitCode: 0,
+          stderrTail: "",
+          ...blobsOnWire(recorded.kept, run.blobsDropped),
+        },
+        isError: true,
+      };
+    }
     if (args.mode.dryRun) {
       const report = readDryRunReport(run.result);
       await recordDryRun(
@@ -778,8 +820,8 @@ async function runHeld(
         ? {
             answer: {
               dryRun: report,
-              ...(run.blobs.length > 0 || run.blobsDropped > 0
-                ? blobsOnWire(run.blobs, run.blobsDropped)
+              ...(recorded.kept.length > 0 || run.blobsDropped > 0
+                ? blobsOnWire(recorded.kept, run.blobsDropped)
                 : {}),
             },
             isError: false,
@@ -795,7 +837,7 @@ async function runHeld(
     }
     await record("ok", versioned);
     return {
-      answer: withBlobs(boundResult(run.result), run.blobs, run.blobsDropped),
+      answer: withBlobs(boundResult(run.result), recorded.kept, run.blobsDropped),
       isError: false,
     };
   }

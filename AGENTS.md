@@ -695,7 +695,17 @@ quota alone, since a shell command is not JSON the runner reads), refuse `blob_q
 shape with no exec, put the two variables into the process's environment beside the runner's path,
 and hold the grant on the in-flight registry until the process settles, a detached one's on its
 process name through `heldInFlight`'s `budgetBytes`; `isPolledProcess` in `sandbox.ts` is the one
-spelling of the runner-answer shape the three readers of a ledger share. Three more rules from Greptile's review of #148: the runner reserves
+spelling of the runner-answer shape the three readers of a ledger share. Two rules from Greptile's
+review of #157: **the admission and its grant are one step** (`admitUnderGrant` in `in-flight.ts`,
+serialised per agent through `InFlightRegistry.admit`, on `run.ts`'s path too), since two
+admissions interleaved across the door's await both read the remainder before either reserved it;
+and **the record is the rule, the environment is advice** (`blob-budget.ts`): a by-hand command can
+hand the runner any `GRAFT_BLOB_BUDGET_BYTES` it likes, so when the server records a run's ledger
+(`recordBlobsWithinBudget`, at the three record sites and at `wait_for_process`, which reads the
+budget off the process name with `budgetOf`) it sums the committed bytes against the admitted
+budget and, past it, removes the newest blobs through the `BlobStore` until the rest fit, writes no
+row for them, and answers a `blob_quota` failure naming the overshoot (`blobBudgetOvershoot`); the
+newest go because the earlier writes are what an honest runner would have committed. Three more rules from Greptile's review of #148: the runner reserves
 against the budget **as each chunk lands**, one shared figure across every write in flight, so two
 writes started together cannot both fit a remainder only one fits; the door subtracts **what it has
 already handed to this agent's runs still in flight** (`InFlightRegistry.grant` and

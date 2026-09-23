@@ -36,10 +36,24 @@ export type InFlightRegistry = {
   /** Bytes granted to this agent's runs still in flight: every open grant and every tracked process's. */
   outstandingBudget(agentId: string): number;
   /**
+   * Run `work` after every earlier `admit` of this agent's has settled, and before any later one
+   * starts: the door's admission and its grant as one step (`admitUnderGrant`; GRA-200, after
+   * Greptile on #157). The door reads `outstandingBudget` and answers a budget, and the caller
+   * grants it one await later; two admissions of one agent interleaved across that await both read
+   * the remainder before either reserved it, and were both handed the whole of it.
+   */
+  admit<T>(agentId: string, work: () => Promise<T>): Promise<T>;
+  /**
    * A detached process is in flight by name until settled, or until `ttlMs` has passed; the budget
    * the door handed its run, when it has one, is outstanding for as long.
    */
   track(agentId: string, processName: string, ttlMs: number, budgetBytes?: number): void;
+  /**
+   * The budget a tracked process was handed, for the poll that records its ledger to hold it to
+   * (GRA-200; `blob-budget.ts`); undefined for a name not tracked, which is a process this server
+   * did not start or one whose time is up, and whose budget nobody can know.
+   */
+  budgetOf(agentId: string, processName: string): number | undefined;
   /** `wait_for_process` saw the process finish. A name not tracked is ignored. */
   settle(agentId: string, processName: string): void;
   has(agentId: string): boolean;
@@ -58,6 +72,8 @@ type AgentHolds = {
 
 export function createInFlightRegistry(): InFlightRegistry {
   const agents = new Map<string, AgentHolds>();
+  /** The tail of each agent's admission chain (`admit`); an entry is dropped once its chain drains. */
+  const admissions = new Map<string, Promise<void>>();
 
   const holdsOf = (agentId: string): AgentHolds => {
     let holds = agents.get(agentId);
@@ -115,6 +131,20 @@ export function createInFlightRegistry(): InFlightRegistry {
       for (const entry of holds.detached.values()) total += entry.budgetBytes;
       return total;
     },
+    admit(agentId, work) {
+      const previous = admissions.get(agentId) ?? Promise.resolve();
+      // A failed admission ahead of this one is that caller's to answer; the chain goes on.
+      const result = previous.then(work);
+      const settled = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      admissions.set(agentId, settled);
+      settled.then(() => {
+        if (admissions.get(agentId) === settled) admissions.delete(agentId);
+      });
+      return result;
+    },
     track(agentId, processName, ttlMs, budgetBytes = 0) {
       const holds = holdsOf(agentId);
       const previous = holds.detached.get(processName);
@@ -123,6 +153,9 @@ export function createInFlightRegistry(): InFlightRegistry {
       // A tracked process must not hold the server open past its last session.
       timer.unref?.();
       holds.detached.set(processName, { timer, budgetBytes: Math.max(0, budgetBytes) });
+    },
+    budgetOf(agentId, processName) {
+      return agents.get(agentId)?.detached.get(processName)?.budgetBytes;
     },
     settle,
     has(agentId) {
@@ -137,6 +170,29 @@ export function createInFlightRegistry(): InFlightRegistry {
       agents.clear();
     },
   };
+}
+
+/**
+ * The door's admission and its grant as one step for the agent (GRA-200, after Greptile on #157):
+ * `admit` is the door (`blob-door.ts`'s `admitBlobs`, over whatever input the path carries), run
+ * under the agent's admission chain, and an admission's budget is granted before the chain moves
+ * on, so the next admission reads it in `outstandingBudget`. A refusal grants nothing. The
+ * returned `release` is the grant's, for the caller's `finally`; with no registry there is nothing
+ * to reserve against and it is a no-op. Every path that passes the door takes it through here
+ * (`run.ts`, `tools/execute.ts`, `run_command`).
+ */
+export async function admitUnderGrant<A extends { budgetBytes: number }, R>(
+  registry: InFlightRegistry | undefined,
+  agentId: string,
+  admit: () => Promise<{ ok: true; admission: A } | { ok: false; refusal: R }>,
+): Promise<{ ok: true; admission: A; release: () => void } | { ok: false; refusal: R }> {
+  const step = async () => {
+    const door = await admit();
+    if (!door.ok) return door;
+    const release = registry?.grant(agentId, door.admission.budgetBytes) ?? (() => {});
+    return { ok: true as const, admission: door.admission, release };
+  };
+  return registry ? registry.admit(agentId, step) : step();
 }
 
 /**

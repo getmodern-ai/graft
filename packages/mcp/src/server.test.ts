@@ -519,6 +519,9 @@ beforeAll(async () => {
       }),
     listChangedWindowMs: 300,
     toolbox,
+    // The store the record-time budget check removes through (GRA-200; `blob-budget.ts`), over the
+    // same tree the sandbox's `/blobs` links into.
+    blobStore: createFilesystemBlobStore({ root: join(sandbox.root, "toolboxes") }),
     publishTool: (args) => publishToolVersion(publish, args),
     onBlobWritten: (event) => blobEvents.push(event),
     onToolCall: (event) => toolEvents.push(event),
@@ -1453,6 +1456,7 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
    */
   describe("execute__<connection> and run_command pass the door too (GRA-200)", () => {
     const MIB = 1024 * 1024;
+    const REF = /^blob:\/\/[0-9a-f-]{36}$/;
     const EXECUTE_DEMO = executeToolName(CONN_DEMO);
     /** A command that prints what the runner would read: the budget, then the quota. */
     const PRINT_BUDGET = 'echo "$GRAFT_BLOB_BUDGET_BYTES $GRAFT_BLOB_QUOTA_BYTES"';
@@ -1550,6 +1554,110 @@ describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187
           expect(ran.blobs).toBeUndefined();
           expect(store.blobs).toHaveLength(blobsBefore);
           expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * The admission is reserved before anything else is awaited (Greptile on #157): two calls of
+     * one agent overlapping under 1.5 MiB left are handed 1.5 MiB and then 0, never 1.5 MiB twice.
+     */
+    it("reserves the admission at once: two overlapping execute__ calls are handed the remainder and then nothing", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("5", 1.5 * MIB)], async () => {
+          const [first, second] = await Promise.all([
+            a.call(EXECUTE_DEMO, { command: `sleep 1; ${PRINT_BUDGET}` }),
+            a.call(EXECUTE_DEMO, { command: PRINT_BUDGET }),
+          ]);
+          const budgets = [first, second]
+            .map((result) => Number(String(body(result).output).trim().split(" ")[0]))
+            .sort((x, y) => y - x);
+          expect(budgets).toEqual([1.5 * MIB, 0]);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * The record is the rule (Greptile on #157; `blob-budget.ts`): a by-hand command may hand the
+     * runner any budget it likes, so the ledger it prints is held to the admitted budget when the
+     * server records it, the newest blobs removed from the mount and given no row until the rest
+     * fit, and the run answered a `blob_quota` failure. The first write stands: it is what an honest
+     * runner would have committed under the same budget.
+     */
+    const OVERRIDE_WRITE_TWO = `echo '{}' | GRAFT_BLOB_BUDGET_BYTES=${GIB} node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1`;
+    const expectHeldToBudget = async (result: CallToolResult, blobsBefore: number) => {
+      expect(result.isError).toBe(true);
+      const ran = body(result);
+      expect(ran.exitCode).toBe(0);
+      expect(String(ran.error)).toBe(
+        "blob_quota: the run committed 2 MiB of blobs against the 1.5 MiB its budget allowed, 0.5 MiB past it. The newest 1 (1 MiB) were removed and have no ref; the 1 before them stand. The budget is what the agent's quota leaves, and a blob stops counting 24 hours after its write.",
+      );
+      expect(ran).toMatchObject({ blobsRemoved: 1, removedBytes: MIB, budgetBytes: 1.5 * MIB });
+      // The runner, told a gibibyte, committed both; the server kept the first and removed the second.
+      const written = (ran.result ?? readRunnerEnvelope(String(ran.output))?.result) as {
+        first: string;
+        second: string;
+      };
+      expect(written.first).toMatch(REF);
+      expect(written.second).toMatch(REF);
+      const firstId = written.first.slice("blob://".length);
+      const secondId = written.second.slice("blob://".length);
+      expect(ran.blobs).toEqual([expect.objectContaining({ ref: written.first, bytes: MIB })]);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.some((b) => b.id === firstId)).toBe(true);
+      expect(store.blobs.some((b) => b.id === secondId)).toBe(false);
+      await expect(stat(join(sandbox.blobsRoot(AGENT_A), firstId, "data"))).resolves.toBeDefined();
+      await expect(stat(join(sandbox.blobsRoot(AGENT_A), secondId))).rejects.toThrow();
+      expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+    };
+
+    it("holds a by-hand ledger to the admitted budget: a command overriding the variable writes 2 MiB against 1.5 MiB, keeps the first blob, loses the second from /blobs and the rows, and is answered a blob_quota failure", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("6", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          await expectHeldToBudget(
+            await a.call(EXECUTE_DEMO, { command: OVERRIDE_WRITE_TWO }),
+            blobsBefore,
+          );
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, outcome: "error" });
+        });
+        // The same through run_command, which carries no token but runs the runner all the same.
+        await withRows([leaving("7", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          await expectHeldToBudget(
+            await a.call("run_command", { command: OVERRIDE_WRITE_TWO }),
+            blobsBefore,
+          );
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("holds a detached by-hand ledger to the budget on its process name when wait_for_process records it", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("8", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          const started = body(
+            await a.call(EXECUTE_DEMO, { command: OVERRIDE_WRITE_TWO, detached: true }),
+          );
+          expect(started).toMatchObject({ status: "running" });
+          expect(deps.inFlight?.budgetOf(AGENT_A, started.processName as string)).toBe(1.5 * MIB);
+          const waited = await a.call("wait_for_process", {
+            processName: started.processName,
+            maxWaitSeconds: 10,
+          });
+          expect(body(waited)).toMatchObject({ status: "completed" });
+          await expectHeldToBudget(waited, blobsBefore);
+          expect(deps.inFlight?.budgetOf(AGENT_A, started.processName as string)).toBeUndefined();
         });
       } finally {
         await a.close();

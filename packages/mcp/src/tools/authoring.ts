@@ -11,8 +11,9 @@ import {
 import type { SandboxFile } from "@graft/sandbox";
 import { sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { blobBudgetOvershoot, recordBlobsWithinBudget } from "../blob-budget";
 import { admitBlobs, blobBudgetEnvironment } from "../blob-door";
-import { recordWrittenBlobs } from "../blobs";
+import { blobsOnWire } from "../blobs";
 import {
   boundJson,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -31,7 +32,7 @@ import {
   resolveSandboxPath,
 } from "../bounds";
 import type { SessionContext } from "../context";
-import { heldInFlight, isSettledProcess } from "../in-flight";
+import { admitUnderGrant, heldInFlight, isSettledProcess } from "../in-flight";
 import { promotePublished } from "../promote";
 import { isPlainObject, toolError, toolRefusal, toolResult } from "../result";
 import { runAuthoredTool } from "../run";
@@ -244,36 +245,56 @@ const runCommandTool: MetaTool = {
     // A command may run the runner, and the module it loads may write a blob, so an agent at its
     // quota is refused `blob_quota` here, before a sandbox is touched, in the door's own shape.
     // The command is not JSON the runner reads, so the quota alone is judged (`../blob-door.ts`).
-    const door = await admitBlobs(deps, scope, null);
+    // Admitted and granted as one step (`admitUnderGrant`, `in-flight.ts`; Greptile on #157), so a
+    // second call admitted while this one runs is handed the remainder after this one's.
+    // Outstanding until the process settles: released in `finally` whatever happens below, and
+    // carried on the process name past that for a detached start, which `heldInFlight` tracks
+    // before this release runs.
+    const door = await admitUnderGrant(deps.inFlight, scope.agentId, () =>
+      admitBlobs(deps, scope, null),
+    );
     if (!door.ok) return toolError(door.refusal);
     const admitted = door.admission;
-    // The runner's path in the sandbox rides in the environment as GRAFT_RUNNER (GRA-193), and
-    // beside it what the process may still commit under the agent's quota (`../blob-door.ts`),
-    // which the runner holds a write to.
-    const env = {
-      ...commandEnvironment(parsed.timeoutSeconds, await seededRunnerPath(deps)),
-      ...blobBudgetEnvironment(admitted),
-    };
-    // The budget is outstanding until the process settles (`in-flight.ts`): released below once a
-    // waited command has returned, whatever it exited with, and carried on the process name past
-    // that for a detached start, which `heldInFlight` tracks before this release runs.
-    const releaseGrant = deps.inFlight?.grant(scope.agentId, admitted.budgetBytes);
-    let ran: Awaited<ReturnType<typeof runCommand>> | { error: string };
     try {
+      // The runner's path in the sandbox rides in the environment as GRAFT_RUNNER (GRA-193), and
+      // beside it what the process may still commit under the agent's quota (`../blob-door.ts`).
+      // Advice on this path, since the command is the caller's and may replace the variable: the
+      // record below is the rule.
+      const env = {
+        ...commandEnvironment(parsed.timeoutSeconds, await seededRunnerPath(deps)),
+        ...blobBudgetEnvironment(admitted),
+      };
       // In flight for the call, and by process name after a detached start (ADR 0009; `in-flight.ts`).
-      ran = await heldInFlight(
+      const ran = await heldInFlight(
         deps.inFlight,
         scope.agentId,
         () => withSandbox(open(session), (handle) => runCommand(handle, parsed, env)),
         admitted.budgetBytes,
       );
+      if (!isPolledProcess(ran)) return answer(ran);
+      // A runner the command invoked by hand wrote these (GRA-186; `../blobs.ts`): rows now, no
+      // version, held to the budget the door admitted (`../blob-budget.ts`; ADR 0023; Greptile on
+      // #157): the environment is advisory on a by-hand path, and what is recorded is what counts.
+      const recorded = await recordBlobsWithinBudget(
+        deps,
+        scope,
+        null,
+        ran.blobs,
+        ran.dropped,
+        admitted.budgetBytes,
+      );
+      const overshoot = blobBudgetOvershoot(recorded);
+      if (overshoot) {
+        return toolError({
+          ...ran.answer,
+          ...blobsOnWire(recorded.kept, ran.dropped),
+          ...overshoot,
+        });
+      }
+      return answer(ran.answer);
     } finally {
-      releaseGrant?.();
+      door.release();
     }
-    if (!isPolledProcess(ran)) return answer(ran);
-    // A runner the command invoked by hand wrote these (GRA-186; `../blobs.ts`): rows now, no version.
-    await recordWrittenBlobs(deps, scope, null, ran.blobs, ran.dropped);
-    return answer(ran.answer);
   },
 };
 
@@ -307,13 +328,34 @@ const waitForProcess: MetaTool = {
     const parsed = readWaitInput(args);
     if ("error" in parsed) return toolRefusal("input_invalid", parsed.error);
     const polled = await withSandbox(open(session), (handle) => pollProcess(handle, parsed));
-    if (!("answer" in polled)) return answer(polled);
+    if (!isPolledProcess(polled)) return answer(polled);
     // The blobs a runner inside the process wrote get their rows here, since the run that started
     // it returned before they existed (GRA-186; `../blobs.ts`). The version is not known to a poll.
-    await recordWrittenBlobs(session.deps, session.scope, null, polled.blobs, polled.dropped);
+    // The budget is: the start put it on the process name (`in-flight.ts`'s `track`), and the
+    // ledger is held to it here as a waited command's is (`../blob-budget.ts`; ADR 0023; Greptile
+    // on #157), read before the settle below takes the name off the registry. A name the registry
+    // does not hold (a start this server did not make, or one whose time is up) has no budget to
+    // check against, and its ledger is recorded as it stands.
+    const budget = session.deps.inFlight?.budgetOf(session.scope.agentId, parsed.processName);
+    const recorded = await recordBlobsWithinBudget(
+      session.deps,
+      session.scope,
+      null,
+      polled.blobs,
+      polled.dropped,
+      budget,
+    );
     // A process seen finished releases its hold; one still running keeps it (ADR 0009; `in-flight.ts`).
     if (isSettledProcess(polled.answer)) {
       session.deps.inFlight?.settle(session.scope.agentId, parsed.processName);
+    }
+    const overshoot = blobBudgetOvershoot(recorded);
+    if (overshoot) {
+      return toolError({
+        ...polled.answer,
+        ...blobsOnWire(recorded.kept, polled.dropped),
+        ...overshoot,
+      });
     }
     return answer(polled.answer);
   },
