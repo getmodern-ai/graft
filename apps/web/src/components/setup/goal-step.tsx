@@ -37,7 +37,7 @@ export function GoalStep({ state }: { state: SetupStateData }) {
     <div className="flex flex-col gap-6">
       <SetupStepHeader
         title="Choose a goal"
-        description="Say what the first tool should read. Graft's model builds it against the connection, and nothing is written at the vendor."
+        description="Say what the first tool should read. Graft's model authors it against the connection, and nothing is written at the vendor."
       />
       {goal.isPending ? (
         <div className="flex flex-col gap-4" aria-busy="true">
@@ -62,7 +62,7 @@ export function GoalStep({ state }: { state: SetupStateData }) {
 
 function GoalForm({ context, agentName }: { context: SetupGoal; agentName: string }) {
   const queryClient = useQueryClient();
-  // What the person last built with, so *Change the goal* comes back to their words.
+  // The goal the person last pressed Build with, so *Change the goal* comes back to their words.
   const [text, setText] = useState(
     () => queryClient.getQueryData<string>(setupGoalDraftKey) ?? context.goal,
   );
@@ -95,7 +95,7 @@ function GoalForm({ context, agentName }: { context: SetupGoal; agentName: strin
       {context.build.available ? null : (
         <Alert variant="destructive">
           <WarningIcon />
-          <AlertTitle>Building a tool needs a model</AlertTitle>
+          <AlertTitle>Acquiring a tool needs a model</AlertTitle>
           <AlertDescription>{context.build.message}</AlertDescription>
         </Alert>
       )}
@@ -113,14 +113,14 @@ function GoalForm({ context, agentName }: { context: SetupGoal; agentName: strin
           onChange={(event) => setText(event.target.value)}
         />
         <FieldDescription>
-          A sentence or two on what to read. Pressing Build allows {agentName} to build against this
-          connection, so no approval is asked for it later.
+          A sentence or two on what to read. Pressing Build gives {agentName} the build approval for
+          this connection, so it is not asked for later.
         </FieldDescription>
       </Field>
 
       <div className="flex justify-end">
         <Button type="submit" disabled={!available || !trimmed || build.isPending}>
-          {build.isPending ? "Starting the build…" : "Build"}
+          {build.isPending ? "Starting the job…" : "Build"}
         </Button>
       </div>
     </form>

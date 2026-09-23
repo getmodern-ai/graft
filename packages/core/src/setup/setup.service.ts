@@ -434,9 +434,13 @@ export async function startSetupBuild(
       ? active.find((candidate) => candidate.id === record.agentId)
       : undefined;
     if (!agent || !record.connectionId) {
-      throw new ServiceError("CONFLICT", "Setup has no agent and connection to build with yet", {
-        details: { reason: "setup_not_started" },
-      });
+      throw new ServiceError(
+        "CONFLICT",
+        "Setup has no agent and connection to acquire a tool with yet",
+        {
+          details: { reason: "setup_not_started" },
+        },
+      );
     }
     if (record.step !== "goal") {
       throw new ServiceError("CONFLICT", "Setup is not on the goal step", {
@@ -452,14 +456,14 @@ export async function startSetupBuild(
     if (!connection || connection.revokedAt) {
       throw new ServiceError(
         "CONFLICT",
-        `${connection?.displayName ?? "The connection"} is revoked, so nothing can be built against it; choose a vendor again`,
+        `${connection?.displayName ?? "The connection"} is revoked, so no tool can be acquired against it; choose a vendor again`,
         { details: { reason: "connection_revoked", connectionId } },
       );
     }
     if (!(await getAgentScope(scoped, scope, deps.agent)).includes(connectionId)) {
       throw new ServiceError(
         "CONFLICT",
-        `The connection is no longer in ${agent.name}'s scope, so nothing can be built against it`,
+        `The connection is no longer in ${agent.name}'s scope, so no tool can be acquired against it`,
         { details: { reason: "connection_not_in_scope", connectionId } },
       );
     }
@@ -490,11 +494,11 @@ export async function startSetupBuild(
  * move about a job the record no longer waits on (another tab pressed Build again) is stale.
  *
  * - `built`: the job succeeded with this tool, learned on a read. From `building` to `result`; on
- *   `finish` (the person continued while it built) the record names the tool and stays, so the
+ *   `finish` (the person continued while it ran) the record names the tool and stays, so the
  *   finish step can say it arrived. A no-op when stale or already named.
  * - `retry`: *Change the goal* after a failure, from `building` back to `goal` with the job
  *   cleared, so the next Build starts a new one. The caller judges that the job failed.
- * - `continue`: *Continue while it builds*, from `building` to `finish` with the job kept, so the
+ * - `continue`: *Continue while it runs*, from `building` to `finish` with the job kept, so the
  *   tool is still learned when it lands.
  *
  * `retry` and `continue` are requests, and refuse `CONFLICT` when stale.
@@ -528,7 +532,7 @@ export async function moveSetupBuild(
       return false;
     }
     if (!current || record.step !== "building") {
-      throw new ServiceError("CONFLICT", "Setup moved on while this tool was being built", {
+      throw new ServiceError("CONFLICT", "Setup moved on while the job was acquiring this tool", {
         details: { reason: "setup_step", step: record.step },
       });
     }

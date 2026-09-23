@@ -962,7 +962,7 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(await retrySetupGoal(ctx, principal, setupBuildDeps));
   });
 
-  /** *Continue while it builds*: on to the finish step with the job still running. */
+  /** *Continue while it runs*: on to the finish step with the job still running. */
   api.post("/setup/continue", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     await parseBody(c.req.raw, z.object({}), { emptyIs: {} });

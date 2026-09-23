@@ -1051,7 +1051,7 @@ asked. `ApiOptions.acquire` is the model, the job's deps and the runner (the ser
 404. `GET /api/setup` learns a succeeded job's tool through `moveSetupBuild`'s `built`: `building`
 to `result` with `toolId`, or the tool noted on `finish`. A failed job leaves the record on
 `building`; `POST /api/setup/goal` (*Change the goal*) goes back to `goal` with the job cleared,
-refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it builds*)
+refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it runs*)
 goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
 `building` (captured by the read whose move named the tool, `SetupMoveResult.moved`). The console's building step polls the job route
 every 2 s and draws each line beside its stage's sentence on the stage's first line
@@ -1295,7 +1295,11 @@ and the sweep's lines ride under `acquire` and `sweep`. Product events are captu
 two chokepoints and nowhere in the console: the API's mutation routes
 (`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
 does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
-`acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
+`acquire_completed`, `acquire_failed`); both name the person by id. The Setup read,
+`GET /api/setup`, is the one other place (ADR 0024; GRA-206): a step the person completes
+elsewhere, an ask answered in the inbox or a chat's card or a job that finished, is learned on the
+read, so `setup_step_completed` is captured there, once, when the guarded move of the record
+succeeds. The vendors behind the hosted
 form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
 **A sign-up is the one event the account raises itself** (GRA-157): `createAuth`'s
 `onPersonSignedUp` fires from Better Auth's own hooks when a person exists *and* is verified — the

@@ -33,7 +33,7 @@ const STEPS: Record<SetupStep, (props: { state: SetupStateData }) => React.React
   connect: ConnectStep,
   goal: GoalStep,
   building: BuildingStep,
-  // GRA-208: the result and the finish, which a pass and Continue while it builds reach.
+  // GRA-208: the result and the finish, which a pass and Continue while it runs reach.
   result: StepNotReady,
   finish: StepNotReady,
   completed: SetupCompleted,

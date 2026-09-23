@@ -16,7 +16,7 @@ export function VendorStep({ state }: { state: SetupStateData }) {
     <div className="flex flex-col gap-6">
       <SetupStepHeader
         title="Choose a vendor"
-        description="Graft connects one vendor first and builds a small read-only tool for it."
+        description="Graft connects one vendor first and acquires a small read-only tool for it."
       />
       {agent ? (
         <Item variant="outline">

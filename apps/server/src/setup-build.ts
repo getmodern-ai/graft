@@ -44,12 +44,12 @@ import { GOAL_PROPOSAL_MAX, type GoalProposalOutcome } from "@graft/model";
  *   record, one transaction), then the runner woken. Refused with the door's reason when no model
  *   can author, so the console's sentence and the MCP refusal are one decision. Unlike `acquire`,
  *   it does not answer `similar_tools_exist`: the person chose this goal on this page, and a retry
- *   must build.
+ *   must start a job.
  * - `learnSetupBuild`: on every read of the state, a job the record waits on that succeeded names
  *   its tool on the record (`building` to `result`, or the tool noted on `finish`). A failed job
  *   leaves the record on `building`, where the step shows the failure from the job route.
  * - `retrySetupGoal` and `continueSetupBuild`: *Change the goal* after a failure, and *Continue
- *   while it builds*.
+ *   while it runs*.
  * - `readAgentAcquireJob`: one job of one of the person's agents in `acquire_status`'s shape, general
  *   in shape so a later screen may read any job; another person's agent or job is not found.
  */
@@ -72,7 +72,7 @@ export type SetupBuildRouteDeps = {
  * `@graft/env` and the README name them. The console shows it and disables Build.
  */
 export const SETUP_BUILD_UNCONFIGURED_MESSAGE =
-  "This deployment has no model configured, so Graft cannot build a tool yet. Whoever runs this Graft sets GRAFT_MODEL_BACKEND=provider with GRAFT_MODEL_PROVIDER and GRAFT_MODEL_API_KEY, then restarts it.";
+  "This deployment has no model configured, so Graft cannot acquire a tool yet. Whoever runs this Graft sets GRAFT_MODEL_BACKEND=provider with GRAFT_MODEL_PROVIDER and GRAFT_MODEL_API_KEY, then restarts it.";
 
 /** The line a Setup job carries before the runner has said anything: the console's, not the model's. */
 export const SETUP_FIRST_PROGRESS_LINE =
@@ -325,7 +325,7 @@ async function buildingJob(
   const record = await deps.setup.findSetup(ctx.db, principal.personId);
   const read = record?.step === "building" ? await recordJob(ctx, principal, deps) : null;
   if (!read) {
-    throw new ServiceError("CONFLICT", "Setup is not building a tool", {
+    throw new ServiceError("CONFLICT", "Setup is not waiting on a job", {
       details: { reason: "setup_step", step: record?.step ?? null },
     });
   }
@@ -346,8 +346,8 @@ export async function retrySetupGoal(
     throw new ServiceError(
       "CONFLICT",
       job.status === "succeeded"
-        ? "The tool is built; there is no failure to change the goal for"
-        : "The tool is still being built; wait for it, or continue while it builds",
+        ? "The tool has landed; there is no failure to change the goal for"
+        : "The job is still acquiring the tool; wait for it, or continue while it runs",
       { details: { reason: "job_not_failed", status: job.status } },
     );
   }
@@ -361,7 +361,7 @@ export async function retrySetupGoal(
   return state;
 }
 
-/** *Continue while it builds*: on to the finish step, the job kept so its tool is still learned. */
+/** *Continue while it runs*: on to the finish step, the job kept so its tool is still learned. */
 export async function continueSetupBuild(
   ctx: ServiceContext,
   principal: Principal,
