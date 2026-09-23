@@ -351,6 +351,14 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     // authorization server's own suite in `@graft/core` drives the OAuth path over its own fakes.
     findAgentByMcpAccessTokenHash: async () => null,
     revokeMcpTokensForAgent: async () => 0,
+    issueAgentToken: async (_db, personId, agentId, token) => {
+      const row = store.agents.get(agentId);
+      if (!row || row.personId !== personId) return null;
+      if (row.revokedAt || row.tokenHash || row.connectedViaClientId) return null;
+      const updated = { ...row, ...token, updatedAt: store.now() };
+      store.agents.set(agentId, updated);
+      return updated;
+    },
     setAgentConnectedVia: async (_db, personId, agentId, via) => {
       const row = store.agents.get(agentId);
       if (!row || row.personId !== personId || row.connectedViaClientId) return null;

@@ -93,9 +93,9 @@ describe("the vocabularies", () => {
   it("offers the seven harnesses in the order the marketing site's picker does", () => {
     expect(SETUP_HARNESSES.map((entry) => [entry.label, entry.description, entry.kind])).toEqual([
       ["Claude", "Web & desktop", "oauth"],
-      ["ChatGPT", "Web & desktop", "oauth"],
       ["Claude Code", "Terminal & IDE", "oauth"],
       ["Codex", "App, CLI & IDE", "oauth"],
+      ["ChatGPT", "Web & desktop", "oauth"],
       ["Hermes", "Local agent", "token"],
       ["OpenClaw", "Local agent", "token"],
       ["Other MCP agent", "Any compatible client", "token"],
@@ -107,5 +107,15 @@ describe("the vocabularies", () => {
     expect(readSetupHarness("slack")).toBeNull();
     expect(readSetupHarness(undefined)).toBeNull();
     expect(setupHarnessOf("claude-code").agentName).toBe("Claude Code");
+  });
+
+  it("gives every harness its connection steps, in sentences without an em dash", () => {
+    for (const entry of SETUP_HARNESSES) {
+      expect(entry.steps.length).toBeGreaterThan(0);
+      for (const step of entry.steps) {
+        expect(step).toMatch(/\.$/);
+        expect(step).not.toContain("\u2014");
+      }
+    }
   });
 });

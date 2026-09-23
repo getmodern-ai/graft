@@ -11,6 +11,7 @@ import {
   type AgentOutput,
   createAgentAwaitingHarness,
   getAgentScope,
+  issueAwaitingAgentToken,
   toAgentOutput,
 } from "../agent/agent.service";
 import type { ApprovalDeps } from "../approval/approval.deps";
@@ -20,7 +21,7 @@ import { ServiceError } from "../errors";
 import type { Principal } from "../tenancy";
 import { setupHarnessOf } from "./harness";
 import type { SetupDeps } from "./setup.deps";
-import { currentSetupStep, shouldShowSetup } from "./setup.rules";
+import { currentSetupStep, isAwaitingHarness, shouldShowSetup } from "./setup.rules";
 
 /**
  * **Setup** (CONTEXT.md; ADR 0024): the console's guided first run, as a person-scoped record and
@@ -430,13 +431,16 @@ export async function startSetupBuild(
  *   cleared, so the next Build starts a new one. The caller judges that the job failed.
  * - `continue`: *Continue while it builds*, from `building` to `finish` with the job kept, so the
  *   tool is still learned when it lands.
+ * - `finish`: the result step's *Continue* (GRA-208), from `result` to `finish`, the job and the
+ *   tool kept for the finish step's prompt.
  *
- * `retry` and `continue` are requests, and refuse `CONFLICT` when stale.
+ * `retry`, `continue` and `finish` are requests, and refuse `CONFLICT` when stale.
  */
 export type SetupBuildMove =
   | { kind: "built"; acquireJobId: string; toolId: string }
   | { kind: "retry"; acquireJobId: string }
-  | { kind: "continue"; acquireJobId: string };
+  | { kind: "continue"; acquireJobId: string }
+  | { kind: "finish"; acquireJobId: string };
 
 /** Apply a `SetupBuildMove` under the record's lock, and answer the state as it now stands. */
 export async function moveSetupBuild(
@@ -458,7 +462,8 @@ export async function moveSetupBuild(
       }
       return;
     }
-    if (!current || record.step !== "building") {
+    const from = move.kind === "finish" ? "result" : "building";
+    if (!current || record.step !== from) {
       throw new ServiceError("CONFLICT", "Setup moved on while this tool was being built", {
         details: { reason: "setup_step", step: record.step },
       });
@@ -470,4 +475,59 @@ export async function moveSetupBuild(
     await deps.saveSetup(tx, principal.personId, patch);
   });
   return getSetupState(ctx, principal, deps, agentDeps);
+}
+
+/**
+ * The finish (GRA-208; ADR 0024, *The token is minted at the finish step*; GRA-202, *Completion*):
+ * the record marked completed, so the show rule answers no and the console's intercept ends, and,
+ * for a static-token harness whose agent is still awaiting it, the agent's token issued in the
+ * same transaction through `issueAwaitingAgentToken`, since a plaintext exists only at mint and
+ * this is the one request that can hand it over. An OAuth harness gets no token: its consent names
+ * the agent. A record that adopted an agent (`harness` null) gets none either: that agent's
+ * harness was connected before Setup showed. An agent with a token already (issued from *Connect a
+ * harness* before the finish) gets none, and the finish still completes.
+ *
+ * From `finish` only, under the record's lock: a second finish is refused `CONFLICT`
+ * (`setup_completed`), a finish from another step `setup_step`, and one whose agent no longer
+ * stands `setup_not_started`.
+ */
+export async function finishSetup(
+  ctx: ServiceContext,
+  principal: Principal,
+  deps: SetupDeps,
+  agentDeps: AgentDeps,
+): Promise<{ state: SetupState; token: string | null }> {
+  const token = await ctx.db.transaction(async (tx) => {
+    const scoped: ServiceContext = { db: tx };
+    const record = await deps.lockSetup(tx, principal.personId);
+    if (record.step === "completed") {
+      throw new ServiceError("CONFLICT", "Setup is already complete", {
+        details: { reason: "setup_completed" },
+      });
+    }
+    const active = activeOf(await agentDeps.listAgents(tx, principal.personId));
+    const agent = record.agentId
+      ? active.find((candidate) => candidate.id === record.agentId)
+      : undefined;
+    if (!agent) {
+      throw new ServiceError("CONFLICT", "Setup has no agent to finish with; choose a harness", {
+        details: { reason: "setup_not_started" },
+      });
+    }
+    if (record.step !== "finish") {
+      throw new ServiceError("CONFLICT", "Setup is not on the finish step", {
+        details: { reason: "setup_step", step: record.step },
+      });
+    }
+    const issues =
+      record.harness !== null &&
+      setupHarnessOf(record.harness).kind === "token" &&
+      isAwaitingHarness(agent);
+    const issued = issues
+      ? (await issueAwaitingAgentToken(scoped, principal, agent.id, agentDeps)).token
+      : null;
+    await deps.saveSetup(tx, principal.personId, { step: "completed", completedAt: deps.now() });
+    return issued;
+  });
+  return { state: await getSetupState(ctx, principal, deps, agentDeps), token };
 }
