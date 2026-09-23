@@ -334,6 +334,64 @@ describe("the connect step's moves", () => {
     expect((await move({ kind: "lost", connectionId: "conn_1" })).moved).toBe(false);
   });
 
+  it("replaces an ask only while the record still waits on it", async () => {
+    const w = await onVendor();
+    const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
+      moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
+    await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" });
+    // Another tab re-pointed the record: a replacement of the first ask changes nothing.
+    await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_2" });
+    const late = await move({
+      kind: "ask",
+      agentId: "agent_new",
+      pendingActionId: "pa_3",
+      askId: "pa_1",
+    });
+    expect(late.moved).toBe(false);
+    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_2" });
+    const replaced = await move({
+      kind: "ask",
+      agentId: "agent_new",
+      pendingActionId: "pa_3",
+      askId: "pa_2",
+    });
+    expect(replaced.moved).toBe(true);
+    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_3" });
+  });
+
+  it("runs confirm under the lock once the guard passes, and a no leaves the record", async () => {
+    const w = await onVendor();
+    await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "connected", agentId: "agent_new", connectionId: "conn_1" },
+      w.deps,
+      w.agentDeps,
+    );
+    const asked: string[] = [];
+    const lost = (answer: boolean, connectionId = "conn_1") =>
+      moveSetupConnect(
+        ctx,
+        PRINCIPAL,
+        { kind: "lost", connectionId },
+        w.deps,
+        w.agentDeps,
+        async () => {
+          asked.push(connectionId);
+          return answer;
+        },
+      );
+    // The guard fails first: confirm is never asked.
+    expect((await lost(true, "conn_other")).moved).toBe(false);
+    expect(asked).toEqual([]);
+    // Judged again and found untrue: the record stays on goal.
+    expect((await lost(false)).moved).toBe(false);
+    expect(w.record()).toMatchObject({ step: "goal", connectionId: "conn_1" });
+    expect((await lost(true)).moved).toBe(true);
+    expect(w.record()).toMatchObject({ step: "vendor", connectionId: null });
+    expect(asked).toEqual(["conn_1", "conn_1"]);
+  });
+
   it("goes back to the vendor step when the ask it waits on closed without a connection", async () => {
     const w = await onVendor();
     await moveSetupConnect(
