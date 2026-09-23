@@ -79,6 +79,15 @@ describe("toolCallEvent", () => {
     expect(
       JSON.stringify(toolCallEvent(session, "find_tool", found, 5, { query: "acme invoices" })),
     ).not.toContain("acme");
+    // The Setup offer (GRA-210) is counted when it was made, and its url is not copied.
+    const offered = toolResult({
+      tools: [],
+      connections: [],
+      setup: { url: "http://console.graft.test/setup?agent=agent_1", message: "Relay it." },
+    });
+    const offeredEvent = toolCallEvent(session, "find_tool", offered, 5, { query: "weather" });
+    expect(offeredEvent.detail).toEqual({ queryWords: 1, hits: 0, setupOffered: true });
+    expect(JSON.stringify(offeredEvent)).not.toContain("console.graft.test");
     const opened = toolResult({ jobId: "acq_1", status: "running", progress: [], attempts: 0 });
     expect(
       toolCallEvent(session, "acquire", opened, 25, { goal: "List the items" }).detail,

@@ -1,4 +1,4 @@
-import type { AskCard } from "@graft/ask-card/shape";
+import type { CardData } from "@graft/ask-card/shape";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 /**
@@ -106,9 +106,10 @@ export function notAvailableYet(what: string, ticket: string): CallToolResult {
  * `url`, the `message`, the `reason` — and the card is the host's to render, so it rides where a
  * host looks and a model's transcript does not change by a character. Without a card the result
  * is returned as it was. What the text says under a rendered card is `card-client.ts`'s
- * `toolAskResult` (GRA-120), which calls this last.
+ * `toolAskResult` (GRA-120), which calls this last. `find_tool`'s Setup offer (GRA-210) puts its
+ * `setup` card here too, on a plain result: it is an offer, not an ask (`setup-offer.ts`).
  */
-export function withCard(result: CallToolResult, card: AskCard | undefined): CallToolResult {
+export function withCard(result: CallToolResult, card: CardData | undefined): CallToolResult {
   if (!card) return result;
   return { ...result, structuredContent: { ...(result.structuredContent ?? {}), card } };
 }
