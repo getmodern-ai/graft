@@ -1119,6 +1119,39 @@ job runs, the state read every 3 s). The finish's answer, token included, is hel
 record reads `completed`. The consent card pre-selects the person's one agent awaiting its harness
 and falls back to *A new agent* with none or several (`lib/consent-default.ts`).
 
+**The rail is navigable, every step has one footer, and Finish Setup leaves** (GRA-215).
+`POST /api/setup/back` (`SetupBackBody`: `{ step }`) is `@graft/core`'s `moveSetupBack`: under
+`lockSetup`, only to a step `setupBackTargets` names (every step before the record's that it holds
+what for, `setupStepReachable`: connect needs an ask or a connection, the goal a connection, the
+building step a job, the result a tool), refused `setup_step_ahead`, `setup_step_unavailable` (the
+result a record passed by *Continue while it runs*) or `setup_completed`. **Looking back discards
+nothing**: the connection, the job and the tool stay, a running job keeps running and is learned
+again on the building step. `POST /api/setup/next` (`SetupNextBody`) is `moveSetupOn`, Continue on a
+step returned to with nothing changed: `harness` to `vendor` (a different harness only while
+Setup's own agent awaits it, renaming it where its name was the old harness's default, else
+`harness_fixed`), `connect` to `goal` with the connection made, `goal` to `building` with the held
+job, `building` to `result` with the tool; `from` must be the record's step (`setup_step`). What
+leaves a held job behind is a forward action that says so: the connect moves drop the job and tool
+when a different connection replaces the one they were acquired against (an ask leaves them until
+it is answered; a reopen or a lost connection clears them), and while the held job is queued or
+running a choice of another vendor (`POST /api/setup/connect`, judged on the vendor) or a Build
+(`startSetupBuild`) is refused `job_running` unless the body carries `discardJob: true`, which the
+console sends after `DiscardJobDialog`. `SetupGoalContext.job` is the held job, whose goal the goal
+step shows and offers Continue to while the text is unchanged. Neither route is a mutation-table
+row. The console: `SetupRail` and `SetupProgress` link the steps `setupRail(step, record)` marks
+(`lib/setup-steps.ts`, with `backTargetOf` for the footer), labelled *Integration* and *Task*;
+`SetupFooter` (Back bottom left through `useSetupBack`, the step's primary bottom right) closes
+every step, the connect step's open ask keeping its card's own Connect as the primary; the building
+step is `progressCard` (`lib/setup-progress.ts`: a plain label per stage, the newest line, the
+attempt past the first, the lines behind *Details*); the finish is `finishSections`
+(`lib/setup-finish.ts`): the prompt with the URL and steps behind *Set it up by hand* for an OAuth
+harness, the token block issued by the footer's *Issue the token* (`POST /api/agents/:id/token`)
+before Finish Setup plus the prompt for a token harness, the one request for an adopted agent. One
+press of Finish Setup completes and, unless the card opened the page, lands on `/agents/$agentId`
+with `setupFinishedToast` (`lib/setup-page.ts`'s `afterSetupFinish`: `leave`, `close`, or `stay`
+only for a token the finish itself issued); GRA-208 stayed on every console visit and needed a
+second press on *Open the console*.
+
 **`find_tool` offers Setup in the chat, as a card where the client renders one** (GRA-210; GRA-202,
 *The in-chat door*; ADR 0024). For an agent whose person has no connection at all (revoked rows
 count, as the show rule counts them) and whose Setup is neither completed nor skipped
