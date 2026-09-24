@@ -77,7 +77,7 @@ export const SETUP_BUILD_UNCONFIGURED_MESSAGE =
 
 /** The line a Setup job carries before the runner has said anything: the console's, not the model's. */
 export const SETUP_FIRST_PROGRESS_LINE =
-  "Queued: Graft's model will read the vendor's documentation, write a small module, check it, prove it with reads, publish it and dry-run it.";
+  "Queued: Graft's model will read the integration's documentation, write a small module, check it, prove it with reads, publish it and dry-run it.";
 
 export type SetupBuildAvailability =
   | { available: true }
@@ -374,7 +374,7 @@ export async function retrySetupGoal(
     throw new ServiceError(
       "CONFLICT",
       job.status === "succeeded"
-        ? "The tool has landed; there is no failure to change the goal for"
+        ? "The tool has landed; there is no failure to change the task for"
         : "The job is still acquiring the tool; wait for it, or continue while it runs",
       { details: { reason: "job_not_failed", status: job.status } },
     );

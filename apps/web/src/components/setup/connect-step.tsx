@@ -55,7 +55,7 @@ function OpenAsk({ state, askId }: { state: SetupStateData; askId: string | null
   const vendorName =
     view.kind === "card" && typeof view.action.payload.displayName === "string"
       ? view.action.payload.displayName
-      : "the vendor";
+      : "the integration";
 
   return (
     <div className="flex flex-col gap-6">

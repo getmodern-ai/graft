@@ -21,10 +21,10 @@ import {
 import { ANOTHER_VENDOR, choiceLeavesJob, SETUP_CONNECT_LABEL } from "@/lib/setup-vendors";
 
 /**
- * The starter vendors this deployment can connect, as the server lists them (GRA-206; ADR 0024),
- * one sentence each saying what the first tool will show, and *Another vendor* last. Continue on a
- * starter opens the agent's own connection ask (`POST /api/setup/connect`), which the connect step
- * then draws; on *Another vendor* it opens the ordinary Add connection form, and the connection it
+ * The starter integrations this deployment connects in one click, as the server lists them
+ * (GRA-206, GRA-216; ADR 0024), one sentence each saying what the first tool will show, and
+ * *Another integration* last. Continue on a starter opens the agent's own connection ask
+ * (`POST /api/setup/connect`), which the connect step then draws; on *Another integration* it opens the ordinary Add connection form, and the connection it
  * makes is taken on by the record. That connection's id is kept, so a handoff that fails after the
  * form closed is tried again with it, rather than opening a blank form for a second connection.
  *
@@ -44,7 +44,7 @@ export function VendorChoice({ state }: { state: SetupStateData }) {
   const choice = picked ?? heldStarter;
   const [formOpen, setFormOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  // The connection *Another vendor*'s form made, until the record has taken it on.
+  // The connection *Another integration*'s form made, until the record has taken it on.
   const [madeConnectionId, setMadeConnectionId] = useState<string | null>(null);
   // The person agreed to leave the running job behind, for the form's handoff too.
   const [discard, setDiscard] = useState(false);
@@ -87,7 +87,7 @@ export function VendorChoice({ state }: { state: SetupStateData }) {
       <p className="text-muted-foreground text-sm">
         <RetryNotice
           error={vendors.error}
-          message="Could not load the vendors."
+          message="Could not load the integrations."
           onRetry={() => void vendors.refetch()}
           retrying={vendors.isFetching}
         />
@@ -104,8 +104,8 @@ export function VendorChoice({ state }: { state: SetupStateData }) {
     })),
     {
       value: ANOTHER_VENDOR,
-      label: "Another vendor",
-      description: "Connect any vendor with its API address, how it signs in and its key.",
+      label: "Another integration",
+      description: "Connect any integration with its API address, how it signs in and its key.",
     },
   ];
   const held = goal.data
@@ -125,7 +125,7 @@ export function VendorChoice({ state }: { state: SetupStateData }) {
       >
         <SetupChoice
           name="setup-vendor"
-          legend="Vendor"
+          legend="Integration"
           options={options}
           value={choice}
           onChange={setPicked}

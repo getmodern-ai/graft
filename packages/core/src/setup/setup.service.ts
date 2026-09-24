@@ -348,7 +348,7 @@ export function connectingAgentOf(state: SetupState): AgentOutput {
     });
   }
   if (state.step !== "vendor" && state.step !== "connect") {
-    throw new ServiceError("CONFLICT", "Setup is past connecting a vendor", {
+    throw new ServiceError("CONFLICT", "Setup is past connecting an integration", {
       details: { reason: "setup_step", step: state.step },
     });
   }
@@ -393,9 +393,13 @@ export async function moveSetupConnect(
       move.kind !== "reopen" &&
       (record.agentId !== move.agentId || (record.step !== "vendor" && record.step !== "connect"))
     ) {
-      throw new ServiceError("CONFLICT", "Setup moved on while this vendor was being connected", {
-        details: { reason: "setup_step", step: record.step },
-      });
+      throw new ServiceError(
+        "CONFLICT",
+        "Setup moved on while this integration was being connected",
+        {
+          details: { reason: "setup_step", step: record.step },
+        },
+      );
     }
     if (confirm && !(await confirm({ db: tx }))) return false;
     // A record that went back (GRA-215) may still hold a connection, a job and its tool. An ask
@@ -478,7 +482,7 @@ export async function startSetupBuild(
       );
     }
     if (record.step !== "goal") {
-      throw new ServiceError("CONFLICT", "Setup is not on the goal step", {
+      throw new ServiceError("CONFLICT", "Setup is not on the task step", {
         details: { reason: "setup_step", step: record.step },
       });
     }
@@ -491,7 +495,7 @@ export async function startSetupBuild(
     if (!connection || connection.revokedAt) {
       throw new ServiceError(
         "CONFLICT",
-        `${connection?.displayName ?? "The connection"} is revoked, so no tool can be acquired against it; choose a vendor again`,
+        `${connection?.displayName ?? "The connection"} is revoked, so no tool can be acquired against it; choose an integration again`,
         { details: { reason: "connection_revoked", connectionId } },
       );
     }

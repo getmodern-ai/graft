@@ -33,7 +33,7 @@ import { connectionKeys, createConnection } from "@/lib/connection-queries";
  * they add it to that agent's scope (ADR 0007). For an OAuth consent (ADR 0005) the answer carries
  * the authorize URL and the dialog runs the consent in a popup before it closes.
  *
- * `onConnected` is for a caller that takes the connection on (Setup's *Another vendor*, GRA-206):
+ * `onConnected` is for a caller that takes the connection on (Setup's *Another integration*, GRA-206):
  * it is handed the connection's id once it can be called, the consent included, in place of the
  * toast that points at the agent's page.
  */
@@ -130,8 +130,8 @@ export function AddConnectionDialog({
           <DialogHeader>
             <DialogTitle>Add a connection</DialogTitle>
             <DialogDescription>
-              One vendor account: its hosts, its auth scheme and its credential, entered once and
-              never shown again. Agents use it once you add it to their scope.
+              One account of an integration: its hosts, its auth scheme and its credential, entered
+              once and never shown again. Agents use it once you add it to their scope.
             </DialogDescription>
           </DialogHeader>
           <FieldSet>

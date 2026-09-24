@@ -365,8 +365,8 @@ const setupStartBody = z.strictObject({
 export type SetupStartBody = z.input<typeof setupStartBody>;
 
 /**
- * `POST /setup/connect` (GRA-206): a starter vendor by its id, which opens the agent's own
- * connection ask, or the connection *Another vendor*'s ordinary form just made, which the record
+ * `POST /setup/connect` (GRA-206): a starter integration by its id, which opens the agent's own
+ * connection ask, or the connection *Another integration*'s ordinary form just made, which the record
  * takes as it is. One or the other, strictly.
  */
 const setupConnectBody = z.union([

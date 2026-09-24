@@ -54,7 +54,7 @@ import {
  *   so the ask, the card, the build choice and the inbox are the ones an agent's proposal gets, and
  *   a repeat re-uses the open ask by its proposal key. A connection the routing makes or finds at
  *   once (a no-step provider, a row already in the agent's scope) moves the record straight on. A
- *   connection the person made with the ordinary form (*Another vendor*) is added to the agent's
+ *   connection the person made with the ordinary form (*Another integration*) is added to the agent's
  *   scope and moves it the same way.
  * - `learnSetupConnection`: on every read of the state, an ask the record waits on is read (never
  *   taken: the agent's own next `request_connection` still takes it) and, once answered with a
@@ -88,7 +88,7 @@ export type SetupConnectDeps = {
 export type SetupConnectResult = { state: SetupState; connected: boolean };
 
 /**
- * `POST /api/setup/connect`: a starter by its id, or the connection *Another vendor*'s form made.
+ * `POST /api/setup/connect`: a starter by its id, or the connection *Another integration*'s form made.
  * `discardJob` is the person agreeing to leave behind the job a record that went back still holds
  * while it runs (GRA-215), which a choice of another vendor does.
  */
@@ -158,7 +158,7 @@ export async function connectSetupVendor(
   }
 
   const starter = starterVendorOf(input.starterId);
-  if (!starter) throw new ServiceError("NOT_FOUND", "No starter vendor has that id");
+  if (!starter) throw new ServiceError("NOT_FOUND", "No starter integration has that id");
   return routeStarter(ctx, principal, agent.id, starter, deps);
 }
 

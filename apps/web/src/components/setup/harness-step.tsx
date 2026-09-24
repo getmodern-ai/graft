@@ -281,7 +281,7 @@ function ChooseAgent({ state }: { state: SetupStateData }) {
     >
       <SetupStepHeader
         title="Which agent should Setup use?"
-        description="Setup connects a vendor and has Graft acquire a first tool for one of your agents. Its harness finds the tool there."
+        description="Setup connects an integration and has Graft acquire a first tool for one of your agents. Its harness finds the tool there."
       />
       <SetupChoice
         name="setup-agent"

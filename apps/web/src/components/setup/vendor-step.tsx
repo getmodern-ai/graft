@@ -6,9 +6,10 @@ import type { SetupStateData } from "@/lib/setup-queries";
 import { agentStatusChip } from "@/lib/status-chips";
 
 /**
- * The vendor step (GRA-206): which agent Setup runs as, so a reload visibly resumes with the same
- * one, and the starter vendors this deployment can connect (`VendorChoice`), each saying what the
- * first tool will show, with *Another vendor* last. Its footer carries Back to the harness and
+ * The integration step (GRA-206; GRA-216, `vendor` in the record): which agent Setup runs as, so
+ * a reload visibly resumes with the same one, and the starter integrations this deployment can
+ * connect in one click (`VendorChoice`), each saying what the first tool will show, with *Another
+ * integration* last. Its footer carries Back to the harness and
  * Continue (GRA-215).
  */
 export function VendorStep({ state }: { state: SetupStateData }) {
@@ -16,8 +17,8 @@ export function VendorStep({ state }: { state: SetupStateData }) {
   return (
     <div className="flex flex-col gap-6">
       <SetupStepHeader
-        title="Choose a vendor"
-        description="Graft connects one vendor first and acquires a small read-only tool for it."
+        title="Choose an integration"
+        description="Graft connects one integration first and acquires a small read-only tool for it."
       />
       {agent ? (
         <Item variant="outline">

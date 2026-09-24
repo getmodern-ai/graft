@@ -54,8 +54,8 @@ function ConnectionsRoute() {
         <PageHeaderContent>
           <PageHeaderTitle>Connections</PageHeaderTitle>
           <PageHeaderDescription>
-            One vendor account each: its scheme, the hosts it may reach, and whether a credential is
-            set. Credentials are never shown.
+            One account of an integration each: its scheme, the hosts it may reach, and whether a
+            credential is set. Credentials are never shown.
           </PageHeaderDescription>
         </PageHeaderContent>
         <PageHeaderActions>
@@ -74,8 +74,8 @@ function ConnectionsRoute() {
             </EmptyMedia>
             <EmptyTitle>No connections yet</EmptyTitle>
             <EmptyDescription>
-              An agent proposes one when it needs a vendor it cannot reach, and you enter the secret
-              here — never through the agent.
+              An agent proposes one when it needs an integration it cannot reach, and you enter the
+              secret here — never through the agent.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

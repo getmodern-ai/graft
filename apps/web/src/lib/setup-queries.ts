@@ -86,7 +86,7 @@ export const setupVendorsQuery = queryOptions({
   staleTime: 60_000,
 });
 
-/** A starter by its id, or the connection *Another vendor*'s form made (`SetupConnectBody`). */
+/** A starter by its id, or the connection *Another integration*'s form made (`SetupConnectBody`). */
 export function connectSetup(body: SetupConnectBody) {
   return api<SetupStateData>("/setup/connect", { method: "POST", body });
 }

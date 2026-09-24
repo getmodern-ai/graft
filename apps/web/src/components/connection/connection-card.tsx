@@ -99,7 +99,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       toast.success(`${connection.displayName} is reconnected`, {
         description: keyless
-          ? "The vendor is called as-is again. The approvals the revoke removed stay removed; each tool asks again."
+          ? "The integration is called as-is again. The approvals the revoke removed stay removed; each tool asks again."
           : "Every call relays through your API gateway again. The approvals the revoke removed stay removed; each tool asks again.",
       });
     },
@@ -159,11 +159,11 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       <>Registered, no {connection.oauth ? "client secret" : "credential"} entered yet.</>
     ),
     awaiting_consent: (
-      <>Client secret set; the vendor's consent has not been completed. Connect opens it.</>
+      <>Client secret set; the integration's consent has not been completed. Connect opens it.</>
     ),
     consent_required: (
       <>
-        The vendor refused to refresh the token
+        The integration refused to refresh the token
         {connection.oauth?.consentRequired ? (
           <>
             {" "}
@@ -175,8 +175,8 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
     ),
     connected: gateway ? (
       <>
-        Connected through your API gateway with no person step: it holds the vendor credential and
-        receives every call, and nothing is entered or stored here.
+        Connected through your API gateway with no person step: it holds the integration's
+        credential and receives every call, and nothing is entered or stored here.
       </>
     ) : !keyring ? (
       <>
@@ -187,7 +187,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
       // A keyless scheme (GRA-66) has no credential to have set: the sentence says so instead of
       // formatting the null the column holds, which is what took this route down (GRA-96).
       <>
-        Connected. This scheme sends no credential: the vendor is public, and every call goes
+        Connected. This scheme sends no credential: the integration is public, and every call goes
         through the proxy with nothing added.
       </>
     ) : connection.oauth ? (
@@ -351,7 +351,7 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
           onClick={() => setShowCalls((open) => !open)}
         >
           {showCalls ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
-          Recent vendor calls
+          Recent calls
         </Button>
         {showCalls ? <ConnectionCalls connectionId={connection.id} /> : null}
       </CardContent>

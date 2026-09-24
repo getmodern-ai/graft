@@ -180,7 +180,7 @@ export function ProposalSource({
         <DocsLink href={docsUrl} origin={origin} />
       ) : (
         <p className="text-muted-foreground text-xs">
-          The agent named no documentation page. Check the hosts against the vendor's own.
+          The agent named no documentation page. Check the hosts against the integration's own.
         </p>
       )}
     </figure>
@@ -196,7 +196,7 @@ export function DocsLink({ href, origin }: { href: string; origin: AskOrigin }) 
       rel="noreferrer noopener"
       className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
     >
-      {`${origin === "setup" ? "The vendor's documentation" : "The documentation the agent read"}: ${href}`}
+      {`${origin === "setup" ? "The integration's documentation" : "The documentation the agent read"}: ${href}`}
       <OpenInNewIcon className="size-3" />
     </a>
   );
