@@ -1123,8 +1123,16 @@ sandbox and no ask is ever opened from the console; another person's agent is a 
 under `lockSetup`, the record to `completed` and, for a `token` harness whose agent is still
 awaiting it, the token issued through `issueAwaitingAgentToken` and answered once beside the state
 (`SetupFinishOutput`); a second finish is `409 setup_completed`. `POST /api/agents/:id/token` is the
-same issue for *Connect a harness*; the write (`issueAgentToken` in `repo/agent.ts`) holds the
-awaiting rule in its statement, so two issues mint one token. `setup_step_completed` adds `result`,
+same issue for *Connect a harness* and the finish step's *Issue the token*; the write
+(`issueAgentToken` in `repo/agent.ts`) holds the awaiting rule in its statement, so two issues mint
+one token. The route is `@graft/core`'s `issueConsoleAgentToken`, which also **replaces** the token
+of the agent Setup runs as while the record is not completed and no client holds the agent (ADR
+0024 as amended 2026-09-25; Greptile on #172): the page held the only plaintext, so a reload lost
+it. The replacement is judged again under `lockSetup` and written with `issueAgentToken`'s
+`replacing`, the hash it read, so the old token stops resolving and nothing lands after the finish;
+the finish step offers it as *Issue a new token* on the saved-token block (`finishSections`'
+`reissue`, `tokenReplaceable`). Any other agent with a token is still `409
+agent_not_awaiting_harness`. `setup_step_completed` adds `result`,
 and `setup_completed` carries the harness. The console: `result-step.tsx` draws the input from
 **the tool's own `inputSchema`** (GRA-217, `lib/setup-run-input.ts`'s `runInputView`): a field per
 string, number, integer, boolean, enum or list of scalars, starting at the starter's `runInput`

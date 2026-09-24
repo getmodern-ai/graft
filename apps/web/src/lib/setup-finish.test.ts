@@ -5,6 +5,7 @@ import {
   finishVariant,
   promptToolOf,
   snippetShapeOf,
+  tokenReplaceable,
   toolArrival,
 } from "./setup-finish";
 
@@ -64,7 +65,7 @@ describe("toolArrival and promptToolOf", () => {
 });
 
 describe("finishSections (GRA-215)", () => {
-  const fresh = { issued: false, awaiting: true };
+  const fresh = { issued: false, awaiting: true, replaceable: false };
 
   it("gives an OAuth harness the prompt, with the URL and the steps behind the disclosure", () => {
     expect(finishSections("oauth", fresh)).toEqual({
@@ -73,6 +74,7 @@ describe("finishSections (GRA-215)", () => {
       byHand: "oauth",
       askInChat: false,
       primary: "finish",
+      reissue: false,
     });
   });
 
@@ -83,16 +85,29 @@ describe("finishSections (GRA-215)", () => {
       byHand: "token",
       askInChat: false,
       primary: "issue_token",
+      reissue: false,
     });
-    expect(finishSections("token", { issued: true, awaiting: false })).toMatchObject({
-      token: "issued",
-      primary: "finish",
-    });
+    expect(
+      finishSections("token", { issued: true, awaiting: false, replaceable: true }),
+    ).toMatchObject({ token: "issued", primary: "finish", reissue: false });
     // An agent issued a token elsewhere keeps the one it has; Finish Setup is the action.
-    expect(finishSections("token", { issued: false, awaiting: false })).toMatchObject({
-      token: "saved",
-      primary: "finish",
-    });
+    expect(
+      finishSections("token", { issued: false, awaiting: false, replaceable: false }),
+    ).toMatchObject({ token: "saved", primary: "finish", reissue: false });
+  });
+
+  it("offers a new token where the one issued was lost and the route may still replace it", () => {
+    // Greptile on #172: the page was reloaded after Issue the token and before the token was saved.
+    expect(
+      finishSections("token", { issued: false, awaiting: false, replaceable: true }),
+    ).toMatchObject({ token: "saved", primary: "finish", reissue: true });
+    const agent = { tokenPrefix: "grft_abc", connectedVia: null, revokedAt: null };
+    expect(tokenReplaceable(agent)).toBe(true);
+    expect(tokenReplaceable({ ...agent, tokenPrefix: null })).toBe(false);
+    expect(tokenReplaceable({ ...agent, connectedVia: { clientId: "c", clientName: "C" } })).toBe(
+      false,
+    );
+    expect(tokenReplaceable({ ...agent, revokedAt: "2026-09-25T00:00:00.000Z" })).toBe(false);
   });
 
   it("gives an adopted agent the one request to ask, and nothing else", () => {
@@ -102,6 +117,7 @@ describe("finishSections (GRA-215)", () => {
       byHand: null,
       askInChat: true,
       primary: "finish",
+      reissue: false,
     });
   });
 });

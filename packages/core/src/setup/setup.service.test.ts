@@ -10,6 +10,7 @@ import {
   connectingAgentOf,
   finishSetup,
   getSetupState,
+  issueConsoleAgentToken,
   moveSetupBack,
   moveSetupBuild,
   moveSetupConnect,
@@ -87,10 +88,12 @@ function world(options: { agents?: AgentRow[]; work?: { connections: number; too
     }),
     listAgents: vi.fn(async () => agents.map((row) => ({ ...row, workingSetCount: 0 }))),
     findAgent: vi.fn(async (_db, _p, id) => agents.find((row) => row.id === id) ?? null),
-    issueAgentToken: vi.fn(async (_db, _p, id, token) => {
+    issueAgentToken: vi.fn(async (_db, _p, id, token, replacing = null) => {
       const index = agents.findIndex((row) => row.id === id);
       const row = agents[index];
-      if (!row || row.tokenHash || row.connectedViaClientId || row.revokedAt) return null;
+      if (!row || row.connectedViaClientId || row.revokedAt) return null;
+      // The repo's predicate: no hash for a first issue, the replaced one for a re-issue.
+      if (row.tokenHash !== replacing) return null;
       const issued = { ...row, ...token };
       agents[index] = issued;
       return issued;
@@ -615,6 +618,92 @@ describe("the result and finish steps", () => {
     const done = await finishSetup(ctx, PRINCIPAL, adopted.deps, adopted.agentDeps);
     expect(done.token).toBeNull();
     expect(done.state.setup).toMatchObject({ step: "completed", harness: null });
+  });
+});
+
+/**
+ * The console's token route (ADR 0024 as amended 2026-09-25; Greptile on #172): a first issue to
+ * an agent awaiting its harness, and a replacement for the agent Setup runs as while Setup is not
+ * completed, since the finish step held the only plaintext and a reload lost it.
+ */
+describe("issueConsoleAgentToken", () => {
+  async function onFinish() {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness: "hermes" }, w.deps, w.agentDeps);
+    await w.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, { step: "finish" });
+    const issue = (agentId = "agent_new") =>
+      issueConsoleAgentToken(ctx, PRINCIPAL, agentId, w.deps, w.agentDeps);
+    return { ...w, issue };
+  }
+
+  it("issues the first token, then replaces it while Setup is not completed, the old hash gone", async () => {
+    const w = await onFinish();
+    const first = await w.issue();
+    expect(first.token).toMatch(/^grft_/);
+    const firstHash = w.agents[0]?.tokenHash;
+    const second = await w.issue();
+    expect(second.token).toMatch(/^grft_/);
+    expect(second.token).not.toBe(first.token);
+    expect(w.agents[0]?.tokenHash).not.toBe(firstHash);
+    expect(second.agent.tokenPrefix).toBe(second.token.slice(0, 8));
+    // The replacement names the hash it replaced, so the write lands only over that one.
+    expect(vi.mocked(w.agentDeps.issueAgentToken).mock.calls[1]?.[4]).toBe(firstHash);
+    // Judged under the record's lock.
+    expect(w.deps.lockSetup).toHaveBeenCalled();
+  });
+
+  it("refuses a replacement once Setup is completed, and for an agent Setup does not run as", async () => {
+    const w = await onFinish();
+    await w.issue();
+    await w.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, {
+      step: "completed",
+      completedAt: NOW,
+    });
+    await expect(w.issue()).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("already has a token"),
+      details: { reason: "agent_not_awaiting_harness" },
+    });
+
+    const other = world({ agents: [agentRow("agent_1"), agentRow("agent_2")] });
+    await startSetup(ctx, PRINCIPAL, { agentId: "agent_1" }, other.deps, other.agentDeps);
+    await expect(
+      issueConsoleAgentToken(ctx, PRINCIPAL, "agent_2", other.deps, other.agentDeps),
+    ).rejects.toMatchObject({ details: { reason: "agent_not_awaiting_harness" } });
+  });
+
+  it("refuses a replacement for an agent a client connected, or one revoked", async () => {
+    for (const patch of [
+      { connectedViaClientId: "client_1", connectedViaClientName: "Claude" },
+      { revokedAt: NOW },
+    ]) {
+      const w = await onFinish();
+      await w.issue();
+      const row = w.agents[0];
+      if (row) w.agents[0] = { ...row, ...patch };
+      await expect(w.issue()).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "agent_not_awaiting_harness" },
+      });
+    }
+  });
+
+  it("refuses the replacement when Setup finished between the read and the lock", async () => {
+    const w = await onFinish();
+    await w.issue();
+    const lock = vi.mocked(w.deps.lockSetup);
+    const locked = lock.getMockImplementation();
+    lock.mockImplementationOnce(async (db, person) => {
+      // Another tab's Finish Setup lands first.
+      await w.deps.saveSetup(db, person, { step: "completed", completedAt: NOW });
+      return (await locked?.(db, person)) as SetupRow;
+    });
+    const before = w.agents[0]?.tokenHash;
+    await expect(w.issue()).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringContaining("can no longer be replaced"),
+    });
+    expect(w.agents[0]?.tokenHash).toBe(before);
   });
 });
 

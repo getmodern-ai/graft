@@ -382,10 +382,12 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     // authorization server's own suite in `@graft/core` drives the OAuth path over its own fakes.
     findAgentByMcpAccessTokenHash: async () => null,
     revokeMcpTokensForAgent: async () => 0,
-    issueAgentToken: async (_db, personId, agentId, token) => {
+    issueAgentToken: async (_db, personId, agentId, token, replacing = null) => {
       const row = store.agents.get(agentId);
       if (!row || row.personId !== personId) return null;
-      if (row.revokedAt || row.tokenHash || row.connectedViaClientId) return null;
+      if (row.revokedAt || row.connectedViaClientId) return null;
+      // The repo's predicate: no hash for a first issue, the replaced one for a re-issue.
+      if ((row.tokenHash ?? null) !== replacing) return null;
       const updated = { ...row, ...token, updatedAt: store.now() };
       store.agents.set(agentId, updated);
       return updated;

@@ -85,3 +85,15 @@ key or an operator's own OAuth client is never offered, so the keyring alone off
 alone. *Another integration* is still the ordinary form. The consequence above that reads
 "filtered to what the deployment's providers can connect with at most a pasted key" is superseded
 by that rule; the list is still a convenience beside ADR 0001, never a catalogue.
+
+## Amendment, 2026-09-25: a lost token is replaced until Setup completes (GRA-217)
+
+The text above says the route that issues a static-token harness's token "admits only an agent
+awaiting its harness". Since the finish step issues the token before *Finish Setup* and holds the
+only plaintext in the page, a reload or a closed tab before it was saved left the person with an
+agent they could not connect short of revoking it (Greptile on #172). The route now also
+**replaces** the token of the agent Setup runs as, while the record is not completed and no client
+holds the agent: the new hash overwrites the old, so the old plaintext stops working, and each
+token is still shown once, in the answer that minted it. The replacement is judged under the
+record's lock, so none lands after the finish; once Setup is completed the rule above stands, and
+a lost token is again a revoke and a new agent.

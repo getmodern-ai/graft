@@ -36,7 +36,11 @@ export function finishVariant(harness: SetupHarness | null): FinishVariant {
  * - `adopted`: the one request to ask in the chat, and nothing else.
  *
  * `primary` is the footer's action: *Issue the token* while the token block waits on it, so that
- * *Finish Setup* is always one press that leaves the page.
+ * *Finish Setup* is always one press that leaves the page. `reissue` offers *Issue a new token*
+ * beside it on a `saved` block whose token the route may still replace (`replaceable`: the agent
+ * Setup runs as, active, with a token and no client, and Setup not completed; ADR 0024 as amended
+ * 2026-09-25): the page held the only plaintext, so a reload before it was saved lost it
+ * (Greptile on #172), and the new token replaces the old one, which stops working.
  */
 export type FinishSections = {
   prompt: boolean;
@@ -44,17 +48,32 @@ export type FinishSections = {
   byHand: "oauth" | "token" | null;
   askInChat: boolean;
   primary: "issue_token" | "finish";
+  reissue: boolean;
 };
 
 export function finishSections(
   variant: FinishVariant,
-  token: { issued: boolean; awaiting: boolean },
+  token: { issued: boolean; awaiting: boolean; replaceable: boolean },
 ): FinishSections {
   if (variant === "adopted") {
-    return { prompt: false, token: null, byHand: null, askInChat: true, primary: "finish" };
+    return {
+      prompt: false,
+      token: null,
+      byHand: null,
+      askInChat: true,
+      primary: "finish",
+      reissue: false,
+    };
   }
   if (variant === "oauth") {
-    return { prompt: true, token: null, byHand: "oauth", askInChat: false, primary: "finish" };
+    return {
+      prompt: true,
+      token: null,
+      byHand: "oauth",
+      askInChat: false,
+      primary: "finish",
+      reissue: false,
+    };
   }
   const block = token.issued ? "issued" : token.awaiting ? "to_issue" : "saved";
   return {
@@ -63,7 +82,21 @@ export function finishSections(
     byHand: "token",
     askInChat: false,
     primary: block === "to_issue" ? "issue_token" : "finish",
+    reissue: block === "saved" && token.replaceable,
   };
+}
+
+/**
+ * Whether the token route would replace this agent's token (`issueConsoleAgentToken`): it has one,
+ * no client holds it and it stands. The route also holds Setup to not completed, which the finish
+ * step is until its own finish, and judges all of it again under the record's lock.
+ */
+export function tokenReplaceable(agent: {
+  tokenPrefix: string | null;
+  connectedVia: unknown;
+  revokedAt: string | null;
+}): boolean {
+  return agent.tokenPrefix !== null && agent.connectedVia === null && agent.revokedAt === null;
 }
 
 /** The configuration block's shape for a static-token harness (`mcp-snippet.ts`). */
