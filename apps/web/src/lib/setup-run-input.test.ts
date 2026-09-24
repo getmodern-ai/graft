@@ -320,8 +320,10 @@ describe("the JSON input", () => {
     expect(
       canRun(nested, {}, '{ "name": "report", "filter": { "label": "inbox" }, "ids": [{}] }'),
     ).toBe(true);
-    expect(missingJsonFields(view, '{ "filter": {}, "name": "x" }')).toEqual(["filter"]);
-    expect(missingJsonFields(view, '{ "filter": [], "name": "x" }')).toEqual(["filter"]);
+    // Edited text: an empty object or list is the person's value (Greptile on #172, second pass).
+    expect(missingJsonFields(view, '{ "filter": {}, "name": "x" }')).toEqual([]);
+    expect(missingJsonFields(view, '{ "filter": [], "name": "x" }')).toEqual([]);
+    expect(missingJsonFields(view, '{ "filter": {}, "name": " " }')).toEqual(["name"]);
   });
 
   it("sends a parsed object and says why anything else cannot be sent", () => {

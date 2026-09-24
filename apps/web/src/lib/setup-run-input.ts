@@ -331,31 +331,39 @@ export function missingFields(view: RunInputView, values: Record<string, string>
 }
 
 /**
- * Whether a JSON value supplies nothing: absent, null, a blank string, or the empty object or list
- * the skeleton lays out for a complex field (Greptile on #172: an untouched `{}` for a required
- * `filter` is the skeleton's placeholder, not the person's value, and the run waits for theirs).
+ * Whether a JSON value supplies nothing: absent, null or a blank string, and, while the text is
+ * still the skeleton exactly as it was laid out, the empty object or list it holds for a complex
+ * field. Greptile on #172, twice: an untouched `{}` for a required `filter` is the skeleton's
+ * placeholder and the run waits for the person's value; once the person has edited the text, an
+ * empty object or list is theirs to send.
  */
-function suppliesNothing(value: unknown): boolean {
+function suppliesNothing(value: unknown, untouched: boolean): boolean {
   if (value === undefined || value === null) return true;
   if (typeof value === "string") return value.trim() === "";
+  if (!untouched) return false;
   if (Array.isArray(value)) return value.length === 0;
   return isSchema(value) && Object.keys(value).length === 0;
 }
 
+/** The parsed text, or undefined when it does not parse. */
+function parsedOrUndefined(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * The JSON input's required keys still absent or empty, an empty object or list included; none
- * while the text does not parse, since the run's refusal of that text says why.
+ * The JSON input's required keys still absent or empty (an empty object or list only while the
+ * skeleton is untouched); none while the text does not parse, since the run's refusal says why.
  */
 export function missingJsonFields(view: RunInputView, text: string): string[] {
   if (view.kind !== "json") return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return [];
-  }
+  const parsed = parsedOrUndefined(text);
   if (!isSchema(parsed)) return [];
-  return view.required.filter((name) => suppliesNothing(parsed[name]));
+  const untouched = JSON.stringify(parsed) === JSON.stringify(parsedOrUndefined(view.initial));
+  return view.required.filter((name) => suppliesNothing(parsed[name], untouched));
 }
 
 /** Whether Run can be pressed: nothing required is missing. */
