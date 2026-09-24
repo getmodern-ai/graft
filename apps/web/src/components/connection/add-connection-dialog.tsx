@@ -2,9 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { ConnectionFormFields, HostsNotice } from "@/components/connection/connection-form";
-import { CredentialFields } from "@/components/connection/credential-fields";
-import { ConsentStatus, OAuthClientNotice } from "@/components/connection/oauth-client-notice";
+import { ConnectionForm } from "@/components/connection/connection-form";
+import { ConsentStatus } from "@/components/connection/oauth-client-notice";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,13 +14,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
 import { ApiError } from "@/lib/api";
 import {
   type ConnectionDraft,
   type DraftErrors,
   emptyDraft,
-  secretLegend,
   validateConnectionDraft,
 } from "@/lib/connection-form";
 import { connectionKeys, createConnection } from "@/lib/connection-queries";
@@ -96,19 +93,8 @@ export function AddConnectionDialog({
     create.mutate(verdict.value);
   };
 
-  const secret = secretLegend(draft);
   const consenting = consent.state.phase === "running" || consent.state.phase === "blocked";
   const busy = create.isPending || consenting;
-  const credentialFields = (
-    <CredentialFields
-      scheme={draft.scheme}
-      value={draft.credential}
-      onChange={(credential) => setDraft({ ...draft, credential })}
-      errors={errors}
-      idPrefix="add-connection"
-      disabled={busy}
-    />
-  );
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
@@ -123,34 +109,17 @@ export function AddConnectionDialog({
           <DialogHeader>
             <DialogTitle>Add a connection</DialogTitle>
             <DialogDescription>
-              One vendor account: its hosts, its auth scheme and its credential, entered once and
-              never shown again. Agents use it once you add it to their scope.
+              Connect an account for your agents to use. Your credentials are saved securely and
+              won’t be shown again.
             </DialogDescription>
           </DialogHeader>
-          <FieldSet>
-            <FieldLegend variant="label">The connection</FieldLegend>
-            <FieldGroup>
-              <ConnectionFormFields
-                draft={draft}
-                onChange={setDraft}
-                errors={errors}
-                idPrefix="add-connection"
-                disabled={busy}
-              />
-            </FieldGroup>
-          </FieldSet>
-          <HostsNotice draft={draft} />
-          <OAuthClientNotice draft={draft} />
-          {secret ? (
-            <FieldSet>
-              <FieldLegend variant="label">{secret}</FieldLegend>
-              <FieldGroup>{credentialFields}</FieldGroup>
-            </FieldSet>
-          ) : (
-            // A keyless scheme (GRA-66): the one sentence where the inputs would be, under no
-            // heading about a secret (GRA-91).
-            credentialFields
-          )}
+          <ConnectionForm
+            draft={draft}
+            onChange={setDraft}
+            errors={errors}
+            idPrefix="add-connection"
+            disabled={busy}
+          />
           <ConsentStatus state={consent.state} onCancel={consent.cancel} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>

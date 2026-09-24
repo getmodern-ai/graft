@@ -4,15 +4,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
-import { ConnectionFormFields, HostsNotice } from "@/components/connection/connection-form";
-import { CredentialFields } from "@/components/connection/credential-fields";
-import { ConsentStatus, OAuthClientNotice } from "@/components/connection/oauth-client-notice";
+import { ConnectionForm } from "@/components/connection/connection-form";
+import { ConsentStatus } from "@/components/connection/oauth-client-notice";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
 import { OpenInNewIcon } from "@/components/icons";
 import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
 import { Badge } from "@/components/ui/badge";
-import { FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError } from "@/lib/api";
 import {
@@ -21,7 +19,6 @@ import {
   draftFromProposal,
   hostsOf,
   isOAuthDraft,
-  secretLegend,
   validateConnectionDraft,
 } from "@/lib/connection-form";
 import { connectionKeys, submitConnectionProposal } from "@/lib/connection-queries";
@@ -120,22 +117,11 @@ export function ConnectionAskCard({
   const open = isOpen(action);
   const hosts = hostsOf(draft) ?? payload.hosts;
   const oauth = isOAuthDraft(draft);
-  const secret = secretLegend(draft);
   const provider: string = payload.provider ?? KEYRING_PROVIDER;
   const widens = payload.widens ?? null;
   // Once the client is saved and the popup is open, the form's job is done; the callback settles it.
   const consenting = consent.state.phase !== "idle" && consent.state.phase !== "done";
   const busy = connect.isPending || decline.isPending || consenting;
-  const credentialFields = (
-    <CredentialFields
-      scheme={draft.scheme}
-      value={draft.credential}
-      onChange={(credential) => setDraft({ ...draft, credential })}
-      errors={errors}
-      idPrefix={`ask-${action.id}`}
-      disabled={busy}
-    />
-  );
 
   return (
     <AskCard
@@ -225,34 +211,13 @@ export function ConnectionAskCard({
         </>
       ) : open ? (
         <>
-          <FieldSet>
-            <FieldLegend variant="label">
-              The connection, as proposed — edit what is wrong
-            </FieldLegend>
-            <FieldGroup>
-              <ConnectionFormFields
-                draft={draft}
-                onChange={setDraft}
-                errors={errors}
-                idPrefix={`ask-${action.id}`}
-                disabled={busy}
-              />
-            </FieldGroup>
-          </FieldSet>
-          <HostsNotice draft={draft} />
-          <OAuthClientNotice draft={draft} />
-          {secret ? (
-            <FieldSet>
-              <FieldLegend variant="label">
-                {secret} — entered here, never through the agent
-              </FieldLegend>
-              <FieldGroup>{credentialFields}</FieldGroup>
-            </FieldSet>
-          ) : (
-            // A keyless scheme (GRA-66): the one sentence where the inputs would be, under no
-            // heading about a secret (GRA-91).
-            credentialFields
-          )}
+          <ConnectionForm
+            draft={draft}
+            onChange={setDraft}
+            errors={errors}
+            idPrefix={`ask-${action.id}`}
+            disabled={busy}
+          />
           <BuildApprovalItem
             id={`ask-${action.id}-approve-build`}
             agentName={agentName}

@@ -62,8 +62,8 @@ function RedirectUriNotice() {
           </p>
         )}
         <p>
-          Then enter the client's id above and its secret below. Connect opens the vendor's consent
-          in a popup; the tokens it yields are stored encrypted and never shown.
+          Then enter the client's id and secret in the required fields. Connect opens the vendor's
+          consent in a popup; the tokens it yields are stored encrypted and never shown.
         </p>
       </AlertDescription>
     </Alert>

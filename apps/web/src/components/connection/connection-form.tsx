@@ -1,8 +1,13 @@
 import type { AuthScheme } from "@graft/proxy/types";
+import { useEffect, useState } from "react";
 
-import { LanguageIcon } from "@/components/icons";
+import { ConnectionField } from "@/components/connection/connection-field";
+import { CredentialFields } from "@/components/connection/credential-fields";
+import { OAuthClientNotice } from "@/components/connection/oauth-client-notice";
+import { KeyboardArrowDownIcon, LanguageIcon } from "@/components/icons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
+import { Button } from "@/components/ui/button";
+import { FieldError, FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -14,6 +19,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   type ConnectionDraft,
+  credentialFieldsFor,
   type DraftErrors,
   hostsNoticeTitle,
   hostsOf,
@@ -23,175 +29,140 @@ import {
   SCHEMES,
   withScheme,
 } from "@/lib/connection-form";
+import { cn } from "@/lib/utils";
 
 /** What a scheme is called in the picker: the person's words, then the wire name it maps to. */
 const schemeOption = (scheme: AuthScheme) => `${SCHEME_LABELS[scheme]} · ${scheme}`;
 const SCHEME_ITEMS = SCHEMES.map((scheme) => ({ value: scheme, label: schemeOption(scheme) }));
 
-/**
- * The non-secret half of a connection (ADR 0006: everything the handoff carries): the vendor slug,
- * the name, the primary host and the additional hosts, the scheme and its parameters — each input
- * judged by the service's own rule as the person types (`lib/connection-form.ts`). The secret half
- * is `credential-fields.tsx`, kept apart so the credential ask can show it alone.
- */
-export function ConnectionFormFields({
-  draft,
-  onChange,
-  errors,
-  idPrefix,
-  disabled,
-}: {
+type ConnectionFormProps = {
   draft: ConnectionDraft;
   onChange: (next: ConnectionDraft) => void;
   errors: DraftErrors;
   idPrefix: string;
   disabled?: boolean;
-}) {
-  const id = (name: string) => `${idPrefix}-${name}`;
-  const invalid = (key: string) => (errors[key] ? true : undefined);
-  const parameters = parametersFor(draft.scheme);
+};
+
+function groupFields(fields: { name: string; value: string; required: boolean }[]) {
+  const groups: { required: string[]; prefilled: string[]; optional: string[] } = {
+    required: [],
+    prefilled: [],
+    optional: [],
+  };
+  for (const field of fields) {
+    const group = field.value.trim() ? "prefilled" : field.required ? "required" : "optional";
+    groups[group].push(field.name);
+  }
+  return groups;
+}
+
+function groupParameters(draft: ConnectionDraft) {
+  return {
+    scheme: draft.scheme,
+    ...groupFields(
+      parametersFor(draft.scheme).map((field) => ({
+        ...field,
+        name: `schemeConfig.${field.name}`,
+        value: draft.schemeConfig[field.name] ?? "",
+      })),
+    ),
+  };
+}
+
+/** Required entry comes first; the opening values determine each detail's section (ADR 0006). */
+export function ConnectionForm(props: ConnectionFormProps) {
+  const { draft, onChange, errors, idPrefix, disabled } = props;
+  // Hold only field names, so typing never moves a field or copies a credential into this state.
+  const [details] = useState(() =>
+    groupFields([
+      { name: "vendor", value: draft.vendor, required: true },
+      {
+        name: "primaryHost",
+        value: draft.primaryHost.trim() === "https://" ? "" : draft.primaryHost,
+        required: true,
+      },
+      { name: "hosts", value: draft.hosts, required: false },
+      { name: "scheme", value: draft.scheme, required: true },
+    ]),
+  );
+  const [parameters, setParameters] = useState(() => groupParameters(draft));
+  // A different scheme has fresh parameters; the other details keep their original sections.
+  if (parameters.scheme !== draft.scheme) setParameters(groupParameters(draft));
+
+  const required = ["displayName", ...details.required, ...parameters.required];
+  const prefilled = [...details.prefilled, ...parameters.prefilled];
+  const optional = [...details.optional, ...parameters.optional];
+  const credentials = credentialFieldsFor(draft.scheme);
+  const hasOptional = optional.length > 0 || credentials.some((field) => !field.required);
+  const [showPrefilled, setShowPrefilled] = useState(false);
+  useEffect(() => {
+    const hasPrefilledErrors = [...details.prefilled, ...parameters.prefilled].some(
+      (name) => errors[name] || (name.startsWith("schemeConfig.") && errors.schemeConfig),
+    );
+    if (hasPrefilledErrors) setShowPrefilled(true);
+  }, [errors, details.prefilled, parameters.prefilled]);
+  const credentialProps = {
+    scheme: draft.scheme,
+    value: draft.credential,
+    onChange: (credential: Record<string, string>) => onChange({ ...draft, credential }),
+    errors,
+    idPrefix,
+    disabled,
+  };
 
   return (
     <>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field data-invalid={invalid("vendor")}>
-          <FieldLabel htmlFor={id("vendor")}>Vendor</FieldLabel>
-          <Input
-            id={id("vendor")}
-            value={draft.vendor}
-            disabled={disabled}
-            placeholder="unleashed"
-            autoComplete="off"
-            spellCheck={false}
-            aria-invalid={invalid("vendor")}
-            onChange={(event) => onChange({ ...draft, vendor: event.target.value })}
-          />
-          <FieldDescription>
-            A kebab-case slug. Tools authored against this connection are bound to it.
-          </FieldDescription>
-          {errors.vendor ? <FieldError>{errors.vendor}</FieldError> : null}
-        </Field>
-        <Field data-invalid={invalid("displayName")}>
-          <FieldLabel htmlFor={id("displayName")}>Name</FieldLabel>
-          <Input
-            id={id("displayName")}
-            value={draft.displayName}
-            disabled={disabled}
-            placeholder="Acme Unleashed (production)"
-            autoComplete="off"
-            aria-invalid={invalid("displayName")}
-            onChange={(event) => onChange({ ...draft, displayName: event.target.value })}
-          />
-          <FieldDescription>What you and your agents will see.</FieldDescription>
-          {errors.displayName ? <FieldError>{errors.displayName}</FieldError> : null}
-        </Field>
-      </div>
-
-      <Field data-invalid={invalid("primaryHost")}>
-        <FieldLabel htmlFor={id("primaryHost")}>Primary host</FieldLabel>
-        <Input
-          id={id("primaryHost")}
-          value={draft.primaryHost}
-          disabled={disabled}
-          placeholder="https://api.vendor.example/v1"
-          autoComplete="off"
-          spellCheck={false}
-          inputMode="url"
-          className="font-mono"
-          aria-invalid={invalid("primaryHost")}
-          onChange={(event) => onChange({ ...draft, primaryHost: event.target.value })}
-        />
-        <FieldDescription>
-          The https base URL vendor paths resolve against. Private, loopback, link-local and
-          cloud-metadata hosts are refused here and again by the proxy.
-        </FieldDescription>
-        {errors.primaryHost ? <FieldError>{errors.primaryHost}</FieldError> : null}
-      </Field>
-
-      <Field data-invalid={invalid("hosts")}>
-        <FieldLabel htmlFor={id("hosts")}>
-          Additional hosts
-          <span className="font-normal text-muted-foreground">(optional)</span>
-        </FieldLabel>
-        <Textarea
-          id={id("hosts")}
-          value={draft.hosts}
-          disabled={disabled}
-          placeholder={"files.vendor.example\nupload.vendor.example"}
-          autoComplete="off"
-          spellCheck={false}
-          className="min-h-12 font-mono"
-          aria-invalid={invalid("hosts")}
-          onChange={(event) => onChange({ ...draft, hosts: event.target.value })}
-        />
-        <FieldDescription>
-          One hostname per line, for a vendor whose API spans several. The primary's own host is
-          always included.
-        </FieldDescription>
-        {errors.hosts ? <FieldError>{errors.hosts}</FieldError> : null}
-      </Field>
-
-      <Field>
-        <FieldLabel htmlFor={id("scheme")}>Auth scheme</FieldLabel>
-        <Select
-          value={draft.scheme}
-          items={SCHEME_ITEMS}
-          disabled={disabled}
-          onValueChange={(next) => {
-            if (next !== null && isScheme(next)) onChange(withScheme(draft, next));
-          }}
-        >
-          <SelectTrigger id={id("scheme")} className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {SCHEMES.map((scheme) => (
-              <SelectItem key={scheme} value={scheme}>
-                {schemeOption(scheme)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <FieldDescription>
-          How the proxy presents the credential to the vendor. The secret fields below follow it.
-        </FieldDescription>
-      </Field>
-
-      {parameters.length > 0 ? (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {parameters.map((parameter) => {
-            const key = `schemeConfig.${parameter.name}`;
-            return (
-              <Field key={parameter.name} data-invalid={invalid(key)}>
-                <FieldLabel htmlFor={id(key)}>
-                  {parameter.presentation.label}
-                  {parameter.required ? null : (
-                    <span className="font-normal text-muted-foreground">(optional)</span>
-                  )}
-                </FieldLabel>
-                <Input
-                  id={id(key)}
-                  value={draft.schemeConfig[parameter.name] ?? ""}
-                  disabled={disabled}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="font-mono"
-                  aria-invalid={invalid(key)}
-                  onChange={(event) =>
-                    onChange({
-                      ...draft,
-                      schemeConfig: { ...draft.schemeConfig, [parameter.name]: event.target.value },
-                    })
-                  }
-                />
-                {parameter.presentation.hint ? (
-                  <FieldDescription>{parameter.presentation.hint}</FieldDescription>
-                ) : null}
-                {errors[key] ? <FieldError>{errors[key]}</FieldError> : null}
-              </Field>
-            );
-          })}
-        </div>
+      {draft.vendor.trim() ? (
+        <dl className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+          <dt className="text-muted-foreground">Service</dt>
+          <dd id={`${idPrefix}-service-name`} className="font-medium capitalize">
+            {draft.vendor.trim()}
+          </dd>
+        </dl>
+      ) : null}
+      <HostsNotice draft={draft} />
+      <FieldSet>
+        <FieldLegend className="w-full border-border border-b pb-2">Required fields</FieldLegend>
+        <FieldGroup>
+          <OAuthClientNotice draft={draft} />
+          <ConnectionFormFields {...props} fieldNames={required} />
+          <CredentialFields {...credentialProps} include="required" />
+        </FieldGroup>
+      </FieldSet>
+      {credentials.length === 0 ? <CredentialFields {...credentialProps} /> : null}
+      {prefilled.length > 0 ? (
+        <FieldSet>
+          <FieldLegend className="mb-0 w-full">
+            <Button
+              type="button"
+              variant="ghost"
+              className="-ml-2.5 h-auto justify-start py-1 aria-expanded:bg-transparent"
+              aria-expanded={showPrefilled}
+              aria-controls={`${idPrefix}-prefilled-details`}
+              onClick={() => setShowPrefilled((open) => !open)}
+            >
+              <KeyboardArrowDownIcon className={showPrefilled ? undefined : "-rotate-90"} />
+              Connection details
+            </Button>
+          </FieldLegend>
+          {/* Keep controls mounted so collapsing preserves each field's change status. */}
+          <FieldGroup
+            id={`${idPrefix}-prefilled-details`}
+            hidden={!showPrefilled}
+            className={cn("pt-4", !showPrefilled && "hidden")}
+          >
+            <ConnectionFormFields {...props} fieldNames={prefilled} />
+          </FieldGroup>
+        </FieldSet>
+      ) : null}
+      {hasOptional ? (
+        <FieldSet>
+          <FieldLegend className="w-full border-border border-b pb-2">Optional fields</FieldLegend>
+          <FieldGroup>
+            <ConnectionFormFields {...props} fieldNames={optional} />
+            <CredentialFields {...credentialProps} include="optional" />
+          </FieldGroup>
+        </FieldSet>
       ) : null}
       {errors.schemeConfig ? <FieldError>{errors.schemeConfig}</FieldError> : null}
     </>
@@ -199,8 +170,206 @@ export function ConnectionFormFields({
 }
 
 /**
+ * The non-secret half of a connection (ADR 0006: everything the handoff carries): the vendor slug,
+ * the name, the primary host and the additional hosts, the scheme and its parameters — each input
+ * judged by the service's own rule as the person types (`lib/connection-form.ts`). The secret half
+ * is `credential-fields.tsx`, kept apart so the credential ask can show it alone.
+ */
+function ConnectionFormFields({
+  draft,
+  onChange,
+  errors,
+  idPrefix,
+  disabled,
+  fieldNames,
+}: ConnectionFormProps & { fieldNames: string[] }) {
+  const id = (name: string) => `${idPrefix}-${name}`;
+  const show = (name: string) => fieldNames.includes(name);
+  const parameters = parametersFor(draft.scheme).filter((field) =>
+    show(`schemeConfig.${field.name}`),
+  );
+
+  return (
+    <>
+      {show("vendor") || show("displayName") ? (
+        <div
+          className={cn("grid gap-4", show("vendor") && show("displayName") && "sm:grid-cols-2")}
+        >
+          {show("displayName") ? (
+            <ConnectionField
+              id={id("displayName")}
+              label="Name"
+              value={draft.displayName}
+              required
+              disabled={disabled}
+              error={errors.displayName}
+              hint="What you and your agents will see."
+            >
+              {(props) => (
+                <Input
+                  {...props}
+                  value={draft.displayName}
+                  placeholder="Name this connection"
+                  autoComplete="off"
+                  onChange={(event) => onChange({ ...draft, displayName: event.target.value })}
+                />
+              )}
+            </ConnectionField>
+          ) : null}
+          {show("vendor") ? (
+            <ConnectionField
+              id={id("vendor")}
+              label="Vendor"
+              value={draft.vendor}
+              required
+              disabled={disabled}
+              error={errors.vendor}
+              hint="A kebab-case slug. Tools authored against this connection are bound to it."
+            >
+              {(props) => (
+                <Input
+                  {...props}
+                  value={draft.vendor}
+                  placeholder="Enter the vendor slug"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => onChange({ ...draft, vendor: event.target.value })}
+                />
+              )}
+            </ConnectionField>
+          ) : null}
+        </div>
+      ) : null}
+
+      {show("primaryHost") ? (
+        <ConnectionField
+          id={id("primaryHost")}
+          label="Primary host"
+          value={draft.primaryHost}
+          incomplete={!draft.primaryHost.trim() || draft.primaryHost.trim() === "https://"}
+          required
+          disabled={disabled}
+          error={errors.primaryHost}
+          hint="The https base URL vendor paths resolve against. Private, loopback, link-local and cloud-metadata hosts are refused here and again by the proxy."
+        >
+          {(props) => (
+            <Input
+              {...props}
+              value={draft.primaryHost}
+              placeholder="Enter the API base URL"
+              autoComplete="off"
+              spellCheck={false}
+              inputMode="url"
+              className={cn(props.className, "font-mono")}
+              onChange={(event) => onChange({ ...draft, primaryHost: event.target.value })}
+            />
+          )}
+        </ConnectionField>
+      ) : null}
+
+      {show("hosts") ? (
+        <ConnectionField
+          id={id("hosts")}
+          label="Additional hosts"
+          value={draft.hosts}
+          disabled={disabled}
+          error={errors.hosts}
+          hint="One hostname per line, for a vendor whose API spans several. The primary's own host is always included."
+        >
+          {(props) => (
+            <Textarea
+              {...props}
+              value={draft.hosts}
+              placeholder="Add any other API hosts"
+              autoComplete="off"
+              spellCheck={false}
+              className={cn(props.className, "min-h-12 font-mono")}
+              onChange={(event) => onChange({ ...draft, hosts: event.target.value })}
+            />
+          )}
+        </ConnectionField>
+      ) : null}
+
+      {show("scheme") ? (
+        <ConnectionField
+          id={id("scheme")}
+          label="Auth scheme"
+          value={draft.scheme}
+          required
+          disabled={disabled}
+          hint="How the proxy presents the credential to the vendor. Changing it updates the required fields."
+        >
+          {(props) => (
+            <Select
+              value={draft.scheme}
+              items={SCHEME_ITEMS}
+              disabled={disabled}
+              onValueChange={(next) => {
+                if (next !== null && isScheme(next) && next !== draft.scheme) {
+                  onChange(withScheme(draft, next));
+                }
+              }}
+            >
+              <SelectTrigger {...props} className={cn(props.className, "w-full")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCHEMES.map((scheme) => (
+                  <SelectItem key={scheme} value={scheme}>
+                    {schemeOption(scheme)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </ConnectionField>
+      ) : null}
+
+      {parameters.length > 0 ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {parameters.map((parameter) => {
+            const key = `schemeConfig.${parameter.name}`;
+            return (
+              <ConnectionField
+                key={`${draft.scheme}-${parameter.name}`}
+                id={id(key)}
+                label={parameter.presentation.label}
+                value={draft.schemeConfig[parameter.name] ?? ""}
+                required={parameter.required}
+                disabled={disabled}
+                error={errors[key]}
+                hint={parameter.presentation.hint}
+              >
+                {(props) => (
+                  <Input
+                    {...props}
+                    value={draft.schemeConfig[parameter.name] ?? ""}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className={cn(props.className, "font-mono")}
+                    onChange={(event) =>
+                      onChange({
+                        ...draft,
+                        schemeConfig: {
+                          ...draft.schemeConfig,
+                          [parameter.name]: event.target.value,
+                        },
+                      })
+                    }
+                  />
+                )}
+              </ConnectionField>
+            );
+          })}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/**
  * Where the credential will go, as the form stands — every host the proxy will pin the connection
- * to (ADR 0010), named beside the secret inputs so the person reads them before typing (ADR 0006).
+ * to (ADR 0010), shown above the form so the person reads them before typing (ADR 0006).
  * The title follows the scheme (`hostsNoticeTitle`): a keyless scheme has no credential to send, so
  * it says the vendor is reached there. An `Alert`, the primitive's own frame, as every notice in
  * this form is.
@@ -208,7 +377,7 @@ export function ConnectionFormFields({
 export function HostsNotice({ draft }: { draft: ConnectionDraft }) {
   const hosts = hostsOf(draft);
   return (
-    <Alert>
+    <Alert className="bg-secondary text-secondary-foreground">
       <LanguageIcon />
       <AlertTitle>{hostsNoticeTitle(draft)}</AlertTitle>
       {hosts ? (
