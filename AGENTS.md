@@ -1140,12 +1140,14 @@ job, `building` to `result` with the tool; `from` must be the record's step (`se
 leaves a held job behind is a forward action that says so: the connect moves drop the job and tool
 when a different connection replaces the one they were acquired against (an ask leaves them until
 it is answered; a reopen or a lost connection clears them), and while the held job is queued or
-running a choice of another vendor (`POST /api/setup/connect`, judged on the vendor) or a Build
-(`startSetupBuild`) is refused `job_running` unless the body carries `discardJob: true`, which the
-console sends after `DiscardJobDialog`. `SetupGoalContext.job` is the held job, whose goal the goal
-step shows and offers Continue to while the text is unchanged. Neither route is a mutation-table
-row. The console: `SetupRail` and `SetupProgress` link the steps `setupRail(step, record)` marks
-(`lib/setup-steps.ts`, with `backTargetOf` for the footer), labelled *Integration* and *Task*;
+running a choice of another vendor (`POST /api/setup/connect`, judged on the vendor, then again on
+the row the same starter's routing resolves or the ask it hands back settles on, GRA-216's review)
+or a Build (`startSetupBuild`) is refused `job_running` unless the body carries `discardJob: true`,
+which the console sends after `DiscardJobDialog`. `SetupGoalContext.job` is the held job, whose
+goal the goal step shows and offers Continue to while the text is unchanged. Neither route is a
+mutation-table row. The console: `SetupRail` and `SetupProgress` link the steps
+`setupRail(step, record)` marks (`lib/setup-steps.ts`, with `backTargetOf` for the footer),
+labelled *Integration* and *Task*;
 `SetupFooter` (Back bottom left through `useSetupBack`, the step's primary bottom right) closes
 every step, the connect step's open ask keeping its card's own Connect as the primary; the building
 step is `progressCard` (`lib/setup-progress.ts`: a plain label per stage, the newest line, the
