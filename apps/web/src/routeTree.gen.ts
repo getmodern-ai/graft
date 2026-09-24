@@ -16,6 +16,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AuthShellRouteRouteImport } from './routes/_auth/_shell/route'
+import { Route as AuthSetupRouteImport } from './routes/_auth/setup'
 import { Route as LinkCallbackRouteImport } from './routes/link.callback'
 import { Route as OauthCallbackRouteImport } from './routes/oauth.callback'
 import { Route as AuthShellConsentRouteImport } from './routes/_auth/_shell/consent'
@@ -57,6 +58,11 @@ const SignupRoute = SignupRouteImport.update({
 } as any)
 const AuthShellRouteRoute = AuthShellRouteRouteImport.update({
   id: '/_shell',
+  getParentRoute: () => AuthRouteRoute,
+} as any)
+const AuthSetupRoute = AuthSetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
   getParentRoute: () => AuthRouteRoute,
 } as any)
 const LinkCallbackRoute = LinkCallbackRouteImport.update({
@@ -112,6 +118,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
   '/consent': typeof AuthShellConsentRoute
@@ -128,6 +135,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
   '/consent': typeof AuthShellConsentRoute
@@ -147,6 +155,7 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/_auth/_shell': typeof AuthShellRouteRouteWithChildren
+  '/_auth/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
   '/_auth/_shell/consent': typeof AuthShellConsentRoute
@@ -165,6 +174,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/setup'
     | '/link/callback'
     | '/oauth/callback'
     | '/consent'
@@ -181,6 +191,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/setup'
     | '/link/callback'
     | '/oauth/callback'
     | '/consent'
@@ -199,6 +210,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/_auth/_shell'
+    | '/_auth/setup'
     | '/link/callback'
     | '/oauth/callback'
     | '/_auth/_shell/consent'
@@ -270,6 +282,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AuthShellRouteRouteImport
+      parentRoute: typeof AuthRouteRoute
+    }
+    '/_auth/setup': {
+      id: '/_auth/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof AuthSetupRouteImport
       parentRoute: typeof AuthRouteRoute
     }
     '/link/callback': {
@@ -362,11 +381,13 @@ const AuthShellRouteRouteWithChildren = AuthShellRouteRoute._addFileChildren(
 
 interface AuthRouteRouteChildren {
   AuthShellRouteRoute: typeof AuthShellRouteRouteWithChildren
+  AuthSetupRoute: typeof AuthSetupRoute
   AuthPendingIdRoute: typeof AuthPendingIdRoute
 }
 
 const AuthRouteRouteChildren: AuthRouteRouteChildren = {
   AuthShellRouteRoute: AuthShellRouteRouteWithChildren,
+  AuthSetupRoute: AuthSetupRoute,
   AuthPendingIdRoute: AuthPendingIdRoute,
 }
 

@@ -979,6 +979,27 @@ page keeps scope and limit editors, the working set, approvals, history and stan
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
 
+**Setup is one record per person and three routes** (GRA-204; ADR 0024). The `setup` table
+(`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
+harness, the agent, the open connection ask, the connection, the acquire job, the tool, and
+`started_at`, `completed_at`, `skipped_at`; `repo/setup.ts` names the person in every statement,
+pinned in `repo/setup.test.ts`, and `lockSetup` makes the row and locks it so two starts, or a start and a skip, serialise.
+`@graft/core/setup/` holds the service (`getSetupState`, `startSetup`, `skipSetup`), the
+browser-safe rules (`shouldShowSetup` over the record and the person's connection and tool counts,
+`isAwaitingHarness` over an agent, `currentSetupStep`) and the harness data (`SETUP_HARNESSES`:
+the seven, each with its kind, `oauth` or `token`, and the marketing site's label). `GET
+/api/setup` answers `SetupState` (the record, `step`, `show`, the agent it runs as, the active
+agents); `POST /api/setup/start` (`SetupStartBody`) mints an agent with no token and no client
+through `createAgentAwaitingHarness` when the person has none, adopts the one when there is one,
+and needs `agentId` among several; `POST /api/setup/skip` sets `skipped_at`. Both are rows in
+`analytics-routes.ts` carrying `harness`, read off the answer by the row's `properties`. The console:
+`routes/_auth/setup.tsx` is under the guard and outside the shell; `_shell/route.tsx`'s `beforeLoad`
+redirects to it on `show`, except `/consent` and `/pending` (`lib/setup-intercept.ts`); one
+component per step under `components/setup/`, wired in `setup-step.tsx`'s map, each moving the
+record through `useSetupMutation`, which writes the answered state into the one `["setup"]` entry.
+The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline) and
+offers *Set up Graft* in its empty body to a person who skipped.
+
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
 auto — and `DataTableRow` for the 40px rhythm; a column the row cannot afford at 390px steps out

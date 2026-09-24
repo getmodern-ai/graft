@@ -5,12 +5,14 @@ import {
   answerPendingAction,
   type ConnectionDeps,
   createAgent,
+  defaultSetupDeps,
   deletePersonModelKey,
   getAgent,
   getAgentScope,
   getConnection,
   getPendingActionForPerson,
   getPersonModelKey,
+  getSetupState,
   isOAuthAuthorizationCode,
   type LedgerDeps,
   listAgents,
@@ -36,10 +38,13 @@ import {
   ServiceError,
   type ServiceErrorCode,
   type SessionLike,
+  type SetupDeps,
   setAgentScope,
   setAskEveryCall,
   setConnectionCredential,
   setPersonModelKey,
+  skipSetup,
+  startSetup,
   type ToolDeps,
   updateAgentLimits,
   type WorkingSetDeps,
@@ -48,6 +53,7 @@ import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { agentScopeMode } from "@graft/db/schema/agent";
+import { setupHarness } from "@graft/db/schema/setup";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
@@ -74,7 +80,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
-import { routeEvent } from "./analytics-routes";
+import { trackedRoute } from "./analytics-routes";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 import { createOriginGuard } from "./origin-guard";
@@ -167,6 +173,11 @@ export type ApiDeps = {
   pendingAction: PendingActionDeps;
   /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
   modelKey: ModelKeyDeps;
+  /**
+   * The person's Setup record (ADR 0024; GRA-204). Optional, and `defaultSetupDeps` when absent,
+   * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
+   */
+  setup?: SetupDeps;
 };
 
 export type ApiOptions = {
@@ -272,6 +283,28 @@ const agentBody = z.object({
 });
 
 const agentPatch = agentBody.omit({ connectionIds: true, scopeMode: true }).partial();
+
+/**
+ * `POST /setup/start` (ADR 0024; `startSetup` in `@graft/core` says what each field decides):
+ * the harness picked, the agent to run as when the person has one or several, or the agent to mint
+ * under *Advanced options*, the create dialog's body less its list. Strict at both levels, so a
+ * `connectionIds` or a `scopeMode` sent beside `agent` rather than inside it is refused rather than
+ * dropped, which would mint an agent on `all`: Setup's agent is narrowed on the agent page, later.
+ */
+const setupStartBody = z.strictObject({
+  harness: z.enum(setupHarness).optional(),
+  agentId: z.string().optional(),
+  agent: z
+    .strictObject({
+      name: z.string().optional(),
+      workingSetCap: z.number().int().optional(),
+      idleWindowDays: z.number().int().optional(),
+      scopeMode: z.enum(agentScopeMode).optional(),
+    })
+    .optional(),
+});
+/** The start's wire shape, as the console posts it. */
+export type SetupStartBody = z.input<typeof setupStartBody>;
 
 /**
  * `PUT /agents/:id/scope`: every connection, or a list — `SetAgentScopeInput` in `@graft/core`
@@ -561,12 +594,23 @@ export function createApi(options: ApiOptions): Hono {
   api.use("*", async (c, next) => {
     await next();
     if (analytics === NO_ANALYTICS || c.res.status >= 300) return;
-    const event = routeEvent(c.req.method, c.req.path);
-    if (!event) return;
+    const route = trackedRoute(c.req.method, c.req.path);
+    if (!route) return;
     const session = await options.auth.getSession(c.req.raw.headers).catch(() => null);
     const personId = session?.user.id;
-    if (personId)
-      analytics.capture({ distinctId: personId, event, properties: { via: "console" } });
+    if (!personId) return;
+    // A row that reads its answer reads a clone, so the body the console receives is untouched.
+    const answer = route.properties
+      ? await c.res
+          .clone()
+          .json()
+          .catch(() => null)
+      : null;
+    analytics.capture({
+      distinctId: personId,
+      event: route.event,
+      properties: { via: "console", ...(route.properties ? route.properties(answer) : {}) },
+    });
   });
 
   api.onError((error, c) => {
@@ -754,6 +798,33 @@ export function createApi(options: ApiOptions): Hono {
   api.delete("/me/model-key", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ deleted: await deletePersonModelKey(ctx, principal, modelKeyDeps) });
+  });
+
+  /**
+   * **Setup** (ADR 0024; GRA-204): the person's guided first run, one record per person. `GET`
+   * answers `SetupState` — the record, the step the person is on, the show rule's verdict the
+   * console's shell redirects on, the agent it runs as and the person's active agents. `start`
+   * mints or adopts the agent and moves the record to the vendor step; `skip` marks it skipped. Both
+   * answer the state as it now stands, and both are rows in `analytics-routes.ts` carrying the
+   * harness. Later steps are GRA-206's and GRA-208's, on the same record.
+   */
+  const setupDeps = options.deps.setup ?? defaultSetupDeps;
+
+  api.get("/setup", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(await getSetupState(ctx, principal, setupDeps, agentDeps));
+  });
+
+  api.post("/setup/start", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupStartBody);
+    return c.json(await startSetup(ctx, principal, body, setupDeps, agentDeps));
+  });
+
+  api.post("/setup/skip", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await skipSetup(ctx, principal, setupDeps, agentDeps));
   });
 
   api.get("/agents", async (c) => {
