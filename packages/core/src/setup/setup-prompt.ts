@@ -34,6 +34,7 @@ import {
   type SetupHarness,
   type SetupHarnessEntry,
 } from "./harness";
+import { withoutTrailingSlashes } from "./setup.rules";
 
 /**
  * The harnesses a setup prompt is written for: Setup's own list (`harness.ts`), whose ids, labels,
@@ -268,13 +269,6 @@ function originOf(url: string): string {
   } catch {
     return url;
   }
-}
-
-/** Trims trailing slashes by index, not by a regular expression over caller input (CodeQL's polynomial-regex rule). */
-function withoutTrailingSlashes(url: string): string {
-  let end = url.length;
-  while (end > 0 && url.charCodeAt(end - 1) === 47) end -= 1;
-  return url.slice(0, end);
 }
 
 /**

@@ -127,6 +127,8 @@ export {
   FROM_CARD_CLOSE_MS,
   FROM_CARD_PARAM,
   openedFromCard,
+  type SetupCompletedMessage,
+  setupCompletedMessage,
 } from "./connection/card.rules";
 export { type ConnectionDeps, createConnectionDeps } from "./connection/connection.deps";
 export {
@@ -386,16 +388,20 @@ export {
   type AgentHarnessFields,
   currentSetupStep,
   isAwaitingHarness,
+  SETUP_AGENT_PARAM,
   SETUP_PATH,
   SETUP_STEPS,
   type SetupClocks,
   type SetupStep,
   type SetupWorkCounts,
+  setupUrl,
+  shouldOfferSetup,
   shouldShowSetup,
 } from "./setup/setup.rules";
 export {
   connectingAgentOf,
   finishSetup,
+  getSetupRecord,
   getSetupState,
   moveSetupBuild,
   moveSetupConnect,

@@ -30,13 +30,14 @@ import type { SetupFinish, SetupStateData } from "@/lib/setup-queries";
  *
  * The finish is the one step with a second prop: the finish's answer, held by the page, since a
  * token issued there must stay on screen after the record reads `completed` (`finish-step.tsx`).
- * Once the person finished on this page, the finish step stays whatever the state says.
+ * Once the person finished on this page, the finish step stays whatever the state says. The harness
+ * step is the other: it takes the agent the page's URL names (`/setup?agent=<id>`, GRA-210), so a
+ * Setup opened from `find_tool`'s offer starts as that agent.
  */
 const STEPS: Record<
-  Exclude<SetupStep, "finish">,
+  Exclude<SetupStep, "finish" | "harness">,
   (props: { state: SetupStateData }) => React.ReactNode
 > = {
-  harness: HarnessStep,
   vendor: VendorStep,
   connect: ConnectStep,
   goal: GoalStep,
@@ -49,14 +50,18 @@ export function SetupStepView({
   state,
   finished,
   onFinished,
+  agentId,
 }: {
   state: SetupStateData;
   finished: SetupFinish | null;
   onFinished: (answer: SetupFinish) => void;
+  /** The agent the page's URL names, which the harness step starts as when it is the person's. */
+  agentId?: string;
 }) {
   if (state.step === "finish" || finished) {
     return <FinishStep state={state} finished={finished} onFinished={onFinished} />;
   }
+  if (state.step === "harness") return <HarnessStep state={state} agentId={agentId} />;
   const Step = STEPS[state.step];
   return <Step state={state} />;
 }

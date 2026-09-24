@@ -316,6 +316,13 @@ body {
   font-size: 13px;
 }
 
+/* An address the person copies when the host refused to open a window (the Setup card, GRA-210). */
+.ask-address {
+  margin: 0;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 /* A labelled control with a sentence beside it — the console's `Item` with a checkbox. */
 .ask-choice {
   display: flex;

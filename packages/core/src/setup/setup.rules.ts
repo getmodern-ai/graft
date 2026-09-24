@@ -49,6 +49,49 @@ export function shouldShowSetup(setup: SetupClocks | null, work: SetupWorkCounts
   return true;
 }
 
+/**
+ * The query that names the agent a Setup page opened from outside the console should run as
+ * (GRA-210): `find_tool`'s offer builds it (`setupUrl`) and the console's `/setup` reads it, so
+ * Setup adopts that agent even when the person has several.
+ */
+export const SETUP_AGENT_PARAM = "agent";
+
+/**
+ * A URL with its trailing slashes trimmed, by index rather than by a regular expression over
+ * caller input: `/\/+$/` backtracks polynomially on a long run of slashes (CodeQL's
+ * polynomial-regex rule, on #167). `setupUrl` and `setup-prompt.ts` read it.
+ */
+export function withoutTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47) end -= 1;
+  return url.slice(0, end);
+}
+
+/**
+ * The console URL of the Setup page for one agent: `<GRAFT_CONSOLE_URL>/setup?agent=<id>`, the
+ * base's own path kept and a trailing slash not doubled, as `handoffUrl` builds a handoff's.
+ */
+export function setupUrl(consoleUrl: string, agentId: string): string {
+  const base = withoutTrailingSlashes(consoleUrl);
+  const query = new URLSearchParams({ [SETUP_AGENT_PARAM]: agentId });
+  return `${base}${SETUP_PATH}?${query}`;
+}
+
+/**
+ * Whether `find_tool` offers Setup in the chat (GRA-210; GRA-202, *The in-chat door*): while the
+ * person has no connection at all, revoked ones included as the show rule counts them, and their
+ * Setup is neither completed nor skipped. A Setup under way is still offered, since the page
+ * resumes where the record stands. One connection of any kind ends the offer: the agent then has
+ * a vendor to ask for, and the playbook takes over.
+ */
+export function shouldOfferSetup(
+  setup: Pick<SetupClocks, "completedAt" | "skippedAt"> | null,
+  work: Pick<SetupWorkCounts, "connections">,
+): boolean {
+  if (setup?.completedAt || setup?.skippedAt) return false;
+  return work.connections === 0;
+}
+
 /** The fields of an agent (`AgentOutput`, or its wire form) the predicate reads. */
 export type AgentHarnessFields = {
   revokedAt: At;

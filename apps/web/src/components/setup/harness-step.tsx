@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { readScopeMode, SCOPE_MODE_ITEMS } from "@/lib/scope-mode";
+import { agentToAdopt } from "@/lib/setup-page";
 import { type SetupStateData, startSetup } from "@/lib/setup-queries";
 import { agentStatusChip } from "@/lib/status-chips";
 
@@ -30,12 +31,13 @@ type Agent = SetupStateData["activeAgents"][number];
  * starts as it without asking (a person who consented from a chat product already has the agent
  * the tool should land in); with several, the person picks which. The server decides the same
  * three ways (`startSetup` in `@graft/core`) and refuses a start that does not fit, so this step
- * only chooses which form to draw.
+ * only chooses which form to draw. A page opened from `find_tool`'s offer names its agent
+ * (`agentId`, GRA-210): among several, Setup starts as that one without asking.
  */
-export function HarnessStep({ state }: { state: SetupStateData }) {
-  const [only, ...rest] = state.activeAgents;
-  if (only && rest.length === 0) return <AdoptOnlyAgent agent={only} />;
-  if (only) return <ChooseAgent agents={state.activeAgents} />;
+export function HarnessStep({ state, agentId }: { state: SetupStateData; agentId?: string }) {
+  const adopt = agentToAdopt(state.activeAgents, agentId);
+  if (adopt) return <AdoptOnlyAgent agent={adopt} />;
+  if (state.activeAgents.length > 0) return <ChooseAgent agents={state.activeAgents} />;
   return <ChooseHarness />;
 }
 
@@ -241,7 +243,8 @@ function ChooseAgent({ agents }: { agents: readonly Agent[] }) {
 }
 
 /**
- * One agent: Setup starts as it at once, so the person lands on the vendor step. The start is sent
+ * One agent, or the one the page's URL names: Setup starts as it at once, so the person lands on
+ * the vendor step. The start is sent
  * once per mount (the ref holds React's development double effect to one request); a refused start
  * has toasted its sentence, and the button sends it again.
  */

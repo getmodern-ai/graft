@@ -4,6 +4,8 @@ import {
   ASK_STATUS_POLL_MS,
   type AskCard,
   type AskStatusOutcome,
+  type CardData,
+  type SetupCard,
   type StartLinkInput,
   type StartLinkOutcome,
   withFromCard,
@@ -39,6 +41,11 @@ import {
  * forward: the console button appears under it, since the handoff URL is the floor. The card
  * never writes into the chat: the person's click is the answer, and what the agent says next is
  * the agent's.
+ *
+ * A seventh shape is no ask (GRA-210): **Setup**, `find_tool`'s offer for an agent whose person
+ * has no connection yet (`renderSetup`). One button, *Set up your first tool*, opens the console's
+ * Setup page with `from=card`; the page closes itself when the person finishes, and the card polls
+ * nothing, since no pending action stands behind it. Its sentence says to ask again once done.
  */
 
 export type CardHandlers = {
@@ -545,4 +552,106 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
   buttons.push(decline, connect);
   actions.append(decline, connect);
   return root;
+}
+
+/** The Setup card's words (GRA-210): the eyebrow, the title, and the button, which says the same. */
+export const SETUP_EYEBROW = "Setup";
+export const SETUP_TITLE = "Set up your first tool";
+export const SETUP_BUTTON = "Set up your first tool";
+
+/** What the Setup card says under its title: what Setup does, and where it happens. */
+export function setupDescriptionOf(card: SetupCard): string {
+  return `${card.agentName} has no vendor connected yet. Setup, in Graft's console, connects one and has Graft acquire a first tool for this agent in a few clicks. It opens in a new window, and nothing is typed in the chat.`;
+}
+
+/** The sentence the Setup card always carries: there is nothing to wait for here, so ask again. */
+export function setupAskAgainOf(card: SetupCard): string {
+  return `Once Setup is done, its window closes itself. Ask again here, and ${card.agentName} finds the new tool.`;
+}
+
+/** What the Setup card says once the window is open. */
+export const SETUP_OPENED_SENTENCE =
+  "Setup is open in the window that opened. Ask again here once you have finished.";
+
+/**
+ * What the Setup card says when the host refuses to open the window, above Setup's address drawn
+ * on the card to copy. The agent was told not to send a link while the card is shown, so the card
+ * carries the address itself, and the agent gives the same one when asked
+ * (`@graft/mcp`'s `setupOfferMessage`).
+ */
+export function setupOpenRefusedOf(card: SetupCard, reason: string): string {
+  return `The chat could not open the window (${reason}). Setup opens at this address in a browser, and ${card.agentName} can give it to you too:`;
+}
+
+/**
+ * Render the Setup offer (GRA-210) into a fresh element: the title, the sentence, the agent, the
+ * ask-again sentence and one primary button that opens the Setup page with `from=card` through the
+ * host's link opener. Nothing is answered and nothing is polled; the button stays enabled after a
+ * click, so a window the person closed early can be opened again. Where the host refuses to open
+ * it, the card shows Setup's address to copy (`setupOpenRefusedOf`).
+ */
+export function renderSetup(
+  card: SetupCard,
+  handlers: Pick<CardHandlers, "openLink">,
+  doc: Document,
+): HTMLElement {
+  const root = el(doc, "section", "ask");
+  root.dataset.kind = card.kind;
+  root.dataset.answerable = "false";
+  root.setAttribute("aria-label", SETUP_TITLE);
+
+  const header = el(doc, "header");
+  header.append(
+    el(doc, "p", "ask-eyebrow", SETUP_EYEBROW),
+    el(doc, "h1", "ask-title", SETUP_TITLE),
+    el(doc, "p", "ask-description", setupDescriptionOf(card)),
+  );
+  root.append(header);
+
+  const facts = el(doc, "dl", "ask-facts");
+  const row = el(doc, "div");
+  row.append(el(doc, "dt", undefined, "Agent"), el(doc, "dd", undefined, card.agentName));
+  facts.append(row);
+  root.append(facts, el(doc, "p", "ask-note", setupAskAgainOf(card)));
+
+  const actions = el(doc, "div", "ask-actions");
+  const status = el(doc, "p", "ask-outcome");
+  status.setAttribute("role", "status");
+  status.hidden = true;
+  const note = (sentence: string, tone: "waiting" | "refused") => {
+    status.textContent = sentence;
+    status.dataset.tone = tone;
+    status.hidden = false;
+    if (!status.isConnected) actions.after(status);
+  };
+  // The address a browser opens Setup at, shown only when the host refused the window: without
+  // `from=card`, since that page has no card to tell and should not close itself.
+  const address = el(doc, "p", "ask-mono ask-address", card.url);
+  address.hidden = true;
+
+  const open = button(doc, SETUP_BUTTON, "primary", () => {
+    void (async () => {
+      try {
+        await handlers.openLink(withFromCard(card.url));
+      } catch (error) {
+        note(
+          setupOpenRefusedOf(card, error instanceof Error ? error.message : String(error)),
+          "refused",
+        );
+        address.hidden = false;
+        if (!address.isConnected) status.after(address);
+        return;
+      }
+      address.hidden = true;
+      note(SETUP_OPENED_SENTENCE, "waiting");
+    })();
+  });
+  actions.append(open);
+  root.append(actions);
+  return root;
+}
+
+/** Render whatever the result carried: the Setup offer, or an ask (`main.ts`'s one call). */
+export function renderCard(card: CardData, handlers: CardHandlers, doc: Document): HTMLElement {
+  return card.kind === "setup" ? renderSetup(card, handlers, doc) : renderAsk(card, handlers, doc);
 }
