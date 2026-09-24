@@ -478,6 +478,8 @@ const app = createServer({
     notifier: mcp.notifier,
     // Setup's connect step opens the agent's own ask through `request_connection`'s routing (GRA-206).
     connectionRouting: mcp,
+    // Setup's Build shares `acquire`'s model, job record and runner (GRA-207).
+    acquire: mcp,
   },
   mcpOAuth,
   // The console's build, served from the same origin as the API (`console.ts`); absent, the API is

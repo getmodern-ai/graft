@@ -212,7 +212,7 @@ function ChooseAgent({ agents }: { agents: readonly Agent[] }) {
     >
       <SetupStepHeader
         title="Which agent should Setup use?"
-        description="Setup connects a vendor and builds a first tool for one of your agents. Its harness finds the tool there."
+        description="Setup connects a vendor and has Graft acquire a first tool for one of your agents. Its harness finds the tool there."
       />
       <SetupChoice
         name="setup-agent"
@@ -273,7 +273,7 @@ function AdoptOnlyAgent({ agent }: { agent: Agent }) {
     <div className="flex flex-col gap-6">
       <SetupStepHeader
         title={`Setup runs as ${agent.name}`}
-        description="The tool Setup builds lands in this agent's working set."
+        description="The tool Setup acquires lands in this agent's working set."
       />
       <Loader />
     </div>

@@ -1,5 +1,11 @@
 import type { SetupOutput, SetupState, SetupVendorOption } from "@graft/core";
-import type { SetupConnectBody, SetupStartBody } from "@graft/server/api";
+import type { AcquireStatus } from "@graft/mcp/acquire/shapes";
+import type {
+  SetupBuildBody,
+  SetupConnectBody,
+  SetupGoalContext,
+  SetupStartBody,
+} from "@graft/server/api";
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
@@ -18,6 +24,7 @@ export type SetupStateData = Jsonified<SetupState>;
 export const setupKeys = {
   current: ["setup"] as const,
   vendors: ["setup", "vendors"] as const,
+  goal: ["setup", "goal"] as const,
 };
 
 export const setupQuery = queryOptions({
@@ -61,4 +68,50 @@ export const setupVendorsQuery = queryOptions({
 /** A starter by its id, or the connection *Another vendor*'s form made (`SetupConnectBody`). */
 export function connectSetup(body: SetupConnectBody) {
   return api<SetupStateData>("/setup/connect", { method: "POST", body });
+}
+
+export type SetupGoal = Jsonified<SetupGoalContext>;
+
+/**
+ * What the goal step draws (`GET /api/setup/goal`): the connection, the starter's curated goal
+ * (empty for another vendor), and whether Build is available here at all, with the sentence
+ * naming what the operator sets when it is not. Under `["setup"]`, so it is refetched with the
+ * state.
+ */
+export const setupGoalQuery = queryOptions({
+  queryKey: setupKeys.goal,
+  queryFn: () => api<SetupGoal>("/setup/goal"),
+});
+
+/**
+ * The goal the person last pressed Build with, held in the cache alone (never fetched), so *Change
+ * the goal* returns to what they typed rather than to the curated one. A reload forgets it, and
+ * the curated goal is what the field then shows.
+ */
+export const setupGoalDraftKey = ["setup-goal-draft"] as const;
+
+/** Build: the build approval, the job, and the record on the building step (`SetupBuildBody`). */
+export function buildSetup(body: SetupBuildBody) {
+  return api<SetupStateData>("/setup/build", { method: "POST", body });
+}
+
+/** *Change the goal*, once the job failed: back to the goal step. */
+export function retrySetupGoal() {
+  return api<SetupStateData>("/setup/goal", { method: "POST" });
+}
+
+/** *Continue while it runs*: on to the finish step with the job still running. */
+export function continueSetupBuild() {
+  return api<SetupStateData>("/setup/continue", { method: "POST" });
+}
+
+/** One acquire job as the agent's job route answers it: `acquire_status`'s shape. */
+export type AcquireJobStatus = Jsonified<AcquireStatus>;
+
+/** `GET /api/agents/:id/acquire-jobs/:jobId`, read at once; the building step polls it. */
+export function acquireJobQuery(agentId: string, jobId: string) {
+  return queryOptions({
+    queryKey: ["agents", agentId, "acquire-jobs", jobId] as const,
+    queryFn: () => api<AcquireJobStatus>(`/agents/${agentId}/acquire-jobs/${jobId}`),
+  });
 }

@@ -9,7 +9,9 @@ import type { SetupDeps } from "./setup.deps";
 import {
   connectingAgentOf,
   getSetupState,
+  moveSetupBuild,
   moveSetupConnect,
+  type SetupBuildMove,
   skipSetup,
   startSetup,
 } from "./setup.service";
@@ -439,5 +441,67 @@ describe("the connect step's moves", () => {
     const fresh = world({});
     const state = await getSetupState(ctx, PRINCIPAL, fresh.deps, fresh.agentDeps);
     expect(() => connectingAgentOf(state)).toThrow("Setup has not started");
+  });
+});
+
+describe("the building step's moves", () => {
+  /** A record on `building` for job `job_1`, as `startSetupBuild` leaves it. */
+  async function onBuilding() {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness: "claude" }, w.deps, w.agentDeps);
+    await w.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, {
+      step: "building",
+      connectionId: "conn_1",
+      acquireJobId: "job_1",
+    });
+    const move = (m: SetupBuildMove) => moveSetupBuild(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
+    return { ...w, move };
+  }
+
+  it("names the tool and moves to the result once the job it waits on passed", async () => {
+    const w = await onBuilding();
+    // A read about another job is stale and changes nothing.
+    await w.move({ kind: "built", acquireJobId: "job_0", toolId: "tool_0" });
+    expect(w.record()).toMatchObject({ step: "building", toolId: null });
+    const built = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(built.moved).toBe(true);
+    expect(built.state.setup).toMatchObject({
+      step: "result",
+      toolId: "tool_1",
+      acquireJobId: "job_1",
+    });
+    // A second read of the same pass is a no-op, and says so, so the step is counted once.
+    const again = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(again).toMatchObject({ moved: false, state: { step: "result" } });
+    expect(w.record()).toMatchObject({ step: "result" });
+  });
+
+  it("continues to the finish while it runs, and names the tool there when it lands", async () => {
+    const w = await onBuilding();
+    const finish = await w.move({ kind: "continue", acquireJobId: "job_1" });
+    expect(finish.state.setup).toMatchObject({
+      step: "finish",
+      acquireJobId: "job_1",
+      toolId: null,
+    });
+    const landed = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(landed).toMatchObject({ moved: true, state: { setup: { toolId: "tool_1" } } });
+    expect(landed.state.setup).toMatchObject({ step: "finish", toolId: "tool_1" });
+  });
+
+  it("goes back to the goal with the job cleared on a retry, and refuses a stale one", async () => {
+    const w = await onBuilding();
+    await expect(w.move({ kind: "retry", acquireJobId: "job_0" })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    const back = await w.move({ kind: "retry", acquireJobId: "job_1" });
+    expect(back.state.setup).toMatchObject({
+      step: "goal",
+      acquireJobId: null,
+      connectionId: "conn_1",
+    });
+    await expect(w.move({ kind: "continue", acquireJobId: "job_1" })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
   });
 });

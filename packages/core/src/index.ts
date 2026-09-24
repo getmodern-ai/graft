@@ -395,15 +395,20 @@ export {
 export {
   connectingAgentOf,
   getSetupState,
+  moveSetupBuild,
   moveSetupConnect,
+  type SetupBuildDeps,
+  type SetupBuildMove,
   type SetupConnectMove,
   type SetupMoveResult,
   type SetupOutput,
   type SetupState,
   type StartSetupAgentInput,
+  type StartSetupBuildInput,
   type StartSetupInput,
   skipSetup,
   startSetup,
+  startSetupBuild,
   toSetupOutput,
 } from "./setup/setup.service";
 export {

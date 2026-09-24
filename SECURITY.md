@@ -22,7 +22,10 @@ where a decision is theirs. Anything that breaks either is in scope:
 - The **vault**: a stored credential that becomes readable, or a decrypt outside the proxy binding
   and the OAuth callback. The **sandbox**: egress that is not the proxy, or escape.
 - The **approval and ask flows**: an approval or a connection confirmation that something other
-  than the person can answer, or a handoff URL that works for someone it was not signed for.
+  than the person can answer, or a handoff URL that works for someone it was not signed for. The
+  console's session also records a build approval with no pending action, when the person presses
+  Setup's Build for their agent and connection (ADR 0024); one recorded for an agent or connection
+  that is not theirs, or for a connection the agent was not given, is in scope.
 - The **MCP OAuth server**: a token issued to the wrong client or agent, a code or refresh token
   replayed, a consent decided without a session. The **console**: a cross-origin state change.
 
@@ -34,6 +37,6 @@ model writes, which the check, the dry run and the approvals exist to bound.
 
 `docs/adr/`: 0004 (who holds the pen), 0006 (the console is the channel to the human), 0008 (reads
 pass, writes ask once), 0010 (an SDK reaches a vendor through the proxy or not at all), 0013
-(packages install at publish or never), 0018 (MCP clients authenticate with OAuth). README
-summarises them under "How it is safe". **No third-party audit has been done**: the design is
-ours, reviewed by us.
+(packages install at publish or never), 0018 (MCP clients authenticate with OAuth), 0024 (Setup
+runs as the person's first agent). README summarises them under "How it is safe". **No
+third-party audit has been done**: the design is ours, reviewed by us.

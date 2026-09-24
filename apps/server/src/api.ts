@@ -5,8 +5,10 @@ import {
   answerPendingAction,
   type ConnectionDeps,
   createAgent,
+  defaultAcquireJobDeps,
   defaultSetupDeps,
   deletePersonModelKey,
+  GOAL_MAX_LENGTH,
   getAgent,
   getAgentScope,
   getConnection,
@@ -99,6 +101,16 @@ import {
   signInDoorKey,
 } from "./rate-limit";
 import {
+  buildSetupTool,
+  continueSetupBuild,
+  learnSetupBuild,
+  readAgentAcquireJob,
+  retrySetupGoal,
+  type SetupAcquireDeps,
+  type SetupBuildRouteDeps,
+  setupGoalContext,
+} from "./setup-build";
+import {
   connectSetupVendor,
   learnSetupConnection,
   listSetupVendors,
@@ -110,6 +122,8 @@ import {
   SETUP_PROMPT_PATH,
   setupPromptCors,
 } from "./setup-prompt";
+
+export type { SetupBuildAvailability, SetupGoalContext } from "./setup-build";
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -239,6 +253,14 @@ export type ApiOptions = {
    */
   connectionRouting?: ConnectionRoutingDeps;
   /**
+   * The seams Setup's build shares with `acquire` (GRA-207; ADR 0024; `setup-build.ts`): the model,
+   * whose absence is the door's `acquire_unconfigured`; the job's record, which the job route reads
+   * too; and the runner, woken once a job is queued. `index.ts` binds the MCP endpoint's `McpDeps`.
+   * Absent, Build is unavailable with the unconfigured sentence and the job route reads the
+   * database's jobs (`defaultAcquireJobDeps`).
+   */
+  acquire?: SetupAcquireDeps;
+  /**
    * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two doors under `/api`:
    * `sign_in` over Better Auth's writes and `api` over this app's mutations. `createServer` hands
    * it down; absent, `NO_RATE_LIMITING` and every door open, which is the default in both forms.
@@ -332,6 +354,11 @@ const setupConnectBody = z.union([
 ]);
 /** The connect's wire shape, as the console posts it. */
 export type SetupConnectBody = z.input<typeof setupConnectBody>;
+
+/** `POST /setup/build` (GRA-207): the goal as the person accepted or typed it, `acquire`'s bound. */
+const setupBuildBody = z.strictObject({ goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH) });
+/** The build's wire shape, as the console posts it. */
+export type SetupBuildBody = z.input<typeof setupBuildBody>;
 
 /**
  * `PUT /agents/:id/scope`: every connection, or a list — `SetAgentScopeInput` in `@graft/core`
@@ -861,24 +888,79 @@ export function createApi(options: ApiOptions): Hono {
       notifier: options.notifier,
     };
   };
-  const countConnectStep = (principal: Principal, state: SetupState) =>
+
+  /**
+   * The goal, build and building steps (GRA-207; `setup-build.ts`). A read learns the tool from the
+   * job the record waits on, as it learns the connection from the ask; the building step's
+   * completion is counted where it is learned, since that is a read, and the goal step's is
+   * `POST /setup/build`'s row in the mutation table.
+   */
+  const acquireJobDeps = options.acquire?.acquireJob ?? defaultAcquireJobDeps;
+  const setupBuildDeps: SetupBuildRouteDeps = {
+    setup: setupDeps,
+    agent: agentDeps,
+    connection: connectionDeps,
+    approval: approvalDeps,
+    acquireJob: acquireJobDeps,
+    // Read at call time: `index.ts` binds the runner onto the MCP deps after this is built.
+    get model() {
+      return options.acquire?.model ?? null;
+    },
+    get acquireRunner() {
+      return options.acquire?.acquireRunner;
+    },
+  };
+  const countStep = (principal: Principal, state: SetupState, step: "connect" | "building") =>
     analytics.capture({
       distinctId: principal.personId,
       event: "setup_step_completed",
-      properties: { via: "console", step: "connect", harness: state.setup?.harness ?? null },
+      properties: { via: "console", step, harness: state.setup?.harness ?? null },
     });
 
   api.get("/setup", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const { state, connected } = await learnSetupConnection(ctx, principal, {
+    const { state: afterConnect, connected } = await learnSetupConnection(ctx, principal, {
       setup: setupDeps,
       agent: agentDeps,
       connection: connectionDeps,
       pendingAction: pendingActionDeps,
       notifier: options.notifier,
     });
-    if (connected) countConnectStep(principal, state);
+    if (connected) countStep(principal, afterConnect, "connect");
+    const learnsBuild =
+      afterConnect.step === "building" ||
+      (afterConnect.step === "finish" && afterConnect.setup?.toolId === null);
+    if (!learnsBuild) return c.json(afterConnect);
+    const { state, built } = await learnSetupBuild(ctx, principal, setupBuildDeps);
+    if (built) countStep(principal, state, "building");
     return c.json(state);
+  });
+
+  /** What the goal step draws (`SetupGoalContext`): the connection, the curated goal, whether Build is available. */
+  api.get("/setup/goal", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(await setupGoalContext(ctx, principal, setupBuildDeps));
+  });
+
+  /** Build: the build approval, the job, the record on `building`, and the runner woken. */
+  api.post("/setup/build", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupBuildBody);
+    return c.json(await buildSetupTool(ctx, principal, body, setupBuildDeps));
+  });
+
+  /** *Change the goal*, once the job failed: back to the goal step, where Build starts a new job. */
+  api.post("/setup/goal", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await retrySetupGoal(ctx, principal, setupBuildDeps));
+  });
+
+  /** *Continue while it runs*: on to the finish step with the job still running. */
+  api.post("/setup/continue", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await continueSetupBuild(ctx, principal, setupBuildDeps));
   });
 
   /** The vendor step's list for this deployment (`listSetupVendors`): each starter, its provider and what connecting takes. */
@@ -891,7 +973,7 @@ export function createApi(options: ApiOptions): Hono {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, setupConnectBody);
     const { state, connected } = await connectSetupVendor(ctx, principal, body, setupConnectDeps());
-    if (connected) countConnectStep(principal, state);
+    if (connected) countStep(principal, state, "connect");
     return c.json(state);
   });
 
@@ -948,6 +1030,25 @@ export function createApi(options: ApiOptions): Hono {
       "Agent not found, or already revoked",
     );
     return c.json({ agent });
+  });
+
+  /**
+   * One `acquire` job of one of the person's agents, in the shape `acquire_status` answers
+   * (`@graft/mcp`'s `AcquireStatus`: status, progress lines, attempts, and the result once it
+   * settled), read at once and never held (GRA-207). Setup's building step polls it; the route is
+   * the agent's, not Setup's, so a later screen reads any job the same way. Another person's agent,
+   * or a job of another agent, is not found.
+   */
+  api.get("/agents/:id/acquire-jobs/:jobId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(
+      await readAgentAcquireJob(
+        ctx,
+        principal,
+        { agentId: c.req.param("id"), jobId: c.req.param("jobId") },
+        { agent: agentDeps, acquireJob: acquireJobDeps },
+      ),
+    );
   });
 
   /**

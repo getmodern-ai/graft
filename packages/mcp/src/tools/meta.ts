@@ -17,7 +17,7 @@ import { AUTH_SCHEMES } from "@graft/proxy/types";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { awaitJobNews, STATUS_WAIT_MS } from "../acquire/await";
-import { acquireStatusOf } from "../acquire/shapes";
+import { ACQUIRE_UNCONFIGURED, acquireConfigured, acquireStatusOf } from "../acquire/shapes";
 import { requireBuildApproval } from "../approval";
 import { ASK_CARD_TOOL_META } from "../ask-card";
 import { BLOB_RESULT_FACT } from "../blobs";
@@ -422,9 +422,9 @@ const acquire: MetaTool = {
         `Connection ${connectionId} is not in this agent's scope, so nothing can be authored against it. request_connection proposes a new connection for the person to confirm; an existing one is added to the scope in the console.`,
       );
     }
-    if (!deps.model) {
+    if (!acquireConfigured(deps)) {
       return toolRefusal(
-        "acquire_unconfigured",
+        ACQUIRE_UNCONFIGURED,
         "This deployment has no model configured, so Graft cannot author a tool. Say so rather than retrying; the advanced tools (write_file, check_tool, publish_tool) still let you drive the loop yourself.",
       );
     }

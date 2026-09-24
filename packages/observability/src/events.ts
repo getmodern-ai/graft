@@ -40,7 +40,8 @@ export type AnalyticsEvent =
   // `harness`: the harness picked, or null when Setup adopted an agent that already existed or was
   // skipped before a harness was picked. `setup_step_completed` (GRA-206) carries `step` too, the
   // step completed: `vendor` when a vendor is chosen, `connect` when the record learns the
-  // connection. GRA-208 adds `setup_completed`.
+  // connection, `goal` when Build is pressed and `building` when the record learns the tool the
+  // job acquired (GRA-207). GRA-208 adds `setup_completed`.
   | "setup_started"
   | "setup_step_completed"
   | "setup_skipped"
