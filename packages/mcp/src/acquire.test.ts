@@ -269,6 +269,13 @@ beforeAll(async () => {
     respond: (request) => {
       const url = new URL(request.url);
       if (url.pathname === "/v2/items") return Response.json(VENDOR_BODY);
+      // The connection's second host, reached by name (GRA-213): Open-Meteo's geocoding API beside
+      // its forecast API, as a host the module knows when it is written.
+      if (url.host === "files.demo.example" && url.pathname === "/v1/search") {
+        return Response.json({
+          results: [{ name: url.searchParams.get("name"), latitude: 52.52 }],
+        });
+      }
       // A vendor that points elsewhere, as Open-Meteo does for a keyed request (GRA-65): once to a
       // host the connection declares, once to one it does not. The real proxy hands both back.
       if (url.pathname === "/v2/moved-home") {
@@ -588,7 +595,7 @@ describe("a job that passes first time", () => {
       },
       write(
         "docs",
-        draft({ proofReads: ["/items?limit=1"] }),
+        draft({ proofReads: [{ path: "/items?limit=1" }] }),
         "Drafted list-items around GET /items.",
       ),
       {
@@ -758,7 +765,7 @@ describe("the toolbox first (GRA-154)", () => {
   /** A goal a live tool of the vendor already covers is answered, not rebuilt; the agent may insist. */
   it("answers similar_tools_exist with the tools and their schemas, opens no job, and builds with ignoreExisting", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     const a = await connect(TOKEN_A);
@@ -807,12 +814,12 @@ describe("a proof-only answer (GRA-153)", () => {
   /** The model proves the second path with the id the first read returned — a turn, not an attempt. */
   it("runs the added reads against the same draft, shows every read so far, and publishes on proceed with one attempt", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       {
         on: "proof",
         answer: {
           kind: "prove",
-          proofReads: ["/items?limit=2"],
+          proofReads: [{ path: "/items?limit=2" }],
           note: "The list answered; one more page.",
         },
       },
@@ -852,13 +859,17 @@ describe("a proof-only answer (GRA-153)", () => {
       write(
         "goal",
         draft({
-          proofReads: ["/items?limit=1", "/items?limit=2", "/items?limit=3", "/items?limit=4"],
+          proofReads: [1, 2, 3, 4].map((n) => ({ path: `/items?limit=${n}` })),
         }),
         "Drafted list-items.",
       ),
       {
         on: "proof",
-        answer: { kind: "prove", proofReads: ["/items/itm_1", "/items/itm_2"], note: "Two more." },
+        answer: {
+          kind: "prove",
+          proofReads: [{ path: "/items/itm_1" }, { path: "/items/itm_2" }],
+          note: "Two more.",
+        },
       },
       { on: "proof", answer: { kind: "proceed", note: "Enough was proven." } },
     ]);
@@ -876,6 +887,157 @@ describe("a proof-only answer (GRA-153)", () => {
       expect(refused && refused.kind === "proof" ? refused.refused : null).toContain(
         "named 2 more read(s), and this attempt has 1 of 5 left",
       );
+    } finally {
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+});
+
+/**
+ * GRA-213: a connection's second declared host, known when the module is written (Open-Meteo's
+ * geocoding API beside its forecast API), has one sanctioned form for a module and a proof read
+ * alike: a path and the `host`, sent through the proxy's host route. Here the demo connection's
+ * `files.demo.example` plays the geocoding host, behind the real proxy and the real runner.
+ */
+describe("a connection's second host, named (GRA-213)", () => {
+  const SEARCH_SCHEMA = {
+    type: "object",
+    properties: { name: { type: "string" } },
+    required: ["name"],
+    additionalProperties: false,
+  };
+  const SEARCH_MODULE = [
+    "export default async (input: Input, ctx: Context) => {",
+    '  const res = await ctx.fetch("/v1/search?name=" + String(input.name), { host: "files.demo.example" });',
+    `  if (!res.ok) throw new Error(\`GET /v1/search ${D}{res.status}: ${D}{await res.text()}\`);`,
+    "  const { results } = (await res.json()) as { results: { name: string; latitude: number }[] };",
+    "  return { name: results[0]?.name ?? null, latitude: results[0]?.latitude ?? null };",
+    "};",
+    "",
+  ].join("\n");
+  const searchDraft = (proofReads: ModuleDraft["proofReads"]): ModuleDraft => ({
+    name: "search-places",
+    description: "Finds a place by name in Demo Orders' geocoding API.",
+    inputSchema: SEARCH_SCHEMA,
+    files: [{ path: "index.ts", content: SEARCH_MODULE }],
+    testInput: { name: "Berlin" },
+    proofReads,
+  });
+
+  it("checks a module reading the second host through { host }, proves the read there, and passes the dry run on it", async () => {
+    deps.checkModule = checkModule;
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        searchDraft([{ path: "/v1/search?name=Berlin", host: "files.demo.example" }]),
+        "Drafted search-places on the geocoding host.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "The geocoding read answered." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    const eventsBefore = vendor.events.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Find a place by name",
+        ignoreExisting: true,
+      });
+      expect(status.status).toBe("succeeded");
+      expect(status.result).toMatchObject({
+        tool: authoredToolName("demo", "search-places"),
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      });
+      // Every request, the proof read's and the dry run's, reached the second host with the
+      // credential the proxy injected, and none reached the primary.
+      const sent = vendor.requests.slice(requestsBefore);
+      expect(sent.map((r) => r.url)).toEqual([
+        "https://files.demo.example/v1/search?name=Berlin",
+        "https://files.demo.example/v1/search?name=Berlin",
+      ]);
+      expect(sent.every((r) => r.headers.get("x-demo-key") === API_KEY)).toBe(true);
+      expect(vendor.events.slice(eventsBefore).map((e) => e.host)).toEqual([
+        "files.demo.example",
+        "files.demo.example",
+      ]);
+      // The model was shown the read on its host, and the trace says where it went.
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      expect(proof?.kind === "proof" ? proof.reads : null).toEqual([
+        expect.objectContaining({
+          path: "/v1/search?name=Berlin",
+          host: "files.demo.example",
+          ok: true,
+          status: 200,
+        }),
+      ]);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(traces.filter((row) => row.kind === "proof").map((row) => row.text)).toEqual([
+        "Proof read GET /v1/search?name=Berlin on files.demo.example: 200.",
+      ]);
+      // The dry run's report names the host, as the host route's reads are recorded (query dropped).
+      const version = store.versions.get(attempts[0]?.versionId ?? "");
+      expect(version?.dryRunOutcome).toMatchObject({
+        passed: true,
+        reads: [{ method: "GET", path: "https://files.demo.example/v1/search?…", status: 200 }],
+        moduleResult: { name: "Berlin", latitude: 52.52 },
+      });
+    } finally {
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+      await runner.idle();
+    }
+  }, 60_000);
+
+  it("refuses a proof read naming a host the connection does not declare, with a sentence and no request, and keeps the draft unpublished", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        searchDraft([
+          { path: "/items?limit=1" },
+          { path: "/v1/search?name=Berlin", host: "geocoding.other.example" },
+        ]),
+        "Drafted search-places.",
+      ),
+      { on: "proof", answer: { kind: "give_up", reason: "The host is not the connection's." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Find a place by name on another host",
+        ignoreExisting: true,
+      });
+      expect(status.status).toBe("failed");
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const reads = proof?.kind === "proof" ? proof.reads : [];
+      expect(reads.map((r) => [r.path, r.host, r.ok, r.status])).toEqual([
+        ["/items?limit=1", null, true, 200],
+        ["/v1/search?name=Berlin", "geocoding.other.example", false, null],
+      ]);
+      expect(reads[1]?.error).toBe(
+        "The proof read names geocoding.other.example, which this connection does not declare (it declares api.demo.example, files.demo.example), so it was not run. " +
+          "A proof read's host is one of those, the same host the module passes as ctx.fetch(path, { host }); name one of them, or null for the primary host. " +
+          "If the tool needs geocoding.other.example, answer give_up with a reason that names it, so the person can connect the vendor with that host in its set.",
+      );
+      // Only the declared read left; nothing was sent for the other host.
+      expect(vendor.requests.slice(requestsBefore).map((r) => new URL(r.url).host)).toEqual([
+        "api.demo.example",
+      ]);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.versionId])).toEqual([[1, null]]);
+      expect(
+        traces.some(
+          (row) =>
+            row.kind === "proof" &&
+            row.text.startsWith(
+              "Proof read GET /v1/search?name=Berlin on geocoding.other.example refused: The proof read names geocoding.other.example",
+            ),
+        ),
+      ).toBe(true);
     } finally {
       await a.close();
       await runner.idle();
@@ -919,7 +1081,7 @@ describe("a job that fails and tries again", () => {
    */
   it("writes the draft through the toolbox store when the publish finds nothing at it, and publishes on that", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     const publishBefore = deps.publishTool;
@@ -972,7 +1134,7 @@ describe("a job that fails and tries again", () => {
   /** GRA-141: a store that still misses after the write is waited for, once per configured delay, before the model hears of it. */
   it("waits and asks the store again while it misses, and publishes when it answers", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000, storeMissRetryDelaysMs: [5, 5, 5] };
@@ -1009,7 +1171,7 @@ describe("a job that fails and tries again", () => {
   /** Greptile on #114: a store write that fails is traced and the waits still run; the job does not end on it. */
   it("goes on to the waits when writing the draft through the store fails", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000, storeMissRetryDelaysMs: [5, 5] };
@@ -1055,7 +1217,7 @@ describe("a job that fails and tries again", () => {
   /** GRA-141: the floor. A store that never answers reaches the model as `publish_refused`, as before. */
   it("shows the model the draft-missing refusal only once the store write and every wait have missed", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
       {
         on: "publish_refused",
@@ -1094,7 +1256,7 @@ describe("a job that fails and tries again", () => {
 
   it("acquire waits for the job and answers the result when it settles in time; acquire_status waits for news", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     deps.model = scripted;
@@ -1145,7 +1307,7 @@ describe("a job that fails and tries again", () => {
         draft({
           name: "save-items",
           files: [{ path: "index.ts", content: BLOB_WRITER_MODULE }],
-          proofReads: ["/items?limit=1"],
+          proofReads: [{ path: "/items?limit=1" }],
         }),
         "Drafted save-items.",
       ),
@@ -1198,7 +1360,7 @@ describe("a job that fails and tries again", () => {
       release = resolve;
     });
     const scripted = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     deps.model = {
@@ -1332,13 +1494,13 @@ describe("a job that fails and tries again", () => {
     const scripted = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-proven", path: "/nope", proofReads: ["/nope"] }),
+        draft({ name: "list-proven", path: "/nope", proofReads: [{ path: "/nope" }] }),
         "Drafted around GET /nope.",
       ),
       { on: "proof", answer: { kind: "proceed", note: "Publishing despite the 404." } },
       write(
         "proof",
-        draft({ name: "list-proven", proofReads: ["/items?limit=1"] }),
+        draft({ name: "list-proven", proofReads: [{ path: "/items?limit=1" }] }),
         "The documented path is /items.",
       ),
       { on: "proof", answer: { kind: "proceed", note: "Every read answered." } },
@@ -1389,7 +1551,7 @@ describe("a job that fails and tries again", () => {
     deps.model = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-stubborn", path: "/nope", proofReads: ["/nope"] }),
+        draft({ name: "list-stubborn", path: "/nope", proofReads: [{ path: "/nope" }] }),
         "Drafted around GET /nope.",
       ),
       { on: "proof", answer: { kind: "proceed", note: "Publishing anyway." } },
@@ -1431,7 +1593,11 @@ describe("a job that fails and tries again", () => {
     const scripted = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-unreachable", path: "/unreachable", proofReads: ["/unreachable"] }),
+        draft({
+          name: "list-unreachable",
+          path: "/unreachable",
+          proofReads: [{ path: "/unreachable" }],
+        }),
         "Reading /unreachable first.",
       ),
     ]);
@@ -1980,7 +2146,11 @@ describe("a job that fails and tries again", () => {
 
   it("tells the model a redirected proof read is about the host set: an undeclared host is named, and give_up carries it", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ name: "list-moved", proofReads: ["/moved"] }), "Reading /moved."),
+      write(
+        "goal",
+        draft({ name: "list-moved", proofReads: [{ path: "/moved" }] }),
+        "Reading /moved.",
+      ),
       {
         on: "proof",
         answer: {
@@ -2039,7 +2209,7 @@ describe("a job that fails and tries again", () => {
     const scripted = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-moved-rel", proofReads: ["/moved-relative#top"] }),
+        draft({ name: "list-moved-rel", proofReads: [{ path: "/moved-relative#top" }] }),
         "Reading.",
       ),
       { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
@@ -2063,7 +2233,11 @@ describe("a job that fails and tries again", () => {
 
   it("says a redirect to another port is out of the proxy's reach, whatever the host set declares", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ name: "list-moved-port", proofReads: ["/moved-port"] }), "Reading."),
+      write(
+        "goal",
+        draft({ name: "list-moved-port", proofReads: [{ path: "/moved-port" }] }),
+        "Reading.",
+      ),
       { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
     ]);
     deps.model = scripted;
@@ -2080,9 +2254,13 @@ describe("a job that fails and tries again", () => {
     }
   });
 
-  it("describes a redirect to a declared host as the module's to follow through ctx.proxyBase", async () => {
+  it("describes a redirect to a declared host as the module's to follow with ctx.fetch(path, { host }), and the proof's to read there", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ name: "list-moved-home", proofReads: ["/moved-home"] }), "Reading."),
+      write(
+        "goal",
+        draft({ name: "list-moved-home", proofReads: [{ path: "/moved-home" }] }),
+        "Reading.",
+      ),
       { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
     ]);
     deps.model = scripted;
@@ -2099,8 +2277,14 @@ describe("a job that fails and tries again", () => {
       expect(read?.error).toContain(
         "redirected GET /moved-home to files.demo.example/v3/archive?since=2024, a host this connection declares",
       );
+      // GRA-213: the hand-written form first, the proof read's shape beside it, the SDK's base last.
+      expect(read?.error).toContain(
+        'ctx.fetch("/v3/archive?since=2024", { host: "files.demo.example" })',
+      );
+      expect(read?.error).toContain(
+        'the proof read is { path: "/v3/archive?since=2024", host: "files.demo.example" }',
+      );
       expect(read?.error).toContain('ctx.proxyBase("files.demo.example")');
-      expect(read?.error).toContain("/v3/archive?since=2024 is the path the vendor wants there");
     } finally {
       await a.close();
     }
@@ -2112,7 +2296,11 @@ describe("what the rows hold", () => {
     deps.model = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-secrets", path: "/secret-echo", proofReads: ["/secret-echo"] }),
+        draft({
+          name: "list-secrets",
+          path: "/secret-echo",
+          proofReads: [{ path: "/secret-echo" }],
+        }),
         "Drafted list-secrets around GET /secret-echo.",
       ),
       { on: "proof", answer: { kind: "give_up", reason: "The vendor refuses the credential." } },
@@ -2173,7 +2361,7 @@ describe("what the rows hold", () => {
           inputSchema: CREATE_ORDER_SCHEMA,
           files: [{ path: "index.ts", content: CREATE_ORDER_MODULE }],
           testInput: { itemId: "itm_1", quantity: 2 },
-          proofReads: ["/items?limit=1"],
+          proofReads: [{ path: "/items?limit=1" }],
         },
         "Drafted create-order around POST /orders.",
       ),

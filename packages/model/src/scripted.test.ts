@@ -40,7 +40,7 @@ const DRAFT: ModuleDraft = {
     },
   ],
   testInput: { limit: 2 },
-  proofReads: ["/items?limit=1"],
+  proofReads: [{ path: "/items?limit=1" }],
 };
 
 const SCRIPT: ScriptedStep[] = [
@@ -112,6 +112,65 @@ describe("parseScript", () => {
     const json = JSON.parse(JSON.stringify({ steps: SCRIPT }));
     expect(parseScript(json)).toEqual(SCRIPT);
     expect(parseScript(JSON.parse(JSON.stringify(SCRIPT)))).toEqual(SCRIPT);
+  });
+
+  /** GRA-213: a proof read is a path on the primary host, or `{ path, host }` on another declared one. */
+  it("reads a proof read as a path or as { path, host }, and refuses anything else naming the step", () => {
+    const draft = { name: "x", description: "d", inputSchema: { type: "object" } };
+    const files = [{ path: "index.ts", content: "" }];
+    const [written, proven] = parseScript([
+      {
+        on: "goal",
+        answer: {
+          kind: "write_module",
+          note: "n",
+          draft: {
+            ...draft,
+            files,
+            proofReads: [
+              "/v1/forecast",
+              { path: "/v1/search", host: "geocoding-api.open-meteo.com" },
+              { path: "/v1/other", host: null },
+            ],
+          },
+        },
+      },
+      {
+        on: "proof",
+        answer: {
+          kind: "prove",
+          note: "n",
+          proofReads: [{ path: "/v1/search?name=Berlin", host: "geocoding-api.open-meteo.com" }],
+        },
+      },
+    ]);
+    expect(written?.answer).toMatchObject({
+      draft: {
+        proofReads: [
+          { path: "/v1/forecast" },
+          { path: "/v1/search", host: "geocoding-api.open-meteo.com" },
+          { path: "/v1/other" },
+        ],
+      },
+    });
+    expect(proven?.answer).toEqual({
+      kind: "prove",
+      note: "n",
+      proofReads: [{ path: "/v1/search?name=Berlin", host: "geocoding-api.open-meteo.com" }],
+    });
+    expect(() =>
+      parseScript([
+        {
+          on: "goal",
+          answer: { kind: "write_module", note: "n", draft: { ...draft, files, proofReads: [7] } },
+        },
+      ]),
+    ).toThrow(/step 1: the draft's "proofReads" must be an array of paths, or of \{ path, host \}/);
+    expect(() =>
+      parseScript([
+        { on: "proof", answer: { kind: "prove", note: "n", proofReads: [{ host: "a.example" }] } },
+      ]),
+    ).toThrow(/step 1: a prove answer carries "proofReads"/);
   });
 
   it("fills a draft's optional fields and refuses a malformed step naming it", () => {

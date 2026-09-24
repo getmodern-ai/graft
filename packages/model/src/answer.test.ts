@@ -30,7 +30,10 @@ const draft: WireAnswer = {
       { path: "index.ts", content: "export default async (input: Input, ctx: Context) => ({})" },
     ],
     testInputJson: '{"itemId":"itm_a"}',
-    proofReads: ["/items?limit=1"],
+    proofReads: [
+      { path: "/items?limit=1", host: null },
+      { path: "/v1/search?name=Berlin", host: " Geocoding.Demo.example " },
+    ],
   },
 };
 
@@ -52,7 +55,11 @@ describe("readWireAnswer", () => {
           },
           files: draft.draft?.files,
           testInput: { itemId: "itm_a" },
-          proofReads: ["/items?limit=1"],
+          // GRA-213: a null host is the primary's and drops away; a named one is trimmed and lower-cased.
+          proofReads: [
+            { path: "/items?limit=1" },
+            { path: "/v1/search?name=Berlin", host: "geocoding.demo.example" },
+          ],
         },
       },
     });
@@ -89,7 +96,10 @@ describe("readWireAnswer", () => {
           inputSchemaJson: '{"type":"array"}',
           files: [{ path: "main.ts", content: "" }],
           testInputJson: "[1]",
-          proofReads: ["items"],
+          proofReads: [
+            { path: "items", host: null },
+            { path: "/v1/search", host: "geocoding.demo.example/v1" },
+          ],
         } as NonNullable<WireAnswer["draft"]>,
       },
       "docs",
@@ -103,7 +113,8 @@ describe("readWireAnswer", () => {
       `description is longer than ${TOOL_DESCRIPTION_MAX_LENGTH} characters`,
       'inputSchema is not a JSON Schema object with type "object"',
       "files carry no index.ts (or index.mjs) entry",
-      'proof read "items" is not a vendor-relative path',
+      'proof read "items" is not a vendor-relative path; give the path from the host\'s root, starting with /, and name another host the connection declares in "host"',
+      'proof read host "geocoding.demo.example/v1" is not a host name; name one of the connection\'s hosts, such as api.example.com, or null for the primary',
     ]);
     expect(read.problems).not.toContain("testInput is not an object");
   });
@@ -171,7 +182,7 @@ describe("the wire schema and the round trip", () => {
         ...draft,
         draft: {
           ...draft.draft,
-          proofReads: ["/a", "/b", "/c", "/d", "/e", "/f"],
+          proofReads: ["/a", "/b", "/c", "/d", "/e", "/f"].map((path) => ({ path, host: null })),
         } as NonNullable<WireAnswer["draft"]>,
       },
       "goal",
@@ -187,16 +198,50 @@ describe("the wire schema and the round trip", () => {
 
   /** GRA-153: more reads against the current draft, a turn and not an attempt. */
   it("reads a prove with its paths, and refuses one with none, one off the vendor, or more than an attempt runs", () => {
-    const prove = (proofReads: string[], note = "the id the list returned"): WireAnswer => ({
+    const prove = (paths: string[], note = "the id the list returned"): WireAnswer => ({
       kind: "prove",
       note,
       urls: [],
-      proofReads,
+      proofReads: paths.map((path) => ({ path, host: null })),
       draft: null,
     });
     expect(readWireAnswer(prove([" /items/itm_1 ", ""]), "proof")).toEqual({
       ok: true,
-      answer: { kind: "prove", proofReads: ["/items/itm_1"], note: "the id the list returned" },
+      answer: {
+        kind: "prove",
+        proofReads: [{ path: "/items/itm_1" }],
+        note: "the id the list returned",
+      },
+    });
+    // GRA-213: a read on another declared host carries it; one whose host is not a host name is repaired.
+    expect(
+      readWireAnswer(
+        { ...prove([]), proofReads: [{ path: "/v1/search", host: "geocoding.demo.example" }] },
+        "proof",
+      ),
+    ).toEqual({
+      ok: true,
+      answer: {
+        kind: "prove",
+        proofReads: [{ path: "/v1/search", host: "geocoding.demo.example" }],
+        note: "the id the list returned",
+      },
+    });
+    expect(
+      readWireAnswer(
+        {
+          ...prove([]),
+          proofReads: [{ path: "/v1/search", host: "https://geocoding.demo.example" }],
+        },
+        "proof",
+      ),
+    ).toMatchObject({
+      ok: false,
+      problems: [
+        expect.stringContaining(
+          'proof read host "https://geocoding.demo.example" is not a host name',
+        ),
+      ],
     });
     expect(readWireAnswer(prove([]), "proof")).toEqual({
       ok: false,
@@ -204,7 +249,11 @@ describe("the wire schema and the round trip", () => {
     });
     expect(readWireAnswer(prove(["https://api.demo.example/items"]), "proof")).toEqual({
       ok: false,
-      problems: ['proof read "https://api.demo.example/items" is not a vendor-relative path'],
+      problems: [
+        expect.stringContaining(
+          'proof read "https://api.demo.example/items" is not a vendor-relative path',
+        ),
+      ],
     });
     expect(readWireAnswer(prove(["/a", "/b", "/c", "/d", "/e", "/f"]), "proof")).toEqual({
       ok: false,
@@ -224,7 +273,12 @@ describe("the wire schema and the round trip", () => {
   it("round-trips every answer kind through wireOf", () => {
     const answers: ModelAnswer[] = [
       { kind: "read_docs", urls: ["https://d.example/a"], note: "read" },
-      { kind: "prove", proofReads: ["/items/itm_1"], note: "the id the list returned" },
+      { kind: "prove", proofReads: [{ path: "/items/itm_1" }], note: "the id the list returned" },
+      {
+        kind: "prove",
+        proofReads: [{ path: "/v1/search?name=Berlin", host: "geocoding.demo.example" }],
+        note: "the geocoding host",
+      },
       { kind: "proceed", note: "go" },
       { kind: "give_up", reason: "no api" },
     ];

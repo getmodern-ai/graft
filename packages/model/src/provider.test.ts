@@ -50,7 +50,7 @@ const GOOD_DRAFT: WireAnswer = {
       },
     ],
     testInputJson: JSON.stringify({ limit: 1 }),
-    proofReads: ["/items?limit=1"],
+    proofReads: [{ path: "/items?limit=1", host: null }],
   },
 };
 
@@ -181,7 +181,7 @@ describe("the repair turn", () => {
             ...GOOD_DRAFT.draft,
             name: "List Items",
             inputSchemaJson: "not json",
-            proofReads: ["items"],
+            proofReads: [{ path: "items", host: null }],
           },
         };
       },

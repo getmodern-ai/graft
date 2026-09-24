@@ -1,11 +1,12 @@
 import { MAX_PROOF_READS } from "./answer";
-import type {
-  DocPage,
-  DryRunSummary,
-  ModelDiagnostic,
-  ModelJobContext,
-  ModelSituation,
-  ProofRead,
+import {
+  type DocPage,
+  type DryRunSummary,
+  type ModelDiagnostic,
+  type ModelJobContext,
+  type ModelSituation,
+  type ProofRead,
+  proofReadLabel,
 } from "./types";
 
 /**
@@ -39,7 +40,7 @@ and the job acts on it. Where the skill above says to call a tool, answer instea
 | --- | --- |
 | \`read_web_page\` a page | \`read_docs\` with the URLs; the pages come back as the next situation |
 | \`write_file\`, \`check_tool\`, \`publish_tool\` | \`write_module\` with the whole module; the job checks, proves, publishes and dry-runs it |
-| prove it with reads through \`execute__<connection>\` | \`proofReads\` on the draft: vendor-relative GET paths the job runs for you; then \`prove\` with more paths built from what those reads returned, run against the same draft |
+| prove it with reads through \`execute__<connection>\` | \`proofReads\` on the draft: GET reads the job runs for you, each a path and the host it is read on (null for the primary); then \`prove\` with more reads built from what those returned, run against the same draft |
 | the tool passed and is promoted | nothing — the job ends when the dry run passes |
 
 Situations you will be shown: \`goal\` (once, first), \`docs\` (the pages you asked for),
@@ -59,11 +60,14 @@ The draft: \`name\` kebab-case; \`description\` for the person, plain language, 
 you declare a package; \`testInputJson\` an input the dry run uses, as JSON text; \`proofReads\` the GET paths that
 prove the credential and the shape: one for every distinct path the module reads, not the first
 alone, up to ${MAX_PROOF_READS} — a path built from another's answer (a record's id from a list) is
-added with \`prove\` once that read has answered — or empty when the module reads nothing.
+added with \`prove\` once that read has answered — or empty when the module reads nothing. Each
+read is \`{ path, host }\`: \`host\` null for the primary host, or the other declared host the module
+reads that path from with \`ctx.fetch(path, { host })\`, so the proof covers the host the module uses.
 
 Rules that hold whatever the docs say: the module reaches the vendor through \`ctx.fetch\` with a
-vendor-relative path, or through an SDK bound to \`ctx.proxyKey\` and \`ctx.proxyBase(...)\`, and
-through nothing else; it never names a host, never holds a key, never reads the environment. Every
+vendor-relative path (on another declared host, \`ctx.fetch(path, { host })\`), or through an SDK
+bound to \`ctx.proxyKey\` and \`ctx.proxyBase(...)\`, and through nothing else; it never writes a URL
+of its own, never holds a key, never reads the environment. Every
 request reaches the vendor from Graft's proxy, never from the person's machine, so whatever the vendor
 infers from the connection — the source address, its geolocation, a rate limit keyed on it, a "your
 IP" or "your location" answer — is the proxy's and not the person's, and the tool's description and
@@ -82,7 +86,7 @@ export function systemPrompt(context: ModelJobContext): string {
     `- vendor: \`${connection.vendor}\` (shown to the person as "${connection.displayName}")`,
     `- auth scheme: \`${connection.scheme}\` — the proxy injects the credential; your module never sees it`,
     `- primary host (what a vendor-relative path resolves against): ${connection.primaryHost}`,
-    `- hosts the connection may reach (what \`ctx.proxyBase(host)\` may name): ${connection.hosts.join(", ")}`,
+    `- hosts the connection may reach (what \`ctx.fetch(path, { host })\`, a proof read's \`host\` and \`ctx.proxyBase(host)\` may name): ${connection.hosts.join(", ")}`,
     "",
     "## The budget",
     "",
@@ -166,7 +170,7 @@ export function renderCheckRefused(
 
 function renderRead(read: ProofRead): string {
   const status = read.status === null ? "no answer" : `HTTP ${read.status}`;
-  const lines = [`### GET ${read.path} → ${status}${read.ok ? "" : " (failed)"}`];
+  const lines = [`### GET ${proofReadLabel(read)} → ${status}${read.ok ? "" : " (failed)"}`];
   if (read.redirectTo) lines.push(`Redirected to \`${read.redirectTo}\`.`);
   if (read.reason) lines.push(`The proxy got no response from the vendor (${read.reason}).`);
   if (read.error) lines.push(`_${read.error}_`);
@@ -198,7 +202,7 @@ export function renderProof(
     ...(reads.some((read) => read.redirectTo)
       ? [
           "",
-          "A read the vendor redirected is a question about the connection's hosts, not about the code: no change to the module makes the vendor answer at the path it redirected away from. Do what the read's note says — call the declared host through `ctx.proxyBase(host)`, or `give_up` naming the host so the person can connect it.",
+          "A read the vendor redirected is a question about the connection's hosts, not about the code: no change to the module makes the vendor answer at the path it redirected away from. Do what the read's note says — call the declared host with `ctx.fetch(path, { host })` and prove the read with that `host` (an SDK is pointed at it with `ctx.proxyBase(host)`), or `give_up` naming the host so the person can connect it.",
         ]
       : []),
   ].join("\n");

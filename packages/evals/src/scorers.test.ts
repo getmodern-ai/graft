@@ -249,6 +249,25 @@ describe("no_vendor_host_in_code", () => {
       ).pass,
     ).toBe(true);
   });
+
+  /** GRA-213: naming a declared host with the `host` option is the sanctioned form, not a host in the code. */
+  it("is green for a declared host named with the host option, and still red for the same host anywhere else", () => {
+    const hosts = ["api.demo.example", "geo.demo.example"];
+    const named = 'await ctx.fetch("/v1/search", { host: "geo.demo.example" });';
+    expect(
+      noVendorHostInCode(
+        run({ attempts: [attempt([{ path: "index.ts", content: named }])] }),
+        hosts,
+      ).pass,
+    ).toBe(true);
+    const elsewhere = `${named}\nconst base = "geo.demo.example";`;
+    const score = noVendorHostInCode(
+      run({ attempts: [attempt([{ path: "index.ts", content: elsewhere }])] }),
+      hosts,
+    );
+    expect(score.pass).toBe(false);
+    expect(score.detail).toContain("geo.demo.example");
+  });
 });
 
 describe("dry_run_before_any_ask", () => {

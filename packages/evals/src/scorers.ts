@@ -193,15 +193,21 @@ export function publishBeforeFirstWrite(run: ScenarioRun): Score {
 /**
  * No vendor host in the model's code: every file of every attempt names no hostname of the
  * connection and builds no absolute URL. The module reaches the vendor through `ctx` alone
- * (ADR 0010); a host in the source is the mistake the proxy exists to make unnecessary.
+ * (ADR 0010); a host in the source is the mistake the proxy exists to make unnecessary. The one
+ * exception is a literal `host:` option, `ctx.fetch("/v1/search", { host: "geo.example" })`, the
+ * sanctioned way to name another host the connection declares, which the proxy judges on its host
+ * route (GRA-213; ADR 0010 as amended 2026-09-24): it is taken out before the scan.
  */
+const HOST_OPTION = /\bhost:\s*(["'`])[a-z0-9.-]+\1/gi;
+
 export function noVendorHostInCode(run: ScenarioRun, hostnames: readonly string[]): Score {
   const offenders: string[] = [];
   for (const attempt of run.attempts) {
     for (const file of attempt.files) {
       if (file.path === "package.json") continue;
+      const content = file.content.replace(HOST_OPTION, "host: <declared>");
       for (const host of hostnames) {
-        if (file.content.includes(host))
+        if (content.includes(host))
           offenders.push(`a${attempt.attemptNumber}/${file.path}: ${host}`);
       }
       if (/https?:\/\//.test(file.content)) {
