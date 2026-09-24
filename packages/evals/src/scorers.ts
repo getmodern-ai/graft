@@ -210,7 +210,40 @@ const CLOSERS = ")]}";
 function closingQuote(source: string, start: number): number {
   const quote = source[start];
   let i = start + 1;
-  while (i < source.length && source[i] !== quote) i += source[i] === "\\" ? 2 : 1;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === "\\") {
+      i += 2;
+      continue;
+    }
+    if (c === quote) return i;
+    // A template's `${…}` may hold strings and templates of its own, backticks included.
+    if (quote === "`" && c === "$" && source[i + 1] === "{") {
+      i = closingBrace(source, i + 2) + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+/** The index of the `}` closing the `${` whose body starts at `start`, stepping over strings. */
+function closingBrace(source: string, start: number): number {
+  let depth = 1;
+  let i = start;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '"' || c === "'" || c === "`") {
+      i = closingQuote(source, i) + 1;
+      continue;
+    }
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+    i += 1;
+  }
   return i;
 }
 

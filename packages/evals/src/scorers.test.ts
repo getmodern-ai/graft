@@ -294,6 +294,11 @@ describe("no_vendor_host_in_code", () => {
       ),
     ).toBe(false);
     expect(scored('ctx.fetch("/x", { vhost: "geo.demo.example" })')).toBe(false);
+    // Greptile on #169: a template nested in the path's `${…}` is stepped over whole.
+    const open = "$" + "{";
+    expect(scored(`ctx.fetch(\`/v1/${open}\`x,\`}search\`, { host: "geo.demo.example" })`)).toBe(
+      true,
+    );
   });
 });
 
