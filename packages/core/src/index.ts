@@ -412,6 +412,15 @@ export {
   toSetupOutput,
 } from "./setup/setup.service";
 export {
+  GRAFT_CLOUD_ORIGIN,
+  isSetupPromptHarness,
+  SETUP_PROMPT_HARNESSES,
+  type SetupPromptHarness,
+  type SetupPromptInput,
+  setupPrompt,
+  suggestedFirstSentence,
+} from "./setup/setup-prompt";
+export {
   type CoveredStarter,
   isStarterVendorId,
   type SetupConnectKind,
