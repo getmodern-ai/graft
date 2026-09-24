@@ -180,6 +180,7 @@ function agentDeps(): AgentDeps {
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...agentRow, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...agentRow, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
+    issueAgentToken: vi.fn(async () => null),
     setAgentConnectedVia: vi.fn(async () => agentRow),
     replaceAgentConnections: vi.fn(async () => {}),
     addAgentConnection: vi.fn(async () => {}),

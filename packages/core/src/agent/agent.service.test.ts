@@ -12,6 +12,7 @@ import {
   createAgent,
   createAgentAwaitingHarness,
   createAgentForClient,
+  issueAwaitingAgentToken,
   revokeAgent,
   setAgentScope,
   toAgentOutput,
@@ -46,6 +47,9 @@ const row: AgentRow = {
 /** The same agent on `all` (ADR 0007 as amended 2026-09-19). */
 const openRow: AgentRow = { ...row, scopeMode: "all" };
 
+/** The same agent as Setup mints it (ADR 0024): no token and no client, so awaiting its harness. */
+const awaitingRow: AgentRow = { ...row, tokenHash: null, tokenPrefix: null };
+
 const connectionRow = (id: string): ConnectionRow =>
   ({ id, personId: "person_1", vendor: "unleashed" }) as ConnectionRow;
 
@@ -63,6 +67,7 @@ function fakeDeps(overrides: Partial<AgentDeps> = {}): AgentDeps {
     updateAgent: vi.fn(async (_db, _p, _a, patch) => ({ ...row, ...patch })),
     revokeAgent: vi.fn(async () => ({ ...row, revokedAt: NOW })),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
+    issueAgentToken: vi.fn(async (_db, _p, _a, token) => ({ ...awaitingRow, ...token })),
     setAgentConnectedVia: vi.fn(async (_db, _p, _a, via) => ({
       ...row,
       connectedViaClientId: via.clientId,
@@ -297,6 +302,55 @@ describe("createAgentAwaitingHarness", () => {
     await expect(
       createAgentAwaitingHarness(ctx, PRINCIPAL, { name: "Claude", workingSetCap: 0 }, fakeDeps()),
     ).rejects.toBeInstanceOf(ServiceError);
+  });
+});
+
+/** ADR 0024 (GRA-208): the token Setup's finish step and *Connect a harness* issue, once. */
+describe("issueAwaitingAgentToken", () => {
+  it("mints once for an agent awaiting its harness and stores only the hash and the prefix", async () => {
+    const deps = fakeDeps({ findAgent: vi.fn(async () => awaitingRow) });
+    const result = await issueAwaitingAgentToken(ctx, PRINCIPAL, "agent_1", deps);
+    expect(result.token.startsWith("grft_")).toBe(true);
+    const written = vi.mocked(deps.issueAgentToken).mock.calls[0];
+    expect(written?.slice(1, 3)).toEqual(["person_1", "agent_1"]);
+    expect(written?.[3]).toEqual({
+      tokenHash: hashAgentToken(result.token),
+      tokenPrefix: result.token.slice(0, 8),
+    });
+    expect(result.agent.tokenPrefix).toBe(result.token.slice(0, 8));
+  });
+
+  it.each([
+    ["revoked", { revokedAt: NOW }, /is revoked/],
+    ["with a token", { tokenHash: "hash", tokenPrefix: "grft_abc" }, /already has a token/],
+    [
+      "connected by a client",
+      { connectedViaClientId: "client_1", connectedViaClientName: "Claude" },
+      /connected through Claude/,
+    ],
+  ])("refuses an agent %s before minting anything", async (_case, patch, message) => {
+    const deps = fakeDeps({ findAgent: vi.fn(async () => ({ ...awaitingRow, ...patch })) });
+    const refused = issueAwaitingAgentToken(ctx, PRINCIPAL, "agent_1", deps);
+    await expect(refused).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: expect.stringMatching(message),
+      details: { reason: "agent_not_awaiting_harness" },
+    });
+    expect(deps.issueAgentToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the guarded write matched nothing, and another person's agent as not found", async () => {
+    const raced = fakeDeps({
+      findAgent: vi.fn(async () => awaitingRow),
+      issueAgentToken: vi.fn(async () => null),
+    });
+    await expect(issueAwaitingAgentToken(ctx, PRINCIPAL, "agent_1", raced)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    const missing = fakeDeps({ findAgent: vi.fn(async () => null) });
+    await expect(issueAwaitingAgentToken(ctx, PRINCIPAL, "agent_1", missing)).rejects.toMatchObject(
+      { code: "NOT_FOUND" },
+    );
   });
 });
 

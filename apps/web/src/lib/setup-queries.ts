@@ -1,10 +1,14 @@
 import type { SetupOutput, SetupState, SetupVendorOption } from "@graft/core";
 import type { AcquireStatus } from "@graft/mcp/acquire/shapes";
 import type {
+  AgentToolRunOutput,
   SetupBuildBody,
   SetupConnectBody,
+  SetupFinishOutput,
   SetupGoalContext,
   SetupStartBody,
+  SetupToolContext,
+  ToolRunBody,
 } from "@graft/server/api";
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
 
@@ -25,6 +29,7 @@ export const setupKeys = {
   current: ["setup"] as const,
   vendors: ["setup", "vendors"] as const,
   goal: ["setup", "goal"] as const,
+  tool: ["setup", "tool"] as const,
 };
 
 export const setupQuery = queryOptions({
@@ -107,6 +112,53 @@ export function continueSetupBuild() {
 
 /** One acquire job as the agent's job route answers it: `acquire_status`'s shape. */
 export type AcquireJobStatus = Jsonified<AcquireStatus>;
+
+export type SetupTool = Jsonified<SetupToolContext>;
+
+/**
+ * What the result and finish steps draw (`GET /api/setup/tool`, GRA-208): the agent, the harness,
+ * the connection, the goal the job was built for, where the job stands, the tool once it landed and
+ * the starter's run input. Under `["setup"]`, so it is refetched with the state.
+ */
+export const setupToolQuery = queryOptions({
+  queryKey: setupKeys.tool,
+  queryFn: () => api<SetupTool>("/setup/tool"),
+});
+
+/** The result step's Continue: on to the finish step. */
+export function completeSetupResult() {
+  return api<SetupStateData>("/setup/result", { method: "POST" });
+}
+
+export type SetupFinish = Jsonified<SetupFinishOutput>;
+
+/**
+ * The finish (`POST /api/setup/finish`): the record completed, and for a static-token harness
+ * whose agent still awaits it the token, in this answer and nowhere else.
+ */
+export function finishSetup() {
+  return api<SetupFinish>("/setup/finish", { method: "POST" });
+}
+
+export type AgentToolRun = Jsonified<AgentToolRunOutput>;
+
+/**
+ * Run an authored tool as one of the person's agents (`POST /api/agents/:id/tools/:vendor/:name/run`,
+ * GRA-208): the run's result, or its refusal or failure with the sentence to show. The server
+ * refuses a tool that is not read-only and one outside the agent's working set.
+ */
+export function runAgentTool(args: {
+  agentId: string;
+  vendor: string;
+  name: string;
+  body: ToolRunBody;
+}) {
+  const [agent, vendor, name] = [args.agentId, args.vendor, args.name].map(encodeURIComponent);
+  return api<AgentToolRun>(`/agents/${agent}/tools/${vendor}/${name}/run`, {
+    method: "POST",
+    body: args.body,
+  });
+}
 
 /** `GET /api/agents/:id/acquire-jobs/:jobId`, read at once; the building step polls it. */
 export function acquireJobQuery(agentId: string, jobId: string) {

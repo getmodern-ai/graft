@@ -5,9 +5,10 @@ import type * as React from "react";
 import { CheckCircleIcon } from "@/components/icons";
 import { BuildingStep } from "@/components/setup/building-step";
 import { ConnectStep } from "@/components/setup/connect-step";
+import { FinishStep } from "@/components/setup/finish-step";
 import { GoalStep } from "@/components/setup/goal-step";
 import { HarnessStep } from "@/components/setup/harness-step";
-import { SetupStepHeader } from "@/components/setup/setup-step-header";
+import { ResultStep } from "@/components/setup/result-step";
 import { VendorStep } from "@/components/setup/vendor-step";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +19,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { DEFAULT_SIGNED_IN_PATH } from "@/lib/safe-redirect";
-import type { SetupStateData } from "@/lib/setup-queries";
+import type { SetupFinish, SetupStateData } from "@/lib/setup-queries";
 
 /**
  * The step the person is on, by `state.step` (`currentSetupStep` in `@graft/core`, answered by the
@@ -26,31 +27,38 @@ import type { SetupStateData } from "@/lib/setup-queries";
  * the one place a step is wired in, as `pending-action-card.tsx` dispatches an ask by its kind. A
  * later ticket adds a step by writing its file and replacing its entry here; every step takes the
  * whole state and moves the record on through `useSetupMutation`.
+ *
+ * The finish is the one step with a second prop: the finish's answer, held by the page, since a
+ * token issued there must stay on screen after the record reads `completed` (`finish-step.tsx`).
+ * Once the person finished on this page, the finish step stays whatever the state says.
  */
-const STEPS: Record<SetupStep, (props: { state: SetupStateData }) => React.ReactNode> = {
+const STEPS: Record<
+  Exclude<SetupStep, "finish">,
+  (props: { state: SetupStateData }) => React.ReactNode
+> = {
   harness: HarnessStep,
   vendor: VendorStep,
   connect: ConnectStep,
   goal: GoalStep,
   building: BuildingStep,
-  // GRA-208: the result and the finish, which a pass and Continue while it runs reach.
-  result: StepNotReady,
-  finish: StepNotReady,
+  result: ResultStep,
   completed: SetupCompleted,
 };
 
-export function SetupStepView({ state }: { state: SetupStateData }) {
+export function SetupStepView({
+  state,
+  finished,
+  onFinished,
+}: {
+  state: SetupStateData;
+  finished: SetupFinish | null;
+  onFinished: (answer: SetupFinish) => void;
+}) {
+  if (state.step === "finish" || finished) {
+    return <FinishStep state={state} finished={finished} onFinished={onFinished} />;
+  }
   const Step = STEPS[state.step];
   return <Step state={state} />;
-}
-
-function StepNotReady() {
-  return (
-    <SetupStepHeader
-      title="This step is not available yet"
-      description="Skip Setup for now; your agent and anything Setup made stay as they are."
-    />
-  );
 }
 
 function SetupCompleted() {

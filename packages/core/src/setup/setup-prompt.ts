@@ -20,29 +20,32 @@
  *   the tool with a first request built from the tool's goal. Nothing here takes a token: the
  *   inputs have no field for one, and a prompt is text a person pastes into a model.
  *
- * **This module is browser-safe, and the console depends on that**: it imports nothing, so
- * `@graft/core/setup/setup-prompt` is what the console renders with.
+ * **This module is browser-safe, and the console depends on that**: it imports nothing but the
+ * harness data module, itself browser-safe, so `@graft/core/setup/setup-prompt` is what the console
+ * renders with.
  *
- * The harness list below is the site's `SETUP_AGENTS` (ids, labels and descriptions), which the
- * route answers as JSON. It is this file's own until GRA-204's harness data module lands beside it;
- * the two are to be reconciled onto one list keyed by these ids.
+ * The harness list is Setup's (`harness.ts`): the site's `SETUP_AGENTS` ids, labels and
+ * descriptions, in its order, which the route answers as JSON (reconciled under GRA-208).
  */
 
-/** The harnesses a setup prompt is written for, in the site's order, with the site's words. */
-export const SETUP_PROMPT_HARNESSES = [
-  { id: "claude", label: "Claude", description: "Web & desktop" },
-  { id: "claude-code", label: "Claude Code", description: "Terminal & IDE" },
-  { id: "codex", label: "Codex", description: "App, CLI & IDE" },
-  { id: "chatgpt", label: "ChatGPT", description: "Web & desktop" },
-  { id: "hermes", label: "Hermes", description: "Local agent" },
-  { id: "openclaw", label: "OpenClaw", description: "Local agent" },
-  { id: "other", label: "Other MCP agent", description: "Any compatible client" },
-] as const;
+import {
+  readSetupHarness,
+  SETUP_HARNESSES,
+  type SetupHarness,
+  type SetupHarnessEntry,
+} from "./harness";
 
-export type SetupPromptHarness = (typeof SETUP_PROMPT_HARNESSES)[number]["id"];
+/**
+ * The harnesses a setup prompt is written for: Setup's own list (`harness.ts`), whose ids, labels,
+ * descriptions and order are the marketing site's. One list since GRA-208; the route answers its
+ * `{ id, label, description }`.
+ */
+export const SETUP_PROMPT_HARNESSES: readonly SetupHarnessEntry[] = SETUP_HARNESSES;
+
+export type SetupPromptHarness = SetupHarness;
 
 export function isSetupPromptHarness(value: unknown): value is SetupPromptHarness {
-  return SETUP_PROMPT_HARNESSES.some((harness) => harness.id === value);
+  return readSetupHarness(value) !== null;
 }
 
 /** Graft Cloud's origin: a prompt whose MCP URL is here says Graft Cloud, and no other does. */

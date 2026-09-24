@@ -973,7 +973,9 @@ word *connection* is a vendor account (CONTEXT.md) and the screen beside this on
 never says it. The dialog shares creation's setup (`harness-setup.tsx`: the URL, a harness
 picker, the token's place and the configuration in that harness's shape — GRA-152) but cannot
 retrieve the token; the token line carries a saved-token placeholder (ADR 0007). OAuth agents get
-the URL and consent instructions. Agent names are links to the standalone `/agents/:agentId` page,
+the URL and consent instructions. An agent *awaiting its harness* (Setup's, no token and no client)
+gets both: the URL, whose consent page chooses it, and *Issue a token*
+(`POST /api/agents/:id/token`, GRA-208), which shows the token once as creation does. Agent names are links to the standalone `/agents/:agentId` page,
 and every row's menu has View agent, revoked rows included; the detail drawer is deferred. That
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
@@ -987,7 +989,9 @@ pinned in `repo/setup.test.ts`, and `lockSetup` makes the row and locks it so tw
 `@graft/core/setup/` holds the service (`getSetupState`, `startSetup`, `skipSetup`), the
 browser-safe rules (`shouldShowSetup` over the record and the person's connection and tool counts,
 `isAwaitingHarness` over an agent, `currentSetupStep`) and the harness data (`SETUP_HARNESSES`:
-the seven, each with its kind, `oauth` or `token`, and the marketing site's label). `GET
+the seven in the marketing site's order, each with its kind, `oauth` or `token`, the site's label
+and the finish step's connection `steps`; since GRA-208 it is also `setup-prompt.ts`'s list,
+`SETUP_PROMPT_HARNESSES`, which `GET /api/setup-prompt` answers as `{ id, label, description }`). `GET
 /api/setup` answers `SetupState` (the record, `step`, `show`, the agent it runs as, the active
 agents); `POST /api/setup/start` (`SetupStartBody`) mints an agent with no token and no client
 through `createAgentAwaitingHarness` when the person has none, adopts the one when there is one,
@@ -1027,8 +1031,10 @@ stands, even one that closed and left the record on `vendor` again. A stale answ
 under the lock before it is taken, so one made good meanwhile is left for the next read. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
 captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
 one answer count once. A listed agent's scope grown by Setup (*Another vendor*, a `scope` ask
-answered in the console) is announced to its session, since no waiting call of its own does. The console's connect step
-draws the open ask from the inbox's list with `PendingActionCard`, unchanged, and polls both reads
+answered in the console) is announced to its session, since no waiting call of its own does. The
+console's connect step draws the open ask from the inbox's list with `PendingActionCard` under
+`origin="setup"` (no model provenance, the proposal editor folded behind *Edit the connection*;
+the inbox and the handoff page pass nothing and draw the cards as before), and polls both reads
 every 3 s so an answer given in the inbox or a chat card moves it too. The goal step's starter is
 `starterVendorFor(connection.vendor)`.
 
@@ -1048,8 +1054,9 @@ asked. `ApiOptions.acquire` is the model, the job's deps and the runner (the ser
 `McpDeps`). `GET /api/agents/:id/acquire-jobs/:jobId` answers `acquire_status`'s shape
 (`acquireStatusOf`) for one of the person's agents, never held; another person's agent or job is a
 404. `GET /api/setup` learns a succeeded job's tool through `moveSetupBuild`'s `built`: `building`
-to `result` with `toolId`, or the tool noted on `finish`. A failed job leaves the record on
-`building`; `POST /api/setup/goal` (*Change the goal*) goes back to `goal` with the job cleared,
+to `result` with `toolId`, or the tool noted on `finish`, or on `completed` when Finish Setup
+came first. A failed job leaves the record on `building`; `POST /api/setup/goal` (*Change the
+goal*) goes back to `goal` with the job cleared,
 refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it runs*)
 goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
 `building` (captured by the read whose move named the tool, `SetupMoveResult.moved`). The console's building step polls the job route
@@ -1057,6 +1064,37 @@ every 2 s and draws each line beside its stage's sentence on the stage's first l
 (`lib/setup-progress.ts`'s `progressStage` and `explainProgress`, keyed on `acquire/job.ts`'s
 lines; a new progress line there wants a rule and a case in `setup-progress.test.ts`).
 `components/setup/goal-suggestions.tsx` is the chips row, empty until GRA-209.
+
+**The result step runs the tool, and the finish step connects the harness** (GRA-208; ADR 0024,
+`apps/server/src/setup-finish.ts` and `tool-run.ts`). `GET /api/setup/tool` answers
+`SetupToolContext`: the record's agent and harness, the connection, the job's goal and status (with
+the failure's sentence), the tool once it landed (wire name, input schema, `readOnly`) and the
+starter's `runInput`. `POST /api/agents/:id/tools/:vendor/:name/run` (`ToolRunBody`: `{ input? }`)
+is the console's second caller of a run: `@graft/mcp`'s `runAuthoredTool` with the server's
+`McpDeps` (`ApiOptions.run`), synchronous at `DEFAULT_COMMAND_TIMEOUT_SECONDS`, `NO_ELICITATION`,
+never a dry run, answering `AgentToolRunOutput` (`{ ok: true, result }` or `{ ok: false, reason,
+message, answer }`, the run's own refusal or failure); a tool whose annotation is not read-only is
+`409 tool_not_read_only` and one outside the agent's working set `409 tool_not_in_working_set`,
+both before the run and again on the run's own read of the tool inside the agent's in-flight hold
+(`AuthoredRunArgs.admit`), so a republish or a demotion in between cannot reach the gate or the
+sandbox and no ask is ever opened from the console; another person's agent is a 404.
+`POST /api/setup/result` is `moveSetupBuild`'s `finish` (`result` to `finish`), and
+`POST /api/setup/finish` is `@graft/core`'s `finishSetup`: from `finish` only, one transaction
+under `lockSetup`, the record to `completed` and, for a `token` harness whose agent is still
+awaiting it, the token issued through `issueAwaitingAgentToken` and answered once beside the state
+(`SetupFinishOutput`); a second finish is `409 setup_completed`. `POST /api/agents/:id/token` is the
+same issue for *Connect a harness*; the write (`issueAgentToken` in `repo/agent.ts`) holds the
+awaiting rule in its statement, so two issues mint one token. `setup_step_completed` adds `result`,
+and `setup_completed` carries the harness. The console: `result-step.tsx` runs the tool once on
+arrival with the starter's default (`lib/setup-run-input.ts`), editable, and shows the answer in
+`CodeBlock`; `finish-step.tsx` draws, by `lib/setup-finish.ts`'s `finishVariant`, the token once
+with the configuration blocks, the URL and the harness's steps ending on the consent page, or
+(a record that adopted an agent, `harness` null) the first request to ask in the chat, with
+`SetupPromptBlock` personalised with the agent, the connection and the tool (arriving while the
+job runs, the state read every 3 s). The finish's answer, token included, is held in
+`routes/_auth/setup.tsx`'s state, never the query cache, so the step keeps showing it once the
+record reads `completed`. The consent card pre-selects the person's one agent awaiting its harness
+and falls back to *A new agent* with none or several (`lib/consent-default.ts`).
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left

@@ -41,9 +41,11 @@ export type AnalyticsEvent =
   // skipped before a harness was picked. `setup_step_completed` (GRA-206) carries `step` too, the
   // step completed: `vendor` when a vendor is chosen, `connect` when the record learns the
   // connection, `goal` when Build is pressed and `building` when the record learns the tool the
-  // job acquired (GRA-207). GRA-208 adds `setup_completed`.
+  // job acquired (GRA-207), `result` when the result step's Continue is pressed (GRA-208).
+  // `setup_completed` (GRA-208) is the finish, with the harness.
   | "setup_started"
   | "setup_step_completed"
+  | "setup_completed"
   | "setup_skipped"
   // A link provider's connect (ADR 0019), at the server's two link routes (GRA-147): whether the
   // provider's link could be minted, and how the person's return ended. Properties: `provider`,

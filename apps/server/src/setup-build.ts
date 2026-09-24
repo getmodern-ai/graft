@@ -42,8 +42,9 @@ import {
  *   it does not answer `similar_tools_exist`: the person chose this goal on this page, and a retry
  *   must start a job.
  * - `learnSetupBuild`: on every read of the state, a job the record waits on that succeeded names
- *   its tool on the record (`building` to `result`, or the tool noted on `finish`). A failed job
- *   leaves the record on `building`, where the step shows the failure from the job route.
+ *   its tool on the record (`building` to `result`, or the tool noted on `finish`, or on `completed`
+ *   when the person finished before it landed). A failed job leaves the record on `building`,
+ *   where the step shows the failure from the job route.
  * - `retrySetupGoal` and `continueSetupBuild`: *Change the goal* after a failure, and *Continue
  *   while it runs*.
  * - `readAgentAcquireJob`: one job of one of the person's agents in `acquire_status`'s shape, general
@@ -178,7 +179,7 @@ export async function learnSetupBuild(
 ): Promise<SetupBuildResult> {
   const record = await deps.setup.findSetup(ctx.db, principal.personId);
   const waiting =
-    (record?.step === "building" || record?.step === "finish") &&
+    (record?.step === "building" || record?.step === "finish" || record?.step === "completed") &&
     record.acquireJobId !== null &&
     record.toolId === null;
   const read = waiting ? await recordJob(ctx, principal, deps) : null;

@@ -58,6 +58,7 @@ export {
   getAgent,
   getAgentScope,
   IDLE_WINDOW_DAYS_RANGE,
+  issueAwaitingAgentToken,
   listActiveAgentScopes,
   listAgents,
   revokeAgent,
@@ -394,6 +395,7 @@ export {
 } from "./setup/setup.rules";
 export {
   connectingAgentOf,
+  finishSetup,
   getSetupState,
   moveSetupBuild,
   moveSetupConnect,
