@@ -78,8 +78,9 @@ function GoalForm({
   // with; otherwise the task the person last pressed Build with, so *Change the task* comes back
   // to their words, or the curated one.
   const held = context.job;
+  const draftKey = setupGoalDraftKey(context.connection?.id ?? null);
   const [text, setText] = useState(
-    () => held?.goal ?? queryClient.getQueryData<string>(setupGoalDraftKey) ?? context.goal,
+    () => held?.goal ?? queryClient.getQueryData<string>(draftKey) ?? context.goal,
   );
   const [confirming, setConfirming] = useState(false);
   const build = useSetupMutation(buildSetup);
@@ -90,7 +91,7 @@ function GoalForm({
   const returning = held !== null && trimmed === held.goal;
   const busy = build.isPending || next.isPending;
   const start = (discardJob: boolean) => {
-    queryClient.setQueryData(setupGoalDraftKey, trimmed);
+    queryClient.setQueryData(draftKey, trimmed);
     build.mutate(
       { goal: trimmed, ...(discardJob ? { discardJob: true } : {}) },
       { onSettled: () => setConfirming(false) },
