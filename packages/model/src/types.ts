@@ -57,9 +57,10 @@ export type ModuleFile = { path: string; content: string };
 /**
  * A module as the model drafts it: what the publish takes, plus the test input the dry run needs
  * and the reads that prove the credential and the request shape before anything is published
- * (the skill's step 4). `proofReads` are vendor-relative `GET` paths, `/items?limit=1`; the job
- * runs each through the connection's execute path with the dry-run claim on and hands the answers
- * back as `ProofRead`s. Empty skips the step.
+ * (the skill's step 4). `proofReads` are vendor-relative `GET` paths, `/items?limit=1`, each on
+ * the primary host or on another host the connection declares (`ProofReadTarget`); the job runs
+ * each through the connection's execute path with the dry-run claim on and hands the answers back
+ * as `ProofRead`s. Empty skips the step.
  */
 export type ModuleDraft = {
   /** Kebab-case; with the vendor, the tool's identity. */
@@ -70,8 +71,23 @@ export type ModuleDraft = {
   /** `index.ts` and any siblings; a `package.json` when the module declares a package (ADR 0013). */
   files: ModuleFile[];
   testInput: Record<string, unknown>;
-  proofReads: string[];
+  proofReads: ProofReadTarget[];
 };
+
+/**
+ * One proof read as the model asks for it: a `GET` path on the connection's primary host, or, with
+ * `host`, a path from the root of another host the connection declares. The same pair a module
+ * passes as `ctx.fetch(path, { host })`, and sent the same way, through the proxy's host route
+ * (GRA-213): Open-Meteo's `/v1/search` is proven on `geocoding-api.open-meteo.com`, not on the
+ * forecast host the connection names first. The job refuses a host the connection does not declare
+ * before any read is made.
+ */
+export type ProofReadTarget = { path: string; host?: string };
+
+/** A proof read named as the job's lines and the prompt name it: `/v1/search on geocoding-api.open-meteo.com`, or the path alone. */
+export function proofReadLabel(target: { path: string; host?: string | null }): string {
+  return target.host ? `${target.path} on ${target.host}` : target.path;
+}
 
 /** A diagnostic as the check and the publish report one — `@graft/check`'s `Diagnostic`, structurally. */
 export type ModelDiagnostic = {
@@ -91,6 +107,8 @@ export type DocPage =
 /** One proof read's answer: the vendor's status and the head of its body, credentials redacted. */
 export type ProofRead = {
   path: string;
+  /** The declared host the read named (GRA-213); null for a read on the primary host. */
+  host: string | null;
   ok: boolean;
   status: number | null;
   body: string | null;
@@ -181,7 +199,7 @@ export type ModelSituationKind = ModelSituation["kind"];
 export type ModelAnswer =
   | { kind: "read_docs"; urls: string[]; note: string }
   | { kind: "write_module"; draft: ModuleDraft; note: string }
-  | { kind: "prove"; proofReads: string[]; note: string }
+  | { kind: "prove"; proofReads: ProofReadTarget[]; note: string }
   | { kind: "proceed"; note: string }
   | { kind: "give_up"; reason: string };
 

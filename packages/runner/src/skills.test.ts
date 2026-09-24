@@ -151,7 +151,16 @@ describe("the shipped skills", () => {
       "untrusted text",
       "ctx.fetch(path, init)",
       "vendor-relative",
-      "never names a host, never holds a key",
+      "never writes a URL of its own, never holds a key",
+      // GRA-213: a declared host known in advance is named with `host`, for the module and the
+      // proof read alike, and `ctx.proxyBase` stays for SDKs.
+      "To reach another host the connection declares, name it with `host`",
+      'ctx.fetch("/v1/search?name=Berlin", { host: "geocoding-api.open-meteo.com" })',
+      "the `host` is one of the connection's hosts exactly, and the path starts with `/`",
+      "`ctx.proxyBase` stays for SDKs: a hand-written call to another host is `ctx.fetch(path, { host })`",
+      "A proof read may name a host",
+      "with the same `{ host }` the module passes to `ctx.fetch`, never on the primary host",
+      "RequestInit & { host?: string }",
       // GRA-197 (ADR 0010 as amended 2026-09-23): a URL the vendor answers at run time goes to
       // ctx.fetch as it is, and a write flow is ctx.fetch rather than an SDK.
       "goes to `ctx.fetch` as it is",

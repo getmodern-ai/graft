@@ -11,6 +11,7 @@ import {
   type ModelSituationKind,
   type ModelUsage,
   type ModuleDraft,
+  type ProofReadTarget,
 } from "./types";
 
 /**
@@ -159,6 +160,34 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 /**
+ * A script's proof reads: each a path on the primary host, `"/items?limit=1"`, or `{ "path",
+ * "host"? }` for a path on another host the connection declares (GRA-213), so a script written
+ * before the host existed still reads as it did. Null when the value is neither.
+ */
+function readScriptProofReads(value: unknown): ProofReadTarget[] | null {
+  if (!Array.isArray(value)) return null;
+  const reads: ProofReadTarget[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      reads.push({ path: entry });
+    } else if (
+      isRecord(entry) &&
+      typeof entry.path === "string" &&
+      (entry.host === undefined || entry.host === null || typeof entry.host === "string")
+    ) {
+      reads.push(
+        typeof entry.host === "string"
+          ? { path: entry.path, host: entry.host }
+          : { path: entry.path },
+      );
+    } else {
+      return null;
+    }
+  }
+  return reads;
+}
+
+/**
  * A script as a JSON file carries it (`GRAFT_MODEL_SCRIPT`): `{ "steps": [ { "on", "answer",
  * "usage"? } ] }`, or the bare array. Checked field by field so a typo in a hand-written script is a
  * sentence naming the step, not a job that fails halfway with a stack.
@@ -206,12 +235,13 @@ function parseAnswer(value: unknown, at: string): ModelAnswer {
       return { kind: "write_module", draft: parseDraft(value.draft, at), note: value.note };
     }
     case "prove": {
-      if (!isStringArray(value.proofReads) || typeof value.note !== "string") {
+      const proofReads = readScriptProofReads(value.proofReads);
+      if (proofReads === null || typeof value.note !== "string") {
         throw new Error(
-          `${at}: a prove answer carries "proofReads" (an array of paths) and a "note"`,
+          `${at}: a prove answer carries "proofReads" (an array of paths, or of { path, host }) and a "note"`,
         );
       }
-      return { kind: "prove", proofReads: value.proofReads, note: value.note };
+      return { kind: "prove", proofReads, note: value.note };
     }
     case "proceed": {
       if (typeof value.note !== "string") {
@@ -251,8 +281,11 @@ function parseDraft(value: unknown, at: string): ModuleDraft {
   if (testInput !== undefined && !isRecord(testInput)) {
     throw new Error(`${at}: the draft's "testInput" must be an object`);
   }
-  if (proofReads !== undefined && !isStringArray(proofReads)) {
-    throw new Error(`${at}: the draft's "proofReads" must be an array of paths`);
+  const reads = proofReads === undefined ? [] : readScriptProofReads(proofReads);
+  if (reads === null) {
+    throw new Error(
+      `${at}: the draft's "proofReads" must be an array of paths, or of { path, host }`,
+    );
   }
   return {
     name,
@@ -260,6 +293,6 @@ function parseDraft(value: unknown, at: string): ModuleDraft {
     inputSchema,
     files: files.map((file) => ({ path: String(file.path), content: String(file.content) })),
     testInput: testInput ?? {},
-    proofReads: proofReads ?? [],
+    proofReads: reads,
   };
 }

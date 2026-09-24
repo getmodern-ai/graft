@@ -48,13 +48,19 @@
  *    `ctx.proxyBase(host)` names, so a URL a vendor hands back at run time on a second host of the
  *    connection (Slack's `files.slack.com` upload URL, GRA-197) reaches the proxy, which judges the
  *    host against the connection's set as it does an SDK's call (ADR 0010 as amended 2026-09-23).
+ *    `ctx.fetch(path, { ...init, host })` is the same route for a host the module knows when it is
+ *    written (Open-Meteo's geocoding host beside its forecast host, GRA-213): the `host` option,
+ *    judged by `HOST_PATTERN` and taken off the init, with a path from that host's root, is sent as
+ *    `https://<host><path>` would be, so a literal absolute URL, which the check refuses, is never
+ *    needed to reach a declared host.
  *    The runner adds nothing it does not have: no host list, so which hosts are allowed is the
  *    proxy's alone. A dry run records a call on this route as scheme, host and path, the query
  *    dropped and marked `?…` and the fragment dropped (`recordableTarget`): a URL a vendor hands
  *    back may carry a signature or a bearer capability in either, and the report reaches the
  *    authoring model's prompt.
  *    Refused rather than bent, before any request leaves: a URL that is not `https:`,
- *    one carrying credentials (`user:pass@`), one whose host is not a host name; and a relative path
+ *    one carrying credentials (`user:pass@`), one whose host is not a host name; a `host` option that
+ *    is not a host name, or given beside a URL or a path not starting with `/`; and a relative path
  *    that walks out of `/c/<connection>/`, so nothing can be sent for any connection but the one this
  *    run was minted for. The token travels to the proxy and nowhere else under either form. It
  *    never follows a redirect (`redirect: "manual"`): a vendor 3xx the proxy hands back reaches the
@@ -561,6 +567,19 @@ function recordableTarget(target) {
 }
 
 /**
+ * How a refusal's sentence, and a named host's report entry before it is a URL, spell a path the
+ * module gave: the text before its first `?` or `#`, with `?…` appended when a query followed, the
+ * rule `recordableTarget` applies to a URL. A path beside the host option is refused when it does not
+ * start with `/` (`upload?sig=…`), and a refusal reaches the report and the authoring model's prompt
+ * as a record does, so a signature in that path's query is dropped there too (Greptile on #169).
+ */
+function recordablePath(target) {
+  const cut = target.search(/[?#]/);
+  if (cut === -1) return target;
+  return `${target.slice(0, cut)}${target[cut] === "?" ? "?…" : ""}`;
+}
+
+/**
  * An absolute URL given to `ctx.fetch`, rewritten onto the proxy's host form (the header):
  * `https://files.slack.com/upload/v1/abc?x=1` becomes `${prefix}h/files.slack.com/upload/v1/abc?x=1`,
  * the same route `ctx.proxyBase("files.slack.com")` names, so the proxy judges the host against the
@@ -596,13 +615,53 @@ function hostRoute(target, prefix, refuse, shown) {
   return new URL(`h/${given.host}${given.pathname}${given.search}`, prefix);
 }
 
+/**
+ * The `host` option of `ctx.fetch(path, { host })`, turned into the absolute URL `hostRoute` takes
+ * (GRA-213): a call to a host the connection declares and the module knows when it is written
+ * (Open-Meteo's `geocoding-api.open-meteo.com` beside its `api.open-meteo.com`), which a literal
+ * absolute URL cannot carry since the check refuses one. The host is judged by `HOST_PATTERN`, as
+ * `ctx.proxyBase(host)` and an absolute URL's host are, and the path must start at that host's
+ * root, so the pair becomes `https://<host><path>` and nothing in the path can move the host.
+ * Whether the host is the connection's is the proxy's judgement on the host route and never this
+ * file's (ADR 0010 as amended 2026-09-24). Null when no host is named.
+ */
+function namedHostTarget(target, host, absolute, refuse) {
+  if (host === undefined) return null;
+  if (typeof host !== "string" || !HOST_PATTERN.test(host)) {
+    const shown =
+      typeof host === "string" ? JSON.stringify(recordablePath(host).slice(0, 100)) : typeof host;
+    throw refuse(
+      `ctx.fetch's host option takes a host name the connection declares, such as "geocoding-api.example.com", not ${shown}.`,
+    );
+  }
+  if (absolute) {
+    throw refuse(
+      `ctx.fetch takes a path beside its host option, such as "/v1/search", not a URL (${recordableTarget(target)}).`,
+    );
+  }
+  if (!target.startsWith("/")) {
+    throw refuse(
+      `ctx.fetch's host option takes a path from that host's root, starting with "/", such as "/v1/search", not ${JSON.stringify(recordablePath(target).slice(0, 100))}.`,
+    );
+  }
+  return `https://${host.toLowerCase()}${target}`;
+}
+
 function boundFetch(path, init = {}) {
   if (!proxyUrl || !connection) throw unbound("ctx.fetch");
-  const target = String(path);
-  const method = String(init.method ?? "GET").toUpperCase();
-  const absolute = /^[a-z][a-z0-9+.-]*:/i.test(target);
-  // What the report and a refusal's sentence may say of the target: an absolute URL less its query.
-  const recorded = absolute ? recordableTarget(target) : target;
+  // `host` is the runner's option and never fetch's: taken off the init before anything is sent.
+  const { host, ...options } = init ?? {};
+  const given = String(path);
+  const method = String(options.method ?? "GET").toUpperCase();
+  const givenAbsolute = /^[a-z][a-z0-9+.-]*:/i.test(given);
+  // What the report and a refusal's sentence may say of the target: an absolute URL less its query,
+  // and a named host's call the same way, as a path until it is a URL (below) so a refusal of the
+  // path records no query either. A path on the primary host is the module's own and kept whole.
+  let recorded = givenAbsolute
+    ? recordableTarget(given)
+    : host === undefined
+      ? given
+      : recordablePath(given);
   // A refusal here never reaches the proxy; in a dry run it is still part of the report, because a
   // write the module could not even address is a write request that was not well-formed.
   const refuse = (message) => {
@@ -616,24 +675,30 @@ function boundFetch(path, init = {}) {
     }
     return new Error(message);
   };
+  // A named host is the host route, as an absolute URL is, and on the report the same way: scheme,
+  // host and path, the query dropped (GRA-213).
+  const named = namedHostTarget(given, host, givenAbsolute, refuse);
+  if (named !== null) recorded = recordableTarget(named);
+  const target = named ?? given;
   const prefix = connectionPrefix();
   let url;
-  if (absolute) {
+  if (named !== null || givenAbsolute) {
     url = hostRoute(target, prefix, refuse, recorded);
   } else {
     url = new URL(target.replace(/^\/+/, ""), prefix);
     if (!url.href.startsWith(prefix.href)) {
-      throw refuse(`ctx.fetch refused a path that leaves the connection: ${target}`);
+      recorded = recordablePath(target);
+      throw refuse(`ctx.fetch refused a path that leaves the connection: ${recorded}`);
     }
   }
 
-  const headers = new Headers(init.headers);
+  const headers = new Headers(options.headers);
   if (token) headers.set("authorization", `Bearer ${token}`);
   // Never follow: the proxy returned the vendor's 3xx unfollowed on purpose, and the only host this
   // sandbox can reach is the proxy — see the header.
-  const request = { ...init, headers, redirect: "manual" };
+  const request = { ...options, headers, redirect: "manual" };
   if (!dryRun) return fetch(url, request);
-  return dryRunFetch(url, request, { method, path: recorded, headers, init });
+  return dryRunFetch(url, request, { method, path: recorded, headers, init: options });
 }
 
 /**

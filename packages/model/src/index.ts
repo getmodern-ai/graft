@@ -95,4 +95,6 @@ export {
   type ModuleDraft,
   type ModuleFile,
   type ProofRead,
+  type ProofReadTarget,
+  proofReadLabel,
 } from "./types";

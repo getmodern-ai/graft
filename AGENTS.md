@@ -834,7 +834,17 @@ run's 202 preview (GRA-198 decides whether the preview changes shape instead). `
 and the Hermes skill carry no sentence on it: the budget stood at 2,039 of 2,048, and the rule is
 for the model that writes the module, which is Graft's. This is what let Slack's
 `files.getUploadURLExternal` flow (a `POST` of the bytes to `files.slack.com`) be authored without
-an SDK.
+an SDK. **A declared host known when the module is written is named with `host`** (GRA-213; ADR
+0010 as amended 2026-09-24): `ctx.fetch("/v1/search", { host: "geocoding-api.open-meteo.com" })`
+takes a path from that host's root, the runner judges the host by `HOST_PATTERN`, takes it off the
+init and sends the call exactly as `https://<host><path>` would go, so the proxy's
+`host_not_in_set` is still the judgement and a dry run records it as scheme, host and path; the
+check admits a literal in that position (`CONTEXT_DECLARATION`'s init is `RequestInit & { host?:
+string }`) and keeps refusing a literal absolute URL. `acquire`'s proof reads carry the same
+optional `host` (`@graft/model`'s `ProofReadTarget`, `{ path, host: string | null }` on the wire,
+a bare path still read from a script): the probe passes it to `ctx.fetch`, and `job.ts` refuses a
+host outside the connection's set (`hostSetOf`) before any read, as a failed read naming the
+declared hosts. The authoring skill says both, and that `ctx.proxyBase` stays for SDKs.
 
 ### The self-hosted image
 

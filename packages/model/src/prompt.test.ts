@@ -5,6 +5,7 @@ import type { ModelJobContext, ProofRead } from "./types";
 
 const answered: ProofRead = {
   path: "/items?limit=1",
+  host: null,
   ok: true,
   status: 200,
   body: '{"items":[]}',
@@ -21,9 +22,20 @@ describe("renderProof", () => {
     expect(text).not.toContain("connection's hosts");
   });
 
+  /** GRA-213: a read on another declared host names it, so the model sees which host answered. */
+  it("renders a read on a named host with the host beside the path", () => {
+    const text = renderProof(1, [
+      { ...answered, path: "/v1/search?name=Berlin", host: "geocoding-api.open-meteo.com" },
+    ]);
+    expect(text).toContain(
+      "### GET /v1/search?name=Berlin on geocoding-api.open-meteo.com → HTTP 200",
+    );
+  });
+
   it("renders a redirected read with the host and the job's note, and says a redirect is a host question", () => {
     const redirected: ProofRead = {
       path: "/v1/forecast",
+      host: null,
       ok: false,
       status: 303,
       body: null,
@@ -46,6 +58,7 @@ describe("renderProof", () => {
 describe("renderProof and the publish gate (GRA-72)", () => {
   const failed: ProofRead = {
     path: "/nope",
+    host: null,
     ok: false,
     status: 404,
     body: '{"error":"not found"}',
@@ -129,5 +142,23 @@ describe("systemPrompt", () => {
     expect(prose).toContain(
       "Every `write_module` is a new attempt against the budget; `prove` is not",
     );
+  });
+
+  /**
+   * GRA-213: on 2026-09-24 a job gave up because the module could not name the connection's second
+   * host and its proof read went to the primary. The protocol names the one form for both.
+   */
+  it("names ctx.fetch(path, { host }) for another declared host, for the module and the proof read alike", () => {
+    const prose = systemPrompt(context).replace(/\s+/g, " ");
+    expect(prose).toContain(
+      "vendor-relative path (on another declared host, `ctx.fetch(path, { host })`)",
+    );
+    expect(prose).toContain(
+      "Each read is `{ path, host }`: `host` null for the primary host, or the other declared host the module reads that path from with `ctx.fetch(path, { host })`",
+    );
+    expect(prose).toContain(
+      "hosts the connection may reach (what `ctx.fetch(path, { host })`, a proof read's `host` and `ctx.proxyBase(host)` may name): httpbin.org",
+    );
+    expect(prose).not.toContain("never names a host");
   });
 });

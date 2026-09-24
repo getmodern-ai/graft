@@ -249,6 +249,57 @@ describe("no_vendor_host_in_code", () => {
       ).pass,
     ).toBe(true);
   });
+
+  /** GRA-213: naming a declared host with the `host` option is the sanctioned form, not a host in the code. */
+  it("is green for a declared host named with the host option, and still red for the same host anywhere else", () => {
+    const hosts = ["api.demo.example", "geo.demo.example"];
+    const named = 'await ctx.fetch("/v1/search", { host: "geo.demo.example" });';
+    expect(
+      noVendorHostInCode(
+        run({ attempts: [attempt([{ path: "index.ts", content: named }])] }),
+        hosts,
+      ).pass,
+    ).toBe(true);
+    const elsewhere = `${named}\nconst base = "geo.demo.example";`;
+    const score = noVendorHostInCode(
+      run({ attempts: [attempt([{ path: "index.ts", content: elsewhere }])] }),
+      hosts,
+    );
+    expect(score.pass).toBe(false);
+    expect(score.detail).toContain("geo.demo.example");
+  });
+
+  /** Greptile on #169: the exemption is `ctx.fetch`'s second argument alone, not any `host:` property. */
+  it("exempts a host property only on ctx.fetch's init object, at its top level", () => {
+    const hosts = ["api.demo.example", "geo.demo.example"];
+    const scored = (content: string) =>
+      noVendorHostInCode(run({ attempts: [attempt([{ path: "index.ts", content }])] }), hosts).pass;
+
+    expect(scored('ctx.fetch("/x", { host: "geo.demo.example" })')).toBe(true);
+    // A first argument holding a comma inside a template and a call, and a quoted key among others.
+    const multiline = [
+      `await ctx.fetch(\`/v1/search?name=$${"{"}encodeURIComponent(input.city, ",")}\`, {`,
+      '  method: "GET",',
+      '  "host": "geo.demo.example",',
+      '  headers: { accept: "application/json" },',
+      "})",
+    ].join("\n");
+    expect(scored(multiline)).toBe(true);
+    expect(scored('const config = { host: "geo.demo.example" };')).toBe(false);
+    expect(scored('fetch("/x", { host: "geo.demo.example" })')).toBe(false);
+    expect(scored('ctx.fetch({ host: "geo.demo.example" })')).toBe(false);
+    expect(
+      scored(
+        'ctx.fetch("/x", { headers: { host: "geo.demo.example" }, host: "api.demo.example" })',
+      ),
+    ).toBe(false);
+    expect(scored('ctx.fetch("/x", { vhost: "geo.demo.example" })')).toBe(false);
+    // Greptile on #169: a template nested in the path's `${…}` is stepped over whole.
+    const open = "$" + "{";
+    expect(scored(`ctx.fetch(\`/v1/${open}\`x,\`}search\`, { host: "geo.demo.example" })`)).toBe(
+      true,
+    );
+  });
 });
 
 describe("dry_run_before_any_ask", () => {
