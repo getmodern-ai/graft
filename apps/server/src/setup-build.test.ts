@@ -1200,6 +1200,79 @@ describe("Setup's navigable rail (GRA-215)", () => {
     }
   }, 60_000);
 
+  it("refuses the same starter routing to another row while the job runs, until it says so", async () => {
+    const held = heldModel(PASSING_SCRIPT);
+    mcp.model = held.model;
+    try {
+      // The starter's own row covers both Open-Meteo hosts; a second row of the same vendor, made
+      // with the ordinary form, covers only the forecast host, so the starter never routes to it.
+      const { connectionId: starterRow } = await onGoal(true, "claude");
+      const made = await app.request(
+        "/api/connections",
+        post({
+          vendor: "open-meteo",
+          displayName: "My Open-Meteo",
+          primaryHost: "https://api.open-meteo.com/v1",
+          scheme: "none",
+        }),
+      );
+      expect(made.status).toBe(201);
+      const formRow: string = (await read(made)).connection.id;
+      await app.request("/api/setup/back", post({ step: "vendor" }));
+      const onForm = await read(
+        await app.request("/api/setup/connect", post({ connectionId: formRow })),
+      );
+      expect(onForm).toMatchObject({ step: "goal", setup: { connectionId: formRow } });
+      const building = await read(
+        await app.request("/api/setup/build", post({ goal: OPEN_METEO.goal })),
+      );
+      const jobId: string = building.setup.acquireJobId;
+
+      // Open-Meteo again is the held connection's vendor, but the routing resolves the starter's
+      // row: that leaves the job behind, so it is refused rather than silently dropping it.
+      await app.request("/api/setup/back", post({ step: "vendor" }));
+      const same = await app.request("/api/setup/connect", post({ starterId: "open-meteo" }));
+      expect(same.status).toBe(409);
+      expect((await read(same)).details).toMatchObject({
+        reason: "job_running",
+        acquireJobId: jobId,
+      });
+      expect(await get("/api/setup")).toMatchObject({
+        step: "vendor",
+        setup: { connectionId: formRow, acquireJobId: jobId },
+      });
+
+      // That was the answered ask the routing re-used (GRA-203). Taken, as the agent's own
+      // request_connection would take it, the routing finds the starter's row at once instead,
+      // and that is refused the same way.
+      for (const [id, row] of store.pendingActions) {
+        if (row.answeredAt && !row.consumedAt) {
+          store.pendingActions.set(id, { ...row, consumedAt: new Date() });
+        }
+      }
+      const direct = await app.request("/api/setup/connect", post({ starterId: "open-meteo" }));
+      expect(direct.status).toBe(409);
+      expect((await read(direct)).details).toMatchObject({
+        reason: "job_running",
+        acquireJobId: jobId,
+      });
+
+      // Said so, the record moves to the starter's row and lets the job go.
+      const discarded = await read(
+        await app.request(
+          "/api/setup/connect",
+          post({ starterId: "open-meteo", discardJob: true }),
+        ),
+      );
+      expect(discarded).toMatchObject({
+        step: "goal",
+        setup: { connectionId: starterRow, acquireJobId: null, toolId: null },
+      });
+    } finally {
+      held.release();
+    }
+  }, 60_000);
+
   it("leaves a running job behind when the choice or the Build says so", async () => {
     const held = heldModel(PASSING_SCRIPT);
     mcp.model = held.model;

@@ -126,9 +126,13 @@ export function setupGoalSuggestionsQuery(connectionId: string) {
 /**
  * The goal the person last pressed Build with, held in the cache alone (never fetched), so *Change
  * the goal* returns to what they typed rather than to the curated one. A reload forgets it, and
- * the curated goal is what the field then shows.
+ * the curated goal is what the field then shows. Keyed by the connection it was built against
+ * (Greptile on #170): after going back and choosing another integration, the field starts at that
+ * integration's curated task, never at the task typed for the one before.
  */
-export const setupGoalDraftKey = ["setup-goal-draft"] as const;
+export function setupGoalDraftKey(connectionId: string | null) {
+  return ["setup-goal-draft", connectionId] as const;
+}
 
 /** Build: the build approval, the job, and the record on the building step (`SetupBuildBody`). */
 export function buildSetup(body: SetupBuildBody) {

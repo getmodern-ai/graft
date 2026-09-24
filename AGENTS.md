@@ -1160,12 +1160,14 @@ job, `building` to `result` with the tool; `from` must be the record's step (`se
 leaves a held job behind is a forward action that says so: the connect moves drop the job and tool
 when a different connection replaces the one they were acquired against (an ask leaves them until
 it is answered; a reopen or a lost connection clears them), and while the held job is queued or
-running a choice of another vendor (`POST /api/setup/connect`, judged on the vendor) or a Build
-(`startSetupBuild`) is refused `job_running` unless the body carries `discardJob: true`, which the
-console sends after `DiscardJobDialog`. `SetupGoalContext.job` is the held job, whose goal the goal
-step shows and offers Continue to while the text is unchanged. Neither route is a mutation-table
-row. The console: `SetupRail` and `SetupProgress` link the steps `setupRail(step, record)` marks
-(`lib/setup-steps.ts`, with `backTargetOf` for the footer), labelled *Integration* and *Task*;
+running a choice of another vendor (`POST /api/setup/connect`, judged on the vendor, then again on
+the row the same starter's routing resolves or the ask it hands back settles on, GRA-216's review)
+or a Build (`startSetupBuild`) is refused `job_running` unless the body carries `discardJob: true`,
+which the console sends after `DiscardJobDialog`. `SetupGoalContext.job` is the held job, whose
+goal the goal step shows and offers Continue to while the text is unchanged. Neither route is a
+mutation-table row. The console: `SetupRail` and `SetupProgress` link the steps
+`setupRail(step, record)` marks (`lib/setup-steps.ts`, with `backTargetOf` for the footer),
+labelled *Integration* and *Task*;
 `SetupFooter` (Back bottom left through `useSetupBack`, the step's primary bottom right) closes
 every step, the connect step's open ask keeping its card's own Connect as the primary; the building
 step is `progressCard` (`lib/setup-progress.ts`: a plain label per stage, the newest line, the
@@ -1198,7 +1200,8 @@ and `connections`: `url` is `setupUrl(GRAFT_CONSOLE_URL, agentId)`, `/setup?agen
 `message` is `handoff-message.ts`'s `setupOfferMessage` in the console form (GRA-55's relay
 clause). The record is read (`getSetupRecord`, `McpDeps.setup`) only when the person's connection
 count, which `find_tool` already holds, is zero; `packages/mcp/src/setup-offer.ts` is the rule's
-home. It is **not an ask**: no pending action, no signature, no expiry, `isError` unset, and
+home. A record running as another of the person's active agents suppresses the offer, since the
+page would resume Setup as that agent (GRA-216's review). It is **not an ask**: no pending action, no signature, no expiry, `isError` unset, and
 `answer_ask` has nothing to admit. For a `clientRendersCards` session the message takes its card
 form, `cardShown: true` rides inside `setup` beside `url`, and `structuredContent.card` is a
 `SetupCard` (`@graft/ask-card/shape`: `{ kind: "setup", agentName, url }`, beside `AskCard` in

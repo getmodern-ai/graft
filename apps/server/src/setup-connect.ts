@@ -159,7 +159,10 @@ export async function connectSetupVendor(
 
   const starter = starterVendorOf(input.starterId);
   if (!starter) throw new ServiceError("NOT_FOUND", "No starter integration has that id");
-  return routeStarter(ctx, principal, agent.id, starter, deps);
+  // The same starter can still route to another row than the one the job was acquired against
+  // (Greptile on #171): that replaces the connection as surely as another vendor does.
+  const held = input.discardJob ? undefined : { state: before };
+  return routeStarter(ctx, principal, agent.id, starter, deps, undefined, held);
 }
 
 /**
@@ -167,7 +170,8 @@ export async function connectSetupVendor(
  * and the connect moves drop that job with the connection it was acquired against. While the job
  * still runs, a choice that would replace the connection is refused `job_running` until it says
  * `discardJob`, so the console asks first; the same vendor again keeps the job, and a job that
- * finished is left without asking. Judged on the vendor, since the routing decides the row.
+ * finished is left without asking. Judged here on the vendor, since the routing decides the row,
+ * and judged again on the row the routing resolves (`routeStarter`'s `held`).
  */
 async function refuseLeavingJobRunning(
   ctx: ServiceContext,
@@ -176,15 +180,29 @@ async function refuseLeavingJobRunning(
   input: SetupConnectInput,
   deps: SetupConnectDeps,
 ): Promise<void> {
-  const record = state.setup;
-  if (!record?.acquireJobId || !record.connectionId || !state.agent || !deps.acquireJob) return;
-  const held = record.connectionId;
+  const held = state.setup?.connectionId;
+  if (!held || !state.setup?.acquireJobId) return;
   if ("connectionId" in input) {
     if (input.connectionId === held) return;
   } else {
     const current = await getConnection(ctx, principal, held, deps.connection);
     if (current && current.vendor === starterVendorOf(input.starterId)?.vendor) return;
   }
+  await refuseReplacingRunningJob(ctx, principal, state, deps);
+}
+
+/**
+ * Refuse `job_running` when the record holds a job that is still queued or running: the one check
+ * behind both the choice judged on its vendor before routing and the row the routing resolved.
+ */
+async function refuseReplacingRunningJob(
+  ctx: ServiceContext,
+  principal: Principal,
+  state: SetupState,
+  deps: SetupConnectDeps,
+): Promise<void> {
+  const record = state.setup;
+  if (!record?.acquireJobId || !state.agent || !deps.acquireJob) return;
   const job = await deps.acquireJob.findAcquireJob(
     ctx.db,
     { personId: principal.personId, agentId: state.agent.id },
@@ -211,6 +229,11 @@ function connectedBy({ state, moved }: SetupMoveResult): SetupConnectResult {
  * routing's move lands only on the record as it was seen then (`fromVendorAt`), so the person's
  * choice in flight is kept over a read that reopened the record, and any choice another tab made
  * since is kept over this one, even one that closed and left the record on `vendor` again.
+ *
+ * `held` is the state the request read before routing, given unless the person said `discardJob`:
+ * a routing that resolves a connection other than the one the record holds, while the record's
+ * job still runs, is refused `job_running` before the move, as a choice of another vendor is,
+ * rather than dropping the job with the connection it was acquired against.
  */
 async function routeStarter(
   ctx: ServiceContext,
@@ -219,6 +242,7 @@ async function routeStarter(
   starter: StarterVendor,
   deps: SetupConnectDeps,
   vendorAt?: Date,
+  held?: { state: SetupState },
 ): Promise<SetupConnectResult> {
   const move = (next: SetupConnectMove) =>
     moveSetupConnect(ctx, principal, next, deps.setup, deps.agent);
@@ -233,6 +257,9 @@ async function routeStarter(
     case "refused":
       throw refusal(routing);
     case "connected":
+      if (held && held.state.setup?.connectionId !== routing.connection.id) {
+        await refuseReplacingRunningJob(ctx, principal, held.state, deps);
+      }
       return connectedBy(
         await move({
           kind: "connected",
@@ -244,6 +271,20 @@ async function routeStarter(
     case "connection":
     case "scope": {
       const pendingActionId = routing.pendingActionId;
+      const heldConnection = held?.state.setup?.acquireJobId ? held.state.setup.connectionId : null;
+      if (held && heldConnection) {
+        // A re-used ask may already be answered with another row, and the read below would move
+        // the record onto it (GRA-203); an open ask for a new row would, once answered.
+        const row = await getPendingActionForPerson(
+          ctx,
+          principal,
+          pendingActionId,
+          deps.pendingAction,
+        );
+        if (askSettlesOn(row, agentId, deps.pendingAction.now()) !== heldConnection) {
+          await refuseReplacingRunningJob(ctx, principal, held.state, deps);
+        }
+      }
       const asked = await move({ kind: "ask", agentId, pendingActionId, fromVendorAt: vendorAt });
       if (!asked.moved) return { state: asked.state, connected: false };
       // The routing may answer an ask already answered and not yet taken (GRA-203): read it now,
@@ -255,7 +296,7 @@ async function routeStarter(
       // another tab's choice.
       const seen = learned.result.state.setup;
       if (learned.stale && !vendorAt && seen?.step === "vendor") {
-        return routeStarter(ctx, principal, agentId, starter, deps, seen.updatedAt);
+        return routeStarter(ctx, principal, agentId, starter, deps, seen.updatedAt, held);
       }
       return learned.result;
     }
@@ -279,6 +320,18 @@ function askVerdict(
     return readConnectionAnswer(row.answer) ?? "closed";
   }
   return row.expiresAt.getTime() <= now.getTime() ? "closed" : "open";
+}
+
+/**
+ * The connection an ask the routing handed back settles the record on: the one its answer names,
+ * the row an open ask is about (a scope ask or a widening, which carry it in `connection_id`), or
+ * none (an open ask for a new row, or a closed one, which reopens the record without a connection).
+ */
+function askSettlesOn(row: PendingActionRow | null, agentId: string, now: Date): string | null {
+  const verdict = askVerdict(row, agentId, now);
+  if (verdict === "closed") return null;
+  if (verdict === "open") return row?.connectionId ?? null;
+  return verdict.connectionId;
 }
 
 /**

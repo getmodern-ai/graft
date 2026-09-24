@@ -30,6 +30,7 @@ import {
   type SetupTool,
   setupToolQuery,
 } from "@/lib/setup-queries";
+import { resultToolOf } from "@/lib/setup-result";
 import {
   canRun,
   initialValues,
@@ -58,6 +59,17 @@ import { TOOL_ANNOTATION_CHIP } from "@/lib/status-chips";
 export function ResultStep({ state }: { state: SetupStateData }) {
   const context = useQuery(setupToolQuery);
   const agentName = state.agent?.name ?? "your agent";
+  const recordToolId = state.setup?.toolId ?? null;
+  const tool = resultToolOf(recordToolId, context.data?.tool);
+  // A cached context naming an earlier job's tool is read again, once per tool the record names,
+  // and nothing runs until the record's own tool is here (`lib/setup-result.ts`).
+  const refetchedFor = useRef<string | null>(null);
+  const { data, isFetching, refetch } = context;
+  useEffect(() => {
+    if (!data?.tool || tool || isFetching || refetchedFor.current === recordToolId) return;
+    refetchedFor.current = recordToolId;
+    void refetch();
+  }, [data, tool, isFetching, recordToolId, refetch]);
   return (
     <div className="flex flex-col gap-6">
       <SetupStepHeader
@@ -75,12 +87,13 @@ export function ResultStep({ state }: { state: SetupStateData }) {
             retrying={context.isFetching}
           />
         </p>
-      ) : context.data.tool && context.data.agent ? (
+      ) : tool && context.data.agent ? (
         <ToolRun
+          key={tool.id}
           state={state}
           context={context.data}
           agentId={context.data.agent.id}
-          tool={context.data.tool}
+          tool={tool}
         />
       ) : (
         <Loader />
