@@ -1,7 +1,6 @@
 import { join } from "node:path";
 
 import {
-  hashAgentToken,
   type SetupDeps,
   type StarterVendor,
   starterVendorOf,
@@ -49,12 +48,13 @@ import {
 import { fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
- * Setup's goal, build and building steps over the API (GRA-207; ADR 0024), walked from the harness
- * step on: the keyless Open-Meteo ask answered through the existing route, the goal step's
- * context, Build as the build approval, the job polled through the agent's job route to a pass,
- * and the record naming the tool. The loop underneath is the real one: the runner over the
- * in-memory store, a scripted model in the seat Graft's model takes, the fake sandbox running the
- * real runner, and a fake Open-Meteo behind the real proxy. What is asserted is the wire and the
+ * Setup's goal, build, building, result and finish steps over the API (GRA-207, GRA-208; ADR 0024),
+ * walked from the harness step on: the keyless Open-Meteo ask answered through the existing route,
+ * the goal step's context, Build as the build approval, the job polled through the agent's job
+ * route to a pass, the record naming the tool, the tool run as the agent from the console, and the
+ * finish issuing the token the harness then connects with. The loop underneath is the real one:
+ * the runner over the in-memory store, a scripted model in the seat Graft's model takes, the fake
+ * sandbox running the real runner, and a fake Open-Meteo behind the real proxy. What is asserted is the wire and the
  * store: the state, the job's shape, the approvals and the asks.
  */
 
@@ -255,6 +255,7 @@ beforeAll(async () => {
       handoff,
       connectionRouting: mcp,
       acquire: mcp,
+      run: mcp,
       analytics: {
         name: "recorder",
         shutdown: async () => {},
@@ -303,10 +304,13 @@ const get = async (path: string) => read(await app.request(path));
  * confirmed through the route the card posts to, with the build choice as given, and the record
  * read onto `goal`. Answers the agent and the connection.
  */
-async function onGoal(approveBuild: boolean): Promise<{ agentId: string; connectionId: string }> {
+async function onGoal(
+  approveBuild: boolean,
+  harness = "hermes",
+): Promise<{ agentId: string; connectionId: string }> {
   people += 1;
   person = `person_${people}`;
-  const started = await read(await app.request("/api/setup/start", post({ harness: "hermes" })));
+  const started = await read(await app.request("/api/setup/start", post({ harness })));
   const agentId: string = started.agent.id;
   const asked = await read(
     await app.request("/api/setup/connect", post({ starterId: "open-meteo" })),
@@ -340,12 +344,8 @@ const stepEvents = () =>
     .filter((event) => event.event === "setup_step_completed" && event.distinctId === person)
     .map((event) => event.properties?.step);
 
-/** An MCP session as the agent, once a token is on its row (GRA-208 mints it at the finish step). */
-async function connectAs(agentId: string) {
-  const token = `grft_setup_build_${agentId}_0000000000000000000000`;
-  const row = store.agents.get(agentId);
-  if (!row) throw new Error(`no agent ${agentId}`);
-  store.agents.set(agentId, { ...row, tokenHash: hashAgentToken(token), tokenPrefix: "grft_set" });
+/** An MCP session with a static token, as a harness configured from the finish step connects. */
+async function connectAs(token: string) {
   const notifier = createToolListChangedNotifier();
   const session = await openAgentSession(mcp, token, notifier);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -426,9 +426,72 @@ describe("Setup's goal and build steps", () => {
     await get("/api/setup");
     expect(stepEvents()).toEqual(["vendor", "connect", "goal", "building"]);
 
-    // A later acquire over MCP for the same pair asks nothing: the job starts.
-    const harness = await connectAs(agentId);
+    // The result step: what it draws, then the tool run as the agent, synchronously.
+    expect(await get("/api/setup/tool")).toEqual({
+      agent: { id: agentId, name: "Hermes" },
+      harness: "hermes",
+      connection: { id: connectionId, vendor: "open-meteo", displayName: expect.any(String) },
+      goal: goal.goal,
+      job: { id: jobId, status: "succeeded", failure: null },
+      tool: {
+        id: status.result.toolId,
+        vendor: "open-meteo",
+        name: "current-weather",
+        wireName: "open-meteo__current-weather",
+        description: expect.any(String),
+        inputSchema: expect.objectContaining({ properties: { city: { type: "string" } } }),
+        readOnly: true,
+      },
+      runInput: { field: "city", label: "City", defaultValue: "Melbourne" },
+    });
+    const runPath = `/api/agents/${agentId}/tools/open-meteo/current-weather/run`;
+    const ran = await app.request(runPath, post({ input: { city: "Melbourne" } }));
+    expect(ran.status).toBe(200);
+    expect(await read(ran)).toEqual({ ok: true, result: FORECAST });
+    // An input the tool's schema refuses is the run's own refusal, with its sentence.
+    expect(await read(await app.request(runPath, post({ input: { city: 3 } })))).toMatchObject({
+      ok: false,
+      reason: "input_invalid",
+      message: expect.any(String),
+    });
+    expect(await openAsks()).toEqual([]);
+
+    // On to the finish, which issues Hermes's token once and completes the record.
+    const onFinish = await read(await app.request("/api/setup/result", post()));
+    expect(onFinish).toMatchObject({ step: "finish", setup: { toolId: status.result.toolId } });
+    expect(await get("/api/setup/tool")).toMatchObject({ tool: { wireName: status.result.tool } });
+    const finished = await app.request("/api/setup/finish", post());
+    expect(finished.status).toBe(200);
+    const done = await read(finished);
+    expect(done).toMatchObject({
+      step: "completed",
+      show: false,
+      setup: { step: "completed", completedAt: expect.any(String) },
+      agent: { id: agentId, tokenPrefix: expect.stringMatching(/^grft_/) },
+      token: expect.stringMatching(/^grft_/),
+    });
+    const token: string = done.token;
+    // A second finish is refused, the show rule stays no, and the token route admits nothing now.
+    const again = await app.request("/api/setup/finish", post());
+    expect(again.status).toBe(409);
+    expect((await read(again)).details).toEqual({ reason: "setup_completed" });
+    expect(await get("/api/setup")).toMatchObject({ step: "completed", show: false });
+    const reissue = await app.request(`/api/agents/${agentId}/token`, post());
+    expect(reissue.status).toBe(409);
+    expect((await read(reissue)).details).toMatchObject({ reason: "agent_not_awaiting_harness" });
+    expect(stepEvents()).toEqual(["vendor", "connect", "goal", "building", "result"]);
+    expect(
+      captured
+        .filter((event) => event.event === "setup_completed" && event.distinctId === person)
+        .map((event) => event.properties?.harness),
+    ).toEqual(["hermes"]);
+
+    // The harness connects with the finish's token: find_tool lists the tool, and a later acquire
+    // over MCP for the same pair asks nothing, the job starts.
+    const harness = await connectAs(token);
     try {
+      const found = await harness.call("find_tool", { query: "current weather" });
+      expect(JSON.stringify(found.tools)).toContain("current-weather");
       const again = await harness.call("acquire", {
         connectionId,
         goal: "Read tomorrow's forecast for a city. Read only.",
@@ -492,9 +555,9 @@ describe("Setup's goal and build steps", () => {
     expect(retry.setup.acquireJobId).not.toBe(jobId);
   }, 60_000);
 
-  it("continues to the finish while it runs, and notes the tool there once it lands", async () => {
+  it("continues to the finish while it runs, notes the tool there once it lands, and an OAuth harness finishes with no token", async () => {
     mcp.model = createScriptedModel(PASSING_SCRIPT);
-    await onGoal(true);
+    const { agentId } = await onGoal(true, "claude");
     // Held queued: no kick reaches the runner until the continue has landed.
     const kick = runner.kick;
     runner.kick = () => {};
@@ -515,10 +578,51 @@ describe("Setup's goal and build steps", () => {
     } finally {
       runner.kick = kick;
     }
+    // While it builds, the finish step draws the goal and no tool: the prompt says it is arriving.
+    expect(await get("/api/setup/tool")).toMatchObject({
+      harness: "claude",
+      goal: "Read the current weather. Read only.",
+      job: { status: "queued" },
+      tool: null,
+    });
     runner.kick();
     await runner.idle();
     const landed = await get("/api/setup");
     expect(landed).toMatchObject({ step: "finish", setup: { toolId: expect.any(String) } });
+    // The result step's Continue is refused off the result step.
+    expect((await app.request("/api/setup/result", post())).status).toBe(409);
+
+    // Claude consents onto this agent later, so the finish issues nothing and the agent still awaits.
+    const done = await read(await app.request("/api/setup/finish", post()));
+    expect(done).toMatchObject({ step: "completed", show: false, token: null });
+    expect(done.agent).toMatchObject({ id: agentId, tokenPrefix: null, connectedVia: null });
+  }, 60_000);
+
+  it("records the tool that lands after Finish Setup, and the finish's context names it", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    await onGoal(true, "claude");
+    const kick = runner.kick;
+    runner.kick = () => {};
+    try {
+      await app.request("/api/setup/build", post({ goal: "Read the current weather. Read only." }));
+      await app.request("/api/setup/continue", post());
+      // Finished while the job is still queued: completed with no tool yet.
+      const done = await read(await app.request("/api/setup/finish", post()));
+      expect(done).toMatchObject({ step: "completed", setup: { toolId: null } });
+    } finally {
+      runner.kick = kick;
+    }
+    runner.kick();
+    await runner.idle();
+    const landed = await get("/api/setup");
+    expect(landed).toMatchObject({ step: "completed", setup: { toolId: expect.any(String) } });
+    expect(await get("/api/setup/tool")).toMatchObject({
+      goal: "Read the current weather. Read only.",
+      tool: { wireName: "open-meteo__current-weather" },
+    });
+    // Counted once, when it landed, on the completed record as on the finish step.
+    await get("/api/setup");
+    expect(stepEvents().filter((step) => step === "building")).toEqual(["building"]);
   }, 60_000);
 
   it("counts the building step once when two reads learn the same pass", async () => {
@@ -824,4 +928,153 @@ describe("GET /api/agents/:id/acquire-jobs/:jobId", () => {
       404,
     );
   }, 60_000);
+});
+
+describe("POST /api/agents/:id/tools/:vendor/:name/run", () => {
+  /** A fresh person with the tool built and promoted, the record on the result step. */
+  async function onResult() {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    const { agentId } = await onGoal(true);
+    await app.request("/api/setup/build", post({ goal: "Read the current weather. Read only." }));
+    await runner.idle();
+    const state = await get("/api/setup");
+    expect(state.step).toBe("result");
+    const runPath = `/api/agents/${agentId}/tools/open-meteo/current-weather/run`;
+    return { agentId, toolId: state.setup.toolId as string, runPath };
+  }
+
+  it("refuses a tool that is not read-only and one outside the working set, before any run or ask", async () => {
+    const { agentId, toolId, runPath } = await onResult();
+    const tool = store.tools.get(toolId);
+    if (!tool) throw new Error("no tool");
+    const runs = () => store.usage.filter((row) => row.toolId === toolId).length;
+    const before = runs();
+
+    store.tools.set(toolId, { ...tool, readOnly: false });
+    const write = await app.request(runPath, post({ input: { city: "Melbourne" } }));
+    expect(write.status).toBe(409);
+    expect(await read(write)).toMatchObject({
+      message: expect.stringContaining("is not read-only"),
+      details: { reason: "tool_not_read_only", tool: "open-meteo__current-weather" },
+    });
+    store.tools.set(toolId, tool);
+
+    store.workingSet.delete(`${agentId} ${toolId}`);
+    const demoted = await app.request(runPath, post({ input: { city: "Melbourne" } }));
+    expect(demoted.status).toBe(409);
+    expect((await read(demoted)).details).toMatchObject({ reason: "tool_not_in_working_set" });
+
+    expect(runs()).toBe(before);
+    expect(await openAsks()).toEqual([]);
+  }, 60_000);
+
+  it("judges the tool again on the run's own read, so a republish or a demotion in between is refused", async () => {
+    const { agentId, toolId, runPath } = await onResult();
+    const tool = store.tools.get(toolId);
+    if (!tool) throw new Error("no tool");
+    const runs = () => store.usage.filter((row) => row.toolId === toolId);
+    const before = runs().length;
+
+    // Read-only for the route's read, write-capable by the run's: a republish landed between them.
+    let reads = 0;
+    const republished = { ...tool };
+    Object.defineProperty(republished, "readOnly", {
+      get: () => {
+        reads += 1;
+        return reads === 1;
+      },
+    });
+    store.tools.set(toolId, republished);
+    const write = await app.request(runPath, post({ input: { city: "Melbourne" } }));
+    expect(write.status).toBe(409);
+    expect((await read(write)).details).toMatchObject({ reason: "tool_not_read_only" });
+    store.tools.set(toolId, tool);
+
+    // Promoted for the route's read, demoted by the run's.
+    const entry = `${agentId} ${toolId}`;
+    const get = store.workingSet.get.bind(store.workingSet);
+    let lookups = 0;
+    store.workingSet.get = (key) => {
+      if (key !== entry) return get(key);
+      lookups += 1;
+      return lookups === 1 ? get(key) : undefined;
+    };
+    try {
+      const demoted = await app.request(runPath, post({ input: { city: "Melbourne" } }));
+      expect(demoted.status).toBe(409);
+      expect((await read(demoted)).details).toMatchObject({ reason: "tool_not_in_working_set" });
+    } finally {
+      store.workingSet.get = get;
+    }
+
+    // Neither reached the sandbox or the gate: two refusals on the ledger, and no ask.
+    expect(
+      runs()
+        .slice(before)
+        .map((row) => row.outcome),
+    ).toEqual(["refused", "refused"]);
+    expect(await openAsks()).toEqual([]);
+  }, 60_000);
+
+  it("answers another person's agent, and a tool not in the toolbox, as not found", async () => {
+    const { agentId, runPath } = await onResult();
+    expect(
+      (await app.request(`/api/agents/${agentId}/tools/open-meteo/nothing/run`, post({}))).status,
+    ).toBe(404);
+    await onGoal(true);
+    expect((await app.request(runPath, post({ input: { city: "Melbourne" } }))).status).toBe(404);
+  }, 60_000);
+});
+
+describe("POST /api/agents/:id/token", () => {
+  it("mints once for an agent awaiting its harness, and the token works on /mcp", async () => {
+    people += 1;
+    person = `person_${people}`;
+    const started = await read(
+      await app.request("/api/setup/start", post({ harness: "openclaw" })),
+    );
+    const agentId: string = started.agent.id;
+    const issued = await app.request(`/api/agents/${agentId}/token`, post());
+    expect(issued.status).toBe(201);
+    const body = await read(issued);
+    expect(body).toMatchObject({
+      agent: { id: agentId, tokenPrefix: body.token.slice(0, 8) },
+      token: expect.stringMatching(/^grft_/),
+    });
+    const second = await app.request(`/api/agents/${agentId}/token`, post());
+    expect(second.status).toBe(409);
+    expect(await read(second)).toMatchObject({
+      message: expect.stringContaining("already has a token"),
+      details: { reason: "agent_not_awaiting_harness" },
+    });
+    const harness = await connectAs(body.token);
+    try {
+      expect(await harness.call("find_tool", { query: "anything" })).toHaveProperty("tools");
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses an agent a client connected, and another person's agent as not found", async () => {
+    people += 1;
+    person = `person_${people}`;
+    const started = await read(await app.request("/api/setup/start", post({ harness: "claude" })));
+    const agentId: string = started.agent.id;
+    const row = store.agents.get(agentId);
+    if (!row) throw new Error("no agent");
+    store.agents.set(agentId, {
+      ...row,
+      connectedViaClientId: "client_1",
+      connectedViaClientName: "Claude",
+    });
+    const oauth = await app.request(`/api/agents/${agentId}/token`, post());
+    expect(oauth.status).toBe(409);
+    expect(await read(oauth)).toMatchObject({
+      message: expect.stringContaining("connected through Claude"),
+      details: { reason: "agent_not_awaiting_harness" },
+    });
+    people += 1;
+    person = `person_${people}`;
+    expect((await app.request(`/api/agents/${agentId}/token`, post())).status).toBe(404);
+  });
 });

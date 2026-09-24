@@ -187,6 +187,35 @@ export async function setAgentConnectedVia(
 }
 
 /**
+ * Issue a static token to an agent **awaiting its harness** (ADR 0024; `isAwaitingHarness` in
+ * `@graft/core`): the hash and the prefix written only while the agent is active with no token
+ * and no client, all four in the predicate, so a second issue, a revoke or a consent that landed
+ * first matches nothing and the plaintext minted for this call is never stored anywhere. Null for
+ * no such agent of this person, or one that is no longer awaiting.
+ */
+export async function issueAgentToken(
+  db: DbOrTx,
+  personId: string,
+  agentId: string,
+  token: { tokenHash: string; tokenPrefix: string },
+): Promise<AgentRow | null> {
+  const [row] = await db
+    .update(agent)
+    .set({ tokenHash: token.tokenHash, tokenPrefix: token.tokenPrefix })
+    .where(
+      and(
+        eq(agent.id, agentId),
+        eq(agent.personId, personId),
+        isNull(agent.revokedAt),
+        isNull(agent.tokenHash),
+        isNull(agent.connectedViaClientId),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
  * Revoke: the row stays, the token stops resolving. `revoked_at IS NULL` in the predicate makes a
  * second revoke match nothing rather than moving the timestamp, so the recorded moment is the
  * first one.

@@ -480,6 +480,8 @@ const app = createServer({
     connectionRouting: mcp,
     // Setup's Build shares `acquire`'s model, job record and runner (GRA-207).
     acquire: mcp,
+    // Setup's result step runs the tool through the same authored-run function (GRA-208).
+    run: mcp,
   },
   mcpOAuth,
   // The console's build, served from the same origin as the API (`console.ts`); absent, the API is

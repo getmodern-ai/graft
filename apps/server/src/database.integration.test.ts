@@ -4,6 +4,7 @@ import { createAuth } from "@graft/auth";
 import {
   addConnectionToAgentScope,
   createAgent,
+  createAgentAwaitingHarness,
   createConnectionDeps,
   createModelKeyDeps,
   createTool,
@@ -14,11 +15,14 @@ import {
   defaultWorkingSetDeps,
   deletePersonModelKey,
   findPersonModelKeyRow,
+  finishSetup,
   getAgentScope,
   getConnection,
   getPersonModelKey,
   getSetupState,
   getToolById,
+  hashAgentToken,
+  issueAwaitingAgentToken,
   listAgents,
   listConnections,
   listWorkingSet,
@@ -848,6 +852,48 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       setup: { harness: "hermes", skippedAt: null },
       agent: { name: "Hermes" },
     });
+  });
+
+  /** GRA-208: the finish issues a token harness's token once, in the statement's own guard. */
+  it("finishes Setup with the agent's token once, and two issues racing mint one token", async () => {
+    const personId = await signUp("setup-finish@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    const started = await startSetup(
+      ctx,
+      principal,
+      { harness: "hermes" },
+      defaultSetupDeps,
+      defaultAgentDeps,
+    );
+    const agentId = started.agent?.id ?? "";
+    await defaultSetupDeps.saveSetup(db, personId, { step: "finish" });
+    const done = await finishSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps);
+    expect(done.token).toMatch(/^grft_/);
+    expect(done.state).toMatchObject({ step: "completed", show: false });
+    const [row] = (
+      await db.execute<{ token_hash: string | null }>(
+        sql`select token_hash from agent where id = ${agentId}`,
+      )
+    ).rows;
+    expect(row?.token_hash).toBe(hashAgentToken(done.token ?? ""));
+    await expect(
+      finishSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps),
+    ).rejects.toMatchObject({ code: "CONFLICT", details: { reason: "setup_completed" } });
+
+    // A second agent awaiting its harness, issued twice at once: one token, one refusal.
+    const { agent } = await createAgentAwaitingHarness(
+      ctx,
+      principal,
+      { name: "Spare" },
+      defaultAgentDeps,
+    );
+    const races = await Promise.allSettled([
+      issueAwaitingAgentToken(ctx, principal, agent.id, defaultAgentDeps),
+      issueAwaitingAgentToken(ctx, principal, agent.id, defaultAgentDeps),
+    ]);
+    expect(races.filter((race) => race.status === "fulfilled")).toHaveLength(1);
+    expect(races.filter((race) => race.status === "rejected")).toHaveLength(1);
   });
 
   it("moves the Setup record's updated_at forward on every write, even within one millisecond", async () => {

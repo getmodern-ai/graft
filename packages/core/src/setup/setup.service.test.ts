@@ -8,6 +8,7 @@ import { ServiceError } from "../errors";
 import type { SetupDeps } from "./setup.deps";
 import {
   connectingAgentOf,
+  finishSetup,
   getSetupState,
   moveSetupBuild,
   moveSetupConnect,
@@ -81,6 +82,15 @@ function world(options: { agents?: AgentRow[]; work?: { connections: number; too
       return row;
     }),
     listAgents: vi.fn(async () => agents.map((row) => ({ ...row, workingSetCount: 0 }))),
+    findAgent: vi.fn(async (_db, _p, id) => agents.find((row) => row.id === id) ?? null),
+    issueAgentToken: vi.fn(async (_db, _p, id, token) => {
+      const index = agents.findIndex((row) => row.id === id);
+      const row = agents[index];
+      if (!row || row.tokenHash || row.connectedViaClientId || row.revokedAt) return null;
+      const issued = { ...row, ...token };
+      agents[index] = issued;
+      return issued;
+    }),
     replaceAgentConnections: vi.fn(async () => {}),
     listScopeConnectionIds: vi.fn(async () => []),
     findConnectionsByIds: vi.fn(async () => []),
@@ -489,6 +499,21 @@ describe("the building step's moves", () => {
     expect(landed.state.setup).toMatchObject({ step: "finish", toolId: "tool_1" });
   });
 
+  it("names the tool on a record completed before it landed, and stays completed", async () => {
+    const w = await onBuilding();
+    await w.move({ kind: "continue", acquireJobId: "job_1" });
+    await finishSetup(ctx, PRINCIPAL, w.deps, w.agentDeps);
+    expect(w.record()).toMatchObject({ step: "completed", toolId: null });
+    const landed = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(landed.moved).toBe(true);
+    expect(landed.state).toMatchObject({
+      show: false,
+      setup: { step: "completed", toolId: "tool_1" },
+    });
+    const again = await w.move({ kind: "built", acquireJobId: "job_1", toolId: "tool_1" });
+    expect(again.moved).toBe(false);
+  });
+
   it("goes back to the goal with the job cleared on a retry, and refuses a stale one", async () => {
     const w = await onBuilding();
     await expect(w.move({ kind: "retry", acquireJobId: "job_0" })).rejects.toMatchObject({
@@ -503,5 +528,80 @@ describe("the building step's moves", () => {
     await expect(w.move({ kind: "continue", acquireJobId: "job_1" })).rejects.toMatchObject({
       code: "CONFLICT",
     });
+  });
+});
+
+describe("the result and finish steps", () => {
+  /** A record on `result` for job `job_1` and tool `tool_1`, run as the agent minted for `harness`. */
+  async function onResult(harness: "hermes" | "claude") {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness }, w.deps, w.agentDeps);
+    await w.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, {
+      step: "result",
+      connectionId: "conn_1",
+      acquireJobId: "job_1",
+      toolId: "tool_1",
+    });
+    const move = (m: SetupBuildMove) => moveSetupBuild(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
+    return { ...w, move, finish: () => finishSetup(ctx, PRINCIPAL, w.deps, w.agentDeps) };
+  }
+
+  it("moves from the result to the finish with the job and the tool kept, and refuses a stale move", async () => {
+    const w = await onResult("hermes");
+    await expect(w.move({ kind: "finish", acquireJobId: "job_0" })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    const finish = await w.move({ kind: "finish", acquireJobId: "job_1" });
+    expect(finish.moved).toBe(true);
+    expect(finish.state.setup).toMatchObject({
+      step: "finish",
+      acquireJobId: "job_1",
+      toolId: "tool_1",
+    });
+    await expect(w.move({ kind: "finish", acquireJobId: "job_1" })).rejects.toMatchObject({
+      details: { reason: "setup_step", step: "finish" },
+    });
+  });
+
+  it("completes a token harness's Setup with the agent's token, once, and the show rule answers no", async () => {
+    const w = await onResult("hermes");
+    await expect(w.finish()).rejects.toMatchObject({
+      details: { reason: "setup_step", step: "result" },
+    });
+    await w.move({ kind: "finish", acquireJobId: "job_1" });
+    const done = await w.finish();
+    expect(done.token).toMatch(/^grft_/);
+    expect(done.state).toMatchObject({ step: "completed", show: false });
+    expect(done.state.setup?.completedAt).toEqual(NOW);
+    expect(done.state.agent?.tokenPrefix).toBe(done.token?.slice(0, 8));
+    await expect(w.finish()).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "setup_completed" },
+    });
+  });
+
+  it("completes an OAuth harness's Setup with no token, the agent still awaiting its consent", async () => {
+    const w = await onResult("claude");
+    await w.move({ kind: "finish", acquireJobId: "job_1" });
+    const done = await w.finish();
+    expect(done.token).toBeNull();
+    expect(done.state.step).toBe("completed");
+    expect(w.agentDeps.issueAgentToken).not.toHaveBeenCalled();
+    expect(done.state.agent).toMatchObject({ tokenPrefix: null, connectedVia: null });
+  });
+
+  it("issues nothing to an agent that already has a token, or to one Setup adopted", async () => {
+    const w = await onResult("hermes");
+    const minted = w.agents[0];
+    if (minted) w.agents[0] = { ...minted, tokenHash: "h", tokenPrefix: "grft_old" };
+    await w.move({ kind: "finish", acquireJobId: "job_1" });
+    expect((await w.finish()).token).toBeNull();
+
+    const adopted = world({ agents: [agentRow("agent_1")] });
+    await startSetup(ctx, PRINCIPAL, {}, adopted.deps, adopted.agentDeps);
+    await adopted.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, { step: "finish" });
+    const done = await finishSetup(ctx, PRINCIPAL, adopted.deps, adopted.agentDeps);
+    expect(done.token).toBeNull();
+    expect(done.state.setup).toMatchObject({ step: "completed", harness: null });
   });
 });

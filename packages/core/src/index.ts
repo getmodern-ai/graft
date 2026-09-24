@@ -58,6 +58,7 @@ export {
   getAgent,
   getAgentScope,
   IDLE_WINDOW_DAYS_RANGE,
+  issueAwaitingAgentToken,
   listActiveAgentScopes,
   listAgents,
   revokeAgent,
@@ -394,6 +395,7 @@ export {
 } from "./setup/setup.rules";
 export {
   connectingAgentOf,
+  finishSetup,
   getSetupState,
   moveSetupBuild,
   moveSetupConnect,
@@ -411,6 +413,15 @@ export {
   startSetupBuild,
   toSetupOutput,
 } from "./setup/setup.service";
+export {
+  GRAFT_CLOUD_ORIGIN,
+  isSetupPromptHarness,
+  SETUP_PROMPT_HARNESSES,
+  type SetupPromptHarness,
+  type SetupPromptInput,
+  setupPrompt,
+  suggestedFirstSentence,
+} from "./setup/setup-prompt";
 export {
   type CoveredStarter,
   isStarterVendorId,
