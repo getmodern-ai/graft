@@ -23,6 +23,7 @@ import {
   getToolById,
   hashAgentToken,
   issueAwaitingAgentToken,
+  issueConsoleAgentToken,
   listAgents,
   listConnections,
   listWorkingSet,
@@ -894,6 +895,54 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     ]);
     expect(races.filter((race) => race.status === "fulfilled")).toHaveLength(1);
     expect(races.filter((race) => race.status === "rejected")).toHaveLength(1);
+  });
+
+  /** Greptile on #172: the finish step's token lost to a reload is replaced until Setup completes. */
+  it("replaces the token of the agent Setup runs as until Setup completes, the old hash gone", async () => {
+    const personId = await signUp("setup-reissue@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    const started = await startSetup(
+      ctx,
+      principal,
+      { harness: "hermes" },
+      defaultSetupDeps,
+      defaultAgentDeps,
+    );
+    const agentId = started.agent?.id ?? "";
+    await defaultSetupDeps.saveSetup(db, personId, { step: "finish" });
+    const issue = () =>
+      issueConsoleAgentToken(ctx, principal, agentId, defaultSetupDeps, defaultAgentDeps);
+    const hashNow = async () =>
+      (
+        await db.execute<{ token_hash: string | null }>(
+          sql`select token_hash from agent where id = ${agentId}`,
+        )
+      ).rows[0]?.token_hash;
+    const first = await issue();
+    expect(await hashNow()).toBe(hashAgentToken(first.token));
+    const second = await issue();
+    expect(second.token).not.toBe(first.token);
+    expect(await hashNow()).toBe(hashAgentToken(second.token));
+    // A write that read the first hash, landing after the replacement, matches nothing.
+    expect(
+      await defaultAgentDeps.issueAgentToken(
+        db,
+        personId,
+        agentId,
+        { tokenHash: "stale", tokenPrefix: "grft_old" },
+        hashAgentToken(first.token),
+      ),
+    ).toBeNull();
+    // Finished: the finish issues nothing more, and the route refuses a replacement.
+    expect(
+      (await finishSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps)).token,
+    ).toBeNull();
+    await expect(issue()).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "agent_not_awaiting_harness" },
+    });
+    expect(await hashNow()).toBe(hashAgentToken(second.token));
   });
 
   it("moves the Setup record's updated_at forward on every write, even within one millisecond", async () => {

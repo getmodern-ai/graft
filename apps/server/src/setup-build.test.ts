@@ -711,6 +711,7 @@ describe("GET /api/setup/goal/suggestions", () => {
         vendor: "open-meteo",
         displayName: connection.displayName,
         primaryHost: OPEN_METEO.primaryHost,
+        hosts: [...OPEN_METEO.hosts],
         docsUrl: OPEN_METEO.docsUrl,
         curatedGoal: OPEN_METEO.goal,
       },
@@ -1028,7 +1029,7 @@ describe("POST /api/agents/:id/tools/:vendor/:name/run", () => {
 });
 
 describe("POST /api/agents/:id/token", () => {
-  it("mints once for an agent awaiting its harness, and the token works on /mcp", async () => {
+  it("mints for an agent awaiting its harness, replaces it while Setup runs, and the token works on /mcp", async () => {
     people += 1;
     person = `person_${people}`;
     const started = await read(
@@ -1042,13 +1043,17 @@ describe("POST /api/agents/:id/token", () => {
       agent: { id: agentId, tokenPrefix: body.token.slice(0, 8) },
       token: expect.stringMatching(/^grft_/),
     });
+    // The page that held it was reloaded before the token was saved (Greptile on #172): Setup is
+    // not completed and no client holds the agent, so a second issue replaces the first.
     const second = await app.request(`/api/agents/${agentId}/token`, post());
-    expect(second.status).toBe(409);
-    expect(await read(second)).toMatchObject({
-      message: expect.stringContaining("already has a token"),
-      details: { reason: "agent_not_awaiting_harness" },
-    });
-    const harness = await connectAs(body.token);
+    expect(second.status).toBe(201);
+    const replaced = await read(second);
+    expect(replaced.token).toMatch(/^grft_/);
+    expect(replaced.token).not.toBe(body.token);
+    expect(replaced.agent.tokenPrefix).toBe(replaced.token.slice(0, 8));
+    // The old plaintext stops working the moment the new hash lands.
+    await expect(connectAs(body.token)).rejects.toThrow();
+    const harness = await connectAs(replaced.token);
     try {
       expect(await harness.call("find_tool", { query: "anything" })).toHaveProperty("tools");
     } finally {

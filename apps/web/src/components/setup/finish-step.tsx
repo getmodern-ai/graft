@@ -25,6 +25,7 @@ import {
   promptToolOf,
   snippetShapeOf,
   type ToolArrival,
+  tokenReplaceable,
   toolArrival,
 } from "@/lib/setup-finish";
 import type { setupFinishedToast } from "@/lib/setup-page";
@@ -64,6 +65,9 @@ export type FinishStepProps = {
  *   prompt, the configuration blocks behind the same disclosure. The token is issued by the
  *   footer's *Issue the token* (`POST /api/agents/:id/token`) before the finish, so Finish Setup
  *   stays one press that leaves; it is held by the page (`SetupRoute`), never the query cache.
+ *   A token the page lost to a reload before it was saved is replaced by *Issue a new token*,
+ *   the same route, while Setup is not completed; the old one stops working (ADR 0024 as amended
+ *   2026-09-25).
  * - A Setup that **adopted** an agent (no harness on the record): the one request to ask in the
  *   chat.
  *
@@ -140,6 +144,7 @@ export function FinishStep({
   const sections = finishSections(variant, {
     issued: token !== null,
     awaiting: agent !== null && isAwaitingHarness(agent),
+    replaceable: finished === null && agent !== null && tokenReplaceable(agent),
   });
   const origin = window.location.origin;
   const promptTool = promptToolOf(context.data);
@@ -156,7 +161,12 @@ export function FinishStep({
       {arrival?.kind === "failed" ? <BuildFailed arrival={arrival} /> : null}
 
       {sections.token && harness ? (
-        <TokenBlock state={sections.token} token={token} agentName={agentName} />
+        <TokenBlock
+          state={sections.token}
+          token={token}
+          agentName={agentName}
+          replaceable={sections.token === "saved" ? sections.reissue : finished === null}
+        />
       ) : null}
 
       {sections.askInChat ? <AskInChat context={context.data} /> : null}
@@ -198,6 +208,11 @@ export function FinishStep({
         </div>
       ) : (
         <SetupFooter state={state} disabled={busy}>
+          {sections.reissue ? (
+            <Button variant="outline" disabled={busy} onClick={() => issue.mutate()}>
+              {issue.isPending ? "Issuing a new token…" : "Issue a new token"}
+            </Button>
+          ) : null}
           {sections.primary === "issue_token" ? (
             <Button disabled={busy} onClick={() => issue.mutate()}>
               {issue.isPending ? "Issuing the token…" : "Issue the token"}
@@ -247,15 +262,20 @@ function Steps({ steps }: { steps: readonly string[] }) {
   );
 }
 
-/** The token block: shown once when issued, a note before, or the saved token's reminder. */
+/**
+ * The token block: shown once when issued, a note before, or the saved token's reminder.
+ * `replaceable` is whether this page can still issue a new one (before its own finish).
+ */
 function TokenBlock({
   state,
   token,
   agentName,
+  replaceable,
 }: {
   state: "issued" | "to_issue" | "saved";
   token: string | null;
   agentName: string;
+  replaceable: boolean;
 }) {
   if (state === "issued" && token) {
     return (
@@ -264,7 +284,9 @@ function TokenBlock({
           <KeyIcon />
           <AlertTitle>This token is shown once</AlertTitle>
           <AlertDescription>
-            Copy and save it now. If you lose it, revoke this agent and create a new one.
+            {replaceable
+              ? "Copy and save it now. If you lose it before you finish, issue a new one here, and this one stops working."
+              : "Copy and save it now. If you lose it, revoke this agent and create a new one."}
           </AlertDescription>
         </Alert>
         <CodeBlock label="The agent's token" code={token} copyLabel="Copy token" />
@@ -287,7 +309,9 @@ function TokenBlock({
       <InfoIcon />
       <AlertTitle>{agentName} already has its token</AlertTitle>
       <AlertDescription>
-        It was shown once when it was issued. Use the one you saved.
+        {replaceable
+          ? "It was shown once when it was issued. Use the one you saved, or issue a new one if it was lost, and the old one stops working."
+          : "It was shown once when it was issued. Use the one you saved."}
       </AlertDescription>
     </Alert>
   );

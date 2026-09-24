@@ -221,6 +221,11 @@ export type GoalProposalRequest = {
   vendor: string;
   displayName: string;
   primaryHost: string;
+  /**
+   * The connection's hosts, which a proposal must name one of (GRA-217): a read on another host
+   * (Drive's file list for a Sheets connection) is one the connection cannot make.
+   */
+  hosts: readonly string[];
   docsUrl: string | null;
   curatedGoal: string | null;
 };
@@ -245,6 +250,11 @@ export type GoalProposal = {
   usage: ModelUsage;
   /** The failure's message, for the log, when `outcome` is `failed`. */
   error?: string;
+  /**
+   * How many of the model's proposals were dropped as ungrounded (a host outside the connection's,
+   * or an input with no default), for the log; absent when none was.
+   */
+  dropped?: number;
 };
 
 /** Which answers a situation admits; the job refuses the others as a model failure, by name. */

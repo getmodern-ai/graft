@@ -145,6 +145,8 @@ export type SetupGoalSuggestions = { suggestions: string[] };
 export type SetupGoalSuggestionsResult = SetupGoalSuggestions & {
   outcome: GoalProposalOutcome | "not_asked";
   error?: string;
+  /** How many proposals were dropped as ungrounded (GRA-217): a host outside the connection's, or an input to look up. */
+  dropped?: number;
   /** True when the answer is the memo's, from an earlier call for the same connection. */
   cached?: boolean;
 };
@@ -248,6 +250,7 @@ export async function setupGoalSuggestions(
         vendor: connection.vendor,
         displayName: connection.displayName,
         primaryHost: connection.primaryHost,
+        hosts: connection.hosts,
         docsUrl: starter?.docsUrl ?? null,
         curatedGoal: starter?.goal ?? null,
       });
@@ -255,6 +258,7 @@ export async function setupGoalSuggestions(
         suggestions: proposal.goals.slice(0, GOAL_PROPOSAL_MAX),
         outcome: proposal.outcome,
         ...(proposal.error ? { error: proposal.error } : {}),
+        ...(proposal.dropped ? { dropped: proposal.dropped } : {}),
       };
     } catch (error) {
       // Reading the person's key, or a backing that throws: the step goes on without chips.

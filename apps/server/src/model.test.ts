@@ -126,6 +126,7 @@ const proposal = (personId: string) => ({
   vendor: "demo",
   displayName: "Demo",
   primaryHost: "https://api.demo.example",
+  hosts: ["api.demo.example"],
   docsUrl: null,
   curatedGoal: null,
 });

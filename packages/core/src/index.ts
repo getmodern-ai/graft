@@ -407,6 +407,7 @@ export {
   finishSetup,
   getSetupRecord,
   getSetupState,
+  issueConsoleAgentToken,
   moveSetupBack,
   moveSetupBuild,
   moveSetupConnect,

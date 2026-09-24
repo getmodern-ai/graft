@@ -1,3 +1,4 @@
+import { goalProposalOf, type RawGoalProposal } from "./goal-grounding";
 import {
   type GoalProposal,
   type GoalProposalRequest,
@@ -55,14 +56,23 @@ export type ScriptedModel = ModelAdapter & {
  * set, the vendor's name the one thing filled in, so the step draws chips on a laptop with no
  * provider key. The script file carries none of it; a proposal is not a job's situation. Each is
  * a read that makes sense for any vendor, a keyless one included (GRA-212: "which Open-Meteo
- * account this is" read oddly where there is no account).
+ * account this is" read oddly where there is no account), and each needs nothing the person has
+ * to look up (GRA-217).
  */
 export function scriptedGoals(displayName: string): string[] {
+  return scriptedGoalProposals(displayName, "").map((proposal) => proposal.task);
+}
+
+/**
+ * The fixed set as the provider's model answers it: each on the connection's first host with no
+ * input, so it passes `groundedGoals` as a real proposal must.
+ */
+export function scriptedGoalProposals(displayName: string, host: string): RawGoalProposal[] {
   return [
     `Show me the latest from ${displayName}`,
-    `Look something up in ${displayName} and show me the answer`,
+    `List what I can see in ${displayName}`,
     `Summarise what ${displayName} has for today`,
-  ];
+  ].map((task) => ({ task, host, inputs: [] }));
 }
 
 export const SCRIPTED_MODEL_NAME = "scripted";
@@ -105,11 +115,11 @@ export function createScriptedModel(
     proposals,
     async proposeGoals(request) {
       proposals.push(request);
-      return {
-        goals: scriptedGoals(request.displayName),
-        outcome: "proposed",
-        usage: defaultUsage,
-      };
+      return goalProposalOf(
+        scriptedGoalProposals(request.displayName, request.hosts[0] ?? ""),
+        request,
+        defaultUsage,
+      );
     },
     open(context): ModelConversation {
       const record: ScriptedConversationRecord = { context, situations: [] };

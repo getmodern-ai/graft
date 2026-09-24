@@ -19,7 +19,7 @@ import { grantBuildApproval } from "../approval/approval.service";
 import type { ConnectionDeps } from "../connection/connection.deps";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
-import type { Principal } from "../tenancy";
+import { mintAgentToken, type Principal } from "../tenancy";
 import { setupHarnessOf } from "./harness";
 import type { SetupDeps } from "./setup.deps";
 import {
@@ -753,6 +753,70 @@ export async function moveSetupOn(
     await deps.saveSetup(tx, principal.personId, patch);
   });
   return { state: await getSetupState(ctx, principal, deps, agentDeps), moved: true };
+}
+
+/**
+ * Whether Setup may replace the agent's token: the record runs as it and is not completed, and the
+ * agent is active, holds a token and no client (an OAuth agent's client holds its own tokens).
+ */
+function setupReplacesToken(
+  record: Pick<SetupRow, "agentId" | "completedAt" | "step">,
+  row: AgentRow,
+): row is AgentRow & { tokenHash: string } {
+  return (
+    record.agentId === row.id &&
+    record.completedAt === null &&
+    record.step !== "completed" &&
+    row.revokedAt === null &&
+    row.connectedViaClientId === null &&
+    row.tokenHash !== null
+  );
+}
+
+/**
+ * `POST /api/agents/:id/token` (ADR 0024 as amended 2026-09-25; GRA-208; Greptile on #172): the
+ * static token of an agent awaiting its harness, issued once (`issueAwaitingAgentToken`), or a
+ * **replacement** for the agent Setup runs as while Setup is not completed. The finish step holds
+ * the only plaintext in the page, so a reload or a closed tab before it was saved lost it, and the
+ * harness could not be connected short of revoking the agent. The replacement is judged again under
+ * the record's lock, so it never lands after the finish completed the record, and its write
+ * replaces the hash it read there (`issueAgentToken`'s `replacing`): the old token stops resolving,
+ * and two replacements take the lock in turn, so only the later one's token works. Any other agent
+ * gets `issueAwaitingAgentToken`'s answer, its refusals included (`agent_not_awaiting_harness`).
+ */
+export async function issueConsoleAgentToken(
+  ctx: ServiceContext,
+  principal: Principal,
+  agentId: string,
+  deps: SetupDeps,
+  agentDeps: AgentDeps,
+): Promise<{ agent: AgentOutput; token: string }> {
+  const row = await agentDeps.findAgent(ctx.db, principal.personId, agentId);
+  const record = row?.tokenHash ? await deps.findSetup(ctx.db, principal.personId) : null;
+  if (!row || !record || !setupReplacesToken(record, row)) {
+    return issueAwaitingAgentToken(ctx, principal, agentId, agentDeps);
+  }
+  return ctx.db.transaction(async (tx) => {
+    const locked = await deps.lockSetup(tx, principal.personId);
+    const current = await agentDeps.findAgent(tx, principal.personId, agentId);
+    const refuse = () =>
+      new ServiceError(
+        "CONFLICT",
+        `${row.name}'s token can no longer be replaced: Setup was finished, or the agent was connected or revoked, while it was being issued`,
+        { details: { reason: "agent_not_awaiting_harness", agentId: row.id } },
+      );
+    if (!current || !setupReplacesToken(locked, current)) throw refuse();
+    const minted = mintAgentToken(agentDeps.randomBytes);
+    const issued = await agentDeps.issueAgentToken(
+      tx,
+      principal.personId,
+      current.id,
+      { tokenHash: minted.tokenHash, tokenPrefix: minted.tokenPrefix },
+      current.tokenHash,
+    );
+    if (!issued) throw refuse();
+    return { agent: toAgentOutput(issued), token: minted.token };
+  });
 }
 
 /**

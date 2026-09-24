@@ -1009,10 +1009,15 @@ offers *Set up Graft* in its empty body to a person who skipped.
 are `@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs,
 the keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
 `outcome` sentence); adding one is one entry. **Starters are one-click only** (GRA-216): the list is
-common services a link provider connects by OAuth (Gmail, Google Calendar, Google Sheets, Slack,
+common services a link provider connects by OAuth (Gmail, Google Calendar, Google Drive, Slack,
 Notion, GitHub, HubSpot) plus Open-Meteo, the keyless one, each task a `GET`, since the check counts
 a `POST` as a write and the result step runs only a read-only tool (so no Linear, whose API is
-GraphQL). The keyring's scheme on each entry stays truthful for the form path a link provider steps
+GraphQL). **Every task needs nothing the person has to look up** (GRA-217): no id, no name, no link;
+Open-Meteo's city, with its default, is the one input, and every other starter's `hints` names its
+one endpoint and says the tool takes no input (`starter-vendors.test.ts` pins both). That is why
+Google Drive's file list replaced Google Sheets, whose rows need a spreadsheet's id and a range; a
+starter's vendor slug is the catalogue's app with hyphens read as underscores (`google-drive` is
+Pipedream's `google_drive`). The keyring's scheme on each entry stays truthful for the form path a link provider steps
 aside to (GRA-147). `setupVendorOptions` is the pure filter and order over each starter's covering
 provider: only `link`, `none` and `keyless` (a `none` scheme the form provider lists) are offered,
 in that order, and a starter the keyring would connect with a pasted key or an operator's own OAuth
@@ -1079,8 +1084,14 @@ starter's `hints`, which reaches the job only beside the curated goal unchanged.
 carries an optional `proposeGoals` (`@graft/model`'s `propose-goals.ts`, shaped as `triage.ts`'s
 calls: the triage model, a strict output, one attempt, traced with `situation: "propose_goals"`
 and the request's `traceId`, `setup:<personId>`, where a job's id would be; bounded at
-`GOAL_PROPOSAL_TIMEOUT_MS`, 8 s, and never throwing). The provider's adapter implements it, the
-scripted one answers `scriptedGoals(displayName)`, and the router sends it where the person's jobs
+`GOAL_PROPOSAL_TIMEOUT_MS`, 8 s, and never throwing). **A chip must end in a tool that runs with
+nothing to look up** (GRA-217): the request carries the connection's `hosts`, the model answers
+each proposal as `{ task, host, inputs: [{ name, default }] }`, and `goal-grounding.ts`'s
+`groundedGoals` keeps one only when its host is one of the connection's and every input has a
+default, the dropped count riding on the wide event as `goalSuggestions.dropped`; the system prompt
+states the rules. The provider's adapter implements it, the scripted one answers
+`scriptedGoals(displayName)` through the same `goalProposalOf` (each on the connection's first
+host, no input), and the router sends it where the person's jobs
 go, so a person's own key carries their vendor's name to their provider alone. `GET
 /api/setup/goal/suggestions` answers `SetupGoalSuggestions`, `{ suggestions }`, up to three or
 none: none and no call where Build is unavailable, the record is not on an open goal step
@@ -1112,11 +1123,30 @@ sandbox and no ask is ever opened from the console; another person's agent is a 
 under `lockSetup`, the record to `completed` and, for a `token` harness whose agent is still
 awaiting it, the token issued through `issueAwaitingAgentToken` and answered once beside the state
 (`SetupFinishOutput`); a second finish is `409 setup_completed`. `POST /api/agents/:id/token` is the
-same issue for *Connect a harness*; the write (`issueAgentToken` in `repo/agent.ts`) holds the
-awaiting rule in its statement, so two issues mint one token. `setup_step_completed` adds `result`,
-and `setup_completed` carries the harness. The console: `result-step.tsx` runs the tool once on
-arrival with the starter's default (`lib/setup-run-input.ts`), editable, and shows the answer in
-`CodeBlock`; `finish-step.tsx` draws, by `lib/setup-finish.ts`'s `finishVariant`, the token once
+same issue for *Connect a harness* and the finish step's *Issue the token*; the write
+(`issueAgentToken` in `repo/agent.ts`) holds the awaiting rule in its statement, so two issues mint
+one token. The route is `@graft/core`'s `issueConsoleAgentToken`, which also **replaces** the token
+of the agent Setup runs as while the record is not completed and no client holds the agent (ADR
+0024 as amended 2026-09-25; Greptile on #172): the page held the only plaintext, so a reload lost
+it. The replacement is judged again under `lockSetup` and written with `issueAgentToken`'s
+`replacing`, the hash it read, so the old token stops resolving and nothing lands after the finish;
+the finish step offers it as *Issue a new token* on the saved-token block (`finishSections`'
+`reissue`, `tokenReplaceable`). Any other agent with a token is still `409
+agent_not_awaiting_harness`. `setup_step_completed` adds `result`,
+and `setup_completed` carries the harness. The console: `result-step.tsx` draws the input from
+**the tool's own `inputSchema`** (GRA-217, `lib/setup-run-input.ts`'s `runInputView`): a field per
+string, number, integer, boolean, enum or list of scalars, starting at the starter's `runInput`
+only where the field names match, else the schema's `default` or first `examples` entry; a
+required field with no value says *This tool needs …* and Run waits (`canRun`), the required fields
+drawn first since a stored schema's keys come back in jsonb's order; JSON only for a
+schema too complex to draw (a nested object, a list of objects, a union, a composed root), where a
+required key still at the skeleton's empty object or list counts as missing. It runs the tool once
+on arrival only when the tool takes no input (`lib/setup-result.ts`'s `runsOnArrival`; a tool with
+inputs, Open-Meteo's prefilled city included, waits for Run) and shows the answer in `CodeBlock`; a
+refusal or a failure is one sentence with the raw text, cut to 500 characters, behind *Details*
+(`lib/short-failure.ts`'s `shortFailure` and `runFailure`: an HTML body reads *The integration
+answered with a web page instead of data (status N)*), and the building step's and the finish
+step's failure reasons go through the same `shortFailure`; `finish-step.tsx` draws, by `lib/setup-finish.ts`'s `finishVariant`, the token once
 with the configuration blocks, the URL and the harness's steps ending on the consent page, or
 (a record that adopted an agent, `harness` null) the first request to ask in the chat, with
 `SetupPromptBlock` personalised with the agent, the connection and the tool (arriving while the

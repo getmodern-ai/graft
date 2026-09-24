@@ -223,7 +223,41 @@ describe("progressCard (GRA-215)", () => {
       attempts: 1,
       result: { failure: "model_failed", message },
     });
-    expect(card).toMatchObject({ kind: "failed", label: SETUP_FAILED_LABEL, message });
+    expect(card).toMatchObject({
+      kind: "failed",
+      label: SETUP_FAILED_LABEL,
+      message,
+      failureDetails: null,
+    });
+  });
+
+  it("makes a long or HTML reason one sentence, the raw text behind Details (GRA-217)", () => {
+    const page = `<!DOCTYPE html><html><title>Error 404 (Not Found)</title>${"x".repeat(800)}</html>`;
+    const message = `The dry run failed: Google answered 404: ${page}`;
+    const card = progressCard({
+      status: "failed",
+      progress: LIVE_FAIL,
+      attempts: 4,
+      result: { failure: "dry_run_failed", message },
+    });
+    expect(card.message).toBe(
+      "The integration answered with a web page instead of data (status 404).",
+    );
+    expect(card.failureDetails?.startsWith("The dry run failed: Google answered 404:")).toBe(true);
+    expect(card.failureDetails?.length).toBe(500);
+  });
+
+  it("drops the closing Stopped line that repeats the reported reason, and keeps any other", () => {
+    const message = "The model gave up: no such read.";
+    const failed = (last: string) =>
+      progressCard({
+        status: "failed",
+        progress: [FIRST, last],
+        attempts: 1,
+        result: { failure: "model_gave_up", message },
+      }).lines.map((entry) => entry.line);
+    expect(failed(`Stopped: ${message}`)).toEqual([FIRST]);
+    expect(failed("Stopped: something else.")).toEqual([FIRST, "Stopped: something else."]);
   });
 
   it("counts the attempt once past the first", () => {

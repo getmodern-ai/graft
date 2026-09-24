@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
+import { CodeBlock } from "@/components/code-block";
 import { CheckCircleIcon, WarningIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
@@ -156,8 +157,16 @@ function ProgressCardView({ card, pending }: { card: ProgressCard; pending: bool
             </span>
           ) : null}
         </div>
-        {card.lines.length > 0 ? (
+        {card.lines.length > 0 || card.failureDetails ? (
           <SetupDisclosure label="Details">
+            {card.failureDetails ? (
+              <CodeBlock
+                label="What the job reported"
+                code={card.failureDetails}
+                copyLabel="Copy details"
+                wrap
+              />
+            ) : null}
             <ol className="flex flex-col gap-3">
               {card.lines.map((entry, index) => (
                 // The lines only ever grow at the end, so the position is the line's identity.

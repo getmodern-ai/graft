@@ -15,7 +15,7 @@ import {
   getPendingActionForPerson,
   getPersonModelKey,
   isOAuthAuthorizationCode,
-  issueAwaitingAgentToken,
+  issueConsoleAgentToken,
   type LedgerDeps,
   listAgents,
   listApprovals,
@@ -1013,14 +1013,19 @@ export function createApi(options: ApiOptions): Hono {
   const goalSuggestions = createGoalSuggestionMemo();
   api.get("/setup/goal/suggestions", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const { suggestions, outcome, error, cached } = await setupGoalSuggestions(ctx, principal, {
-      ...setupBuildDeps,
-      goalSuggestions,
-    });
+    const { suggestions, outcome, error, cached, dropped } = await setupGoalSuggestions(
+      ctx,
+      principal,
+      {
+        ...setupBuildDeps,
+        goalSuggestions,
+      },
+    );
     useLogger().set({
       goalSuggestions: {
         outcome,
         count: suggestions.length,
+        ...(dropped ? { dropped } : {}),
         ...(cached ? { cached } : {}),
         ...(error ? { error } : {}),
       },
@@ -1173,16 +1178,21 @@ export function createApi(options: ApiOptions): Hono {
   });
 
   /**
-   * The static token of an agent **awaiting its harness** (ADR 0024; GRA-208), for *Connect a
-   * harness* on such an agent; Setup's finish issues it through `POST /setup/finish` instead, in the
-   * transaction that completes the record. Answered once, `201 { agent, token }`, as `POST /agents`
-   * answers; any other agent is `409 agent_not_awaiting_harness` (revoked, a token already, a client
-   * connected), another person's a 404 (`issueAwaitingAgentToken`).
+   * The static token of an agent **awaiting its harness** (ADR 0024; GRA-208), for Setup's finish
+   * step and *Connect a harness* on such an agent, answered once, `201 { agent, token }`, as
+   * `POST /agents` answers. For the agent Setup runs as, while Setup is not completed and no client
+   * holds the agent, a **replacement** (ADR 0024 as amended 2026-09-25): the finish step held the
+   * only plaintext, so a reload lost it, and the new hash replaces the old one, which stops
+   * working. Any other agent is `409 agent_not_awaiting_harness` (revoked, a token already outside
+   * Setup, a client connected), another person's a 404 (`issueConsoleAgentToken`).
    */
   api.post("/agents/:id/token", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
-    return c.json(await issueAwaitingAgentToken(ctx, principal, c.req.param("id"), agentDeps), 201);
+    return c.json(
+      await issueConsoleAgentToken(ctx, principal, c.req.param("id"), setupDeps, agentDeps),
+      201,
+    );
   });
 
   /**

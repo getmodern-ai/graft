@@ -28,10 +28,13 @@ where a decision is theirs. Anything that breaks either is in scope:
   that is not theirs, or for a connection the agent was not given, is in scope.
 - The **MCP OAuth server**: a token issued to the wrong client or agent, a code or refresh token
   replayed, a consent decided without a session. The **console**: a cross-origin state change. Its
-  session also issues an agent's static token, once and only while the agent is awaiting its
-  harness (`POST /api/agents/:id/token`, and Setup's finish), and runs a read-only tool in an
-  agent's working set as that agent (`POST /api/agents/:id/tools/:vendor/:name/run`), refusing any
-  other (ADR 0024); a token issued for any other agent, or a run of any other tool, is in scope.
+  session also issues an agent's static token, shown once per request, to an agent awaiting its
+  harness (`POST /api/agents/:id/token`, and Setup's finish), and replaces that token for the
+  agent Setup runs as until Setup is completed, while no client holds the agent, the old token
+  ceasing to work; and it runs a read-only tool in an agent's working set as that agent
+  (`POST /api/agents/:id/tools/:vendor/:name/run`), refusing any other (ADR 0024); a token issued
+  or replaced for any other agent, one replaced once Setup is completed, a replaced token that
+  still works, or a run of any other tool, is in scope.
 
 Out of scope: a vendor's own API, a self-hosted deployment's own misconfiguration (an exposed
 database, a public console with no reverse proxy, a leaked `.env`), and the quality of what the

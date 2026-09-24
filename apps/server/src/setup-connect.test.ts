@@ -231,7 +231,7 @@ describe("GET /api/setup/vendors", () => {
     expect(vendors.map((option: { starter: { id: string } }) => option.starter.id)).toEqual([
       "gmail",
       "google-calendar",
-      "google-sheets",
+      "google-drive",
       "slack",
       "notion",
       "github",
@@ -417,6 +417,44 @@ describe("POST /api/setup/connect", () => {
     // Both steps complete in this one request: the vendor step's row in the mutation table, and the
     // connect step counted by the route, which fires first since the table's middleware runs last.
     expect(stepEvents(h.captured).sort()).toEqual(["connect", "vendor"]);
+  });
+
+  it("grants nothing when another tab moved Setup on before the choice's move took the lock", async () => {
+    const h = harness();
+    const agentId = await started(h);
+    await h.app.request(`/api/agents/${agentId}/scope`, {
+      ...post({ mode: "listed", connectionIds: [] }),
+      method: "PUT",
+    });
+    const made = await h.app.request(
+      "/api/connections",
+      post({
+        vendor: "acme",
+        displayName: "Acme",
+        primaryHost: "https://api.acme.example",
+        scheme: "none",
+      }),
+    );
+    const connectionId: string = (await read(made)).connection.id;
+    // Greptile on #172: this request read the record on the vendor step; another tab chose
+    // Open-Meteo, confirmed it and moved the record to the goal before this move took the lock.
+    h.hooks.locks.push(async () => {
+      const askId = await openMeteoAsk(h);
+      await confirmKeyless(h, askId);
+      expect((await read(await h.app.request("/api/setup"))).step).toBe("goal");
+    });
+    const stale = await h.app.request("/api/setup/connect", post({ connectionId }));
+    expect(stale.status).toBe(409);
+    expect((await read(stale)).details).toMatchObject({ reason: "setup_step", step: "goal" });
+    // The move was refused, so the grant it carries never landed: Acme is not in the scope.
+    const scope: string[] = (await read(await h.app.request(`/api/agents/${agentId}`)))
+      .connectionIds;
+    expect(scope).not.toContain(connectionId);
+    expect(scope).toHaveLength(1);
+    expect(await read(await h.app.request("/api/setup"))).toMatchObject({
+      step: "goal",
+      setup: { connectionId: scope[0] },
+    });
   });
 
   it("counts the connect step once when two reads learn the same answer", async () => {

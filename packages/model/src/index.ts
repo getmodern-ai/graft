@@ -25,6 +25,9 @@ export {
   GOAL_PROPOSAL_MAX_LENGTH,
   GOAL_PROPOSAL_TIMEOUT_MS,
   type GoalProposalOptions,
+  goalProposalOf,
+  groundedGoals,
+  type RawGoalProposal,
 } from "./propose-goals";
 export {
   AUTHORING_MAX_OUTPUT_TOKENS,
@@ -58,6 +61,7 @@ export {
   type ScriptedModel,
   type ScriptedStep,
   ScriptMismatchError,
+  scriptedGoalProposals,
   scriptedGoals,
 } from "./scripted";
 export {
