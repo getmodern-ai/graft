@@ -41,8 +41,10 @@ the re-entry variant against the existing connection.
 4. **Prove it with reads** through the connection's execute tool, `execute__<connection id>`, until
    a read returns what the docs said it would — one for every distinct path the module reads,
    not the first alone: a module that lists and then fetches each item has two paths to prove,
-   and the second's headers and fields are what it parses. A draft whose proof read failed is
-   not published: change the module or the read and prove again.
+   and the second's headers and fields are what it parses. A proof read may name a host: a path
+   the module reads from another host the connection declares is proven on that host, with the
+   same `{ host }` the module passes to `ctx.fetch`, never on the primary host. A draft whose proof
+   read failed is not published: change the module or the read and prove again.
 5. **Publish with a test input** — `publish_tool` with `testInput`. It runs the same check and
    refuses on the same list, installs any package the module declares if the package policy allows
    it, then **dry-runs** the version it just wrote: reads reach the vendor for real, every write
@@ -111,7 +113,7 @@ export default async (input: Input, ctx: Context) => {
 from the input schema you pass to `check_tool` and `publish_tool`, and `Context` is exactly
 
 ```ts
-{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }
+{ fetch(path: string, init?: RequestInit & { host?: string }): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }
 ```
 
 Annotate the export with both, so a read of a field the schema does not declare — `input.quanity`
@@ -121,17 +123,23 @@ for `quantity` — fails the check at its line rather than the run.
 
 - **`ctx.fetch(path, init)`** is how the module calls the vendor, and the path is vendor-relative —
   `/orders`, not `https://api.vendor.com/orders`. The proxy supplies the connection's primary host
-  and injects the credential on the way out. A module never names a host, never holds a key, never
-  sets an `Authorization` header of its own: the check refuses an absolute URL written into the
-  module. A URL the vendor answers at run time on another of the connection's hosts (Slack's
-  `upload_url` on `files.slack.com`, a presigned upload URL) goes to `ctx.fetch` as it is: the runner
-  routes it through the proxy, which admits the host only if the connection declares it and refuses
-  it otherwise, so the module still names no host of its own. Prefer `ctx.fetch` over a vendor SDK
-  for a write flow: an SDK that retries on a body it does not expect will time out against the dry
-  run's 202 preview.
+  and injects the credential on the way out. A module never writes a URL of its own, never holds a
+  key, never sets an `Authorization` header of its own: the check refuses an absolute URL written
+  into the module. **To reach another host the connection declares, name it with `host`**:
+  `ctx.fetch("/v1/search?name=Berlin", { host: "geocoding-api.open-meteo.com" })` sends the path,
+  from that host's root, through the proxy, which admits the host only if the connection declares it
+  and refuses it otherwise. That is the form for a host you know when you write the module, such as
+  an API whose search and data live on two hosts; the `host` is one of the connection's hosts
+  exactly, and the path starts with `/`. A URL the vendor answers at run time on another of the
+  connection's hosts (Slack's `upload_url` on `files.slack.com`, a presigned upload URL) goes to
+  `ctx.fetch` as it is: the runner routes it through the proxy the same way, so the module still
+  writes no URL of its own. Prefer `ctx.fetch` over a vendor SDK for a write flow: an SDK that
+  retries on a body it does not expect will time out against the dry run's 202 preview.
 - **`ctx.proxyBase(host?)`** is the base URL an SDK is pointed at, and nothing else uses it. Without
   an argument it is the connection's primary host; with one — `ctx.proxyBase("www.googleapis.com")`
-  — it is another host the connection declares. It is a call, never a string you assemble.
+  — it is another host the connection declares. It is a call, never a string you assemble, and
+  `ctx.proxyBase` stays for SDKs: a hand-written call to another host is `ctx.fetch(path, { host })`,
+  never a URL built from `ctx.proxyBase`.
 - **`ctx.proxyKey`** is the capability token this run holds, for an SDK's credential option. The
   proxy reads it and swaps in the connection's real credential. It lives for this run and this
   connection only: never cache it, log it, return it, or send it anywhere but through an SDK bound
@@ -297,7 +305,8 @@ the exec's environment; `child_process`, `net`, `dgram`, `fs`, `fs/promises`, `w
 `vm`, `module`, `cluster` or `inspector`, bare or `node:`-prefixed, however imported (a tool has no
 filesystem of its own: a file it writes for another tool, or reads from one, is a blob, and
 `ctx.blob.write` and `ctx.blob.read` are the route); an import from outside the module, or of
-a package `dependencies` does not declare; a literal absolute URL passed to `ctx.fetch`; an SDK not
+a package `dependencies` does not declare; a literal absolute URL passed to `ctx.fetch` (another
+declared host is named with `{ host }` beside the path, which the check admits); an SDK not
 bound to `ctx.proxyKey` and `ctx.proxyBase`; syntax Node cannot strip. Advice: an implicit `any`, a
 declared input field the module never reads, a result JSON would lose (a function, a `Map`).
 
@@ -391,13 +400,15 @@ Read it in this order:
   answer, so it proves nothing. A `moduleError` there (the module threw on the preview) does not
   fail the dry run; a `moduleError` with no write previewed does.
 - **`writesRefused`** is a write that never became a preview: a URL that is not `https://` or that
-  carries credentials, a path that left the connection, or a refusal from the proxy (a host the
-  connection does not declare, an expired token). Fix the module.
+  carries credentials, a `host` that is not a host name or sits beside a path not starting with `/`,
+  a path that left the connection, or a refusal from the proxy (a host the connection does not
+  declare, an expired token). Fix the module.
 - **`reads`** with a status of `400` or more failed the dry run — the credential, the path or the
   query is wrong, and the docs say which. A `3xx` failed it too: the proxy hands a vendor redirect
   back and `ctx.fetch` does not follow it, so the vendor did not answer the read where you asked.
   Its `Location` says where it points; a host the connection declares is yours to call with
-  `ctx.fetch` on that URL as it is, and one it does not is a connection question, not a code one.
+  `ctx.fetch` on that URL as it is, or with its path and `{ host }`, and one it does not is a
+  connection question, not a code one.
 
 An SDK's calls cross the proxy with the same token, so writes through an SDK are stopped and
 previewed all the same — but they do not pass through `ctx.fetch`, so they are absent from `reads`
