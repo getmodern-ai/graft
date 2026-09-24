@@ -141,20 +141,25 @@ export async function connectSetupVendor(
         details: { reason: "connection_revoked", connectionId: connection.id },
       });
     }
-    // A no-op for an agent on every connection (ADR 0007 as amended 2026-09-19).
-    await addConnectionToAgentScope(ctx, principal, agent.id, connection.id, deps.agent);
+    // The grant rides in the move's transaction, after the move's check under the record's lock
+    // (Greptile on #172): a choice another tab made stale is refused before the agent is given the
+    // row, and an accepted one commits the grant and the move together. A no-op for an agent on
+    // every connection (ADR 0007 as amended 2026-09-19).
+    const result = await moveSetupConnect(
+      ctx,
+      principal,
+      { kind: "connected", agentId: agent.id, connectionId: connection.id },
+      deps.setup,
+      deps.agent,
+      async (scoped) => {
+        await addConnectionToAgentScope(scoped, principal, agent.id, connection.id, deps.agent);
+        return true;
+      },
+    );
     // The row was announced when it was made, to the agents that reached it then; a listed agent's
     // list grows only now, after the grant committed.
-    if (agent.scopeMode === "listed") deps.notifier?.changed(agent.id);
-    return connectedBy(
-      await moveSetupConnect(
-        ctx,
-        principal,
-        { kind: "connected", agentId: agent.id, connectionId: connection.id },
-        deps.setup,
-        deps.agent,
-      ),
-    );
+    if (result.moved && agent.scopeMode === "listed") deps.notifier?.changed(agent.id);
+    return connectedBy(result);
   }
 
   const starter = starterVendorOf(input.starterId);
