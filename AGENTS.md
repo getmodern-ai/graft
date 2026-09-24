@@ -1129,7 +1129,8 @@ and `setup_completed` carries the harness. The console: `result-step.tsx` draws 
 **the tool's own `inputSchema`** (GRA-217, `lib/setup-run-input.ts`'s `runInputView`): a field per
 string, number, integer, boolean, enum or list of scalars, starting at the starter's `runInput`
 only where the field names match, else the schema's `default` or first `examples` entry; a
-required field with no value says *This tool needs …* and Run waits (`canRun`); JSON only for a
+required field with no value says *This tool needs …* and Run waits (`canRun`), the required fields
+drawn first since a stored schema's keys come back in jsonb's order; JSON only for a
 schema too complex to draw (a nested object, a list of objects, a union, a composed root). It runs
 the tool once on arrival when nothing required is missing and shows the answer in `CodeBlock`; a
 refusal or a failure is one sentence with the raw text, cut to 500 characters, behind *Details*

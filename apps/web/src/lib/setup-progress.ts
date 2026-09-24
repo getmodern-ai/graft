@@ -198,6 +198,10 @@ export function progressCard(
         : null,
     failureDetails: failure?.details ?? null,
     attempt: attempts > 1 ? attempts : null,
-    lines,
+    // The job's closing `Stopped: <reason>` line says again what the reported block above it holds.
+    lines:
+      view.kind === "failed" && job?.progress?.at(-1) === `Stopped: ${view.message}`
+        ? lines.slice(0, -1)
+        : lines,
   };
 }

@@ -288,7 +288,15 @@ export function runInputView(
       needs: isRequired && initial.trim() === "" ? needsSentence(name, description) : null,
     });
   }
-  if (fields.length === names.length && names.length > 0) return { kind: "form", fields };
+  if (fields.length === names.length && names.length > 0) {
+    // The required fields first, each group in the schema's order as stored: a stored schema's
+    // keys come back from Postgres's jsonb in its own order (shortest first), not the author's.
+    const ordered = [
+      ...fields.filter((field) => field.required),
+      ...fields.filter((field) => !field.required),
+    ];
+    return { kind: "form", fields: ordered };
+  }
 
   // Too complex to draw: the fields as JSON, a string field at its starting value.
   const skeleton = Object.fromEntries(

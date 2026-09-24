@@ -162,6 +162,29 @@ describe("runInputView, from the tool's schema (GRA-217)", () => {
     });
   });
 
+  it("draws the required fields first, as a stored schema's key order is not the author's", () => {
+    // Postgres's jsonb hands keys back shortest first: the walk's tool came back this way.
+    const view = runInputView(
+      {
+        type: "object",
+        properties: {
+          units: { type: "string", default: "celsius" },
+          hourly: { type: "boolean" },
+          latitude: { type: "number" },
+          longitude: { type: "number" },
+        },
+        required: ["latitude", "longitude"],
+      },
+      null,
+    );
+    expect(form(view).map((field) => field.name)).toEqual([
+      "latitude",
+      "longitude",
+      "units",
+      "hourly",
+    ]);
+  });
+
   it("never waits on a boolean, which is false when unchecked", () => {
     const view = runInputView(
       { type: "object", properties: { unread: { type: "boolean" } }, required: ["unread"] },

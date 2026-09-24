@@ -245,6 +245,19 @@ describe("progressCard (GRA-215)", () => {
     expect(card.failureDetails?.length).toBe(500);
   });
 
+  it("drops the closing Stopped line that repeats the reported reason, and keeps any other", () => {
+    const message = "The model gave up: no such read.";
+    const failed = (last: string) =>
+      progressCard({
+        status: "failed",
+        progress: [FIRST, last],
+        attempts: 1,
+        result: { failure: "model_gave_up", message },
+      }).lines.map((entry) => entry.line);
+    expect(failed(`Stopped: ${message}`)).toEqual([FIRST]);
+    expect(failed("Stopped: something else.")).toEqual([FIRST, "Stopped: something else."]);
+  });
+
   it("counts the attempt once past the first", () => {
     const second = [
       ...LIVE_FAIL.slice(0, 9),

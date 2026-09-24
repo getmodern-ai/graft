@@ -260,7 +260,7 @@ function RunFieldInput({
   }
 
   return (
-    <Field data-invalid={missing || undefined}>
+    <Field>
       <FieldLabel htmlFor={id}>
         {field.label}
         {optional}
@@ -289,7 +289,6 @@ function RunFieldInput({
           value={value}
           disabled={disabled}
           inputMode={field.kind === "number" || field.kind === "integer" ? "decimal" : undefined}
-          aria-invalid={missing || undefined}
           onChange={(event) => onChange(event.target.value)}
         />
       )}
