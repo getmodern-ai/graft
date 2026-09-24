@@ -104,6 +104,12 @@ import {
   listSetupVendors,
   type SetupConnectDeps,
 } from "./setup-connect";
+import {
+  createSetupPromptRoutes,
+  isSetupPromptPath,
+  SETUP_PROMPT_PATH,
+  setupPromptCors,
+} from "./setup-prompt";
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -567,8 +573,15 @@ export function createApi(options: ApiOptions): Hono {
     ledger: ledgerDeps,
   } = options.deps;
 
+  /**
+   * The setup prompt is read from other origins with no credentials (`setup-prompt.ts`), so its path
+   * takes the open policy and the console's credentialed one skips it: two `cors()` on one request
+   * would each write `Access-Control-Allow-Origin`, and a preflight would be answered by the first.
+   */
+  api.use(SETUP_PROMPT_PATH, setupPromptCors);
   if (options.corsOrigins.length > 0) {
-    api.use("*", cors({ origin: [...options.corsOrigins], credentials: true }));
+    const consoleCors = cors({ origin: [...options.corsOrigins], credentials: true });
+    api.use("*", (c, next) => (isSetupPromptPath(c.req.path) ? next() : consoleCors(c, next)));
   }
 
   /**
@@ -666,6 +679,18 @@ export function createApi(options: ApiOptions): Hono {
    */
   const signInMethods: SignInMethods = { social: options.signInMethods?.social ?? [] };
   api.get("/sign-in-methods", (c) => c.json(signInMethods));
+
+  /**
+   * The generic setup prompt per harness, for the marketing site and the docs (GRA-205). A read
+   * with no session: the origin check exempts every read, so it does not apply here, and nothing
+   * here reads a cookie. Mounted only with `authUrl`, which names the MCP URL the prompt carries.
+   */
+  if (options.authUrl) {
+    api.route(
+      SETUP_PROMPT_PATH,
+      createSetupPromptRoutes({ authUrl: options.authUrl, consoleUrl: options.handoff.consoleUrl }),
+    );
+  }
 
   const {
     approval: approvalDeps,
