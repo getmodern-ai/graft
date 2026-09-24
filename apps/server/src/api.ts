@@ -105,12 +105,15 @@ import {
 import {
   buildSetupTool,
   continueSetupBuild,
+  createGoalSuggestionMemo,
   learnSetupBuild,
   readAgentAcquireJob,
   retrySetupGoal,
   type SetupAcquireDeps,
   type SetupBuildRouteDeps,
+  type SetupGoalSuggestions,
   setupGoalContext,
+  setupGoalSuggestions,
 } from "./setup-build";
 import {
   connectSetupVendor,
@@ -127,7 +130,11 @@ import {
 } from "./setup-prompt";
 import { runAgentTool } from "./tool-run";
 
-export type { SetupBuildAvailability, SetupGoalContext } from "./setup-build";
+export type {
+  SetupBuildAvailability,
+  SetupGoalContext,
+  SetupGoalSuggestions,
+} from "./setup-build";
 export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
 export type { AgentToolRunOutput } from "./tool-run";
 
@@ -965,6 +972,30 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/setup/goal", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json(await setupGoalContext(ctx, principal, setupBuildDeps));
+  });
+
+  /**
+   * The goal step's chips (`SetupGoalSuggestions`, GRA-209): the model's proposal, routed per
+   * person, or none, asked once per person and connection inside the memo's window. Never refused
+   * past the session; the outcome goes on the wide event, the goals do not.
+   */
+  const goalSuggestions = createGoalSuggestionMemo();
+  api.get("/setup/goal/suggestions", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const { suggestions, outcome, error, cached } = await setupGoalSuggestions(ctx, principal, {
+      ...setupBuildDeps,
+      goalSuggestions,
+    });
+    useLogger().set({
+      goalSuggestions: {
+        outcome,
+        count: suggestions.length,
+        ...(cached ? { cached } : {}),
+        ...(error ? { error } : {}),
+      },
+    });
+    const body: SetupGoalSuggestions = { suggestions };
+    return c.json(body);
   });
 
   /** Build: the build approval, the job, the record on `building`, and the runner woken. */
