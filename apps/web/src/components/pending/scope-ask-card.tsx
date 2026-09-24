@@ -10,6 +10,11 @@ import { Badge } from "@/components/ui/badge";
 import { agentKeys } from "@/lib/agent-queries";
 import { approvalKeys } from "@/lib/approval-queries";
 import {
+  declinedToastDescription,
+  scopeAllowedSettledSentence,
+  scopeAllowedToastDescription,
+} from "@/lib/ask-answered-copy";
+import {
   type Ask,
   answerPendingAction,
   isOpen,
@@ -52,10 +57,13 @@ export function ScopeAskCard({
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
       if (submitted.allow) {
         toast.success(`${payload.displayName} is in ${agentName}'s scope`, {
-          description: `${submitted.approveBuild ? "Allowed to build tools against it; its" : "Its"} waiting call answers connected. Nothing was entered and no new connection was made.`,
+          description: scopeAllowedToastDescription({
+            origin,
+            approveBuild: submitted.approveBuild,
+          }),
         });
       } else {
-        toast.success("Declined", { description: "The agent's waiting call is refused." });
+        toast.success("Declined", { description: declinedToastDescription(origin) });
       }
       onAnswered?.();
     },
@@ -82,9 +90,10 @@ export function ScopeAskCard({
       settled={(recorded) =>
         recorded?.allow === true ? (
           <>
-            Allowed. The connection is in the agent's scope
-            {recorded.approveBuild === true ? ", and it may build tools against it" : ""}; its
-            waiting call answers connected.{" "}
+            {scopeAllowedSettledSentence({
+              origin,
+              approveBuild: recorded.approveBuild === true,
+            })}{" "}
             <Link to="/agents" className="underline underline-offset-4">
               See agents
             </Link>

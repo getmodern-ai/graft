@@ -64,7 +64,7 @@ const FIELD_PRESENTATION: Record<string, FieldPresentation> = {
   queryParam: { label: "Query parameter" },
   authorizeUrl: {
     label: "Authorize URL",
-    hint: "Where the consent runs, from the vendor's OAuth documentation — https, on a public host.",
+    hint: "Where the consent runs, from the vendor's OAuth documentation: https, on a public host.",
   },
   tokenUrl: { label: "Token URL", hint: "https, on a public host." },
   scopes: { label: "Scopes", hint: "Space-separated, as the vendor lists them." },

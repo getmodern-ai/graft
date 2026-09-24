@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { agentKeys } from "@/lib/agent-queries";
 import { approvalKeys } from "@/lib/approval-queries";
+import { type AskOrigin, declinedToastDescription } from "@/lib/ask-answered-copy";
 import {
   answerPendingAction,
   isOpen,
@@ -31,7 +32,11 @@ import {
  * fill the title, the description line and the body, say what the answer carries beyond `allow`,
  * and name the approve button when "Approve" is not the verb — GRA-28's cards say Connect.
  */
-export function useAnswerAsk(action: PendingAction, onAnswered?: () => void) {
+export function useAnswerAsk(
+  action: PendingAction,
+  onAnswered?: () => void,
+  origin: AskOrigin = "agent",
+) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (answer: PendingAnswer) => answerPendingAction(action.id, answer),
@@ -41,7 +46,7 @@ export function useAnswerAsk(action: PendingAction, onAnswered?: () => void) {
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
       toast.success(answer.allow ? "Approved" : "Declined", {
         description: !answer.allow
-          ? "The agent's waiting call is refused."
+          ? declinedToastDescription(origin)
           : answer.askEveryCall
             ? "The agent's waiting call resumes, and the tool asks again next time."
             : "The agent's waiting call resumes, and the answer holds for its next calls.",
@@ -145,9 +150,11 @@ export function Hosts({ hosts }: { hosts: readonly string[] }) {
  * card says so and opens the proposal for editing, since a model can be wrong. `setup` is the
  * ask Setup's connect step opened as the agent from a curated starter entry (ADR 0024), so the
  * card drops the model's provenance and keeps the proposal editor behind a disclosure. The ask
- * itself is the same either way; the inbox and the handoff page never pass `setup`.
+ * itself is the same either way; the inbox and the handoff page never pass `setup`. What the
+ * card says once answered follows the origin too (`lib/ask-answered-copy.ts`, GRA-212): Setup has
+ * no waiting call.
  */
-export type AskOrigin = "agent" | "setup";
+export type { AskOrigin } from "@/lib/ask-answered-copy";
 
 /**
  * Where a proposal came from: under `agent`, the provenance badge, the server's note and the page

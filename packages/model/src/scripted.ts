@@ -53,13 +53,15 @@ export type ScriptedModel = ModelAdapter & {
 /**
  * What the scripted backing proposes for Setup's goal step (GRA-209), whatever the vendor: a fixed
  * set, the vendor's name the one thing filled in, so the step draws chips on a laptop with no
- * provider key. The script file carries none of it; a proposal is not a job's situation.
+ * provider key. The script file carries none of it; a proposal is not a job's situation. Each is
+ * a read that makes sense for any vendor, a keyless one included (GRA-212: "which Open-Meteo
+ * account this is" read oddly where there is no account).
  */
 export function scriptedGoals(displayName: string): string[] {
   return [
-    `Show me the five newest items in ${displayName}`,
-    `List what changed in ${displayName} today`,
-    `Tell me which ${displayName} account this is`,
+    `Show me the latest from ${displayName}`,
+    `Look something up in ${displayName} and show me the answer`,
+    `Summarise what ${displayName} has for today`,
   ];
 }
 

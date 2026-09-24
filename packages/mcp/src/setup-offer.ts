@@ -23,7 +23,17 @@ import { setupOfferMessage } from "./handoff-message";
  *
  * `connections` is the person's count, revoked rows included, which `find_tool` has already read,
  * so the record is read only when the count is zero.
+ *
+ * **One card per session** (GRA-212). A host mounts the card for every result of a tool that names
+ * it, and ChatGPT called `find_tool` five times in answer to one question, so five identical cards
+ * stacked in the reply. The card, with its card-form message and `cardShown`, rides on the first
+ * answer of a session that carries the offer; every later answer carries `setup` in the console
+ * form and no card, so the model still knows and can relay the link, and the person sees one card.
+ * Held per session as `clientRendersCards` holds its verdict: a session the server re-opens
+ * (GRA-129) is a new session and shows the card again.
  */
+
+const cardShown = new WeakSet<SessionContext>();
 
 export type SetupOffer = {
   setup: { url: string; message: string; cardShown?: true };
@@ -43,6 +53,12 @@ export async function setupOfferFor(
     return { setup: { url, message: setupOfferMessage("console", url) } };
   }
   const agent = await getAgent(ctx, principal, scope.agentId, deps.agent);
+  // Claimed after the last read and with no await between the check and the claim, so two
+  // `find_tool` calls in flight together cannot both carry the card.
+  if (cardShown.has(session)) {
+    return { setup: { url, message: setupOfferMessage("console", url) } };
+  }
+  cardShown.add(session);
   return {
     setup: { url, message: setupOfferMessage("card", url), cardShown: true },
     card: { kind: "setup", agentName: agent?.name ?? "This agent", url },

@@ -83,7 +83,7 @@ function ConsentRoute() {
           </EmptyMedia>
           <EmptyTitle>{title}</EmptyTitle>
           <EmptyDescription>
-            {message.replace(/\.$/, "")} — nothing has been connected. Start again from the app that
+            {message.replace(/\.$/, "")}. Nothing has been connected. Start again from the app that
             asked.
           </EmptyDescription>
         </EmptyHeader>

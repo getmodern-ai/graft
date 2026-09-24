@@ -263,7 +263,7 @@ function openConversation(context: ModelJobContext, bound: Bound): ModelConversa
           const answer: ModelAnswer = {
             kind: "read_docs",
             urls: triage.urls,
-            note: `Reading the documentation the agent pointed at: ${triage.urls.join(", ")}`,
+            note: `${triage.urls.join(", ")}, named with the goal`,
           };
           record(answer);
           return { answer, usage };

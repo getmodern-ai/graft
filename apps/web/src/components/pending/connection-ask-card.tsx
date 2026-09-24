@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError } from "@/lib/api";
+import { connectedSettledSentence, connectedToastDescription } from "@/lib/ask-answered-copy";
 import {
   type ConnectionDraft,
   type DraftErrors,
@@ -81,11 +82,11 @@ export function ConnectionAskCard({
   // Setup's disclosure over the proposal editor; outside Setup the editor is never folded.
   const [editing, setEditing] = useState(false);
   const agentName = action.agent?.name ?? "the agent";
-  const decline = useAnswerAsk(action, onAnswered);
+  const decline = useAnswerAsk(action, onAnswered, origin);
   const consent = useOAuthConsent({
     onConnected: () => {
       toast.success(`${draft.displayName} is connected`, {
-        description: `In ${action.agent?.name ?? "the agent"}'s scope; its waiting call answers connected. Other agents get it when you add it to theirs.`,
+        description: connectedToastDescription({ origin, agentName }),
       });
       onAnswered?.();
     },
@@ -106,7 +107,11 @@ export function ConnectionAskCard({
         return;
       }
       toast.success(`${connection.displayName} is connected`, {
-        description: `In ${agentName}'s scope${submitted.approveBuild ? ", allowed to build tools against it" : ""}; its waiting call answers connected. Other agents get it when you add it to theirs.`,
+        description: connectedToastDescription({
+          origin,
+          agentName,
+          approveBuild: submitted.approveBuild,
+        }),
       });
       onAnswered?.();
     },
@@ -178,9 +183,7 @@ export function ConnectionAskCard({
       settled={(recorded) =>
         typeof recorded?.connectionId === "string" ? (
           <>
-            {widens
-              ? "Confirmed. The connection now reaches the added hosts and the agent's waiting call answers connected; nothing new was made."
-              : "Connected. The connection is in the agent's scope and its waiting call answers connected; other agents get it when you add it to theirs."}{" "}
+            {connectedSettledSentence({ origin, widens: widens !== null })}{" "}
             <Link to="/connections" className="underline underline-offset-4">
               See connections
             </Link>
