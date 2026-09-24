@@ -107,6 +107,16 @@ describe("the starter integrations", () => {
     expect(starterVendorFor("acme")).toBeNull();
   });
 
+  it("makes Gmail's task one call: the threads list, whose snippets need no read per message", () => {
+    const gmail = starterVendorOf("gmail");
+    expect(gmail?.goal).toBe("Show me my five latest inbox conversations");
+    expect(gmail?.hints).toContain("threads list endpoint, one GET of `users/me/threads`");
+    expect(gmail?.hints).toContain("`maxResults=5` and `labelIds=INBOX`");
+    expect(gmail?.hints).toContain("`snippet`");
+    expect(gmail?.hints).toContain("Make no other call.");
+    expect(gmail?.hints).not.toMatch(/message get|metadataHeaders|then read each/);
+  });
+
   it("proposes exactly what an agent's request_connection would send", () => {
     const github = starterVendorOf("github");
     if (!github) throw new Error("no github starter");

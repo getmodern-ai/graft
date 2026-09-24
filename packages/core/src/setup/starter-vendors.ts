@@ -94,11 +94,13 @@ export const STARTER_VENDORS = [
       ...GOOGLE_OAUTH,
       scopes: "https://www.googleapis.com/auth/gmail.readonly",
     },
-    goal: "Show me my five latest emails",
+    // One call (Greptile on #172): the threads list carries each conversation's `snippet`, where
+    // the messages list carries ids alone and would need a read per message after it.
+    goal: "Show me my five latest inbox conversations",
     hints:
-      "List the five most recent messages in the inbox with the messages list endpoint (`maxResults=5`, `labelIds=INBOX`), then read each with the message get endpoint (`format=metadata`, `metadataHeaders` From, Subject and Date), all GETs, returning the sender, the subject and the date of each. The tool takes no input. Read only.",
+      "List the five most recent conversations in the inbox with the threads list endpoint, one GET of `users/me/threads` with `maxResults=5` and `labelIds=INBOX`, returning each thread's `id` and its `snippet`, the line of text Gmail shows for it. Make no other call. The tool takes no input. Read only.",
     runInput: null,
-    outcome: "Your five latest emails, with who sent each one and its subject.",
+    outcome: "Your five latest inbox conversations, with the first line of each.",
   },
   {
     id: "google-calendar",
