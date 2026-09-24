@@ -94,6 +94,12 @@ export type SetupGoalContext = {
   /** The starter's curated read-only goal, or empty for another vendor. */
   goal: string;
   build: SetupBuildAvailability;
+  /**
+   * The job the record still holds after going back to this step (GRA-215), with the goal it was
+   * started with, so the step shows those words and offers to continue to it while they stand;
+   * null on a first visit and after *Change the goal*.
+   */
+  job: { id: string; goal: string; status: AcquireJobRow["status"] } | null;
 };
 
 function availability(deps: Pick<SetupBuildRouteDeps, "model">): SetupBuildAvailability {
@@ -120,6 +126,7 @@ export async function setupGoalContext(
   const record = await deps.setup.findSetup(ctx.db, principal.personId);
   const connection = await recordConnection(ctx, principal, record?.connectionId, deps);
   const starter = connection ? starterVendorFor(connection.vendor) : null;
+  const held = await recordJob(ctx, principal, deps);
   return {
     connection: connection
       ? { id: connection.id, vendor: connection.vendor, displayName: connection.displayName }
@@ -127,6 +134,7 @@ export async function setupGoalContext(
     starterId: starter && isStarterVendorId(starter.id) ? starter.id : null,
     goal: starter?.goal ?? "",
     build: availability(deps),
+    job: held?.job ? { id: held.job.id, goal: held.job.goal, status: held.job.status } : null,
   };
 }
 
@@ -262,7 +270,7 @@ export async function setupGoalSuggestions(
 export async function buildSetupTool(
   ctx: ServiceContext,
   principal: Principal,
-  input: { goal: string },
+  input: { goal: string; discardJob?: boolean },
   deps: SetupBuildRouteDeps,
 ): Promise<SetupState> {
   const build = availability(deps);
@@ -281,6 +289,7 @@ export async function buildSetupTool(
       // agent would hint them; another vendor's model finds its own.
       hints: setupBuildHints(starter, input.goal),
       firstProgressLine: SETUP_FIRST_PROGRESS_LINE,
+      ...(input.discardJob ? { discardJob: true } : {}),
     },
     deps,
   );

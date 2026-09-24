@@ -26,6 +26,8 @@ import {
   listWorkingSet,
   listWorkingSetChanges,
   type ModelKeyDeps,
+  moveSetupBack,
+  moveSetupOn,
   orNotFound,
   type PendingActionDeps,
   type Principal,
@@ -368,16 +370,44 @@ export type SetupStartBody = z.input<typeof setupStartBody>;
  * takes as it is. One or the other, strictly.
  */
 const setupConnectBody = z.union([
-  z.strictObject({ starterId: z.enum(STARTER_VENDOR_IDS) }),
-  z.strictObject({ connectionId: z.string().min(1) }),
+  z.strictObject({ starterId: z.enum(STARTER_VENDOR_IDS), discardJob: z.boolean().optional() }),
+  z.strictObject({ connectionId: z.string().min(1), discardJob: z.boolean().optional() }),
 ]);
 /** The connect's wire shape, as the console posts it. */
 export type SetupConnectBody = z.input<typeof setupConnectBody>;
 
-/** `POST /setup/build` (GRA-207): the goal as the person accepted or typed it, `acquire`'s bound. */
-const setupBuildBody = z.strictObject({ goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH) });
+/**
+ * `POST /setup/build` (GRA-207): the goal as the person accepted or typed it, `acquire`'s bound.
+ * `discardJob` leaves behind a job the record still holds while it runs (GRA-215), which the
+ * console sends once the person has said so.
+ */
+const setupBuildBody = z.strictObject({
+  goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH),
+  discardJob: z.boolean().optional(),
+});
 /** The build's wire shape, as the console posts it. */
 export type SetupBuildBody = z.input<typeof setupBuildBody>;
+
+/**
+ * `POST /setup/back` (GRA-215): the step to return the record to, from the rail or the footer's
+ * *Back*; `moveSetupBack` admits only a step the record completed and holds what for.
+ */
+const setupBackBody = z.strictObject({
+  step: z.enum(["harness", "vendor", "connect", "goal", "building", "result"]),
+});
+/** The back move's wire shape, as the console posts it. */
+export type SetupBackBody = z.input<typeof setupBackBody>;
+
+/**
+ * `POST /setup/next` (GRA-215): Continue on a step returned to with nothing changed, naming the
+ * step the page shows; on the harness step, the harness as the person left it (`moveSetupOn`).
+ */
+const setupNextBody = z.union([
+  z.strictObject({ from: z.literal("harness"), harness: z.enum(setupHarness).optional() }),
+  z.strictObject({ from: z.enum(["connect", "goal", "building"]) }),
+]);
+/** The continue's wire shape, as the console posts it. */
+export type SetupNextBody = z.input<typeof setupNextBody>;
 
 /**
  * `POST /agents/:id/tools/:vendor/:name/run` (GRA-208): the tool's input, which the run holds to
@@ -913,6 +943,7 @@ export function createApi(options: ApiOptions): Hono {
       pendingAction: pendingActionDeps,
       routing: options.connectionRouting,
       notifier: options.notifier,
+      acquireJob: acquireJobDeps,
     };
   };
 
@@ -1070,6 +1101,26 @@ export function createApi(options: ApiOptions): Hono {
     const principal = await principalOf(c.req.raw.headers);
     const body = await parseBody(c.req.raw, setupStartBody);
     return c.json(await startSetup(ctx, principal, body, setupDeps, agentDeps));
+  });
+
+  /**
+   * The navigable rail (GRA-215): `back` returns the record to a step it completed, keeping what
+   * it holds, and `next` walks on from a step returned to with nothing changed. Neither is a row
+   * in the mutation table: the step was counted when it was first completed, and a look back is
+   * not a step.
+   */
+  api.post("/setup/back", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupBackBody);
+    const { state } = await moveSetupBack(ctx, principal, { to: body.step }, setupDeps, agentDeps);
+    return c.json(state);
+  });
+
+  api.post("/setup/next", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupNextBody);
+    const { state } = await moveSetupOn(ctx, principal, body, setupDeps, agentDeps);
+    return c.json(state);
   });
 
   api.post("/setup/skip", async (c) => {
