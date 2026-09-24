@@ -1,16 +1,19 @@
 import type { AgentScopeMode } from "@graft/core";
 import { SETUP_HARNESSES, type SetupHarness, setupHarnessOf } from "@graft/core/setup/harness";
+import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
 import { useEffect, useRef, useState } from "react";
 
-import { KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { SetupChoice } from "@/components/setup/setup-choice";
+import { SetupDisclosure } from "@/components/setup/setup-disclosure";
+import { SetupFooter } from "@/components/setup/setup-footer";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { StatusChip } from "@/components/status-chip";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Item, ItemContent, ItemDescription, ItemTitle } from "@/components/ui/item";
 import {
   Select,
   SelectContent,
@@ -20,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import { readScopeMode, SCOPE_MODE_ITEMS } from "@/lib/scope-mode";
 import { agentToAdopt } from "@/lib/setup-page";
-import { type SetupStateData, startSetup } from "@/lib/setup-queries";
+import { nextSetup, type SetupStateData, startSetup } from "@/lib/setup-queries";
 import { agentStatusChip } from "@/lib/status-chips";
 
 type Agent = SetupStateData["activeAgents"][number];
@@ -35,10 +38,88 @@ type Agent = SetupStateData["activeAgents"][number];
  * (`agentId`, GRA-210): among several, Setup starts as that one without asking.
  */
 export function HarnessStep({ state, agentId }: { state: SetupStateData; agentId?: string }) {
+  // Returned to from a later step (GRA-215): the record already runs as its agent.
+  if (state.setup?.agentId && state.agent) return <HarnessReview state={state} />;
   const adopt = agentToAdopt(state.activeAgents, agentId);
   if (adopt) return <AdoptOnlyAgent agent={adopt} />;
-  if (state.activeAgents.length > 0) return <ChooseAgent agents={state.activeAgents} />;
-  return <ChooseHarness />;
+  if (state.activeAgents.length > 0) return <ChooseAgent state={state} />;
+  return <ChooseHarness state={state} />;
+}
+
+/**
+ * The harness step returned to (GRA-215, *The rail is navigable*): the harness chosen, which the
+ * person may change while Setup's own agent still awaits its harness, since the harness decides
+ * only the finish's instructions and the token-or-consent path. An agent that already has its token
+ * or its client shows its harness read only, and an adopted agent (no harness on the record) is
+ * shown as the agent Setup runs as. Continue walks on to the integration step with nothing else
+ * changed (`POST /api/setup/next`).
+ */
+function HarnessReview({ state }: { state: SetupStateData }) {
+  const recorded = state.setup?.harness ?? null;
+  const agent = state.agent;
+  const [harness, setHarness] = useState<SetupHarness | null>(recorded);
+  const next = useSetupMutation(nextSetup);
+  const changeable = recorded !== null && agent !== null && isAwaitingHarness(agent);
+
+  return (
+    <form
+      className="flex flex-col gap-6"
+      onSubmit={(event) => {
+        event.preventDefault();
+        next.mutate({ from: "harness", ...(harness && changeable ? { harness } : {}) });
+      }}
+    >
+      {recorded ? (
+        <>
+          <SetupStepHeader
+            title="Which harness do you use?"
+            description={
+              changeable
+                ? `Setup made ${agent?.name ?? "an agent"} for this harness. Change it here until the harness connects; only the finish's instructions follow it.`
+                : `${agent?.name ?? "The agent"} is connected to its harness already, so Setup keeps it.`
+            }
+          />
+          <SetupChoice
+            name="setup-harness"
+            legend="Harness"
+            options={SETUP_HARNESSES.map((entry) => ({
+              value: entry.id,
+              label: entry.label,
+              description: entry.description,
+            }))}
+            value={harness}
+            onChange={setHarness}
+            disabled={!changeable || next.isPending}
+          />
+        </>
+      ) : (
+        <>
+          <SetupStepHeader
+            title={`Setup runs as ${agent?.name ?? "your agent"}`}
+            description="Its harness was connected before Setup, so there is nothing to choose here."
+          />
+          {agent ? (
+            <Item variant="outline">
+              <ItemContent>
+                <ItemTitle>
+                  {agent.name}
+                  <StatusChip chip={agentStatusChip(agent)} />
+                </ItemTitle>
+                <ItemDescription>
+                  The tool Setup acquires lands in this agent's working set.
+                </ItemDescription>
+              </ItemContent>
+            </Item>
+          ) : null}
+        </>
+      )}
+      <SetupFooter state={state} disabled={next.isPending}>
+        <Button type="submit" disabled={next.isPending}>
+          {next.isPending ? "Continuing…" : "Continue"}
+        </Button>
+      </SetupFooter>
+    </form>
+  );
 }
 
 /** The create dialog's defaults (`create-agent-dialog.tsx`), which Setup's agent starts from. */
@@ -56,9 +137,8 @@ const SETUP_SCOPE_DESCRIPTION: Record<AgentScopeMode, string> = {
     "This agent can only use the connections you give it. The one you make in Setup is added, and you can add others on its page.",
 };
 
-function ChooseHarness() {
+function ChooseHarness({ state }: { state: SetupStateData }) {
   const [harness, setHarness] = useState<SetupHarness | null>(null);
-  const [advanced, setAdvanced] = useState(false);
   const [name, setName] = useState("");
   const [cap, setCap] = useState(DEFAULT_CAP);
   const [idleDays, setIdleDays] = useState(DEFAULT_IDLE_DAYS);
@@ -101,97 +181,83 @@ function ChooseHarness() {
         disabled={start.isPending}
       />
 
-      <div className="flex flex-col gap-4">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="self-start"
-          aria-expanded={advanced}
-          aria-controls="setup-advanced"
-          onClick={() => setAdvanced((open) => !open)}
-        >
-          {advanced ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
-          Advanced options
-        </Button>
-        {advanced ? (
-          <FieldGroup id="setup-advanced">
+      <SetupDisclosure label="Advanced options">
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="setup-agent-name">Agent name</FieldLabel>
+            <Input
+              id="setup-agent-name"
+              placeholder={defaultName || "Enter agent name"}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+            <FieldDescription>
+              {defaultName
+                ? `Left empty, the agent is called ${defaultName}.`
+                : "Left empty, the agent is named after the harness."}
+            </FieldDescription>
+          </Field>
+          <div className="grid grid-cols-2 gap-4">
             <Field>
-              <FieldLabel htmlFor="setup-agent-name">Agent name</FieldLabel>
+              <FieldLabel htmlFor="setup-agent-cap">Working set cap</FieldLabel>
               <Input
-                id="setup-agent-name"
-                placeholder={defaultName || "Enter agent name"}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
+                id="setup-agent-cap"
+                type="number"
+                min={1}
+                step={1}
+                required
+                value={cap}
+                onChange={(event) => setCap(event.target.value)}
+              />
+              <FieldDescription>Target number of tools in the working set.</FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="setup-agent-idle">Idle window (days)</FieldLabel>
+              <Input
+                id="setup-agent-idle"
+                type="number"
+                min={1}
+                step={1}
+                required
+                value={idleDays}
+                onChange={(event) => setIdleDays(event.target.value)}
               />
               <FieldDescription>
-                {defaultName
-                  ? `Left empty, the agent is called ${defaultName}.`
-                  : "Left empty, the agent is named after the harness."}
+                Days without use before a tool leaves the working set.
               </FieldDescription>
             </Field>
-            <div className="grid grid-cols-2 gap-4">
-              <Field>
-                <FieldLabel htmlFor="setup-agent-cap">Working set cap</FieldLabel>
-                <Input
-                  id="setup-agent-cap"
-                  type="number"
-                  min={1}
-                  step={1}
-                  required
-                  value={cap}
-                  onChange={(event) => setCap(event.target.value)}
-                />
-                <FieldDescription>Target number of tools in the working set.</FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="setup-agent-idle">Idle window (days)</FieldLabel>
-                <Input
-                  id="setup-agent-idle"
-                  type="number"
-                  min={1}
-                  step={1}
-                  required
-                  value={idleDays}
-                  onChange={(event) => setIdleDays(event.target.value)}
-                />
-                <FieldDescription>
-                  Days without use before a tool leaves the working set.
-                </FieldDescription>
-              </Field>
-            </div>
-            <Field>
-              <FieldLabel htmlFor="setup-agent-scope">Scope</FieldLabel>
-              <Select
-                value={scopeMode}
-                items={SCOPE_MODE_ITEMS}
-                onValueChange={(next) => {
-                  const read = readScopeMode(next);
-                  if (read) setScopeMode(read);
-                }}
-              >
-                <SelectTrigger id="setup-agent-scope" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SCOPE_MODE_ITEMS.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FieldDescription>{SETUP_SCOPE_DESCRIPTION[scopeMode]}</FieldDescription>
-            </Field>
-          </FieldGroup>
-        ) : null}
-      </div>
+          </div>
+          <Field>
+            <FieldLabel htmlFor="setup-agent-scope">Scope</FieldLabel>
+            <Select
+              value={scopeMode}
+              items={SCOPE_MODE_ITEMS}
+              onValueChange={(next) => {
+                const read = readScopeMode(next);
+                if (read) setScopeMode(read);
+              }}
+            >
+              <SelectTrigger id="setup-agent-scope" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCOPE_MODE_ITEMS.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FieldDescription>{SETUP_SCOPE_DESCRIPTION[scopeMode]}</FieldDescription>
+          </Field>
+        </FieldGroup>
+      </SetupDisclosure>
 
-      <div className="flex justify-end">
+      <SetupFooter state={state} disabled={start.isPending}>
         <Button type="submit" disabled={!harness || start.isPending}>
           {start.isPending ? "Creating agent…" : "Continue"}
         </Button>
-      </div>
+      </SetupFooter>
     </form>
   );
 }
@@ -200,7 +266,8 @@ function ChooseHarness() {
  * Several agents: which one Setup runs as. Never a guess (GRA-202, user story 6); each is shown with
  * its chip, so an agent awaiting its harness reads apart from one already connected.
  */
-function ChooseAgent({ agents }: { agents: readonly Agent[] }) {
+function ChooseAgent({ state }: { state: SetupStateData }) {
+  const agents = state.activeAgents;
   const [agentId, setAgentId] = useState<string | null>(null);
   const start = useSetupMutation(startSetup);
 
@@ -233,11 +300,11 @@ function ChooseAgent({ agents }: { agents: readonly Agent[] }) {
         onChange={setAgentId}
         disabled={start.isPending}
       />
-      <div className="flex justify-end">
+      <SetupFooter state={state} disabled={start.isPending}>
         <Button type="submit" disabled={!agentId || start.isPending}>
           {start.isPending ? "Starting…" : "Continue"}
         </Button>
-      </div>
+      </SetupFooter>
     </form>
   );
 }

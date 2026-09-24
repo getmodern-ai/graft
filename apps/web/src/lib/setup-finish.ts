@@ -22,6 +22,49 @@ export function finishVariant(harness: SetupHarness | null): FinishVariant {
   return setupHarnessOf(harness).kind;
 }
 
+/**
+ * What the finish step holds, per harness kind (GRA-215, *The finish is short*), and nothing else
+ * beyond the step's one sentence and a failed build's notice:
+ *
+ * - `oauth`: the prompt with *Copy prompt*; the connector URL and the manual steps behind *Set it
+ *   up by hand* (`byHand`), since the prompt walks the harness through them.
+ * - `token`: the token block and the prompt, the configuration behind the same disclosure. The
+ *   token block is `issued` once the token is in this page's hands (shown once), `to_issue` while
+ *   the agent still awaits it, when the step's primary action issues it before the finish, and
+ *   `saved` for an agent that already has one, whose token was shown when it was issued.
+ * - `adopted`: the one request to ask in the chat, and nothing else.
+ *
+ * `primary` is the footer's action: *Issue the token* while the token block waits on it, so that
+ * *Finish Setup* is always one press that leaves the page.
+ */
+export type FinishSections = {
+  prompt: boolean;
+  token: "issued" | "to_issue" | "saved" | null;
+  byHand: "oauth" | "token" | null;
+  askInChat: boolean;
+  primary: "issue_token" | "finish";
+};
+
+export function finishSections(
+  variant: FinishVariant,
+  token: { issued: boolean; awaiting: boolean },
+): FinishSections {
+  if (variant === "adopted") {
+    return { prompt: false, token: null, byHand: null, askInChat: true, primary: "finish" };
+  }
+  if (variant === "oauth") {
+    return { prompt: true, token: null, byHand: "oauth", askInChat: false, primary: "finish" };
+  }
+  const block = token.issued ? "issued" : token.awaiting ? "to_issue" : "saved";
+  return {
+    prompt: true,
+    token: block,
+    byHand: "token",
+    askInChat: false,
+    primary: block === "to_issue" ? "issue_token" : "finish",
+  };
+}
+
 /** The configuration block's shape for a static-token harness (`mcp-snippet.ts`). */
 export function snippetShapeOf(harness: SetupHarness): Harness {
   if (harness === "hermes" || harness === "openclaw") return harness;

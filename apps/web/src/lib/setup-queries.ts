@@ -2,11 +2,13 @@ import type { SetupOutput, SetupState, SetupVendorOption } from "@graft/core";
 import type { AcquireStatus } from "@graft/mcp/acquire/shapes";
 import type {
   AgentToolRunOutput,
+  SetupBackBody,
   SetupBuildBody,
   SetupConnectBody,
   SetupFinishOutput,
   SetupGoalContext,
   SetupGoalSuggestions,
+  SetupNextBody,
   SetupStartBody,
   SetupToolContext,
   ToolRunBody,
@@ -55,6 +57,19 @@ export function startSetup(body: SetupStartBody) {
 
 export function skipSetup() {
   return api<SetupStateData>("/setup/skip", { method: "POST" });
+}
+
+/**
+ * Back to a step the record completed (`POST /api/setup/back`, GRA-215), from the rail or the
+ * footer: the record keeps its connection, job and tool, and a running job keeps running.
+ */
+export function backSetup(body: SetupBackBody) {
+  return api<SetupStateData>("/setup/back", { method: "POST", body });
+}
+
+/** Continue on a step returned to with nothing changed (`POST /api/setup/next`, GRA-215). */
+export function nextSetup(body: SetupNextBody) {
+  return api<SetupStateData>("/setup/next", { method: "POST", body });
 }
 
 /** One line of the vendor step: a starter, the provider that covers it here, and what connecting takes. */

@@ -112,3 +112,80 @@ export function explainProgress(lines: readonly string[]): ExplainedProgressLine
     return { line, stage, explanation: SETUP_STAGE_EXPLANATION[stage] };
   });
 }
+
+/**
+ * The progress card's plain label per stage (GRA-215, *The building step is a progress card*): the
+ * words a chat product puts on a tool call, one per part of the loop a person can picture. The
+ * sandbox opening has none of its own and keeps the label before it.
+ */
+export const SETUP_STAGE_LABEL: Record<Exclude<SetupBuildStage, "sandbox">, string> = {
+  queued: "Waiting to start",
+  docs: "Reading the documentation",
+  model: "Writing the tool",
+  write: "Writing the tool",
+  check: "Checking it",
+  prove: "Trying it against the real service",
+  publish: "Publishing",
+  dry_run: "Dry run",
+  done: "The tool is ready",
+};
+
+/** What the card says once a runner has picked the job up and before any stage has a line. */
+export const SETUP_STARTING_LABEL = "Starting";
+
+/** What the card says when the job ended short of a tool. */
+export const SETUP_FAILED_LABEL = "The tool did not pass";
+
+/**
+ * The building step's card, from the job as `acquire_status` answers it (GRA-215): where the job
+ * stands, the label of the stage it is in, one line under it that changes with each progress line
+ * (the newest, its `Attempt N: ` prefix left to the attempt count), the attempt count once past
+ * the first, and every line with its teaching for the *Details* disclosure. A failure's line is the
+ * job's own sentence, the reason the person reads before changing the task.
+ */
+export type ProgressCard = {
+  kind: BuildingView["kind"];
+  label: string;
+  message: string | null;
+  /** The attempt the job is on, only once past the first. */
+  attempt: number | null;
+  lines: ExplainedProgressLine[];
+};
+
+function sentenceCase(line: string): string {
+  return line.charAt(0).toUpperCase() + line.slice(1);
+}
+
+export function progressCard(
+  job:
+    | { status: string; progress?: readonly string[]; attempts?: number; result?: unknown }
+    | undefined,
+): ProgressCard {
+  const view = buildingView(job);
+  const lines = explainProgress(job?.progress ?? []);
+  let label = SETUP_STAGE_LABEL.queued;
+  for (const entry of lines) {
+    if (entry.stage && entry.stage !== "sandbox") label = SETUP_STAGE_LABEL[entry.stage];
+    // The runner's opening line ("Authoring …", "Resumed …") says the job has left the queue.
+    else if (!entry.stage && label === SETUP_STAGE_LABEL.queued) label = SETUP_STARTING_LABEL;
+  }
+  const newest = lines.at(-1)?.line;
+  const attempts = job?.attempts ?? 0;
+  return {
+    kind: view.kind,
+    label:
+      view.kind === "failed"
+        ? SETUP_FAILED_LABEL
+        : view.kind === "passed"
+          ? SETUP_STAGE_LABEL.done
+          : label,
+    message:
+      view.kind === "failed"
+        ? view.message
+        : newest
+          ? sentenceCase(newest.replace(ATTEMPT_PREFIX, ""))
+          : null,
+    attempt: attempts > 1 ? attempts : null,
+    lines,
+  };
+}

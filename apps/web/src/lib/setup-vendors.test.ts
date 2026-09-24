@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { PendingAction } from "./pending-action-queries";
-import { connectAskView, SETUP_CONNECT_LABEL } from "./setup-vendors";
+import {
+  ANOTHER_VENDOR,
+  choiceLeavesJob,
+  connectAskView,
+  jobRunning,
+  SETUP_CONNECT_LABEL,
+} from "./setup-vendors";
 
 const action = (id: string) => ({ id }) as PendingAction;
 
@@ -23,5 +29,23 @@ describe("SETUP_CONNECT_LABEL", () => {
     for (const label of Object.values(SETUP_CONNECT_LABEL)) {
       expect(label).toMatch(/^[A-Z][a-z ]+$/);
     }
+  });
+});
+
+describe("choiceLeavesJob (GRA-215)", () => {
+  const running = { starterId: "open-meteo", jobStatus: "running" };
+
+  it("asks before another integration replaces a connection whose job still runs", () => {
+    expect(choiceLeavesJob("github", running)).toBe(true);
+    expect(choiceLeavesJob(ANOTHER_VENDOR, running)).toBe(true);
+    expect(choiceLeavesJob("github", { starterId: null, jobStatus: "queued" })).toBe(true);
+  });
+
+  it("never asks for the same integration, a finished job, or no job", () => {
+    expect(choiceLeavesJob("open-meteo", running)).toBe(false);
+    expect(choiceLeavesJob("github", { ...running, jobStatus: "failed" })).toBe(false);
+    expect(choiceLeavesJob("github", { ...running, jobStatus: "succeeded" })).toBe(false);
+    expect(choiceLeavesJob("github", null)).toBe(false);
+    expect(jobRunning(null)).toBe(false);
   });
 });

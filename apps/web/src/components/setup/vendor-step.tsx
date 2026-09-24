@@ -8,7 +8,8 @@ import { agentStatusChip } from "@/lib/status-chips";
 /**
  * The vendor step (GRA-206): which agent Setup runs as, so a reload visibly resumes with the same
  * one, and the starter vendors this deployment can connect (`VendorChoice`), each saying what the
- * first tool will show, with *Another vendor* last.
+ * first tool will show, with *Another vendor* last. Its footer carries Back to the harness and
+ * Continue (GRA-215).
  */
 export function VendorStep({ state }: { state: SetupStateData }) {
   const { agent } = state;
@@ -29,7 +30,7 @@ export function VendorStep({ state }: { state: SetupStateData }) {
           </ItemContent>
         </Item>
       ) : null}
-      <VendorChoice />
+      <VendorChoice state={state} />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { CodeBlock } from "@/components/code-block";
 import { WarningIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
+import { SetupFooter } from "@/components/setup/setup-footer";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { StatusChip } from "@/components/status-chip";
@@ -54,7 +55,12 @@ export function ResultStep({ state }: { state: SetupStateData }) {
           />
         </p>
       ) : context.data.tool && context.data.agent ? (
-        <ToolRun context={context.data} agentId={context.data.agent.id} tool={context.data.tool} />
+        <ToolRun
+          state={state}
+          context={context.data}
+          agentId={context.data.agent.id}
+          tool={context.data.tool}
+        />
       ) : (
         <Loader />
       )}
@@ -63,10 +69,12 @@ export function ResultStep({ state }: { state: SetupStateData }) {
 }
 
 function ToolRun({
+  state,
   context,
   agentId,
   tool,
 }: {
+  state: SetupStateData;
   context: SetupTool;
   agentId: string;
   tool: NonNullable<SetupTool["tool"]>;
@@ -169,7 +177,7 @@ function ToolRun({
         </Alert>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <SetupFooter state={state} disabled={run.isPending || onward.isPending}>
         {view.kind === "none" && !answer ? null : (
           <Button type="submit" variant="outline" disabled={run.isPending}>
             {run.isPending ? "Running…" : "Run again"}
@@ -178,7 +186,7 @@ function ToolRun({
         <Button type="button" disabled={onward.isPending} onClick={() => onward.mutate(undefined)}>
           {onward.isPending ? "Continuing…" : "Continue"}
         </Button>
-      </div>
+      </SetupFooter>
     </form>
   );
 }
