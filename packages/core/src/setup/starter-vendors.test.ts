@@ -8,6 +8,7 @@ import {
   STARTER_VENDOR_IDS,
   STARTER_VENDORS,
   type StarterVendor,
+  setupBuildHints,
   setupVendorOptions,
   starterProposal,
   starterVendorFor,
@@ -48,9 +49,29 @@ describe("the starter vendors", () => {
       expect(hosts.ok).toBe(true);
       // The list names every host the calls reach, the primary's among them.
       if (hosts.ok) expect(new Set(hosts.hosts)).toEqual(new Set(starter.hosts));
-      expect(starter.goal).toMatch(/Read only\.$/);
       expect(starter.outcome).not.toMatch(/—/);
     }
+  });
+
+  it("keeps the curated goal in the person's voice and the technical detail in the hints", () => {
+    for (const starter of STARTER_VENDORS) {
+      // What the person reads as their own goal: short, no field names, no instruction to a model.
+      expect(starter.goal.length).toBeLessThanOrEqual(60);
+      expect(starter.goal).toMatch(/^[A-Z]/);
+      expect(starter.goal).not.toMatch(/[`—]|Read only|\.$/);
+      // What the model is told beside it, when the person builds with it unchanged.
+      expect(starter.hints).toMatch(/Read only\.$/);
+      if (starter.runInput) expect(starter.hints).toContain(`\`${starter.runInput.field}\``);
+    }
+  });
+
+  it("hints a Setup build with the curated detail only for the curated goal unchanged", () => {
+    const meteo = starterVendorOf("open-meteo");
+    if (!meteo) throw new Error("no open-meteo starter");
+    const docs = "The vendor's documentation starts at https://open-meteo.com/en/docs.";
+    expect(setupBuildHints(meteo, `  ${meteo.goal} `)).toBe(`${meteo.hints} ${docs}`);
+    expect(setupBuildHints(meteo, "Show me tomorrow's forecast for Paris")).toBe(docs);
+    expect(setupBuildHints(null, "List my tickets")).toBeNull();
   });
 
   it("gives Open-Meteo a city with Melbourne as its default, and Gmail no input", () => {

@@ -1,6 +1,11 @@
 import { join } from "node:path";
 
-import { type SetupDeps, toProxyConnection } from "@graft/core";
+import {
+  type SetupDeps,
+  type StarterVendor,
+  starterVendorOf,
+  toProxyConnection,
+} from "@graft/core";
 import type { SetupPatch, SetupRow } from "@graft/db/repo/setup";
 import {
   type AcquireRunner,
@@ -11,7 +16,12 @@ import {
 } from "@graft/mcp";
 import { createFakeDeps, createFakeStore, type FakeStore } from "@graft/mcp/testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "@graft/mcp/testing/fake-vendor";
-import { createScriptedModel, type ScriptedStep } from "@graft/model";
+import {
+  createScriptedModel,
+  type ModelAdapter,
+  type ScriptedStep,
+  scriptedGoals,
+} from "@graft/model";
 import type { Capture } from "@graft/observability";
 import {
   createFakeMetadataSource,
@@ -27,7 +37,14 @@ import { initLogger } from "evlog";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createServer } from "./app";
-import { SETUP_BUILD_UNCONFIGURED_MESSAGE, SETUP_FIRST_PROGRESS_LINE } from "./setup-build";
+import {
+  createGoalSuggestionMemo,
+  GOAL_SUGGESTION_MEMO_FAILURE_TTL_MS,
+  GOAL_SUGGESTION_MEMO_TTL_MS,
+  SETUP_BUILD_UNCONFIGURED_MESSAGE,
+  SETUP_FIRST_PROGRESS_LINE,
+  type SetupGoalSuggestionsResult,
+} from "./setup-build";
 import { fakeModelKeyDeps } from "./testing/fake-model-key";
 
 /**
@@ -42,6 +59,12 @@ import { fakeModelKeyDeps } from "./testing/fake-model-key";
  */
 
 initLogger({ silent: true });
+
+const OPEN_METEO: StarterVendor = (() => {
+  const starter = starterVendorOf("open-meteo");
+  if (!starter) throw new Error("no open-meteo starter");
+  return starter;
+})();
 
 const CONSOLE_ORIGIN = "http://localhost";
 const FORECAST = { current: { temperature_2m: 14.2 }, latitude: -37.81, longitude: 144.96 };
@@ -355,7 +378,7 @@ describe("Setup's goal and build steps", () => {
     expect(goal).toEqual({
       connection: { id: connectionId, vendor: "open-meteo", displayName: expect.any(String) },
       starterId: "open-meteo",
-      goal: expect.stringMatching(/Read only\.$/),
+      goal: OPEN_METEO.goal,
       build: { available: true },
     });
 
@@ -374,7 +397,8 @@ describe("Setup's goal and build steps", () => {
       agentId,
       connectionId,
       goal: goal.goal,
-      hints: expect.stringContaining("https://open-meteo.com/en/docs"),
+      // The curated goal unchanged carries the starter's detail for the model, then the docs.
+      hints: `${OPEN_METEO.hints} The vendor's documentation starts at https://open-meteo.com/en/docs.`,
     });
 
     // The job route, polled to the end, in acquire_status's shape.
@@ -486,8 +510,14 @@ describe("Setup's goal and build steps", () => {
     const { agentId } = await onGoal(true);
     const granted = buildApprovals(agentId);
     expect(granted).toHaveLength(1);
-    await app.request("/api/setup/build", post({ goal: "Read the current weather. Read only." }));
+    const own = await read(
+      await app.request("/api/setup/build", post({ goal: "Read the current weather. Read only." })),
+    );
     expect(buildApprovals(agentId)).toEqual(granted);
+    // A goal of the person's own carries the docs and not the curated goal's detail.
+    expect(store.acquireJobs.get(own.setup.acquireJobId)?.hints).toBe(
+      "The vendor's documentation starts at https://open-meteo.com/en/docs.",
+    );
     // A second Build from a tab that did not move on opens no second job.
     const second = await app.request("/api/setup/build", post({ goal: "Again." }));
     expect(second.status).toBe(409);
@@ -655,6 +685,226 @@ describe("Setup's goal and build steps", () => {
     expect(early.status).toBe(409);
     await onGoal(true);
     expect((await app.request("/api/setup/build", post({ goal: "   " }))).status).toBe(400);
+  });
+});
+
+describe("GET /api/setup/goal/suggestions", () => {
+  const suggestions = async () => {
+    const res = await app.request("/api/setup/goal/suggestions");
+    expect(res.status).toBe(200);
+    return read(res);
+  };
+
+  it("answers the scripted model's fixed set, asked with the connection and the curated goal", async () => {
+    const scripted = createScriptedModel(PASSING_SCRIPT);
+    mcp.model = scripted;
+    const { connectionId } = await onGoal(true);
+    const connection = store.connections.get(connectionId);
+    if (!connection) throw new Error("the keyless confirmation made the row");
+
+    expect(await suggestions()).toEqual({ suggestions: scriptedGoals(connection.displayName) });
+    expect(scripted.proposals).toEqual([
+      {
+        personId: person,
+        traceId: `setup:${person}`,
+        vendor: "open-meteo",
+        displayName: connection.displayName,
+        primaryHost: OPEN_METEO.primaryHost,
+        docsUrl: OPEN_METEO.docsUrl,
+        curatedGoal: OPEN_METEO.goal,
+      },
+    ]);
+  });
+
+  it("answers none with no model, and asks nothing", async () => {
+    mcp.model = null;
+    await onGoal(true);
+    expect(await suggestions()).toEqual({ suggestions: [] });
+  });
+
+  it("answers none, asking nothing, before the record names a connection", async () => {
+    const scripted = createScriptedModel(PASSING_SCRIPT);
+    mcp.model = scripted;
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "hermes" }));
+    expect(await suggestions()).toEqual({ suggestions: [] });
+    expect(scripted.proposals).toEqual([]);
+  });
+
+  const standIn = (proposeGoals: ModelAdapter["proposeGoals"]): ModelAdapter => ({
+    name: "stand-in",
+    open: () => {
+      throw new Error("no job here");
+    },
+    proposeGoals,
+  });
+  const usage = { inputTokens: 0, outputTokens: 0 };
+
+  it("answers none when the proposal answers none, or throws, and never more than three", async () => {
+    // A fresh person per case: the memo holds each person's first answer for the connection.
+    await onGoal(true);
+    mcp.model = standIn(async () => ({ goals: [], outcome: "timeout", usage }));
+    expect(await suggestions()).toEqual({ suggestions: [] });
+    await onGoal(true);
+    mcp.model = standIn(async () => {
+      throw new Error("the person's key would not decrypt");
+    });
+    expect(await suggestions()).toEqual({ suggestions: [] });
+    await onGoal(true);
+    mcp.model = standIn(async () => ({
+      goals: ["one", "two", "three", "four"],
+      outcome: "proposed",
+      usage,
+    }));
+    expect(await suggestions()).toEqual({ suggestions: ["one", "two", "three"] });
+    // An adapter that cannot propose answers none rather than failing the step.
+    await onGoal(true);
+    mcp.model = standIn(undefined);
+    expect(await suggestions()).toEqual({ suggestions: [] });
+  });
+
+  it("asks the model once per person and connection, however often or concurrently it is read", async () => {
+    await onGoal(true);
+    let calls = 0;
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mcp.model = standIn(async () => {
+      calls += 1;
+      await held;
+      return { goals: [`goal ${calls}`], outcome: "proposed", usage };
+    });
+    const racing = [suggestions(), suggestions()];
+    release();
+    expect(await Promise.all(racing)).toEqual([
+      { suggestions: ["goal 1"] },
+      { suggestions: ["goal 1"] },
+    ]);
+    expect(await suggestions()).toEqual({ suggestions: ["goal 1"] });
+    expect(calls).toBe(1);
+    // A failure is held too, for its short window, so a failing provider is not asked on every read.
+    await onGoal(true);
+    mcp.model = standIn(async () => {
+      calls += 1;
+      throw new Error("the provider is down");
+    });
+    await suggestions();
+    await suggestions();
+    expect(calls).toBe(2);
+  });
+
+  it("asks nothing once the record has left the goal step, is skipped, or its connection is revoked", async () => {
+    const scripted = createScriptedModel(PASSING_SCRIPT);
+    mcp.model = scripted;
+    await onGoal(true);
+    const built = await app.request("/api/setup/build", post({ goal: "Show me the weather" }));
+    expect(built.status).toBe(200);
+    await runner.idle();
+    expect(await suggestions()).toEqual({ suggestions: [] });
+
+    await onGoal(true);
+    expect((await app.request("/api/setup/skip", post())).status).toBe(200);
+    expect(await suggestions()).toEqual({ suggestions: [] });
+
+    const { connectionId } = await onGoal(true);
+    const row = store.connections.get(connectionId);
+    if (!row) throw new Error("the keyless confirmation made the row");
+    store.connections.set(connectionId, { ...row, revokedAt: store.now() });
+    expect(await suggestions()).toEqual({ suggestions: [] });
+    expect(scripted.proposals).toEqual([]);
+  });
+});
+
+describe("the goal suggestions memo", () => {
+  const clock = () => {
+    let at = 0;
+    return {
+      now: () => at,
+      advance: (ms: number) => {
+        at += ms;
+      },
+    };
+  };
+  const counting = (answer: (call: number) => Promise<SetupGoalSuggestionsResult>) => {
+    let calls = 0;
+    return {
+      propose: () => {
+        calls += 1;
+        return answer(calls);
+      },
+      calls: () => calls,
+    };
+  };
+
+  it("holds a proposal for the hour", async () => {
+    const time = clock();
+    const memo = createGoalSuggestionMemo({ now: time.now });
+    const model = counting(async (call) => ({
+      suggestions: [`goal ${call}`],
+      outcome: "proposed",
+    }));
+    expect(await memo.run("p:c", model.propose)).toEqual({
+      suggestions: ["goal 1"],
+      outcome: "proposed",
+    });
+    time.advance(GOAL_SUGGESTION_MEMO_TTL_MS - 1);
+    expect(await memo.run("p:c", model.propose)).toMatchObject({
+      suggestions: ["goal 1"],
+      cached: true,
+    });
+    expect(model.calls()).toBe(1);
+    time.advance(1);
+    expect((await memo.run("p:c", model.propose)).suggestions).toEqual(["goal 2"]);
+    expect(model.calls()).toBe(2);
+  });
+
+  it.each(["timeout", "failed", "declined", "unusable"] as const)(
+    "holds a %s outcome for the short window from when it settled, not the hour",
+    async (outcome) => {
+      const time = clock();
+      const memo = createGoalSuggestionMemo({ now: time.now });
+      let settle: () => void = () => {};
+      const model = counting((call) =>
+        call === 1
+          ? new Promise((resolve) => {
+              settle = () => resolve({ suggestions: [], outcome });
+            })
+          : Promise.resolve({ suggestions: ["later"], outcome: "proposed" }),
+      );
+      // Concurrent reads share the call in flight, however long it runs.
+      const racing = [memo.run("p:c", model.propose), memo.run("p:c", model.propose)];
+      time.advance(30_000);
+      settle();
+      expect((await Promise.all(racing)).map((answer) => answer.outcome)).toEqual([
+        outcome,
+        outcome,
+      ]);
+      // An immediate re-read, and one just inside the window, share it too.
+      expect(await memo.run("p:c", model.propose)).toMatchObject({ outcome, cached: true });
+      time.advance(GOAL_SUGGESTION_MEMO_FAILURE_TTL_MS - 1);
+      expect(await memo.run("p:c", model.propose)).toMatchObject({ outcome, cached: true });
+      expect(model.calls()).toBe(1);
+      // Past the window the model is asked again, and its proposal is the one held.
+      time.advance(1);
+      expect((await memo.run("p:c", model.propose)).suggestions).toEqual(["later"]);
+      expect(model.calls()).toBe(2);
+    },
+  );
+
+  it("holds a throw for the short window too", async () => {
+    const time = clock();
+    const memo = createGoalSuggestionMemo({ now: time.now });
+    const model = counting(async (call) => {
+      if (call === 1) throw new Error("the provider is down");
+      return { suggestions: ["back"], outcome: "proposed" };
+    });
+    await expect(memo.run("p:c", model.propose)).rejects.toThrow("the provider is down");
+    await expect(memo.run("p:c", model.propose)).rejects.toThrow("the provider is down");
+    expect(model.calls()).toBe(1);
+    time.advance(GOAL_SUGGESTION_MEMO_FAILURE_TTL_MS);
+    expect((await memo.run("p:c", model.propose)).suggestions).toEqual(["back"]);
   });
 });
 

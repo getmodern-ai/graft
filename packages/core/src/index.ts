@@ -438,6 +438,7 @@ export {
   type StarterRunInput,
   type StarterVendor,
   type StarterVendorId,
+  setupBuildHints,
   setupVendorOptions,
   starterProposal,
   starterVendorFor,
