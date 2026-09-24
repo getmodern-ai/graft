@@ -279,6 +279,34 @@ export async function createAgentForClient(
 }
 
 /**
+ * Mint the agent Setup runs as (ADR 0024): the same row as `createAgent`'s with **no token and no
+ * client** — no hash, no prefix, no origin recorded. The agent is *awaiting its harness*
+ * (`isAwaitingHarness` in `setup/setup.rules.ts`) until a consent names it or a token is issued to
+ * it at Setup's finish step (GRA-208), since a plaintext exists only at mint and a reload before
+ * the finish would lose it.
+ */
+export async function createAgentAwaitingHarness(
+  ctx: ServiceContext,
+  principal: Principal,
+  input: CreateAgentInput,
+  deps: AgentDeps,
+): Promise<{ agent: AgentOutput; connectionIds: string[] }> {
+  const { row, connectionIds } = await insertNewAgent(
+    ctx,
+    principal,
+    input,
+    {
+      tokenHash: null,
+      tokenPrefix: null,
+      connectedViaClientId: null,
+      connectedViaClientName: null,
+    },
+    deps,
+  );
+  return { agent: toAgentOutput(row), connectionIds };
+}
+
+/**
  * The consent named an agent the person already had (ADR 0018): confirm it is theirs and still
  * stands, and record the client as its origin when none is recorded yet — an agent that already
  * says where it came from keeps saying so. A revoked agent cannot be lent to a client; the person

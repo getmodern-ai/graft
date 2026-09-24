@@ -53,6 +53,7 @@ export {
   type CreateAgentInput,
   connectExistingAgentToClient,
   createAgent,
+  createAgentAwaitingHarness,
   createAgentForClient,
   getAgent,
   getAgentScope,
@@ -370,6 +371,37 @@ export {
   listOpenPendingActions,
   MAX_PENDING_ACTION_TTL_MS,
 } from "./pending-action/pending-action.service";
+export {
+  readSetupHarness,
+  SETUP_HARNESS_IDS,
+  SETUP_HARNESSES,
+  type SetupHarness,
+  type SetupHarnessEntry,
+  type SetupHarnessKind,
+  setupHarnessOf,
+} from "./setup/harness";
+export { defaultSetupDeps, type SetupDeps } from "./setup/setup.deps";
+export {
+  type AgentHarnessFields,
+  currentSetupStep,
+  isAwaitingHarness,
+  SETUP_PATH,
+  SETUP_STEPS,
+  type SetupClocks,
+  type SetupStep,
+  type SetupWorkCounts,
+  shouldShowSetup,
+} from "./setup/setup.rules";
+export {
+  getSetupState,
+  type SetupOutput,
+  type SetupState,
+  type StartSetupAgentInput,
+  type StartSetupInput,
+  skipSetup,
+  startSetup,
+  toSetupOutput,
+} from "./setup/setup.service";
 export {
   AGENT_TOKEN_DISPLAY_LENGTH,
   AGENT_TOKEN_PREFIX,

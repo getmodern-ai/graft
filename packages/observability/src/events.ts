@@ -36,6 +36,12 @@ export type AnalyticsEvent =
   | "scope_changed"
   | "model_key_set"
   | "model_key_removed"
+  // Setup (ADR 0024; GRA-204), at its routes: the start, on the harness step, and the skip. Property
+  // `harness`: the harness picked, or null when Setup adopted an agent that already existed or was
+  // skipped before a harness was picked. GRA-206 onwards adds `setup_step_completed` and
+  // `setup_completed`.
+  | "setup_started"
+  | "setup_skipped"
   // A link provider's connect (ADR 0019), at the server's two link routes (GRA-147): whether the
   // provider's link could be minted, and how the person's return ended. Properties: `provider`,
   // and on the return `outcome` (connected | failed | declined). Counted so a provider that
