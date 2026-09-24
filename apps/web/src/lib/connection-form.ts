@@ -55,19 +55,22 @@ const FIELD_PRESENTATION: Record<string, FieldPresentation> = {
   token: { label: "Token" },
   username: { label: "Username" },
   password: { label: "Password" },
-  clientId: { label: "Client id", hint: "From the OAuth client you registered at the vendor." },
+  clientId: {
+    label: "Client id",
+    hint: "From the OAuth client you registered with the integration.",
+  },
   clientSecret: { label: "Client secret" },
-  privateKey: { label: "Private key", hint: "PEM, as the vendor issued it.", multiline: true },
+  privateKey: { label: "Private key", hint: "PEM, as the integration issued it.", multiline: true },
   privateKeyPassphrase: { label: "Private key passphrase" },
   headerName: { label: "Header name", hint: "e.g. x-api-key" },
   prefix: { label: "Prefix", hint: "Put before the key in the header, e.g. Bearer or Token." },
   queryParam: { label: "Query parameter" },
   authorizeUrl: {
     label: "Authorize URL",
-    hint: "Where the consent runs, from the vendor's OAuth documentation — https, on a public host.",
+    hint: "Where the consent runs, from the integration's OAuth documentation: https, on a public host.",
   },
   tokenUrl: { label: "Token URL", hint: "https, on a public host." },
-  scopes: { label: "Scopes", hint: "Space-separated, as the vendor lists them." },
+  scopes: { label: "Scopes", hint: "Space-separated, as the integration lists them." },
   clientAuth: { label: "Client authentication", hint: "basic or body." },
   account: { label: "Account" },
   user: { label: "User" },
@@ -136,8 +139,8 @@ export function hostsNoticeTitle(draft: ConnectionDraft): string {
       : "Fix the hosts above to see where the credential will be sent";
   }
   return hosts
-    ? "The vendor is reached at these hosts and nothing else"
-    : "Fix the hosts above to see where the vendor is reached";
+    ? "The integration is reached at these hosts and nothing else"
+    : "Fix the hosts above to see where the integration is reached";
 }
 
 /**
@@ -236,6 +239,15 @@ function hostInput(draft: ConnectionDraft, host: string | undefined): "primaryHo
  * pass. `withCredential: false` skips the secret fields — the person-initiated Add connection and
  * an agent's proposal both carry them; only the preview of the hosts does not.
  */
+/**
+ * `validateVendor`'s sentence as the form's field says it: the rule is `@graft/core`'s and is shared
+ * with an agent's `request_connection`, whose refusal reaches a model and keeps the word vendor;
+ * the person reads integration (GRA-216).
+ */
+function inIntegrationWords(problem: string): string {
+  return problem.replace(/^A vendor slug/, "An integration's slug");
+}
+
 export function validateConnectionDraft(
   draft: ConnectionDraft,
   options: { withCredential: boolean } = { withCredential: true },
@@ -243,7 +255,7 @@ export function validateConnectionDraft(
   const errors: DraftErrors = {};
   const vendor = draft.vendor.trim();
   const vendorProblem = validateVendor(vendor);
-  if (vendorProblem) errors.vendor = vendorProblem;
+  if (vendorProblem) errors.vendor = inIntegrationWords(vendorProblem);
   const displayName = draft.displayName.trim();
   const nameProblem = validateDisplayName(displayName);
   if (nameProblem) errors.displayName = nameProblem;

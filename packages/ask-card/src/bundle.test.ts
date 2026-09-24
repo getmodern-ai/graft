@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { ASK_CARD_HTML_PATH } from "./index";
+import { SETUP_TITLE } from "./render";
 
 /**
  * The built page, as a host will receive it from `resources/read`. Three properties, each one a
@@ -52,6 +53,12 @@ describe("dist/ask.html", () => {
     expect(page).toContain('id="ask"');
     expect(page).toContain('name="color-scheme"');
     expect(page.match(/<script/g)?.length).toBe(1);
+  });
+
+  it("carries the Setup offer's kind and words in the one script (GRA-210)", () => {
+    const page = html();
+    expect(page).toContain(SETUP_TITLE);
+    expect(page).toMatch(/[`"']setup[`"']/);
   });
 
   it("copies the console's token block whole, between its sentinels, in the source stylesheet", () => {

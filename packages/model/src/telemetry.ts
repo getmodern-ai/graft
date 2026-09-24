@@ -17,14 +17,24 @@ import type { ModelSituationKind } from "./types";
 /** Which of the two models answered: the strong one that writes code, the cheap one that never does. */
 export type ModelRole = "authoring" | "triage";
 
+/**
+ * What a call is about: one of a job's situations, or `propose_goals`, Setup's goal suggestions
+ * (GRA-209), the one call made outside a job.
+ */
+export type ModelCallSituation = ModelSituationKind | "propose_goals";
+
 /** What one provider call is about — every field a trace carries, decided before the call. */
 export type ModelCallTrace = {
   role: ModelRole;
+  /** The job, or for a call outside one the id of what it serves (`GoalProposalRequest.traceId`). */
   jobId: string;
   personId: string;
-  /** The attempt the call is about: the situation's own number, or the draft about to be written. */
+  /**
+   * The attempt the call is about: the situation's own number, or the draft about to be written.
+   * Zero for a call outside a job.
+   */
   attempt: number;
-  situation: ModelSituationKind;
+  situation: ModelCallSituation;
   provider: string;
   modelId: string;
 };

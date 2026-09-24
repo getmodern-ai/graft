@@ -216,6 +216,63 @@ export type ModelAdapter = {
   /** Which backing this is — `scripted`, or the provider's name — for the trace. */
   readonly name: string;
   open(context: ModelJobContext): ModelConversation;
+  /**
+   * Setup's goal suggestions (GRA-209): up to three short read-only goals for a vendor the person
+   * just connected, from the triage model. Optional, so an adapter that cannot propose (a test's
+   * stand-in) answers none by being without it; the provider's, the scripted one and the router
+   * all carry it. It answers rather than throws for want of goals: a refusal, a timeout or an
+   * unusable answer is an empty `goals` with the `outcome` saying which.
+   */
+  proposeGoals?(request: GoalProposalRequest): Promise<GoalProposal>;
+};
+
+/**
+ * What a goal proposal is about: the vendor as the person connected it, and the starter's curated
+ * goal when the vendor is a starter one (`@graft/core`'s `setup/starter-vendors.ts`). Never a
+ * credential.
+ */
+export type GoalProposalRequest = {
+  /** Whose proposal this is; the router picks the person's own key by it (ADR 0014), as a job's `personId`. */
+  personId: string;
+  /** What the call serves, for the trace where a job's id would go (`setup:<personId>`). */
+  traceId: string;
+  vendor: string;
+  displayName: string;
+  primaryHost: string;
+  /**
+   * The connection's hosts, which a proposal must name one of (GRA-217): a read on another host
+   * (Drive's file list for a Sheets connection) is one the connection cannot make.
+   */
+  hosts: readonly string[];
+  docsUrl: string | null;
+  curatedGoal: string | null;
+};
+
+/**
+ * How a proposal ended. `proposed` carries goals; every other outcome carries none: the model
+ * answered an empty list (`declined`), answered out of shape or with nothing usable (`unusable`),
+ * ran past its bound (`timeout`), the call failed (`failed`), or no model answers this person
+ * (`unavailable`).
+ */
+export type GoalProposalOutcome =
+  | "proposed"
+  | "declined"
+  | "unusable"
+  | "timeout"
+  | "failed"
+  | "unavailable";
+
+export type GoalProposal = {
+  goals: string[];
+  outcome: GoalProposalOutcome;
+  usage: ModelUsage;
+  /** The failure's message, for the log, when `outcome` is `failed`. */
+  error?: string;
+  /**
+   * How many of the model's proposals were dropped as ungrounded (a host outside the connection's,
+   * or an input with no default), for the log; absent when none was.
+   */
+  dropped?: number;
 };
 
 /** Which answers a situation admits; the job refuses the others as a model failure, by name. */

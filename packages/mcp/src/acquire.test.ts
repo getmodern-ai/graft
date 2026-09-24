@@ -848,6 +848,11 @@ describe("a proof-only answer (GRA-153)", () => {
           (row) => row.kind === "model" && row.text.startsWith("Proving attempt 1 further:"),
         ),
       ).toBe(true);
+      // Setup's building step shows the lines verbatim, and console copy has no em dash (GRA-212).
+      expect(status.progress).toContain(
+        "Attempt 1: 1 more proof read(s): The list answered; one more page.",
+      );
+      for (const line of status.progress) expect(line).not.toContain("\u2014");
     } finally {
       await a.close();
       await runner.idle();
@@ -1584,6 +1589,71 @@ describe("a job that fails and tries again", () => {
     }
   }, 30_000);
 
+  it("names a proof read whose run failed with the runner's sentence and its stderr, joined without an em dash", async () => {
+    // The probe is Graft's own module; a run of it the runner cannot finish (the process exits
+    // here, as a kill or a timeout ends it) is reported as the run's sentence and its stderr tail,
+    // which reach the model and the trace, and Graft's copy has no em dash (GRA-212).
+    const ensure = sandbox.ensure;
+    sandbox.ensure = async (options) => {
+      const opened = await ensure(options);
+      // A view of the backing's handle, never the handle itself: the backing keeps one per agent,
+      // and a later test must write the real probe through it.
+      const real = opened.handle;
+      const handle: typeof real = Object.create(real);
+      handle.writeTree = (files, destination) =>
+        real.writeTree(
+          destination.endsWith("/.probe")
+            ? [
+                {
+                  path: "index.mjs",
+                  content: [
+                    "export default async () => {",
+                    '  console.error("the probe wrote to stderr");',
+                    "  process.exit(3);",
+                    "};",
+                    "",
+                  ].join("\n"),
+                },
+              ]
+            : files,
+          destination,
+        );
+      return { ...opened, handle };
+    };
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-probed", proofReads: [{ path: "/items?limit=1" }] }),
+        "Drafted list-probed.",
+      ),
+      { on: "proof", answer: { kind: "give_up", reason: "The probe would not run." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items through a probe that throws",
+      });
+      expect(status.status).toBe("failed");
+      const shown = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = shown?.kind === "proof" ? shown.reads[0] : undefined;
+      expect(read?.ok).toBe(false);
+      // The run's sentence, then its stderr tail after a colon.
+      expect(read?.error).toBe(
+        "The tool failed (exit code 3): the probe wrote to stderr: the probe wrote to stderr",
+      );
+      expect(read?.error).not.toContain("\u2014");
+      const failed = rowsOf(jobId).traces.find((row) => row.kind === "vendor_error");
+      expect(failed?.text).toContain("the probe wrote to stderr");
+      expect(failed?.text).not.toContain("\u2014");
+      for (const line of status.progress) expect(line).not.toContain("\u2014");
+    } finally {
+      sandbox.ensure = ensure;
+      await a.close();
+    }
+  }, 30_000);
+
   /**
    * The network's answer is not the vendor's (GRA-79): the job ends on the first proof read the
    * proxy could not make, naming the host, the reason and the code, and the model is never shown
@@ -1848,6 +1918,7 @@ describe("a job that fails and tries again", () => {
         expect.stringContaining("v2 is already current"),
       );
       expect(status.progress.at(-1)).toContain("so demo__list-raced runs as v2");
+      expect(status.progress.at(-1)).not.toContain("\u2014");
     } finally {
       deps.tool.recordToolVersionDryRun = record;
       await a.close();

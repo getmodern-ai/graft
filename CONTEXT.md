@@ -18,7 +18,9 @@ _Avoid_: user (in schema and API names), customer, owner, tenant
 One harness connection to Graft, authenticating with its own token — a static bearer token the
 harness carries, or the OAuth tokens an MCP client holds for it. An agent holds a scope and a
 working set and nothing else of its own. A person with OpenClaw on a server and Hermes on a laptop
-has two agents and one toolbox; a person who connects Claude has a third.
+has two agents and one toolbox; a person who connects Claude has a third. An agent Setup mints for a
+harness the person has not yet connected is **awaiting its harness** until that harness's consent
+names it or its token is first used.
 _Avoid_: harness (that is the software), client, bot, session, assistant
 
 **Harness**:
@@ -32,15 +34,20 @@ A harness in its OAuth role: the software that registers itself with Graft's aut
 sends the person to the consent page, and holds the tokens the consent issues. RFC 6749's "client",
 kept to protocol code and the consent page, where it names the software that is asking — never an
 agent, which is the record the client's tokens act as.
-_Avoid_: app, connector (the products' word for the same thing), integration
+_Avoid_: app, connector (the products' word for the same thing)
 
 ### Connections and reach
 
+**Integration**:
+A service Graft can connect a person to, such as Gmail, Slack or a company's own API. A connection
+is one account of an integration. Code and model-facing text call it the vendor.
+_Avoid_: vendor (in person-facing copy), app, service
+
 **Connection**:
-One vendor account a person has given Graft: its auth scheme, its credential, and the set of hosts
-it may reach, and the provider it comes from. Credentials are write-only after entry.
-_Avoid_: integration, app, account, provider (as a word for the vendor — a connection *has* a
-provider, below)
+One account of an integration a person has given Graft: its auth scheme, its credential, the set
+of hosts it may reach, and the provider it comes from. Credentials are write-only after entry.
+_Avoid_: app, account, provider (as a word for the integration — a connection *has* a provider,
+below)
 
 **Connection provider**:
 Where a connection comes from: the seam that decides how the person connects the vendor — a secret
@@ -48,7 +55,7 @@ form, a one-click link, or no person step — and what happens to a vendor reque
 inject a credential Graft holds, or relay to an upstream that holds it. The keyring provider is
 every deployment's floor and covers every vendor; a deployment may enable others before it, in
 order. ADR 0019.
-_Avoid_: broker (that is a company, not the seam), backend, integration, source
+_Avoid_: broker (that is a company, not the seam), backend, source
 
 **Relay**:
 What the proxy does for a connection whose provider holds the credential elsewhere: the resolved
@@ -104,7 +111,7 @@ _Avoid_: system tool, builtin, core tool
 A tool Graft's model wrote: a small module of code making one call against a connection, no more
 of the vendor's API than the task needs. Versioned in the toolbox, bound to a connection's vendor
 rather than a connection row, and promoted per agent.
-_Avoid_: custom tool, generated tool, function, integration, script
+_Avoid_: custom tool, generated tool, function, script
 
 **Toolbox**:
 A person's store of authored tools, every version kept, demoted ones included. Nothing is ever
@@ -193,3 +200,16 @@ A person's answer to a tool's ask. Reads never ask. Any other tool, destructive 
 and the answer holds; the person may set a tool to ask every time, and back. `acquire` asks once
 per agent per connection. Answerable later through the console.
 _Avoid_: grant, permission, consent (fine in prose, not as the noun for the record)
+
+**Setup**:
+The console's guided first run: a person names the harness they run, connects a first
+integration, names the task for a first tool, has Graft acquire it and run it, and leaves with the
+prompt that connects that harness.
+It runs as the person's first agent, and every step is one the console offers on its own.
+_Avoid_: onboarding (the word for the effort, in tickets), wizard, tour, getting started
+
+**Starter integration**:
+One of a short list of integrations Setup offers first, each connected in one click and with a
+read-only task known to acquire cleanly. A convenience for the first tool, never a catalogue (ADR
+0001); an integration not on it is connected the way any other is.
+_Avoid_: starter vendor, app, catalogue, supported integration, template

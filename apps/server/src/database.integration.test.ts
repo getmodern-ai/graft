@@ -4,19 +4,26 @@ import { createAuth } from "@graft/auth";
 import {
   addConnectionToAgentScope,
   createAgent,
+  createAgentAwaitingHarness,
   createConnectionDeps,
   createModelKeyDeps,
   createTool,
   defaultAgentDeps,
   defaultApprovalDeps,
+  defaultSetupDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
   deletePersonModelKey,
   findPersonModelKeyRow,
+  finishSetup,
   getAgentScope,
   getConnection,
   getPersonModelKey,
+  getSetupState,
   getToolById,
+  hashAgentToken,
+  issueAwaitingAgentToken,
+  issueConsoleAgentToken,
   listAgents,
   listConnections,
   listWorkingSet,
@@ -32,11 +39,14 @@ import {
   setApproval,
   setConnectionCredential,
   setPersonModelKey,
+  skipSetup,
+  startSetup,
 } from "@graft/core";
 import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
 import { addConnectionHosts } from "@graft/db/repo/connection";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
+import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
 import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
 import {
   CAPABILITY_TOKEN_ALG,
@@ -52,7 +62,7 @@ import {
 import { sql } from "drizzle-orm";
 import { initLogger } from "evlog";
 import { exportPKCS8, exportSPKI, generateKeyPair } from "jose";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "./app";
 import { createDatabaseConnections } from "./connections";
@@ -165,6 +175,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "pending_action",
       "acquire_job",
       "usage_ledger",
+      "setup",
     ]) {
       expect(names).toContain(table);
     }
@@ -192,6 +203,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "mcp_token",
       "pending_action",
       "person_model_key",
+      "setup",
       "tool_version",
       "usage_ledger",
       "working_set",
@@ -769,5 +781,210 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     });
     expect(await deletePersonModelKey(ctx, { personId }, deps)).toBe(true);
     expect(await getPersonModelKey(ctx, { personId }, deps)).toBeNull();
+  });
+  /**
+   * Setup's record over real rows (ADR 0024; GRA-204): the show rule's counts, the start that mints
+   * an agent with no token and no client, two starts at once serialised on the record's lock into
+   * one agent, a skip, and a restart once the agent it ran as is revoked.
+   */
+  it("starts Setup once per person under the lock, and counts only the person's own work", async () => {
+    const personId = await signUp("setup-owner@example.com");
+    const other = await signUp("setup-other@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+
+    expect(await getSetupState(ctx, principal, defaultSetupDeps, defaultAgentDeps)).toMatchObject({
+      setup: null,
+      step: "harness",
+      show: true,
+    });
+    // Another person's connection is not this person's work.
+    await registerConnection(
+      ctx,
+      { personId: other },
+      {
+        vendor: "demo",
+        displayName: "Demo",
+        scheme: "none",
+        primaryHost: "https://api.demo.example",
+      },
+      connectionDeps,
+    );
+    expect(
+      (await getSetupState(ctx, { personId: other }, defaultSetupDeps, defaultAgentDeps)).show,
+    ).toBe(false);
+    expect((await getSetupState(ctx, principal, defaultSetupDeps, defaultAgentDeps)).show).toBe(
+      true,
+    );
+
+    const [first, second] = await Promise.all([
+      startSetup(ctx, principal, { harness: "claude" }, defaultSetupDeps, defaultAgentDeps),
+      startSetup(ctx, principal, { harness: "claude" }, defaultSetupDeps, defaultAgentDeps),
+    ]);
+    const agents = await listAgents(ctx, principal, defaultAgentDeps);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({ name: "Claude", tokenPrefix: null, connectedVia: null });
+    expect(first.setup?.agentId).toBe(agents[0]?.id);
+    expect(second.setup?.agentId).toBe(agents[0]?.id);
+    const [row] = (
+      await db.execute<{ token_hash: string | null; connected_via_client_id: string | null }>(
+        sql`select token_hash, connected_via_client_id from agent where person_id = ${personId}`,
+      )
+    ).rows;
+    expect(row).toEqual({ token_hash: null, connected_via_client_id: null });
+
+    const skipped = await skipSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps);
+    expect(skipped).toMatchObject({ show: false, step: "vendor", setup: { harness: "claude" } });
+
+    await revokeAgent(ctx, principal, agents[0]?.id ?? "", defaultAgentDeps);
+    expect((await getSetupState(ctx, principal, defaultSetupDeps, defaultAgentDeps)).step).toBe(
+      "harness",
+    );
+    const restarted = await startSetup(
+      ctx,
+      principal,
+      { harness: "hermes" },
+      defaultSetupDeps,
+      defaultAgentDeps,
+    );
+    expect(restarted).toMatchObject({
+      show: true,
+      step: "vendor",
+      setup: { harness: "hermes", skippedAt: null },
+      agent: { name: "Hermes" },
+    });
+  });
+
+  /** GRA-208: the finish issues a token harness's token once, in the statement's own guard. */
+  it("finishes Setup with the agent's token once, and two issues racing mint one token", async () => {
+    const personId = await signUp("setup-finish@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    const started = await startSetup(
+      ctx,
+      principal,
+      { harness: "hermes" },
+      defaultSetupDeps,
+      defaultAgentDeps,
+    );
+    const agentId = started.agent?.id ?? "";
+    await defaultSetupDeps.saveSetup(db, personId, { step: "finish" });
+    const done = await finishSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps);
+    expect(done.token).toMatch(/^grft_/);
+    expect(done.state).toMatchObject({ step: "completed", show: false });
+    const [row] = (
+      await db.execute<{ token_hash: string | null }>(
+        sql`select token_hash from agent where id = ${agentId}`,
+      )
+    ).rows;
+    expect(row?.token_hash).toBe(hashAgentToken(done.token ?? ""));
+    await expect(
+      finishSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps),
+    ).rejects.toMatchObject({ code: "CONFLICT", details: { reason: "setup_completed" } });
+
+    // A second agent awaiting its harness, issued twice at once: one token, one refusal.
+    const { agent } = await createAgentAwaitingHarness(
+      ctx,
+      principal,
+      { name: "Spare" },
+      defaultAgentDeps,
+    );
+    const races = await Promise.allSettled([
+      issueAwaitingAgentToken(ctx, principal, agent.id, defaultAgentDeps),
+      issueAwaitingAgentToken(ctx, principal, agent.id, defaultAgentDeps),
+    ]);
+    expect(races.filter((race) => race.status === "fulfilled")).toHaveLength(1);
+    expect(races.filter((race) => race.status === "rejected")).toHaveLength(1);
+  });
+
+  /** Greptile on #172: the finish step's token lost to a reload is replaced until Setup completes. */
+  it("replaces the token of the agent Setup runs as until Setup completes, the old hash gone", async () => {
+    const personId = await signUp("setup-reissue@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    const started = await startSetup(
+      ctx,
+      principal,
+      { harness: "hermes" },
+      defaultSetupDeps,
+      defaultAgentDeps,
+    );
+    const agentId = started.agent?.id ?? "";
+    await defaultSetupDeps.saveSetup(db, personId, { step: "finish" });
+    const issue = () =>
+      issueConsoleAgentToken(ctx, principal, agentId, defaultSetupDeps, defaultAgentDeps);
+    const hashNow = async () =>
+      (
+        await db.execute<{ token_hash: string | null }>(
+          sql`select token_hash from agent where id = ${agentId}`,
+        )
+      ).rows[0]?.token_hash;
+    const first = await issue();
+    expect(await hashNow()).toBe(hashAgentToken(first.token));
+    const second = await issue();
+    expect(second.token).not.toBe(first.token);
+    expect(await hashNow()).toBe(hashAgentToken(second.token));
+    // A write that read the first hash, landing after the replacement, matches nothing.
+    expect(
+      await defaultAgentDeps.issueAgentToken(
+        db,
+        personId,
+        agentId,
+        { tokenHash: "stale", tokenPrefix: "grft_old" },
+        hashAgentToken(first.token),
+      ),
+    ).toBeNull();
+    // Finished: the finish issues nothing more, and the route refuses a replacement.
+    expect(
+      (await finishSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps)).token,
+    ).toBeNull();
+    await expect(issue()).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "agent_not_awaiting_harness" },
+    });
+    expect(await hashNow()).toBe(hashAgentToken(second.token));
+  });
+
+  it("moves the Setup record's updated_at forward on every write, even within one millisecond", async () => {
+    const personId = await signUp("setup-clock@example.com");
+    const first = await lockSetup(db, personId);
+    // The clock held still, and then stepped back: each write still reads as a later instant.
+    const held = new Date(first.updatedAt.getTime());
+    vi.setSystemTime(held);
+    try {
+      const a = await saveSetup(db, personId, { step: "vendor" });
+      const b = await saveSetup(db, personId, { step: "connect" });
+      vi.setSystemTime(new Date(held.getTime() - 60_000));
+      const c = await saveSetup(db, personId, { step: "vendor" });
+      expect(a.updatedAt.getTime()).toBeGreaterThan(first.updatedAt.getTime());
+      expect(b.updatedAt.getTime()).toBeGreaterThan(a.updatedAt.getTime());
+      expect(c.updatedAt.getTime()).toBeGreaterThan(b.updatedAt.getTime());
+      expect((await findSetup(db, personId))?.updatedAt.getTime()).toBe(c.updatedAt.getTime());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * A skip waits on the record's lock as a start does (Greptile on #164): a skip sent while another
+   * transaction holds the row is judged on the record that transaction commits, so a record it
+   * completed is never marked skipped, where a read outside the lock would have seen it unfinished.
+   */
+  it("serialises a skip behind the record's lock and judges it on what commits", async () => {
+    const personId = await signUp("setup-skip-race@example.com");
+    const ctx: ServiceContext = { db };
+    const principal = { personId };
+    let skipping: Promise<unknown> | undefined;
+    await db.transaction(async (tx) => {
+      await defaultSetupDeps.lockSetup(tx, personId);
+      await defaultSetupDeps.saveSetup(tx, personId, {
+        step: "completed",
+        completedAt: new Date(),
+      });
+      skipping = skipSetup(ctx, principal, defaultSetupDeps, defaultAgentDeps);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+    const skipped = await skipping;
+    expect(skipped).toMatchObject({ show: false, setup: { step: "completed", skippedAt: null } });
   });
 });

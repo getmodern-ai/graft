@@ -17,10 +17,11 @@ import type {
  * (`session.ts` serves it). The **tool metadata** that makes a host fetch and render it —
  * `_meta.ui.resourceUri` on every tool that can ask — `acquire`, `request_connection`,
  * `request_credential`, and since GRA-116 `run_tool`, each `execute__<connection id>` and each
- * authored tool in the list, whose first write answers the tool ask — declared unconditionally
+ * authored tool in the list, whose first write answers the tool ask, and since GRA-210 `find_tool`,
+ * whose answer may carry the Setup offer (`setup-offer.ts`) — declared unconditionally
  * because Claude.ai renders apps without declaring the extension in `initialize` (the ticket's
  * research), and on no other tool; a host mounts the page for every result of such a tool, and the
- * page draws nothing for a result that is not an ask. And the **card data** an awaiting result carries
+ * page draws nothing for a result that carries no card. And the **card data** an awaiting result carries
  * under `structuredContent.card`, built by the two ask flows (`approval.ts`,
  * `connection-request.ts`) from the same rows the console's handoff page reads: the agent's name,
  * the vendor, the connection and its hosts, the scheme and whether it takes a credential, the
@@ -64,14 +65,14 @@ export const ASK_CARD_MIME_TYPE = "text/html;profile=mcp-app";
 
 /** One sentence on what the page shows, for ChatGPT's `openai/widgetDescription` (the header). */
 const ASK_CARD_WIDGET_DESCRIPTION =
-  "Graft's ask card: a build approval, a keyless connection confirmation or a scope ask answered in place, or a link to the console.";
+  "Graft's ask card: a build approval, a keyless connection confirmation or a scope ask answered in place, a link to the console, or the offer of Setup's first tool.";
 
 export const ASK_CARD_RESOURCE: Resource = {
   uri: ASK_CARD_RESOURCE_URI,
   name: "graft-ask",
   title: "Graft ask card",
   description:
-    "The card Graft shows for an ask a tool answers with: a build approval, a connection confirmation or a scope ask the person answers in place, or the link to answer it in the console.",
+    "The card Graft shows for an ask a tool answers with: a build approval, a connection confirmation or a scope ask the person answers in place, or the link to answer it in the console; and the offer of Setup, which opens the console's Setup page.",
   mimeType: ASK_CARD_MIME_TYPE,
   // The extension's keys, then ChatGPT's aliases of each (the header): an empty CSP because the
   // card fetches nothing, and a border, since the card is a form and not a figure.
@@ -87,8 +88,9 @@ export const ASK_CARD_RESOURCE: Resource = {
 };
 
 /**
- * On a tool definition: render `ui://graft/ask` for this tool's results. Exactly three tools carry
- * it (`tools/meta.ts`). `openai/outputTemplate` is ChatGPT's documented alias of `ui.resourceUri`,
+ * On a tool definition: render `ui://graft/ask` for this tool's results. The tools the header names
+ * carry it (`tools/meta.ts`, `tools/execute.ts`, `tools.ts`); `session.test.ts` pins the set.
+ * `openai/outputTemplate` is ChatGPT's documented alias of `ui.resourceUri`,
  * same value (the header).
  */
 export const ASK_CARD_TOOL_META: NonNullable<Tool["_meta"]> = {

@@ -487,7 +487,8 @@ where `apps/server/tsdown.config.ts` copies it and the Dockerfile's `build` stag
 Every tool that can ask carries `_meta.ui.resourceUri` unconditionally (Claude.ai declares no
 extension): `acquire`, `request_connection`, `request_credential`, and — since a host renders a card
 only for a tool whose definition names the resource (GRA-116's live check, 2026-09-20) — `run_tool`,
-every `execute__<id>` and every authored tool in the list, whose first write answers the tool ask;
+every `execute__<id>` and every authored tool in the list, whose first write answers the tool ask,
+and `find_tool`, whose answer may carry the Setup offer's card (GRA-210, the paragraph on it below);
 ChatGPT's alias `openai/outputTemplate` rides beside it, and the
 resource carries the `openai/widget*` aliases of its `ui` keys (GRA-112); their awaiting results
 carry the card's data under `structuredContent.card` beside GRA-55's unchanged `url`, `message` and
@@ -983,11 +984,267 @@ word *connection* is a vendor account (CONTEXT.md) and the screen beside this on
 never says it. The dialog shares creation's setup (`harness-setup.tsx`: the URL, a harness
 picker, the token's place and the configuration in that harness's shape — GRA-152) but cannot
 retrieve the token; the token line carries a saved-token placeholder (ADR 0007). OAuth agents get
-the URL and consent instructions. Agent names are links to the standalone `/agents/:agentId` page,
+the URL and consent instructions. An agent *awaiting its harness* (Setup's, no token and no client)
+gets both: the URL, whose consent page chooses it, and *Issue a token*
+(`POST /api/agents/:id/token`, GRA-208), which shows the token once as creation does. Agent names are links to the standalone `/agents/:agentId` page,
 and every row's menu has View agent, revoked rows included; the detail drawer is deferred. That
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+
+**Setup is one record per person and three routes** (GRA-204; ADR 0024). The `setup` table
+(`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
+harness, the agent, the open connection ask, the connection, the acquire job, the tool, and
+`started_at`, `completed_at`, `skipped_at`; `repo/setup.ts` names the person in every statement,
+pinned in `repo/setup.test.ts`, and `lockSetup` makes the row and locks it so two starts, or a start and a skip, serialise.
+`@graft/core/setup/` holds the service (`getSetupState`, `startSetup`, `skipSetup`), the
+browser-safe rules (`shouldShowSetup` over the record and the person's connection and tool counts,
+`isAwaitingHarness` over an agent, `currentSetupStep`) and the harness data (`SETUP_HARNESSES`:
+the seven in the marketing site's order, each with its kind, `oauth` or `token`, the site's label
+and the finish step's connection `steps`; since GRA-208 it is also `setup-prompt.ts`'s list,
+`SETUP_PROMPT_HARNESSES`, which `GET /api/setup-prompt` answers as `{ id, label, description }`). `GET
+/api/setup` answers `SetupState` (the record, `step`, `show`, the agent it runs as, the active
+agents); `POST /api/setup/start` (`SetupStartBody`) mints an agent with no token and no client
+through `createAgentAwaitingHarness` when the person has none, adopts the one when there is one,
+and needs `agentId` among several; `POST /api/setup/skip` sets `skipped_at`. Both are rows in
+`analytics-routes.ts` carrying `harness`, read off the answer by the row's `properties`. The console:
+`routes/_auth/setup.tsx` is under the guard and outside the shell; `_shell/route.tsx`'s `beforeLoad`
+redirects to it on `show`, except `/consent` and `/pending` (`lib/setup-intercept.ts`); one
+component per step under `components/setup/`, wired in `setup-step.tsx`'s map, each moving the
+record through `useSetupMutation`, which writes the answered state into the one `["setup"]` entry.
+The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline) and
+offers *Set up Graft* in its empty body to a person who skipped.
+
+**The integration and connect steps are the agent's own connection ask** (GRA-206). The starters
+are `@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs,
+the keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
+`outcome` sentence); adding one is one entry. **Starters are one-click only** (GRA-216): the list is
+common services a link provider connects by OAuth (Gmail, Google Calendar, Google Drive, Slack,
+Notion, GitHub, HubSpot) plus Open-Meteo, the keyless one, each task a `GET`, since the check counts
+a `POST` as a write and the result step runs only a read-only tool (so no Linear, whose API is
+GraphQL). **Every task needs nothing the person has to look up** (GRA-217): no id, no name, no link;
+Open-Meteo's city, with its default, is the one input, and every other starter's `hints` names its
+one endpoint and says the tool takes no input (`starter-vendors.test.ts` pins both). That is why
+Google Drive's file list replaced Google Sheets, whose rows need a spreadsheet's id and a range; a
+starter's vendor slug is the catalogue's app with hyphens read as underscores (`google-drive` is
+Pipedream's `google_drive`). The keyring's scheme on each entry stays truthful for the form path a link provider steps
+aside to (GRA-147). `setupVendorOptions` is the pure filter and order over each starter's covering
+provider: only `link`, `none` and `keyless` (a `none` scheme the form provider lists) are offered,
+in that order, and a starter the keyring would connect with a pasted key or an operator's own OAuth
+client is dropped, so the keyring alone offers Open-Meteo alone; `SetupConnectKind` has no `form`.
+`GET /api/setup/vendors`
+asks `providerFor` per starter in `Backings.providers` order (`apps/server/src/setup-connect.ts`);
+the console never computes coverage. `POST /api/setup/connect` (`SetupConnectBody`: `{ starterId }`
+or `{ connectionId }`) calls GRA-203's `routeConnectionProposal` as the setup's agent, through
+`ApiOptions.connectionRouting` (the server binds its `McpDeps`), and moves the record through
+`moveSetupConnect`: an ask to `connect` with `pendingActionId` (a repeat re-uses it by proposal
+key), a connection made or found at once, or *Another integration*'s ordinary-form connection (added to
+the agent's scope), to `goal`. `GET /api/setup` reads the ask the record waits on and never takes
+a live answer: answered with a connection (or a `scope` ask allowed) that is still live, usable and
+in the agent's scope it moves to `goal` naming it; declined, expired, gone, or answered with a
+connection revoked or taken out of the scope since (that answer is taken, so the routing stops
+handing it back, under the record's lock so two reads take it once), back to `vendor`, and on
+`goal` a connection that stopped standing takes it back too, judged again under the lock
+(`moveSetupConnect`'s `confirm`) so a restore meanwhile stands. The connect route that finds such
+an answer (or finds a poll reopened the record for it) routes once more, and that second routing's
+move lands only on the record as it was seen on `vendor`, its `updatedAt` unchanged
+(`fromVendorAt`; `saveSetup` moves it forward by at least a millisecond on every write), so the choice in flight wins over a poll and any choice another tab made since
+stands, even one that closed and left the record on `vendor` again. A stale answer is judged again
+under the lock before it is taken, so one made good meanwhile is left for the next read. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
+captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
+one answer count once. A listed agent's scope grown by Setup (*Another integration*, a `scope` ask
+answered in the console) is announced to its session, since no waiting call of its own does. The
+console's connect step draws the open ask from the inbox's list with `PendingActionCard` under
+`origin="setup"` (no model provenance, the proposal editor folded behind *Edit the connection*;
+the inbox and the handoff page pass nothing and draw the cards as before), and polls both reads
+every 3 s so an answer given in the inbox or a chat card moves it too. The goal step's starter is
+`starterVendorFor(connection.vendor)`.
+
+**Build is the build approval, and the building step reads the job** (GRA-207; ADR 0024,
+`apps/server/src/setup-build.ts`). `GET /api/setup/goal` answers `SetupGoalContext`: the record's
+connection, `starterId`, the curated `goal` (empty for another vendor) and `build`, which is
+`{ available: false, reason: "acquire_unconfigured", message }` whenever `@graft/mcp`'s
+`acquireConfigured` (the `acquire` door's own model check) says no; the console then shows the
+message naming the variables and disables Build. `POST /api/setup/build` (`SetupBuildBody`:
+`{ goal }`) is `@graft/core`'s `startSetupBuild`, one transaction under `lockSetup`: from `goal`
+only, the connection not revoked (refused `connection_revoked`; a revoked row stays in a resolved
+scope) and still in the agent's scope, `grantBuildApproval` for the pair (the standing
+row answered when the connection card already granted it), `createAcquireJob` with Setup's own
+first line and `setupBuildHints` as `hints` (the starter's documentation, after the starter's own
+`hints` when the goal is its curated one unchanged; GRA-209), the record to `building` naming the job;
+the route then kicks the runner. No pending action is opened, and `similar_tools_exist` is not
+asked. `ApiOptions.acquire` is the model, the job's deps and the runner (the server binds its
+`McpDeps`). `GET /api/agents/:id/acquire-jobs/:jobId` answers `acquire_status`'s shape
+(`acquireStatusOf`) for one of the person's agents, never held; another person's agent or job is a
+404. `GET /api/setup` learns a succeeded job's tool through `moveSetupBuild`'s `built`: `building`
+to `result` with `toolId`, or the tool noted on `finish`, or on `completed` when Finish Setup
+came first. A failed job leaves the record on `building`; `POST /api/setup/goal` (*Change the
+goal*) goes back to `goal` with the job cleared,
+refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it runs*)
+goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
+`building` (captured by the read whose move named the tool, `SetupMoveResult.moved`). The console's building step polls the job route
+every 2 s and draws each line beside its stage's sentence on the stage's first line
+(`lib/setup-progress.ts`'s `progressStage` and `explainProgress`, keyed on `acquire/job.ts`'s
+lines; a new progress line there wants a rule and a case in `setup-progress.test.ts`).
+
+**The goal step's chips come from the triage model, and the curated goal is in the person's
+voice** (GRA-209). A starter's `goal` is what the person reads as their own, short and in the
+first person; the detail the model needs (the input's field, the endpoints, *Read only*) is the
+starter's `hints`, which reaches the job only beside the curated goal unchanged. `ModelAdapter`
+carries an optional `proposeGoals` (`@graft/model`'s `propose-goals.ts`, shaped as `triage.ts`'s
+calls: the triage model, a strict output, one attempt, traced with `situation: "propose_goals"`
+and the request's `traceId`, `setup:<personId>`, where a job's id would be; bounded at
+`GOAL_PROPOSAL_TIMEOUT_MS`, 8 s, and never throwing). **A chip must end in a tool that runs with
+nothing to look up** (GRA-217): the request carries the connection's `hosts`, the model answers
+each proposal as `{ task, host, inputs: [{ name, default }] }`, and `goal-grounding.ts`'s
+`groundedGoals` keeps one only when its host is one of the connection's and every input has a
+default, the dropped count riding on the wide event as `goalSuggestions.dropped`; the system prompt
+states the rules. The provider's adapter implements it, the scripted one answers
+`scriptedGoals(displayName)` through the same `goalProposalOf` (each on the connection's first
+host, no input), and the router sends it where the person's jobs
+go, so a person's own key carries their vendor's name to their provider alone. `GET
+/api/setup/goal/suggestions` answers `SetupGoalSuggestions`, `{ suggestions }`, up to three or
+none: none and no call where Build is unavailable, the record is not on an open goal step
+(skipped, completed or elsewhere) or its connection is gone or revoked, none where the proposal
+declined, timed out, failed or answered nothing usable; the outcome rides on the wide event under
+`goalSuggestions`, never the goals. The route is a read, outside the `api` rate-limit bucket, so
+the model is asked **once per person and connection** inside a window, and the answer held in
+flight and after (`createGoalSuggestionMemo` in `setup-build.ts`, one per process; `cached: true`
+on the wide event): an hour for a proposal, two minutes from when it settled for any other outcome
+or a throw, so a timeout does not hide the chips for the hour. It is its own route so the goal step draws at
+once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
+`["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
+
+**The result step runs the tool, and the finish step connects the harness** (GRA-208; ADR 0024,
+`apps/server/src/setup-finish.ts` and `tool-run.ts`). `GET /api/setup/tool` answers
+`SetupToolContext`: the record's agent and harness, the connection, the job's goal and status (with
+the failure's sentence), the tool once it landed (wire name, input schema, `readOnly`) and the
+starter's `runInput`. `POST /api/agents/:id/tools/:vendor/:name/run` (`ToolRunBody`: `{ input? }`)
+is the console's second caller of a run: `@graft/mcp`'s `runAuthoredTool` with the server's
+`McpDeps` (`ApiOptions.run`), synchronous at `DEFAULT_COMMAND_TIMEOUT_SECONDS`, `NO_ELICITATION`,
+never a dry run, answering `AgentToolRunOutput` (`{ ok: true, result }` or `{ ok: false, reason,
+message, answer }`, the run's own refusal or failure); a tool whose annotation is not read-only is
+`409 tool_not_read_only` and one outside the agent's working set `409 tool_not_in_working_set`,
+both before the run and again on the run's own read of the tool inside the agent's in-flight hold
+(`AuthoredRunArgs.admit`), so a republish or a demotion in between cannot reach the gate or the
+sandbox and no ask is ever opened from the console; another person's agent is a 404.
+`POST /api/setup/result` is `moveSetupBuild`'s `finish` (`result` to `finish`), and
+`POST /api/setup/finish` is `@graft/core`'s `finishSetup`: from `finish` only, one transaction
+under `lockSetup`, the record to `completed` and, for a `token` harness whose agent is still
+awaiting it, the token issued through `issueAwaitingAgentToken` and answered once beside the state
+(`SetupFinishOutput`); a second finish is `409 setup_completed`. `POST /api/agents/:id/token` is the
+same issue for *Connect a harness* and the finish step's *Issue the token*; the write
+(`issueAgentToken` in `repo/agent.ts`) holds the awaiting rule in its statement, so two issues mint
+one token. The route is `@graft/core`'s `issueConsoleAgentToken`, which also **replaces** the token
+of the agent Setup runs as while the record is not completed and no client holds the agent (ADR
+0024 as amended 2026-09-25; Greptile on #172): the page held the only plaintext, so a reload lost
+it. The replacement is judged again under `lockSetup` and written with `issueAgentToken`'s
+`replacing`, the hash it read, so the old token stops resolving and nothing lands after the finish;
+the finish step offers it as *Issue a new token* on the saved-token block (`finishSections`'
+`reissue`, `tokenReplaceable`). Any other agent with a token is still `409
+agent_not_awaiting_harness`. `setup_step_completed` adds `result`,
+and `setup_completed` carries the harness. The console: `result-step.tsx` draws the input from
+**the tool's own `inputSchema`** (GRA-217, `lib/setup-run-input.ts`'s `runInputView`): a field per
+string, number, integer, boolean, enum or list of scalars, starting at the starter's `runInput`
+only where the field names match, else the schema's `default` or first `examples` entry; a
+required field with no value says *This tool needs …* and Run waits (`canRun`), the required fields
+drawn first since a stored schema's keys come back in jsonb's order; JSON only for a
+schema too complex to draw (a nested object, a list of objects, a union, a composed root), where a
+required key still at the skeleton's empty object or list counts as missing. It runs the tool once
+on arrival only when the tool takes no input (`lib/setup-result.ts`'s `runsOnArrival`; a tool with
+inputs, Open-Meteo's prefilled city included, waits for Run) and shows the answer in `CodeBlock`; a
+refusal or a failure is one sentence with the raw text, cut to 500 characters, behind *Details*
+(`lib/short-failure.ts`'s `shortFailure` and `runFailure`: an HTML body reads *The integration
+answered with a web page instead of data (status N)*), and the building step's and the finish
+step's failure reasons go through the same `shortFailure`; `finish-step.tsx` draws, by `lib/setup-finish.ts`'s `finishVariant`, the token once
+with the configuration blocks, the URL and the harness's steps ending on the consent page, or
+(a record that adopted an agent, `harness` null) the first request to ask in the chat, with
+`SetupPromptBlock` personalised with the agent, the connection and the tool (arriving while the
+job runs, the state read every 3 s). The finish's answer, token included, is held in
+`routes/_auth/setup.tsx`'s state, never the query cache, so the step keeps showing it once the
+record reads `completed`. The consent card pre-selects the person's one agent awaiting its harness
+and falls back to *A new agent* with none or several (`lib/consent-default.ts`).
+
+**The rail is navigable, every step has one footer, and Finish Setup leaves** (GRA-215).
+`POST /api/setup/back` (`SetupBackBody`: `{ step }`) is `@graft/core`'s `moveSetupBack`: under
+`lockSetup`, only to a step `setupBackTargets` names (every step before the record's that it holds
+what for, `setupStepReachable`: connect needs an ask or a connection, the goal a connection, the
+building step a job, the result a tool), refused `setup_step_ahead`, `setup_step_unavailable` (the
+result a record passed by *Continue while it runs*) or `setup_completed`. **Looking back discards
+nothing**: the connection, the job and the tool stay, a running job keeps running and is learned
+again on the building step. `POST /api/setup/next` (`SetupNextBody`) is `moveSetupOn`, Continue on a
+step returned to with nothing changed: `harness` to `vendor` (a different harness only while
+Setup's own agent awaits it, renaming it where its name was the old harness's default, else
+`harness_fixed`), `connect` to `goal` with the connection made, `goal` to `building` with the held
+job, `building` to `result` with the tool; `from` must be the record's step (`setup_step`). What
+leaves a held job behind is a forward action that says so: the connect moves drop the job and tool
+when a different connection replaces the one they were acquired against (an ask leaves them until
+it is answered; a reopen or a lost connection clears them), and while the held job is queued or
+running a choice of another vendor (`POST /api/setup/connect`, judged on the vendor, then again on
+the row the same starter's routing resolves or the ask it hands back settles on, GRA-216's review)
+or a Build (`startSetupBuild`) is refused `job_running` unless the body carries `discardJob: true`,
+which the console sends after `DiscardJobDialog`. `SetupGoalContext.job` is the held job, whose
+goal the goal step shows and offers Continue to while the text is unchanged. Neither route is a
+mutation-table row. The console: `SetupRail` and `SetupProgress` link the steps
+`setupRail(step, record)` marks (`lib/setup-steps.ts`, with `backTargetOf` for the footer),
+labelled *Integration* and *Task*;
+`SetupFooter` (Back bottom left through `useSetupBack`, the step's primary bottom right) closes
+every step, the connect step's open ask keeping its card's own Connect as the primary; the building
+step is `progressCard` (`lib/setup-progress.ts`: a plain label per stage, the newest line, the
+attempt past the first, the lines behind *Details*); the finish is `finishSections`
+(`lib/setup-finish.ts`): the prompt with the URL and steps behind *Set it up by hand* for an OAuth
+harness, the token block issued by the footer's *Issue the token* (`POST /api/agents/:id/token`)
+before Finish Setup plus the prompt for a token harness, the one request for an adopted agent. One
+press of Finish Setup completes and, unless the card opened the page, lands on `/agents/$agentId`
+with `setupFinishedToast` (`lib/setup-page.ts`'s `afterSetupFinish`: `leave`, `close`, or `stay`
+only for a token the finish itself issued); GRA-208 stayed on every console visit and needed a
+second press on *Open the console*.
+
+**Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
+amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects
+and *task* for what the first tool should do: Setup's steps (*Choose an integration*, *What should
+your first tool do?*, the *Task* field, *Suggested tasks*, *Another integration*), the console's
+connection screens and pending cards, the ask card's rendered text, and the server's sentences a
+person reads (Setup's refusals, the OAuth callback's). Code identifiers (`vendor`, `STARTER_VENDORS`,
+the `<vendor>__<name>` wire form, columns, the record's step values `vendor` and `goal`, the
+analytics `step`), and model-facing text (`SERVER_INSTRUCTIONS`, tool descriptions, the authoring
+skill, `handoff-message.ts`, the acquire job's own progress lines) keep *vendor* and *goal*. The one
+bridge is the connection form's slug error: `validateVendor`'s sentence is shared with a model's
+refusal, so `lib/connection-form.ts` rewords it for the field.
+
+**`find_tool` offers Setup in the chat, as a card where the client renders one** (GRA-210; GRA-202,
+*The in-chat door*; ADR 0024). For an agent whose person has no connection at all (revoked rows
+count, as the show rule counts them) and whose Setup is neither completed nor skipped
+(`@graft/core`'s `shouldOfferSetup`), `find_tool` answers `setup: { url, message }` beside `tools`
+and `connections`: `url` is `setupUrl(GRAFT_CONSOLE_URL, agentId)`, `/setup?agent=<id>`, and
+`message` is `handoff-message.ts`'s `setupOfferMessage` in the console form (GRA-55's relay
+clause). The record is read (`getSetupRecord`, `McpDeps.setup`) only when the person's connection
+count, which `find_tool` already holds, is zero; `packages/mcp/src/setup-offer.ts` is the rule's
+home. A record running as another of the person's active agents suppresses the offer, since the
+page would resume Setup as that agent (GRA-216's review). It is **not an ask**: no pending action, no signature, no expiry, `isError` unset, and
+`answer_ask` has nothing to admit. For a `clientRendersCards` session the message takes its card
+form, `cardShown: true` rides inside `setup` beside `url`, and `structuredContent.card` is a
+`SetupCard` (`@graft/ask-card/shape`: `{ kind: "setup", agentName, url }`, beside `AskCard` in
+`CardData`; `readCardData` reads either). The card (`render.ts`'s `renderSetup`, dispatched by
+`renderCard`) draws a title, a sentence, the agent, a sentence saying to ask again once done, and
+one button, *Set up your first tool*, that opens the URL with `from=card` through `ui/open-link`;
+it polls nothing. Where the host refuses the window, the card shows the bare URL to copy
+(`setupOpenRefusedOf`), since the card-form message tells the model not to send a link and to
+give that URL only when the person says they cannot see the card or it could not open Setup.
+**One card per session** (GRA-212): the card, the card-form message and
+`cardShown` ride on the first `find_tool` answer of an MCP session that carries the offer, held
+per session in `setup-offer.ts` as `clientRendersCards` holds its verdict; every later answer in
+that session carries `setup` in the console form and no card, since a host mounts the card for
+every result of a tool that names it and ChatGPT called `find_tool` five times in one turn. A
+session the server re-opens (GRA-129) is a new one. `find_tool`'s description gained one
+capability sentence and `SERVER_INSTRUCTIONS` is unchanged. The wide event counts `setupOffered: true` when it was made.
+The console's `/setup` validates `?agent=&from=` (`lib/setup-page.ts`'s `readSetupSearch`); the
+harness step starts as the named agent when it is one of the person's active agents, even among
+several (`agentToAdopt`); a page the card opened shows an `Alert` saying so and, once
+`POST /api/setup/finish` succeeds with no token, posts `{ type: "graft:ask", setup: "completed" }`
+(`card.rules.ts`'s `setupCompletedMessage`) to its opener and closes itself after
+`FROM_CARD_CLOSE_MS` (`afterSetupFinish`); a finish that issued a token stays, since the token is
+shown once. `packages/mcp/src/setup-offer.test.ts` is the suite.
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
@@ -1205,7 +1462,11 @@ and the sweep's lines ride under `acquire` and `sweep`. Product events are captu
 two chokepoints and nowhere in the console: the API's mutation routes
 (`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
 does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
-`acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
+`acquire_completed`, `acquire_failed`); both name the person by id. The Setup read,
+`GET /api/setup`, is the one other place (ADR 0024; GRA-206): a step the person completes
+elsewhere, an ask answered in the inbox or a chat's card or a job that finished, is learned on the
+read, so `setup_step_completed` is captured there, once, when the guarded move of the record
+succeeds. The vendors behind the hosted
 form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
 **A sign-up is the one event the account raises itself** (GRA-157): `createAuth`'s
 `onPersonSignedUp` fires from Better Auth's own hooks when a person exists *and* is verified — the

@@ -173,25 +173,25 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
         status: declined ? "declined" : "failed",
         connectionId: row.id,
         message: declined
-          ? `You declined to connect ${row.displayName} — nothing was stored.`
-          : `The vendor refused to start the consent for ${row.displayName} (${sanitiseErrorCode(query.error)}). Check the client id, the redirect URI and the scopes at the vendor, then connect again from the console.`,
+          ? `You declined to connect ${row.displayName}, and nothing was stored.`
+          : `The integration refused to start the consent for ${row.displayName} (${sanitiseErrorCode(query.error)}). Check the client id, the redirect URI and the scopes you registered with the integration, then connect again from the console.`,
       });
     }
 
     const state = readOAuthState(row.oauthRefreshState);
     if (!state.pkce) {
       return failed(
-        `No consent is in progress for ${row.displayName} — start it again from the console.`,
+        `No consent is in progress for ${row.displayName}. Start it again from the console.`,
         row.id,
       );
     }
     const code = query.code;
     if (typeof code !== "string" || code.length === 0) {
-      return failed("The vendor sent the browser back without a code.", row.id);
+      return failed("The integration sent the browser back without a code.", row.id);
     }
     if (!row.credentialCiphertext) {
       return failed(
-        `${row.displayName} has no client secret — enter it in the console before connecting.`,
+        `${row.displayName} has no client secret. Enter it in the console before connecting.`,
         row.id,
       );
     }
@@ -234,7 +234,7 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
       const detail =
         error instanceof DerivedCredentialError ? error.message : "the exchange failed";
       return failed(
-        `The vendor did not hand over a token for ${row.displayName}: ${detail}. Connect again from the console.`,
+        `The integration did not hand over a token for ${row.displayName}: ${detail}. Connect again from the console.`,
         row.id,
       );
     }
@@ -299,7 +299,7 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
     return land({
       status: "connected",
       connectionId: row.id,
-      message: `${row.displayName} is connected — the console updates on its own.`,
+      message: `${row.displayName} is connected. The console updates on its own.`,
     });
   });
 

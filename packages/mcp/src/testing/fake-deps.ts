@@ -8,6 +8,7 @@ import {
   hashAgentToken,
   type LedgerDeps,
   type PendingActionDeps,
+  type SetupDeps,
   type ToolDeps,
   type WorkingSetDeps,
 } from "@graft/core";
@@ -23,6 +24,7 @@ import type {
   lockPendingActionKey,
   PendingActionRow,
 } from "@graft/db/repo/pending-action";
+import type { SetupPatch, SetupRow } from "@graft/db/repo/setup";
 import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 import type { UsageLedgerRow } from "@graft/db/repo/usage";
 import type { WorkingSetChangeRow, WorkingSetRow } from "@graft/db/repo/working-set";
@@ -60,6 +62,8 @@ export type FakeStore = {
   acquireJobs: Map<string, AcquireJobRow>;
   acquireAttempts: Map<string, AcquireAttemptRow>;
   acquireTraces: AcquireTraceRow[];
+  /** person id -> the person's Setup record (ADR 0024), which `find_tool`'s offer reads (GRA-210). */
+  setups: Map<string, SetupRow>;
   now: () => Date;
   /** The next generated id. */
   newId: () => string;
@@ -107,6 +111,8 @@ export type FakeStore = {
   grantBuild(agentId: string, connectionId: string): void;
   /** A registered OAuth client, by its id and the redirect URIs it registered; the rest is the registration's defaults. */
   addMcpClient(input: { id: string; name?: string; redirectUris: readonly string[] }): McpClientRow;
+  /** Write a person's Setup record as `saveSetup` does: made when absent, the patch's keys set on it. */
+  saveSetup(personId: string, patch: SetupPatch): SetupRow;
 };
 
 const key = (agentId: string, toolId: string) => `${agentId} ${toolId}`;
@@ -131,6 +137,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     acquireJobs: new Map(),
     acquireAttempts: new Map(),
     acquireTraces: [],
+    setups: new Map(),
     now,
     newId: () => `id_${++counter}`,
     addAgent(input) {
@@ -270,6 +277,29 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
       store.mcpClients.set(row.id, row);
       return row;
     },
+    saveSetup(personId, patch) {
+      const at = now();
+      const row = {
+        personId,
+        step: "harness",
+        harness: null,
+        agentId: null,
+        pendingActionId: null,
+        connectionId: null,
+        acquireJobId: null,
+        toolId: null,
+        startedAt: null,
+        completedAt: null,
+        skippedAt: null,
+        owner: "person",
+        createdAt: at,
+        ...store.setups.get(personId),
+        ...patch,
+        updatedAt: at,
+      } as SetupRow;
+      store.setups.set(personId, row);
+      return row;
+    },
   };
   return store;
 }
@@ -288,6 +318,7 @@ export type FakeDeps = {
   lockPendingActionKey: typeof lockPendingActionKey;
   findMcpClient: typeof findMcpClient;
   acquireJob: AcquireJobDeps;
+  setup: SetupDeps;
 };
 
 /** The deps over a store. `db` is never dereferenced; the transaction fake hands itself to its body. */
@@ -351,6 +382,16 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     // authorization server's own suite in `@graft/core` drives the OAuth path over its own fakes.
     findAgentByMcpAccessTokenHash: async () => null,
     revokeMcpTokensForAgent: async () => 0,
+    issueAgentToken: async (_db, personId, agentId, token, replacing = null) => {
+      const row = store.agents.get(agentId);
+      if (!row || row.personId !== personId) return null;
+      if (row.revokedAt || row.connectedViaClientId) return null;
+      // The repo's predicate: no hash for a first issue, the replaced one for a re-issue.
+      if ((row.tokenHash ?? null) !== replacing) return null;
+      const updated = { ...row, ...token, updatedAt: store.now() };
+      store.agents.set(agentId, updated);
+      return updated;
+    },
     setAgentConnectedVia: async (_db, personId, agentId, via) => {
       const row = store.agents.get(agentId);
       if (!row || row.personId !== personId || row.connectedViaClientId) return null;
@@ -1323,5 +1364,18 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     lockPendingActionKey: async () => {},
     findMcpClient: async (_db, clientId) => store.mcpClients.get(clientId) ?? null,
     acquireJob,
+    // The person's Setup record over the store's map (GRA-210), the four statements as the repo's.
+    setup: {
+      findSetup: async (_db, personId) => store.setups.get(personId) ?? null,
+      lockSetup: async (_db, personId) =>
+        store.setups.get(personId) ?? store.saveSetup(personId, {}),
+      saveSetup: async (_db, personId, patch) => store.saveSetup(personId, patch),
+      countSetupWork: async (_db, personId) => ({
+        connections: [...store.connections.values()].filter((row) => row.personId === personId)
+          .length,
+        tools: [...store.tools.values()].filter((row) => row.personId === personId).length,
+      }),
+      now: store.now,
+    },
   };
 }

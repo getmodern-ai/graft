@@ -131,7 +131,7 @@ export function CredentialAskCard({
         <figure className="flex flex-col gap-1.5">
           <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
             <Badge variant="outline">in the agent's words</Badge>
-            What the vendor answered, as the agent reports it.
+            What the integration answered, as the agent reports it.
           </figcaption>
           <blockquote className="border-l-2 pl-3 italic">{payload.reason}</blockquote>
         </figure>
@@ -139,8 +139,8 @@ export function CredentialAskCard({
       <p className="text-muted-foreground text-xs">
         {oauth
           ? payload.revoked
-            ? "This connection was revoked, and its client secret with it. Enter the secret of the client you registered at the vendor; the consent then runs in a popup and reconnects it."
-            : "The client secret is still in place. Reconnect runs the vendor's consent again in a popup; the new tokens replace the old, and no approval is touched."
+            ? "This connection was revoked, and its client secret with it. Enter the secret of the client you registered with the integration; the consent then runs in a popup and reconnects it."
+            : "The client secret is still in place. Reconnect runs the integration's consent again in a popup; the new tokens replace the old, and no approval is touched."
           : payload.revoked
             ? "This connection was revoked. Entering a credential reconnects it: its tools stay and ask again on their own terms."
             : `The new credential replaces the old one for scheme ${payload.scheme}; nothing else about the connection changes, and no approval is touched.`}

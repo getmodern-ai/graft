@@ -27,18 +27,18 @@ const OUTCOMES: Record<
   connected: {
     title: "Connected",
     Icon: CheckCircleIcon,
-    fallback: "The connection is ready — the console updates on its own.",
+    fallback: "The connection is ready. The console updates on its own.",
   },
   declined: {
     title: "Not connected",
     Icon: WarningIcon,
-    fallback: "You declined — nothing was stored.",
+    fallback: "You declined, and nothing was stored.",
   },
   failed: {
     title: "Something went wrong",
     Icon: DangerousIcon,
     fallback:
-      "This did not complete — nothing was stored, and you can connect again from the console.",
+      "This did not complete. Nothing was stored, and you can connect again from the console.",
   },
 };
 

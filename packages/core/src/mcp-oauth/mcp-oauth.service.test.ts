@@ -4,9 +4,11 @@ import type { McpAuthorizationCodeRow, McpClientRow, McpTokenRow } from "@graft/
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentDeps } from "../agent/agent.deps";
+import { toAgentOutput } from "../agent/agent.service";
 import { generatePkce } from "../connection/oauth-consent";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
+import { isAwaitingHarness } from "../setup/setup.rules";
 import {
   hashAgentToken,
   MCP_ACCESS_TOKEN_PREFIX,
@@ -244,6 +246,7 @@ function harness(overrides: { clock?: Date } = {}) {
     updateAgent: vi.fn(async () => null),
     revokeAgent: vi.fn(async () => null),
     revokeMcpTokensForAgent: vi.fn(async () => 0),
+    issueAgentToken: vi.fn(async () => null),
     setAgentConnectedVia: vi.fn(async (_db, _personId, agentId, via) => {
       const row = store.agents.get(agentId);
       if (!row || row.connectedViaClientId) return null;
@@ -617,6 +620,22 @@ describe("the consent (ADR 0018: it mints the agent)", () => {
     expect(outcome.agent?.connectedVia).toEqual({ clientId: client_id, clientName: "Claude" });
     expect(h.agentDeps.insertAgent).not.toHaveBeenCalled();
     expect([...h.store.codes.values()][0]?.agentId).toBe("agent_1");
+  });
+
+  /** ADR 0018 as amended 2026-09-23 (GRA-208): Setup's agent exists before its consent names it. */
+  it("binds the code to an agent awaiting its harness, which then leaves that state, and mints none", async () => {
+    const h = harness();
+    h.store.agents.set("agent_1", agentRow("agent_1", { tokenHash: null, tokenPrefix: null }));
+    const before = h.store.agents.get("agent_1");
+    expect(before && isAwaitingHarness(toAgentOutput(before))).toBe(true);
+    const { client_id } = await registered(h);
+    const { outcome } = await consented(h, client_id, { agent: "existing" });
+    expect(outcome.agent?.id).toBe("agent_1");
+    const after = h.store.agents.get("agent_1");
+    expect(after?.connectedViaClientId).toBe(client_id);
+    expect(after && isAwaitingHarness(toAgentOutput(after))).toBe(false);
+    expect(h.agentDeps.insertAgent).not.toHaveBeenCalled();
+    expect(h.store.agents.size).toBe(1);
   });
 
   /** ADR 0007 as amended 2026-09-19: a consent that names no mode mints an agent on every connection. */

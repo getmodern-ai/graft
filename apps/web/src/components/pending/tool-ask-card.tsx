@@ -77,7 +77,7 @@ export function ToolAskCard({
             <ItemDescription className="line-clamp-none">
               {destructive
                 ? "This tool is destructive: it can delete or overwrite data. "
-                : "This tool can change data at the vendor. "}
+                : "This tool can change data in the integration. "}
               Off, your answer holds for this agent and later calls pass silently until withdrawn on
               its page. On, every call asks you first; you can turn it off there too.
             </ItemDescription>

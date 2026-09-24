@@ -24,17 +24,18 @@ import {
 } from "@/components/ui/select";
 import type { Agent } from "@/lib/agent-queries";
 import type { Connection } from "@/lib/connection-queries";
+import { consentDefaultAgent, NEW_AGENT } from "@/lib/consent-default";
 import { type ConsentRequest, decideConsent } from "@/lib/mcp-oauth-queries";
-
-/** The one option that is not an agent: mint a new one, named for the client. */
-const NEW_AGENT = "new";
 
 /**
  * The consent (ADR 0006: the console is where a consent happens; ADR 0018: the consent mints the
  * agent). One card: who is asking, by the name it registered, and where it will be sent back; then
  * the agent the connection will *be* — a new one, prefilled with the client's name, on every
  * connection of the person's unless they limit it to a list (ADR 0007 as amended 2026-09-19), or
- * one the person already has. Connect binds a code to that agent and sends the browser back to the
+ * one the person already has. The choice starts on the person's one agent awaiting its harness, the
+ * agent Setup made for this client, and on *A new agent* with none or several (`consentDefaultAgent`;
+ * ADR 0018 as amended 2026-09-23), until the person picks. Connect binds a code to that agent and
+ * sends the browser back to the
  * client; Cancel sends it back with `access_denied`. Either way the browser leaves this page, so
  * the card has no settled state of its own.
  *
@@ -64,13 +65,15 @@ export function ConsentCard({
   agentsFailed?: { error: unknown; onRetry: () => void; retrying: boolean };
 }) {
   const client = request.client.name;
-  const [as, setAs] = useState<string>(NEW_AGENT);
+  // Null until the person picks: the default follows the agents read, which may still be arriving.
+  const [picked, setPicked] = useState<string | null>(null);
   const [name, setName] = useState(client);
   const [scopeMode, setScopeMode] = useState<AgentScopeMode>("all");
   const [scope, setScope] = useState<Set<string>>(new Set());
   const [leaving, setLeaving] = useState(false);
 
   const active = (agents ?? []).filter((agent) => agent.revokedAt === null);
+  const as = picked ?? consentDefaultAgent(active);
   const items = [
     { value: NEW_AGENT, label: "A new agent" },
     ...active.map((agent) => ({ value: agent.id, label: agent.name })),
@@ -102,8 +105,8 @@ export function ConsentCard({
       <CardHeader>
         <CardTitle>Connect {client} to Graft</CardTitle>
         <CardDescription>
-          {client} asked to connect over MCP. It will act as one agent of yours — with that agent's
-          scope, working set and approvals — and when you connect it is sent back to{" "}
+          {client} asked to connect over MCP. It will act as one agent of yours, with that agent's
+          scope, working set and approvals, and when you connect it is sent back to{" "}
           <code className="font-mono text-xs">{request.redirectTarget}</code>.
           {/* Where this client's asks will reach you (ADR 0006 as amended 2026-09-21): the gate is
               the callback host it registered, and the server has judged it (`rendersCards`). */}
@@ -145,7 +148,7 @@ export function ConsentCard({
                 items={items}
                 disabled={busy || agents === undefined}
                 onValueChange={(next) => {
-                  if (typeof next === "string") setAs(next);
+                  if (typeof next === "string") setPicked(next);
                 }}
               >
                 <SelectTrigger id="consent-as" className="w-full">
@@ -173,6 +176,8 @@ export function ConsentCard({
                   )
                 ) : minting ? (
                   "A new agent, made for this connection. You can rename it and change its scope any time."
+                ) : as === consentDefaultAgent(active) ? (
+                  "The agent Setup made, awaiting its harness. Its scope, working set and first tool apply as they are."
                 ) : (
                   "An agent you already have. Its scope, working set and approvals apply as they are."
                 )}

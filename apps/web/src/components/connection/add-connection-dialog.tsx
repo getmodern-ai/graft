@@ -32,24 +32,34 @@ import { connectionKeys, createConnection } from "@/lib/connection-queries";
  * (`POST /api/connections` with `credential`), and belongs to the person; it reaches an agent when
  * they add it to that agent's scope (ADR 0007). For an OAuth consent (ADR 0005) the answer carries
  * the authorize URL and the dialog runs the consent in a popup before it closes.
+ *
+ * `onConnected` is for a caller that takes the connection on (Setup's *Another integration*, GRA-206):
+ * it is handed the connection's id once it can be called, the consent included, in place of the
+ * toast that points at the agent's page.
  */
 export function AddConnectionDialog({
   open,
   onOpenChange,
+  onConnected,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onConnected?: (connectionId: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<ConnectionDraft>(() => emptyDraft());
   const [errors, setErrors] = useState<DraftErrors>({});
-  const consent = useOAuthConsent({
-    onConnected: () => {
-      toast.success(`${draft.displayName} is connected`, {
+  const connected = (connectionId: string, displayName: string) => {
+    if (onConnected) onConnected(connectionId);
+    else {
+      toast.success(`${displayName} is connected`, {
         description: "Add it to an agent's scope on the agent's page to let that agent use it.",
       });
-      close();
-    },
+    }
+    close();
+  };
+  const consent = useOAuthConsent({
+    onConnected: (connectionId) => connected(connectionId, draft.displayName),
   });
 
   const create = useMutation({
@@ -63,10 +73,7 @@ export function AddConnectionDialog({
         void consent.run(authorizeUrl, connection);
         return;
       }
-      toast.success(`${connection.displayName} is connected`, {
-        description: "Add it to an agent's scope on the agent's page to let that agent use it.",
-      });
-      close();
+      connected(connection.id, connection.displayName);
     },
     onError: (error) => {
       if (error instanceof ApiError && error.status === 400) {
@@ -123,8 +130,8 @@ export function AddConnectionDialog({
           <DialogHeader>
             <DialogTitle>Add a connection</DialogTitle>
             <DialogDescription>
-              One vendor account: its hosts, its auth scheme and its credential, entered once and
-              never shown again. Agents use it once you add it to their scope.
+              One account of an integration: its hosts, its auth scheme and its credential, entered
+              once and never shown again. Agents use it once you add it to their scope.
             </DialogDescription>
           </DialogHeader>
           <FieldSet>
