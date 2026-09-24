@@ -567,6 +567,19 @@ function recordableTarget(target) {
 }
 
 /**
+ * How a refusal's sentence, and a named host's report entry before it is a URL, spell a path the
+ * module gave: the text before its first `?` or `#`, with `?…` appended when a query followed, the
+ * rule `recordableTarget` applies to a URL. A path beside the host option is refused when it does not
+ * start with `/` (`upload?sig=…`), and a refusal reaches the report and the authoring model's prompt
+ * as a record does, so a signature in that path's query is dropped there too (Greptile on #169).
+ */
+function recordablePath(target) {
+  const cut = target.search(/[?#]/);
+  if (cut === -1) return target;
+  return `${target.slice(0, cut)}${target[cut] === "?" ? "?…" : ""}`;
+}
+
+/**
  * An absolute URL given to `ctx.fetch`, rewritten onto the proxy's host form (the header):
  * `https://files.slack.com/upload/v1/abc?x=1` becomes `${prefix}h/files.slack.com/upload/v1/abc?x=1`,
  * the same route `ctx.proxyBase("files.slack.com")` names, so the proxy judges the host against the
@@ -615,7 +628,8 @@ function hostRoute(target, prefix, refuse, shown) {
 function namedHostTarget(target, host, absolute, refuse) {
   if (host === undefined) return null;
   if (typeof host !== "string" || !HOST_PATTERN.test(host)) {
-    const shown = typeof host === "string" ? JSON.stringify(host.slice(0, 100)) : typeof host;
+    const shown =
+      typeof host === "string" ? JSON.stringify(recordablePath(host).slice(0, 100)) : typeof host;
     throw refuse(
       `ctx.fetch's host option takes a host name the connection declares, such as "geocoding-api.example.com", not ${shown}.`,
     );
@@ -627,7 +641,7 @@ function namedHostTarget(target, host, absolute, refuse) {
   }
   if (!target.startsWith("/")) {
     throw refuse(
-      `ctx.fetch's host option takes a path from that host's root, starting with "/", such as "/v1/search", not ${JSON.stringify(target.slice(0, 100))}.`,
+      `ctx.fetch's host option takes a path from that host's root, starting with "/", such as "/v1/search", not ${JSON.stringify(recordablePath(target).slice(0, 100))}.`,
     );
   }
   return `https://${host.toLowerCase()}${target}`;
@@ -641,8 +655,13 @@ function boundFetch(path, init = {}) {
   const method = String(options.method ?? "GET").toUpperCase();
   const givenAbsolute = /^[a-z][a-z0-9+.-]*:/i.test(given);
   // What the report and a refusal's sentence may say of the target: an absolute URL less its query,
-  // and a named host's call the same way once it is one (below).
-  let recorded = givenAbsolute ? recordableTarget(given) : given;
+  // and a named host's call the same way, as a path until it is a URL (below) so a refusal of the
+  // path records no query either. A path on the primary host is the module's own and kept whole.
+  let recorded = givenAbsolute
+    ? recordableTarget(given)
+    : host === undefined
+      ? given
+      : recordablePath(given);
   // A refusal here never reaches the proxy; in a dry run it is still part of the report, because a
   // write the module could not even address is a write request that was not well-formed.
   const refuse = (message) => {
@@ -668,7 +687,8 @@ function boundFetch(path, init = {}) {
   } else {
     url = new URL(target.replace(/^\/+/, ""), prefix);
     if (!url.href.startsWith(prefix.href)) {
-      throw refuse(`ctx.fetch refused a path that leaves the connection: ${target}`);
+      recorded = recordablePath(target);
+      throw refuse(`ctx.fetch refused a path that leaves the connection: ${recorded}`);
     }
   }
 

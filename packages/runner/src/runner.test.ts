@@ -192,7 +192,11 @@ const FIXTURES: Record<string, string> = {
     "  });",
     "  let refused = null;",
     "  try {",
-    '    await ctx.fetch("v1/notes", { host: "geocoding-api.example.com", method: "PUT", body: "x" });',
+    '    await ctx.fetch("v1/notes?sig=malformed-secret#frag-secret", {',
+    '      host: "geocoding-api.example.com",',
+    '      method: "PUT",',
+    '      body: "x",',
+    "    });",
     "  } catch (error) {",
     "    refused = error.message;",
     "  }",
@@ -1210,6 +1214,12 @@ describe("ctx.fetch", () => {
       'starting with "/", such as "/v1/search", not "v1/search".',
     ],
     [
+      { path: "upload?sig=secret123", host: "files.example.com" },
+      'starting with "/", such as "/v1/search", not "upload?…".',
+    ],
+    [{ path: "upload#token=secret123", host: "files.example.com" }, 'not "upload".'],
+    [{ path: "/upload", host: "files.example.com?sig=secret123" }, 'not "files.example.com?…".'],
+    [
       {
         path: "https://geocoding-api.example.com/v1/search?key=secret123",
         host: "geocoding-api.example.com",
@@ -1639,13 +1649,19 @@ describe("GRAFT_DRY_RUN", () => {
     expect(result.writesRefused).toEqual([
       {
         method: "PUT",
-        path: "v1/notes",
+        // A path refused for its missing "/" is on the record and in the sentence less its query and
+        // fragment, as a routed one is (Greptile on #169).
+        path: "v1/notes?…",
         status: null,
-        error: expect.stringContaining('starting with "/"'),
+        error: expect.stringContaining(
+          'starting with "/", such as "/v1/search", not "v1/notes?…".',
+        ),
       },
     ]);
     expect(result.moduleResult).toMatchObject({ read: 200, write: 202 });
     expect(JSON.stringify(result)).not.toContain("named-secret");
+    expect(JSON.stringify(result)).not.toContain("malformed-secret");
+    expect(JSON.stringify(result)).not.toContain("frag-secret");
     expect(JSON.stringify(result)).not.toContain("Berlin");
     expect(received.slice(before).map((r) => r.url)).toEqual([
       "/c/conn_1/h/geocoding-api.example.com/v1/search?name=Berlin",
