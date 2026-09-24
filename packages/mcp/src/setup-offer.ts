@@ -22,7 +22,8 @@ import { setupOfferMessage } from "./handoff-message";
  * `from=card`. The console's Setup page, opened so, closes itself once Setup is finished.
  *
  * `connections` is the person's count, revoked rows included, which `find_tool` has already read,
- * so the record is read only when the count is zero.
+ * so the record is read only when the count is zero. A record running as another active agent of
+ * the person's suppresses the offer: the page would resume Setup as that agent, not this one.
  *
  * **One card per session** (GRA-212). A host mounts the card for every result of a tool that names
  * it, and ChatGPT called `find_tool` five times in answer to one question, so five identical cards
@@ -48,6 +49,13 @@ export async function setupOfferFor(
   const { ctx, principal, scope, deps } = session;
   const record = await getSetupRecord(ctx, principal, deps.setup);
   if (!shouldOfferSetup(record, { connections })) return null;
+  // Setup already runs as another of the person's agents, which the page would resume (its start
+  // refuses `setup_running` for any other), so an offer naming this agent would acquire the tool
+  // for that one (Greptile on #171). A record whose agent was revoked adopts this one, and offers.
+  if (record?.agentId && record.agentId !== scope.agentId) {
+    const running = await getAgent(ctx, principal, record.agentId, deps.agent);
+    if (running && !running.revokedAt) return null;
+  }
   const url = setupUrl(deps.handoff.consoleUrl, scope.agentId);
   if (!(await clientRendersCards(session))) {
     return { setup: { url, message: setupOfferMessage("console", url) } };

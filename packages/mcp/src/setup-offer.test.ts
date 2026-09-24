@@ -245,6 +245,32 @@ describe("find_tool's Setup offer (GRA-210)", () => {
     expect(skipped.structuredContent?.card).toBeUndefined();
   });
 
+  it("is not offered to another agent while Setup runs as one, and is again once that one is revoked", async () => {
+    // Setup is under way as Hermes; the page would resume it as Hermes, never as Claude.
+    store.saveSetup(PERSON, { step: "vendor", agentId: HERMES, startedAt: store.now() });
+    const claude = await connect(TOKEN_CLAUDE);
+    const found = await claude.findTool();
+    expect(found.isError).toBeFalsy();
+    expect(text(found).setup).toBeUndefined();
+    expect(found.structuredContent?.card).toBeUndefined();
+    // Hermes itself is still offered the Setup it runs as.
+    const hermes = await connect(TOKEN_HERMES);
+    expect(text(await hermes.findTool()).setup).toEqual({
+      url: setupUrlOf(HERMES),
+      message: setupOfferMessage("console", setupUrlOf(HERMES)),
+    });
+
+    // Hermes revoked: a start adopts the agent it is opened for, so Claude is offered it again.
+    const row = store.agents.get(HERMES);
+    if (!row) throw new Error("no hermes");
+    store.agents.set(HERMES, { ...row, revokedAt: store.now() });
+    const again = await connect(TOKEN_CLAUDE);
+    expect((await again.findTool()).structuredContent?.card).toMatchObject({
+      kind: "setup",
+      url: setupUrlOf(CLAUDE),
+    });
+  });
+
   it("ends at the person's first connection, made through the card, and a revoked one still ends it", async () => {
     const claude = await connect(TOKEN_CLAUDE);
     expect((await claude.findTool()).structuredContent?.card).toMatchObject({ kind: "setup" });

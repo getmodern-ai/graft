@@ -1180,7 +1180,8 @@ and `connections`: `url` is `setupUrl(GRAFT_CONSOLE_URL, agentId)`, `/setup?agen
 `message` is `handoff-message.ts`'s `setupOfferMessage` in the console form (GRA-55's relay
 clause). The record is read (`getSetupRecord`, `McpDeps.setup`) only when the person's connection
 count, which `find_tool` already holds, is zero; `packages/mcp/src/setup-offer.ts` is the rule's
-home. It is **not an ask**: no pending action, no signature, no expiry, `isError` unset, and
+home. A record running as another of the person's active agents suppresses the offer, since the
+page would resume Setup as that agent (GRA-216's review). It is **not an ask**: no pending action, no signature, no expiry, `isError` unset, and
 `answer_ask` has nothing to admit. For a `clientRendersCards` session the message takes its card
 form, `cardShown: true` rides inside `setup` beside `url`, and `structuredContent.card` is a
 `SetupCard` (`@graft/ask-card/shape`: `{ kind: "setup", agentName, url }`, beside `AskCard` in
