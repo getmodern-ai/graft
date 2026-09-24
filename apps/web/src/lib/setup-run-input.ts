@@ -331,8 +331,20 @@ export function missingFields(view: RunInputView, values: Record<string, string>
 }
 
 /**
- * The JSON input's required keys still absent or empty; none while the text does not parse, since
- * the run's refusal of that text says why.
+ * Whether a JSON value supplies nothing: absent, null, a blank string, or the empty object or list
+ * the skeleton lays out for a complex field (Greptile on #172: an untouched `{}` for a required
+ * `filter` is the skeleton's placeholder, not the person's value, and the run waits for theirs).
+ */
+function suppliesNothing(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === "string") return value.trim() === "";
+  if (Array.isArray(value)) return value.length === 0;
+  return isSchema(value) && Object.keys(value).length === 0;
+}
+
+/**
+ * The JSON input's required keys still absent or empty, an empty object or list included; none
+ * while the text does not parse, since the run's refusal of that text says why.
  */
 export function missingJsonFields(view: RunInputView, text: string): string[] {
   if (view.kind !== "json") return [];
@@ -343,12 +355,7 @@ export function missingJsonFields(view: RunInputView, text: string): string[] {
     return [];
   }
   if (!isSchema(parsed)) return [];
-  return view.required.filter((name) => {
-    const value = parsed[name];
-    return (
-      value === undefined || value === null || (typeof value === "string" && value.trim() === "")
-    );
-  });
+  return view.required.filter((name) => suppliesNothing(parsed[name]));
 }
 
 /** Whether Run can be pressed: nothing required is missing. */

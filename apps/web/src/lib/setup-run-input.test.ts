@@ -292,9 +292,36 @@ describe("the JSON input", () => {
   const view: RunInputView = { kind: "json", initial: "{}", required: ["filter", "name"] };
 
   it("waits for its required keys, and not on text that does not parse", () => {
-    expect(missingJsonFields(view, '{ "filter": {}, "name": " " }')).toEqual(["name"]);
-    expect(canRun(view, {}, '{ "filter": {}, "name": "x" }')).toBe(true);
+    expect(missingJsonFields(view, '{ "filter": { "label": "x" }, "name": " " }')).toEqual([
+      "name",
+    ]);
+    expect(canRun(view, {}, '{ "filter": { "label": "x" }, "name": "x" }')).toBe(true);
     expect(canRun(view, {}, "{ filter")).toBe(true);
+  });
+
+  it("counts the skeleton's empty object or list for a required key as nothing supplied", () => {
+    // Greptile on #172: a required nested `filter` starts at `{}`, which is the skeleton's, not
+    // the person's; Run and the run on arrival wait until they edit it.
+    const nested = runInputView(
+      {
+        type: "object",
+        properties: {
+          name: { type: "string", default: "report" },
+          filter: { type: "object", properties: { label: { type: "string" } } },
+          ids: { type: "array", items: { type: "object" } },
+        },
+        required: ["filter", "ids"],
+      },
+      null,
+    );
+    if (nested.kind !== "json") throw new Error("expected the JSON view");
+    expect(missingJsonFields(nested, nested.initial)).toEqual(["filter", "ids"]);
+    expect(canRun(nested, {}, nested.initial)).toBe(false);
+    expect(
+      canRun(nested, {}, '{ "name": "report", "filter": { "label": "inbox" }, "ids": [{}] }'),
+    ).toBe(true);
+    expect(missingJsonFields(view, '{ "filter": {}, "name": "x" }')).toEqual(["filter"]);
+    expect(missingJsonFields(view, '{ "filter": [], "name": "x" }')).toEqual(["filter"]);
   });
 
   it("sends a parsed object and says why anything else cannot be sent", () => {
