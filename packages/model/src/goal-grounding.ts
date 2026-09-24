@@ -28,14 +28,29 @@ export type RawGoalProposal = {
   inputs: readonly { name: string; default: string | null }[];
 };
 
-/** A host as the connection lists it: lower-case, no scheme, path or port. */
+const SCHEME = /^[a-z][a-z0-9+.-]*$/;
+const DIGITS = /^\d+$/;
+
+/**
+ * A host as the connection lists it: lower-case, no scheme, path or port. Linear string scans
+ * rather than regular expressions over the whole value (CodeQL's polynomial-ReDoS on #172), since
+ * the host is the model's answer and a run of `#` or `/` made the tail's `.*$` quadratic; the two
+ * patterns left are anchored at both ends over one slice.
+ */
 export function bareHost(host: string): string {
-  return host
-    .trim()
-    .toLowerCase()
-    .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
-    .replace(/[/?#].*$/, "")
-    .replace(/:\d+$/, "");
+  let rest = host.trim().toLowerCase();
+  const scheme = rest.indexOf("://");
+  if (scheme > 0 && SCHEME.test(rest.slice(0, scheme))) rest = rest.slice(scheme + 3);
+  for (let i = 0; i < rest.length; i += 1) {
+    const char = rest[i];
+    if (char === "/" || char === "?" || char === "#") {
+      rest = rest.slice(0, i);
+      break;
+    }
+  }
+  const colon = rest.lastIndexOf(":");
+  if (colon !== -1 && DIGITS.test(rest.slice(colon + 1))) rest = rest.slice(0, colon);
+  return rest;
 }
 
 /**
@@ -59,13 +74,24 @@ export function groundedGoals(
   return { tasks, dropped };
 }
 
+const OPENING_QUOTES = new Set(['"', "'", "“"]);
+const CLOSING_QUOTES = new Set(['"', "'", "”"]);
+
+/**
+ * The text less the quotes wrapping it, scanned from each end (CodeQL's polynomial-ReDoS on #172:
+ * a trailing `["'”]+$` over a run of quotes followed by anything else was quadratic).
+ */
+function unquoted(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && OPENING_QUOTES.has(text[start] ?? "")) start += 1;
+  while (end > start && CLOSING_QUOTES.has(text[end - 1] ?? "")) end -= 1;
+  return text.slice(start, end);
+}
+
 /** One goal as a chip shows it, or null when it is not a usable one. */
 function cleanGoal(raw: string): string | null {
-  const goal = raw
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^["'“]+|["'”]+$/g, "")
-    .trim();
+  const goal = unquoted(raw.replace(/\s+/g, " ").trim()).trim();
   if (goal.length === 0 || goal.length > GOAL_PROPOSAL_MAX_LENGTH) return null;
   return goal;
 }
