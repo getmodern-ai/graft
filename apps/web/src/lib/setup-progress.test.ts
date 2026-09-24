@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildingView,
   explainProgress,
+  JOB_POLL_MS,
+  jobPollInterval,
   progressCard,
   progressStage,
   SETUP_FAILED_LABEL,
@@ -246,5 +248,23 @@ describe("progressCard (GRA-215)", () => {
     for (const label of [...Object.values(SETUP_STAGE_LABEL), SETUP_FAILED_LABEL]) {
       expect(label).not.toContain("—");
     }
+  });
+});
+
+describe("jobPollInterval", () => {
+  it("reads the job every two seconds while it works, and before the first read lands", () => {
+    expect(jobPollInterval({ status: "success", data: { status: "running" } })).toBe(JOB_POLL_MS);
+    expect(jobPollInterval({ status: "pending", data: undefined })).toBe(JOB_POLL_MS);
+  });
+
+  it("stops once the job settled", () => {
+    expect(
+      jobPollInterval({ status: "success", data: { status: "succeeded", result: { tool: "a" } } }),
+    ).toBe(false);
+    expect(jobPollInterval({ status: "success", data: { status: "failed" } })).toBe(false);
+  });
+
+  it("stops while the read failed, leaving the step's Retry to read again", () => {
+    expect(jobPollInterval({ status: "error", data: undefined })).toBe(false);
   });
 });
