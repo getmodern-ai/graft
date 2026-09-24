@@ -711,6 +711,7 @@ describe("GET /api/setup/goal/suggestions", () => {
         vendor: "open-meteo",
         displayName: connection.displayName,
         primaryHost: OPEN_METEO.primaryHost,
+        hosts: [...OPEN_METEO.hosts],
         docsUrl: OPEN_METEO.docsUrl,
         curatedGoal: OPEN_METEO.goal,
       },

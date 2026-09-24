@@ -1013,14 +1013,19 @@ export function createApi(options: ApiOptions): Hono {
   const goalSuggestions = createGoalSuggestionMemo();
   api.get("/setup/goal/suggestions", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const { suggestions, outcome, error, cached } = await setupGoalSuggestions(ctx, principal, {
-      ...setupBuildDeps,
-      goalSuggestions,
-    });
+    const { suggestions, outcome, error, cached, dropped } = await setupGoalSuggestions(
+      ctx,
+      principal,
+      {
+        ...setupBuildDeps,
+        goalSuggestions,
+      },
+    );
     useLogger().set({
       goalSuggestions: {
         outcome,
         count: suggestions.length,
+        ...(dropped ? { dropped } : {}),
         ...(cached ? { cached } : {}),
         ...(error ? { error } : {}),
       },
