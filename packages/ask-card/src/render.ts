@@ -586,9 +586,11 @@ export function setupOpenRefusedOf(card: SetupCard, reason: string): string {
 /**
  * Render the Setup offer (GRA-210) into a fresh element: the title, the sentence, the agent, the
  * ask-again sentence and one primary button that opens the Setup page with `from=card` through the
- * host's link opener. Nothing is answered and nothing is polled; the button stays enabled after a
- * click, so a window the person closed early can be opened again. Where the host refuses to open
- * it, the card shows Setup's address to copy (`setupOpenRefusedOf`).
+ * host's link opener. Nothing is answered and nothing is polled; the button is disabled only while
+ * the host's opener is answering, so one attempt settles before the next starts and an older
+ * refusal cannot overwrite a later success, and enabled again after, so a window the person closed
+ * early can be opened again. Where the host refuses to open it, the card shows Setup's address to
+ * copy (`setupOpenRefusedOf`).
  */
 export function renderSetup(
   card: SetupCard,
@@ -630,6 +632,8 @@ export function renderSetup(
   address.hidden = true;
 
   const open = button(doc, SETUP_BUTTON, "primary", () => {
+    if (open.disabled) return;
+    open.disabled = true;
     void (async () => {
       try {
         await handlers.openLink(withFromCard(card.url));
@@ -641,6 +645,8 @@ export function renderSetup(
         address.hidden = false;
         if (!address.isConnected) status.after(address);
         return;
+      } finally {
+        open.disabled = false;
       }
       address.hidden = true;
       note(SETUP_OPENED_SENTENCE, "waiting");
