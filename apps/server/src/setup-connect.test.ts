@@ -231,7 +231,7 @@ describe("GET /api/setup/vendors", () => {
     expect(vendors.map((option: { starter: { id: string } }) => option.starter.id)).toEqual([
       "gmail",
       "google-calendar",
-      "google-sheets",
+      "google-drive",
       "slack",
       "notion",
       "github",

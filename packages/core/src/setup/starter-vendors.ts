@@ -21,7 +21,11 @@ import type { ProviderDescription } from "../connection/provider";
  * 0019), plus Open-Meteo, the keyless one, for a deployment where no link provider covers anything.
  * Every task is a GET: Setup's result step runs only a read-only tool, and the check counts a
  * `POST` as a write whatever it reads. That is why there is no Linear, whose API is GraphQL and
- * reads through `POST` alone.
+ * reads through `POST` alone. **And every task needs nothing the person has to look up** (GRA-217):
+ * no id, no name, no link; a free-text value with an obvious default (Open-Meteo's city) is the one
+ * input allowed, since a first run that fails is where a person leaves. That is why there is no
+ * Google Sheets, whose rows need a spreadsheet's id and a range, and Google Drive's file list stands
+ * in for it. Each entry's `hints` names its one endpoint and says the tool takes no input.
  *
  * `scheme` is **the keyring's path**, kept truthful (a pasted token's scheme, or the vendor's own
  * authorization-code endpoints) though `setupVendorOptions` never offers it: a link provider
@@ -92,7 +96,7 @@ export const STARTER_VENDORS = [
     },
     goal: "Show me my five latest emails",
     hints:
-      "List the five most recent messages in the inbox, with the sender, the subject and the date of each. Read only.",
+      "List the five most recent messages in the inbox with the messages list endpoint (`maxResults=5`, `labelIds=INBOX`), then read each with the message get endpoint (`format=metadata`, `metadataHeaders` From, Subject and Date), all GETs, returning the sender, the subject and the date of each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your five latest emails, with who sent each one and its subject.",
   },
@@ -110,33 +114,31 @@ export const STARTER_VENDORS = [
     },
     goal: "Show me what is on my calendar this week",
     hints:
-      "List the events on the primary calendar for the next seven days, with the title, the start time and the location of each. Read only.",
+      "List the events on the `primary` calendar for the next seven days with the events list endpoint, a GET, with `timeMin` now, `timeMax` seven days on, `singleEvents=true` and `orderBy=startTime`, returning the title, the start time and the location of each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your week ahead: each event's title, when it starts and where.",
   },
   {
-    id: "google-sheets",
-    vendor: "google-sheets",
-    displayName: "Google Sheets",
-    primaryHost: "https://sheets.googleapis.com/v4",
-    hosts: ["sheets.googleapis.com"],
-    docsUrl: "https://developers.google.com/workspace/sheets/api/reference/rest",
+    id: "google-drive",
+    // Pipedream's app is `google_drive`, the name its catalogue reads this slug as (hyphens as
+    // underscores), and its proxy forwards to `www.googleapis.com/drive/v3`, the host listed here.
+    vendor: "google-drive",
+    displayName: "Google Drive",
+    primaryHost: "https://www.googleapis.com/drive/v3",
+    hosts: ["www.googleapis.com"],
+    docsUrl: "https://developers.google.com/workspace/drive/api/reference/rest/v3",
     scheme: "oauth_authorization_code",
     schemeConfig: {
       ...GOOGLE_OAUTH,
-      scopes: "https://www.googleapis.com/auth/spreadsheets.readonly",
+      scopes: "https://www.googleapis.com/auth/drive.metadata.readonly",
     },
-    goal: "Show me the first rows of a spreadsheet I choose",
+    // Listing files needs nothing looked up; a spreadsheet's rows need its id and a range, and the
+    // Google Sheets starter's first run failed on both (GRA-217).
+    goal: "Show me my ten most recently edited files",
     hints:
-      "The tool takes a spreadsheet's link or its id as the input `spreadsheet`, reads the id from between `/d/` and the next slash when it is a link, and returns the spreadsheet's title, the first sheet's name and that sheet's first ten rows. Read only.",
-    // Google's own sample spreadsheet, readable by any Google account, so the first run has rows.
-    runInput: {
-      field: "spreadsheet",
-      label: "Spreadsheet link",
-      defaultValue:
-        "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
-    },
-    outcome: "The first rows of a spreadsheet you choose, starting with a sample one.",
+      "List the ten most recently modified files with Drive's files list endpoint, a GET, with `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,mimeType,webViewLink)`, returning those four for each. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Your ten most recently edited files, with when each changed and a link to it.",
   },
   {
     id: "slack",
@@ -151,9 +153,12 @@ export const STARTER_VENDORS = [
       tokenUrl: "https://slack.com/api/oauth.v2.access",
       scopes: "channels:read",
     },
+    // `conversations.list` over public channels needs `channels:read` alone, which Pipedream's
+    // `slack_v2` grants (its own List Channels action calls the same method); nothing else is asked
+    // of the token, so a narrower grant still runs.
     goal: "List the public channels in my workspace",
     hints:
-      "List the public channels in the Slack workspace, with the name, the topic and the member count of each. Read only.",
+      "List the public channels in the Slack workspace with the `conversations.list` method, a GET, with `types=public_channel`, `exclude_archived=true` and `limit=20`, returning the name, the topic and the member count of each. Slack answers 200 with `ok: false` on an error, so treat that as a failure naming Slack's `error`. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your workspace's public channels, with each one's topic and member count.",
   },
@@ -171,7 +176,7 @@ export const STARTER_VENDORS = [
     // Setup's result step runs only a read-only tool: the users list is a GET.
     goal: "Show me the people in my Notion workspace",
     hints:
-      "List the users of the Notion workspace with the users list endpoint, a GET, with the name and the type (person or bot) of each, sending the `Notion-Version` header the documentation names. Read only.",
+      "List the users of the Notion workspace with the users list endpoint, a GET, with `page_size=20`, returning the name and the type (person or bot) of each, and send the `Notion-Version` header the documentation names. The tool takes no input. Read only.",
     runInput: null,
     outcome: "The people in your Notion workspace, and which of them are bots.",
   },
@@ -187,7 +192,7 @@ export const STARTER_VENDORS = [
     schemeConfig: {},
     goal: "Show me the repositories I updated most recently",
     hints:
-      "List the authenticated user's ten most recently updated repositories, with the name, the description, the main language and the star count of each. Read only.",
+      "List the authenticated user's ten most recently updated repositories with the authenticated user's repositories endpoint, a GET, with `sort=updated` and `per_page=10`, returning the name, the description, the main language and the star count of each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your ten most recently updated repositories, with their language and stars.",
   },
@@ -204,7 +209,7 @@ export const STARTER_VENDORS = [
     // The contacts search is a POST, which the check counts as a write: the list is a GET.
     goal: "Show me ten contacts from my CRM",
     hints:
-      "List ten contacts with the contacts list endpoint, a GET and not the search, asking for the `firstname`, `lastname`, `email` and `company` properties and returning those for each. Read only.",
+      "List ten contacts with the contacts list endpoint, a GET and not the search, with `limit=10` and the `firstname`, `lastname`, `email` and `company` properties, returning those for each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Ten contacts from your CRM, with each one's email and company.",
   },

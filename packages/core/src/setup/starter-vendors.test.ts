@@ -37,7 +37,7 @@ describe("the starter integrations", () => {
     expect(STARTER_VENDOR_IDS).toEqual([
       "gmail",
       "google-calendar",
-      "google-sheets",
+      "google-drive",
       "slack",
       "notion",
       "github",
@@ -75,15 +75,29 @@ describe("the starter integrations", () => {
     expect(setupBuildHints(null, "List my tickets")).toBeNull();
   });
 
-  it("gives Open-Meteo a city, Google Sheets a sample link, and Gmail no input", () => {
+  it("asks for nothing the person has to look up: Open-Meteo's city has a default, the rest take no input", () => {
     expect(starterVendorOf("open-meteo")).toMatchObject({
       scheme: "none",
       hosts: ["api.open-meteo.com", "geocoding-api.open-meteo.com"],
       runInput: { field: "city", defaultValue: "Melbourne" },
     });
-    expect(starterVendorOf("google-sheets")?.runInput).toMatchObject({
-      field: "spreadsheet",
-      defaultValue: expect.stringMatching(/^https:\/\/docs\.google\.com\/spreadsheets\/d\//),
+    for (const starter of STARTER_VENDORS) {
+      if (starter.runInput) {
+        expect(starter.runInput.defaultValue.trim()).not.toBe("");
+      } else {
+        expect(starter.hints).toContain("The tool takes no input.");
+      }
+    }
+    expect(STARTER_VENDORS.filter((starter) => starter.runInput).map((s) => s.id)).toEqual([
+      "open-meteo",
+    ]);
+    // A spreadsheet's rows need its id and a range, both looked up (GRA-217): Drive lists files.
+    expect(starterVendorOf("google-sheets")).toBeNull();
+    expect(starterVendorOf("google-drive")).toMatchObject({
+      vendor: "google-drive",
+      primaryHost: "https://www.googleapis.com/drive/v3",
+      hosts: ["www.googleapis.com"],
+      runInput: null,
     });
     expect(starterVendorOf("gmail")?.runInput).toBeNull();
     expect(starterVendorOf("jira")).toBeNull();
@@ -122,7 +136,7 @@ describe("setupVendorOptions", () => {
     expect(ids(list)).toEqual([
       "gmail",
       "google-calendar",
-      "google-sheets",
+      "google-drive",
       "slack",
       "notion",
       "github",
@@ -155,7 +169,7 @@ describe("setupVendorOptions", () => {
     expect(list.map((option) => `${option.starter.id}:${option.connect}`)).toEqual([
       "gmail:link",
       "google-calendar:link",
-      "google-sheets:link",
+      "google-drive:link",
       "slack:link",
       "notion:link",
       "github:none",
