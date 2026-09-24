@@ -1,6 +1,7 @@
 import { type SetupHarness, setupHarnessOf } from "@graft/core/setup/harness";
 
 import type { Harness } from "./mcp-snippet";
+import { shortFailure } from "./short-failure";
 
 /**
  * The finish step's decisions (GRA-208; GRA-202, *The finish step and the prompt*), pure so they are
@@ -93,7 +94,9 @@ export function toolArrival(context: FinishToolFields): ToolArrival {
   if (context.tool) return { kind: "landed", wireName: context.tool.wireName };
   if (!context.job) return { kind: "none" };
   if (context.job.status === "failed") {
-    return { kind: "failed", message: context.job.failure ?? "The tool did not pass." };
+    // One sentence, a page of HTML summarised (GRA-217), as the building step shows it.
+    const { sentence } = shortFailure(context.job.failure, { fallback: "The tool did not pass." });
+    return { kind: "failed", message: sentence };
   }
   // Queued, running, or passed and not yet learned by the record's next read.
   return { kind: "arriving" };

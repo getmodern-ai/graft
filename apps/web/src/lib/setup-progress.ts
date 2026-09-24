@@ -1,3 +1,5 @@
+import { shortFailure, trimmed } from "./short-failure";
+
 /**
  * The building step's teaching (GRA-207; GRA-202, *Building and result*): every progress line an
  * `acquire` job writes, keyed to the stage of the loop it was written in, and one sentence per
@@ -142,12 +144,15 @@ export const SETUP_FAILED_LABEL = "The tool did not pass";
  * stands, the label of the stage it is in, one line under it that changes with each progress line
  * (the newest, its `Attempt N: ` prefix left to the attempt count), the attempt count once past
  * the first, and every line with its teaching for the *Details* disclosure. A failure's line is the
- * job's own sentence, the reason the person reads before changing the task.
+ * job's own sentence made short (`shortFailure`, GRA-217: a page's HTML is summarised), the reason
+ * the person reads before changing the task, and its raw text, trimmed, goes behind *Details*.
  */
 export type ProgressCard = {
   kind: BuildingView["kind"];
   label: string;
   message: string | null;
+  /** A failure's raw reason, trimmed, for *Details*; null when the sentence says it all. */
+  failureDetails: string | null;
   /** The attempt the job is on, only once past the first. */
   attempt: number | null;
   lines: ExplainedProgressLine[];
@@ -163,7 +168,11 @@ export function progressCard(
     | undefined,
 ): ProgressCard {
   const view = buildingView(job);
-  const lines = explainProgress(job?.progress ?? []);
+  // A line may carry what a service answered, a page of HTML included: Details shows it cut.
+  const lines = explainProgress(job?.progress ?? []).map((entry) => ({
+    ...entry,
+    line: trimmed(entry.line),
+  }));
   let label = SETUP_STAGE_LABEL.queued;
   for (const entry of lines) {
     if (entry.stage && entry.stage !== "sandbox") label = SETUP_STAGE_LABEL[entry.stage];
@@ -172,6 +181,8 @@ export function progressCard(
   }
   const newest = lines.at(-1)?.line;
   const attempts = job?.attempts ?? 0;
+  const failure =
+    view.kind === "failed" ? shortFailure(view.message, { fallback: "The job failed." }) : null;
   return {
     kind: view.kind,
     label:
@@ -180,12 +191,12 @@ export function progressCard(
         : view.kind === "passed"
           ? SETUP_STAGE_LABEL.done
           : label,
-    message:
-      view.kind === "failed"
-        ? view.message
-        : newest
-          ? sentenceCase(newest.replace(ATTEMPT_PREFIX, ""))
-          : null,
+    message: failure
+      ? failure.sentence
+      : newest
+        ? sentenceCase(newest.replace(ATTEMPT_PREFIX, ""))
+        : null,
+    failureDetails: failure?.details ?? null,
     attempt: attempts > 1 ? attempts : null,
     lines,
   };
