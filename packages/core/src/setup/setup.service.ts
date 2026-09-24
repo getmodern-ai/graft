@@ -22,7 +22,13 @@ import { ServiceError } from "../errors";
 import type { Principal } from "../tenancy";
 import { setupHarnessOf } from "./harness";
 import type { SetupDeps } from "./setup.deps";
-import { currentSetupStep, isAwaitingHarness, shouldShowSetup } from "./setup.rules";
+import {
+  currentSetupStep,
+  isAwaitingHarness,
+  SETUP_STEPS,
+  setupBackTargets,
+  shouldShowSetup,
+} from "./setup.rules";
 
 /**
  * **Setup** (CONTEXT.md; ADR 0024): the console's guided first run, as a person-scoped record and
@@ -392,12 +398,21 @@ export async function moveSetupConnect(
       });
     }
     if (confirm && !(await confirm({ db: tx }))) return false;
+    // A record that went back (GRA-215) may still hold a connection, a job and its tool. An ask
+    // leaves them as they are, since it may yet be answered with the same connection or declined;
+    // a connection replaces them only where it is another one, since the job was acquired against
+    // the one the record named; a reopen or a lost connection clears them with it.
+    const connectionId = move.kind === "connected" ? move.connectionId : null;
+    const built: SetupPatch =
+      record.connectionId === connectionId && connectionId !== null
+        ? {}
+        : { acquireJobId: null, toolId: null };
     const patch: SetupPatch =
       move.kind === "ask"
-        ? { step: "connect", pendingActionId: move.pendingActionId, connectionId: null }
+        ? { step: "connect", pendingActionId: move.pendingActionId }
         : move.kind === "connected"
-          ? { step: "goal", pendingActionId: null, connectionId: move.connectionId }
-          : { step: "vendor", pendingActionId: null, connectionId: null };
+          ? { step: "goal", pendingActionId: null, connectionId, ...built }
+          : { step: "vendor", pendingActionId: null, connectionId: null, ...built };
     await deps.saveSetup(tx, principal.personId, patch);
     return true;
   });
@@ -423,6 +438,12 @@ export type StartSetupBuildInput = {
   hints?: string | null;
   /** The line the job carries before its runner has said anything. */
   firstProgressLine: string;
+  /**
+   * The person agreed to leave behind the job the record still holds while it runs (GRA-215: a
+   * record that went back to the goal step keeps its job). Without it such a Build is refused
+   * `job_running`, so a running job is never dropped by a press that did not say so.
+   */
+  discardJob?: boolean;
 };
 
 export type SetupBuildDeps = {
@@ -480,6 +501,16 @@ export async function startSetupBuild(
         `The connection is no longer in ${agent.name}'s scope, so no tool can be acquired against it`,
         { details: { reason: "connection_not_in_scope", connectionId } },
       );
+    }
+    if (record.acquireJobId && !input.discardJob) {
+      const held = await deps.acquireJob.findAcquireJob(tx, scope, record.acquireJobId);
+      if (held && (held.status === "queued" || held.status === "running")) {
+        throw new ServiceError(
+          "CONFLICT",
+          "The job Setup started is still acquiring a tool; a new one leaves it behind",
+          { details: { reason: "job_running", acquireJobId: held.id } },
+        );
+      }
     }
     await grantBuildApproval(scoped, scope, connectionId, deps.approval);
     const created = await createAcquireJob(
@@ -564,6 +595,160 @@ export async function moveSetupBuild(
     return true;
   });
   return { state: await getSetupState(ctx, principal, deps, agentDeps), moved };
+}
+
+/**
+ * The agent a navigation move acts as: the record's, while it stands. Refused `CONFLICT` once
+ * completed (`setup_completed`) or before an agent (`setup_not_started`), as the finish is.
+ */
+function navigableAgent(record: SetupRow, active: readonly AgentOutput[]): AgentOutput {
+  if (record.step === "completed") {
+    throw new ServiceError("CONFLICT", "Setup is already complete", {
+      details: { reason: "setup_completed" },
+    });
+  }
+  const agent = record.agentId
+    ? active.find((candidate) => candidate.id === record.agentId)
+    : undefined;
+  if (!agent) {
+    throw new ServiceError("CONFLICT", "Setup has not started; choose a harness first", {
+      details: { reason: "setup_not_started" },
+    });
+  }
+  return agent;
+}
+
+/**
+ * **Back** (GRA-215, *The rail is navigable*): the record returned to a step the person completed,
+ * from the rail or the footer, one move for both. Admitted only for a step `setupBackTargets`
+ * names, so a step ahead of the record is refused `setup_step_ahead` and one the record never
+ * held (the result, passed by *Continue while it runs* before the tool landed) is refused
+ * `setup_step_unavailable`.
+ *
+ * **Nothing is discarded by looking back.** The connection, the job and the tool stay on the
+ * record, and a running job keeps running: it is learned on the building step when the person
+ * returns there, as it would have been. What does leave something behind is a forward action
+ * taken on the step returned to, each of which says so: another vendor chosen (the connect moves
+ * drop the job with the connection it was acquired against), or Build pressed again, which is
+ * refused `job_running` while the held job runs unless it says `discardJob`. A continue with
+ * nothing changed is `moveSetupOn`.
+ */
+export type SetupBackMove = { to: SetupStep };
+
+export async function moveSetupBack(
+  ctx: ServiceContext,
+  principal: Principal,
+  move: SetupBackMove,
+  deps: SetupDeps,
+  agentDeps: Pick<AgentDeps, "listAgents">,
+): Promise<SetupMoveResult> {
+  await ctx.db.transaction(async (tx) => {
+    const record = await deps.lockSetup(tx, principal.personId);
+    navigableAgent(record, activeOf(await agentDeps.listAgents(tx, principal.personId)));
+    if (!setupBackTargets(record).includes(move.to)) {
+      const ahead = SETUP_STEPS.indexOf(move.to) >= SETUP_STEPS.indexOf(record.step);
+      throw new ServiceError(
+        "CONFLICT",
+        ahead
+          ? "That step is ahead of where Setup stands; continue to reach it"
+          : "Setup has nothing to show on that step yet",
+        {
+          details: {
+            reason: ahead ? "setup_step_ahead" : "setup_step_unavailable",
+            step: record.step,
+          },
+        },
+      );
+    }
+    await deps.saveSetup(tx, principal.personId, { step: move.to });
+  });
+  return { state: await getSetupState(ctx, principal, deps, agentDeps), moved: true };
+}
+
+/**
+ * **Continue on a step returned to, with nothing changed** (GRA-215): one step on, the record's
+ * connection, job and tool kept, so a person who went back to look walks forward again without
+ * connecting or building a second time. `from` is the step the page shows, so a tab that fell
+ * behind is refused `setup_step` rather than moving a record another tab moved.
+ *
+ * - `harness` to `vendor`, with `harness` the person's choice. It may differ from the record's only
+ *   while the agent is Setup's own and still awaiting its harness, since the harness decides
+ *   nothing but the finish's instructions and the token-or-consent path; the agent keeps its name
+ *   unless that was the old harness's default, which follows the new one. Otherwise a different
+ *   harness is refused `harness_fixed`.
+ * - `connect` to `goal`, with the connection made (no ask still open).
+ * - `goal` to `building`, with the job the record holds (the console offers it only while the
+ *   task reads as the job's).
+ * - `building` to `result`, with the tool the job published.
+ *
+ * Forward from the vendor step is always a choice (`POST /api/setup/connect`), from the building
+ * step while it runs *Continue while it runs*, and from the result its own Continue.
+ */
+export type SetupOnMove =
+  | { from: "harness"; harness?: SetupHarness }
+  | { from: "connect" | "goal" | "building" };
+
+export async function moveSetupOn(
+  ctx: ServiceContext,
+  principal: Principal,
+  move: SetupOnMove,
+  deps: SetupDeps,
+  agentDeps: Pick<AgentDeps, "listAgents" | "updateAgent">,
+): Promise<SetupMoveResult> {
+  await ctx.db.transaction(async (tx) => {
+    const record = await deps.lockSetup(tx, principal.personId);
+    const agent = navigableAgent(
+      record,
+      activeOf(await agentDeps.listAgents(tx, principal.personId)),
+    );
+    if (record.step !== move.from) {
+      throw new ServiceError("CONFLICT", "Setup has moved on from that step", {
+        details: { reason: "setup_step", step: record.step },
+      });
+    }
+    const missing = (sentence: string) =>
+      new ServiceError("CONFLICT", sentence, {
+        details: { reason: "setup_step_unavailable", step: record.step },
+      });
+    let patch: SetupPatch;
+    switch (move.from) {
+      case "harness": {
+        const next = move.harness ?? record.harness;
+        if (next !== record.harness) {
+          if (record.harness === null || next === null || !isAwaitingHarness(agent)) {
+            throw new ServiceError(
+              "CONFLICT",
+              `${agent.name} already has its harness, so Setup keeps it`,
+              { details: { reason: "harness_fixed" } },
+            );
+          }
+          if (agent.name === setupHarnessOf(record.harness).agentName) {
+            await agentDeps.updateAgent(tx, principal.personId, agent.id, {
+              name: setupHarnessOf(next).agentName,
+            });
+          }
+        }
+        patch = { step: "vendor", harness: next };
+        break;
+      }
+      case "connect":
+        if (!record.connectionId || record.pendingActionId) {
+          throw missing("The connection is not made yet; answer the ask first");
+        }
+        patch = { step: "goal" };
+        break;
+      case "goal":
+        if (!record.acquireJobId) throw missing("There is no job to return to; press Build");
+        patch = { step: "building" };
+        break;
+      case "building":
+        if (!record.toolId) throw missing("The tool has not landed yet");
+        patch = { step: "result" };
+        break;
+    }
+    await deps.saveSetup(tx, principal.personId, patch);
+  });
+  return { state: await getSetupState(ctx, principal, deps, agentDeps), moved: true };
 }
 
 /**

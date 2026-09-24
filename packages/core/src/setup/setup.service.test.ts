@@ -10,11 +10,15 @@ import {
   connectingAgentOf,
   finishSetup,
   getSetupState,
+  moveSetupBack,
   moveSetupBuild,
   moveSetupConnect,
+  moveSetupOn,
+  type SetupBuildDeps,
   type SetupBuildMove,
   skipSetup,
   startSetup,
+  startSetupBuild,
 } from "./setup.service";
 
 /**
@@ -91,8 +95,16 @@ function world(options: { agents?: AgentRow[]; work?: { connections: number; too
       agents[index] = issued;
       return issued;
     }),
+    updateAgent: vi.fn(async (_db, _p, id, patch) => {
+      const index = agents.findIndex((row) => row.id === id);
+      const row = agents[index];
+      if (!row) return null;
+      const updated = { ...row, ...patch };
+      agents[index] = updated;
+      return updated;
+    }),
     replaceAgentConnections: vi.fn(async () => {}),
-    listScopeConnectionIds: vi.fn(async () => []),
+    listScopeConnectionIds: vi.fn(async () => ["conn_1", "conn_2"]),
     findConnectionsByIds: vi.fn(async () => []),
     newId: () => "agent_new",
     now: () => NOW,
@@ -603,5 +615,288 @@ describe("the result and finish steps", () => {
     const done = await finishSetup(ctx, PRINCIPAL, adopted.deps, adopted.agentDeps);
     expect(done.token).toBeNull();
     expect(done.state.setup).toMatchObject({ step: "completed", harness: null });
+  });
+});
+
+describe("going back and on again (GRA-215)", () => {
+  /** A record on `step` holding what that step needs, run as the agent minted for `harness`. */
+  async function on(
+    step: "vendor" | "connect" | "goal" | "building" | "result" | "finish",
+    harness: "claude" | "hermes" = "claude",
+    held: { toolId?: string | null } = {},
+  ) {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness }, w.deps, w.agentDeps);
+    const at = ["vendor", "connect", "goal", "building", "result", "finish"].indexOf(step);
+    await w.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, {
+      step,
+      connectionId: at >= 1 ? "conn_1" : null,
+      acquireJobId: at >= 3 ? "job_1" : null,
+      toolId: held.toolId !== undefined ? held.toolId : at >= 4 ? "tool_1" : null,
+    });
+    return {
+      ...w,
+      back: (to: Parameters<typeof moveSetupBack>[2]["to"]) =>
+        moveSetupBack(ctx, PRINCIPAL, { to }, w.deps, w.agentDeps),
+      onward: (move: Parameters<typeof moveSetupOn>[2]) =>
+        moveSetupOn(ctx, PRINCIPAL, move, w.deps, w.agentDeps),
+    };
+  }
+
+  it("returns from the finish to every step it completed, keeping the connection, the job and the tool", async () => {
+    for (const to of ["result", "building", "goal", "connect", "vendor", "harness"] as const) {
+      const w = await on("finish");
+      const back = await w.back(to);
+      expect(back.moved).toBe(true);
+      expect(back.state.step).toBe(to);
+      expect(back.state.setup).toMatchObject({
+        step: to,
+        connectionId: "conn_1",
+        acquireJobId: "job_1",
+        toolId: "tool_1",
+      });
+    }
+  });
+
+  it("returns from each step to the one before it", async () => {
+    const pairs = [
+      ["vendor", "harness"],
+      ["connect", "vendor"],
+      ["goal", "connect"],
+      ["building", "goal"],
+      ["result", "building"],
+    ] as const;
+    for (const [from, to] of pairs) {
+      const w = await on(from);
+      expect((await w.back(to)).state.setup?.step).toBe(to);
+    }
+  });
+
+  it("refuses a step ahead of the record, the step it stands on, and a completed Setup", async () => {
+    const w = await on("goal");
+    await expect(w.back("building")).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { reason: "setup_step_ahead", step: "goal" },
+    });
+    await expect(w.back("goal")).rejects.toMatchObject({
+      details: { reason: "setup_step_ahead" },
+    });
+    expect(w.record()).toMatchObject({ step: "goal" });
+
+    const done = await on("finish");
+    await finishSetup(ctx, PRINCIPAL, done.deps, done.agentDeps);
+    await expect(done.back("goal")).rejects.toMatchObject({
+      details: { reason: "setup_completed" },
+    });
+  });
+
+  it("refuses the result a record passed while the job ran, since no tool is there to show", async () => {
+    const w = await on("finish", "claude", { toolId: null });
+    await expect(w.back("result")).rejects.toMatchObject({
+      details: { reason: "setup_step_unavailable", step: "finish" },
+    });
+    expect((await w.back("building")).state.setup?.step).toBe("building");
+  });
+
+  it("keeps a running job when the person looks back, and walks on to it with nothing changed", async () => {
+    const w = await on("building");
+    await w.back("harness");
+    expect(w.record()).toMatchObject({ step: "harness", acquireJobId: "job_1" });
+    await w.onward({ from: "harness" });
+    await w.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, { step: "connect" });
+    const goal = await w.onward({ from: "connect" });
+    expect(goal.state.setup).toMatchObject({ step: "goal", acquireJobId: "job_1" });
+    const building = await w.onward({ from: "goal" });
+    expect(building.state.setup).toMatchObject({ step: "building", acquireJobId: "job_1" });
+    // The tool has not landed, so there is no result to walk on to.
+    await expect(w.onward({ from: "building" })).rejects.toMatchObject({
+      details: { reason: "setup_step_unavailable" },
+    });
+  });
+
+  it("drops the job only when another vendor's connection replaces the one it was acquired against", async () => {
+    const same = await on("building");
+    await same.back("vendor");
+    await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "connected", agentId: "agent_new", connectionId: "conn_1" },
+      same.deps,
+      same.agentDeps,
+    );
+    expect(same.record()).toMatchObject({ step: "goal", acquireJobId: "job_1" });
+
+    const other = await on("result");
+    await other.back("vendor");
+    await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "connected", agentId: "agent_new", connectionId: "conn_2" },
+      other.deps,
+      other.agentDeps,
+    );
+    expect(other.record()).toMatchObject({
+      step: "goal",
+      connectionId: "conn_2",
+      acquireJobId: null,
+      toolId: null,
+    });
+
+    const asked = await on("building");
+    await asked.back("vendor");
+    await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "ask", agentId: "agent_new", pendingActionId: "pa_9" },
+      asked.deps,
+      asked.agentDeps,
+    );
+    // An ask leaves them until it is answered: with another connection they go, declined too.
+    expect(asked.record()).toMatchObject({ step: "connect", acquireJobId: "job_1" });
+    await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "reopen", askId: "pa_9" },
+      asked.deps,
+      asked.agentDeps,
+    );
+    expect(asked.record()).toMatchObject({
+      step: "vendor",
+      connectionId: null,
+      acquireJobId: null,
+    });
+  });
+
+  it("changes the harness while the agent awaits it, renaming a default name, and moves to the vendor", async () => {
+    const w = await on("goal");
+    await w.back("harness");
+    const next = await w.onward({ from: "harness", harness: "codex" });
+    expect(next.state.setup).toMatchObject({ step: "vendor", harness: "codex" });
+    expect(next.state.agent?.name).toBe("Codex");
+    // The connection and anything built against it stay: the harness decides none of it.
+    expect(next.state.setup).toMatchObject({ connectionId: "conn_1" });
+
+    const named = await on("vendor");
+    const agent = named.agents[0];
+    if (agent) named.agents[0] = { ...agent, name: "Work Claude" };
+    await named.back("harness");
+    const kept = await named.onward({ from: "harness", harness: "chatgpt" });
+    expect(kept.state.agent?.name).toBe("Work Claude");
+  });
+
+  it("refuses a different harness once the agent has its token or client, and for an adopted agent", async () => {
+    const w = await on("vendor", "hermes");
+    const agent = w.agents[0];
+    if (agent) w.agents[0] = { ...agent, tokenHash: "h", tokenPrefix: "grft_abc" };
+    await w.back("harness");
+    await expect(w.onward({ from: "harness", harness: "openclaw" })).rejects.toMatchObject({
+      details: { reason: "harness_fixed" },
+    });
+    // The same harness, or none named, continues.
+    expect((await w.onward({ from: "harness" })).state.setup?.step).toBe("vendor");
+
+    const adopted = world({ agents: [agentRow("agent_1")] });
+    await startSetup(ctx, PRINCIPAL, {}, adopted.deps, adopted.agentDeps);
+    await moveSetupBack(ctx, PRINCIPAL, { to: "harness" }, adopted.deps, adopted.agentDeps);
+    await expect(
+      moveSetupOn(
+        ctx,
+        PRINCIPAL,
+        { from: "harness", harness: "claude" },
+        adopted.deps,
+        adopted.agentDeps,
+      ),
+    ).rejects.toMatchObject({ details: { reason: "harness_fixed" } });
+  });
+
+  it("refuses a continue from a step the record is not on, and one with nothing to continue to", async () => {
+    const w = await on("goal", "claude");
+    await expect(w.onward({ from: "connect" })).rejects.toMatchObject({
+      details: { reason: "setup_step", step: "goal" },
+    });
+    // On goal with no job held, Build is the way on.
+    await expect(w.onward({ from: "goal" })).rejects.toMatchObject({
+      details: { reason: "setup_step_unavailable" },
+    });
+    const waiting = await on("connect");
+    await waiting.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, {
+      connectionId: null,
+      pendingActionId: "pa_1",
+    });
+    await expect(waiting.onward({ from: "connect" })).rejects.toMatchObject({
+      details: { reason: "setup_step_unavailable" },
+    });
+  });
+});
+
+describe("Build over a job the record still holds (GRA-215)", () => {
+  function buildDeps(w: ReturnType<typeof world>, status: "queued" | "running" | "failed") {
+    const jobs: Record<string, unknown>[] = [];
+    const deps = {
+      setup: w.deps,
+      agent: w.agentDeps,
+      connection: { findConnection: vi.fn(async () => ({ id: "conn_1", revokedAt: null })) },
+      approval: {
+        findConnection: vi.fn(async () => ({ id: "conn_1" })),
+        insertBuildApproval: vi.fn(async (_db: unknown, row: unknown) => row),
+        findBuildApproval: vi.fn(async () => null),
+        now: () => NOW,
+      },
+      acquireJob: {
+        findAcquireJob: vi.fn(async (_db: unknown, _scope: unknown, id: string) => ({
+          id,
+          status,
+        })),
+        findConnection: vi.fn(async () => ({ id: "conn_1" })),
+        insertAcquireJob: vi.fn(async (_db: unknown, row: Record<string, unknown>) => {
+          jobs.push(row);
+          return row;
+        }),
+        newId: () => `job_${jobs.length + 2}`,
+        now: () => NOW,
+      },
+    } as unknown as SetupBuildDeps;
+    return { deps, jobs };
+  }
+
+  async function onGoalHolding(status: "queued" | "running" | "failed") {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness: "claude" }, w.deps, w.agentDeps);
+    await w.deps.saveSetup(fakeDb as never, PRINCIPAL.personId, {
+      step: "building",
+      connectionId: "conn_1",
+      acquireJobId: "job_1",
+    });
+    await moveSetupBack(ctx, PRINCIPAL, { to: "goal" }, w.deps, w.agentDeps);
+    const built = buildDeps(w, status);
+    return { record: w.record, deps: built.deps, jobs: built.jobs };
+  }
+
+  const input = { goal: "Read the weather", firstProgressLine: "Queued: the job waits." };
+
+  it("refuses to leave a running job behind unless the Build says so", async () => {
+    for (const status of ["queued", "running"] as const) {
+      const w = await onGoalHolding(status);
+      await expect(startSetupBuild(ctx, PRINCIPAL, input, w.deps)).rejects.toMatchObject({
+        code: "CONFLICT",
+        details: { reason: "job_running", acquireJobId: "job_1" },
+      });
+      expect(w.jobs).toHaveLength(0);
+      expect(w.record()).toMatchObject({ step: "goal", acquireJobId: "job_1" });
+      const { state } = await startSetupBuild(
+        ctx,
+        PRINCIPAL,
+        { ...input, discardJob: true },
+        w.deps,
+      );
+      expect(w.jobs).toHaveLength(1);
+      expect(state.setup).toMatchObject({ step: "building", acquireJobId: "job_2" });
+    }
+  });
+
+  it("builds over a held job that already failed without asking", async () => {
+    const w = await onGoalHolding("failed");
+    const { state } = await startSetupBuild(ctx, PRINCIPAL, input, w.deps);
+    expect(state.setup).toMatchObject({ step: "building", acquireJobId: "job_2" });
   });
 });

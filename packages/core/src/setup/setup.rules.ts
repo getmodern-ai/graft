@@ -92,6 +92,62 @@ export function shouldOfferSetup(
   return work.connections === 0;
 }
 
+/** The fields of the record the navigation rules read (`SetupOutput`, or its wire form). */
+export type SetupNavigationFields = {
+  step: SetupStep;
+  pendingActionId: string | null;
+  connectionId: string | null;
+  acquireJobId: string | null;
+  toolId: string | null;
+};
+
+/**
+ * Whether the record holds what a step shows, so the step can be returned to (GRA-215): the harness
+ * and the vendor always; the connect step once an ask or a connection is named; the goal once a
+ * connection is; the building step once a job is; the result once a tool is. The finish is never a
+ * step to go back to, since only `completed` lies beyond it and a completed Setup does not move.
+ * The result is the one step a record passes without holding: *Continue while it runs* goes from
+ * the building step straight to the finish, and the result is not there to return to until the tool
+ * lands.
+ */
+export function setupStepReachable(
+  step: SetupStep,
+  record: Omit<SetupNavigationFields, "step">,
+): boolean {
+  switch (step) {
+    case "harness":
+    case "vendor":
+      return true;
+    case "connect":
+      return record.connectionId !== null || record.pendingActionId !== null;
+    case "goal":
+      return record.connectionId !== null;
+    case "building":
+      return record.acquireJobId !== null;
+    case "result":
+      return record.acquireJobId !== null && record.toolId !== null;
+    default:
+      return false;
+  }
+}
+
+/**
+ * The steps the record may go back to (GRA-215, *The rail is navigable*): every step before the
+ * one it stands on that it holds what for (`setupStepReachable`), in order. None on the harness
+ * step and none once completed. The server's back move admits exactly these, and the console's rail
+ * links exactly these beside the current step, so a step ahead is never a link.
+ */
+export function setupBackTargets(record: SetupNavigationFields): SetupStep[] {
+  if (record.step === "completed") return [];
+  const at = SETUP_STEPS.indexOf(record.step);
+  return SETUP_STEPS.slice(0, at).filter((step) => setupStepReachable(step, record));
+}
+
+/** The step the footer's *Back* returns to: the nearest of `setupBackTargets`, or null on the first. */
+export function previousSetupStep(record: SetupNavigationFields): SetupStep | null {
+  return setupBackTargets(record).at(-1) ?? null;
+}
+
 /** The fields of an agent (`AgentOutput`, or its wire form) the predicate reads. */
 export type AgentHarnessFields = {
   revokedAt: At;
