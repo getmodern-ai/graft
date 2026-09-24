@@ -174,7 +174,7 @@ function ToolRun({
           code={runResultText(answer.result)}
           copyLabel="Copy answer"
           wrap
-          hint="This is what the vendor answered, as your harness will see it."
+          hint="This is what the integration answered, as your harness will see it."
         />
       ) : answer && !answer.ok ? (
         <Alert variant="destructive">

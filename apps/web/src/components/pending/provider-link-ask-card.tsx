@@ -186,10 +186,10 @@ export function ProviderLinkAskCard({
       {open ? (
         <>
           <p className="text-muted-foreground text-xs">
-            One click. Connect opens {provider}'s sign-in for {payload.vendor} in a popup, and you
-            sign in at the vendor there. The account's token stays with {provider}; Graft stores
-            only the account's id and relays every call for this connection through {provider}.
-            Nothing is typed here, and nothing secret is stored in Graft.
+            One click. Connect opens {provider}'s sign-in for {payload.displayName} in a popup, and
+            you sign in to {payload.displayName} there. The account's token stays with {provider},
+            and Graft stores only the account's id and relays every call for this connection through{" "}
+            {provider}. Nothing is typed here, and nothing secret is stored in Graft.
           </p>
           <BuildApprovalItem
             id={`ask-${action.id}-approve-build`}
@@ -230,8 +230,7 @@ function LinkStatus({
         <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
           <Spinner className="size-3.5" />
           <span>
-            Sign in at the vendor in {provider}'s popup. This card updates once you have been sent
-            back.
+            Sign in through {provider}'s popup. This card updates once you have been sent back.
           </span>
           <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
             Stop waiting

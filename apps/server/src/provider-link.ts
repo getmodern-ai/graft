@@ -233,7 +233,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
     // it. Read to phrase the sentence and for nothing else; the ask stays open for another try.
     if (query[LINK_OUTCOME_PARAM] === "error") {
       return failedCounted(
-        `${provider.name} reported that the sign-in at ${proposal.vendor} did not complete, and nothing was connected. Press Connect on the ask to try again.`,
+        `${provider.name} reported that the sign-in to ${proposal.displayName} did not complete, and nothing was connected. Press Connect on the ask to try again.`,
       );
     }
 

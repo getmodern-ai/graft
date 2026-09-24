@@ -470,7 +470,7 @@ class AcquireLoop {
       );
     }
     await this.progress(
-      `Authoring "${this.job.goal}" against ${connection.displayName} (${connection.vendor}). Reads reach the vendor for real; every write is previewed at the proxy and nothing changes there.`,
+      `Authoring "${this.job.goal}" against ${connection.displayName} (${connection.vendor}). Reads reach ${connection.displayName} for real; every write is previewed at the proxy and nothing changes there.`,
     );
 
     const skill = (await this.deps.skills()).find((s) => s.name === "authoring-a-tool");

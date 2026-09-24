@@ -26,15 +26,16 @@ export type SetupBuildStage =
 export const SETUP_STAGE_EXPLANATION: Record<SetupBuildStage, string> = {
   queued: "The job waits for a free runner. Graft runs a few jobs at once.",
   model: "Graft's model decides the next step. This is usually the longest wait.",
-  docs: "Graft's model reads the vendor's own documentation before it writes anything.",
+  docs: "Graft's model reads the integration's own documentation before it writes anything.",
   write: "The model writes the smallest module that makes the call.",
   sandbox:
-    "The module runs in this agent's own sandbox, which reaches the vendor only through Graft's proxy.",
+    "The module runs in this agent's own sandbox, which reaches the integration only through Graft's proxy.",
   check: "A check reads the module before it runs and refuses anything a tool may not do.",
-  prove: "Proof reads call the vendor for real, read only, to confirm it answers as documented.",
+  prove:
+    "Proof reads call the integration for real, read only, to confirm it answers as documented.",
   publish: "The module is saved as a version that stays inactive until its dry run passes.",
   dry_run:
-    "The dry run runs the tool once with a test input. Reads reach the vendor, and a write is only previewed.",
+    "The dry run runs the tool once with a test input. Reads reach the integration, and a write is only previewed.",
   done: "The tool passed and is promoted into the agent's working set.",
 };
 

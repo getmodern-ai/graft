@@ -95,7 +95,7 @@ export function schemeLabel(scheme: string | null): string {
  * provider's page and the provider holds the token. The row says that, and never the keyring label.
  */
 export function linkSchemeLabel(card: AskCard): string {
-  return `Sign-in at the vendor through ${card.provider ?? "the provider"}; no client to register, nothing typed in Graft`;
+  return `Sign-in to ${card.displayName} through ${card.provider ?? "the provider"}; no client to register, nothing typed in Graft`;
 }
 
 /** The person's own words for the pending-action kind — the eyebrow above the title. */
@@ -160,21 +160,21 @@ export function descriptionOf(card: AskCard): string {
     case "connection":
       if (isLinkAsk(card)) {
         const provider = card.provider ?? "the provider";
-        return `${card.agentName} proposes this connection. You sign in at the vendor on ${provider}'s page, which opens in a new window; the account's token stays with ${provider}, and nothing is typed here.`;
+        return `${card.agentName} proposes this connection. You sign in to ${card.displayName} on ${provider}'s page, which opens in a new window; the account's token stays with ${provider}, and nothing is typed here.`;
       }
       if (card.widens) {
         // A widening (GRA-167): the row exists; the yes adds hosts to it and makes nothing new.
-        return `${card.agentName} proposes that the connection you already have to ${card.displayName} also reach ${card.widens.addedHosts.join(", ")}. The vendor takes no credential, so there is nothing to enter: confirming adds the hosts to that connection; no new connection is made.`;
+        return `${card.agentName} proposes that the connection you already have to ${card.displayName} also reach ${card.widens.addedHosts.join(", ")}. The integration takes no credential, so there is nothing to enter: confirming adds the hosts to that connection; no new connection is made.`;
       }
       return card.answerable
-        ? `${card.agentName} proposes this connection. The vendor takes no credential, so there is nothing to enter: confirming makes the connection and gives it to this agent.`
+        ? `${card.agentName} proposes this connection. The integration takes no credential, so there is nothing to enter: confirming makes the connection and gives it to this agent.`
         : `${card.agentName} proposes this connection. Its credential is entered in Graft's console, which opens in a new window, never here or in the chat; this card updates once it is stored.`;
     case "credential":
-      return `The vendor refused ${card.agentName}'s calls. The new credential is entered in Graft's console, which opens in a new window, never here or in the chat; this card updates once it is stored.`;
+      return `${card.displayName} refused ${card.agentName}'s calls. The new credential is entered in Graft's console, which opens in a new window, never here or in the chat; this card updates once it is stored.`;
     case "tool": {
       const does = card.tool?.destructive
-        ? "can delete or overwrite data at the vendor"
-        : "changes data at the vendor";
+        ? `can delete or overwrite data in ${card.displayName}`
+        : `changes data in ${card.displayName}`;
       const holds = card.tool?.askEveryCall
         ? "You have set this tool to ask every time, so a yes is for this call alone; change that on the agent's page in the console."
         : "Your answer holds for this agent's next calls, a no as much as a yes, until withdrawn on its page in the console.";
@@ -195,7 +195,7 @@ export function toolHintsLabel(tool: NonNullable<AskCard["tool"]>): string {
 export function factsOf(card: AskCard): Array<{ label: string; value: string; mono?: boolean }> {
   const facts: Array<{ label: string; value: string; mono?: boolean }> = [
     { label: "Agent", value: card.agentName },
-    { label: "Vendor", value: card.vendor },
+    { label: "Integration", value: card.vendor },
     { label: "Connection", value: card.displayName },
   ];
   if (card.kind === "tool" && card.toolName) {
@@ -561,7 +561,7 @@ export const SETUP_BUTTON = "Set up your first tool";
 
 /** What the Setup card says under its title: what Setup does, and where it happens. */
 export function setupDescriptionOf(card: SetupCard): string {
-  return `${card.agentName} has no vendor connected yet. Setup, in Graft's console, connects one and has Graft acquire a first tool for this agent in a few clicks. It opens in a new window, and nothing is typed in the chat.`;
+  return `${card.agentName} has no integration connected yet. Setup, in Graft's console, connects one and has Graft acquire a first tool for this agent in a few clicks. It opens in a new window, and nothing is typed in the chat.`;
 }
 
 /** The sentence the Setup card always carries: there is nothing to wait for here, so ask again. */

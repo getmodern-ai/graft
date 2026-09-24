@@ -1005,19 +1005,25 @@ record through `useSetupMutation`, which writes the answered state into the one 
 The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline) and
 offers *Set up Graft* in its empty body to a person who skipped.
 
-**The vendor and connect steps are the agent's own connection ask** (GRA-206). The starters are
-`@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs, the
-keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
-`outcome` sentence); adding one is one entry. `setupVendorOptions` is the pure filter and order over
-each starter's covering provider: a keyring form over `oauth_authorization_code` is dropped, and
-`link` leads, then `none`, then `keyless` (a `none` scheme the form provider lists), then `form`.
+**The integration and connect steps are the agent's own connection ask** (GRA-206). The starters
+are `@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs,
+the keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
+`outcome` sentence); adding one is one entry. **Starters are one-click only** (GRA-216): the list is
+common services a link provider connects by OAuth (Gmail, Google Calendar, Google Sheets, Slack,
+Notion, GitHub, HubSpot) plus Open-Meteo, the keyless one, each task a `GET`, since the check counts
+a `POST` as a write and the result step runs only a read-only tool (so no Linear, whose API is
+GraphQL). The keyring's scheme on each entry stays truthful for the form path a link provider steps
+aside to (GRA-147). `setupVendorOptions` is the pure filter and order over each starter's covering
+provider: only `link`, `none` and `keyless` (a `none` scheme the form provider lists) are offered,
+in that order, and a starter the keyring would connect with a pasted key or an operator's own OAuth
+client is dropped, so the keyring alone offers Open-Meteo alone; `SetupConnectKind` has no `form`.
 `GET /api/setup/vendors`
 asks `providerFor` per starter in `Backings.providers` order (`apps/server/src/setup-connect.ts`);
 the console never computes coverage. `POST /api/setup/connect` (`SetupConnectBody`: `{ starterId }`
 or `{ connectionId }`) calls GRA-203's `routeConnectionProposal` as the setup's agent, through
 `ApiOptions.connectionRouting` (the server binds its `McpDeps`), and moves the record through
 `moveSetupConnect`: an ask to `connect` with `pendingActionId` (a repeat re-uses it by proposal
-key), a connection made or found at once, or *Another vendor*'s ordinary-form connection (added to
+key), a connection made or found at once, or *Another integration*'s ordinary-form connection (added to
 the agent's scope), to `goal`. `GET /api/setup` reads the ask the record waits on and never takes
 a live answer: answered with a connection (or a `scope` ask allowed) that is still live, usable and
 in the agent's scope it moves to `goal` naming it; declined, expired, gone, or answered with a
@@ -1031,7 +1037,7 @@ move lands only on the record as it was seen on `vendor`, its `updatedAt` unchan
 stands, even one that closed and left the record on `vendor` again. A stale answer is judged again
 under the lock before it is taken, so one made good meanwhile is left for the next read. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
 captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
-one answer count once. A listed agent's scope grown by Setup (*Another vendor*, a `scope` ask
+one answer count once. A listed agent's scope grown by Setup (*Another integration*, a `scope` ask
 answered in the console) is announced to its session, since no waiting call of its own does. The
 console's connect step draws the open ask from the inbox's list with `PendingActionCard` under
 `origin="setup"` (no model provenance, the proposal editor folded behind *Edit the connection*;
@@ -1134,12 +1140,14 @@ job, `building` to `result` with the tool; `from` must be the record's step (`se
 leaves a held job behind is a forward action that says so: the connect moves drop the job and tool
 when a different connection replaces the one they were acquired against (an ask leaves them until
 it is answered; a reopen or a lost connection clears them), and while the held job is queued or
-running a choice of another vendor (`POST /api/setup/connect`, judged on the vendor) or a Build
-(`startSetupBuild`) is refused `job_running` unless the body carries `discardJob: true`, which the
-console sends after `DiscardJobDialog`. `SetupGoalContext.job` is the held job, whose goal the goal
-step shows and offers Continue to while the text is unchanged. Neither route is a mutation-table
-row. The console: `SetupRail` and `SetupProgress` link the steps `setupRail(step, record)` marks
-(`lib/setup-steps.ts`, with `backTargetOf` for the footer), labelled *Integration* and *Task*;
+running a choice of another vendor (`POST /api/setup/connect`, judged on the vendor, then again on
+the row the same starter's routing resolves or the ask it hands back settles on, GRA-216's review)
+or a Build (`startSetupBuild`) is refused `job_running` unless the body carries `discardJob: true`,
+which the console sends after `DiscardJobDialog`. `SetupGoalContext.job` is the held job, whose
+goal the goal step shows and offers Continue to while the text is unchanged. Neither route is a
+mutation-table row. The console: `SetupRail` and `SetupProgress` link the steps
+`setupRail(step, record)` marks (`lib/setup-steps.ts`, with `backTargetOf` for the footer),
+labelled *Integration* and *Task*;
 `SetupFooter` (Back bottom left through `useSetupBack`, the step's primary bottom right) closes
 every step, the connect step's open ask keeping its card's own Connect as the primary; the building
 step is `progressCard` (`lib/setup-progress.ts`: a plain label per stage, the newest line, the
@@ -1152,6 +1160,18 @@ with `setupFinishedToast` (`lib/setup-page.ts`'s `afterSetupFinish`: `leave`, `c
 only for a token the finish itself issued); GRA-208 stayed on every console visit and needed a
 second press on *Open the console*.
 
+**Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
+amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects
+and *task* for what the first tool should do: Setup's steps (*Choose an integration*, *What should
+your first tool do?*, the *Task* field, *Suggested tasks*, *Another integration*), the console's
+connection screens and pending cards, the ask card's rendered text, and the server's sentences a
+person reads (Setup's refusals, the OAuth callback's). Code identifiers (`vendor`, `STARTER_VENDORS`,
+the `<vendor>__<name>` wire form, columns, the record's step values `vendor` and `goal`, the
+analytics `step`), and model-facing text (`SERVER_INSTRUCTIONS`, tool descriptions, the authoring
+skill, `handoff-message.ts`, the acquire job's own progress lines) keep *vendor* and *goal*. The one
+bridge is the connection form's slug error: `validateVendor`'s sentence is shared with a model's
+refusal, so `lib/connection-form.ts` rewords it for the field.
+
 **`find_tool` offers Setup in the chat, as a card where the client renders one** (GRA-210; GRA-202,
 *The in-chat door*; ADR 0024). For an agent whose person has no connection at all (revoked rows
 count, as the show rule counts them) and whose Setup is neither completed nor skipped
@@ -1160,7 +1180,8 @@ and `connections`: `url` is `setupUrl(GRAFT_CONSOLE_URL, agentId)`, `/setup?agen
 `message` is `handoff-message.ts`'s `setupOfferMessage` in the console form (GRA-55's relay
 clause). The record is read (`getSetupRecord`, `McpDeps.setup`) only when the person's connection
 count, which `find_tool` already holds, is zero; `packages/mcp/src/setup-offer.ts` is the rule's
-home. It is **not an ask**: no pending action, no signature, no expiry, `isError` unset, and
+home. A record running as another of the person's active agents suppresses the offer, since the
+page would resume Setup as that agent (GRA-216's review). It is **not an ask**: no pending action, no signature, no expiry, `isError` unset, and
 `answer_ask` has nothing to admit. For a `clientRendersCards` session the message takes its card
 form, `cardShown: true` rides inside `setup` beside `url`, and `structuredContent.card` is a
 `SetupCard` (`@graft/ask-card/shape`: `{ kind: "setup", agentName, url }`, beside `AskCard` in

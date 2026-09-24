@@ -19,11 +19,11 @@ import {
  */
 const LINES: ReadonlyArray<readonly [string, SetupBuildStage | null]> = [
   [
-    "Queued: Graft's model will read the vendor's documentation, write a small module, check it, prove it with reads, publish it and dry-run it.",
+    "Queued: Graft's model will read the integration's documentation, write a small module, check it, prove it with reads, publish it and dry-run it.",
     "queued",
   ],
   [
-    'Authoring "Read the current weather. Read only." against Open-Meteo (open-meteo). Reads reach the vendor for real; every write is previewed at the proxy and nothing changes there.',
+    'Authoring "Read the current weather. Read only." against Open-Meteo (open-meteo). Reads reach Open-Meteo for real; every write is previewed at the proxy and nothing changes there.',
     null,
   ],
   ["Resumed after an interruption: 1 of 4 attempts used, 600 tokens spent.", null],
@@ -137,10 +137,10 @@ describe("explainProgress", () => {
  * answer for it; the second job passed.
  */
 const FIRST =
-  "Queued: Graft's model will read the vendor's documentation, write a small module, check it, prove it with reads, publish it and dry-run it.";
+  "Queued: Graft's model will read the integration's documentation, write a small module, check it, prove it with reads, publish it and dry-run it.";
 const LIVE_PASS = [
   FIRST,
-  'Authoring "Tell me the weather right now in a city I name" against Open-Meteo (open-meteo). Reads reach the vendor for real; every write is previewed at the proxy and nothing changes there.',
+  'Authoring "Tell me the weather right now in a city I name" against Open-Meteo (open-meteo). Reads reach Open-Meteo for real; every write is previewed at the proxy and nothing changes there.',
   "Asking the model for a first draft, or the documentation to read first.",
   "Attempt 1: opening the sandbox.",
   "Attempt 1: Drafted current-weather around GET /v1/forecast.",

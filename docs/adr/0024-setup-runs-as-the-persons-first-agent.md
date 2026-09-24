@@ -70,3 +70,18 @@ answer merely happen in one click.
   cover it, and one job per person is the bound Setup keeps.
 - **`SERVER_INSTRUCTIONS` does not change.** The budget stands at 2,039 of 2,048 characters; the
   in-chat door is a fact in `find_tool`'s description, and the model only relays a link.
+
+## Amendment, 2026-09-24: integration and task, and one-click starters (GRA-216)
+
+Aleks's walkthrough of Setup on 2026-09-24 changed three things this record's text predates, and
+the text above is left as it was decided. **The person-facing word is integration**, not vendor:
+Setup's steps, the console's connection screens and the ask card say integration, and a connection
+is one account of an integration (CONTEXT.md, *Integration*); code identifiers and model-facing text
+keep vendor. **The step that names the first tool's work is the task step**, not the goal step; the
+record's step value stays `goal`, as `vendor` does. **The starter vendors are starter integrations,
+and they are one-click only**: common services a link provider connects by OAuth (Pipedream on
+Cloud), plus Open-Meteo, the keyless one; a starter the deployment could connect only with a pasted
+key or an operator's own OAuth client is never offered, so the keyring alone offers Open-Meteo
+alone. *Another integration* is still the ordinary form. The consequence above that reads
+"filtered to what the deployment's providers can connect with at most a pasted key" is superseded
+by that rule; the list is still a convenience beside ADR 0001, never a catalogue.

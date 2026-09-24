@@ -50,17 +50,17 @@ describe("an answered connection ask's copy (GRA-212)", () => {
   it("says Setup's next step in Setup, where no call is waiting", () => {
     expect(
       connectedToastDescription({ origin: "setup", agentName: "Claude", approveBuild: true }),
-    ).toBe("In Claude's scope, allowed to build tools against it. Setup moves on to the goal.");
+    ).toBe("In Claude's scope, allowed to build tools against it. Setup moves on to the task.");
     expect(
       connectedToastDescription({ origin: "setup", agentName: "Claude", provider: "broker" }),
     ).toBe(
-      "In Claude's scope, and the account's token stays with broker. Setup moves on to the goal.",
+      "In Claude's scope, and the account's token stays with broker. Setup moves on to the task.",
     );
     expect(scopeAllowedToastDescription({ origin: "setup" })).toBe(
-      "Nothing was entered and no new connection was made. Setup moves on to the goal.",
+      "Nothing was entered and no new connection was made. Setup moves on to the task.",
     );
     expect(declinedToastDescription("setup")).toBe(
-      "Nothing was connected. Setup goes back to the vendor list.",
+      "Nothing was connected. Setup goes back to the integrations.",
     );
     for (const sentence of everySentence("setup")) {
       expect(sentence).not.toContain("waiting call");

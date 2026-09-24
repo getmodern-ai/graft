@@ -174,7 +174,7 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
         connectionId: row.id,
         message: declined
           ? `You declined to connect ${row.displayName}, and nothing was stored.`
-          : `The vendor refused to start the consent for ${row.displayName} (${sanitiseErrorCode(query.error)}). Check the client id, the redirect URI and the scopes at the vendor, then connect again from the console.`,
+          : `The integration refused to start the consent for ${row.displayName} (${sanitiseErrorCode(query.error)}). Check the client id, the redirect URI and the scopes you registered with the integration, then connect again from the console.`,
       });
     }
 
@@ -187,7 +187,7 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
     }
     const code = query.code;
     if (typeof code !== "string" || code.length === 0) {
-      return failed("The vendor sent the browser back without a code.", row.id);
+      return failed("The integration sent the browser back without a code.", row.id);
     }
     if (!row.credentialCiphertext) {
       return failed(
@@ -234,7 +234,7 @@ export function createOAuthRoutes(options: OAuthRouteOptions): Hono {
       const detail =
         error instanceof DerivedCredentialError ? error.message : "the exchange failed";
       return failed(
-        `The vendor did not hand over a token for ${row.displayName}: ${detail}. Connect again from the console.`,
+        `The integration did not hand over a token for ${row.displayName}: ${detail}. Connect again from the console.`,
         row.id,
       );
     }

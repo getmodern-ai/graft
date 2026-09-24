@@ -11,7 +11,7 @@
 export type AskOrigin = "agent" | "setup";
 
 /** Setup's next step after a connection is made, said the one way. */
-const SETUP_MOVES_ON = "Setup moves on to the goal.";
+const SETUP_MOVES_ON = "Setup moves on to the task.";
 
 const buildClause = (approveBuild: boolean | undefined) =>
   approveBuild ? ", allowed to build tools against it" : "";
@@ -84,6 +84,6 @@ export function scopeAllowedSettledSentence(input: {
 /** The toast after any connection ask is declined. */
 export function declinedToastDescription(origin: AskOrigin): string {
   return origin === "setup"
-    ? "Nothing was connected. Setup goes back to the vendor list."
+    ? "Nothing was connected. Setup goes back to the integrations."
     : "The agent's waiting call is refused.";
 }

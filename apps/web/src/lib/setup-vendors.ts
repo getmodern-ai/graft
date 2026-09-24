@@ -3,8 +3,9 @@ import type { SetupConnectKind } from "@graft/core/setup/starter-vendors";
 import type { PendingAction } from "./pending-action-queries";
 
 /**
- * The vendor and connect steps' pure halves (GRA-206). The list itself is the server's
- * (`GET /api/setup/vendors`); these name what the console draws for it.
+ * The integration and connect steps' pure halves (GRA-206, GRA-216). The list itself is the
+ * server's (`GET /api/setup/vendors`), one-click starters only; these name what the console draws
+ * for it.
  */
 
 /** The chip beside a starter: what connecting it takes on this deployment. */
@@ -12,10 +13,9 @@ export const SETUP_CONNECT_LABEL: Record<SetupConnectKind, string> = {
   link: "One click",
   none: "Connects at once",
   keyless: "No key needed",
-  form: "Paste a key",
 };
 
-/** The value the vendor step's radio group holds for *Another vendor*, beside the starters' ids. */
+/** The value the integration step's radio group holds for *Another integration*, beside the starters' ids. */
 export const ANOTHER_VENDOR = "another";
 
 /**
@@ -45,7 +45,7 @@ export function jobRunning(status: string | null | undefined): boolean {
 /**
  * Whether a choice on the vendor step leaves a running job behind (GRA-215): the record went back
  * holding a job acquired against the integration it chose before, and the connect moves drop that
- * job with its connection. The same starter again keeps it; another starter, or *Another vendor*
+ * job with its connection. The same starter again keeps it; another starter, or *Another integration*
  * (whose form makes a new connection), leaves it while it runs, so the step asks first. The server
  * judges the same on the vendor and refuses `job_running` without the person's word.
  */

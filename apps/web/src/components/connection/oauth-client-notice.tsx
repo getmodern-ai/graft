@@ -38,8 +38,8 @@ function RedirectUriNotice() {
     <Alert>
       <KeyIcon />
       <AlertTitle>
-        Register an OAuth client of the web application type at the vendor, and paste this redirect
-        URI into it
+        Register an OAuth client of the web application type with the integration, and paste this
+        redirect URI into it
       </AlertTitle>
       <AlertDescription>
         {isPending ? (
@@ -62,8 +62,8 @@ function RedirectUriNotice() {
           </p>
         )}
         <p>
-          Then enter the client's id above and its secret below. Connect opens the vendor's consent
-          in a popup; the tokens it yields are stored encrypted and never shown.
+          Then enter the client's id above and its secret below. Connect opens the integration's
+          consent in a popup; the tokens it yields are stored encrypted and never shown.
         </p>
       </AlertDescription>
     </Alert>
@@ -99,7 +99,8 @@ export function ConsentStatus({ state, onCancel }: { state: ConsentState; onCanc
         <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
           <Spinner className="size-3.5" />
           <span>
-            Complete the consent in the popup. This page updates once the vendor has sent you back.
+            Complete the consent in the popup. This page updates once the integration has sent you
+            back.
           </span>
           {onCancel ? (
             <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
@@ -120,7 +121,7 @@ export function ConsentStatus({ state, onCancel }: { state: ConsentState; onCanc
               rel="noreferrer noopener"
               className="inline-flex items-center gap-1 underline underline-offset-4"
             >
-              Open the vendor's consent page
+              Open the integration's consent page
               <OpenInNewIcon className="size-3" />
             </a>{" "}
             and come back here once it says connected.

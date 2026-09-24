@@ -275,7 +275,7 @@ describe("a tool's first-use approval (GRA-116)", () => {
     const root = renderAsk(TOOL, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "tool", answerable: "true" });
     expect(root.querySelector("h1")?.textContent).toBe("Allow Claude to run demo__create-order?");
-    expect(root.textContent).toContain("changes data at the vendor");
+    expect(root.textContent).toContain("changes data in Demo Orders");
     expect(root.textContent).toContain("Your answer holds for this agent's next calls");
     expect(root.querySelector(".ask-quote blockquote")?.textContent).toBe(TOOL.tool?.description);
     expect(root.querySelector(".ask-badge")?.textContent).toBe(MODEL_WORDS_NOTE);
@@ -541,7 +541,7 @@ describe("a connection a link provider covers", () => {
   it("names how the provider connects in the Scheme row, never the keyring label the proposal carries", () => {
     const scheme = factsOf(LINK).find((fact) => fact.label === "Scheme");
     expect(scheme?.value).toBe(
-      "Sign-in at the vendor through broker; no client to register, nothing typed in Graft",
+      "Sign-in to Gmail through broker; no client to register, nothing typed in Graft",
     );
     expect(scheme?.value).not.toContain("a client you register");
     // The same proposal on the keyring keeps the keyring label.
@@ -557,7 +557,7 @@ describe("a connection a link provider covers", () => {
     const root = renderAsk(LINK, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "connection", answerable: "false" });
     expect(root.querySelector("h1")?.textContent).toBe("Connect Gmail (gmail) through broker?");
-    expect(root.textContent).toContain("sign in at the vendor on broker's page");
+    expect(root.textContent).toContain("sign in to Gmail on broker's page");
     expect(root.textContent).toContain("nothing is typed here");
     const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
     expect(box.checked).toBe(true);
@@ -734,7 +734,7 @@ describe("the Setup offer", () => {
     expect(root.querySelector(".ask-eyebrow")?.textContent).toBe(SETUP_EYEBROW);
     expect(root.querySelector("h1")?.textContent).toBe(SETUP_TITLE);
     expect(root.querySelector(".ask-description")?.textContent).toBe(setupDescriptionOf(SETUP));
-    expect(root.textContent).toContain("Claude has no vendor connected yet.");
+    expect(root.textContent).toContain("Claude has no integration connected yet.");
     expect(root.querySelector(".ask-note")?.textContent).toBe(setupAskAgainOf(SETUP));
     expect(setupAskAgainOf(SETUP)).toContain("Ask again here");
     expect(buttons(root)).toEqual([SETUP_BUTTON]);

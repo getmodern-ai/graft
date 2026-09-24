@@ -23,7 +23,7 @@ export function GoalSuggestions({ onPick }: { onPick: (goal: string) => void }) 
 
   return (
     <fieldset>
-      <legend className="mb-2 text-muted-foreground text-xs">Suggested goals</legend>
+      <legend className="mb-2 text-muted-foreground text-xs">Suggested tasks</legend>
       <div className="flex flex-wrap gap-2">
         {chips.map((chip) => (
           <Button

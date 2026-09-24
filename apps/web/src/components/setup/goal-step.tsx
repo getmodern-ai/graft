@@ -28,7 +28,7 @@ import { jobRunning } from "@/lib/setup-vendors";
 /**
  * The goal step (GRA-207; GRA-202, *The goal step* and *Build is the build approval*): what the
  * first tool should read, pre-filled with the starter's curated read-only goal and editable, or
- * empty for another vendor. Above the field sits the suggestions row (GRA-209). **Build** is the
+ * empty for another integration. Above the field sits the suggestions row (GRA-209). **Build** is the
  * build approval for this agent and connection, pressed here rather than asked in the inbox, and
  * starts the job (`POST /api/setup/build`); the record moves to the building step.
  *
@@ -40,8 +40,8 @@ export function GoalStep({ state }: { state: SetupStateData }) {
   return (
     <div className="flex flex-col gap-6">
       <SetupStepHeader
-        title="Choose a goal"
-        description="Say what the first tool should read. Graft's model authors it against the connection, and nothing is written at the vendor."
+        title="What should your first tool do?"
+        description="Say what the first tool should read. Graft's model authors it against the connection, and nothing is changed in the integration."
       />
       {goal.isPending ? (
         <div className="flex flex-col gap-4" aria-busy="true">
@@ -52,7 +52,7 @@ export function GoalStep({ state }: { state: SetupStateData }) {
         <p className="text-muted-foreground text-sm">
           <RetryNotice
             error={goal.error}
-            message="Could not load the goal."
+            message="Could not load the task."
             onRetry={() => void goal.refetch()}
             retrying={goal.isFetching}
           />
@@ -136,7 +136,7 @@ function GoalForm({
         <GoalSuggestions onPick={setText} />
 
         <Field>
-          <FieldLabel htmlFor="setup-goal">Goal</FieldLabel>
+          <FieldLabel htmlFor="setup-goal">Task</FieldLabel>
           <Textarea
             id="setup-goal"
             value={text}
