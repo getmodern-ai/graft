@@ -30,7 +30,7 @@ import {
   type SetupTool,
   setupToolQuery,
 } from "@/lib/setup-queries";
-import { resultToolOf } from "@/lib/setup-result";
+import { resultToolOf, runsOnArrival } from "@/lib/setup-result";
 import {
   canRun,
   initialValues,
@@ -49,9 +49,11 @@ import { TOOL_ANNOTATION_CHIP } from "@/lib/status-chips";
  * console's code block. The input is drawn from the tool's own schema (GRA-217,
  * `lib/setup-run-input.ts`): a field per input, starting at the starter's default where the names
  * match (the city for Open-Meteo) or the schema's default or example, nothing for a tool that
- * takes none, and JSON only for a schema too complex to draw. The run starts once on arrival when
- * nothing required is missing, so the answer is on screen before the person does anything; a
- * required field with no value says what the tool needs and Run waits for it. A refusal or a
+ * takes none, and JSON only for a schema too complex to draw. A tool that takes no input runs once
+ * on arrival, so its answer is on screen before the person does anything; a tool with inputs shows
+ * them prefilled where it can and waits for Run (`lib/setup-result.ts`'s `runsOnArrival`), and a
+ * required field with no value, or a JSON key still at the skeleton's empty value, says what the
+ * tool needs and Run stays disabled until it is given. A refusal or a
  * failure is one sentence, with the raw text behind *Details* (`lib/short-failure.ts`). The server
  * runs read-only tools in the agent's working set only, so nothing here can raise an approval.
  * *Continue* moves on to the finish step.
@@ -131,12 +133,13 @@ function ToolRun({
     run.mutate({ agentId, vendor: tool.vendor, name: tool.name, body: { input: input.input } });
   };
 
-  // Run once on arrival when nothing required is missing, so the answer is the first thing shown.
+  // Run once on arrival only for a tool that takes no input (`runsOnArrival`); a tool with inputs
+  // waits for Run, so its first answer is for the values the person chose.
   const started = useRef(false);
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    if (ready) start();
+    if (runsOnArrival(view)) start();
   });
 
   const answer = run.data;
