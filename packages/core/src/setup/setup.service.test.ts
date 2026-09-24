@@ -6,7 +6,13 @@ import type { AgentDeps } from "../agent/agent.deps";
 import type { ServiceContext } from "../context";
 import { ServiceError } from "../errors";
 import type { SetupDeps } from "./setup.deps";
-import { getSetupState, skipSetup, startSetup } from "./setup.service";
+import {
+  connectingAgentOf,
+  getSetupState,
+  moveSetupConnect,
+  skipSetup,
+  startSetup,
+} from "./setup.service";
 
 /**
  * The Setup service over fakes: an in-memory record and agent table, so what is asserted is what a
@@ -261,5 +267,177 @@ describe("skipSetup", () => {
     expect(resumed.setup?.skippedAt).toBeNull();
     expect(resumed.show).toBe(true);
     expect(w.agentDeps.insertAgent).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the connect step's moves", () => {
+  async function onVendor() {
+    const w = world({});
+    await startSetup(ctx, PRINCIPAL, { harness: "claude" }, w.deps, w.agentDeps);
+    return w;
+  }
+
+  it("names the ask on connect, then the connection on goal once the ask is answered", async () => {
+    const w = await onVendor();
+    const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
+      moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
+    const asked = await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" });
+    expect(asked).toMatchObject({ moved: true, state: { setup: { step: "connect" } } });
+    expect(asked.state.setup).toMatchObject({ step: "connect", pendingActionId: "pa_1" });
+    // A repeat, or another starter, re-points the ask while on connect.
+    await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_2" });
+    // A read that learned from the first ask is stale and changes nothing.
+    const stale = await move({
+      kind: "connected",
+      agentId: "agent_new",
+      connectionId: "conn_1",
+      askId: "pa_1",
+    });
+    expect(stale.moved).toBe(false);
+    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_2" });
+    const done = await move({
+      kind: "connected",
+      agentId: "agent_new",
+      connectionId: "conn_2",
+      askId: "pa_2",
+    });
+    expect(done.moved).toBe(true);
+    expect(done.state.setup).toMatchObject({
+      step: "goal",
+      connectionId: "conn_2",
+      pendingActionId: null,
+    });
+    expect(() => connectingAgentOf(done.state)).toThrow(ServiceError);
+    // A second read that learned the same answer finds the record moved on: it answers the same
+    // state, and says it did not move it, so the step is counted once.
+    const again = await move({
+      kind: "connected",
+      agentId: "agent_new",
+      connectionId: "conn_2",
+      askId: "pa_2",
+    });
+    expect(again).toMatchObject({ moved: false, state: { step: "goal" } });
+  });
+
+  it("goes back to the vendor step from goal when its connection is lost, and only then", async () => {
+    const w = await onVendor();
+    const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
+      moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
+    await move({ kind: "connected", agentId: "agent_new", connectionId: "conn_1" });
+    expect((await move({ kind: "lost", connectionId: "conn_other" })).moved).toBe(false);
+    expect(w.record()).toMatchObject({ step: "goal", connectionId: "conn_1" });
+    const lost = await move({ kind: "lost", connectionId: "conn_1" });
+    expect(lost).toMatchObject({ moved: true, state: { step: "vendor" } });
+    expect(w.record()).toMatchObject({ step: "vendor", connectionId: null });
+    expect((await move({ kind: "lost", connectionId: "conn_1" })).moved).toBe(false);
+  });
+
+  it("lands a move from vendor only on the record as it was seen there", async () => {
+    const w = await onVendor();
+    const move = (m: Parameters<typeof moveSetupConnect>[2]) =>
+      moveSetupConnect(ctx, PRINCIPAL, m, w.deps, w.agentDeps);
+    const seenAt = new Date("2026-09-23T10:00:00.001Z");
+    const at = (iso: string) => {
+      const row = w.record();
+      if (row) Object.assign(row, { updatedAt: new Date(iso) });
+    };
+    at("2026-09-23T10:00:00.001Z");
+    // Another tab chose, and that choice closed, leaving the record on vendor as a later write.
+    await move({ kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" });
+    await move({ kind: "reopen", askId: "pa_1" });
+    at("2026-09-23T10:00:00.009Z");
+    const ask = { kind: "ask", agentId: "agent_new", pendingActionId: "pa_2" } as const;
+    expect((await move({ ...ask, fromVendorAt: seenAt })).moved).toBe(false);
+    expect(
+      (
+        await move({
+          kind: "connected",
+          agentId: "agent_new",
+          connectionId: "conn_1",
+          fromVendorAt: seenAt,
+        })
+      ).moved,
+    ).toBe(false);
+    expect(w.record()).toMatchObject({ step: "vendor", pendingActionId: null });
+    // As it was seen: the move lands.
+    const landed = await move({ ...ask, fromVendorAt: new Date("2026-09-23T10:00:00.009Z") });
+    expect(landed.moved).toBe(true);
+    expect(w.record()).toMatchObject({ step: "connect", pendingActionId: "pa_2" });
+    // Off vendor, it never lands, whatever the instant.
+    at("2026-09-23T10:00:00.020Z");
+    const offVendor = await move({
+      ...ask,
+      pendingActionId: "pa_3",
+      fromVendorAt: new Date("2026-09-23T10:00:00.020Z"),
+    });
+    expect(offVendor.moved).toBe(false);
+  });
+
+  it("runs confirm under the lock once the guard passes, and a no leaves the record", async () => {
+    const w = await onVendor();
+    await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "connected", agentId: "agent_new", connectionId: "conn_1" },
+      w.deps,
+      w.agentDeps,
+    );
+    const asked: string[] = [];
+    const lost = (answer: boolean, connectionId = "conn_1") =>
+      moveSetupConnect(
+        ctx,
+        PRINCIPAL,
+        { kind: "lost", connectionId },
+        w.deps,
+        w.agentDeps,
+        async () => {
+          asked.push(connectionId);
+          return answer;
+        },
+      );
+    // The guard fails first: confirm is never asked.
+    expect((await lost(true, "conn_other")).moved).toBe(false);
+    expect(asked).toEqual([]);
+    // Judged again and found untrue: the record stays on goal.
+    expect((await lost(false)).moved).toBe(false);
+    expect(w.record()).toMatchObject({ step: "goal", connectionId: "conn_1" });
+    expect((await lost(true)).moved).toBe(true);
+    expect(w.record()).toMatchObject({ step: "vendor", connectionId: null });
+    expect(asked).toEqual(["conn_1", "conn_1"]);
+  });
+
+  it("goes back to the vendor step when the ask it waits on closed without a connection", async () => {
+    const w = await onVendor();
+    await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "ask", agentId: "agent_new", pendingActionId: "pa_1" },
+      w.deps,
+      w.agentDeps,
+    );
+    const back = await moveSetupConnect(
+      ctx,
+      PRINCIPAL,
+      { kind: "reopen", askId: "pa_1" },
+      w.deps,
+      w.agentDeps,
+    );
+    expect(back.state.setup).toMatchObject({ step: "vendor", pendingActionId: null });
+  });
+
+  it("refuses a move for an agent the record does not run as, and a Setup not yet started", async () => {
+    const w = await onVendor();
+    await expect(
+      moveSetupConnect(
+        ctx,
+        PRINCIPAL,
+        { kind: "connected", agentId: "agent_other", connectionId: "conn_1" },
+        w.deps,
+        w.agentDeps,
+      ),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    const fresh = world({});
+    const state = await getSetupState(ctx, PRINCIPAL, fresh.deps, fresh.agentDeps);
+    expect(() => connectingAgentOf(state)).toThrow("Setup has not started");
   });
 });

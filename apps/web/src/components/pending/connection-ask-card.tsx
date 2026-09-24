@@ -8,10 +8,17 @@ import { ConnectionFormFields, HostsNotice } from "@/components/connection/conne
 import { CredentialFields } from "@/components/connection/credential-fields";
 import { ConsentStatus, OAuthClientNotice } from "@/components/connection/oauth-client-notice";
 import { useOAuthConsent } from "@/components/connection/use-oauth-consent";
-import { OpenInNewIcon } from "@/components/icons";
-import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
+import { KeyboardArrowDownIcon, KeyboardArrowUpIcon } from "@/components/icons";
+import {
+  AskCard,
+  type AskOrigin,
+  Hosts,
+  ProposalSource,
+  useAnswerAsk,
+} from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError } from "@/lib/api";
@@ -51,19 +58,28 @@ import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
  * 2026-09-18): Connect posts it with the proposal, and the submit records `acquire`'s approval for
  * the asking agent in the transaction that makes the connection, so the agent's first `acquire`
  * needs no second link. Unticked, the agent asks as it always did.
+ *
+ * Under `origin: "setup"` (GRA-206) the proposal is Setup's, written from a starter entry: the
+ * model's provenance is not shown and the proposal editor sits behind *Edit the connection*,
+ * closed until opened or until a refusal lands on one of its inputs. The hosts, the secret
+ * inputs, the build choice and the answer are the same card's.
  */
 export function ConnectionAskCard({
   ask,
   onAnswered,
+  origin = "agent",
 }: {
   ask: Extract<Ask, { kind: "connection" }>;
   onAnswered?: () => void;
+  origin?: AskOrigin;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<ConnectionDraft>(() => draftFromProposal(payload));
   const [errors, setErrors] = useState<DraftErrors>({});
   const [approveBuild, setApproveBuild] = useState(true);
+  // Setup's disclosure over the proposal editor; outside Setup the editor is never folded.
+  const [editing, setEditing] = useState(false);
   const agentName = action.agent?.name ?? "the agent";
   const decline = useAnswerAsk(action, onAnswered);
   const consent = useOAuthConsent({
@@ -102,6 +118,7 @@ export function ConnectionAskCard({
           const host = details.host ?? "";
           const primary = safeHostname(draft.primaryHost);
           setErrors({ [primary === host ? "primaryHost" : "hosts"]: error.message });
+          setEditing(true);
         }
       }
     },
@@ -111,6 +128,10 @@ export function ConnectionAskCard({
     const verdict = validateConnectionDraft(draft);
     if (!verdict.ok) {
       setErrors(verdict.errors);
+      // A problem outside the secret inputs is in the editor, so a folded editor opens to show it.
+      if (Object.keys(verdict.errors).some((key) => !key.startsWith("credential"))) {
+        setEditing(true);
+      }
       return;
     }
     setErrors({});
@@ -173,27 +194,7 @@ export function ConnectionAskCard({
       pending={busy}
       onAnswer={(allow) => (allow ? submit() : decline.mutate({ allow: false }))}
     >
-      <figure className="flex flex-col gap-1.5">
-        <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-          <Badge variant="outline">proposed by the agent's model</Badge>
-          {payload.note}
-        </figcaption>
-        {payload.docsUrl ? (
-          <a
-            href={payload.docsUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
-          >
-            The documentation the agent read: {payload.docsUrl}
-            <OpenInNewIcon className="size-3" />
-          </a>
-        ) : (
-          <p className="text-muted-foreground text-xs">
-            The agent named no documentation page. Check the hosts against the vendor's own.
-          </p>
-        )}
-      </figure>
+      <ProposalSource origin={origin} note={payload.note} docsUrl={payload.docsUrl} />
 
       {open && widens ? (
         // A widening (GRA-167): the row is the person's already, so nothing here is editable —
@@ -225,26 +226,41 @@ export function ConnectionAskCard({
         </>
       ) : open ? (
         <>
-          <FieldSet>
-            <FieldLegend variant="label">
-              The connection, as proposed — edit what is wrong
-            </FieldLegend>
-            <FieldGroup>
-              <ConnectionFormFields
-                draft={draft}
-                onChange={setDraft}
-                errors={errors}
-                idPrefix={`ask-${action.id}`}
-                disabled={busy}
-              />
-            </FieldGroup>
-          </FieldSet>
+          {origin === "setup" ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-start"
+              aria-expanded={editing}
+              onClick={() => setEditing((shown) => !shown)}
+            >
+              {editing ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+              Edit the connection
+            </Button>
+          ) : null}
+          {origin !== "setup" || editing ? (
+            <FieldSet>
+              <FieldLegend variant="label">
+                The connection as proposed: edit what is wrong
+              </FieldLegend>
+              <FieldGroup>
+                <ConnectionFormFields
+                  draft={draft}
+                  onChange={setDraft}
+                  errors={errors}
+                  idPrefix={`ask-${action.id}`}
+                  disabled={busy}
+                />
+              </FieldGroup>
+            </FieldSet>
+          ) : null}
           <HostsNotice draft={draft} />
           <OAuthClientNotice draft={draft} />
           {secret ? (
             <FieldSet>
               <FieldLegend variant="label">
-                {secret} — entered here, never through the agent
+                {secret}, entered here and never through the agent
               </FieldLegend>
               <FieldGroup>{credentialFields}</FieldGroup>
             </FieldSet>

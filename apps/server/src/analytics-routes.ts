@@ -37,6 +37,11 @@ export function setupHarnessProperty(answer: unknown): AnalyticsProperties {
   return { harness: typeof harness === "string" ? harness : null };
 }
 
+/** A Setup step's completion: the step the route completes, beside the harness on the answer. */
+export function setupStepProperties(step: string): (answer: unknown) => AnalyticsProperties {
+  return (answer) => ({ step, ...setupHarnessProperty(answer) });
+}
+
 export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
   { method: "POST", path: /^\/agents$/, event: "agent_created" },
   { method: "POST", path: /^\/agents\/[^/]+\/revoke$/, event: "agent_revoked" },
@@ -54,6 +59,14 @@ export const TRACKED_ROUTES: ReadonlyArray<TrackedRoute> = [
     path: /^\/setup\/start$/,
     event: "setup_started",
     properties: setupHarnessProperty,
+  },
+  // The vendor step completes when a vendor is chosen; the connect step's completion is counted
+  // where the connection is learned (`api.ts`, "The connect step"), since that may be a read.
+  {
+    method: "POST",
+    path: /^\/setup\/connect$/,
+    event: "setup_step_completed",
+    properties: setupStepProperties("vendor"),
   },
   {
     method: "POST",

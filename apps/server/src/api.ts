@@ -12,7 +12,6 @@ import {
   getConnection,
   getPendingActionForPerson,
   getPersonModelKey,
-  getSetupState,
   isOAuthAuthorizationCode,
   type LedgerDeps,
   listAgents,
@@ -39,6 +38,8 @@ import {
   type ServiceErrorCode,
   type SessionLike,
   type SetupDeps,
+  type SetupState,
+  STARTER_VENDOR_IDS,
   setAgentScope,
   setAskEveryCall,
   setConnectionCredential,
@@ -58,6 +59,7 @@ import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
   CONNECTION_ASK_KIND,
+  type ConnectionRoutingDeps,
   CREDENTIAL_ASK_KIND,
   confirmConnectionAsk,
   HANDOFF_TOKEN_PARAM,
@@ -96,6 +98,12 @@ import {
   rateLimit,
   signInDoorKey,
 } from "./rate-limit";
+import {
+  connectSetupVendor,
+  learnSetupConnection,
+  listSetupVendors,
+  type SetupConnectDeps,
+} from "./setup-connect";
 import {
   createSetupPromptRoutes,
   isSetupPromptPath,
@@ -224,6 +232,13 @@ export type ApiOptions = {
    */
   notifier?: Pick<ToolListChangedNotifier, "changed">;
   /**
+   * `request_connection`'s routing seams (`@graft/mcp`'s `ConnectionRoutingDeps`, GRA-203), for
+   * Setup's connect step, which opens the agent's own connection ask through the same routing
+   * (GRA-206; ADR 0024). `index.ts` binds the MCP endpoint's `McpDeps`; absent, the connect route
+   * refuses with a sentence saying so and every other route is unaffected.
+   */
+  connectionRouting?: ConnectionRoutingDeps;
+  /**
    * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two doors under `/api`:
    * `sign_in` over Better Auth's writes and `api` over this app's mutations. `createServer` hands
    * it down; absent, `NO_RATE_LIMITING` and every door open, which is the default in both forms.
@@ -305,6 +320,18 @@ const setupStartBody = z.strictObject({
 });
 /** The start's wire shape, as the console posts it. */
 export type SetupStartBody = z.input<typeof setupStartBody>;
+
+/**
+ * `POST /setup/connect` (GRA-206): a starter vendor by its id, which opens the agent's own
+ * connection ask, or the connection *Another vendor*'s ordinary form just made, which the record
+ * takes as it is. One or the other, strictly.
+ */
+const setupConnectBody = z.union([
+  z.strictObject({ starterId: z.enum(STARTER_VENDOR_IDS) }),
+  z.strictObject({ connectionId: z.string().min(1) }),
+]);
+/** The connect's wire shape, as the console posts it. */
+export type SetupConnectBody = z.input<typeof setupConnectBody>;
 
 /**
  * `PUT /agents/:id/scope`: every connection, or a list — `SetAgentScopeInput` in `@graft/core`
@@ -810,9 +837,62 @@ export function createApi(options: ApiOptions): Hono {
    */
   const setupDeps = options.deps.setup ?? defaultSetupDeps;
 
+  /**
+   * The connect step (GRA-206; `setup-connect.ts`). A read learns the connection from the ask the
+   * record waits on, so the record moves to `goal` on the read after the person answers, wherever
+   * they answered it: this step's card, the inbox or a chat's card. The connect step's completion
+   * is counted where it is learned, here or in the connect route when the connection was made at
+   * once, since a read is not a row in the mutation table; the vendor step's is the connect
+   * route's row there.
+   */
+  const setupConnectDeps = (): SetupConnectDeps => {
+    if (!options.connectionRouting) {
+      throw new ServiceError(
+        "BAD_REQUEST",
+        "This server has no connection routing configured, so Setup cannot open a connection ask",
+      );
+    }
+    return {
+      setup: setupDeps,
+      agent: agentDeps,
+      connection: connectionDeps,
+      pendingAction: pendingActionDeps,
+      routing: options.connectionRouting,
+      notifier: options.notifier,
+    };
+  };
+  const countConnectStep = (principal: Principal, state: SetupState) =>
+    analytics.capture({
+      distinctId: principal.personId,
+      event: "setup_step_completed",
+      properties: { via: "console", step: "connect", harness: state.setup?.harness ?? null },
+    });
+
   api.get("/setup", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    return c.json(await getSetupState(ctx, principal, setupDeps, agentDeps));
+    const { state, connected } = await learnSetupConnection(ctx, principal, {
+      setup: setupDeps,
+      agent: agentDeps,
+      connection: connectionDeps,
+      pendingAction: pendingActionDeps,
+      notifier: options.notifier,
+    });
+    if (connected) countConnectStep(principal, state);
+    return c.json(state);
+  });
+
+  /** The vendor step's list for this deployment (`listSetupVendors`): each starter, its provider and what connecting takes. */
+  api.get("/setup/vendors", async (c) => {
+    await principalOf(c.req.raw.headers);
+    return c.json({ vendors: await listSetupVendors(connectionDeps.providers) });
+  });
+
+  api.post("/setup/connect", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupConnectBody);
+    const { state, connected } = await connectSetupVendor(ctx, principal, body, setupConnectDeps());
+    if (connected) countConnectStep(principal, state);
+    return c.json(state);
   });
 
   api.post("/setup/start", async (c) => {

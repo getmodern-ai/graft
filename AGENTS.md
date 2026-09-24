@@ -1000,6 +1000,38 @@ record through `useSetupMutation`, which writes the answered state into the one 
 The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline) and
 offers *Set up Graft* in its empty body to a person who skipped.
 
+**The vendor and connect steps are the agent's own connection ask** (GRA-206). The starters are
+`@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs, the
+keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
+`outcome` sentence); adding one is one entry. `setupVendorOptions` is the pure filter and order over
+each starter's covering provider: a keyring form over `oauth_authorization_code` is dropped, and
+`link` leads, then `none`, then `keyless` (a `none` scheme the form provider lists), then `form`.
+`GET /api/setup/vendors`
+asks `providerFor` per starter in `Backings.providers` order (`apps/server/src/setup-connect.ts`);
+the console never computes coverage. `POST /api/setup/connect` (`SetupConnectBody`: `{ starterId }`
+or `{ connectionId }`) calls GRA-203's `routeConnectionProposal` as the setup's agent, through
+`ApiOptions.connectionRouting` (the server binds its `McpDeps`), and moves the record through
+`moveSetupConnect`: an ask to `connect` with `pendingActionId` (a repeat re-uses it by proposal
+key), a connection made or found at once, or *Another vendor*'s ordinary-form connection (added to
+the agent's scope), to `goal`. `GET /api/setup` reads the ask the record waits on and never takes
+a live answer: answered with a connection (or a `scope` ask allowed) that is still live, usable and
+in the agent's scope it moves to `goal` naming it; declined, expired, gone, or answered with a
+connection revoked or taken out of the scope since (that answer is taken, so the routing stops
+handing it back, under the record's lock so two reads take it once), back to `vendor`, and on
+`goal` a connection that stopped standing takes it back too, judged again under the lock
+(`moveSetupConnect`'s `confirm`) so a restore meanwhile stands. The connect route that finds such
+an answer (or finds a poll reopened the record for it) routes once more, and that second routing's
+move lands only on the record as it was seen on `vendor`, its `updatedAt` unchanged
+(`fromVendorAt`; `saveSetup` moves it forward by at least a millisecond on every write), so the choice in flight wins over a poll and any choice another tab made since
+stands, even one that closed and left the record on `vendor` again. A stale answer is judged again
+under the lock before it is taken, so one made good meanwhile is left for the next read. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
+captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
+one answer count once. A listed agent's scope grown by Setup (*Another vendor*, a `scope` ask
+answered in the console) is announced to its session, since no waiting call of its own does. The console's connect step
+draws the open ask from the inbox's list with `PendingActionCard`, unchanged, and polls both reads
+every 3 s so an answer given in the inbox or a chat card moves it too. The goal step's starter is
+`starterVendorFor(connection.vendor)`.
+
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
 auto — and `DataTableRow` for the 40px rhythm; a column the row cannot afford at 390px steps out
@@ -1216,7 +1248,11 @@ and the sweep's lines ride under `acquire` and `sweep`. Product events are captu
 two chokepoints and nowhere in the console: the API's mutation routes
 (`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
 does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
-`acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
+`acquire_completed`, `acquire_failed`); both name the person by id. The Setup read,
+`GET /api/setup`, is the one other place (ADR 0024; GRA-206): a step the person completes
+elsewhere, an ask answered in the inbox or a chat's card or a job that finished, is learned on the
+read, so `setup_step_completed` is captured there, once, when the guarded move of the record
+succeeds. The vendors behind the hosted
 form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
 **A sign-up is the one event the account raises itself** (GRA-157): `createAuth`'s
 `onPersonSignedUp` fires from Better Auth's own hooks when a person exists *and* is verified — the

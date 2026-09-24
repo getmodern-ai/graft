@@ -1,6 +1,6 @@
-import type { SetupOutput, SetupState } from "@graft/core";
-import type { SetupStartBody } from "@graft/server/api";
-import { queryOptions } from "@tanstack/react-query";
+import type { SetupOutput, SetupState, SetupVendorOption } from "@graft/core";
+import type { SetupConnectBody, SetupStartBody } from "@graft/server/api";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
 
 import { api, type Jsonified } from "./api";
 
@@ -17,12 +17,23 @@ export type SetupStateData = Jsonified<SetupState>;
 
 export const setupKeys = {
   current: ["setup"] as const,
+  vendors: ["setup", "vendors"] as const,
 };
 
 export const setupQuery = queryOptions({
   queryKey: setupKeys.current,
   queryFn: () => api<SetupStateData>("/setup"),
 });
+
+/**
+ * Install a verb's answer as the state. A read of the state in flight (the connect step polls it)
+ * may have left before the verb committed, and landing after it would put back the step the verb
+ * left, so it is cancelled first; a read that starts after this sees the verb's answer anyway.
+ */
+export async function installSetupState(queryClient: QueryClient, state: SetupStateData) {
+  await queryClient.cancelQueries({ queryKey: setupKeys.current, exact: true });
+  queryClient.setQueryData(setupKeys.current, state);
+}
 
 /** The body is the server's own shape (`SetupStartBody`). */
 export function startSetup(body: SetupStartBody) {
@@ -31,4 +42,23 @@ export function startSetup(body: SetupStartBody) {
 
 export function skipSetup() {
   return api<SetupStateData>("/setup/skip", { method: "POST" });
+}
+
+/** One line of the vendor step: a starter, the provider that covers it here, and what connecting takes. */
+export type SetupVendor = Jsonified<SetupVendorOption>;
+
+/**
+ * The vendor step's list for this deployment (`GET /api/setup/vendors`), filtered and ordered by the
+ * server from the providers it has: the console never computes coverage. Under `["setup"]` so the
+ * list is refetched whenever the state is invalidated.
+ */
+export const setupVendorsQuery = queryOptions({
+  queryKey: setupKeys.vendors,
+  queryFn: () => api<{ vendors: SetupVendor[] }>("/setup/vendors"),
+  staleTime: 60_000,
+});
+
+/** A starter by its id, or the connection *Another vendor*'s form made (`SetupConnectBody`). */
+export function connectSetup(body: SetupConnectBody) {
+  return api<SetupStateData>("/setup/connect", { method: "POST", body });
 }

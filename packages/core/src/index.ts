@@ -393,7 +393,11 @@ export {
   shouldShowSetup,
 } from "./setup/setup.rules";
 export {
+  connectingAgentOf,
   getSetupState,
+  moveSetupConnect,
+  type SetupConnectMove,
+  type SetupMoveResult,
   type SetupOutput,
   type SetupState,
   type StartSetupAgentInput,
@@ -411,6 +415,21 @@ export {
   setupPrompt,
   suggestedFirstSentence,
 } from "./setup/setup-prompt";
+export {
+  type CoveredStarter,
+  isStarterVendorId,
+  type SetupConnectKind,
+  type SetupVendorOption,
+  STARTER_VENDOR_IDS,
+  STARTER_VENDORS,
+  type StarterRunInput,
+  type StarterVendor,
+  type StarterVendorId,
+  setupVendorOptions,
+  starterProposal,
+  starterVendorFor,
+  starterVendorOf,
+} from "./setup/starter-vendors";
 export {
   AGENT_TOKEN_DISPLAY_LENGTH,
   AGENT_TOKEN_PREFIX,

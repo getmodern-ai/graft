@@ -266,3 +266,119 @@ export async function skipSetup(
   });
   return getSetupState(ctx, principal, deps, agentDeps);
 }
+
+/**
+ * How the connect step moves the record (GRA-206; GRA-202, *The connect step is the agent's own
+ * connection ask*). The server decides which move a request or an answered ask makes, since the
+ * routing and the ask's answer are `@graft/mcp`'s; this function holds the record to its steps.
+ *
+ * - `ask`: the agent's own connection (or scope) ask is open; the record names it and is on
+ *   `connect`. From `vendor` or `connect`, so a repeat or another starter re-points it.
+ * - `connected`: the record names the connection and moves to `goal`. Without `askId`, from
+ *   `vendor` or `connect`, for a connection the request made or found (a no-step provider, a row
+ *   already in the agent's scope, the ordinary form). With `askId`, learned from that ask's answer
+ *   on a read, and only while the record still waits on that ask.
+ * - `fromVendorAt`, on `ask` and `connected`: the move lands only on the record as it was seen on
+ *   `vendor`, its `updatedAt` unchanged. The connect route's second routing carries it, made after
+ *   the ask the first handed back was found answered about a connection that no longer stands and
+ *   the record went back to `vendor`: the person's choice is still in flight, so it lands over a
+ *   read that reopened the record, and never over a choice another tab made meanwhile, even one
+ *   that has since closed and left the record on `vendor` again (every write moves `updatedAt`).
+ * - `reopen`: the ask was declined, expired or is gone, or its answer names a connection that is no
+ *   longer live and in the agent's scope; back to `vendor` with no ask, only while the record
+ *   still waits on it.
+ * - `lost`: the connection the record names on `goal` was revoked or left the agent's scope before
+ *   anything was built with it; back to `vendor`, only while the record is still on `goal` with it.
+ */
+export type SetupConnectMove =
+  | { kind: "ask"; agentId: string; pendingActionId: string; fromVendorAt?: Date }
+  | {
+      kind: "connected";
+      agentId: string;
+      connectionId: string;
+      askId?: string;
+      fromVendorAt?: Date;
+    }
+  | { kind: "reopen"; askId: string }
+  | { kind: "lost"; connectionId: string };
+
+/**
+ * What a move answers: the state as it now stands, and whether this call changed the record. A move
+ * learned on a read is a no-op when another read got there first, and the state alone cannot say
+ * which of two reads made it, so a caller that counts the step reads `moved`.
+ */
+export type SetupMoveResult = { state: SetupState; moved: boolean };
+
+/**
+ * The agent the connect step acts as: the record's, while it stands, on the vendor or connect
+ * step. Refused `CONFLICT` otherwise, so no ask is opened for a Setup that has not started, has
+ * moved past connecting, or runs as an agent that was revoked.
+ */
+export function connectingAgentOf(state: SetupState): AgentOutput {
+  if (!state.agent || !state.setup) {
+    throw new ServiceError("CONFLICT", "Setup has not started; choose a harness first", {
+      details: { reason: "setup_not_started" },
+    });
+  }
+  if (state.step !== "vendor" && state.step !== "connect") {
+    throw new ServiceError("CONFLICT", "Setup is past connecting a vendor", {
+      details: { reason: "setup_step", step: state.step },
+    });
+  }
+  return state.agent;
+}
+
+/**
+ * Apply a `SetupConnectMove` under the record's lock, and answer the state and whether it moved.
+ *
+ * `confirm`, when given, runs under the lock once the move's own guard has passed and before the
+ * record is written, with the transaction; answering false leaves the record as it is. It is how a
+ * move a read decided is judged again, or its side effect made, against the record as it now
+ * stands: a `lost` that a later restore of the same connection has made untrue, or the taking of a
+ * stale answer, which two reads would otherwise both attempt.
+ */
+export async function moveSetupConnect(
+  ctx: ServiceContext,
+  principal: Principal,
+  move: SetupConnectMove,
+  deps: SetupDeps,
+  agentDeps: Pick<AgentDeps, "listAgents">,
+  confirm?: (scoped: ServiceContext) => Promise<boolean>,
+): Promise<SetupMoveResult> {
+  const moved = await ctx.db.transaction(async (tx) => {
+    const record = await deps.lockSetup(tx, principal.personId);
+    const askId =
+      move.kind === "reopen" ? move.askId : move.kind === "connected" ? move.askId : null;
+    if (move.kind === "lost") {
+      if (record.step !== "goal" || record.connectionId !== move.connectionId) return false;
+    } else if (askId) {
+      // Learned on a read, so a stale read (another tab moved on) changes nothing.
+      if (record.step !== "connect" || record.pendingActionId !== askId) return false;
+    } else if (move.kind !== "reopen" && move.fromVendorAt) {
+      if (
+        record.agentId !== move.agentId ||
+        record.step !== "vendor" ||
+        record.updatedAt.getTime() !== move.fromVendorAt.getTime()
+      ) {
+        return false;
+      }
+    } else if (
+      move.kind !== "reopen" &&
+      (record.agentId !== move.agentId || (record.step !== "vendor" && record.step !== "connect"))
+    ) {
+      throw new ServiceError("CONFLICT", "Setup moved on while this vendor was being connected", {
+        details: { reason: "setup_step", step: record.step },
+      });
+    }
+    if (confirm && !(await confirm({ db: tx }))) return false;
+    const patch: SetupPatch =
+      move.kind === "ask"
+        ? { step: "connect", pendingActionId: move.pendingActionId, connectionId: null }
+        : move.kind === "connected"
+          ? { step: "goal", pendingActionId: null, connectionId: move.connectionId }
+          : { step: "vendor", pendingActionId: null, connectionId: null };
+    await deps.saveSetup(tx, principal.personId, patch);
+    return true;
+  });
+  return { state: await getSetupState(ctx, principal, deps, agentDeps), moved };
+}

@@ -4,8 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { OpenInNewIcon } from "@/components/icons";
-import { AskCard, Hosts } from "@/components/pending/ask-card";
+import { AskCard, type AskOrigin, DocsLink, Hosts } from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
 import { Badge } from "@/components/ui/badge";
 import { agentKeys } from "@/lib/agent-queries";
@@ -32,9 +31,12 @@ import {
 export function ScopeAskCard({
   ask,
   onAnswered,
+  origin = "agent",
 }: {
   ask: Extract<Ask, { kind: "scope" }>;
   onAnswered?: () => void;
+  /** Setup's connect step passes `setup`: the documentation link is not the agent's reading. */
+  origin?: AskOrigin;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
@@ -101,17 +103,7 @@ export function ScopeAskCard({
         to {agentName}'s scope: no new connection, nothing entered, and the connection's approvals
         stay as they are. Other agents get it when you add it to theirs.
       </p>
-      {payload.docsUrl ? (
-        <a
-          href={payload.docsUrl}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
-        >
-          The documentation the agent read: {payload.docsUrl}
-          <OpenInNewIcon className="size-3" />
-        </a>
-      ) : null}
+      {payload.docsUrl ? <DocsLink href={payload.docsUrl} origin={origin} /> : null}
       {open ? (
         <BuildApprovalItem
           id={`ask-${action.id}-approve-build`}

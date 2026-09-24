@@ -476,6 +476,8 @@ const app = createServer({
     authUrl: env.GRAFT_AUTH_URL,
     // The console's revoke announces itself to the endpoint's live sessions (GRA-69).
     notifier: mcp.notifier,
+    // Setup's connect step opens the agent's own ask through `request_connection`'s routing (GRA-206).
+    connectionRouting: mcp,
   },
   mcpOAuth,
   // The console's build, served from the same origin as the API (`console.ts`); absent, the API is
