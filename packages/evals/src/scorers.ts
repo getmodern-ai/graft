@@ -196,16 +196,85 @@ export function publishBeforeFirstWrite(run: ScenarioRun): Score {
  * (ADR 0010); a host in the source is the mistake the proxy exists to make unnecessary. The one
  * exception is a literal `host:` option, `ctx.fetch("/v1/search", { host: "geo.example" })`, the
  * sanctioned way to name another host the connection declares, which the proxy judges on its host
- * route (GRA-213; ADR 0010 as amended 2026-09-24): it is taken out before the scan.
+ * route (GRA-213; ADR 0010 as amended 2026-09-24): it is taken out before the scan, and only where
+ * it is a property of the object literal written as `ctx.fetch`'s second argument, so the same
+ * host in a `const config = { host: "…" }` or in a nested `headers` object is still red (Greptile
+ * on #169).
  */
-const HOST_OPTION = /\bhost:\s*(["'`])[a-z0-9.-]+\1/gi;
+const FETCH_CALL = /\bctx\s*\.\s*fetch\s*\(/g;
+const HOST_PROPERTY = /(?:host|"host"|'host')\s*:\s*(["'`])[a-z0-9.-]+\1/iy;
+const OPENERS = "([{";
+const CLOSERS = ")]}";
+
+/** The index of the quote that closes the string literal opened at `start`, or the end of the text. */
+function closingQuote(source: string, start: number): number {
+  const quote = source[start];
+  let i = start + 1;
+  while (i < source.length && source[i] !== quote) i += source[i] === "\\" ? 2 : 1;
+  return i;
+}
+
+/**
+ * The spans of every literal `host` property at the top level of an object literal that is a
+ * `ctx.fetch(` call's second argument. The first argument is skipped by bracket depth, strings
+ * stepped over whole, so a comma inside a template or a call does not end it early.
+ */
+function sanctionedHostOptions(source: string): [number, number][] {
+  const spans: [number, number][] = [];
+  for (const call of source.matchAll(FETCH_CALL)) {
+    let i = call.index + call[0].length;
+    let depth = 0;
+    for (; i < source.length; i++) {
+      const c = source[i] ?? "";
+      if (c === '"' || c === "'" || c === "`") i = closingQuote(source, i);
+      else if (OPENERS.includes(c)) depth++;
+      else if (CLOSERS.includes(c)) {
+        if (depth === 0) break;
+        depth--;
+      } else if (c === "," && depth === 0) break;
+    }
+    if (source[i] !== ",") continue;
+    i++;
+    while (/\s/.test(source[i] ?? "")) i++;
+    if (source[i] !== "{") continue;
+    depth = 0;
+    for (; i < source.length; i++) {
+      const c = source[i] ?? "";
+      if (depth === 1 && !/[\w$.]/.test(source[i - 1] ?? "")) {
+        HOST_PROPERTY.lastIndex = i;
+        const property = HOST_PROPERTY.exec(source);
+        if (property) {
+          spans.push([i, i + property[0].length]);
+          i += property[0].length - 1;
+          continue;
+        }
+      }
+      if (c === '"' || c === "'" || c === "`") i = closingQuote(source, i);
+      else if (OPENERS.includes(c)) depth++;
+      else if (CLOSERS.includes(c)) {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+  }
+  return spans;
+}
+
+/** The source with each sanctioned `host` option replaced, last first so the spans stay true. */
+function withoutHostOptions(source: string): string {
+  let content = source;
+  for (const [start, end] of sanctionedHostOptions(source).reverse()) {
+    content = `${content.slice(0, start)}host: <declared>${content.slice(end)}`;
+  }
+  return content;
+}
 
 export function noVendorHostInCode(run: ScenarioRun, hostnames: readonly string[]): Score {
   const offenders: string[] = [];
   for (const attempt of run.attempts) {
     for (const file of attempt.files) {
       if (file.path === "package.json") continue;
-      const content = file.content.replace(HOST_OPTION, "host: <declared>");
+      const content = withoutHostOptions(file.content);
       for (const host of hostnames) {
         if (content.includes(host))
           offenders.push(`a${attempt.attemptNumber}/${file.path}: ${host}`);
