@@ -37,20 +37,51 @@ export function agentToAdopt<T extends { id: string }>(
 }
 
 /**
- * What the page does once `POST /api/setup/finish` succeeds. Opened from the card it tells its
- * opener and closes itself, as the handoff page does (`handoff-page.ts`; ADR 0006 as amended
- * 2026-09-21), since the person is in the chat and asks again there. It stays when the finish
- * issued a token, because the token is shown once and closing would lose it; and it stays for a
- * visit the card did not open, which ends on *Open the console* as before.
+ * What the page does once `POST /api/setup/finish` succeeds (GRA-215, *Finish Setup behaves*): one
+ * press completes the record and leaves. Opened from the card it tells its opener and closes
+ * itself, as the handoff page does (`handoff-page.ts`; ADR 0006 as amended 2026-09-21), since the
+ * person is in the chat and asks again there. Opened in the console it goes to the agent's page,
+ * or the agents table when the agent is gone, with a toast saying the tool is ready. It stays only
+ * when the finish itself issued a token, which is shown once and would be lost by leaving: the
+ * finish step issues a token harness's before the press, so that is a token issued for a record
+ * another tab left unissued.
+ *
+ * GRA-208 stayed on every visit the card did not open, ending on *Open the console*: the finish
+ * looked like it had done nothing, *Skip for now* vanished, and it took a second press to leave
+ * (Aleks's walkthrough, 2026-09-24).
  */
-export type AfterSetupFinish = { kind: "close" } | { kind: "stay" };
+export type AfterSetupFinish =
+  | { kind: "close" }
+  | { kind: "stay" }
+  | { kind: "leave"; to: "/agents" }
+  | { kind: "leave"; to: "/agents/$agentId"; agentId: string };
 
 export function afterSetupFinish(
   search: SetupSearch,
-  answer: { token: string | null },
+  answer: { token: string | null; agent: { id: string } | null },
 ): AfterSetupFinish {
-  if (search.from !== "card" || answer.token !== null) return { kind: "stay" };
-  return { kind: "close" };
+  if (answer.token !== null) return { kind: "stay" };
+  if (search.from === "card") return { kind: "close" };
+  return answer.agent
+    ? { kind: "leave", to: "/agents/$agentId", agentId: answer.agent.id }
+    : { kind: "leave", to: "/agents" };
+}
+
+/**
+ * The toast the console shows on arriving at the agent's page from the finish: that Setup is done,
+ * and where the tool stands, landed (its wire name), still arriving, or not there at all.
+ */
+export function setupFinishedToast(
+  agentName: string,
+  tool: { kind: "landed"; wireName: string } | { kind: "arriving" } | { kind: "none" },
+): { title: string; description: string } {
+  const description =
+    tool.kind === "landed"
+      ? `${tool.wireName} is ready in ${agentName}'s tools.`
+      : tool.kind === "arriving"
+        ? `The tool joins ${agentName}'s tools when its job passes.`
+        : `${agentName} is ready. Ask it for what you wanted and Graft acquires it.`;
+  return { title: "Setup is complete", description };
 }
 
 /** How long the finished step stays before the page tries to close: the card popup's own delay. */

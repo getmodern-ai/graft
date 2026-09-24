@@ -1,4 +1,5 @@
 import {
+  type AcquireJobDeps,
   type AgentDeps,
   addConnectionToAgentScope,
   type ConnectionDeps,
@@ -79,13 +80,21 @@ export type SetupConnectDeps = {
    * to the agents that reached it then, and no waiting `request_connection` settles to tell this one.
    */
   notifier?: Pick<ToolListChangedNotifier, "changed">;
+  /** The job a record that went back still holds, read to judge whether a choice leaves it running. */
+  acquireJob?: Pick<AcquireJobDeps, "findAcquireJob">;
 };
 
 /** What a connect or a read did, so the route can count the connect step completing. */
 export type SetupConnectResult = { state: SetupState; connected: boolean };
 
-/** `POST /api/setup/connect`: a starter by its id, or the connection *Another vendor*'s form made. */
-export type SetupConnectInput = { starterId: string } | { connectionId: string };
+/**
+ * `POST /api/setup/connect`: a starter by its id, or the connection *Another vendor*'s form made.
+ * `discardJob` is the person agreeing to leave behind the job a record that went back still holds
+ * while it runs (GRA-215), which a choice of another vendor does.
+ */
+export type SetupConnectInput = ({ starterId: string } | { connectionId: string }) & {
+  discardJob?: boolean;
+};
 
 export async function listSetupVendors(
   providers: readonly ConnectionProvider[],
@@ -120,6 +129,7 @@ export async function connectSetupVendor(
 ): Promise<SetupConnectResult> {
   const before = await getSetupState(ctx, principal, deps.setup, deps.agent);
   const agent = connectingAgentOf(before);
+  if (!input.discardJob) await refuseLeavingJobRunning(ctx, principal, before, input, deps);
 
   if ("connectionId" in input) {
     const connection = orNotFound(
@@ -150,6 +160,43 @@ export async function connectSetupVendor(
   const starter = starterVendorOf(input.starterId);
   if (!starter) throw new ServiceError("NOT_FOUND", "No starter vendor has that id");
   return routeStarter(ctx, principal, agent.id, starter, deps);
+}
+
+/**
+ * A record that went back to the vendor step keeps the job it holds (GRA-215, `moveSetupBack`),
+ * and the connect moves drop that job with the connection it was acquired against. While the job
+ * still runs, a choice that would replace the connection is refused `job_running` until it says
+ * `discardJob`, so the console asks first; the same vendor again keeps the job, and a job that
+ * finished is left without asking. Judged on the vendor, since the routing decides the row.
+ */
+async function refuseLeavingJobRunning(
+  ctx: ServiceContext,
+  principal: Principal,
+  state: SetupState,
+  input: SetupConnectInput,
+  deps: SetupConnectDeps,
+): Promise<void> {
+  const record = state.setup;
+  if (!record?.acquireJobId || !record.connectionId || !state.agent || !deps.acquireJob) return;
+  const held = record.connectionId;
+  if ("connectionId" in input) {
+    if (input.connectionId === held) return;
+  } else {
+    const current = await getConnection(ctx, principal, held, deps.connection);
+    if (current && current.vendor === starterVendorOf(input.starterId)?.vendor) return;
+  }
+  const job = await deps.acquireJob.findAcquireJob(
+    ctx.db,
+    { personId: principal.personId, agentId: state.agent.id },
+    record.acquireJobId,
+  );
+  if (job && (job.status === "queued" || job.status === "running")) {
+    throw new ServiceError(
+      "CONFLICT",
+      "The job Setup started is still acquiring a tool for the connection you chose before; another one leaves it behind",
+      { details: { reason: "job_running", acquireJobId: job.id } },
+    );
+  }
 }
 
 /** A `connected` move's result as the route counts it: the step completes only where it moved. */

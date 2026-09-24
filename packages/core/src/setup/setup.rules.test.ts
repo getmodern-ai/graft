@@ -5,9 +5,12 @@ import { readSetupHarness, SETUP_HARNESS_IDS, SETUP_HARNESSES, setupHarnessOf } 
 import {
   currentSetupStep,
   isAwaitingHarness,
+  previousSetupStep,
   SETUP_AGENT_PARAM,
   SETUP_PATH,
   SETUP_STEPS,
+  setupBackTargets,
+  setupStepReachable,
   setupUrl,
   shouldOfferSetup,
   shouldShowSetup,
@@ -168,5 +171,45 @@ describe("the vocabularies", () => {
         expect(step).not.toContain("\u2014");
       }
     }
+  });
+});
+
+describe("where Setup can go back to (GRA-215)", () => {
+  const held = {
+    pendingActionId: null,
+    connectionId: "conn_1",
+    acquireJobId: "job_1",
+    toolId: "tool_1",
+  };
+
+  it("offers every step before the record's that it holds what for, in order", () => {
+    expect(setupBackTargets({ ...held, step: "finish" })).toEqual([
+      "harness",
+      "vendor",
+      "connect",
+      "goal",
+      "building",
+      "result",
+    ]);
+    expect(setupBackTargets({ ...held, step: "goal" })).toEqual(["harness", "vendor", "connect"]);
+    expect(setupBackTargets({ ...held, step: "harness" })).toEqual([]);
+    expect(setupBackTargets({ ...held, step: "completed" })).toEqual([]);
+  });
+
+  it("leaves out the result a record passed while the job ran, and a connect step it never held", () => {
+    const continued = { ...held, toolId: null, step: "finish" as const };
+    expect(setupBackTargets(continued)).not.toContain("result");
+    expect(previousSetupStep(continued)).toBe("building");
+    const asking = { ...held, connectionId: null, pendingActionId: "pa_1" };
+    expect(setupStepReachable("connect", asking)).toBe(true);
+    expect(setupStepReachable("goal", asking)).toBe(false);
+    expect(setupStepReachable("connect", { ...asking, pendingActionId: null })).toBe(false);
+  });
+
+  it("names the step before as Back's, and none on the first", () => {
+    expect(previousSetupStep({ ...held, step: "result" })).toBe("building");
+    expect(previousSetupStep({ ...held, step: "vendor" })).toBe("harness");
+    expect(previousSetupStep({ ...held, step: "harness" })).toBeNull();
+    expect(setupStepReachable("finish", held)).toBe(false);
   });
 });

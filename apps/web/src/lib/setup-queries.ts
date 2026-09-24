@@ -2,11 +2,13 @@ import type { SetupOutput, SetupState, SetupVendorOption } from "@graft/core";
 import type { AcquireStatus } from "@graft/mcp/acquire/shapes";
 import type {
   AgentToolRunOutput,
+  SetupBackBody,
   SetupBuildBody,
   SetupConnectBody,
   SetupFinishOutput,
   SetupGoalContext,
   SetupGoalSuggestions,
+  SetupNextBody,
   SetupStartBody,
   SetupToolContext,
   ToolRunBody,
@@ -55,6 +57,19 @@ export function startSetup(body: SetupStartBody) {
 
 export function skipSetup() {
   return api<SetupStateData>("/setup/skip", { method: "POST" });
+}
+
+/**
+ * Back to a step the record completed (`POST /api/setup/back`, GRA-215), from the rail or the
+ * footer: the record keeps its connection, job and tool, and a running job keeps running.
+ */
+export function backSetup(body: SetupBackBody) {
+  return api<SetupStateData>("/setup/back", { method: "POST", body });
+}
+
+/** Continue on a step returned to with nothing changed (`POST /api/setup/next`, GRA-215). */
+export function nextSetup(body: SetupNextBody) {
+  return api<SetupStateData>("/setup/next", { method: "POST", body });
 }
 
 /** One line of the vendor step: a starter, the provider that covers it here, and what connecting takes. */
@@ -111,9 +126,13 @@ export function setupGoalSuggestionsQuery(connectionId: string) {
 /**
  * The goal the person last pressed Build with, held in the cache alone (never fetched), so *Change
  * the goal* returns to what they typed rather than to the curated one. A reload forgets it, and
- * the curated goal is what the field then shows.
+ * the curated goal is what the field then shows. Keyed by the connection it was built against
+ * (Greptile on #170): after going back and choosing another integration, the field starts at that
+ * integration's curated task, never at the task typed for the one before.
  */
-export const setupGoalDraftKey = ["setup-goal-draft"] as const;
+export function setupGoalDraftKey(connectionId: string | null) {
+  return ["setup-goal-draft", connectionId] as const;
+}
 
 /** Build: the build approval, the job, and the record on the building step (`SetupBuildBody`). */
 export function buildSetup(body: SetupBuildBody) {

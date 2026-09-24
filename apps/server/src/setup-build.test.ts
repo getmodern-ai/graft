@@ -380,6 +380,7 @@ describe("Setup's goal and build steps", () => {
       starterId: "open-meteo",
       goal: OPEN_METEO.goal,
       build: { available: true },
+      job: null,
     });
 
     const built = await app.request("/api/setup/build", post({ goal: goal.goal }));
@@ -1077,4 +1078,156 @@ describe("POST /api/agents/:id/token", () => {
     person = `person_${people}`;
     expect((await app.request(`/api/agents/${agentId}/token`, post())).status).toBe(404);
   });
+});
+
+/**
+ * A model whose every turn waits for `release`, so a job stays running while a test goes back and
+ * chooses again (GRA-215). The runner's `idle` in `afterEach` waits for it, so each test releases.
+ */
+function heldModel(script: ScriptedStep[]): { model: ModelAdapter; release: () => void } {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const scripted = createScriptedModel(script);
+  return {
+    model: {
+      name: scripted.name,
+      open(context) {
+        const conversation = scripted.open(context);
+        return {
+          async turn(situation) {
+            await gate;
+            return conversation.turn(situation);
+          },
+        };
+      },
+    },
+    release,
+  };
+}
+
+describe("Setup's navigable rail (GRA-215)", () => {
+  it("goes back to a completed step and on again with nothing changed, the running job kept", async () => {
+    const held = heldModel(PASSING_SCRIPT);
+    mcp.model = held.model;
+    try {
+      const { agentId, connectionId } = await onGoal(true, "claude");
+      const building = await read(
+        await app.request("/api/setup/build", post({ goal: OPEN_METEO.goal })),
+      );
+      const jobId: string = building.setup.acquireJobId;
+
+      // A step ahead of the record is refused, and so is the step it stands on.
+      const ahead = await app.request("/api/setup/back", post({ step: "result" }));
+      expect(ahead.status).toBe(409);
+      expect((await read(ahead)).details).toMatchObject({ reason: "setup_step_ahead" });
+      const unknown = await app.request("/api/setup/back", post({ step: "finish" }));
+      expect(unknown.status).toBe(400);
+
+      // Back to the goal while the job runs: the job stays, and the step shows its words.
+      const back = await read(await app.request("/api/setup/back", post({ step: "goal" })));
+      expect(back).toMatchObject({
+        step: "goal",
+        setup: { step: "goal", connectionId, acquireJobId: jobId },
+      });
+      expect(await get("/api/setup/goal")).toMatchObject({
+        job: { id: jobId, goal: OPEN_METEO.goal, status: expect.stringMatching(/queued|running/) },
+      });
+      // Build again would leave it running, so it is refused until the person says so.
+      const rebuild = await app.request("/api/setup/build", post({ goal: "Read tomorrow." }));
+      expect(rebuild.status).toBe(409);
+      expect((await read(rebuild)).details).toMatchObject({
+        reason: "job_running",
+        acquireJobId: jobId,
+      });
+
+      // Back to the vendor: another vendor is refused while the job runs; the same one keeps it.
+      await app.request("/api/setup/back", post({ step: "vendor" }));
+      const other = await app.request("/api/setup/connect", post({ starterId: "github" }));
+      expect(other.status).toBe(409);
+      expect((await read(other)).details).toMatchObject({ reason: "job_running" });
+      const same = await read(
+        await app.request("/api/setup/connect", post({ starterId: "open-meteo" })),
+      );
+      expect(same).toMatchObject({ step: "goal", setup: { connectionId, acquireJobId: jobId } });
+
+      // Back to connect, which shows the connection made, and Continue walks on to the job.
+      await app.request("/api/setup/back", post({ step: "connect" }));
+      const connect = await get("/api/setup");
+      expect(connect).toMatchObject({ step: "connect", setup: { connectionId } });
+      await app.request("/api/setup/next", post({ from: "connect" }));
+      const onBuilding = await read(await app.request("/api/setup/next", post({ from: "goal" })));
+      expect(onBuilding).toMatchObject({ step: "building", setup: { acquireJobId: jobId } });
+      // The tool has not landed, so Continue from the building step has nowhere to go.
+      const early = await app.request("/api/setup/next", post({ from: "building" }));
+      expect((await read(early)).details).toMatchObject({ reason: "setup_step_unavailable" });
+
+      held.release();
+      await runner.idle();
+      expect(await get("/api/setup")).toMatchObject({
+        step: "result",
+        setup: { acquireJobId: jobId },
+      });
+      expect(store.acquireJobs.size).toBeGreaterThan(0);
+      expect([...store.acquireJobs.values()].filter((job) => job.agentId === agentId)).toHaveLength(
+        1,
+      );
+
+      // Viewable: back to the building step after the pass stays there, and Continue returns.
+      const review = await read(await app.request("/api/setup/back", post({ step: "building" })));
+      expect(review).toMatchObject({ step: "building", setup: { toolId: expect.any(String) } });
+      expect(await get("/api/setup")).toMatchObject({ step: "building" });
+      const result = await read(await app.request("/api/setup/next", post({ from: "building" })));
+      expect(result).toMatchObject({ step: "result" });
+
+      // The harness, changed while the agent awaits it: the default name follows, nothing else moves.
+      await app.request("/api/setup/back", post({ step: "harness" }));
+      const codex = await read(
+        await app.request("/api/setup/next", post({ from: "harness", harness: "codex" })),
+      );
+      expect(codex).toMatchObject({
+        step: "vendor",
+        setup: { harness: "codex", connectionId, acquireJobId: jobId },
+        agent: { id: agentId, name: "Codex" },
+      });
+      // A stale tab's Continue from a step the record left is refused.
+      const stale = await app.request("/api/setup/next", post({ from: "harness" }));
+      expect((await read(stale)).details).toMatchObject({ reason: "setup_step", step: "vendor" });
+    } finally {
+      held.release();
+    }
+  }, 60_000);
+
+  it("leaves a running job behind when the choice or the Build says so", async () => {
+    const held = heldModel(PASSING_SCRIPT);
+    mcp.model = held.model;
+    try {
+      await onGoal(true, "claude");
+      const first = await read(
+        await app.request("/api/setup/build", post({ goal: OPEN_METEO.goal })),
+      );
+      await app.request("/api/setup/back", post({ step: "goal" }));
+      const rebuilt = await read(
+        await app.request(
+          "/api/setup/build",
+          post({ goal: "Read tomorrow's forecast. Read only.", discardJob: true }),
+        ),
+      );
+      expect(rebuilt.step).toBe("building");
+      expect(rebuilt.setup.acquireJobId).not.toBe(first.setup.acquireJobId);
+
+      await app.request("/api/setup/back", post({ step: "vendor" }));
+      const other = await read(
+        await app.request("/api/setup/connect", post({ starterId: "github", discardJob: true })),
+      );
+      // The ask is open; answered with GitHub's connection, the job goes with the old one.
+      expect(other).toMatchObject({
+        step: "connect",
+        setup: { pendingActionId: expect.any(String) },
+      });
+    } finally {
+      held.release();
+    }
+  }, 60_000);
 });

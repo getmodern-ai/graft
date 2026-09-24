@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { finishVariant, promptToolOf, snippetShapeOf, toolArrival } from "./setup-finish";
+import {
+  finishSections,
+  finishVariant,
+  promptToolOf,
+  snippetShapeOf,
+  toolArrival,
+} from "./setup-finish";
 
 const GOAL = "Read the current weather for a city. Read only.";
 
@@ -54,5 +60,48 @@ describe("toolArrival and promptToolOf", () => {
     expect(toolArrival(context)).toEqual({ kind: "failed", message: "The model gave up." });
     expect(promptToolOf(context)).toBeUndefined();
     expect(toolArrival({ goal: null, job: null, tool: null })).toEqual({ kind: "none" });
+  });
+});
+
+describe("finishSections (GRA-215)", () => {
+  const fresh = { issued: false, awaiting: true };
+
+  it("gives an OAuth harness the prompt, with the URL and the steps behind the disclosure", () => {
+    expect(finishSections("oauth", fresh)).toEqual({
+      prompt: true,
+      token: null,
+      byHand: "oauth",
+      askInChat: false,
+      primary: "finish",
+    });
+  });
+
+  it("gives a token harness the token block and the prompt, issuing the token before the finish", () => {
+    expect(finishSections("token", fresh)).toEqual({
+      prompt: true,
+      token: "to_issue",
+      byHand: "token",
+      askInChat: false,
+      primary: "issue_token",
+    });
+    expect(finishSections("token", { issued: true, awaiting: false })).toMatchObject({
+      token: "issued",
+      primary: "finish",
+    });
+    // An agent issued a token elsewhere keeps the one it has; Finish Setup is the action.
+    expect(finishSections("token", { issued: false, awaiting: false })).toMatchObject({
+      token: "saved",
+      primary: "finish",
+    });
+  });
+
+  it("gives an adopted agent the one request to ask, and nothing else", () => {
+    expect(finishSections("adopted", fresh)).toEqual({
+      prompt: false,
+      token: null,
+      byHand: null,
+      askInChat: true,
+      primary: "finish",
+    });
   });
 });

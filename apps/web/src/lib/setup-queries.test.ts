@@ -1,7 +1,12 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
-import { installSetupState, type SetupStateData, setupKeys } from "./setup-queries";
+import {
+  installSetupState,
+  type SetupStateData,
+  setupGoalDraftKey,
+  setupKeys,
+} from "./setup-queries";
 
 /** Two states the connect step can see: the one a poll left with, and the one a verb answered. */
 const connect = { step: "connect" } as SetupStateData;
@@ -34,5 +39,17 @@ describe("installSetupState", () => {
     queryClient.setQueryData(setupKeys.vendors, { vendors: [] });
     await installSetupState(queryClient, goal);
     expect(queryClient.getQueryData(setupKeys.vendors)).toEqual({ vendors: [] });
+  });
+});
+
+describe("setupGoalDraftKey", () => {
+  it("holds a task typed for one connection apart from another's", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(setupGoalDraftKey("conn_gmail"), "Show me my unread emails");
+    // Back to the integration step, another chosen: its field starts at its own curated task.
+    expect(queryClient.getQueryData(setupGoalDraftKey("conn_meteo"))).toBeUndefined();
+    expect(queryClient.getQueryData(setupGoalDraftKey("conn_gmail"))).toBe(
+      "Show me my unread emails",
+    );
   });
 });

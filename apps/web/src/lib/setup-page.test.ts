@@ -7,6 +7,7 @@ import {
   readSetupSearch,
   SETUP_CLOSE_MS,
   SETUP_FROM_CARD,
+  setupFinishedToast,
 } from "./setup-page";
 
 /** The Setup page opened from `find_tool`'s offer or the ask card (GRA-210). */
@@ -47,20 +48,45 @@ describe("agentToAdopt", () => {
 });
 
 describe("afterSetupFinish", () => {
+  const agent = { id: "agent_1" };
+
   it("closes a page the card opened once Setup is finished", () => {
-    expect(afterSetupFinish({ from: "card" }, { token: null })).toEqual({ kind: "close" });
-    expect(afterSetupFinish({ agent: "agent_1", from: "card" }, { token: null })).toEqual({
+    expect(afterSetupFinish({ from: "card" }, { token: null, agent })).toEqual({ kind: "close" });
+    expect(afterSetupFinish({ agent: "agent_1", from: "card" }, { token: null, agent })).toEqual({
       kind: "close",
     });
   });
 
   it("stays when the finish issued a token, which is shown once", () => {
-    expect(afterSetupFinish({ from: "card" }, { token: "grft_abc" })).toEqual({ kind: "stay" });
+    expect(afterSetupFinish({ from: "card" }, { token: "grft_abc", agent })).toEqual({
+      kind: "stay",
+    });
+    expect(afterSetupFinish({}, { token: "grft_abc", agent })).toEqual({ kind: "stay" });
   });
 
-  it("stays for a visit the card did not open", () => {
-    expect(afterSetupFinish({}, { token: null })).toEqual({ kind: "stay" });
-    expect(afterSetupFinish({ agent: "agent_1" }, { token: null })).toEqual({ kind: "stay" });
+  it("leaves a visit the card did not open for the agent's page, or the table without one", () => {
+    expect(afterSetupFinish({}, { token: null, agent })).toEqual({
+      kind: "leave",
+      to: "/agents/$agentId",
+      agentId: "agent_1",
+    });
+    expect(afterSetupFinish({ agent: "agent_1" }, { token: null, agent: null })).toEqual({
+      kind: "leave",
+      to: "/agents",
+    });
+  });
+
+  it("says in the toast where the tool stands", () => {
+    expect(
+      setupFinishedToast("Claude", { kind: "landed", wireName: "open-meteo__current-weather" }),
+    ).toEqual({
+      title: "Setup is complete",
+      description: "open-meteo__current-weather is ready in Claude's tools.",
+    });
+    expect(setupFinishedToast("Claude", { kind: "arriving" }).description).toBe(
+      "The tool joins Claude's tools when its job passes.",
+    );
+    expect(setupFinishedToast("Claude", { kind: "none" }).description).not.toContain("—");
   });
 
   it("waits the card popup's delay and says to ask again in the chat", () => {

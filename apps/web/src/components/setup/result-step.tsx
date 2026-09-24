@@ -4,6 +4,7 @@ import { CodeBlock } from "@/components/code-block";
 import { WarningIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
+import { SetupFooter } from "@/components/setup/setup-footer";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { StatusChip } from "@/components/status-chip";
@@ -20,6 +21,7 @@ import {
   type SetupTool,
   setupToolQuery,
 } from "@/lib/setup-queries";
+import { resultToolOf } from "@/lib/setup-result";
 import { type RunInputView, runInputOf, runInputView, runResultText } from "@/lib/setup-run-input";
 import { TOOL_ANNOTATION_CHIP } from "@/lib/status-chips";
 
@@ -36,6 +38,17 @@ import { TOOL_ANNOTATION_CHIP } from "@/lib/status-chips";
 export function ResultStep({ state }: { state: SetupStateData }) {
   const context = useQuery(setupToolQuery);
   const agentName = state.agent?.name ?? "your agent";
+  const recordToolId = state.setup?.toolId ?? null;
+  const tool = resultToolOf(recordToolId, context.data?.tool);
+  // A cached context naming an earlier job's tool is read again, once per tool the record names,
+  // and nothing runs until the record's own tool is here (`lib/setup-result.ts`).
+  const refetchedFor = useRef<string | null>(null);
+  const { data, isFetching, refetch } = context;
+  useEffect(() => {
+    if (!data?.tool || tool || isFetching || refetchedFor.current === recordToolId) return;
+    refetchedFor.current = recordToolId;
+    void refetch();
+  }, [data, tool, isFetching, recordToolId, refetch]);
   return (
     <div className="flex flex-col gap-6">
       <SetupStepHeader
@@ -53,8 +66,14 @@ export function ResultStep({ state }: { state: SetupStateData }) {
             retrying={context.isFetching}
           />
         </p>
-      ) : context.data.tool && context.data.agent ? (
-        <ToolRun context={context.data} agentId={context.data.agent.id} tool={context.data.tool} />
+      ) : tool && context.data.agent ? (
+        <ToolRun
+          key={tool.id}
+          state={state}
+          context={context.data}
+          agentId={context.data.agent.id}
+          tool={tool}
+        />
       ) : (
         <Loader />
       )}
@@ -63,10 +82,12 @@ export function ResultStep({ state }: { state: SetupStateData }) {
 }
 
 function ToolRun({
+  state,
   context,
   agentId,
   tool,
 }: {
+  state: SetupStateData;
   context: SetupTool;
   agentId: string;
   tool: NonNullable<SetupTool["tool"]>;
@@ -169,7 +190,7 @@ function ToolRun({
         </Alert>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <SetupFooter state={state} disabled={run.isPending || onward.isPending}>
         {view.kind === "none" && !answer ? null : (
           <Button type="submit" variant="outline" disabled={run.isPending}>
             {run.isPending ? "Running…" : "Run again"}
@@ -178,7 +199,7 @@ function ToolRun({
         <Button type="button" disabled={onward.isPending} onClick={() => onward.mutate(undefined)}>
           {onward.isPending ? "Continuing…" : "Continue"}
         </Button>
-      </div>
+      </SetupFooter>
     </form>
   );
 }

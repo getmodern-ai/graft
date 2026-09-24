@@ -5,7 +5,7 @@ import type * as React from "react";
 import { CheckCircleIcon } from "@/components/icons";
 import { BuildingStep } from "@/components/setup/building-step";
 import { ConnectStep } from "@/components/setup/connect-step";
-import { FinishStep } from "@/components/setup/finish-step";
+import { FinishStep, type FinishStepProps } from "@/components/setup/finish-step";
 import { GoalStep } from "@/components/setup/goal-step";
 import { HarnessStep } from "@/components/setup/harness-step";
 import { ResultStep } from "@/components/setup/result-step";
@@ -49,17 +49,32 @@ const STEPS: Record<
 export function SetupStepView({
   state,
   finished,
+  leaving,
   onFinished,
+  issuedToken,
+  onTokenIssued,
   agentId,
 }: {
   state: SetupStateData;
   finished: SetupFinish | null;
-  onFinished: (answer: SetupFinish) => void;
+  /** Finish Setup succeeded and the page is leaving for the agent's page (GRA-215). */
+  leaving: boolean;
+  onFinished: FinishStepProps["onFinished"];
+  issuedToken: string | null;
+  onTokenIssued: (token: string) => void;
   /** The agent the page's URL names, which the harness step starts as when it is the person's. */
   agentId?: string;
 }) {
-  if (state.step === "finish" || finished) {
-    return <FinishStep state={state} finished={finished} onFinished={onFinished} />;
+  if (state.step === "finish" || finished || leaving) {
+    return (
+      <FinishStep
+        state={state}
+        finished={finished}
+        onFinished={onFinished}
+        issuedToken={issuedToken}
+        onTokenIssued={onTokenIssued}
+      />
+    );
   }
   if (state.step === "harness") return <HarnessStep state={state} agentId={agentId} />;
   const Step = STEPS[state.step];

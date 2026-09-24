@@ -4,14 +4,21 @@ import { useState } from "react";
 
 import { AddConnectionDialog } from "@/components/connection/add-connection-dialog";
 import { RetryNotice } from "@/components/retry-notice";
+import { DiscardJobDialog } from "@/components/setup/discard-job-dialog";
 import { SetupChoice, type SetupChoiceOption } from "@/components/setup/setup-choice";
+import { SetupFooter } from "@/components/setup/setup-footer";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { pendingKeys } from "@/lib/pending-action-queries";
-import { connectSetup, setupVendorsQuery } from "@/lib/setup-queries";
-import { ANOTHER_VENDOR, SETUP_CONNECT_LABEL } from "@/lib/setup-vendors";
+import {
+  connectSetup,
+  type SetupStateData,
+  setupGoalQuery,
+  setupVendorsQuery,
+} from "@/lib/setup-queries";
+import { ANOTHER_VENDOR, choiceLeavesJob, SETUP_CONNECT_LABEL } from "@/lib/setup-vendors";
 
 /**
  * The starter vendors this deployment can connect, as the server lists them (GRA-206; ADR 0024),
@@ -21,29 +28,52 @@ import { ANOTHER_VENDOR, SETUP_CONNECT_LABEL } from "@/lib/setup-vendors";
  * makes is taken on by the record. That connection's id is kept, so a handoff that fails after the
  * form closed is tried again with it, rather than opening a blank form for a second connection.
  *
- * Drawn by the vendor step, and by the connect step when the person chooses another vendor there,
- * so both offer the same list the same way.
+ * **Returned to** (GRA-215): the record still names the connection it made, so the starter it came
+ * from is chosen already, and Continue with it keeps the connection and anything built on it.
+ * Another choice replaces it; while the job built on it still runs, the step asks first
+ * (`DiscardJobDialog`) and sends `discardJob` once the person agrees.
  */
-export function VendorChoice({ onChosen }: { onChosen?: () => void }) {
+export function VendorChoice({ state }: { state: SetupStateData }) {
   const vendors = useQuery(setupVendorsQuery);
+  const holds = state.setup?.connectionId != null;
+  // What the record holds from before it came back: the starter and its job's status.
+  const goal = useQuery({ ...setupGoalQuery, enabled: holds });
   const queryClient = useQueryClient();
-  const [choice, setChoice] = useState<string | null>(null);
+  const heldStarter = holds ? (goal.data?.starterId ?? null) : null;
+  const [picked, setPicked] = useState<string | null>(null);
+  const choice = picked ?? heldStarter;
   const [formOpen, setFormOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   // The connection *Another vendor*'s form made, until the record has taken it on.
   const [madeConnectionId, setMadeConnectionId] = useState<string | null>(null);
+  // The person agreed to leave the running job behind, for the form's handoff too.
+  const [discard, setDiscard] = useState(false);
   const connect = useSetupMutation(connectSetup);
-  const handOff = (connectionId: string) => connect.mutate({ connectionId }, chosen);
+  const handOff = (connectionId: string) =>
+    connect.mutate({ connectionId, ...(discard ? { discardJob: true } : {}) }, chosen);
 
   const chosen = {
     onSuccess: () => {
       setMadeConnectionId(null);
+      setConfirming(false);
       // The ask the connect step draws is in the inbox's list from now on.
       void queryClient.invalidateQueries({ queryKey: pendingKeys.all });
-      onChosen?.();
     },
   };
 
-  if (vendors.isPending) {
+  const go = (discardJob: boolean) => {
+    if (!choice) return;
+    if (choice === ANOTHER_VENDOR) {
+      setDiscard(discardJob);
+      setConfirming(false);
+      if (madeConnectionId) handOff(madeConnectionId);
+      else setFormOpen(true);
+    } else if (isStarterVendorId(choice)) {
+      connect.mutate({ starterId: choice, ...(discardJob ? { discardJob: true } : {}) }, chosen);
+    }
+  };
+
+  if (vendors.isPending || (holds && goal.isPending)) {
     return (
       <div className="grid gap-2.5 sm:grid-cols-2" aria-busy="true">
         {["a", "b", "c", "d"].map((key) => (
@@ -78,6 +108,9 @@ export function VendorChoice({ onChosen }: { onChosen?: () => void }) {
       description: "Connect any vendor with its API address, how it signs in and its key.",
     },
   ];
+  const held = goal.data
+    ? { starterId: goal.data.starterId, jobStatus: goal.data.job?.status ?? null }
+    : null;
 
   return (
     <>
@@ -86,10 +119,8 @@ export function VendorChoice({ onChosen }: { onChosen?: () => void }) {
         onSubmit={(event) => {
           event.preventDefault();
           if (!choice) return;
-          if (choice === ANOTHER_VENDOR) {
-            if (madeConnectionId) handOff(madeConnectionId);
-            else setFormOpen(true);
-          } else if (isStarterVendorId(choice)) connect.mutate({ starterId: choice }, chosen);
+          if (choiceLeavesJob(choice, held)) setConfirming(true);
+          else go(false);
         }}
       >
         <SetupChoice
@@ -97,14 +128,14 @@ export function VendorChoice({ onChosen }: { onChosen?: () => void }) {
           legend="Vendor"
           options={options}
           value={choice}
-          onChange={setChoice}
+          onChange={setPicked}
           disabled={connect.isPending}
         />
-        <div className="flex justify-end">
+        <SetupFooter state={state} disabled={connect.isPending}>
           <Button type="submit" disabled={!choice || connect.isPending}>
             {connect.isPending ? "Connecting…" : "Continue"}
           </Button>
-        </div>
+        </SetupFooter>
       </form>
       {madeConnectionId && connect.isError && choice === ANOTHER_VENDOR ? (
         // Outside the form, so its Retry is never read as the form's submit.
@@ -117,6 +148,14 @@ export function VendorChoice({ onChosen }: { onChosen?: () => void }) {
           />
         </p>
       ) : null}
+      <DiscardJobDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        onConfirm={() => go(true)}
+        pending={connect.isPending}
+        action={{ label: "Choose it anyway", pending: "Connecting…" }}
+        consequence="Choosing another integration starts over from its connection."
+      />
       {/* Outside the form: a submit inside the dialog's portal would bubble to it through React. */}
       <AddConnectionDialog
         open={formOpen}

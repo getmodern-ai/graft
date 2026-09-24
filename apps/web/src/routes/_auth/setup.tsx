@@ -2,11 +2,13 @@ import { setupCompletedMessage } from "@graft/core/connection/card.rules";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { GraftWordmark } from "@/components/graft-wordmark";
 import { CheckCircleIcon, InfoIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
+import { useSetupBack } from "@/components/setup/setup-footer";
 import { SetupProgress, SetupRail } from "@/components/setup/setup-rail";
 import { SetupStepView } from "@/components/setup/setup-step";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
@@ -20,6 +22,7 @@ import {
   SETUP_CLOSE_CHECK_MS,
   SETUP_CLOSE_MS,
   SETUP_FROM_CARD,
+  setupFinishedToast,
 } from "@/lib/setup-page";
 import { type SetupFinish, setupQuery, skipSetup } from "@/lib/setup-queries";
 
@@ -55,17 +58,35 @@ function SetupRoute() {
   const search = Route.useSearch();
   const navigate = useNavigate();
   const skip = useSetupMutation(skipSetup);
+  const back = useSetupBack();
   // The finish's answer, token included, for as long as this page is open (`finish-step.tsx`).
   const [finished, setFinished] = useState<SetupFinish | null>(null);
+  // A token harness's token, issued on the finish step before Finish Setup (GRA-215), held here
+  // so it outlives the step's own reads; shown once, never cached.
+  const [issuedToken, setIssuedToken] = useState<string | null>(null);
+  // Finish Setup succeeded and the page is on its way to the agent: the finish step stays drawn,
+  // its button held, rather than the completed state flashing before the navigation lands.
+  const [leaving, setLeaving] = useState(false);
   const [closeRefused, setCloseRefused] = useState(false);
   const state = setup.data;
-  const step = finished ? "completed" : (state?.step ?? "harness");
+  const step = finished ? "completed" : leaving ? "finish" : (state?.step ?? "harness");
   const fromCard = search.from === "card";
 
-  // Completion is the finish succeeding; a page the card opened then tells its opener and closes.
-  const onFinished = (answer: SetupFinish) => {
+  // Completion is the finish succeeding (GRA-215): a visit the console opened lands on the agent's
+  // page with a toast; a page the card opened tells its opener and closes; a token the finish
+  // itself issued keeps the page, since it is shown once.
+  const onFinished = (answer: SetupFinish, tool: Parameters<typeof setupFinishedToast>[1]) => {
+    const after = afterSetupFinish(search, answer);
+    if (after.kind === "leave") {
+      setLeaving(true);
+      const message = setupFinishedToast(answer.agent?.name ?? "Your agent", tool);
+      toast.success(message.title, { description: message.description });
+      if (after.to === "/agents") void navigate({ to: "/agents" });
+      else void navigate({ to: after.to, params: { agentId: after.agentId } });
+      return;
+    }
     setFinished(answer);
-    if (afterSetupFinish(search, answer).kind !== "close") return;
+    if (after.kind !== "close") return;
     announceConsent(setupCompletedMessage(), {
       opener: window.opener,
       origin: window.location.origin,
@@ -83,7 +104,7 @@ function SetupRoute() {
     <main className="flex min-h-svh flex-col">
       <header className="mt-4 flex h-9 shrink-0 items-center justify-between gap-4 px-4 md:mt-6 md:px-8">
         <GraftWordmark />
-        {step !== "completed" ? (
+        {step !== "completed" && !leaving ? (
           <Button
             variant="ghost"
             disabled={skip.isPending}
@@ -99,10 +120,20 @@ function SetupRoute() {
       </header>
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-4 md:flex-row md:gap-12 md:p-8">
         <aside className="hidden w-48 shrink-0 md:block">
-          <SetupRail step={step} />
+          <SetupRail
+            step={step}
+            record={finished ? null : state?.setup}
+            onBack={(to) => back.mutate(to)}
+            pending={back.isPending}
+          />
         </aside>
         <div className="md:hidden">
-          <SetupProgress step={step} />
+          <SetupProgress
+            step={step}
+            record={finished ? null : state?.setup}
+            onBack={(to) => back.mutate(to)}
+            pending={back.isPending}
+          />
         </div>
         <section className="flex min-w-0 max-w-2xl flex-1 flex-col gap-6">
           {fromCard && closeRefused ? (
@@ -122,7 +153,10 @@ function SetupRoute() {
             <SetupStepView
               state={state}
               finished={finished}
+              leaving={leaving}
               onFinished={onFinished}
+              issuedToken={issuedToken}
+              onTokenIssued={setIssuedToken}
               agentId={search.agent}
             />
           ) : setup.isError ? (
