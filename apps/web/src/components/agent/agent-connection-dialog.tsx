@@ -1,6 +1,7 @@
 import { type RefObject, useState } from "react";
 
 import { HarnessSetup } from "@/components/agent/harness-setup";
+import { SetupPromptBlock } from "@/components/agent/setup-prompt-block";
 import { CodeBlock } from "@/components/code-block";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,11 +14,14 @@ import {
 } from "@/components/ui/dialog";
 import type { Agent } from "@/lib/agent-queries";
 import { mcpEndpointUrl } from "@/lib/mcp-snippet";
+import { promptHarnessOfClient } from "@/lib/setup-prompt-harness";
 
 /**
  * Reopens setup without retrieving or minting a token (ADR 0007, ADR 0018). Named for what the
  * person does, "Connect a harness", never "connection": that word is a vendor account
- * (CONTEXT.md) and the screen beside this one (GRA-168).
+ * (CONTEXT.md) and the screen beside this one (GRA-168). Both forms end with the setup prompt for
+ * the agent (GRA-205): the harness the person picks for a static token, the client that consented
+ * for an OAuth agent.
  */
 export function AgentConnectionDialog({
   agent,
@@ -47,7 +51,7 @@ export function AgentConnectionDialog({
         </DialogHeader>
         <div className="flex min-w-0 flex-col gap-4">
           {agent.tokenPrefix ? (
-            <HarnessSetup />
+            <HarnessSetup agentName={agent.name} />
           ) : (
             <>
               <CodeBlock
@@ -59,6 +63,10 @@ export function AgentConnectionDialog({
                 Add this URL to your harness, then sign in to Graft and choose {agent.name} on the
                 connection screen. OAuth manages the token for you.
               </p>
+              <SetupPromptBlock
+                harness={promptHarnessOfClient(agent.connectedVia?.clientName)}
+                agentName={agent.name}
+              />
             </>
           )}
         </div>

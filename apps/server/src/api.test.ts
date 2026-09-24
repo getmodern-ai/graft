@@ -10,6 +10,7 @@ import {
   type ToolDeps,
   type WorkingSetDeps,
 } from "@graft/core";
+import { SITE_SETUP_PROMPTS } from "@graft/core/setup/setup-prompt.site-fixture";
 import type { DbOrTx } from "@graft/db";
 import type { AgentRow } from "@graft/db/repo/agent";
 import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
@@ -2218,5 +2219,89 @@ describe("the person's model key", () => {
     });
     const shape = await app.request("/api/me/model-key", json({ provider: "openai" }, "PUT"));
     expect(shape.status).toBe(400);
+  });
+});
+
+/**
+ * `GET /api/setup-prompt` (GRA-205; `setup-prompt.ts`): the generic prompt per harness for the
+ * marketing site and the docs, with no session, open to any origin, naming this deployment's URL.
+ */
+describe("the public setup prompt", () => {
+  const CLOUD = "https://app.getgraft.ai";
+  const cloud = () =>
+    harness(null, { authUrl: CLOUD, handoff: { ...HANDOFF, consoleUrl: CLOUD } }).app;
+
+  it("answers every harness as plain text, word for word the site's on Graft Cloud", async () => {
+    const app = cloud();
+    for (const [harness, text] of Object.entries(SITE_SETUP_PROMPTS)) {
+      const res = await app.request(`/api/setup-prompt?harness=${harness}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(/^text\/plain/);
+      expect(await res.text()).toBe(text);
+    }
+  });
+
+  it("names this deployment's MCP URL and console, from GRAFT_AUTH_URL's origin", async () => {
+    const { app } = harness(null, { authUrl: "https://graft.example.org/api/auth" });
+    const res = await app.request("/api/setup-prompt?harness=hermes");
+    const text = await res.text();
+    expect(text).toContain('url: "https://graft.example.org/mcp"');
+    expect(text).toContain("sign in at http://console.graft.test/app, open Agents → New agent");
+    expect(text).toContain("We are using a self-hosted Graft server");
+    expect(text).not.toContain("getgraft.ai/mcp");
+    expect(text).not.toContain("We are using Graft Cloud");
+  });
+
+  it("lists the harnesses as JSON without the parameter", async () => {
+    const res = await cloud().request("/api/setup-prompt");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { harnesses: { id: string; label: string }[] };
+    expect(body.harnesses.map((entry) => entry.id)).toEqual(Object.keys(SITE_SETUP_PROMPTS));
+    expect(body.harnesses[0]).toEqual({
+      id: "claude",
+      label: "Claude",
+      description: "Web & desktop",
+    });
+  });
+
+  it("refuses an unknown harness in the API's refusal shape", async () => {
+    const app = cloud();
+    for (const query of ["harness=generic", "harness="]) {
+      const res = await app.request(`/api/setup-prompt?${query}`, {
+        headers: { origin: "https://getgraft.ai" },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; message: string; details: unknown };
+      expect(body.error).toBe("BAD_REQUEST");
+      expect(body.message).toMatch(/^There is no setup prompt for the harness/);
+      expect(body.details).toEqual({ harnesses: Object.keys(SITE_SETUP_PROMPTS) });
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    }
+  });
+
+  it("is open to any origin without credentials, the console's listed one included", async () => {
+    const app = cloud();
+    for (const origin of ["https://getgraft.ai", "http://localhost:3001"]) {
+      const res = await app.request("/api/setup-prompt?harness=claude", { headers: { origin } });
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+      expect(res.headers.get("access-control-allow-credentials")).toBeNull();
+    }
+    const preflight = await app.request("/api/setup-prompt", {
+      method: "OPTIONS",
+      headers: { origin: "https://docs.getgraft.ai", "access-control-request-method": "GET" },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
+    // The console's own routes keep the credentialed policy.
+    const health = await app.request("/api/health", {
+      headers: { origin: "http://localhost:3001" },
+    });
+    expect(health.headers.get("access-control-allow-origin")).toBe("http://localhost:3001");
+    expect(health.headers.get("access-control-allow-credentials")).toBe("true");
+  });
+
+  it("is not mounted on a server with no public URL", async () => {
+    const { app } = harness(null);
+    expect((await app.request("/api/setup-prompt?harness=claude")).status).toBe(404);
   });
 });
