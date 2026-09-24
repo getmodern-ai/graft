@@ -3,23 +3,30 @@ import type { AuthScheme } from "@graft/proxy/types";
 import type { ProviderDescription } from "../connection/provider";
 
 /**
- * The **starter vendors** (CONTEXT.md; GRA-202, *Starter vendors*; ADR 0024): the short list
- * Setup's vendor step offers, each with a read-only goal known to acquire cleanly. A convenience
- * for the first tool, never a catalogue (ADR 0001): *Another vendor* is one click away and is the
- * ordinary form.
+ * The **starter integrations** (CONTEXT.md; GRA-202; GRA-216; ADR 0024): the short list Setup's
+ * integration step offers, each with a read-only task known to acquire cleanly and each connected
+ * in one click. A convenience for the first tool, never a catalogue (ADR 0001): *Another
+ * integration* is one click away and is the ordinary form. The code keeps the word vendor (the
+ * connection's `vendor` slug, `STARTER_VENDORS`), as the model-facing text does; the person reads
+ * integration.
  *
- * One entry per vendor and nothing else to edit to add one. An entry carries what the connect step
- * proposes as the agent's own connection ask (`starterProposal`: the vendor, its hosts, the
- * documentation and the keyring's scheme and parameters for the form path), what the goal step
+ * One entry per integration and nothing else to edit to add one. An entry carries what the connect
+ * step proposes as the agent's own connection ask (`starterProposal`: the vendor, its hosts, the
+ * documentation and the keyring's scheme and parameters for the form path), what the task step
  * pre-fills (`goal`, the person's words) and what the model is told beside it (`hints`, the
  * technical detail), what the run step asks for (`runInput`, with its default), and the one
- * sentence the vendor step shows under the name (`outcome`).
+ * sentence the integration step shows under the name (`outcome`).
  *
- * `scheme` is **the keyring's path**, the one a deployment with no other provider connects
- * through. A provider earlier in the order may connect the vendor its own way (a link, ADR 0019),
- * and then the scheme only matters if that provider steps aside to the form (GRA-147).
- * `setupVendorOptions` drops a starter whose only path is the keyring's form over an
- * authorization-code scheme, which would need an OAuth client of the operator's own (ADR 0005).
+ * The list is **common services a link provider connects by OAuth** (Pipedream on Cloud, ADR
+ * 0019), plus Open-Meteo, the keyless one, for a deployment where no link provider covers anything.
+ * Every task is a GET: Setup's result step runs only a read-only tool, and the check counts a
+ * `POST` as a write whatever it reads. That is why there is no Linear, whose API is GraphQL and
+ * reads through `POST` alone.
+ *
+ * `scheme` is **the keyring's path**, kept truthful (a pasted token's scheme, or the vendor's own
+ * authorization-code endpoints) though `setupVendorOptions` never offers it: a link provider
+ * earlier in the order connects the vendor its own way, and the scheme matters only if that
+ * provider steps aside to the form (GRA-147).
  *
  * **Browser-safe**: the console renders the step from the server's list, which is built from this
  * module, and nothing here imports more than a type.
@@ -47,10 +54,10 @@ export type StarterVendor = {
   scheme: AuthScheme;
   schemeConfig: Readonly<Record<string, string>>;
   /**
-   * The curated read-only goal the goal step pre-fills (GRA-207), in the person's voice: short, in
-   * the first person, the way they would type it and the way the suggested goals beside it read
-   * (GRA-209). The technical detail is in `hints`, never here, since the person reads this as
-   * their own goal.
+   * The curated read-only task the task step pre-fills (GRA-207, GRA-216), in the person's voice:
+   * short, in the first person, the way they would type it and the way the suggested tasks beside
+   * it read (GRA-209). The technical detail is in `hints`, never here, since the person reads this
+   * as their own task. `goal` in code, as the acquire job's field is.
    */
   goal: string;
   /**
@@ -61,7 +68,7 @@ export type StarterVendor = {
   hints: string;
   /** The run's one input, or null for a tool that takes none. */
   runInput: StarterRunInput | null;
-  /** What the person will see once the tool runs, one sentence, for the vendor step. */
+  /** What the person will see once the tool runs, one sentence, for the integration step. */
   outcome: string;
 };
 
@@ -108,6 +115,30 @@ export const STARTER_VENDORS = [
     outcome: "Your week ahead: each event's title, when it starts and where.",
   },
   {
+    id: "google-sheets",
+    vendor: "google-sheets",
+    displayName: "Google Sheets",
+    primaryHost: "https://sheets.googleapis.com/v4",
+    hosts: ["sheets.googleapis.com"],
+    docsUrl: "https://developers.google.com/workspace/sheets/api/reference/rest",
+    scheme: "oauth_authorization_code",
+    schemeConfig: {
+      ...GOOGLE_OAUTH,
+      scopes: "https://www.googleapis.com/auth/spreadsheets.readonly",
+    },
+    goal: "Show me the first rows of a spreadsheet I choose",
+    hints:
+      "The tool takes a spreadsheet's link or its id as the input `spreadsheet`, reads the id from between `/d/` and the next slash when it is a link, and returns the spreadsheet's title, the first sheet's name and that sheet's first ten rows. Read only.",
+    // Google's own sample spreadsheet, readable by any Google account, so the first run has rows.
+    runInput: {
+      field: "spreadsheet",
+      label: "Spreadsheet link",
+      defaultValue:
+        "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+    },
+    outcome: "The first rows of a spreadsheet you choose, starting with a sample one.",
+  },
+  {
     id: "slack",
     vendor: "slack",
     displayName: "Slack",
@@ -133,13 +164,16 @@ export const STARTER_VENDORS = [
     primaryHost: "https://api.notion.com/v1",
     hosts: ["api.notion.com"],
     docsUrl: "https://developers.notion.com/reference/intro",
+    // An internal integration's secret, sent as a bearer token; the form path's truth.
     scheme: "bearer",
     schemeConfig: {},
-    goal: "Show me the pages I edited most recently",
+    // Notion lists pages only through its search, a POST, which the check counts as a write, and
+    // Setup's result step runs only a read-only tool: the users list is a GET.
+    goal: "Show me the people in my Notion workspace",
     hints:
-      "List the ten pages shared with this integration that were edited most recently, with the title and the last edited time of each. Read only.",
+      "List the users of the Notion workspace with the users list endpoint, a GET, with the name and the type (person or bot) of each, sending the `Notion-Version` header the documentation names. Read only.",
     runInput: null,
-    outcome: "The ten pages edited most recently, with when each one changed.",
+    outcome: "The people in your Notion workspace, and which of them are bots.",
   },
   {
     id: "github",
@@ -148,6 +182,7 @@ export const STARTER_VENDORS = [
     primaryHost: "https://api.github.com",
     hosts: ["api.github.com"],
     docsUrl: "https://docs.github.com/en/rest",
+    // A personal access token, sent as a bearer token; the form path's truth.
     scheme: "bearer",
     schemeConfig: {},
     goal: "Show me the repositories I updated most recently",
@@ -157,20 +192,21 @@ export const STARTER_VENDORS = [
     outcome: "Your ten most recently updated repositories, with their language and stars.",
   },
   {
-    id: "linear",
-    vendor: "linear",
-    displayName: "Linear",
-    primaryHost: "https://api.linear.app",
-    hosts: ["api.linear.app"],
-    docsUrl: "https://linear.app/developers/graphql",
-    // A personal API key goes in `Authorization` as it is, with no `Bearer` in front.
-    scheme: "api_key_header",
-    schemeConfig: { headerName: "Authorization" },
-    goal: "Show me the open issues assigned to me",
+    id: "hubspot",
+    vendor: "hubspot",
+    displayName: "HubSpot",
+    primaryHost: "https://api.hubapi.com",
+    hosts: ["api.hubapi.com"],
+    docsUrl: "https://developers.hubspot.com/docs/api-reference/latest/crm/objects/contacts/guide",
+    // A private app's access token, sent as a bearer token; the form path's truth.
+    scheme: "bearer",
+    schemeConfig: {},
+    // The contacts search is a POST, which the check counts as a write: the list is a GET.
+    goal: "Show me ten contacts from my CRM",
     hints:
-      "List the issues assigned to the authenticated user that are not completed or cancelled, with the identifier, the title, the state and the priority of each. Read only.",
+      "List ten contacts with the contacts list endpoint, a GET and not the search, asking for the `firstname`, `lastname`, `email` and `company` properties and returning those for each. Read only.",
     runInput: null,
-    outcome: "The open issues assigned to you, with each one's state and priority.",
+    outcome: "Ten contacts from your CRM, with each one's email and company.",
   },
   {
     id: "open-meteo",
@@ -254,15 +290,18 @@ export function starterProposal(starter: StarterVendor): {
 }
 
 /**
- * What the connect step will draw for a starter on this deployment:
+ * What the connect step will draw for a starter on this deployment, and every kind is one click:
  * - `link`: the provider's one-click link (ADR 0019);
  * - `none`: a provider with no person step connects it at once (the gateway, GRA-58);
- * - `keyless`: the keyring's confirmation of a public API, nothing entered (GRA-66);
- * - `form`: the secret form, pre-filled with the host and the scheme.
+ * - `keyless`: the keyring's confirmation of a public API, nothing entered (GRA-66).
+ *
+ * There is no kind for the secret form: a starter the deployment could connect only with a pasted
+ * key or an operator's own OAuth client is never offered (GRA-216). *Another integration* is the
+ * form, for a person who has a key in hand.
  */
-export type SetupConnectKind = "link" | "none" | "keyless" | "form";
+export type SetupConnectKind = "link" | "none" | "keyless";
 
-/** One line of the vendor step: the starter, the provider that covers it, and what connecting takes. */
+/** One line of the integration step: the starter, the provider that covers it, and what connecting takes. */
 export type SetupVendorOption = {
   starter: StarterVendor;
   provider: string;
@@ -272,28 +311,25 @@ export type SetupVendorOption = {
 /** A starter beside the provider `providerFor` routes its proposal to, which the server decides. */
 export type CoveredStarter = { starter: StarterVendor; provider: ProviderDescription };
 
-/** Lower leads: one click first, then no step, then no key, then a key to paste. */
-const CONNECT_RANK: Record<SetupConnectKind, number> = { link: 0, none: 1, keyless: 2, form: 3 };
+/** Lower leads: one click through a link first, then no step, then no key. */
+const CONNECT_RANK: Record<SetupConnectKind, number> = { link: 0, none: 1, keyless: 2 };
 
 function connectKindOf({ starter, provider }: CoveredStarter): SetupConnectKind | null {
   const { connect } = provider;
   if (connect.kind === "link" || connect.kind === "none") return connect.kind;
-  // A form provider that does not sign the starter's scheme cannot connect it, `none` included.
-  if (!connect.schemes.includes(starter.scheme)) return null;
-  if (starter.scheme === "none") return "keyless";
-  // The form over an authorization-code scheme needs a client the operator registered (ADR 0005):
-  // not a first five minutes, so the starter is left off rather than offered and stalled.
-  if (starter.scheme === "oauth_authorization_code") return null;
-  return "form";
+  // A form provider offers the starter only where there is nothing to enter: a public API, and
+  // only when the provider signs `none`. A key to paste, or a client to register for an
+  // authorization-code scheme (ADR 0005), is not a first five minutes.
+  return starter.scheme === "none" && connect.schemes.includes("none") ? "keyless" : null;
 }
 
 /**
- * The vendor step's list for this deployment, from each starter's covering provider (the server
- * asks `providerFor` in `Backings.providers` order, since coverage is async and may be a
- * catalogue's; the console never computes it): a starter with no path short of an operator's own
- * OAuth client is dropped, and the rest are ordered by how little connecting takes, so a
- * one-click starter leads where the deployment has one and Open-Meteo leads where the keyring is
- * alone. Within a kind the module's order stands.
+ * The integration step's list for this deployment, from each starter's covering provider (the
+ * server asks `providerFor` in `Backings.providers` order, since coverage is async and may be a
+ * catalogue's; the console never computes it): only a starter that connects in one click is kept,
+ * and the rest are ordered by how little connecting takes, so the link provider's starters lead
+ * where the deployment has one and Open-Meteo stands alone where the keyring is. Within a kind the
+ * module's order stands.
  */
 export function setupVendorOptions(covered: readonly CoveredStarter[]): SetupVendorOption[] {
   const options: { option: SetupVendorOption; index: number }[] = [];

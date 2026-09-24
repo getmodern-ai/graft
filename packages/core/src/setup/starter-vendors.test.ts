@@ -32,15 +32,16 @@ function covered(
 const ids = (list: ReturnType<typeof setupVendorOptions>) =>
   list.map((option) => option.starter.id);
 
-describe("the starter vendors", () => {
-  it("are the seven, each a vendor slug and a host set the connection rules admit", () => {
+describe("the starter integrations", () => {
+  it("are the eight, each a vendor slug and a host set the connection rules admit", () => {
     expect(STARTER_VENDOR_IDS).toEqual([
       "gmail",
       "google-calendar",
+      "google-sheets",
       "slack",
       "notion",
       "github",
-      "linear",
+      "hubspot",
       "open-meteo",
     ]);
     for (const starter of STARTER_VENDORS) {
@@ -53,7 +54,7 @@ describe("the starter vendors", () => {
     }
   });
 
-  it("keeps the curated goal in the person's voice and the technical detail in the hints", () => {
+  it("keeps the curated task in the person's voice and the technical detail in the hints", () => {
     for (const starter of STARTER_VENDORS) {
       // What the person reads as their own goal: short, no field names, no instruction to a model.
       expect(starter.goal.length).toBeLessThanOrEqual(60);
@@ -74,14 +75,20 @@ describe("the starter vendors", () => {
     expect(setupBuildHints(null, "List my tickets")).toBeNull();
   });
 
-  it("gives Open-Meteo a city with Melbourne as its default, and Gmail no input", () => {
+  it("gives Open-Meteo a city, Google Sheets a sample link, and Gmail no input", () => {
     expect(starterVendorOf("open-meteo")).toMatchObject({
       scheme: "none",
       hosts: ["api.open-meteo.com", "geocoding-api.open-meteo.com"],
       runInput: { field: "city", defaultValue: "Melbourne" },
     });
+    expect(starterVendorOf("google-sheets")?.runInput).toMatchObject({
+      field: "spreadsheet",
+      defaultValue: expect.stringMatching(/^https:\/\/docs\.google\.com\/spreadsheets\/d\//),
+    });
     expect(starterVendorOf("gmail")?.runInput).toBeNull();
     expect(starterVendorOf("jira")).toBeNull();
+    // Linear reads through GraphQL, a POST, which the check counts as a write (GRA-216).
+    expect(starterVendorOf("linear")).toBeNull();
     expect(starterVendorFor("google-calendar")?.id).toBe("google-calendar");
     expect(starterVendorFor("acme")).toBeNull();
   });
@@ -102,27 +109,45 @@ describe("the starter vendors", () => {
 });
 
 describe("setupVendorOptions", () => {
-  it("on the keyring alone, drops the three that need an OAuth client and leads with Open-Meteo", () => {
-    const list = setupVendorOptions(covered());
-    expect(ids(list)).toEqual(["open-meteo", "notion", "github", "linear"]);
-    expect(list[0]).toMatchObject({ provider: "keyring", connect: "keyless" });
-    expect(list.slice(1).every((option) => option.connect === "form")).toBe(true);
+  it("on the keyring alone offers Open-Meteo and nothing else: no key to paste, no client to register", () => {
+    expect(setupVendorOptions(covered())).toEqual([
+      { starter: starterVendorOf("open-meteo"), provider: "keyring", connect: "keyless" },
+    ]);
   });
 
-  it("puts a one-click starter first, and keeps Gmail once a link provider covers it", () => {
+  it("leads with every starter a link provider covers, and Open-Meteo last", () => {
+    const list = setupVendorOptions(
+      covered((starter) => (starter.scheme === "none" ? KEYRING : LINK)),
+    );
+    expect(ids(list)).toEqual([
+      "gmail",
+      "google-calendar",
+      "google-sheets",
+      "slack",
+      "notion",
+      "github",
+      "hubspot",
+      "open-meteo",
+    ]);
+    expect(list.slice(0, -1).every((option) => option.connect === "link")).toBe(true);
+    expect(list.at(-1)).toMatchObject({ provider: "keyring", connect: "keyless" });
+  });
+
+  it("never offers a starter the keyring would connect with a pasted key or an OAuth client", () => {
+    // A link provider that covers Gmail alone: the rest fall to the keyring's form.
     const list = setupVendorOptions(
       covered((starter) => (starter.vendor === "gmail" ? LINK : KEYRING)),
     );
-    expect(ids(list)).toEqual(["gmail", "open-meteo", "notion", "github", "linear"]);
-    expect(list[0]).toMatchObject({ provider: "one-click", connect: "link" });
+    expect(ids(list)).toEqual(["gmail", "open-meteo"]);
+    for (const option of list) expect(["link", "none", "keyless"]).toContain(option.connect);
   });
 
-  it("orders link, then no step, then no key, then a key, the module's order within each", () => {
+  it("orders link, then no step, then no key, the module's order within each", () => {
     const list = setupVendorOptions(
       covered((starter) =>
         starter.vendor === "github"
           ? GATEWAY
-          : starter.vendor === "open-meteo" || starter.vendor === "linear"
+          : starter.vendor === "open-meteo" || starter.vendor === "hubspot"
             ? KEYRING
             : LINK,
       ),
@@ -130,27 +155,19 @@ describe("setupVendorOptions", () => {
     expect(list.map((option) => `${option.starter.id}:${option.connect}`)).toEqual([
       "gmail:link",
       "google-calendar:link",
+      "google-sheets:link",
       "slack:link",
       "notion:link",
       "github:none",
       "open-meteo:keyless",
-      "linear:form",
     ]);
   });
 
-  it("drops a starter a form provider cannot sign", () => {
+  it("drops Open-Meteo under a form provider that does not sign `none`", () => {
     const narrow: ProviderDescription = {
       name: "narrow",
-      connect: { kind: "form", schemes: ["basic"] },
+      connect: { kind: "form", schemes: ["basic", "bearer"] },
     };
-    const list = setupVendorOptions(
-      covered((starter) =>
-        starter.vendor === "github" || starter.vendor === "open-meteo" ? narrow : KEYRING,
-      ),
-    );
-    expect(ids(list)).not.toContain("github");
-    // Keyless is a scheme like any other: a form provider that does not list `none` drops it.
-    expect(ids(list)).not.toContain("open-meteo");
-    expect(ids(list)).toContain("notion");
+    expect(setupVendorOptions(covered(() => narrow))).toEqual([]);
   });
 });

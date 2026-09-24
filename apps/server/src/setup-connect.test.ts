@@ -205,16 +205,13 @@ const stepEvents = (captured: Capture[]) =>
     .map((event) => event.properties?.step);
 
 describe("GET /api/setup/vendors", () => {
-  it("on the keyring alone omits Gmail, Google Calendar and Slack and leads with Open-Meteo", async () => {
+  it("on the keyring alone offers Open-Meteo alone: no key to paste, no client to register", async () => {
     const h = harness();
     const res = await h.app.request("/api/setup/vendors");
     expect(res.status).toBe(200);
     const { vendors } = await read(res);
     expect(vendors.map((option: { starter: { id: string } }) => option.starter.id)).toEqual([
       "open-meteo",
-      "notion",
-      "github",
-      "linear",
     ]);
     expect(vendors[0]).toMatchObject({
       provider: "keyring",
@@ -223,7 +220,32 @@ describe("GET /api/setup/vendors", () => {
     });
   });
 
-  it("leads with Gmail as a link once a link provider covers it", async () => {
+  it("leads with the starters a link provider covers, one click each, and Open-Meteo last", async () => {
+    // A broker that connects the common OAuth services and no public API, as Pipedream does.
+    const broker = createFakeLinkProvider({
+      name: "broker",
+      covers: (vendor) => vendor !== "open-meteo",
+    });
+    const h = harness({ providers: [broker, keyringProvider] });
+    const { vendors } = await read(await h.app.request("/api/setup/vendors"));
+    expect(vendors.map((option: { starter: { id: string } }) => option.starter.id)).toEqual([
+      "gmail",
+      "google-calendar",
+      "google-sheets",
+      "slack",
+      "notion",
+      "github",
+      "hubspot",
+      "open-meteo",
+    ]);
+    expect(
+      vendors.slice(0, -1).every((option: { connect: string }) => option.connect === "link"),
+    ).toBe(true);
+    expect(vendors[0]).toMatchObject({ provider: "broker", connect: "link" });
+    expect(vendors.at(-1)).toMatchObject({ provider: "keyring", connect: "keyless" });
+  });
+
+  it("never offers a starter the keyring would connect with a pasted key", async () => {
     const broker = createFakeLinkProvider({
       name: "broker",
       covers: (vendor) => vendor === "gmail",
@@ -233,11 +255,7 @@ describe("GET /api/setup/vendors", () => {
     expect(vendors.map((option: { starter: { id: string } }) => option.starter.id)).toEqual([
       "gmail",
       "open-meteo",
-      "notion",
-      "github",
-      "linear",
     ]);
-    expect(vendors[0]).toMatchObject({ provider: "broker", connect: "link" });
   });
 });
 
@@ -368,7 +386,7 @@ describe("POST /api/setup/connect", () => {
     });
   });
 
-  it("takes the connection Another vendor's ordinary form made, into the agent's scope", async () => {
+  it("takes the connection Another integration's ordinary form made, into the agent's scope", async () => {
     const h = harness();
     const agentId = await started(h);
     // The agent narrowed to a list, so the scope grant is observable.
