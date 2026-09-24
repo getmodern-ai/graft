@@ -190,3 +190,19 @@ export function progressCard(
     lines,
   };
 }
+
+/** How often the building step reads the job while it works. */
+export const JOB_POLL_MS = 2_000;
+
+/**
+ * The building step's poll (`refetchInterval`): every `JOB_POLL_MS` while the job works, and not at
+ * all while the read itself failed (Greptile on #170), since the step then shows *Could not read
+ * the job* with its own Retry, and a failed read's missing data would otherwise read as working.
+ */
+export function jobPollInterval(read: {
+  status: "pending" | "error" | "success";
+  data: Parameters<typeof progressCard>[0];
+}): number | false {
+  if (read.status === "error") return false;
+  return progressCard(read.data).kind === "working" ? JOB_POLL_MS : false;
+}

@@ -11,7 +11,7 @@ import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { type ProgressCard, progressCard } from "@/lib/setup-progress";
+import { jobPollInterval, type ProgressCard, progressCard } from "@/lib/setup-progress";
 import {
   acquireJobQuery,
   continueSetupBuild,
@@ -20,9 +20,6 @@ import {
   type SetupStateData,
   setupKeys,
 } from "@/lib/setup-queries";
-
-/** How often the step reads the job while it works. */
-const JOB_POLL_MS = 2_000;
 
 /**
  * The building step (GRA-207; GRA-202, *Building and result*), drawn since GRA-215 as a **progress
@@ -57,8 +54,7 @@ function BuildingJob({
   const queryClient = useQueryClient();
   const job = useQuery({
     ...acquireJobQuery(agentId, jobId),
-    refetchInterval: (query) =>
-      progressCard(query.state.data).kind === "working" ? JOB_POLL_MS : false,
+    refetchInterval: (query) => jobPollInterval(query.state),
   });
   const card = progressCard(job.data);
   const retry = useSetupMutation(retrySetupGoal);
