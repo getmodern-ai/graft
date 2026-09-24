@@ -784,6 +784,35 @@ describe("the Setup offer", () => {
     expect(address?.hidden).toBe(true);
   });
 
+  it("holds the button while the host is opening the window, so a stale refusal cannot win", async () => {
+    const h = handlers();
+    let refuse: (error: Error) => void = () => {};
+    h.openLink.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+    const root = renderCard(SETUP, h, document);
+    const open = root.querySelector("button");
+    open?.click();
+    await flush();
+    expect(open?.disabled).toBe(true);
+    // A second press while the first is pending starts nothing.
+    open?.click();
+    await flush();
+    expect(h.openLink).toHaveBeenCalledTimes(1);
+    refuse(new Error("blocked"));
+    await until(() => status(root)?.dataset.tone === "refused");
+    expect(open?.disabled).toBe(false);
+    // The next attempt, once the first has settled, is the one the card shows.
+    open?.click();
+    await until(() => status(root)?.dataset.tone === "waiting");
+    expect(status(root)?.textContent).toBe(SETUP_OPENED_SENTENCE);
+    expect(root.querySelector<HTMLElement>(".ask-address")?.hidden).toBe(true);
+    expect(h.openLink).toHaveBeenCalledTimes(2);
+  });
+
   it("renders an ask through the same entry, unchanged", () => {
     const root = renderCard(BUILD, handlers(), document);
     expect(root.dataset.kind).toBe("build");
