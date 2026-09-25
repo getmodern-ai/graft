@@ -4,10 +4,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import type * as React from "react";
 
 import { ConsentCard } from "@/components/agent/consent-card";
+import { AuthHeader } from "@/components/auth/auth-header";
 import { DangerousIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
-import { PageContainer } from "@/components/page/page-container";
-import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -25,16 +24,24 @@ import { consentRequestQuery } from "@/lib/mcp-oauth-queries";
  * Where the authorization endpoint sends the browser (ADR 0018; `apps/server/src/mcp-oauth.ts`):
  * `/consent?client_id=…&redirect_uri=…&code_challenge=…`, the OAuth request as the product made
  * it, carried whole so the server can judge it again at the decision. Under the guard, so a
- * signed-out person signs in and comes straight back (ADR 0006) — which is how a chat product's
- * "connect" reaches a person with no session yet — and under the shell, because this is a screen
- * of the console like any other.
+ * signed-out person signs in and comes straight back (ADR 0006), which is how a chat product's
+ * "connect" reaches a person with no session yet.
+ *
+ * **A focused page, not the console** (GRA-219), drawn as the handoff page is (`pending.$id.tsx`,
+ * GRA-144): the person arrived from a chat or a terminal and is on their way back to it, so the
+ * page is the mark and one card, with the console one link away and no sidebar to leave through.
+ * Outside the shell, Setup's intercept never reaches it; `setup-intercept.ts` still exempts the
+ * path for a visit that goes through the shell first.
  *
  * The server describes the request first: a client or a redirect URI it cannot vouch for is a
  * refusal page with nothing to press, in the shape the handoff refusal takes (`pending.$id.tsx`),
  * and the browser is never sent anywhere. A sound request is the card.
  */
-export const Route = createFileRoute("/_auth/_shell/consent")({
+export const Route = createFileRoute("/_auth/consent")({
   validateSearch: (search: Record<string, unknown>) => readAuthorizationRequestParams(search),
+  head: () => ({
+    meta: [{ title: "Graft: Connect" }, { name: "robots", content: "noindex" }],
+  }),
   loader: ({ context }) => {
     void context.queryClient.prefetchQuery(connectionsQuery);
     void context.queryClient.prefetchQuery(agentsQuery);
@@ -67,8 +74,6 @@ function ConsentRoute() {
   const request = useQuery(consentRequestQuery(params));
   const connections = useQuery(connectionsQuery);
   const agents = useQuery(agentsQuery);
-
-  useScreenTitle(request.data ? `Connect ${request.data.client.name}` : "Connect");
 
   let content: React.ReactNode;
   if (request.isPending) {
@@ -121,5 +126,23 @@ function ConsentRoute() {
     );
   }
 
-  return <PageContainer size="medium">{content}</PageContainer>;
+  return (
+    <main className="flex min-h-svh flex-col">
+      <AuthHeader />
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-4 md:p-6">
+        {content}
+        {request.data ? (
+          <p className="text-center text-muted-foreground text-sm">
+            From a desktop app, this may end on a page saying you can close the window. Close it and
+            go back to {request.data.client.name}.
+          </p>
+        ) : null}
+        <p className="text-center text-muted-foreground text-sm">
+          <Link to="/agents" className="underline underline-offset-4">
+            Your agents, in the console
+          </Link>
+        </p>
+      </div>
+    </main>
+  );
 }

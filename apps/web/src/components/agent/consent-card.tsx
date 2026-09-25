@@ -105,16 +105,16 @@ export function ConsentCard({
       <CardHeader>
         <CardTitle>Connect {client} to Graft</CardTitle>
         <CardDescription>
-          {client} asked to connect over MCP. It will act as one agent of yours, with that agent's
-          scope, working set and approvals, and when you connect it is sent back to{" "}
+          {client} will use Graft as one of your agents, building and running tools for the
+          integrations you connect. Connect sends you back to{" "}
           <code className="font-mono text-xs">{request.redirectTarget}</code>.
           {/* Where this client's asks will reach you (ADR 0006 as amended 2026-09-21): the gate is
               the callback host it registered, and the server has judged it (`rendersCards`). */}
           {request.rendersCards ? (
             <>
               {" "}
-              {client} can show Graft's approval cards in this chat and record your answers from
-              them; everything else still opens in the console.
+              {client} shows Graft's questions in the chat, and you answer them there. A secret is
+              still entered on a Graft page.
             </>
           ) : null}
         </CardDescription>
