@@ -120,9 +120,9 @@ In a Team or Enterprise workspace, an owner must first add Graft under Organizat
   chatgpt(t) {
     return `I am using ChatGPT on the web or desktop. If Graft is not connected, give me these steps in a few lines and wait until I say they are done.
 
-Open Settings → Connectors → Advanced settings and turn Developer mode on. Back on Connectors, choose Create: name it Graft, enter ${t.mcp} as the MCP server URL, choose OAuth for authentication, leave the client ID and secret empty, tick the acknowledgement and choose Create. On Graft's consent page I sign in or create an account, ${t.consentChoice} and choose Connect. In the conversation, open the tools menu, choose Developer mode and select Graft.
+Open Settings → Security and login and turn Developer mode on. Then open Plugins in the sidebar and choose + → Create app → Create MCP App. Name it Graft, enter ${t.mcp} as the server URL and keep OAuth: ChatGPT registers itself with Graft, so there is no client ID or secret to enter. Tick "I understand and want to continue" and choose Create. On Graft's consent page I sign in or create an account, ${t.consentChoice} and choose Connect. In the desktop app that sign-in opens in my browser and ends on a page saying "Authentication complete"; I close that tab and return to ChatGPT. In the conversation, choose + in the message box, type Graft and select it.
 
-In a Team, Enterprise or Edu workspace an admin must allow connectors first; only explain this if Developer mode or Create is unavailable. If Graft's tools are still missing after connecting and selecting it, ask me to start a new chat with Graft selected and paste this again.`;
+If Create does nothing, a Graft app already exists: open Plugins → Personal → Graft and choose + to connect it. In a Business, Enterprise or Edu workspace an admin may have to allow developer mode first; only explain this if Developer mode or Create app is unavailable. If Graft's tools are still missing after connecting and selecting it, ask me to start a new chat with Graft selected and paste this again.`;
   },
 
   "claude-code"(t) {

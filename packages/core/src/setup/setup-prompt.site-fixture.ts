@@ -1,6 +1,6 @@
 /**
  * The marketing site's setup prompt, one per harness, as `getSetupPrompt(id)` returned it at
- * getmodern-ai/graft-marketing commit a3e11165396f092792e56849dc65970d545a08d4
+ * getmodern-ai/graft-marketing commit 6a6694b7c7b8958ea146201d2fc1db678d520edb
  * (`src/lib/setup-prompt.ts`), copied whole by evaluating that file rather than retyped.
  * `setup-prompt.test.ts` pins `setupPrompt`'s generic form for Graft Cloud to these strings. If
  * the site's copy changes before GRA-211 has the site read `GET /api/setup-prompt`, regenerate
@@ -91,9 +91,9 @@ We are using Graft Cloud: hosted, nothing to install, free for a limited time du
 
 I am using ChatGPT on the web or desktop. If Graft is not connected, give me these steps in a few lines and wait until I say they are done.
 
-Open Settings → Connectors → Advanced settings and turn Developer mode on. Back on Connectors, choose Create: name it Graft, enter https://app.getgraft.ai/mcp as the MCP server URL, choose OAuth for authentication, leave the client ID and secret empty, tick the acknowledgement and choose Create. On Graft's consent page I sign in or create an account, keep "A new agent" and choose Connect. In the conversation, open the tools menu, choose Developer mode and select Graft.
+Open Settings → Security and login and turn Developer mode on. Then open Plugins in the sidebar and choose + → Create app → Create MCP App. Name it Graft, enter https://app.getgraft.ai/mcp as the server URL and keep OAuth: ChatGPT registers itself with Graft, so there is no client ID or secret to enter. Tick "I understand and want to continue" and choose Create. On Graft's consent page I sign in or create an account, keep "A new agent" and choose Connect. In the desktop app that sign-in opens in my browser and ends on a page saying "Authentication complete"; I close that tab and return to ChatGPT. In the conversation, choose + in the message box, type Graft and select it.
 
-In a Team, Enterprise or Edu workspace an admin must allow connectors first; only explain this if Developer mode or Create is unavailable. If Graft's tools are still missing after connecting and selecting it, ask me to start a new chat with Graft selected and paste this again.
+If Create does nothing, a Graft app already exists: open Plugins → Personal → Graft and choose + to connect it. In a Business, Enterprise or Edu workspace an admin may have to allow developer mode first; only explain this if Developer mode or Create app is unavailable. If Graft's tools are still missing after connecting and selecting it, ask me to start a new chat with Graft selected and paste this again.
 
 Once you can see Graft's tools, stop explaining setup and use them. Ask what I want done only if I have not already told you, then call Graft's tools; do not narrate the console or list manual steps. Look for an existing tool before asking Graft to build one, and build only when nothing fits. While Graft is building, relay its newest progress line in a sentence and keep waiting on the same job; if it fails, tell me what Graft reported rather than claiming success.
 

@@ -190,6 +190,7 @@ export function FinishStep({
               steps={[
                 ...entry.steps,
                 `On Graft's consent page, ${agentName} is already chosen under Connect as. Choose Connect.`,
+                ...(entry.afterConsent ?? []),
               ]}
             />
           ) : (
