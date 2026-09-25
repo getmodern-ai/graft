@@ -16,7 +16,8 @@ have given Graft.
 
 ## Connect it
 
-**Claude and ChatGPT need no token.** Add your Graft origin plus `/mcp` as a custom connector:
+**Claude and ChatGPT need no token.** Add your Graft origin plus `/mcp` as a custom connector in
+Claude, or as an MCP app in ChatGPT (Plugins, then + and Create app, with Developer mode on):
 
 ```
 https://your-graft.example/mcp
