@@ -125,3 +125,20 @@ write flow across two of a connection's hosts is `ctx.fetch` twice, and the auth
 prefer that over an SDK for a write, since an SDK that retries on a body it does not expect times
 out against the preview. Whether the preview should instead answer in a shape the common SDKs
 accept is GRA-198's decision, not this amendment's.
+
+## Amended 24 September 2026
+
+**A declared host known in advance is named with `host`, on the same route** (GRA-213). The
+amendment above gave a URL the vendor answers at run time a way onto the proxy's host form and left
+a host the module knows when it is written with none: the check refuses a literal absolute URL,
+`ctx.proxyBase(host)` is an SDK's base, and a proof read was a path on the primary host. On
+2026-09-24 a job authoring an Open-Meteo city forecast gave up on exactly that, its forecast on
+`api.open-meteo.com` and its city lookup on `geocoding-api.open-meteo.com`, both in the
+connection's set. Now `ctx.fetch(path, { host })` takes a path from that host's root and the runner
+sends it as it sends `https://<host><path>`, and `acquire`'s proof reads carry the same optional
+`host`, refused by the job before any read when the connection does not declare it. What this
+admits is one literal the checker used to have no reason to see: a host name in `fetch`'s init.
+It is a selector among hosts the person confirmed, judged by the proxy against the connection's set
+exactly as an absolute URL's host is, so the check lets it stand, and a literal absolute URL stays
+refused. Nothing else moves: the host set is the connection's, the route is the proxy, and the
+runner holds no host list.

@@ -73,7 +73,9 @@ export async function findBlobs(
  * How many bytes of blobs this agent holds live at `now`: rows not yet removed whose expiry is
  * still ahead, summed in one statement: the door's quota read (GRA-187, `blob_quota`). A row past
  * its expiry stops counting whether or not the sweep has reached it, so the quota frees itself on
- * the TTL alone. Zero for an agent that has never written.
+ * the TTL alone. Zero for an agent that has never written. Live is `expires_at > now`, the
+ * complement of `@graft/core`'s `isBlobExpired` (`expiresAt <= now`), the one rule the door and the
+ * sweep apply (GRA-199); `repo/scope.test.ts` pins the operator on the rendered SQL.
  */
 export async function sumLiveBlobBytes(db: DbOrTx, scope: AgentScope, now: Date): Promise<number> {
   const [row] = await db

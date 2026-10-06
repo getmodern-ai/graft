@@ -38,6 +38,7 @@ import {
   type Score,
   sdkBoundToProxy,
   succeeded,
+  tooDeepDetail,
   toolWorks,
   withinBudget,
   writePreviewed,
@@ -248,7 +249,9 @@ export const moveReport: Scenario = {
       report_id: REPORT_ID,
     },
     expect: (answer) => {
-      if (blobRefsIn(answer).length === 0) {
+      const found = blobRefsIn(answer);
+      if (found.tooDeep) return tooDeepDetail("the answer");
+      if (found.refs.length === 0) {
         return `no blob:// ref in ${JSON.stringify(answer).slice(0, 120)}`;
       }
       const blobs = isRecord(answer) && Array.isArray(answer.blobs) ? answer.blobs : [];
@@ -257,7 +260,11 @@ export const moveReport: Scenario = {
     },
   },
   chain: {
-    handoff: (final) => blobRefsIn(final)[0] ?? null,
+    // A final answer the walk could not finish hands nothing on, and `ref_travels` says why.
+    handoff: (final) => {
+      const found = blobRefsIn(final);
+      return found.tooDeep ? null : (found.refs[0] ?? null);
+    },
     stage: (ref) => ({
       connectionId: CONN_DROP,
       vendor: DROP_VENDOR,

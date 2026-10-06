@@ -4,7 +4,13 @@ import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { OpenInNewIcon, WarningIcon } from "@/components/icons";
-import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
+import {
+  AskCard,
+  type AskOrigin,
+  Hosts,
+  ProposalSource,
+  useAnswerAsk,
+} from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { agentKeys } from "@/lib/agent-queries";
 import { ApiError, api } from "@/lib/api";
+import { connectedSettledSentence, connectedToastDescription } from "@/lib/ask-answered-copy";
 import { type Connection, connectionKeys } from "@/lib/connection-queries";
 import { openConsentPopup } from "@/lib/oauth-consent";
 import {
@@ -50,13 +57,16 @@ import {
 export function ProviderLinkAskCard({
   ask,
   onAnswered,
+  origin = "agent",
 }: {
   ask: Extract<Ask, { kind: "connection-link" }>;
   onAnswered?: () => void;
+  /** Setup's connect step passes `setup`: no model provenance (`ask-card.tsx`, `AskOrigin`). */
+  origin?: AskOrigin;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
-  const decline = useAnswerAsk(action, onAnswered);
+  const decline = useAnswerAsk(action, onAnswered, origin);
   const [state, setState] = useState<LinkState>({ phase: "idle" });
   const [approveBuild, setApproveBuild] = useState(true);
   const stop = useRef<AbortController | null>(null);
@@ -72,13 +82,13 @@ export function ProviderLinkAskCard({
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       if (outcome === "connected") {
         toast.success(`${payload.displayName} is connected through ${provider}`, {
-          description: `In ${agentName}'s scope${approveBuild ? ", allowed to build tools against it" : ""}; its waiting call answers connected. The account's token stays with ${provider}.`,
+          description: connectedToastDescription({ origin, agentName, approveBuild, provider }),
         });
         onAnswered?.();
       }
       return connectionId;
     },
-    [queryClient, payload.displayName, provider, agentName, approveBuild, onAnswered],
+    [queryClient, payload.displayName, provider, agentName, approveBuild, onAnswered, origin],
   );
 
   const start = useMutation({
@@ -88,7 +98,7 @@ export function ProviderLinkAskCard({
         // The provider could not start its sign-in and the ask is the keyring's form now
         // (GRA-147): re-read it, and this card gives way to the form in place.
         toast.message(`${started.provider} could not start the sign-in`, {
-          description: `${payload.displayName} is connected on Graft's own page instead — the form is below.`,
+          description: `${payload.displayName} is connected on Graft's own page instead. The form is below.`,
         });
         await queryClient.invalidateQueries({ queryKey: pendingKeys.all });
         return;
@@ -139,8 +149,7 @@ export function ProviderLinkAskCard({
       settled={(recorded) =>
         typeof recorded?.connectionId === "string" ? (
           <>
-            Connected through {provider}. The connection is in the agent's scope and its waiting
-            call answers connected; the account's token stays with {provider}.{" "}
+            {connectedSettledSentence({ origin, provider })}{" "}
             <Link to="/connections" className="underline underline-offset-4">
               See connections
             </Link>
@@ -154,27 +163,7 @@ export function ProviderLinkAskCard({
       pending={busy}
       onAnswer={(allow) => (allow ? start.mutate() : decline.mutate({ allow: false }))}
     >
-      <figure className="flex flex-col gap-1.5">
-        <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-          <Badge variant="outline">proposed by the agent's model</Badge>
-          {payload.note}
-        </figcaption>
-        {payload.docsUrl ? (
-          <a
-            href={payload.docsUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 text-xs underline underline-offset-4"
-          >
-            The documentation the agent read: {payload.docsUrl}
-            <OpenInNewIcon className="size-3" />
-          </a>
-        ) : (
-          <p className="text-muted-foreground text-xs">
-            The agent named no documentation page. Check the hosts against the vendor's own.
-          </p>
-        )}
-      </figure>
+      <ProposalSource origin={origin} note={payload.note} docsUrl={payload.docsUrl} />
 
       <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
         <dt className="text-muted-foreground">Primary host</dt>
@@ -197,10 +186,10 @@ export function ProviderLinkAskCard({
       {open ? (
         <>
           <p className="text-muted-foreground text-xs">
-            One click. Connect opens {provider}'s sign-in for {payload.vendor} in a popup, and you
-            sign in at the vendor there. The account's token stays with {provider}; Graft stores
-            only the account's id and relays every call for this connection through {provider}.
-            Nothing is typed here, and nothing secret is stored in Graft.
+            One click. Connect opens {provider}'s sign-in for {payload.displayName} in a popup, and
+            you sign in to {payload.displayName} there. The account's token stays with {provider},
+            and Graft stores only the account's id and relays every call for this connection through{" "}
+            {provider}. Nothing is typed here, and nothing secret is stored in Graft.
           </p>
           <BuildApprovalItem
             id={`ask-${action.id}-approve-build`}
@@ -241,8 +230,7 @@ function LinkStatus({
         <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
           <Spinner className="size-3.5" />
           <span>
-            Sign in at the vendor in {provider}'s popup. This card updates once you have been sent
-            back.
+            Sign in through {provider}'s popup. This card updates once you have been sent back.
           </span>
           <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
             Stop waiting

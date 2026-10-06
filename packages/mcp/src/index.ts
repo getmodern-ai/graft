@@ -12,6 +12,7 @@ export { type BlobLedgerEntry, type RunnerEnvelope, readRunnerEnvelope } from "@
 export {
   attemptDraftPath,
   DEFAULT_HEARTBEAT_MS,
+  FIXTURE_BLOB_TRACE,
   MAX_DOCS_PER_TURN,
   MAX_PROOF_READS,
   PROBE_MODULE,
@@ -30,6 +31,7 @@ export {
 } from "./acquire/runner";
 export {
   ACQUIRE_FAILURES,
+  ACQUIRE_UNCONFIGURED,
   type AcquireAttemptSummary,
   type AcquireConfig,
   type AcquireFailure,
@@ -38,6 +40,7 @@ export {
   type AcquireStarted,
   type AcquireStatus,
   type AcquireSuccess,
+  acquireConfigured,
   acquireStatusOf,
   DEFAULT_ACQUIRE_CONFIG,
   isAcquireFailure,
@@ -89,6 +92,22 @@ export {
   scopeAskCard,
   UI_EXTENSION_ID,
 } from "./ask-card";
+// The blob door (GRA-187, GRA-199): the walk over an input's string leaves is the one walker, which
+// `@graft/evals`'s scorers read a result through; the two environment helpers are what every run
+// that passed the door carries into its exec.
+export {
+  admitBlobs,
+  type BlobAdmission,
+  blobAgentEnvironment,
+  blobBudgetEnvironment,
+  blobRefsIn,
+  blobRunEnvironment,
+  judgeBlobQuota,
+  judgeBlobRefs,
+  MAX_INPUT_DEPTH,
+  type StringLeafVisit,
+  walkStringLeaves,
+} from "./blob-door";
 export {
   ABANDONED_BLOB_WRITE_SECONDS,
   clampTimeout,
@@ -106,6 +125,8 @@ export {
   type ConnectionProposalInput,
   type ConnectionProposalPayload,
   type ConnectionRequestOutcome,
+  type ConnectionRouting,
+  type ConnectionRoutingDeps,
   CREDENTIAL_ASK_KIND,
   type CredentialAskPayload,
   type CredentialRequestInput,
@@ -113,11 +134,13 @@ export {
   normaliseProposal,
   PROPOSAL_PROVENANCE_NOTE,
   type ProposalVerdict,
+  type RoutedProposal,
   readConnectionAnswer,
   readConnectionProposal,
   readScopeAnswer,
   requestConnection,
   requestCredential,
+  routeConnectionProposal,
   SCOPE_ASK_KIND,
   type ScopeAnswer,
   type ScopeAskPayload,

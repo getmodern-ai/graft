@@ -29,11 +29,12 @@ import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS, mintCapabilityToken } from "@graft/token";
 import { sandboxPath } from "@graft/toolbox";
 import { type AskChannel, gateToolCall } from "./approval";
-import { admitBlobs, blobBudgetEnvironment } from "./blob-door";
-import { blobsOnWire, recordWrittenBlobs, withBlobs } from "./blobs";
+import { blobQuotaOvershoot, recordBlobsWithinQuota } from "./blob-budget";
+import { admitBlobs, blobAgentEnvironment, blobRunEnvironment } from "./blob-door";
+import { blobsOnWire, withBlobs } from "./blobs";
 import { boundResult } from "./bounds";
 import type { McpDeps } from "./deps";
-import { detachedHoldMs, heldInFlight } from "./in-flight";
+import { admitUnderGrant, detachedHoldMs, heldInFlight } from "./in-flight";
 import { type Refusal, refusal } from "./result";
 import { revokedConnectionRefusal } from "./revoke";
 import {
@@ -100,9 +101,10 @@ import { authoredToolName } from "./tool-names";
  * ADR 0023). The runner prints an envelope, `{ result, blobs }`, and this file is where it is read
  * (`describeModuleRun`): the module's result goes on as it always did — bounded, wrapped as a
  * dry-run report, recorded — and the ledger becomes one `blob` row per line (`blobs.ts`) before
- * the answer carries the same list beside the result. `GRAFT_AGENT` and `GRAFT_TOOL_VERSION` go
- * into the exec's environment for the sidecar the runner writes, and `GRAFT_BLOBS_DIR` names the
- * mount (`commandEnvironment`); the runner deletes all three before the module loads.
+ * the answer carries the same list beside the result. `GRAFT_AGENT` (`blob-door.ts`'s
+ * `blobAgentEnvironment`, on every capability run) and `GRAFT_TOOL_VERSION` go into the exec's
+ * environment for the sidecar the runner writes, and `GRAFT_BLOBS_DIR` names the mount
+ * (`commandEnvironment`); the runner deletes all three before the module loads.
  *
  * **A ref the input names is judged at the door, before a sandbox is touched** (GRA-187;
  * `blob-door.ts`). After the input is validated and before the approval gate, the agent's live
@@ -193,8 +195,9 @@ export async function runWithCapability<T>(args: {
     GRAFT_PROXY_URL: deps.proxyPublicUrl,
     GRAFT_CONNECTION: args.connectionId,
     GRAFT_TOKEN: token,
-    // For the sidecar of a blob the run writes (the header; ADR 0023), never for a path.
-    GRAFT_AGENT: scope.agentId,
+    // The agent for the sidecar of any blob the run writes: on every capability run, since an
+    // `execute__` command may invoke `$GRAFT_RUNNER` on a by-hand module (Greptile on #159).
+    ...blobAgentEnvironment(scope),
     // The runner's own switch into dry-run mode; the claim on the token is what the proxy enforces.
     ...(mode.dryRun ? { GRAFT_DRY_RUN: "1" } : {}),
   });
@@ -355,7 +358,7 @@ export function describeModuleRun(
   }
   if (result.status === "killed") {
     return failure(
-      `The tool was killed before it finished — it ran past the ${timeoutSeconds}-second limit.`,
+      `The tool was killed before it finished: it ran past the ${timeoutSeconds}-second limit.`,
     );
   }
   if (result.exitCode === EXIT_MODULE_MISSING) return failure(moduleMissingMessage(modulePath));
@@ -375,35 +378,31 @@ export function describeModuleRun(
   return (
     unwrapped ??
     failure(
-      `The tool exited 0 but printed something that is not JSON. The runner writes only the module's result to stdout, so the module printed to stdout itself: ${text.slice(-500)}`,
+      `The tool exited 0 but its stdout carries no runner envelope. The runner prints the module's result behind its marker line and nothing else, so the module printed to stdout itself: ${text.slice(-500)}`,
     )
   );
 }
 
 /**
  * The runner's stdout read in its own terms: the envelope behind its marker line (`@graft/runner`'s
- * `readRunnerEnvelope`), the module's result and the blobs the run wrote; or, with no marker, the
- * text as the module's bare JSON result with no blobs, because that is what a runner older than the
- * envelope prints, and a sandbox is seeded with the runner once (`sandbox.ts`, `seedRunner`) — the
- * Docker backing recreates every sandbox for the `/blobs` mount (GRA-185), the hosted form's until
- * GRA-192 lands keeps its copy, and a run there is exactly what it was. A bare result never yields
- * a ledger line, whatever its shape: only the marker does. Null when the text is neither.
+ * `readRunnerEnvelope`), the module's result and the blobs the run wrote. Text with no marker is
+ * null, for the caller to word as a failure. Every run on this path goes through the runner this
+ * server seeded (`sandbox.ts`'s `seedRunner`, GRA-193: under `/graft/<hash>/`, handed to the
+ * command as `GRAFT_RUNNER`), and that runner prints the envelope on every exit that prints
+ * anything, so a bare JSON result here is a module that printed to stdout itself and never an
+ * older runner; GRA-186 read one as a result with no blobs for a sandbox seeded before it, GRA-193
+ * closed the case for a sync run, and GRA-199 took the tolerance out. The detached result file
+ * keeps one, narrower, for the reason `sandbox.ts`'s `readRunnerResult` gives.
  */
 export function unwrapEnvelope(text: string): ModuleRunOutcome | null {
   const envelope = readRunnerEnvelope(text);
-  if (envelope) {
-    return {
-      ok: true,
-      result: envelope.result,
-      blobs: envelope.blobs,
-      blobsDropped: envelope.dropped,
-    };
-  }
-  try {
-    return { ok: true, result: JSON.parse(text), blobs: [], blobsDropped: 0 };
-  } catch {
-    return null;
-  }
+  if (!envelope) return null;
+  return {
+    ok: true,
+    result: envelope.result,
+    blobs: envelope.blobs,
+    blobsDropped: envelope.dropped,
+  };
 }
 
 function splitAtMarker(stdout: string): [string, string?] {
@@ -470,6 +469,18 @@ export type AuthoredRunArgs = {
    * cannot use follows the one live connection of the vendor in its scope (the header).
    */
   connectionId?: string;
+  /**
+   * A caller's own check on the tool and the version as this run reads them, made inside the
+   * agent's in-flight hold, before the connection, the input and the gate (GRA-208, Greptile on
+   * #166). The console's run (`apps/server/src/tool-run.ts`) refuses a tool that is not read-only
+   * or not promoted; judged on its own read, a republish or a demotion landing before this one
+   * would slip past it, and the working-set sweep demotes nothing while a run is held. A refusal
+   * is recorded `refused` and answered as the run's own.
+   */
+  admit?: (
+    tool: NonNullable<Awaited<ReturnType<typeof getToolByName>>>,
+    versionId: string,
+  ) => Promise<{ reason: string; message: string } | null>;
 };
 
 /**
@@ -567,6 +578,8 @@ async function runHeld(
         );
   }
   const versioned = { toolId: tool.id, versionId: version.id };
+  const admission = args.admit ? await args.admit(tool, version.id) : null;
+  if (admission) return refuse(admission.reason, admission.message, versioned);
 
   const bound = args.connectionId ?? tool.defaultConnectionId;
   if (!bound) {
@@ -644,16 +657,19 @@ async function runHeld(
 
   // The blob door (GRA-187; `blob-door.ts`): the quota, then every ref the input names, judged over
   // the rows before the gate asks anyone and before a sandbox is touched. A dry run passes it too.
-  const door = await admitBlobs(deps, scope, verdict.value);
+  // Admitted and granted as one step (`admitUnderGrant`, `in-flight.ts`; GRA-200 after Greptile on
+  // #157): the budget is outstanding from the admission until the run settles, so a second run
+  // admitted meanwhile is handed the remainder after this one's; a detached start moves the grant
+  // onto its process name below before this release runs.
+  const door = await admitUnderGrant(deps.inFlight, scope.agentId, () =>
+    admitBlobs(deps, scope, verdict.value),
+  );
   if (!door.ok) {
     await record("refused", versioned);
     return { answer: door.refusal, isError: true };
   }
-  // The budget is outstanding from here until the run settles (`in-flight.ts`), so a second run
-  // admitted meanwhile is handed the remainder after this one's; a detached start moves the grant
-  // onto its process name below before this release runs.
   const admitted = door.admission;
-  const releaseGrant = deps.inFlight?.grant(scope.agentId, admitted.budgetBytes);
+  const releaseGrant = door.release;
   // The narrowed values the admitted run reads, captured once for the function below.
   const runVersion = version;
   const runTool = tool;
@@ -661,7 +677,7 @@ async function runHeld(
   try {
     return await runAdmitted();
   } finally {
-    releaseGrant?.();
+    releaseGrant();
   }
 
   async function runAdmitted(): Promise<AuthoredRunAnswer> {
@@ -715,8 +731,12 @@ async function runHeld(
           modulePath: sandboxPath(runVersion.path),
           input: input,
           // The version whose run this is, for the sidecar of any blob it writes (ADR 0023), and
-          // what the run may still commit under the agent's quota (the header; `blob-door.ts`).
-          env: { ...env, GRAFT_TOOL_VERSION: runVersion.id, ...blobBudgetEnvironment(admitted) },
+          // the agent with what the run may still commit under its quota (the header; `blob-door.ts`).
+          env: {
+            ...env,
+            GRAFT_TOOL_VERSION: runVersion.id,
+            ...blobRunEnvironment(scope, admitted),
+          },
           mode: args.mode,
         });
       },
@@ -734,13 +754,23 @@ async function runHeld(
     if (!run.ok) {
       // A module that wrote and then failed committed its blobs all the same (the outcome type): the
       // rows land as they do on a success, and the failure names the refs beside its own fields.
-      await recordWrittenBlobs(deps, scope, runVersion.id, run.blobs, run.blobsDropped);
+      // Measured against the store and held to the quota as every ledger is (`blob-budget.ts`;
+      // GRA-200): this runner honours the budget, so the check is defence in depth here.
+      const recorded = await recordBlobsWithinQuota(
+        deps,
+        scope,
+        runVersion.id,
+        run.blobs,
+        run.blobsDropped,
+      );
+      const overshoot = blobQuotaOvershoot(recorded);
       await record("error", versioned);
       return {
-        answer:
-          run.blobs.length > 0 || run.blobsDropped > 0
-            ? { ...run.failure, ...blobsOnWire(run.blobs, run.blobsDropped) }
-            : run.failure,
+        answer: {
+          ...run.failure,
+          ...blobsOnWire(recorded.listed, recorded.dropped),
+          ...(overshoot ? { ...overshoot, error: `${run.failure.error} ${overshoot.error}` } : {}),
+        },
         isError: true,
       };
     }
@@ -757,8 +787,29 @@ async function runHeld(
       return { answer: describeDetachedStart(run.detached), isError: false };
     }
     // The blobs the run wrote, one row each, before the answer names them (the header; `blobs.ts`).
-    // A dry run's blobs are real files under the mount and get their rows like any other.
-    await recordWrittenBlobs(deps, scope, runVersion.id, run.blobs, run.blobsDropped);
+    // A dry run's blobs are real files under the mount and get their rows like any other. Measured
+    // against the store and held to the quota (`blob-budget.ts`; GRA-200, after Greptile on #157):
+    // the record is the rule on every path, and a run past the quota is answered a failure.
+    const recorded = await recordBlobsWithinQuota(
+      deps,
+      scope,
+      runVersion.id,
+      run.blobs,
+      run.blobsDropped,
+    );
+    const overshoot = blobQuotaOvershoot(recorded);
+    if (overshoot) {
+      await record("error", versioned);
+      return {
+        answer: {
+          ...overshoot,
+          exitCode: 0,
+          stderrTail: "",
+          ...blobsOnWire(recorded.listed, recorded.dropped),
+        },
+        isError: true,
+      };
+    }
     if (args.mode.dryRun) {
       const report = readDryRunReport(run.result);
       await recordDryRun(
@@ -776,12 +827,7 @@ async function runHeld(
       await record(report ? "ok" : "error", versioned);
       return report
         ? {
-            answer: {
-              dryRun: report,
-              ...(run.blobs.length > 0 || run.blobsDropped > 0
-                ? blobsOnWire(run.blobs, run.blobsDropped)
-                : {}),
-            },
+            answer: { dryRun: report, ...blobsOnWire(recorded.listed, recorded.dropped) },
             isError: false,
           }
         : {
@@ -795,7 +841,7 @@ async function runHeld(
     }
     await record("ok", versioned);
     return {
-      answer: withBlobs(boundResult(run.result), run.blobs, run.blobsDropped),
+      answer: withBlobs(boundResult(run.result), recorded.listed, recorded.dropped),
       isError: false,
     };
   }

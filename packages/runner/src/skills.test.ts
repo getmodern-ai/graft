@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { BLOB_REF_SCHEME, BLOB_TTL_MS, DRY_RUN_HEADER, MAX_BLOB_BYTES } from "./runner-source";
+import { BLOB_REF_SCHEME, BLOB_TTL_HOURS, DRY_RUN_HEADER, MAX_BLOB_BYTES } from "./runner-source";
 import { loadSkillsFrom, parseSkill, SKILLS_SOURCE_DIR, skillFiles } from "./skills";
 
 /**
@@ -151,7 +151,16 @@ describe("the shipped skills", () => {
       "untrusted text",
       "ctx.fetch(path, init)",
       "vendor-relative",
-      "never names a host, never holds a key",
+      "never writes a URL of its own, never holds a key",
+      // GRA-213: a declared host known in advance is named with `host`, for the module and the
+      // proof read alike, and `ctx.proxyBase` stays for SDKs.
+      "To reach another host the connection declares, name it with `host`",
+      'ctx.fetch("/v1/search?name=Berlin", { host: "geocoding-api.open-meteo.com" })',
+      "the `host` is one of the connection's hosts exactly, and the path starts with `/`",
+      "`ctx.proxyBase` stays for SDKs: a hand-written call to another host is `ctx.fetch(path, { host })`",
+      "A proof read may name a host",
+      "with the same `{ host }` the module passes to `ctx.fetch`, never on the primary host",
+      "RequestInit & { host?: string }",
       // GRA-197 (ADR 0010 as amended 2026-09-23): a URL the vendor answers at run time goes to
       // ctx.fetch as it is, and a write flow is ctx.fetch rather than an SDK.
       "goes to `ctx.fetch` as it is",
@@ -202,7 +211,7 @@ describe("the shipped skills", () => {
       "takes the ref as a plain string",
       "put it in `testInput`",
       "mints a fixture blob (a few hundred bytes of `text/plain`)",
-      `lives ${BLOB_TTL_MS / 3_600_000} hours`,
+      `lives ${BLOB_TTL_HOURS} hours`,
       `past ${MAX_BLOB_BYTES / (1024 * 1024)} MiB is refused as it streams, as \`blob_too_large\``,
       "as `blob_not_found` (another agent's ref reads the same)",
       "as `blob_expired`",

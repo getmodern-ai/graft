@@ -33,7 +33,7 @@
     "@types/pg": "catalog:",
     "dotenv": "catalog:",
     "drizzle-kit": "catalog:",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.15",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

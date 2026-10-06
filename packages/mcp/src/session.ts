@@ -17,6 +17,7 @@ import {
   ASK_CARD_RESOURCE_URI,
   UI_EXTENSION_ID,
 } from "./ask-card";
+import { DESCRIPTION_BUDGET } from "./bounds";
 import type { SessionContext } from "./context";
 import type { McpDeps } from "./deps";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -90,12 +91,11 @@ export const SERVER_INSTRUCTIONS = [
 ].join("\n\n");
 
 /**
- * How long `SERVER_INSTRUCTIONS` may be, and how long any one tool description may be: Claude Code
- * caps both at 2KB per server (its CHANGELOG, 2.1.84: "MCP tool descriptions and server
- * instructions are now capped at 2KB"), the one documented cap; ChatGPT and Claude.ai publish none.
- * GRA-54's 1,800 was a guess under it; the research on GRA-111 is the source for this figure.
+ * How long `SERVER_INSTRUCTIONS` may be: the same 2KB Claude Code caps any one tool description at
+ * (`bounds.ts`'s `DESCRIPTION_BUDGET` has the source), one number spelled once, since GRA-200 holds
+ * an authored tool's composed description to it in `tools.ts`.
  */
-export const INSTRUCTIONS_BUDGET = 2_048;
+export const INSTRUCTIONS_BUDGET = DESCRIPTION_BUDGET;
 
 export type AgentSession = {
   server: Server;

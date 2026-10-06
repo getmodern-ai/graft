@@ -95,7 +95,7 @@ export function ReenterCredentialDialog({
         {
           description: reconnecting
             ? "Its tools are usable again and ask afresh on their own terms."
-            : "Approvals are unchanged; the next vendor call carries the new credential.",
+            : "Approvals are unchanged; the next call to the integration carries the new credential.",
         },
       );
       close();
@@ -150,7 +150,7 @@ export function ReenterCredentialDialog({
               Scheme <code className="font-mono">{connection.scheme}</code>, sent to{" "}
               {connection.hosts.join(", ")}.{" "}
               {oauth
-                ? "The client secret is stored, then the vendor's consent runs in a popup; the tokens it yields are stored encrypted and never shown."
+                ? "The client secret is stored, then the integration's consent runs in a popup; the tokens it yields are stored encrypted and never shown."
                 : reconnecting
                   ? "The connection was revoked; a new credential reconnects it, and its tools ask again on their own terms."
                   : "The new credential replaces the old one. Nothing else changes, and no approval is touched."}

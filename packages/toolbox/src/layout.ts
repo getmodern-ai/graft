@@ -87,8 +87,10 @@ export const BLOBS_MOUNT_PATH = "/blobs";
 /**
  * The suffix of a blob's directory while it is being written: `<blobId>.tmp` beside where
  * `<blobId>` will be, renamed whole once `data` and `meta.json` are in it, so a reader sees a blob
- * complete or not at all. Spelt once here so the runner that writes and the sweep that removes a
- * stranded one agree (GRA-186, GRA-189).
+ * complete or not at all. Two copies exist and both are pinned to this one (GRA-186, GRA-189,
+ * GRA-199): the runner's, since `runner.mjs` ships to the sandbox alone
+ * (`packages/mcp/src/run.test.ts`), and `@graft/core`'s sweep decision's, since that package does
+ * not depend on this one (`packages/mcp/src/sweep.test.ts`).
  */
 export const BLOB_TMP_SUFFIX = ".tmp";
 

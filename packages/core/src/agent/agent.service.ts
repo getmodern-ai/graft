@@ -279,6 +279,77 @@ export async function createAgentForClient(
 }
 
 /**
+ * Mint the agent Setup runs as (ADR 0024): the same row as `createAgent`'s with **no token and no
+ * client** — no hash, no prefix, no origin recorded. The agent is *awaiting its harness*
+ * (`isAwaitingHarness` in `setup/setup.rules.ts`) until a consent names it or a token is issued to
+ * it at Setup's finish step (GRA-208), since a plaintext exists only at mint and a reload before
+ * the finish would lose it.
+ */
+export async function createAgentAwaitingHarness(
+  ctx: ServiceContext,
+  principal: Principal,
+  input: CreateAgentInput,
+  deps: AgentDeps,
+): Promise<{ agent: AgentOutput; connectionIds: string[] }> {
+  const { row, connectionIds } = await insertNewAgent(
+    ctx,
+    principal,
+    input,
+    {
+      tokenHash: null,
+      tokenPrefix: null,
+      connectedViaClientId: null,
+      connectedViaClientName: null,
+    },
+    deps,
+  );
+  return { agent: toAgentOutput(row), connectionIds };
+}
+
+/**
+ * Issue the static token of an agent **awaiting its harness** (ADR 0024; GRA-208): Setup's finish
+ * step for a token harness, and *Connect a harness* on such an agent. The token is in the answer
+ * and nowhere else, as `createAgent`'s is. Every other agent is refused, since a second token
+ * would orphan the first and an OAuth agent's client holds its own: `NOT_FOUND` for no agent of
+ * the person's, `CONFLICT` with `agent_not_awaiting_harness` and a sentence naming why for a
+ * revoked one, one with a token, or one a client connected. The write holds the same rule in its
+ * statement (`issueAgentToken`), so two issues racing mint one token between them.
+ */
+export async function issueAwaitingAgentToken(
+  ctx: ServiceContext,
+  principal: Principal,
+  agentId: string,
+  deps: AgentDeps,
+): Promise<{ agent: AgentOutput; token: string }> {
+  const row = orNotFound(
+    await deps.findAgent(ctx.db, principal.personId, agentId),
+    "Agent not found",
+  );
+  const refuse = (message: string) =>
+    new ServiceError("CONFLICT", message, {
+      details: { reason: "agent_not_awaiting_harness", agentId: row.id },
+    });
+  if (row.revokedAt) throw refuse(`${row.name} is revoked, so no token is issued to it`);
+  if (row.connectedViaClientId) {
+    throw refuse(
+      `${row.name} is connected through ${row.connectedViaClientName ?? "an MCP client"}, which holds its own tokens`,
+    );
+  }
+  if (row.tokenHash) {
+    throw refuse(
+      `${row.name} already has a token, shown once when it was issued; revoke the agent and create another to get a new one`,
+    );
+  }
+  const minted = mintAgentToken(deps.randomBytes);
+  const issued = await deps.issueAgentToken(ctx.db, principal.personId, row.id, {
+    tokenHash: minted.tokenHash,
+    tokenPrefix: minted.tokenPrefix,
+  });
+  if (!issued) throw refuse(`${row.name} was connected while its token was being issued`);
+  return { agent: toAgentOutput(issued), token: minted.token };
+}
+
+/**
  * The consent named an agent the person already had (ADR 0018): confirm it is theirs and still
  * stands, and record the client as its origin when none is recorded yet — an agent that already
  * says where it came from keeps saying so. A revoked agent cannot be lent to a client; the person

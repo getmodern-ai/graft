@@ -17,7 +17,7 @@ import { AUTH_SCHEMES } from "@graft/proxy/types";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { awaitJobNews, STATUS_WAIT_MS } from "../acquire/await";
-import { acquireStatusOf } from "../acquire/shapes";
+import { ACQUIRE_UNCONFIGURED, acquireConfigured, acquireStatusOf } from "../acquire/shapes";
 import { requireBuildApproval } from "../approval";
 import { ASK_CARD_TOOL_META } from "../ask-card";
 import { BLOB_RESULT_FACT } from "../blobs";
@@ -37,8 +37,9 @@ import {
   requestCredential,
 } from "../connection-request";
 import type { SessionContext } from "../context";
-import { isPlainObject, toolRefusal, toolResult } from "../result";
+import { isPlainObject, toolRefusal, toolResult, withCard } from "../result";
 import { runAuthoredTool } from "../run";
+import { setupOfferFor } from "../setup-offer";
 import { authoredToolName } from "../tool-names";
 import { similarTools } from "./acquire-similar";
 import { answerAsk } from "./answer-ask";
@@ -108,7 +109,8 @@ const findTool: MetaTool = {
     description:
       "Used first, before acquire, for a task no listed tool covers: searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description, matching every word of the query in any order; a tool no version of which has passed its dry run is not listed. " +
       "Each hit carries vendor and name (the arguments promote, demote and run_tool take), its inputSchema (the shape run_tool's input must match), whether it is in the agent's working set, and its read-only and destructive hints. " +
-      "A hit that is not promoted is one promote call from the agent's list. The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named.",
+      "A hit that is not promoted is one promote call from the agent's list. The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named. " +
+      "While the person has no connection at all and has neither finished nor skipped Setup, the answer also carries setup, a url to the console's Setup page for this agent, where a first vendor is connected and a first tool acquired, and a message in the shape of a handoff, shown as a card on a chat product that renders one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -121,8 +123,11 @@ const findTool: MetaTool = {
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true, destructiveHint: false },
+    // The ask card renders the Setup offer for this tool's results (GRA-210; `../setup-offer.ts`).
+    _meta: ASK_CARD_TOOL_META,
   },
-  handle: async (args, { ctx, principal, scope, deps }) => {
+  handle: async (args, session) => {
+    const { ctx, principal, scope, deps } = session;
     const query = typeof args.query === "string" ? args.query : "";
     if (queryWords(query).length === 0) {
       return toolRefusal(
@@ -165,14 +170,21 @@ const findTool: MetaTool = {
       inputSchema: tool.inputSchema,
       annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
     }));
-    return toolResult({
-      tools: hits,
-      connections,
-      note:
-        hits.length === 0
-          ? "Nothing in the toolbox matches. If the vendor is among connections, acquire authors a new tool against its connectionId; if not, request_connection comes first."
-          : "promote a tool to add it to your list; run_tool runs one without promoting it.",
-    });
+    // A person with no connection at all, and Setup neither finished nor skipped, is offered
+    // Setup (GRA-210): a plain result with the card beside it, since no ask stands behind it.
+    const offer = await setupOfferFor(session, allConnections.length);
+    return withCard(
+      toolResult({
+        tools: hits,
+        connections,
+        ...(offer ? { setup: offer.setup } : {}),
+        note:
+          hits.length === 0
+            ? "Nothing in the toolbox matches. If the vendor is among connections, acquire authors a new tool against its connectionId; if not, request_connection comes first."
+            : "promote a tool to add it to your list; run_tool runs one without promoting it.",
+      }),
+      offer?.card,
+    );
   },
 };
 
@@ -422,9 +434,9 @@ const acquire: MetaTool = {
         `Connection ${connectionId} is not in this agent's scope, so nothing can be authored against it. request_connection proposes a new connection for the person to confirm; an existing one is added to the scope in the console.`,
       );
     }
-    if (!deps.model) {
+    if (!acquireConfigured(deps)) {
       return toolRefusal(
-        "acquire_unconfigured",
+        ACQUIRE_UNCONFIGURED,
         "This deployment has no model configured, so Graft cannot author a tool. Say so rather than retrying; the advanced tools (write_file, check_tool, publish_tool) still let you drive the loop yourself.",
       );
     }

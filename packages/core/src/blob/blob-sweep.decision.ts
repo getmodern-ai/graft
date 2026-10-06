@@ -39,8 +39,10 @@
  *
  * A row already marked removed whose directory is still there is `remove` again with nothing to
  * mark; one whose directory is gone is out of the sweep's hands and is not in the plan. Expiry is
- * strict: a blob expiring exactly now is not yet past it. Nothing under `tools/` can ever be in a
- * plan, since the names come from a store that reaches `.blobs/` alone.
+ * `isBlobExpired`'s (`blob.rules.ts`): a blob expiring exactly now has expired, the door's rule
+ * too, so a ref the door refuses is one this sweep removes on the same tick and never one it keeps.
+ * Nothing under `tools/` can ever be in a plan, since the names come from a store that reaches
+ * `.blobs/` alone.
  *
  * **An agent the database no longer holds** (`agentExists: false`; GRA-195) has directories and
  * nothing else: its rows went with the row (the `blob` table cascades on the agent), there is no
@@ -51,10 +53,13 @@
  * (ADR 0007), its rows stay, and it is judged as any other agent.
  */
 
-import { BLOB_TTL_MS, MAX_BLOB_CONTENT_TYPE_CHARS, MAX_BLOB_NAME_CHARS } from "@graft/runner";
+import {
+  MAX_BLOB_CONTENT_TYPE_CHARS,
+  MAX_BLOB_NAME_CHARS,
+  MEDIA_TYPE_PATTERN,
+} from "@graft/runner";
 
-/** How long a blob lives from its write (ADR 0023): the runner's figure, which the clamp below applies. */
-export { BLOB_TTL_MS };
+import { BLOB_TTL_MS, isBlobExpired } from "./blob.rules";
 
 /** The suffix of a directory the runner is still writing; `@graft/toolbox`'s `BLOB_TMP_SUFFIX`, spelt here so this package does not depend on the store and pinned equal in `@graft/mcp`'s `sweep.test.ts`. */
 export const BLOB_TMP_SUFFIX = ".tmp";
@@ -73,15 +78,16 @@ export const BLOB_NAME_RULES = {
 
 /**
  * What a blob's media type may be: the runner's length (`MAX_BLOB_CONTENT_TYPE_CHARS`, its
- * `blob_invalid_content_type` figure), shaped `type/subtype` with optional `; key=value`
- * parameters (RFC 9110's token grammar), which is what the runner's write admits. Control
- * characters are refused by `hasControlCharacter` rather than the pattern, so no character class
- * here has to spell one.
+ * `blob_invalid_content_type` figure) and the runner's shape, a `RegExp` built from the one pattern
+ * `@graft/runner` exports (`MEDIA_TYPE_PATTERN`: `type/subtype` in token characters, anything after
+ * a `;` admitted as parameters), so a sidecar whose `contentType` the runner's write admitted is
+ * adopted and never refused here (GRA-199; `blob-sweep.decision.test.ts` pins two such values). The
+ * runner refuses no control character past the `;`, so neither does this rule; a name is held to
+ * `hasControlCharacter` because the runner's name rule refuses one.
  */
 export const BLOB_CONTENT_TYPE_RULES = {
   maxChars: MAX_BLOB_CONTENT_TYPE_CHARS,
-  pattern:
-    /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+(?:\s*;\s*[A-Za-z0-9!#$&^_.+-]+=(?:"[^"]*"|[A-Za-z0-9!#$&^_.+-]+))*$/,
+  pattern: new RegExp(MEDIA_TYPE_PATTERN.source, MEDIA_TYPE_PATTERN.flags),
 } as const;
 
 /** A C0 control character (below space) or DEL anywhere in the value. */
@@ -108,7 +114,6 @@ export function isValidBlobContentType(contentType: string): boolean {
   return (
     contentType.length > 0 &&
     contentType.length <= BLOB_CONTENT_TYPE_RULES.maxChars &&
-    !hasControlCharacter(contentType) &&
     BLOB_CONTENT_TYPE_RULES.pattern.test(contentType)
   );
 }
@@ -291,7 +296,7 @@ export function blobSweepDecision(input: BlobSweepDecisionInput): BlobSweepDecis
         actions.push({ action: "remove", blobId: row.id, bytes: row.bytes, mark: false });
       continue;
     }
-    const expired = row.expiresAt.getTime() < now;
+    const expired = isBlobExpired(row.expiresAt, input.now);
     if (!expired) {
       actions.push({ action: "keep", name: row.id, reason: present ? "live" : "landing" });
       continue;
@@ -327,8 +332,11 @@ export function blobSweepDecision(input: BlobSweepDecisionInput): BlobSweepDecis
     }
     if (input.agentExists === false) {
       // No row to adopt into (the agent is gone, and its rows with it): junk once it is older than
-      // any blob may live, and left alone until then.
-      const pastTtl = entry.stat.lastWrittenAt.getTime() + BLOB_TTL_MS < now;
+      // any blob may live, judged as a row's expiry is, and left alone until then.
+      const pastTtl = isBlobExpired(
+        new Date(entry.stat.lastWrittenAt.getTime() + BLOB_TTL_MS),
+        input.now,
+      );
       if (pastTtl) {
         actions.push({ action: "remove_orphan", blobId: entry.name, bytes: entry.stat.bytes });
       } else {

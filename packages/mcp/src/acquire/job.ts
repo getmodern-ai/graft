@@ -40,25 +40,29 @@ import {
   type ModelUsage,
   type ModuleDraft,
   type ProofRead,
+  type ProofReadTarget,
+  proofReadLabel,
 } from "@graft/model";
 import { hostSetOf } from "@graft/proxy/credential-source";
 import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
 import type { PublishArgs, PublishOutcome } from "@graft/publish";
-import { blobIdOf } from "@graft/runner";
+import { BLOB_TTL_HOURS, blobIdOf } from "@graft/runner";
 import type { SandboxHandle } from "@graft/sandbox";
 import { draftPath, sandboxPath, toolboxIdOf } from "@graft/toolbox";
 import { NO_ELICITATION } from "../approval";
 import {
   admitBlobs,
   type BlobAdmission,
-  blobBudgetEnvironment,
   blobRefsIn,
+  blobRunEnvironment,
   judgeBlobRefs,
+  walkStringLeaves,
 } from "../blob-door";
 import { recordWrittenBlobs } from "../blobs";
 import { DEFAULT_COMMAND_TIMEOUT_SECONDS } from "../bounds";
 import type { McpDeps } from "../deps";
+import { admitUnderGrant } from "../in-flight";
 import { promotePublished } from "../promote";
 import {
   type DryRunReport,
@@ -150,13 +154,15 @@ export const PROOF_BODY_CHARS = 4_000;
 export const DEFAULT_HEARTBEAT_MS = 15_000;
 
 /**
- * The probe module every proof read runs through — one `GET` of the path it is handed, and the
- * answer's shape. `reason` is the proxy's mark for a vendor it got no response from (GRA-79), read
- * off the same header the runner reads in a dry run; null for any answer the vendor gave.
+ * The probe module every proof read runs through — one `GET` of the path it is handed, on the host
+ * it is handed when there is one, through the same `ctx.fetch(path, { host })` a module uses
+ * (GRA-213), and the answer's shape. `reason` is the proxy's mark for a vendor it got no response
+ * from (GRA-79), read off the same header the runner reads in a dry run; null for any answer the
+ * vendor gave.
  */
 export const PROBE_MODULE = [
   "export default async (input, ctx) => {",
-  "  const res = await ctx.fetch(input.path);",
+  "  const res = await ctx.fetch(input.path, input.host ? { host: input.host } : {});",
   "  const text = await res.text();",
   "  return {",
   "    status: res.status,",
@@ -204,6 +210,14 @@ export const FIXTURE_BLOB_NAME = "fixture.txt";
 export const FIXTURE_BLOB_CONTENT_TYPE = "text/plain";
 
 /**
+ * How the `dry_run` trace line for a minted fixture opens. The facts (the ref, the size, the media
+ * type, the name, the expiry) ride on the line's `data` as the runner's ledger entry, and
+ * `@graft/evals`'s `blobReadInDryRun` finds the line by this opening and reads them there rather
+ * than out of the sentence (GRA-199).
+ */
+export const FIXTURE_BLOB_TRACE = "Minted fixture blob";
+
+/**
  * A few hundred bytes of text that say what they are, so a person who finds the file under the
  * mount, or a vendor that receives it in a dry run's preview, reads why it exists. Nothing of the
  * person's is in it.
@@ -211,26 +225,30 @@ export const FIXTURE_BLOB_CONTENT_TYPE = "text/plain";
 export function fixtureBlobText(jobId: string, tool: string): string {
   return [
     `A fixture blob. Graft's acquire job ${jobId} wrote it for the dry run of ${tool}: the tool reads a blob from its input, the test input named no live one, and a dry run needs a real file to read (GRA-190; ADR 0023).`,
-    `It is ${FIXTURE_BLOB_CONTENT_TYPE}, held for the agent that asked for 24 hours like any blob, and carries nothing of the person's.`,
+    `It is ${FIXTURE_BLOB_CONTENT_TYPE}, held for the agent that asked for ${BLOB_TTL_HOURS} hours like any blob, and carries nothing of the person's.`,
     "A consuming tool proved against this fixture has shown that it reads the ref off its input, opens the blob and puts the bytes in its request; it has not shown that the vendor accepts the real file's type or size, which its first real run will.",
     "",
   ].join("\n");
 }
 
-/** A copy of `value` with every string leaf in `refs` replaced by `ref`; arrays and objects walked as the door walks them. */
+/**
+ * A copy of `value` with every string leaf in `refs` replaced by `ref`, walked as the door walks an
+ * input (`walkStringLeaves`, GRA-199: the one walker, iterative and depth-bounded; the caller has
+ * already refused an input past the bound through `blobRefsIn`). The copy is `structuredClone`'s,
+ * since the value is a draft's `testInput` read back from a JSON column; a root that is itself a
+ * string is the one leaf the walker cannot replace and is answered here.
+ */
 export function substituteBlobRefs(
   value: unknown,
   refs: ReadonlySet<string>,
   ref: string,
 ): unknown {
   if (typeof value === "string") return refs.has(value) ? ref : value;
-  if (Array.isArray(value)) return value.map((item) => substituteBlobRefs(item, refs, ref));
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, substituteBlobRefs(item, refs, ref)]),
-    );
-  }
-  return value;
+  const copy: unknown = structuredClone(value);
+  walkStringLeaves(copy, (leaf, replace) => {
+    if (refs.has(leaf)) replace(ref);
+  });
+  return copy;
 }
 
 /** Where attempt `n`'s draft is written in the toolbox. */
@@ -459,7 +477,7 @@ class AcquireLoop {
       );
     }
     await this.progress(
-      `Authoring "${this.job.goal}" against ${connection.displayName} (${connection.vendor}). Reads reach the vendor for real; every write is previewed at the proxy and nothing changes there.`,
+      `Authoring "${this.job.goal}" against ${connection.displayName} (${connection.vendor}). Reads reach ${connection.displayName} for real; every write is previewed at the proxy and nothing changes there.`,
     );
 
     const skill = (await this.deps.skills()).find((s) => s.name === "authoring-a-tool");
@@ -585,7 +603,7 @@ class AcquireLoop {
             data: { paths: answer.proofReads },
           });
           await this.progress(
-            `Attempt ${attempt.number}: ${answer.proofReads.length} more proof read(s) — ${answer.note}`,
+            `Attempt ${attempt.number}: ${answer.proofReads.length} more proof read(s): ${answer.note}`,
           );
           situation = {
             kind: "proof",
@@ -776,7 +794,7 @@ class AcquireLoop {
     this.open = attempt;
     await this.trace(
       "edit",
-      `Attempt ${attempt.number}: drafted ${draft.name} — ${draft.files.map((f) => f.path).join(", ")} — at ${row.draftPath}.`,
+      `Attempt ${attempt.number}: drafted ${draft.name} (${draft.files.map((f) => f.path).join(", ")}) at ${row.draftPath}.`,
       {
         attempt: attempt.number,
         data: {
@@ -837,15 +855,18 @@ class AcquireLoop {
   }
 
   /**
-   * The proof reads, each through the execute path with the dry-run claim on. `paths` are the
+   * The proof reads, each through the execute path with the dry-run claim on. `targets` are the
    * draft's own on the first call and a `prove` answer's after (GRA-153); every read is appended to
    * the attempt's, and the attempt's whole list is what the model is shown and what the summary
-   * counts.
+   * counts. A read that names a host goes through the proxy's host route, as a module's
+   * `ctx.fetch(path, { host })` does (GRA-213), and one naming a host the connection does not
+   * declare is refused here, before anything runs, as a failed read with the sentence that says so:
+   * the proxy would refuse it anyway, and the model learns which hosts it has in the same turn.
    */
   private async prove(
     attempt: OpenAttempt,
     connection: ProofConnection,
-    paths: readonly string[],
+    targets: readonly ProofReadTarget[],
   ): Promise<ProofRead[]> {
     const connectionId = connection.id;
     const handle = await this.sandbox();
@@ -859,10 +880,23 @@ class AcquireLoop {
     const reads = attempt.reads;
     const mode = { detached: false, timeoutSeconds: DEFAULT_COMMAND_TIMEOUT_SECONDS, dryRun: true };
     const first = reads.length;
-    const runnable = paths.slice(0, Math.max(0, MAX_PROOF_READS - first));
+    const runnable = targets.slice(0, Math.max(0, MAX_PROOF_READS - first));
     const total = first + runnable.length;
-    for (const [index, path] of runnable.entries()) {
-      await this.step(`proof read ${first + index + 1} of ${total}: GET ${path}`);
+    for (const [index, target] of runnable.entries()) {
+      const { path } = target;
+      const host = target.host ?? null;
+      const label = `GET ${proofReadLabel(target)}`;
+      await this.step(`proof read ${first + index + 1} of ${total}: ${label}`);
+      const undeclared = undeclaredProofHost(target, connection);
+      if (undeclared) {
+        attempt.proofFailed = true;
+        reads.push(undeclared);
+        await this.trace("proof", `Proof read ${label} refused: ${undeclared.error}`, {
+          attempt: attempt.number,
+          data: { path, host, error: undeclared.error },
+        });
+        continue;
+      }
       const outcome = await runWithCapability({
         deps: this.deps,
         scope: this.scope,
@@ -874,19 +908,19 @@ class AcquireLoop {
           return runModule(handle, {
             scope: this.scope,
             modulePath: sandboxPath(probePath(this.job.id)),
-            input: { path },
+            input: host === null ? { path } : { path, host },
             env,
             mode,
           });
         },
       });
-      const read = describeProofRead(path, outcome, connection);
+      const read = describeProofRead(target, outcome, connection);
       reads.push(read);
       const unreached = vendorUnreachedOf(read, refusalFieldsOf(read.body));
       if (unreached) {
         // The network's answer, not the vendor's (GRA-79): recorded, and the job ends here. The
         // model is not asked — the header of this file says why.
-        const ended = describeVendorUnreached(unreached, `GET ${path}`);
+        const ended = describeVendorUnreached(unreached, label);
         await this.trace("vendor_error", ended.summary, {
           attempt: attempt.number,
           data: { path, status: read.status, body: read.body, ...unreached },
@@ -896,19 +930,20 @@ class AcquireLoop {
         throw this.end("vendor_unreachable", ended.message, { proofReads: reads });
       }
       if (read.ok) {
-        await this.trace("proof", `Proof read GET ${path}: ${read.status}.`, {
+        await this.trace("proof", `Proof read ${label}: ${read.status}.`, {
           attempt: attempt.number,
-          data: { path, status: read.status, body: read.body },
+          data: { path, host, status: read.status, body: read.body },
         });
       } else {
         attempt.proofFailed = true;
         await this.trace(
           "vendor_error",
-          `Proof read GET ${path} failed: ${read.status ?? "no status"} ${read.error ?? read.body ?? ""}`.trim(),
+          `Proof read ${label} failed: ${read.status ?? "no status"} ${read.error ?? read.body ?? ""}`.trim(),
           {
             attempt: attempt.number,
             data: {
               path,
+              host,
               status: read.status,
               body: read.body,
               error: read.error,
@@ -922,7 +957,7 @@ class AcquireLoop {
     const failed = reads.filter((r) => !r.ok);
     if (attempt.proofFailed) {
       attempt.proofSummary = `${failed.length} of ${reads.length} proof read(s) failed (${failed
-        .map((r) => `GET ${r.path} ${r.status ?? "no status"}`)
+        .map((r) => `GET ${proofReadLabel(r)} ${r.status ?? "no status"}`)
         .join(", ")})`;
     }
     await this.progress(
@@ -1224,7 +1259,7 @@ class AcquireLoop {
       currentVersion = later;
       await this.trace(
         "publish",
-        `${wire} v${version.versionNumber} passed its dry run but v${later} is already current — a later job activated it — so the pointer stays there.`,
+        `${wire} v${version.versionNumber} passed its dry run but v${later} is already current, since a later job activated it, so the pointer stays there.`,
         {
           attempt: attempt.number,
           data: { versionId: version.id, version: version.versionNumber, currentVersion: later },
@@ -1242,7 +1277,7 @@ class AcquireLoop {
     const runsAs =
       currentVersion === version.versionNumber
         ? `${wire} now runs as v${version.versionNumber}`
-        : `v${version.versionNumber} is not current — a later job made v${currentVersion} current first — so ${wire} runs as v${currentVersion}`;
+        : `v${version.versionNumber} is not current, since a later job made v${currentVersion} current first, so ${wire} runs as v${currentVersion}`;
     await this.progress(
       `Attempt ${attempt.number}: the dry run passed. ${runsAs} and is ${promoted.changed ? "promoted into your working set" : "already in your working set"}; its first real use is yours to make${outcome.annotations.readOnly ? "" : ", and the person is asked once before it"}.`,
     );
@@ -1358,7 +1393,13 @@ class AcquireLoop {
     attempt: OpenAttempt,
     wire: string,
   ): Promise<{ ref: string; bytes: number } | null> {
-    const door = await admitBlobs(this.deps, this.scope, {});
+    // Admitted and granted as one step under the agent's critical section (`admitUnderGrant`,
+    // `in-flight.ts`; GRA-200 after Greptile on #157), as a run is: the budget is outstanding until
+    // the write has settled, so a run admitted for this agent meanwhile is handed the remainder
+    // after this grant and two writes cannot share one remainder.
+    const door = await admitUnderGrant(this.deps.inFlight, this.scope.agentId, () =>
+      admitBlobs(this.deps, this.scope, {}),
+    );
     if (!door.ok) {
       await this.trace(
         "dry_run",
@@ -1367,14 +1408,10 @@ class AcquireLoop {
       );
       return null;
     }
-    // The budget is outstanding until the write has settled, as a run's is (`run.ts`; Greptile on
-    // #149): a run admitted for this agent meanwhile is handed the remainder after this grant, so
-    // two writes cannot share one remainder.
-    const releaseGrant = this.deps.inFlight?.grant(this.scope.agentId, door.admission.budgetBytes);
     try {
       return await this.writeFixtureBlob(attempt, wire, door.admission);
     } finally {
-      releaseGrant?.();
+      door.release();
     }
   }
 
@@ -1404,9 +1441,8 @@ class AcquireLoop {
       input: { text, contentType: FIXTURE_BLOB_CONTENT_TYPE, name: FIXTURE_BLOB_NAME },
       env: {
         ...commandEnvironment(DEFAULT_COMMAND_TIMEOUT_SECONDS, await seededRunnerPath(this.deps)),
-        // For the sidecar (the runner's header; ADR 0023), never for a path.
-        GRAFT_AGENT: this.scope.agentId,
-        ...blobBudgetEnvironment(admission),
+        // The agent for the sidecar and the budget, as a door-admitted run carries them.
+        ...blobRunEnvironment(this.scope, admission),
       },
       mode,
     });
@@ -1423,7 +1459,7 @@ class AcquireLoop {
     await recordWrittenBlobs(this.deps, this.scope, null, [written]);
     await this.trace(
       "dry_run",
-      `Minted fixture blob ${written.ref} (${written.bytes} bytes, ${written.contentType}, ${written.name ?? FIXTURE_BLOB_NAME}) for the dry run of ${wire}; it expires at ${written.expiresAt}.`,
+      `${FIXTURE_BLOB_TRACE} ${written.ref} (${written.bytes} bytes, ${written.contentType}, ${written.name ?? FIXTURE_BLOB_NAME}) for the dry run of ${wire}; it expires at ${written.expiresAt}.`,
       { attempt: attempt.number, data: { ...written } },
     );
     return { ref: written.ref, bytes: written.bytes };
@@ -1638,11 +1674,46 @@ function toModelDiagnostic(diagnostic: {
   return { rule, file, line, column, message, hint };
 }
 
-/** A proof read's outcome in the model's terms: the probe's answer, or why there was none. */
-/** What a proof read needs to know of the connection: its id for the run, its hosts for a redirect. */
+/** What a proof read needs to know of the connection: its id for the run, its hosts for a named host and a redirect. */
 type ProofConnection = { id: string; primaryHost: string; hosts: readonly string[] };
 
-function describeProofRead(path: string, outcome: unknown, connection: ProofConnection): ProofRead {
+/**
+ * A proof read naming a host the connection does not declare (GRA-213), as the failed read the
+ * model is shown in place of a run, or null when the read names none or a declared one. Judged
+ * against the proxy's own normalised set (`hostSetOf`: every declared host lower-cased, plus the
+ * primary's), so this sentence and the proxy's `host_not_in_set` agree; the proxy still judges the
+ * read that does run. Nothing in the job can add a host: consent never moves inside the loop
+ * (ADR 0004, ADR 0006).
+ */
+function undeclaredProofHost(read: ProofReadTarget, connection: ProofConnection): ProofRead | null {
+  if (read.host === undefined) return null;
+  const declared = hostSetOf({ primaryHost: connection.primaryHost, hosts: connection.hosts });
+  if (declared.has(read.host.toLowerCase())) return null;
+  return {
+    path: read.path,
+    host: read.host,
+    ok: false,
+    status: null,
+    body: null,
+    error:
+      `The proof read names ${read.host}, which this connection does not declare (it declares ${[...declared].join(", ")}), so it was not run. ` +
+      "A proof read's host is one of those, the same host the module passes as ctx.fetch(path, { host }); name one of them, or null for the primary host. " +
+      `If the tool needs ${read.host}, answer give_up with a reason that names it, so the person can connect the vendor with that host in its set.`,
+    redirectTo: null,
+    reason: null,
+  };
+}
+
+/** A proof read's outcome in the model's terms: the probe's answer, or why there was none. */
+
+function describeProofRead(
+  target: ProofReadTarget,
+  outcome: unknown,
+  connection: ProofConnection,
+): ProofRead {
+  const { path } = target;
+  const host = target.host ?? null;
+  const label = `GET ${proofReadLabel(target)}`;
   if (
     typeof outcome === "object" &&
     outcome !== null &&
@@ -1652,6 +1723,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     const refusal = outcome as { reason?: string; message?: string };
     return {
       path,
+      host,
       ok: false,
       status: null,
       body: null,
@@ -1669,11 +1741,12 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     const failure = run.failure;
     return {
       path,
+      host,
       ok: false,
       status: null,
       body: null,
       error: failure
-        ? `${failure.error}${failure.stderrTail ? ` — ${failure.stderrTail}` : ""}`
+        ? `${failure.error}${failure.stderrTail ? `: ${failure.stderrTail}` : ""}`
         : "the run failed",
       redirectTo: null,
       reason: null,
@@ -1693,6 +1766,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
   if (report?.moduleError) {
     return {
       path,
+      host,
       ok: false,
       status: null,
       body: null,
@@ -1704,6 +1778,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
   if (!probe || typeof probe.status !== "number") {
     return {
       path,
+      host,
       ok: false,
       status: null,
       body: null,
@@ -1725,21 +1800,23 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
     const fields = refusalFieldsOf(body);
     return {
       path,
+      host,
       ok: false,
       status: probe.status,
       body,
       error: describeVendorUnreached(
         { reason, host: fields.host ?? "the vendor", code: fields.code },
-        `GET ${path}`,
+        label,
       ).summary,
       redirectTo: null,
       reason,
     };
   }
   if (isRedirect(probe.status)) {
-    const redirect = describeRedirect(path, probe.location ?? null, connection);
+    const redirect = describeRedirect(target, probe.location ?? null, connection);
     return {
       path,
+      host,
       ok: false,
       status: probe.status,
       body,
@@ -1750,6 +1827,7 @@ function describeProofRead(path: string, outcome: unknown, connection: ProofConn
   }
   return {
     path,
+    host,
     ok: probe.status < 400,
     status: probe.status,
     body,
@@ -1813,26 +1891,30 @@ function describeVendorUnreached(
 /**
  * A redirected proof read, in the connection's terms. The proxy returned the 3xx unfollowed and the
  * runner did not follow it (CONTEXT.md *Proxy*; GRA-64), so the read is a fact about the host set:
- * a host the connection declares is the module's to call through `ctx.proxyBase(host)`; one it does
- * not is nobody's inside this job — consent never moves inside the loop (ADR 0004, ADR 0006) — so
- * the model is told to give up naming it, and the person connects it (GRA-65).
+ * a host the connection declares is the module's to call with `ctx.fetch(path, { host })` and the
+ * proof's to read with that `host` (GRA-213); one it does not is nobody's inside this job — consent
+ * never moves inside the loop (ADR 0004, ADR 0006) — so the model is told to give up naming it, and
+ * the person connects it (GRA-65).
  */
 function describeRedirect(
-  path: string,
+  read: ProofReadTarget,
   location: string | null,
   connection: ProofConnection,
 ): { host: string | null; error: string } {
+  const { path } = read;
+  const call = `GET ${proofReadLabel(read)}`;
   if (!location) {
     return {
       host: null,
-      error: `The vendor redirected GET ${path} without saying where (no Location header).`,
+      error: `The vendor redirected ${call} without saying where (no Location header).`,
     };
   }
-  // Resolved against the URL the read went to — the primary host's base path plus the proof path,
-  // as the proxy builds it (`resolveTarget`) — so a relative `Location` lands where the vendor meant.
+  // Resolved against the URL the read went to, as the proxy builds it (`resolveTarget`): the
+  // primary host's base path plus the proof path, or a named host's root plus the path — so a
+  // relative `Location` lands where the vendor meant.
   let target: URL;
   try {
-    const base = new URL(connection.primaryHost);
+    const base = new URL(read.host ? `https://${read.host}` : connection.primaryHost);
     const request = new URL(
       path.replace(/^\/+/, ""),
       `${base.origin}${base.pathname.replace(/\/+$/, "")}/`,
@@ -1844,7 +1926,7 @@ function describeRedirect(
   } catch {
     return {
       host: null,
-      error: `The vendor redirected GET ${path} to an unreadable Location: ${location.slice(0, 200)}`,
+      error: `The vendor redirected ${call} to an unreadable Location: ${location.slice(0, 200)}`,
     };
   }
   // The host as the proxy judges it — its own normalised set, an entry with or without a port
@@ -1857,7 +1939,7 @@ function describeRedirect(
     return {
       host: target.host,
       error:
-        `The vendor redirected GET ${path} to ${target.host}${where}, on a port the proxy cannot ` +
+        `The vendor redirected ${call} to ${target.host}${where}, on a port the proxy cannot ` +
         "address: a connection's host is reached on its default port only. Nothing in this job can change that. " +
         `Answer give_up with a reason that names ${target.host}, so the person can see what the vendor wants.`,
     };
@@ -1867,14 +1949,15 @@ function describeRedirect(
     return {
       host,
       error:
-        `The vendor redirected GET ${path} to ${host}${where}, a host this connection declares. ` +
-        `The proxy does not follow redirects, so the module must call that host itself: ctx.proxyBase("${host}") is its base, and ${where} is the path the vendor wants there.`,
+        `The vendor redirected ${call} to ${host}${where}, a host this connection declares. ` +
+        `The proxy does not follow redirects, so the module must call that host itself: ctx.fetch(${JSON.stringify(where)}, { host: "${host}" }), ` +
+        `and the proof read is { path: ${JSON.stringify(where)}, host: "${host}" } (an SDK is pointed at it with ctx.proxyBase("${host}")).`,
     };
   }
   return {
     host,
     error:
-      `The vendor redirected GET ${path} to ${host}${where}, which this connection does not declare ` +
+      `The vendor redirected ${call} to ${host}${where}, which this connection does not declare ` +
       `(it declares ${[...declared].join(", ")}). ` +
       `Nothing in this job can add a host. Answer give_up with a reason that names ${host}, so the person can connect the vendor with that host in its set and the tool can be built against it.`,
   };

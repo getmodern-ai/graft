@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { checkModule, readModuleSources } from "@graft/check";
+import { TOOL_DESCRIPTION_MAX_LENGTH } from "@graft/core";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox/fake";
 import type { InstallArgs, SandboxProcessResult } from "@graft/sandbox/types";
 import {
@@ -207,6 +208,24 @@ describe("a module with no dependencies", () => {
     ]);
   });
 
+  /**
+   * The toolbox keeps a description whole at the row's maximum (GRA-200): the wire cuts a long one
+   * so the composed definition holds the per-description cap (`@graft/mcp`'s `tools.ts`), and that
+   * cut must never reach the row, which is what the approval and the console show.
+   */
+  it("stores a description at the row's maximum whole", async () => {
+    const description = "d".repeat(TOOL_DESCRIPTION_MAX_LENGTH);
+    const result = await publish({
+      draftPath: await draft("job1", await readFixture("hello")),
+      description,
+    });
+
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) return;
+    expect(result.tool.description).toBe(description);
+    expect(h.tool.tools[0]?.description).toHaveLength(TOOL_DESCRIPTION_MAX_LENGTH);
+  });
+
   it("a second publish writes v2 and moves the pointer, and v1 stays on disk and in the rows", async () => {
     const first = await readFixture("hello");
     await publish({ draftPath: await draft("job1", first) });
@@ -404,6 +423,12 @@ describe("a module with no dependencies", () => {
 
 describe("a module declaring packages", () => {
   it("installs an allowlisted package once, into the version, and records the lockfile's hash", async () => {
+    // Allowlisted and still asked about: the allowlist waives provenance alone (GRA-176), so the
+    // registry's age and download facts have to be there for the publish to land.
+    h.metadata = createFakeMetadataSource({
+      "@octokit/rest@22.0.1": { ...ADMITTED, hasProvenance: false },
+    });
+    h.deps.metadata = h.metadata;
     const files = [
       manifestOf({ "@octokit/rest": "22.0.1" }),
       {
@@ -445,8 +470,7 @@ describe("a module declaring packages", () => {
       ]),
     );
     expect(result.dependencies).toEqual(["@octokit/rest"]);
-    // Allowlisted: the registry was never asked.
-    expect(h.metadata.lookups).toEqual([]);
+    expect(h.metadata.lookups).toEqual(["@octokit/rest@22.0.1"]);
     expect(
       await h.store.exists(TOOLBOX, "tools/demo/issues/v1/node_modules/left-pad/index.js"),
     ).toBe(true);
@@ -467,11 +491,15 @@ describe("a module declaring packages", () => {
     expect(h.install).toHaveBeenCalledTimes(1);
   });
 
-  it("admits a package through the configured extra names without asking the registry", async () => {
+  it("admits a package through the configured extra names with no attestation, the registry still asked", async () => {
     h.deps.policy = {
       ...DEFAULT_PACKAGE_POLICY,
       allowlist: [...DEFAULT_PACKAGE_POLICY.allowlist, "left-pad"],
     };
+    h.metadata = createFakeMetadataSource({
+      "left-pad@1.3.0": { ...ADMITTED, hasProvenance: false },
+    });
+    h.deps.metadata = h.metadata;
 
     const result = await publish({
       name: "pad",
@@ -480,7 +508,39 @@ describe("a module declaring packages", () => {
     });
 
     expect(result.ok, JSON.stringify(result)).toBe(true);
-    expect(h.metadata.lookups).toEqual([]);
+    expect(h.metadata.lookups).toEqual(["left-pad@1.3.0"]);
+  });
+
+  /**
+   * The allowlist admits the *name*; the age and download rules still read the registry (GRA-176).
+   * A name on the list that the registry has nothing for is refused as any other would be.
+   */
+  it("refuses an allowlisted package the registry refuses on age, and asks about it at all", async () => {
+    h.deps.policy = {
+      ...DEFAULT_PACKAGE_POLICY,
+      allowlist: [...DEFAULT_PACKAGE_POLICY.allowlist, "left-pad"],
+    };
+    h.metadata = createFakeMetadataSource({
+      "left-pad@1.3.0": { ...ADMITTED, hasProvenance: false, publishedAt: NOW },
+    });
+    h.deps.metadata = h.metadata;
+
+    const result = await publish({
+      name: "pad",
+      inputSchema: PAD_SCHEMA,
+      draftPath: await draft("job1", await readFixture("left-pad")),
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.refusals).toEqual([
+      expect.objectContaining({
+        rule: "package-policy",
+        policy: { package: "left-pad", version: "1.3.0", rule: "age" },
+      }),
+    ]);
+    expect(h.metadata.lookups).toEqual(["left-pad@1.3.0"]);
+    expect(h.install).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -533,6 +593,7 @@ describe("a module declaring packages", () => {
   it("reports every failing package at once", async () => {
     h.metadata = createFakeMetadataSource({
       "left-pad@1.3.0": { ...ADMITTED, hasProvenance: false },
+      "@octokit/rest@22.0.1": ADMITTED,
     });
     h.deps.metadata = h.metadata;
     const files = [
@@ -579,6 +640,8 @@ describe("a module declaring packages", () => {
 
   it("refuses with install-failed carrying npm's words when the build step fails, records no row, and the next publish lands the same version", async () => {
     h.deps.policy = { ...DEFAULT_PACKAGE_POLICY, allowlist: ["left-pad"] };
+    h.metadata = createFakeMetadataSource({ "left-pad@1.3.0": ADMITTED });
+    h.deps.metadata = h.metadata;
     h.install.mockResolvedValueOnce({
       status: "failed",
       exitCode: 1,
@@ -622,6 +685,8 @@ describe("a module declaring packages", () => {
 
   it("refuses when the install reports success but left no lockfile", async () => {
     h.deps.policy = { ...DEFAULT_PACKAGE_POLICY, allowlist: ["left-pad"] };
+    h.metadata = createFakeMetadataSource({ "left-pad@1.3.0": ADMITTED });
+    h.deps.metadata = h.metadata;
     h.deps.sandbox = { install: h.sandbox.install };
 
     const result = await publish({

@@ -54,9 +54,11 @@ const result = (overrides: Partial<Parameters<typeof describeModuleRun>[0]>) => 
 
 describe("describeModuleRun", () => {
   it("reads the result off stdout before the stderr marker", () => {
+    // The runner's stdout is its envelope (GRA-186): the marker line, then `{ result, blobs }`.
+    const printed = `${ENVELOPE_MARKER}\n${JSON.stringify({ result: { ok: true }, blobs: [] })}`;
     expect(
       describeModuleRun(
-        result({ stdout: '{"ok":true}\n__GRAFT_STDERR__\nsome warning\n' }),
+        result({ stdout: `${printed}\n__GRAFT_STDERR__\nsome warning\n` }),
         "/tools/demo/x/v1",
         60,
       ),
@@ -70,22 +72,21 @@ describe("describeModuleRun", () => {
   });
 
   /** The envelope (GRA-186): behind its marker line, the module's result under `result`, the ledger beside it. */
-  it("unwraps the runner's envelope behind its marker, and reads text with no marker as a bare result with no blobs", () => {
+  it("unwraps the runner's envelope behind its marker, and refuses text with no marker as a module that printed to stdout (GRA-199)", () => {
     const envelope = `${ENVELOPE_MARKER}\n${JSON.stringify({ result: { file: BLOB.ref }, blobs: [BLOB] })}`;
     expect(
       describeModuleRun(result({ stdout: `${envelope}\n__GRAFT_STDERR__\n` }), "/tools/x", 60),
     ).toEqual({ ok: true, result: { file: BLOB.ref }, blobs: [BLOB], blobsDropped: 0 });
-    // A module's own `{ result, blobs }`, printed bare by a runner older than the marker, is the
-    // module's result, untouched, and yields no ledger line whatever its entries look like.
+    // Bare JSON with no marker is not a result: every sync run goes through the runner this server
+    // seeded (GRA-193), which always prints the envelope, so this is a module's own stdout. A
+    // module's own `{ result, blobs }` printed bare therefore yields no ledger line either.
     const decoy = { result: 42, blobs: [BLOB] };
-    expect(unwrapEnvelope(JSON.stringify(decoy))).toEqual({
-      ok: true,
-      result: decoy,
-      blobs: [],
-      blobsDropped: 0,
-    });
-    expect(unwrapEnvelope("42")).toEqual({ ok: true, result: 42, blobs: [], blobsDropped: 0 });
+    expect(unwrapEnvelope(JSON.stringify(decoy))).toBeNull();
+    expect(unwrapEnvelope("42")).toBeNull();
     expect(unwrapEnvelope("not json")).toBeNull();
+    const bare = describeModuleRun(result({ stdout: "42\n__GRAFT_STDERR__\n" }), "/tools/x", 60);
+    expect(bare.ok).toBe(false);
+    if (!bare.ok) expect(bare.failure.error).toContain("no runner envelope");
     // A ledger line the runner could not have written is dropped and counted, never a row.
     const forged = { ...BLOB, ref: "blob://../x" };
     const oversized = { ...BLOB, name: "n".repeat(256) };
@@ -142,7 +143,7 @@ describe("describeModuleRun", () => {
     const junk = describeModuleRun(result({ stdout: "hello\n__GRAFT_STDERR__\n" }), "/tools/x", 30);
     expect(junk).toMatchObject({
       ok: false,
-      failure: { error: expect.stringMatching(/not JSON/) },
+      failure: { error: expect.stringMatching(/no runner envelope/) },
     });
   });
 });

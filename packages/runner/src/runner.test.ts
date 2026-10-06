@@ -19,8 +19,10 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  BLOB_NAME_REFUSED,
   BLOB_QUOTA_BYTES,
   BLOB_REF_SCHEME,
+  BLOB_TTL_HOURS,
   BLOB_TTL_MS,
   DRY_RUN_HEADER,
   DRY_RUN_INTERCEPTED,
@@ -28,6 +30,7 @@ import {
   MAX_BLOB_BYTES,
   MAX_BLOB_CONTENT_TYPE_CHARS,
   MAX_BLOB_NAME_CHARS,
+  MEDIA_TYPE_PATTERN,
   MODULE_ENTRIES,
   REFUSAL_HEADER,
   RESULT_MARKER,
@@ -160,6 +163,44 @@ const FIXTURES: Record<string, string> = {
     "  } catch (error) {",
     "    return { refused: error.message };",
     "  }",
+    "};",
+  ].join("\n"),
+  // GRA-213: a path and the `host` option, as a module names a declared host it knows in advance.
+  "namedHost.mjs": [
+    "export default async (input, ctx) => {",
+    "  try {",
+    "    const res = await ctx.fetch(input.path, { ...(input.init ?? {}), host: input.host });",
+    "    return {",
+    "      status: res.status,",
+    '      location: res.headers.get("location"),',
+    "      body: res.status === 303 ? null : await res.json(),",
+    "    };",
+    "  } catch (error) {",
+    "    return { refused: error.message };",
+    "  }",
+    "};",
+  ].join("\n"),
+  // GRA-213 in a dry run: the Open-Meteo shape, a read on the second host by name, then a write there.
+  "dryNamedHost.mjs": [
+    "export default async (_input, ctx) => {",
+    '  const read = await ctx.fetch("/v1/search?name=Berlin", { host: "geocoding-api.example.com" });',
+    '  const write = await ctx.fetch("/v1/notes?sig=named-secret", {',
+    '    host: "geocoding-api.example.com",',
+    '    method: "POST",',
+    '    headers: { "content-type": "text/plain" },',
+    '    body: "the note",',
+    "  });",
+    "  let refused = null;",
+    "  try {",
+    '    await ctx.fetch("v1/notes?sig=malformed-secret#frag-secret", {',
+    '      host: "geocoding-api.example.com",',
+    '      method: "PUT",',
+    '      body: "x",',
+    "    });",
+    "  } catch (error) {",
+    "    refused = error.message;",
+    "  }",
+    "  return { read: read.status, write: write.status, refused };",
     "};",
   ].join("\n"),
   // Two writes to one path on two declared hosts (Greptile on #156): the report must tell them apart,
@@ -736,6 +777,7 @@ describe("a TypeScript module", () => {
     expect(MAX_BLOB_BYTES).toBe(256 * 1024 * 1024);
     expect(source).toContain("const BLOB_TTL_MS = 24 * 60 * 60 * 1000;");
     expect(BLOB_TTL_MS).toBe(24 * 60 * 60 * 1000);
+    expect(BLOB_TTL_HOURS).toBe(24);
     expect(source).toContain(`const ENVELOPE_MARKER = ${JSON.stringify(ENVELOPE_MARKER)};`);
     expect(source).toContain(`const MAX_BLOB_NAME_CHARS = ${MAX_BLOB_NAME_CHARS};`);
     expect(source).toContain(`const MAX_BLOB_CONTENT_TYPE_CHARS = ${MAX_BLOB_CONTENT_TYPE_CHARS};`);
@@ -745,6 +787,29 @@ describe("a TypeScript module", () => {
     expect(source).not.toMatch(/const \w*QUOTA\w* = \d/);
     expect(source).toContain("process.env.GRAFT_BLOB_BUDGET_BYTES");
     expect(source).toContain("process.env.GRAFT_BLOB_QUOTA_BYTES");
+  });
+
+  /**
+   * The name and media-type rules, pinned as regex source so both sides change together (GRA-199):
+   * `toString()` keeps the escapes as written, so the pin holds only while both files spell
+   * `\x00-\x1f\x7f` as escapes. The second assertion is why: a raw control byte in either file makes
+   * a diff show it as binary, so no diff shows a change and no grep finds one.
+   */
+  it("spells the name and media-type rules runner-source.ts declares, with every control character as an escape", async () => {
+    const source = await readFile(RUNNER, "utf8");
+    expect(source).toContain(`const BLOB_NAME_REFUSED = ${BLOB_NAME_REFUSED.toString()};`);
+    expect(source).toContain(`const MEDIA_TYPE_PATTERN = ${MEDIA_TYPE_PATTERN.toString()};`);
+    const declared = await readFile(new URL("./runner-source.ts", import.meta.url), "utf8");
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the bytes' absence is the assertion.
+    const rawControl = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
+    expect(source).not.toMatch(rawControl);
+    expect(declared).not.toMatch(rawControl);
+    expect(BLOB_NAME_REFUSED.test("bad\x00name")).toBe(true);
+    expect(BLOB_NAME_REFUSED.test("bad\x7fname")).toBe(true);
+    expect(BLOB_NAME_REFUSED.test("invoice (final).pdf")).toBe(false);
+    expect(MEDIA_TYPE_PATTERN.test("text/plain; charset=utf-8")).toBe(true);
+    expect(MEDIA_TYPE_PATTERN.test("text/plain;x")).toBe(true);
+    expect(MEDIA_TYPE_PATTERN.test("text")).toBe(false);
   });
 });
 
@@ -1066,6 +1131,126 @@ describe("ctx.fetch", () => {
       refused: expect.stringContaining("leaves the connection"),
     });
     expect(received).toHaveLength(before);
+  });
+
+  /**
+   * GRA-213: `ctx.fetch(path, { host })` is the host route for a declared host the module knows in
+   * advance, sent exactly as the absolute URL would be; `host` is taken off the init and never
+   * reaches fetch, and the proxy, not the runner, judges the host against the connection's set.
+   */
+  it("routes a path with the host option to /h/<host>/ with the query kept, the bearer, the init, and no host on the request", async () => {
+    const before = received.length;
+    const run = await runRunner({
+      module: fixture("namedHost.mjs"),
+      stdin: JSON.stringify({
+        path: "/v1/search?name=Berlin&count=1",
+        host: "Geocoding-API.Open-Meteo.com",
+        init: { method: "POST", headers: { "content-type": "text/plain" }, body: "the bytes" },
+      }),
+      env: bound(),
+    });
+
+    expect(run.code).toBe(0);
+    expect(resultOf(run)).toEqual({
+      status: 200,
+      location: null,
+      body: { path: "/c/conn_1/h/geocoding-api.open-meteo.com/v1/search?name=Berlin&count=1" },
+    });
+    expect(received).toHaveLength(before + 1);
+    const request = received[before];
+    expect(request?.method).toBe("POST");
+    expect(request?.url).toBe(
+      "/c/conn_1/h/geocoding-api.open-meteo.com/v1/search?name=Berlin&count=1",
+    );
+    expect(request?.headers.authorization).toBe("Bearer tok_secret_123");
+    expect(request?.headers["content-type"]).toBe("text/plain");
+    expect(request?.body).toBe("the bytes");
+    // The Host header is the proxy's, not the option's: the option never became a header.
+    expect(request?.headers.host).toMatch(/^127\.0\.0\.1:/);
+  });
+
+  it("sends a GET with only the host option, and hands a 303 on that route back unfollowed", async () => {
+    const before = received.length;
+    const run = await runRunner({
+      module: fixture("namedHost.mjs"),
+      stdin: JSON.stringify({ path: "/redirected", host: "geocoding-api.example.com" }),
+      env: bound(),
+    });
+
+    expect(resultOf(run)).toEqual({
+      status: 303,
+      location: "https://elsewhere.example/moved",
+      body: null,
+    });
+    expect(received).toHaveLength(before + 1);
+    expect(received[before]?.method).toBe("GET");
+    expect(received[before]?.url).toBe("/c/conn_1/h/geocoding-api.example.com/redirected");
+  });
+
+  /** An undefined host is no host: `{ host: input.host }` with the field absent is the primary route. */
+  it("treats an undefined host option as none, and the path goes to the primary host", async () => {
+    const before = received.length;
+    const run = await runRunner({
+      module: fixture("namedHost.mjs"),
+      stdin: JSON.stringify({ path: "/v1/forecast?latitude=52.5" }),
+      env: bound(),
+    });
+
+    expect(resultOf(run)).toMatchObject({ status: 200 });
+    expect(received[before]?.url).toBe("/c/conn_1/v1/forecast?latitude=52.5");
+  });
+
+  it.each([
+    [
+      { path: "/v1/search", host: "geocoding-api.example.com/v1" },
+      'not "geocoding-api.example.com/v1".',
+    ],
+    [{ path: "/v1/search", host: "evil.example@geocoding.example.com" }, "takes a host name"],
+    [{ path: "/v1/search", host: "[::1]" }, "takes a host name"],
+    [{ path: "/v1/search", host: "" }, 'not "".'],
+    [{ path: "/v1/search", host: 42 }, "not number."],
+    [
+      { path: "v1/search", host: "geocoding-api.example.com" },
+      'starting with "/", such as "/v1/search", not "v1/search".',
+    ],
+    [
+      { path: "upload?sig=secret123", host: "files.example.com" },
+      'starting with "/", such as "/v1/search", not "upload?…".',
+    ],
+    [{ path: "upload#token=secret123", host: "files.example.com" }, 'not "upload".'],
+    [{ path: "/upload", host: "files.example.com?sig=secret123" }, 'not "files.example.com?…".'],
+    [
+      {
+        path: "https://geocoding-api.example.com/v1/search?key=secret123",
+        host: "geocoding-api.example.com",
+      },
+      "not a URL (https://geocoding-api.example.com/v1/search?…).",
+    ],
+  ])("refuses %j before any request, with a sentence", async (input, sentence) => {
+    const before = received.length;
+    const run = await runRunner({
+      module: fixture("namedHost.mjs"),
+      stdin: JSON.stringify(input),
+      env: bound(),
+    });
+
+    expect(run.code).toBe(0);
+    const result = resultOf(run) as { refused: string };
+    expect(result.refused).toContain(sentence);
+    expect(result.refused).not.toContain("secret123");
+    expect(received).toHaveLength(before);
+  });
+
+  /** A path cannot move the host it is named beside: it is a path from that host's root. */
+  it("keeps a path that looks like an authority on the named host", async () => {
+    const before = received.length;
+    await runRunner({
+      module: fixture("namedHost.mjs"),
+      stdin: JSON.stringify({ path: "//evil.example/x", host: "geocoding-api.example.com" }),
+      env: bound(),
+    });
+
+    expect(received[before]?.url).toBe("/c/conn_1/h/geocoding-api.example.com//evil.example/x");
   });
 
   /** A plain command carries no connection; a module that reaches for one is told so. */
@@ -1438,6 +1623,49 @@ describe("GRAFT_DRY_RUN", () => {
     expect(received.slice(before).map((r) => r.url)).toEqual([
       "/c/conn_1/h/files.example.com/upload?sig=first-secret",
       "/c/conn_1/h/other.example.com/upload?sig=second-secret",
+    ]);
+  });
+
+  /**
+   * GRA-213: a call through the host option is on the report as the host route's is, scheme, host
+   * and path with the query dropped, and a refused write through it is on `writesRefused` the same way.
+   */
+  it("records a read and a previewed write through the host option by scheme, host and path, and a refused one too", async () => {
+    const before = received.length;
+    const run = await runRunner({ module: fixture("dryNamedHost.mjs"), env: dry() });
+
+    const result = report(run);
+    expect(result.reads).toEqual([
+      { method: "GET", path: "https://geocoding-api.example.com/v1/search?…", status: 200 },
+    ]);
+    expect(result.writesPreviewed).toEqual([
+      {
+        method: "POST",
+        path: "https://geocoding-api.example.com/v1/notes?…",
+        headerNames: expect.arrayContaining(["content-type"]),
+        body: "the note",
+      },
+    ]);
+    expect(result.writesRefused).toEqual([
+      {
+        method: "PUT",
+        // A path refused for its missing "/" is on the record and in the sentence less its query and
+        // fragment, as a routed one is (Greptile on #169).
+        path: "v1/notes?…",
+        status: null,
+        error: expect.stringContaining(
+          'starting with "/", such as "/v1/search", not "v1/notes?…".',
+        ),
+      },
+    ]);
+    expect(result.moduleResult).toMatchObject({ read: 200, write: 202 });
+    expect(JSON.stringify(result)).not.toContain("named-secret");
+    expect(JSON.stringify(result)).not.toContain("malformed-secret");
+    expect(JSON.stringify(result)).not.toContain("frag-secret");
+    expect(JSON.stringify(result)).not.toContain("Berlin");
+    expect(received.slice(before).map((r) => r.url)).toEqual([
+      "/c/conn_1/h/geocoding-api.example.com/v1/search?name=Berlin",
+      "/c/conn_1/h/geocoding-api.example.com/v1/notes?sig=named-secret",
     ]);
   });
 

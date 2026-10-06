@@ -1,4 +1,5 @@
 import type { AcquireJobRow } from "@graft/db/repo/acquire-job";
+import type { ModelAdapter } from "@graft/model";
 
 /**
  * What `acquire` and `acquire_status` answer (GRA-29), and what a job's `result` column holds —
@@ -113,6 +114,19 @@ export function acquireStatusOf(job: AcquireJobRow): AcquireStatus {
     attempts: job.attempts,
     ...(result && (job.status === "succeeded" || job.status === "failed") ? { result } : {}),
   };
+}
+
+/** The refusal's reason when no model can author (`acquireConfigured`). */
+export const ACQUIRE_UNCONFIGURED = "acquire_unconfigured";
+
+/**
+ * Whether this deployment can author a tool at all: the door's model check, which `acquire`
+ * refuses `acquire_unconfigured` on and Setup's goal step (GRA-207) disables Build on, so the two
+ * callers of the loop (ADR 0024) cannot disagree. `apps/server`'s `model.ts` says when the model
+ * is null: the open form with no fixed model, whose person keys are not routed.
+ */
+export function acquireConfigured(deps: { model?: ModelAdapter | null }): boolean {
+  return Boolean(deps.model);
 }
 
 /** The bounds a job is held to — the environment's, or these when a deployment sets none. */

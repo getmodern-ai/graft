@@ -1,5 +1,6 @@
 import type { AcquireAttemptRow, AcquireTraceRow } from "@graft/db/repo/acquire-job";
 import type { ToolVersionRow } from "@graft/db/repo/tool";
+import { MAX_INPUT_DEPTH } from "@graft/mcp";
 import type { ProxyEvent } from "@graft/proxy";
 import { describe, expect, it } from "vitest";
 
@@ -247,6 +248,57 @@ describe("no_vendor_host_in_code", () => {
         ["api.demo.example"],
       ).pass,
     ).toBe(true);
+  });
+
+  /** GRA-213: naming a declared host with the `host` option is the sanctioned form, not a host in the code. */
+  it("is green for a declared host named with the host option, and still red for the same host anywhere else", () => {
+    const hosts = ["api.demo.example", "geo.demo.example"];
+    const named = 'await ctx.fetch("/v1/search", { host: "geo.demo.example" });';
+    expect(
+      noVendorHostInCode(
+        run({ attempts: [attempt([{ path: "index.ts", content: named }])] }),
+        hosts,
+      ).pass,
+    ).toBe(true);
+    const elsewhere = `${named}\nconst base = "geo.demo.example";`;
+    const score = noVendorHostInCode(
+      run({ attempts: [attempt([{ path: "index.ts", content: elsewhere }])] }),
+      hosts,
+    );
+    expect(score.pass).toBe(false);
+    expect(score.detail).toContain("geo.demo.example");
+  });
+
+  /** Greptile on #169: the exemption is `ctx.fetch`'s second argument alone, not any `host:` property. */
+  it("exempts a host property only on ctx.fetch's init object, at its top level", () => {
+    const hosts = ["api.demo.example", "geo.demo.example"];
+    const scored = (content: string) =>
+      noVendorHostInCode(run({ attempts: [attempt([{ path: "index.ts", content }])] }), hosts).pass;
+
+    expect(scored('ctx.fetch("/x", { host: "geo.demo.example" })')).toBe(true);
+    // A first argument holding a comma inside a template and a call, and a quoted key among others.
+    const multiline = [
+      `await ctx.fetch(\`/v1/search?name=$${"{"}encodeURIComponent(input.city, ",")}\`, {`,
+      '  method: "GET",',
+      '  "host": "geo.demo.example",',
+      '  headers: { accept: "application/json" },',
+      "})",
+    ].join("\n");
+    expect(scored(multiline)).toBe(true);
+    expect(scored('const config = { host: "geo.demo.example" };')).toBe(false);
+    expect(scored('fetch("/x", { host: "geo.demo.example" })')).toBe(false);
+    expect(scored('ctx.fetch({ host: "geo.demo.example" })')).toBe(false);
+    expect(
+      scored(
+        'ctx.fetch("/x", { headers: { host: "geo.demo.example" }, host: "api.demo.example" })',
+      ),
+    ).toBe(false);
+    expect(scored('ctx.fetch("/x", { vhost: "geo.demo.example" })')).toBe(false);
+    // Greptile on #169: a template nested in the path's `${…}` is stepped over whole.
+    const open = "$" + "{";
+    expect(scored(`ctx.fetch(\`/v1/${open}\`x,\`}search\`, { host: "geo.demo.example" })`)).toBe(
+      true,
+    );
   });
 });
 
@@ -589,6 +641,27 @@ describe("the blob scorers", () => {
       ).pass,
     ).toBe(false);
     expect(refTravels(chain({}, consumer({ use: null }))).pass).toBe(false);
+  });
+
+  /** The walk is bounded (the door's `MAX_INPUT_DEPTH`); a result past it is said, never read as no ref (Greptile on #159). */
+  it("ref_travels: red with a sentence naming the depth when the answer or the input nests past the walk's bound", () => {
+    let deep: Record<string, unknown> = { file: REF };
+    for (let i = 0; i < MAX_INPUT_DEPTH + 1; i += 1) deep = { deep };
+    const produced = chain().use;
+    const answer = refTravels(chain({ use: produced ? { ...produced, final: deep } : null }));
+    expect(answer.pass).toBe(false);
+    expect(answer.detail).toContain("the producing tool's answer nests past");
+    expect(answer.detail).toContain(`${MAX_INPUT_DEPTH} levels`);
+    const use = consumer().use;
+    const input = refTravels(chain({}, consumer({ use: use ? { ...use, input: deep } : null })));
+    expect(input.pass).toBe(false);
+    expect(input.detail).toContain("the consuming tool's input nests past");
+    // One level inside the bound reads as before.
+    let shallow: Record<string, unknown> = { file: REF };
+    for (let i = 0; i < MAX_INPUT_DEPTH - 2; i += 1) shallow = { shallow };
+    expect(refTravels(chain({ use: produced ? { ...produced, final: shallow } : null })).pass).toBe(
+      true,
+    );
   });
 
   it("blob_read_in_dry_run: green for a live or fixture blob and an intercepted write carrying it; red for no blob, an un-intercepted write, a body too small, or a failed dry run", () => {

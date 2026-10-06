@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { WAIT_SLACK_SECONDS } from "./bounds";
 import {
+  admitUnderGrant,
   createInFlightRegistry,
   detachedHoldMs,
   isSettledProcess,
@@ -68,6 +69,73 @@ describe("a budget grant", () => {
     expect(registry.outstandingBudget("a")).toBe(0);
     expect(registry.has("a")).toBe(false);
     registry.close();
+  });
+});
+
+/**
+ * The admission and its grant as one step (GRA-200, after Greptile on #157): two admissions of one
+ * agent interleaved across the door's await both read the remainder before either grant landed.
+ */
+describe("admitUnderGrant", () => {
+  const QUOTA = 1000;
+  /** A door as `admitBlobs` behaves: the remainder after what is outstanding, read after an await. */
+  const door =
+    (registry: ReturnType<typeof createInFlightRegistry>, agentId: string) => async () => {
+      await tick(1);
+      return {
+        ok: true as const,
+        admission: { budgetBytes: QUOTA - registry.outstandingBudget(agentId) },
+      };
+    };
+
+  it("hands two overlapping admissions the remainder and then what is left, and releases each grant", async () => {
+    const registry = createInFlightRegistry();
+    const [first, second] = await Promise.all([
+      admitUnderGrant(registry, "a", door(registry, "a")),
+      admitUnderGrant(registry, "a", door(registry, "a")),
+    ]);
+    if (!first.ok || !second.ok) throw new Error("admitted");
+    expect(first.admission.budgetBytes).toBe(QUOTA);
+    expect(second.admission.budgetBytes).toBe(0);
+    expect(registry.outstandingBudget("a")).toBe(QUOTA);
+    first.release();
+    second.release();
+    expect(registry.outstandingBudget("a")).toBe(0);
+    registry.close();
+  });
+
+  it("grants nothing for a refusal, keeps other agents apart, and goes on after a door that threw", async () => {
+    const registry = createInFlightRegistry();
+    const refused = await admitUnderGrant(registry, "a", async () => ({
+      ok: false as const,
+      refusal: { reason: "blob_quota" },
+    }));
+    expect(refused).toEqual({ ok: false, refusal: { reason: "blob_quota" } });
+    expect(registry.outstandingBudget("a")).toBe(0);
+
+    const thrown = admitUnderGrant(registry, "a", async () => {
+      throw new Error("the database is away");
+    });
+    await expect(thrown).rejects.toThrow("the database is away");
+    const after = await admitUnderGrant(registry, "a", door(registry, "a"));
+    if (!after.ok) throw new Error("admitted");
+    expect(after.admission.budgetBytes).toBe(QUOTA);
+    const other = await admitUnderGrant(registry, "b", door(registry, "b"));
+    if (!other.ok) throw new Error("admitted");
+    expect(other.admission.budgetBytes).toBe(QUOTA);
+    after.release();
+    other.release();
+    registry.close();
+  });
+
+  it("without a registry admits as the door answers and releases nothing", async () => {
+    const admitted = await admitUnderGrant(undefined, "a", async () => ({
+      ok: true as const,
+      admission: { budgetBytes: 7 },
+    }));
+    if (!admitted.ok) throw new Error("admitted");
+    expect(admitted.admission.budgetBytes).toBe(7);
+    expect(() => admitted.release()).not.toThrow();
   });
 });
 

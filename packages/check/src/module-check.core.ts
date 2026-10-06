@@ -147,12 +147,16 @@ export type ModuleCheckResult = {
  * `Object.freeze({ fetch, proxyBase, proxyKey, connection, blob })`). `fetch` takes a vendor-relative
  * path on the connection's primary host, or an absolute `https://` URL on another of the connection's
  * hosts, which the runner routes through the proxy's host form (GRA-197; ADR 0010 as amended
- * 2026-09-23); the `fetch-absolute-url` rule below still refuses a literal one. `proxyBase` and
+ * 2026-09-23); the `fetch-absolute-url` rule below still refuses a literal one. Its init takes a
+ * `host` beside a path, `ctx.fetch("/v1/search", { host: "geocoding-api.open-meteo.com" })`, the
+ * sanctioned way to name a declared host known in advance (GRA-213): a literal there is admitted,
+ * since it selects one of the connection's hosts and the proxy judges it against the set exactly as
+ * it judges an absolute URL's host (ADR 0010 as amended 2026-09-24). `proxyBase` and
  * `proxyKey` are the two an SDK is bound with (ADR 0010); `blob` is the module's one route to a file
  * (ADR 0023, GRA-186), and a call on it is not a vendor method, so it moves no annotation.
  */
 export const CONTEXT_DECLARATION =
-  "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }";
+  "{ fetch(path: string, init?: RequestInit & { host?: string }): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }";
 
 /** The type the default export must satisfy; declared globally so the entry can be re-typed in place. */
 const TOOL_TYPE = "__GraftTool";
@@ -847,10 +851,12 @@ function scanText(
           // A host written into the module is the smell this refuses; a URL a vendor hands back at
           // run time is a value the check never sees, and the runner routes it through the proxy's
           // host form, where the connection's host set is judged (GRA-197; ADR 0010 as amended
-          // 2026-09-23).
+          // 2026-09-23). Only the first argument is read: a literal `host` in the init
+          // (`{ host: "geocoding-api.open-meteo.com" }`, GRA-213) is the sanctioned way to name a
+          // declared host, and the proxy judges it on the same route, so nothing here refuses it.
           bag.at("fetch-absolute-url", abs, argument?.getStart(sf) ?? node.getStart(sf), {
-            message: `ctx.fetch is given a literal absolute URL (${head.slice(0, 60)}); the proxy supplies the host from the connection, and a host written into the module is refused. A URL a vendor hands back at run time, on one of the connection's hosts, may be passed as it is.`,
-            hint: 'Pass the vendor-relative path, "/v1/orders", with nothing before it; pass a URL the vendor answered (an upload_url, a presigned URL) as the value you read, never as a literal.',
+            message: `ctx.fetch is given a literal absolute URL (${head.slice(0, 60)}); the proxy supplies the host from the connection, and a URL written into the module is refused. A URL a vendor hands back at run time, on one of the connection's hosts, may be passed as it is.`,
+            hint: 'Pass the vendor-relative path, "/v1/orders", with nothing before it; for another host the connection declares, pass the path and name the host, ctx.fetch("/v1/search", { host: "geocoding-api.example.com" }); pass a URL the vendor answered (an upload_url, a presigned URL) as the value you read, never as a literal.',
           });
         }
       }
