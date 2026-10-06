@@ -1,8 +1,11 @@
 name: graft
 
 # The self-hosted form, and the repository's development environment (GRA-33; ADR 0002, ADR 0013,
-# ADR 0014). `docker compose up` brings up Postgres and Graft — server, proxy, MCP endpoint and
-# console in one image — and builds the sandbox image sandboxes run from. `pnpm run db:start`
+# ADR 0014). `docker compose pull` fetches the two published images — Graft, which is the server,
+# the proxy, the MCP endpoint and the console in one, and the sandbox image sandboxes are created
+# from — and `docker compose up` brings up Postgres and Graft over them. Both services keep a
+# `build:` as well, so `docker compose up --build` builds this checkout's Dockerfiles over the
+# tags instead, which is the path for someone patching an image. `pnpm run db:start`
 # still brings up Postgres alone, for a server run from source on the host, through
 # `docker-compose.dev.yml` beside this file. That overlay is the only thing that publishes the
 # database on the host, and it publishes it on loopback alone (GRA-148).
@@ -39,9 +42,12 @@ services:
     restart: unless-stopped
 
   graft:
-    # The published image, or a local build of the same Dockerfile when the tag is not pulled
-    # (`docker compose build`, or `docker compose up --build`).
-    image: ghcr.io/getmodern-ai/graft:${GRAFT_IMAGE_TAG:-latest}
+    # The published image (`.github/workflows/release.yml`), pinned to a release rather than
+    # following one: an `up` months after this checkout was taken runs the version its README was
+    # written for, and upgrading is a tag in `.env` and a `pull`. `GRAFT_IMAGE_TAG=latest` follows
+    # the newest release instead. A release moves this default, and the `sandbox` service below
+    # takes its tag from the same name, since the two images are published together.
+    image: ghcr.io/getmodern-ai/graft:${GRAFT_IMAGE_TAG:-0.1.0}
     build:
       context: .
       dockerfile: apps/server/Dockerfile
@@ -67,9 +73,12 @@ services:
       # The proxy's body cap on both legs is not named here: it reaches the container through
       # `.env` as GRAFT_PROXY_MAX_BODY_BYTES (default 10 MiB, floor 1 MiB) and is raised only by
       # an operator whose tools move larger files (GRA-183). Each call may hold that much memory.
-      # The sandbox backing's pair: the image built below and the internal network as compose names
-      # it — `<project>_sandbox`, so a second project on one daemon gets its own.
-      GRAFT_SANDBOX_IMAGE: ${GRAFT_SANDBOX_IMAGE:-ghcr.io/getmodern-ai/graft-sandbox:${GRAFT_IMAGE_TAG:-latest}}
+      # The sandbox backing's pair: the image the `sandbox` service below leaves on the daemon and
+      # the internal network as compose names it — `<project>_sandbox`, so a second project on one
+      # daemon gets its own. This default and that service's `image` are the same reference on
+      # purpose: the server creates sandboxes by this name, so a name that differed from what was
+      # pulled would have it create them from an image nobody fetched.
+      GRAFT_SANDBOX_IMAGE: ${GRAFT_SANDBOX_IMAGE:-ghcr.io/getmodern-ai/graft-sandbox:${GRAFT_IMAGE_TAG:-0.1.0}}
       GRAFT_SANDBOX_NETWORK: ${COMPOSE_PROJECT_NAME:-graft}_sandbox
       # The toolbox: one named volume, mounted here at GRAFT_TOOLBOX_ROOT (the image's default) and
       # into each sandbox by its own subpath, so the server's files and a sandbox's mount are one tree.
@@ -106,11 +115,13 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # Not a running service: the image every sandbox is created from, built here so `docker compose
-  # up` leaves it on the daemon under the name the `graft` service is handed. `scale: 0` builds
-  # (or pulls) the image and starts no container.
+  # Not a running service: the image every sandbox is created from, named here so `docker compose
+  # pull` leaves it on the daemon under the name the `graft` service is handed, and buildable from
+  # this package for someone patching it (`docker compose build sandbox`). `scale: 0` starts no
+  # container from it. The tag is `GRAFT_IMAGE_TAG` again: the release publishes both images under
+  # the same version, so the pair moves together.
   sandbox:
-    image: ${GRAFT_SANDBOX_IMAGE:-ghcr.io/getmodern-ai/graft-sandbox:${GRAFT_IMAGE_TAG:-latest}}
+    image: ${GRAFT_SANDBOX_IMAGE:-ghcr.io/getmodern-ai/graft-sandbox:${GRAFT_IMAGE_TAG:-0.1.0}}
     build:
       context: packages/sandbox-docker
     scale: 0
