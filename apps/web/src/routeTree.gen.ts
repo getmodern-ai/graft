@@ -16,10 +16,10 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AuthShellRouteRouteImport } from './routes/_auth/_shell/route'
+import { Route as AuthConsentRouteImport } from './routes/_auth/consent'
 import { Route as AuthSetupRouteImport } from './routes/_auth/setup'
 import { Route as LinkCallbackRouteImport } from './routes/link.callback'
 import { Route as OauthCallbackRouteImport } from './routes/oauth.callback'
-import { Route as AuthShellConsentRouteImport } from './routes/_auth/_shell/consent'
 import { Route as AuthShellSettingsRouteImport } from './routes/_auth/_shell/settings'
 import { Route as AuthPendingIdRouteImport } from './routes/_auth/pending.$id'
 import { Route as AuthShellAgentsIndexRouteImport } from './routes/_auth/_shell/agents.index'
@@ -60,6 +60,11 @@ const AuthShellRouteRoute = AuthShellRouteRouteImport.update({
   id: '/_shell',
   getParentRoute: () => AuthRouteRoute,
 } as any)
+const AuthConsentRoute = AuthConsentRouteImport.update({
+  id: '/consent',
+  path: '/consent',
+  getParentRoute: () => AuthRouteRoute,
+} as any)
 const AuthSetupRoute = AuthSetupRouteImport.update({
   id: '/setup',
   path: '/setup',
@@ -74,11 +79,6 @@ const OauthCallbackRoute = OauthCallbackRouteImport.update({
   id: '/oauth/callback',
   path: '/oauth/callback',
   getParentRoute: () => rootRouteImport,
-} as any)
-const AuthShellConsentRoute = AuthShellConsentRouteImport.update({
-  id: '/consent',
-  path: '/consent',
-  getParentRoute: () => AuthShellRouteRoute,
 } as any)
 const AuthShellSettingsRoute = AuthShellSettingsRouteImport.update({
   id: '/settings',
@@ -118,10 +118,10 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/consent': typeof AuthConsentRoute
   '/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
-  '/consent': typeof AuthShellConsentRoute
   '/settings': typeof AuthShellSettingsRoute
   '/pending/$id': typeof AuthPendingIdRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
@@ -135,10 +135,10 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/consent': typeof AuthConsentRoute
   '/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
-  '/consent': typeof AuthShellConsentRoute
   '/settings': typeof AuthShellSettingsRoute
   '/pending/$id': typeof AuthPendingIdRoute
   '/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
@@ -155,10 +155,10 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/_auth/_shell': typeof AuthShellRouteRouteWithChildren
+  '/_auth/consent': typeof AuthConsentRoute
   '/_auth/setup': typeof AuthSetupRoute
   '/link/callback': typeof LinkCallbackRoute
   '/oauth/callback': typeof OauthCallbackRoute
-  '/_auth/_shell/consent': typeof AuthShellConsentRoute
   '/_auth/_shell/settings': typeof AuthShellSettingsRoute
   '/_auth/pending/$id': typeof AuthPendingIdRoute
   '/_auth/_shell/agents/$agentId': typeof AuthShellAgentsAgentIdRoute
@@ -174,10 +174,10 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/consent'
     | '/setup'
     | '/link/callback'
     | '/oauth/callback'
-    | '/consent'
     | '/settings'
     | '/pending/$id'
     | '/agents/$agentId'
@@ -191,10 +191,10 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/consent'
     | '/setup'
     | '/link/callback'
     | '/oauth/callback'
-    | '/consent'
     | '/settings'
     | '/pending/$id'
     | '/agents/$agentId'
@@ -210,10 +210,10 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/_auth/_shell'
+    | '/_auth/consent'
     | '/_auth/setup'
     | '/link/callback'
     | '/oauth/callback'
-    | '/_auth/_shell/consent'
     | '/_auth/_shell/settings'
     | '/_auth/pending/$id'
     | '/_auth/_shell/agents/$agentId'
@@ -284,6 +284,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthShellRouteRouteImport
       parentRoute: typeof AuthRouteRoute
     }
+    '/_auth/consent': {
+      id: '/_auth/consent'
+      path: '/consent'
+      fullPath: '/consent'
+      preLoaderRoute: typeof AuthConsentRouteImport
+      parentRoute: typeof AuthRouteRoute
+    }
     '/_auth/setup': {
       id: '/_auth/setup'
       path: '/setup'
@@ -304,13 +311,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/oauth/callback'
       preLoaderRoute: typeof OauthCallbackRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/_auth/_shell/consent': {
-      id: '/_auth/_shell/consent'
-      path: '/consent'
-      fullPath: '/consent'
-      preLoaderRoute: typeof AuthShellConsentRouteImport
-      parentRoute: typeof AuthShellRouteRoute
     }
     '/_auth/_shell/settings': {
       id: '/_auth/_shell/settings'
@@ -358,7 +358,6 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthShellRouteRouteChildren {
-  AuthShellConsentRoute: typeof AuthShellConsentRoute
   AuthShellSettingsRoute: typeof AuthShellSettingsRoute
   AuthShellAgentsAgentIdRoute: typeof AuthShellAgentsAgentIdRoute
   AuthShellAgentsIndexRoute: typeof AuthShellAgentsIndexRoute
@@ -367,7 +366,6 @@ interface AuthShellRouteRouteChildren {
 }
 
 const AuthShellRouteRouteChildren: AuthShellRouteRouteChildren = {
-  AuthShellConsentRoute: AuthShellConsentRoute,
   AuthShellSettingsRoute: AuthShellSettingsRoute,
   AuthShellAgentsAgentIdRoute: AuthShellAgentsAgentIdRoute,
   AuthShellAgentsIndexRoute: AuthShellAgentsIndexRoute,
@@ -381,12 +379,14 @@ const AuthShellRouteRouteWithChildren = AuthShellRouteRoute._addFileChildren(
 
 interface AuthRouteRouteChildren {
   AuthShellRouteRoute: typeof AuthShellRouteRouteWithChildren
+  AuthConsentRoute: typeof AuthConsentRoute
   AuthSetupRoute: typeof AuthSetupRoute
   AuthPendingIdRoute: typeof AuthPendingIdRoute
 }
 
 const AuthRouteRouteChildren: AuthRouteRouteChildren = {
   AuthShellRouteRoute: AuthShellRouteRouteWithChildren,
+  AuthConsentRoute: AuthConsentRoute,
   AuthSetupRoute: AuthSetupRoute,
   AuthPendingIdRoute: AuthPendingIdRoute,
 }

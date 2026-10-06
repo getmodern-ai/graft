@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in Graft itself is not working as documented.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: One or two sentences on what you did and what Graft did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: what-expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: harness
+    attributes:
+      label: Harness
+      description: The agent software you were running when this happened.
+      options:
+        - Claude.ai
+        - ChatGPT
+        - Hermes
+        - OpenClaw
+        - Other MCP client
+        - Console only
+    validations:
+      required: true
+  - type: dropdown
+    id: form
+    attributes:
+      label: Form
+      description: How you are running Graft.
+      options:
+        - Self-hosted Docker
+        - Graft Cloud
+        - Running from source
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Graft version or commit
+      description: The image tag, release, or commit SHA you are running.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: The relevant lines from `docker compose logs graft`. Redact anything you are unsure about; a wide event never carries a credential, but redact hostnames, ids or tokens you do not want to share.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have checked that no credential or token is pasted anywhere in this issue.
+          required: true

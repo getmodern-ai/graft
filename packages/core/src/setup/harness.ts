@@ -21,6 +21,8 @@ import type { SetupHarness } from "@graft/db/schema/setup";
  * after them the finish step's own (it names the agent); for a `token` harness, where the token
  * and the configuration go, beside the blocks the create dialog draws. Short sentences a person
  * follows with the product open; the setup prompt carries the long form for the harness's model.
+ * `afterConsent` is what an `oauth` harness's person does once the consent step is done (return
+ * from the browser, turn Graft on in a chat), listed after it (GRA-218).
  */
 export type SetupHarnessKind = "oauth" | "token";
 
@@ -31,6 +33,7 @@ export type SetupHarnessEntry = {
   kind: SetupHarnessKind;
   agentName: string;
   steps: readonly string[];
+  afterConsent?: readonly string[];
 };
 
 export type { SetupHarness };
@@ -45,8 +48,8 @@ export const SETUP_HARNESSES = [
     steps: [
       "In Claude, open Customize, then Connectors, and choose Add custom connector (older versions keep Connectors under Settings).",
       "Name it Graft, paste the MCP server URL, leave the OAuth client ID and secret empty, then choose Add and Connect.",
-      "In a conversation, open + and then Connectors, and turn Graft on.",
     ],
+    afterConsent: ["In a conversation, open + and then Connectors, and turn Graft on."],
   },
   {
     id: "claude-code",
@@ -77,9 +80,13 @@ export const SETUP_HARNESSES = [
     kind: "oauth",
     agentName: "ChatGPT",
     steps: [
-      "In ChatGPT, open Settings, then Connectors, then Advanced settings, and turn Developer mode on.",
-      "Back on Connectors, choose Create: name it Graft, paste the MCP server URL, choose OAuth, leave the client ID and secret empty, and choose Create.",
-      "In a conversation, open the tools menu, choose Developer mode and select Graft.",
+      "In ChatGPT, open Settings, then Security and login, and turn Developer mode on.",
+      "Open Plugins in the sidebar and choose +, then Create app, then Create MCP App. Name it Graft, paste the MCP server URL, keep OAuth, tick the acknowledgement and choose Create.",
+      "If Create does nothing, Graft is already there: open Plugins, then Personal, then Graft, and choose +.",
+    ],
+    afterConsent: [
+      "In the desktop app, sign-in ends in your browser on a page saying Authentication complete; close that tab and go back to ChatGPT.",
+      "In a conversation, choose + in the message box, type Graft and select it.",
     ],
   },
   {
