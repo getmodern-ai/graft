@@ -2453,7 +2453,7 @@ describe("what the rows hold", () => {
     deps.model = createScriptedModel([
       write(
         "goal",
-        draft({ name: "read-workbook", path: "/workbook", proofReads: ["/workbook"] }),
+        draft({ name: "read-workbook", path: "/workbook", proofReads: [{ path: "/workbook" }] }),
         "Drafted read-workbook around GET /workbook.",
       ),
       {
@@ -2474,7 +2474,12 @@ describe("what the rows hold", () => {
       const { job, attempts, traces } = rowsOf(jobId);
       const proof = traces.find((row) => row.kind === "proof");
       expect(proof?.text).toBe("Proof read GET /workbook: 200.");
-      expect(proof?.data).toEqual({ path: "/workbook", status: 200, body: WORKBOOK_SENTENCE });
+      expect(proof?.data).toEqual({
+        path: "/workbook",
+        host: null,
+        status: 200,
+        body: WORKBOOK_SENTENCE,
+      });
       const everything = JSON.stringify({ job, attempts, traces, status });
       expect(everything).not.toContain("\u0000");
       expect(everything).not.toContain("PK\u0003\u0004");
