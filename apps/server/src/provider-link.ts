@@ -112,7 +112,7 @@ function openConnectionAsk(
   if (action.expiresAt.getTime() <= now.getTime()) {
     throw new ServiceError(
       "GONE",
-      "This action has expired — the agent will ask again if it still needs to",
+      "This action has expired. The agent will ask again if it still needs to",
     );
   }
   return action;
@@ -198,7 +198,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
         status: "connected",
         pendingActionId,
         connectionId: row.answer.connectionId,
-        message: "This connection is already made — the console updates on its own.",
+        message: "This connection is already made. The console updates on its own.",
       });
     }
     if (row.answeredAt || row.consumedAt) {
@@ -208,7 +208,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
     }
     if (row.expiresAt.getTime() <= now.getTime()) {
       return failedCounted(
-        "This ask has expired — the agent will ask again if it still needs to, and the new ask has a fresh link.",
+        "This ask has expired. The agent will ask again if it still needs to, and the new ask has a fresh link.",
       );
     }
 
@@ -233,7 +233,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
     // it. Read to phrase the sentence and for nothing else; the ask stays open for another try.
     if (query[LINK_OUTCOME_PARAM] === "error") {
       return failedCounted(
-        `${provider.name} reported that the sign-in at ${proposal.vendor} did not complete — nothing was connected. Press Connect on the ask to try again.`,
+        `${provider.name} reported that the sign-in to ${proposal.displayName} did not complete, and nothing was connected. Press Connect on the ask to try again.`,
       );
     }
 
@@ -253,7 +253,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
       });
     } catch {
       return failedCounted(
-        `${provider.name} could not be asked which account was connected — nothing was connected. Press Connect on the ask to try again.`,
+        `${provider.name} could not be asked which account was connected, so nothing was connected. Press Connect on the ask to try again.`,
       );
     }
     if (!outcome.ok) return failedCounted(outcome.message);
@@ -331,7 +331,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
               status: "connected",
               pendingActionId,
               connectionId: settled.answer.connectionId,
-              message: `${proposal.displayName} is connected through ${provider.name} — the console updates on its own.`,
+              message: `${proposal.displayName} is connected through ${provider.name}. The console updates on its own.`,
             });
           }
           await new Promise((resolve) => setTimeout(resolve, 50));
@@ -356,7 +356,7 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
       status: "connected",
       pendingActionId,
       connectionId,
-      message: `${proposal.displayName} is connected through ${provider.name}${outcome.label ? ` as ${outcome.label}` : ""} — the console updates on its own.`,
+      message: `${proposal.displayName} is connected through ${provider.name}${outcome.label ? ` as ${outcome.label}` : ""}. The console updates on its own.`,
     });
   });
 

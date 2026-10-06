@@ -64,6 +64,9 @@ services:
       # (`packages/sandbox-docker/README.md`, "Two arrangements"). The server's own port, not the
       # published one: this URL is resolved by containers, never by the host.
       GRAFT_PROXY_PUBLIC_URL: http://proxy:3000/api/proxy
+      # The proxy's body cap on both legs is not named here: it reaches the container through
+      # `.env` as GRAFT_PROXY_MAX_BODY_BYTES (default 10 MiB, floor 1 MiB) and is raised only by
+      # an operator whose tools move larger files (GRA-183). Each call may hold that much memory.
       # The sandbox backing's pair: the image built below and the internal network as compose names
       # it — `<project>_sandbox`, so a second project on one daemon gets its own.
       GRAFT_SANDBOX_IMAGE: ${GRAFT_SANDBOX_IMAGE:-ghcr.io/getmodern-ai/graft-sandbox:${GRAFT_IMAGE_TAG:-latest}}

@@ -5,13 +5,17 @@ import {
   answerPendingAction,
   type ConnectionDeps,
   createAgent,
+  defaultAcquireJobDeps,
+  defaultSetupDeps,
   deletePersonModelKey,
+  GOAL_MAX_LENGTH,
   getAgent,
   getAgentScope,
   getConnection,
   getPendingActionForPerson,
   getPersonModelKey,
   isOAuthAuthorizationCode,
+  issueConsoleAgentToken,
   type LedgerDeps,
   listAgents,
   listApprovals,
@@ -22,6 +26,8 @@ import {
   listWorkingSet,
   listWorkingSetChanges,
   type ModelKeyDeps,
+  moveSetupBack,
+  moveSetupOn,
   orNotFound,
   type PendingActionDeps,
   type Principal,
@@ -36,10 +42,15 @@ import {
   ServiceError,
   type ServiceErrorCode,
   type SessionLike,
+  type SetupDeps,
+  type SetupState,
+  STARTER_VENDOR_IDS,
   setAgentScope,
   setAskEveryCall,
   setConnectionCredential,
   setPersonModelKey,
+  skipSetup,
+  startSetup,
   type ToolDeps,
   updateAgentLimits,
   type WorkingSetDeps,
@@ -48,15 +59,18 @@ import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { agentScopeMode } from "@graft/db/schema/agent";
+import { setupHarness } from "@graft/db/schema/setup";
 import type { UsageOutcome } from "@graft/db/schema/usage";
 import type { WorkingSetPromotedBy } from "@graft/db/schema/working-set";
 import {
   CONNECTION_ASK_KIND,
+  type ConnectionRoutingDeps,
   CREDENTIAL_ASK_KIND,
   confirmConnectionAsk,
   HANDOFF_TOKEN_PARAM,
   type HandoffConfig,
   handoffUrl,
+  type McpDeps,
   notifyAgentsReachingConnection,
   openAskOfKind,
   recordApprovalAnswer,
@@ -74,7 +88,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
-import { routeEvent } from "./analytics-routes";
+import { trackedRoute } from "./analytics-routes";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 import { createOriginGuard } from "./origin-guard";
@@ -90,6 +104,41 @@ import {
   rateLimit,
   signInDoorKey,
 } from "./rate-limit";
+import {
+  buildSetupTool,
+  continueSetupBuild,
+  createGoalSuggestionMemo,
+  learnSetupBuild,
+  readAgentAcquireJob,
+  retrySetupGoal,
+  type SetupAcquireDeps,
+  type SetupBuildRouteDeps,
+  type SetupGoalSuggestions,
+  setupGoalContext,
+  setupGoalSuggestions,
+} from "./setup-build";
+import {
+  connectSetupVendor,
+  learnSetupConnection,
+  listSetupVendors,
+  type SetupConnectDeps,
+} from "./setup-connect";
+import { completeSetup, completeSetupResult, setupToolContext } from "./setup-finish";
+import {
+  createSetupPromptRoutes,
+  isSetupPromptPath,
+  SETUP_PROMPT_PATH,
+  setupPromptCors,
+} from "./setup-prompt";
+import { runAgentTool } from "./tool-run";
+
+export type {
+  SetupBuildAvailability,
+  SetupGoalContext,
+  SetupGoalSuggestions,
+} from "./setup-build";
+export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
+export type { AgentToolRunOutput } from "./tool-run";
 
 /**
  * The person's JSON API — the routes the console (GRA-26) will call, a plain Hono app for now (GRA-1
@@ -161,6 +210,11 @@ export type ApiDeps = {
   pendingAction: PendingActionDeps;
   /** The person's own model key (GRA-31, ADR 0014) — the vault's encrypt half rides inside. */
   modelKey: ModelKeyDeps;
+  /**
+   * The person's Setup record (ADR 0024; GRA-204). Optional, and `defaultSetupDeps` when absent,
+   * so a harness that never reaches `/setup` binds nothing; a suite that does passes fakes.
+   */
+  setup?: SetupDeps;
 };
 
 export type ApiOptions = {
@@ -206,6 +260,27 @@ export type ApiOptions = {
    * `index.ts` binds `mcp.notifier`, and without it a revoke changes the list silently.
    */
   notifier?: Pick<ToolListChangedNotifier, "changed">;
+  /**
+   * `request_connection`'s routing seams (`@graft/mcp`'s `ConnectionRoutingDeps`, GRA-203), for
+   * Setup's connect step, which opens the agent's own connection ask through the same routing
+   * (GRA-206; ADR 0024). `index.ts` binds the MCP endpoint's `McpDeps`; absent, the connect route
+   * refuses with a sentence saying so and every other route is unaffected.
+   */
+  connectionRouting?: ConnectionRoutingDeps;
+  /**
+   * The seams Setup's build shares with `acquire` (GRA-207; ADR 0024; `setup-build.ts`): the model,
+   * whose absence is the door's `acquire_unconfigured`; the job's record, which the job route reads
+   * too; and the runner, woken once a job is queued. `index.ts` binds the MCP endpoint's `McpDeps`.
+   * Absent, Build is unavailable with the unconfigured sentence and the job route reads the
+   * database's jobs (`defaultAcquireJobDeps`).
+   */
+  acquire?: SetupAcquireDeps;
+  /**
+   * The MCP endpoint's deps, for the console's run of an authored tool (GRA-208; ADR 0024;
+   * `tool-run.ts`), which runs exactly what a first-class call over `/mcp` runs. `index.ts` binds
+   * `mcp`; absent, the run route refuses with a sentence saying so.
+   */
+  run?: McpDeps;
   /**
    * The rate-limit seam's backing (GRA-149; `rate-limit.ts`), for the two doors under `/api`:
    * `sign_in` over Better Auth's writes and `api` over this app's mutations. `createServer` hands
@@ -266,6 +341,81 @@ const agentBody = z.object({
 });
 
 const agentPatch = agentBody.omit({ connectionIds: true, scopeMode: true }).partial();
+
+/**
+ * `POST /setup/start` (ADR 0024; `startSetup` in `@graft/core` says what each field decides):
+ * the harness picked, the agent to run as when the person has one or several, or the agent to mint
+ * under *Advanced options*, the create dialog's body less its list. Strict at both levels, so a
+ * `connectionIds` or a `scopeMode` sent beside `agent` rather than inside it is refused rather than
+ * dropped, which would mint an agent on `all`: Setup's agent is narrowed on the agent page, later.
+ */
+const setupStartBody = z.strictObject({
+  harness: z.enum(setupHarness).optional(),
+  agentId: z.string().optional(),
+  agent: z
+    .strictObject({
+      name: z.string().optional(),
+      workingSetCap: z.number().int().optional(),
+      idleWindowDays: z.number().int().optional(),
+      scopeMode: z.enum(agentScopeMode).optional(),
+    })
+    .optional(),
+});
+/** The start's wire shape, as the console posts it. */
+export type SetupStartBody = z.input<typeof setupStartBody>;
+
+/**
+ * `POST /setup/connect` (GRA-206): a starter integration by its id, which opens the agent's own
+ * connection ask, or the connection *Another integration*'s ordinary form just made, which the record
+ * takes as it is. One or the other, strictly.
+ */
+const setupConnectBody = z.union([
+  z.strictObject({ starterId: z.enum(STARTER_VENDOR_IDS), discardJob: z.boolean().optional() }),
+  z.strictObject({ connectionId: z.string().min(1), discardJob: z.boolean().optional() }),
+]);
+/** The connect's wire shape, as the console posts it. */
+export type SetupConnectBody = z.input<typeof setupConnectBody>;
+
+/**
+ * `POST /setup/build` (GRA-207): the goal as the person accepted or typed it, `acquire`'s bound.
+ * `discardJob` leaves behind a job the record still holds while it runs (GRA-215), which the
+ * console sends once the person has said so.
+ */
+const setupBuildBody = z.strictObject({
+  goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH),
+  discardJob: z.boolean().optional(),
+});
+/** The build's wire shape, as the console posts it. */
+export type SetupBuildBody = z.input<typeof setupBuildBody>;
+
+/**
+ * `POST /setup/back` (GRA-215): the step to return the record to, from the rail or the footer's
+ * *Back*; `moveSetupBack` admits only a step the record completed and holds what for.
+ */
+const setupBackBody = z.strictObject({
+  step: z.enum(["harness", "vendor", "connect", "goal", "building", "result"]),
+});
+/** The back move's wire shape, as the console posts it. */
+export type SetupBackBody = z.input<typeof setupBackBody>;
+
+/**
+ * `POST /setup/next` (GRA-215): Continue on a step returned to with nothing changed, naming the
+ * step the page shows; on the harness step, the harness as the person left it (`moveSetupOn`).
+ */
+const setupNextBody = z.union([
+  z.strictObject({ from: z.literal("harness"), harness: z.enum(setupHarness).optional() }),
+  z.strictObject({ from: z.enum(["connect", "goal", "building"]) }),
+]);
+/** The continue's wire shape, as the console posts it. */
+export type SetupNextBody = z.input<typeof setupNextBody>;
+
+/**
+ * `POST /agents/:id/tools/:vendor/:name/run` (GRA-208): the tool's input, which the run holds to
+ * the tool's own schema; absent, an empty object, for a tool that takes none.
+ */
+const toolRunBody = z.strictObject({ input: z.unknown().optional() });
+/** The run's wire shape, as the console posts it. */
+export type ToolRunBody = z.input<typeof toolRunBody>;
 
 /**
  * `PUT /agents/:id/scope`: every connection, or a list — `SetAgentScopeInput` in `@graft/core`
@@ -507,8 +657,15 @@ export function createApi(options: ApiOptions): Hono {
     ledger: ledgerDeps,
   } = options.deps;
 
+  /**
+   * The setup prompt is read from other origins with no credentials (`setup-prompt.ts`), so its path
+   * takes the open policy and the console's credentialed one skips it: two `cors()` on one request
+   * would each write `Access-Control-Allow-Origin`, and a preflight would be answered by the first.
+   */
+  api.use(SETUP_PROMPT_PATH, setupPromptCors);
   if (options.corsOrigins.length > 0) {
-    api.use("*", cors({ origin: [...options.corsOrigins], credentials: true }));
+    const consoleCors = cors({ origin: [...options.corsOrigins], credentials: true });
+    api.use("*", (c, next) => (isSetupPromptPath(c.req.path) ? next() : consoleCors(c, next)));
   }
 
   /**
@@ -548,12 +705,23 @@ export function createApi(options: ApiOptions): Hono {
   api.use("*", async (c, next) => {
     await next();
     if (analytics === NO_ANALYTICS || c.res.status >= 300) return;
-    const event = routeEvent(c.req.method, c.req.path);
-    if (!event) return;
+    const route = trackedRoute(c.req.method, c.req.path);
+    if (!route) return;
     const session = await options.auth.getSession(c.req.raw.headers).catch(() => null);
     const personId = session?.user.id;
-    if (personId)
-      analytics.capture({ distinctId: personId, event, properties: { via: "console" } });
+    if (!personId) return;
+    // A row that reads its answer reads a clone, so the body the console receives is untouched.
+    const answer = route.properties
+      ? await c.res
+          .clone()
+          .json()
+          .catch(() => null)
+      : null;
+    analytics.capture({
+      distinctId: personId,
+      event: route.event,
+      properties: { via: "console", ...(route.properties ? route.properties(answer) : {}) },
+    });
   });
 
   api.onError((error, c) => {
@@ -595,6 +763,18 @@ export function createApi(options: ApiOptions): Hono {
    */
   const signInMethods: SignInMethods = { social: options.signInMethods?.social ?? [] };
   api.get("/sign-in-methods", (c) => c.json(signInMethods));
+
+  /**
+   * The generic setup prompt per harness, for the marketing site and the docs (GRA-205). A read
+   * with no session: the origin check exempts every read, so it does not apply here, and nothing
+   * here reads a cookie. Mounted only with `authUrl`, which names the MCP URL the prompt carries.
+   */
+  if (options.authUrl) {
+    api.route(
+      SETUP_PROMPT_PATH,
+      createSetupPromptRoutes({ authUrl: options.authUrl, consoleUrl: options.handoff.consoleUrl }),
+    );
+  }
 
   const {
     approval: approvalDeps,
@@ -731,6 +911,229 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({ deleted: await deletePersonModelKey(ctx, principal, modelKeyDeps) });
   });
 
+  /**
+   * **Setup** (ADR 0024; GRA-204): the person's guided first run, one record per person. `GET`
+   * answers `SetupState` — the record, the step the person is on, the show rule's verdict the
+   * console's shell redirects on, the agent it runs as and the person's active agents. `start`
+   * mints or adopts the agent and moves the record to the vendor step; `skip` marks it skipped. Both
+   * answer the state as it now stands, and both are rows in `analytics-routes.ts` carrying the
+   * harness. Later steps are GRA-206's and GRA-208's, on the same record.
+   */
+  const setupDeps = options.deps.setup ?? defaultSetupDeps;
+
+  /**
+   * The connect step (GRA-206; `setup-connect.ts`). A read learns the connection from the ask the
+   * record waits on, so the record moves to `goal` on the read after the person answers, wherever
+   * they answered it: this step's card, the inbox or a chat's card. The connect step's completion
+   * is counted where it is learned, here or in the connect route when the connection was made at
+   * once, since a read is not a row in the mutation table; the vendor step's is the connect
+   * route's row there.
+   */
+  const setupConnectDeps = (): SetupConnectDeps => {
+    if (!options.connectionRouting) {
+      throw new ServiceError(
+        "BAD_REQUEST",
+        "This server has no connection routing configured, so Setup cannot open a connection ask",
+      );
+    }
+    return {
+      setup: setupDeps,
+      agent: agentDeps,
+      connection: connectionDeps,
+      pendingAction: pendingActionDeps,
+      routing: options.connectionRouting,
+      notifier: options.notifier,
+      acquireJob: acquireJobDeps,
+    };
+  };
+
+  /**
+   * The goal, build and building steps (GRA-207; `setup-build.ts`). A read learns the tool from the
+   * job the record waits on, as it learns the connection from the ask; the building step's
+   * completion is counted where it is learned, since that is a read, and the goal step's is
+   * `POST /setup/build`'s row in the mutation table.
+   */
+  const acquireJobDeps = options.acquire?.acquireJob ?? defaultAcquireJobDeps;
+  const setupBuildDeps: SetupBuildRouteDeps = {
+    setup: setupDeps,
+    agent: agentDeps,
+    connection: connectionDeps,
+    approval: approvalDeps,
+    acquireJob: acquireJobDeps,
+    // Read at call time: `index.ts` binds the runner onto the MCP deps after this is built.
+    get model() {
+      return options.acquire?.model ?? null;
+    },
+    get acquireRunner() {
+      return options.acquire?.acquireRunner;
+    },
+  };
+  const countStep = (principal: Principal, state: SetupState, step: "connect" | "building") =>
+    analytics.capture({
+      distinctId: principal.personId,
+      event: "setup_step_completed",
+      properties: { via: "console", step, harness: state.setup?.harness ?? null },
+    });
+
+  api.get("/setup", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const { state: afterConnect, connected } = await learnSetupConnection(ctx, principal, {
+      setup: setupDeps,
+      agent: agentDeps,
+      connection: connectionDeps,
+      pendingAction: pendingActionDeps,
+      notifier: options.notifier,
+    });
+    if (connected) countStep(principal, afterConnect, "connect");
+    // A tool still arriving past the building step, *Continue while it runs* and then, perhaps,
+    // Finish Setup before it landed, is learned on the record as it would have been on `building`.
+    const record = afterConnect.setup;
+    const learnsBuild =
+      afterConnect.step === "building" ||
+      ((record?.step === "finish" || record?.step === "completed") &&
+        record.acquireJobId !== null &&
+        record.toolId === null);
+    if (!learnsBuild) return c.json(afterConnect);
+    const { state, built } = await learnSetupBuild(ctx, principal, setupBuildDeps);
+    if (built) countStep(principal, state, "building");
+    return c.json(state);
+  });
+
+  /** What the goal step draws (`SetupGoalContext`): the connection, the curated goal, whether Build is available. */
+  api.get("/setup/goal", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(await setupGoalContext(ctx, principal, setupBuildDeps));
+  });
+
+  /**
+   * The goal step's chips (`SetupGoalSuggestions`, GRA-209): the model's proposal, routed per
+   * person, or none, asked once per person and connection inside the memo's window. Never refused
+   * past the session; the outcome goes on the wide event, the goals do not.
+   */
+  const goalSuggestions = createGoalSuggestionMemo();
+  api.get("/setup/goal/suggestions", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const { suggestions, outcome, error, cached, dropped } = await setupGoalSuggestions(
+      ctx,
+      principal,
+      {
+        ...setupBuildDeps,
+        goalSuggestions,
+      },
+    );
+    useLogger().set({
+      goalSuggestions: {
+        outcome,
+        count: suggestions.length,
+        ...(dropped ? { dropped } : {}),
+        ...(cached ? { cached } : {}),
+        ...(error ? { error } : {}),
+      },
+    });
+    const body: SetupGoalSuggestions = { suggestions };
+    return c.json(body);
+  });
+
+  /** Build: the build approval, the job, the record on `building`, and the runner woken. */
+  api.post("/setup/build", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupBuildBody);
+    return c.json(await buildSetupTool(ctx, principal, body, setupBuildDeps));
+  });
+
+  /** *Change the goal*, once the job failed: back to the goal step, where Build starts a new job. */
+  api.post("/setup/goal", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await retrySetupGoal(ctx, principal, setupBuildDeps));
+  });
+
+  /** *Continue while it runs*: on to the finish step with the job still running. */
+  api.post("/setup/continue", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await continueSetupBuild(ctx, principal, setupBuildDeps));
+  });
+
+  /**
+   * The result and finish steps (GRA-208; `setup-finish.ts`). `GET /setup/tool` is what both draw;
+   * the run is the agent's route below. `POST /setup/result` is the result step's Continue, a row in
+   * the mutation table as `step: "result"`; `POST /setup/finish` completes the record and, for a
+   * static-token harness whose agent still awaits it, answers the token once beside the state,
+   * counted as `setup_completed` with the harness.
+   */
+  const setupFinishDeps = {
+    setup: setupDeps,
+    agent: agentDeps,
+    connection: connectionDeps,
+    tool: toolDeps,
+    acquireJob: acquireJobDeps,
+  };
+
+  api.get("/setup/tool", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(await setupToolContext(ctx, principal, setupFinishDeps));
+  });
+
+  api.post("/setup/result", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await completeSetupResult(ctx, principal, setupFinishDeps));
+  });
+
+  api.post("/setup/finish", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    // The token, when one is issued, is in this answer and nowhere else, as `POST /agents`'s is.
+    return c.json(await completeSetup(ctx, principal, setupFinishDeps));
+  });
+
+  /** The vendor step's list for this deployment (`listSetupVendors`): each starter, its provider and what connecting takes. */
+  api.get("/setup/vendors", async (c) => {
+    await principalOf(c.req.raw.headers);
+    return c.json({ vendors: await listSetupVendors(connectionDeps.providers) });
+  });
+
+  api.post("/setup/connect", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupConnectBody);
+    const { state, connected } = await connectSetupVendor(ctx, principal, body, setupConnectDeps());
+    if (connected) countStep(principal, state, "connect");
+    return c.json(state);
+  });
+
+  api.post("/setup/start", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupStartBody);
+    return c.json(await startSetup(ctx, principal, body, setupDeps, agentDeps));
+  });
+
+  /**
+   * The navigable rail (GRA-215): `back` returns the record to a step it completed, keeping what
+   * it holds, and `next` walks on from a step returned to with nothing changed. Neither is a row
+   * in the mutation table: the step was counted when it was first completed, and a look back is
+   * not a step.
+   */
+  api.post("/setup/back", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupBackBody);
+    const { state } = await moveSetupBack(ctx, principal, { to: body.step }, setupDeps, agentDeps);
+    return c.json(state);
+  });
+
+  api.post("/setup/next", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupNextBody);
+    const { state } = await moveSetupOn(ctx, principal, body, setupDeps, agentDeps);
+    return c.json(state);
+  });
+
+  api.post("/setup/skip", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(await skipSetup(ctx, principal, setupDeps, agentDeps));
+  });
+
   api.get("/agents", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
     return c.json({ agents: await listAgents(ctx, principal, agentDeps) });
@@ -772,6 +1175,68 @@ export function createApi(options: ApiOptions): Hono {
       "Agent not found, or already revoked",
     );
     return c.json({ agent });
+  });
+
+  /**
+   * The static token of an agent **awaiting its harness** (ADR 0024; GRA-208), for Setup's finish
+   * step and *Connect a harness* on such an agent, answered once, `201 { agent, token }`, as
+   * `POST /agents` answers. For the agent Setup runs as, while Setup is not completed and no client
+   * holds the agent, a **replacement** (ADR 0024 as amended 2026-09-25): the finish step held the
+   * only plaintext, so a reload lost it, and the new hash replaces the old one, which stops
+   * working. Any other agent is `409 agent_not_awaiting_harness` (revoked, a token already outside
+   * Setup, a client connected), another person's a 404 (`issueConsoleAgentToken`).
+   */
+  api.post("/agents/:id/token", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    await parseBody(c.req.raw, z.object({}), { emptyIs: {} });
+    return c.json(
+      await issueConsoleAgentToken(ctx, principal, c.req.param("id"), setupDeps, agentDeps),
+      201,
+    );
+  });
+
+  /**
+   * Run an authored tool as one of the person's agents (GRA-208; ADR 0024; `tool-run.ts`): read-only
+   * tools in the agent's working set only, synchronous, `AgentToolRunOutput`. Setup's result step is
+   * the only caller; the route is the agent's, not Setup's.
+   */
+  api.post("/agents/:id/tools/:vendor/:name/run", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, toolRunBody, { emptyIs: {} });
+    if (!options.run) {
+      throw new ServiceError(
+        "BAD_REQUEST",
+        "This server has no MCP endpoint configured, so the console cannot run a tool",
+      );
+    }
+    return c.json(
+      await runAgentTool(
+        ctx,
+        principal,
+        { agentId: c.req.param("id"), vendor: c.req.param("vendor"), name: c.req.param("name") },
+        body.input ?? {},
+        { agent: agentDeps, tool: toolDeps, workingSet: workingSetDeps, mcp: options.run },
+      ),
+    );
+  });
+
+  /**
+   * One `acquire` job of one of the person's agents, in the shape `acquire_status` answers
+   * (`@graft/mcp`'s `AcquireStatus`: status, progress lines, attempts, and the result once it
+   * settled), read at once and never held (GRA-207). Setup's building step polls it; the route is
+   * the agent's, not Setup's, so a later screen reads any job the same way. Another person's agent,
+   * or a job of another agent, is not found.
+   */
+  api.get("/agents/:id/acquire-jobs/:jobId", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    return c.json(
+      await readAgentAcquireJob(
+        ctx,
+        principal,
+        { agentId: c.req.param("id"), jobId: c.req.param("jobId") },
+        { agent: agentDeps, acquireJob: acquireJobDeps },
+      ),
+    );
   });
 
   /**

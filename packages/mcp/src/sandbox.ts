@@ -1,12 +1,29 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { type ModuleSources, readModuleSources, singleFileModule } from "@graft/check";
 import type { AgentScope } from "@graft/core";
 import { causeChain, describeLink, TRUNCATED } from "@graft/proxy/cause-chain";
-import { RESULT_MARKER, RUNNER_DIR, RUNNER_PATH, SKILLS_DIR, skillFiles } from "@graft/runner";
-import type { SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
-import { DRAFTS_DIR, draftPath, sandboxPath, TOOLBOX_MOUNT_PATH } from "@graft/toolbox";
+import {
+  type BlobLedgerEntry,
+  RESULT_MARKER,
+  RUNNER_PATH_VARIABLE,
+  type RunnerFile,
+  readRunnerEnvelope,
+  runnerPath,
+  runnerSeedDir,
+  SKILLS_SUBDIR,
+  skillFiles,
+} from "@graft/runner";
+import type { MountToolboxArgs, SandboxHandle, SandboxProcessResult } from "@graft/sandbox";
+import {
+  BLOBS_MOUNT_PATH,
+  DRAFTS_DIR,
+  draftPath,
+  sandboxPath,
+  TOOLBOX_MOUNT_PATH,
+} from "@graft/toolbox";
 
+import { blobsOnWire } from "./blobs";
 import {
   boundJson,
   type CommandInput,
@@ -24,16 +41,31 @@ import type { McpDeps } from "./deps";
  * The agent's sandbox — where authored code runs (CONTEXT.md, *Sandbox*) — reached through the
  * seam (ADR 0002) and provisioned the same way on every backing.
  *
- * One sandbox per agent, found again by name on every call. The toolbox is mounted **first**, before
- * anything is written: a backing may recreate the sandbox to attach a mount and only the toolbox is
+ * One sandbox per agent, found again by name on every call. The mounts come **first**, before
+ * anything is written: a backing may recreate the sandbox to attach a mount and only the mounts are
  * guaranteed to survive that (`@graft/sandbox`'s `mountToolbox`), so the runner and the skills are
- * seeded after it, and only when they are not already there. The toolbox id is the person's id,
+ * seeded after them, under a directory named by their content hash and only when that directory is
+ * not there yet (`seedRunner`). The toolbox id is the person's id,
  * because the toolbox is the person's (ADR 0007): every agent of one person mounts one volume, and a
- * tool published for one is on the disk of all.
+ * tool published for one is on the disk of all. The blobs directory is the agent's own (ADR 0023):
+ * `.blobs/<agentId>` beside the toolboxes, mounted alone at `/blobs`, so the scope of a blob is the
+ * mount and another agent's blobs are on no path this sandbox can name.
  */
 
 /** Where the person's toolbox is mounted inside every sandbox — `@graft/toolbox`'s layout. */
 export const TOOLBOX_DIR = TOOLBOX_MOUNT_PATH;
+
+/** Where the agent's own blobs directory is mounted, alone (`@graft/toolbox`'s layout; ADR 0023). */
+export const BLOBS_DIR = BLOBS_MOUNT_PATH;
+
+/** The two mounts every agent sandbox has: the person's toolbox and the agent's blobs directory. */
+export function agentMounts(scope: AgentScope): MountToolboxArgs {
+  return {
+    toolboxId: scope.personId,
+    mountPath: TOOLBOX_DIR,
+    blobs: { agentId: scope.agentId, mountPath: BLOBS_DIR },
+  };
+}
 
 /**
  * Drafts live on the toolbox so a half-written module survives the sandbox, under a directory per
@@ -64,8 +96,14 @@ export function agentSandboxName(prefix: string, agentId: string): string {
   return `${prefix}-${agentId}`;
 }
 
+/** What opening a sandbox reads off the deps: the backing, its name prefix, and the seed's two trees. */
+export type SandboxDeps = Pick<McpDeps, "sandbox" | "sandboxNamePrefix" | "runnerFiles" | "skills">;
+
 /** The agent's sandbox, mounted and seeded. Throws what the backing throws; callers wrap it. */
-export async function openAgentSandbox(deps: McpDeps, scope: AgentScope): Promise<SandboxHandle> {
+export async function openAgentSandbox(
+  deps: SandboxDeps,
+  scope: AgentScope,
+): Promise<SandboxHandle> {
   if (!deps.sandbox) {
     throw new Error(
       "no sandbox backing is configured on this deployment — set GRAFT_SANDBOX_IMAGE and GRAFT_SANDBOX_NETWORK for Docker, or GRAFT_SANDBOX_BACKEND=fake on a laptop",
@@ -76,23 +114,117 @@ export async function openAgentSandbox(deps: McpDeps, scope: AgentScope): Promis
     scope.agentId,
   );
   const { handle } = await deps.sandbox.ensure({ name });
-  await handle.mountToolbox({ toolboxId: scope.personId, mountPath: TOOLBOX_DIR });
+  await handle.mountToolbox(agentMounts(scope));
   await seedRunner(deps, handle);
   return handle;
 }
 
 /** Mount the toolbox again — the recovery when a version directory is not where the pointer says. */
 export async function remountToolbox(handle: SandboxHandle, scope: AgentScope): Promise<void> {
-  await handle.mountToolbox({ toolboxId: scope.personId, mountPath: TOOLBOX_DIR });
+  await handle.mountToolbox(agentMounts(scope));
 }
 
-async function seedRunner(deps: McpDeps, handle: SandboxHandle): Promise<void> {
-  const present = await handle.ls(RUNNER_DIR).catch(() => [] as string[]);
-  if (present.includes(RUNNER_PATH)) return;
-  const runner = await deps.runnerFiles();
-  if (runner.length > 0) await handle.writeTree(runner, RUNNER_DIR);
-  const skills = skillFiles(await deps.skills());
-  if (skills.length > 0) await handle.writeTree(skills, SKILLS_DIR);
+/**
+ * The seed: the runner and the skills as one tree under a directory named by its content hash,
+ * `/graft/<hash>/` (`@graft/runner`'s `runnerSeedDir`) — `runner.mjs` at the top, each skill at
+ * `skills/<name>/SKILL.md`. The paths are relative to that directory, and the runner is last: its
+ * presence is what an open checks, so a runner that is there says the tree before it is too.
+ */
+type Seed = { files: RunnerFile[]; digest: string };
+
+/**
+ * The seed and its digest, computed once per pair of sources: the runner source and the skills are
+ * each read once per process (`@graft/runner`), so the hash is too. Keyed on the two functions
+ * rather than the deps object, because a test hands different sources under one shape and the
+ * server hands one pair under any number of deps objects.
+ */
+const seeds = new WeakMap<
+  SandboxDeps["runnerFiles"],
+  WeakMap<SandboxDeps["skills"], Promise<Seed>>
+>();
+
+function seedFor(deps: SandboxDeps): Promise<Seed> {
+  let bySkills = seeds.get(deps.runnerFiles);
+  if (!bySkills) {
+    bySkills = new WeakMap();
+    seeds.set(deps.runnerFiles, bySkills);
+  }
+  let seed = bySkills.get(deps.skills);
+  if (!seed) {
+    seed = Promise.all([deps.runnerFiles(), deps.skills()]).then(([runner, skills]) => {
+      const files = [
+        ...skillFiles(skills).map((file) => ({
+          path: `${SKILLS_SUBDIR}/${file.path}`,
+          content: file.content,
+        })),
+        ...runner,
+      ];
+      return { files, digest: seedDigest(files) };
+    });
+    bySkills.set(deps.skills, seed);
+  }
+  return seed;
+}
+
+/**
+ * The hex SHA-256 over every seeded file, ordered by its path inside the seed's directory, each as
+ * the path, the byte length and the content with a NUL between: two servers shipping the same
+ * runner and skills name the same directory, and one that ships a different byte names another.
+ */
+export function seedDigest(files: readonly RunnerFile[]): string {
+  const hash = createHash("sha256");
+  const entries = [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  for (const entry of entries) {
+    hash.update(`${entry.path}\0${Buffer.byteLength(entry.content)}\0`);
+    hash.update(entry.content);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+/** Where this server's runner is in every sandbox it has seeded: `/graft/<hash>/runner.mjs`. */
+export async function seededRunnerPath(deps: SandboxDeps): Promise<string> {
+  return runnerPath((await seedFor(deps)).digest);
+}
+
+/**
+ * The runner's path off a command's environment (`commandEnvironment` put it there), for the
+ * script `run.ts` builds around a module. Thrown for an environment built any other way.
+ */
+export function runnerPathIn(env: Record<string, string>): string {
+  const path = env[RUNNER_PATH_VARIABLE];
+  if (!path) {
+    throw new Error(
+      `${RUNNER_PATH_VARIABLE} is not in the command's environment; build it with commandEnvironment`,
+    );
+  }
+  return path;
+}
+
+/**
+ * Seed the runner and the skills, or find them there: a sandbox is one per agent and never destroyed
+ * (ADR 0013's Docker consequence as corrected on 2026-09-22; ADR 0023's second paragraph), so a
+ * long-lived sandbox runs the server's runner rather than the one it was first seeded with — a
+ * deploy that changes `runner.mjs` or a skill seeds its own directory into every agent's sandbox on
+ * its next open and runs from it (GRA-193). The directory is named by the content, so two server
+ * versions sharing a sandbox through a rolling deploy write two directories and never one path, and
+ * two processes of one version write the same bytes to the same paths; there is no marker to
+ * disagree with the files. The open reads one file, the runner at this server's path, in place of
+ * the directory listing it used to do. What an older server seeded — `/graft/runner.mjs` before
+ * GRA-193, another hash's directory after — stays where it is, a few tens of kilobytes each; nothing
+ * here removes.
+ */
+async function seedRunner(deps: SandboxDeps, handle: SandboxHandle): Promise<void> {
+  const seed = await seedFor(deps);
+  const sentinel = seed.files.at(-1);
+  if (!sentinel) return;
+  const directory = runnerSeedDir(seed.digest);
+  const present = await handle.read(`${directory}/${sentinel.path}`).then(
+    () => true,
+    () => false,
+  );
+  if (present) return;
+  await handle.writeTree(seed.files, directory);
 }
 
 /**
@@ -147,13 +279,24 @@ export function errorMessage(error: unknown): string {
  * The environment every command runs with: `NODE_USE_ENV_PROXY=1`, because the hosted backing
  * reaches the proxy through `HTTPS_PROXY` and Node's `fetch` ignores it otherwise (`runner.mjs`
  * says so); `GRAFT_TIMEOUT_MS` a little inside the kill bound, so a module that hangs is reported
- * by the runner's own exit code rather than seen killed. No token here — `run.ts` adds one, per
- * process, for a run that may reach a vendor (ADR 0010).
+ * by the runner's own exit code rather than seen killed; `GRAFT_BLOBS_DIR`, where the agent's blobs
+ * are mounted (ADR 0023), a variable rather than a constant in the runner for the reason
+ * `GRAFT_RESULT_PATH` is one: a backing that maps the sandbox's paths under a root maps the
+ * environment's values with them (the fake's `rewriteEnvPaths`), and the runner cannot know the
+ * root; and `GRAFT_RUNNER`, where this server's runner is in the sandbox (`seededRunnerPath`), for
+ * the same reason and so a command the model types runs `node "$GRAFT_RUNNER" <module>` without
+ * knowing the hash (GRA-193). No token here — `run.ts` adds one, per process, for a run that may
+ * reach a vendor (ADR 0010).
  */
-export function commandEnvironment(timeoutSeconds: number): Record<string, string> {
+export function commandEnvironment(
+  timeoutSeconds: number,
+  runnerPathInSandbox: string,
+): Record<string, string> {
   return {
     NODE_USE_ENV_PROXY: "1",
     GRAFT_TIMEOUT_MS: String(Math.max(1_000, (timeoutSeconds - 2) * 1_000)),
+    GRAFT_BLOBS_DIR: BLOBS_DIR,
+    [RUNNER_PATH_VARIABLE]: runnerPathInSandbox,
   };
 }
 
@@ -211,7 +354,7 @@ export async function runCommand(
   handle: SandboxHandle,
   input: CommandInput,
   env: Record<string, string>,
-): Promise<Record<string, unknown>> {
+): Promise<PolledProcess> {
   if (input.detached) {
     const started = await startDetached(handle, {
       command: input.command,
@@ -219,14 +362,24 @@ export async function runCommand(
       timeoutSeconds: input.timeoutSeconds,
       prefix: "cmd",
     });
-    return describeDetachedStart(started);
+    return { answer: describeDetachedStart(started), blobs: [], dropped: 0 };
   }
   const name = processName("cmd");
   await handle.execDetached(input.command, { name, timeoutSeconds: input.timeoutSeconds, env });
   const result = await handle.waitForProcess(name, {
     maxWaitSeconds: input.timeoutSeconds + WAIT_SLACK_SECONDS,
   });
-  return describeProcess(result, input.timeoutSeconds);
+  // A runner invoked inside the command wrote its envelope onto stdout (GRA-186): read it off the
+  // whole stream before the output is bounded, so a blob a by-hand run wrote gets its row like any
+  // other, and name the ledger beside the output.
+  const envelope = readRunnerEnvelope(result.stdout);
+  const blobs = envelope?.blobs ?? [];
+  const dropped = envelope?.dropped ?? 0;
+  return {
+    answer: { ...describeProcess(result, input.timeoutSeconds), ...blobsOnWire(blobs, dropped) },
+    blobs,
+    dropped,
+  };
 }
 
 /** A detached start in words the model can act on. `status: "running"` so it reads like a poll's. */
@@ -276,13 +429,39 @@ export function describeProcess(
 }
 
 /**
+ * What a poll or a waited command answers, and — apart from it — the blobs a runner invocation
+ * inside the process wrote (GRA-186): `answer` names them as the agent reads them, `blobs` is the
+ * whole ledger for the rows the caller writes (`tools/authoring.ts`, `tools/execute.ts`), which is
+ * why the two are not one object.
+ */
+export type PolledProcess = {
+  answer: Record<string, unknown>;
+  blobs: BlobLedgerEntry[];
+  /** Ledger lines the reader refused (`RunnerEnvelope.dropped`); zero with no envelope. */
+  dropped: number;
+};
+
+/**
+ * Whether a value is `runCommand`'s or `pollProcess`'s answer with its ledger, as against
+ * `withSandbox`'s `{ error }`, a refusal or a bare answer. The one spelling of the test (GRA-200):
+ * `tools/execute.ts`, `tools/authoring.ts` and `in-flight.ts` each read the ledger off one of
+ * these, and three private spellings of the same shape had drifted a word apart.
+ */
+export function isPolledProcess(value: unknown): value is PolledProcess {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { answer?: unknown; blobs?: unknown };
+  return (
+    typeof candidate.answer === "object" &&
+    candidate.answer !== null &&
+    Array.isArray(candidate.blobs)
+  );
+}
+
+/**
  * Look in on a detached process, and read the runner's result file back when the process wrote one
  * — stdout carries `RESULT_MARKER` followed by the path, which is the runner's detached contract.
  */
-export async function pollProcess(
-  handle: SandboxHandle,
-  input: WaitInput,
-): Promise<Record<string, unknown>> {
+export async function pollProcess(handle: SandboxHandle, input: WaitInput): Promise<PolledProcess> {
   const result = await handle.waitForProcess(input.processName, {
     maxWaitSeconds: input.maxWaitSeconds,
   });
@@ -298,52 +477,89 @@ export async function pollProcess(
 
   if (result.status === "running") {
     return {
-      status: "running",
-      ...base,
-      waitedSeconds: input.maxWaitSeconds,
-      note: `Still running after another ${input.maxWaitSeconds} seconds. Call wait_for_process again with the same processName; the process is killed when its timeoutSeconds elapse.`,
+      answer: {
+        status: "running",
+        ...base,
+        waitedSeconds: input.maxWaitSeconds,
+        note: `Still running after another ${input.maxWaitSeconds} seconds. Call wait_for_process again with the same processName; the process is killed when its timeoutSeconds elapse.`,
+      },
+      blobs: [],
+      dropped: 0,
     };
   }
 
   // The marker says the runner wrote a result; the path is the one this side chose at the start.
-  const runner = result.stdout.includes(RESULT_MARKER)
+  const runner: PolledProcess = result.stdout.includes(RESULT_MARKER)
     ? await readRunnerResult(handle, resultPathFor(input.processName))
-    : {};
+    : { answer: {}, blobs: [], dropped: 0 };
 
   if (result.status === "killed") {
     return {
-      status: "killed",
-      ...base,
-      ...runner,
-      note: `The process was killed before it finished — usually because it ran past its timeoutSeconds. Start it again with a longer timeoutSeconds, up to ${MAX_DETACHED_TIMEOUT_SECONDS} when detached.`,
+      answer: {
+        status: "killed",
+        ...base,
+        ...runner.answer,
+        note: `The process was killed before it finished — usually because it ran past its timeoutSeconds. Start it again with a longer timeoutSeconds, up to ${MAX_DETACHED_TIMEOUT_SECONDS} when detached.`,
+      },
+      blobs: runner.blobs,
+      dropped: runner.dropped,
     };
   }
-  if (result.exitCode === 0) return { status: "completed", ...base, ...runner };
+  if (result.exitCode === 0) {
+    return {
+      answer: { status: "completed", ...base, ...runner.answer },
+      blobs: runner.blobs,
+      dropped: runner.dropped,
+    };
+  }
   return {
-    status: "failed",
-    ...base,
-    ...runner,
-    error: `The process exited with code ${result.exitCode}.`,
+    answer: {
+      status: "failed",
+      ...base,
+      ...runner.answer,
+      error: `The process exited with code ${result.exitCode}.`,
+    },
+    blobs: runner.blobs,
+    dropped: runner.dropped,
   };
 }
 
-async function readRunnerResult(
-  handle: SandboxHandle,
-  resultPath: string,
-): Promise<Record<string, unknown>> {
+/**
+ * The runner's result file: the envelope behind its marker line (`@graft/runner`'s
+ * `readRunnerEnvelope`), or a bare result, read as the module's with no blobs. The bare form has one
+ * source left (GRA-199): a detached run that a server older than the envelope started (`v0.1.0`'s
+ * runner printed a bare result), whose file this server polls after the upgrade, inside the
+ * detached ceiling (`MAX_DETACHED_TIMEOUT_SECONDS`). The runner a run started under is the one that
+ * writes its file, whatever this server has seeded since (GRA-193), so the window is real if short;
+ * a sync run has no such window and `run.ts`'s `unwrapEnvelope` refuses a bare result. A bare result
+ * yields no ledger line. The module's result is bounded as a file is; the blobs ride beside it whole.
+ */
+async function readRunnerResult(handle: SandboxHandle, resultPath: string): Promise<PolledProcess> {
   try {
-    const value: unknown = JSON.parse(await handle.read(resultPath));
-    const bounded = boundJson(value, MAX_FILE_CHARS);
-    if (!bounded.cut) return { resultPath, result: bounded.value };
+    const text = await handle.read(resultPath);
+    const envelope = readRunnerEnvelope(text);
+    const result: unknown = envelope ? envelope.result : JSON.parse(text);
+    const blobs = envelope ? envelope.blobs : [];
+    const dropped = envelope?.dropped ?? 0;
+    const named = blobsOnWire(blobs, dropped);
+    const bounded = boundJson(result, MAX_FILE_CHARS);
+    if (!bounded.cut) {
+      return { answer: { resultPath, result: bounded.value, ...named }, blobs, dropped };
+    }
     return {
-      resultPath,
-      result: null,
-      resultTruncated: true,
-      resultHead: bounded.text,
-      note: `The result was ${bounded.length} characters and was cut at ${MAX_FILE_CHARS}. Have the module return less, or read resultPath in parts.`,
+      answer: {
+        resultPath,
+        result: null,
+        resultTruncated: true,
+        resultHead: bounded.text,
+        note: `The result was ${bounded.length} characters and was cut at ${MAX_FILE_CHARS}. Have the module return less, or read resultPath in parts.`,
+        ...named,
+      },
+      blobs,
+      dropped,
     };
   } catch (error) {
-    return { resultPath, resultError: errorMessage(error) };
+    return { answer: { resultPath, resultError: errorMessage(error) }, blobs: [], dropped: 0 };
   }
 }
 

@@ -360,10 +360,15 @@ export type ProxyOptions = {
    * One deadline for the whole call — from the caller's first body byte to the vendor's last —
    * so neither a caller that never finishes sending nor a vendor that never finishes answering
    * can hold a connection and a buffer past it. Named for the vendor leg, which is what it bounds
-   * in practice; a body cap of ten megabytes is read in well under a second.
+   * in practice; the default body cap of ten mebibytes is read in well under a second.
    */
   upstreamTimeoutMs: number;
-  /** The most bytes a request or a response body may carry through the proxy. */
+  /**
+   * The most bytes a request or a response body may carry through the proxy, on either leg, and
+   * the memory one in-flight call may hold, since both legs are buffered (`body.ts`). Quoted in
+   * the `request_too_large` and `response_too_large` refusals. The server sets it from
+   * `GRAFT_PROXY_MAX_BODY_BYTES` (GRA-183); `DEFAULT_PROXY_OPTIONS` holds the default.
+   */
   maxBodyBytes: number;
 };
 

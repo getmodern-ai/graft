@@ -1,0 +1,6 @@
+# Source is diffed as text whatever bytes it holds. A raw control byte inside a regex once made two of
+# these files binary to a diff, so no review saw the change and two rebases reported a binary
+# conflict (GRA-199). The runner suite now refuses the bytes themselves
+# (`packages/runner/src/runner.test.ts`); this is the fallback for a file that slips past it.
+*.ts diff
+*.mjs diff

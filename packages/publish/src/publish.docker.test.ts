@@ -8,7 +8,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { checkModule } from "@graft/check";
-import { RUNNER_DIR, RUNNER_PATH, runnerFiles } from "@graft/runner/runner-source";
+import {
+  readRunnerEnvelope,
+  runnerFiles,
+  runnerPath,
+  runnerSeedDir,
+} from "@graft/runner/runner-source";
 import { fetchProbe } from "@graft/sandbox/conformance";
 import {
   createDockerSandboxBackend,
@@ -188,7 +193,15 @@ describe.skipIf(docker.reason !== undefined)("the publish against the Docker bac
         store,
         mirror: createNoopToolboxMirror(),
         sandbox: backend,
-        metadata: createFakeMetadataSource({}),
+        // `left-pad` is old and downloaded and carries no attestation, which is what the registry
+        // says of it; the allowlist waives the attestation alone (GRA-176), so the facts are here.
+        metadata: createFakeMetadataSource({
+          "left-pad@1.3.0": {
+            publishedAt: new Date("2014-03-05T00:00:00Z"),
+            weeklyDownloads: 1_436_537,
+            hasProvenance: false,
+          },
+        }),
         // `left-pad` is not an official SDK; the extra-names option is how a deployment admits one.
         policy: {
           ...DEFAULT_PACKAGE_POLICY,
@@ -236,14 +249,20 @@ describe.skipIf(docker.reason !== undefined)("the publish against the Docker bac
     // A run: the toolbox mounted first, the runner seeded, the module imported from the version.
     const { handle } = await backend.ensure({ name: "run" });
     await handle.mountToolbox({ toolboxId: PERSON, mountPath: TOOLBOX_MOUNT_PATH });
-    await handle.writeTree(await runnerFiles(), RUNNER_DIR);
+    // Seeded by hand under a stand-in hash: this suite has no MCP deps to compute the real one.
+    await handle.writeTree(await runnerFiles(), runnerSeedDir("test"));
     const modulePath = sandboxPath(result.version.path);
     expect(modulePath).toBe("/tools/tools/demo/pad/v1");
     const output = await handle.exec(
-      `printf '%s' '{"word":"x","width":3}' | node ${RUNNER_PATH} ${modulePath}`,
+      `printf '%s' '{"word":"x","width":3}' | node ${runnerPath("test")} ${modulePath}`,
       { timeoutSeconds: 60 },
     );
-    expect(JSON.parse(output)).toEqual({ padded: "--x" });
+    // The runner's envelope (GRA-186): the module's result beside the ledger of blobs it wrote, none here.
+    expect(readRunnerEnvelope(output)).toEqual({
+      result: { padded: "--x" },
+      blobs: [],
+      dropped: 0,
+    });
 
     // And that sandbox has no route to the registry: the vendored copy is the only one it could load.
     expect(await handle.exec(fetchProbe("https://registry.npmjs.org/left-pad"))).toMatch(/^failed/);

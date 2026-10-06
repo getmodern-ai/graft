@@ -25,8 +25,8 @@ export type Skill = {
   content: string;
 };
 
-/** Where the skills are seeded inside a sandbox, beside the runner's `RUNNER_DIR`. */
-export const SKILLS_DIR = "/skills";
+/** Where the skills sit inside one seed's directory (`runnerSeedDir`): `/graft/<hash>/skills/<name>/SKILL.md`. */
+export const SKILLS_SUBDIR = "skills";
 
 /**
  * Where the shipped skills live: `packages/runner/skills`, resolved off `import.meta.url` because the
@@ -145,7 +145,7 @@ export function resetSkillCache(): void {
 }
 
 /**
- * The tree `writeTree` seeds under `SKILLS_DIR`: `<name>/SKILL.md` per skill, the frontmatter
+ * The skills' part of the seeded tree, relative to `SKILLS_SUBDIR`: `<name>/SKILL.md` per skill, the frontmatter
  * restored so the file in the sandbox parses the same way this one did. The name is a path segment,
  * which `skills.test.ts` pins to `[a-z0-9-]+` for exactly that reason.
  */

@@ -111,6 +111,11 @@ import { createUpstreamFetch, isTimeoutFailure } from "./upstream";
  * never made. The relays return through the same path and are held to the same rule.
  */
 
+/**
+ * What a call runs under when the host passes nothing. `maxBodyBytes` is a default and not the
+ * rule: the server binds `GRAFT_PROXY_MAX_BODY_BYTES` over it (GRA-183, `@graft/env`'s
+ * `proxyMaxBodyBytes`), and the two ten-mebibyte figures are pinned equal in `apps/server`.
+ */
 export const DEFAULT_PROXY_OPTIONS: ProxyOptions = {
   followRedirects: false,
   upstreamTimeoutMs: 30_000,

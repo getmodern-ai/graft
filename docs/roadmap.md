@@ -62,6 +62,8 @@ step and run in parallel where their blockers allow.
 | Licence review | ADR 0015, then ADR 0022 | Done on 2026-09-21, before the repository was made public: the core is Apache-2.0, the skill and any harness plugin stay MIT, and a DCO replaces the CLA (ADR 0022). Reopens only on a decision to sell licence exceptions | [GRA-13](https://linear.app/get-modern/issue/GRA-13), [GRA-137](https://linear.app/get-modern/issue/GRA-137) |
 | Cando adopts Graft as a dependency | ADR 0011 | Graft's core API stable | [GRA-14](https://linear.app/get-modern/issue/GRA-14) |
 | Org tier UI and sharing | ADR 0007 | A customer asks | [GRA-15](https://linear.app/get-modern/issue/GRA-15) |
+| A person or a harness reaching a blob: a console download, an MCP `resource_link` | ADR 0023 | A workflow observed whose last step is the person, not another tool | [GRA-181](https://linear.app/get-modern/issue/GRA-181) |
+| A server-side blob store behind the proxy (ADR 0023's option C), and streaming the proxy's response leg | ADR 0023, ADR 0010 | Blobs outgrowing the toolbox volume in either form, or the cap being raised on more than one deployment | [GRA-181](https://linear.app/get-modern/issue/GRA-181) |
 
 ## Out of scope, and why
 

@@ -1,3 +1,4 @@
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { checkModule, type ModuleCheck } from "@graft/check";
@@ -18,7 +19,7 @@ import {
   type PublishOutcome,
   publishToolVersion,
 } from "@graft/publish";
-import { loadSkills, runnerFiles } from "@graft/runner";
+import { BLOB_QUOTA_BYTES, loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -28,10 +29,12 @@ import {
   ToolListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { FIXTURE_BLOB_CONTENT_TYPE, FIXTURE_BLOB_NAME, substituteBlobRefs } from "./acquire/job";
 import { type AcquireRunner, type AcquireRunnerEvent, createAcquireRunner } from "./acquire/runner";
 import type { AcquireFailure, AcquireStatus, AcquireSuccess } from "./acquire/shapes";
-import type { McpDeps } from "./deps";
-import { createInFlightRegistry } from "./in-flight";
+import { admitBlobs } from "./blob-door";
+import type { McpDeps, ToolCallEvent } from "./deps";
+import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier } from "./notifier";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
@@ -108,6 +111,103 @@ const CREATE_ORDER_SCHEMA = {
   additionalProperties: false,
 };
 
+/** The file the vendor's export answers: 3,000 fixed bytes, so the blob's data can be compared whole. */
+const EXPORT_BYTES = new Uint8Array(3_000).map((_, i) => i % 251);
+
+/**
+ * A workbook as Google Drive's `alt=media` serves one (GRA-201): a ZIP, so its head is `PK\u0003\u0004`
+ * and the bytes that follow decode to NULs and replacement characters. What production's job
+ * 2cebd675 read on 2026-09-23, and what Postgres refused inside jsonb.
+ */
+const WORKBOOK_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const WORKBOOK_BYTES = new Uint8Array(2_048).map((_, i) =>
+  i < 4 ? ([0x50, 0x4b, 0x03, 0x04][i] ?? 0) : i % 7 === 0 ? 0 : (i * 131) % 256,
+);
+const WORKBOOK_SENTENCE = `The body is not text and is not shown: ${WORKBOOK_TYPE}, 2,048 bytes. A tool that needs the bytes moves them with ctx.blob.write, never through its result.`;
+
+/**
+ * A producing tool (GRA-190; ADR 0023), in the authoring skill's shape: the vendor's body goes to
+ * `ctx.blob.write` as the response's stream, typed and named from the headers, and the ref is
+ * answered under `file`. Through the real check, since `ctx.blob` and `res.body` are what it types.
+ */
+const EXPORT_FILE_MODULE = [
+  "export default async (input: Input, ctx: Context) => {",
+  `  const res = await ctx.fetch(\`/export?id=${D}{input.id}\`);`,
+  `  if (!res.ok || !res.body) throw new Error(\`GET /export ${D}{res.status}: ${D}{await res.text()}\`);`,
+  '  const name = res.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] ?? "export.bin";',
+  "  const file = await ctx.blob.write(res.body, {",
+  '    contentType: res.headers.get("content-type") ?? "application/octet-stream",',
+  "    name,",
+  "  });",
+  "  return { file, name };",
+  "};",
+  "",
+].join("\n");
+const EXPORT_FILE_SCHEMA = {
+  type: "object",
+  properties: { id: { type: "string" } },
+  required: ["id"],
+  additionalProperties: false,
+};
+const EXPORT_FILE = authoredToolName("demo", "export-file");
+
+/** The consuming tool: the ref off `input.file`, the `Blob` into a `FormData`, one write. */
+const UPLOAD_FILE_MODULE = [
+  "export default async (input: Input, ctx: Context) => {",
+  "  const file = await ctx.blob.read(input.file);",
+  "  const form = new FormData();",
+  '  form.append("channel", input.channel);',
+  '  form.append("file", file, input.name ?? "upload.bin");',
+  '  const res = await ctx.fetch("/files/upload", { method: "POST", body: form });',
+  `  if (!res.ok) throw new Error(\`POST /files/upload ${D}{res.status}: ${D}{await res.text()}\`);`,
+  "  return { uploaded: input.file, status: res.status, bytes: file.size };",
+  "};",
+  "",
+].join("\n");
+const UPLOAD_FILE_SCHEMA = {
+  type: "object",
+  properties: { file: { type: "string" }, channel: { type: "string" }, name: { type: "string" } },
+  required: ["file", "channel"],
+  additionalProperties: false,
+};
+const UPLOAD_FILE = authoredToolName("demo", "upload-file");
+
+/**
+ * A module that spells `ctx.blob.read(input.file)` in a comment and in a string and calls nothing
+ * of the kind (Greptile on #149): the check reads calls, so the job mints no fixture for it.
+ */
+const NOTE_ONLY_MODULE = [
+  "export default async (input: Input, ctx: Context) => {",
+  "  // ctx.blob.read(input.file) would open the blob; this draft posts the channel alone.",
+  '  const note = "ctx.blob.read(input.file)";',
+  '  const res = await ctx.fetch("/files/upload", {',
+  '    method: "POST",',
+  '    headers: { "content-type": "application/json" },',
+  "    body: JSON.stringify({ channel: input.channel, note }),",
+  "  });",
+  `  if (!res.ok) throw new Error(\`POST /files/upload ${D}{res.status}\`);`,
+  "  return { status: res.status };",
+  "};",
+  "",
+].join("\n");
+const NOTE_ONLY_SCHEMA = {
+  type: "object",
+  properties: { channel: { type: "string" } },
+  required: ["channel"],
+  additionalProperties: false,
+};
+
+function uploadDraft(testInput: Record<string, unknown>): ModuleDraft {
+  return {
+    name: "upload-file",
+    description: "Uploads a file to a Demo Orders channel.",
+    inputSchema: UPLOAD_FILE_SCHEMA,
+    files: [{ path: "index.ts", content: UPLOAD_FILE_MODULE }],
+    testInput,
+    proofReads: [],
+  };
+}
+
 function draft(overrides: Partial<ModuleDraft> & { path?: string } = {}): ModuleDraft {
   const { path, ...rest } = overrides;
   return {
@@ -128,8 +228,30 @@ const write = (on: ModelSituationKind, module: ModuleDraft, note: string): Scrip
   answer: { kind: "write_module", draft: module, note },
 });
 
+/** The suite's default check, which a test that swapped the real one in puts back. */
+const FAKE_CHECK: ModuleCheck = async (input) => ({
+  entry: input.entry,
+  refusals: [],
+  advice: [],
+  annotations: { readOnly: true, destructive: false },
+  contextMembersUsed: [],
+  blobReadFields: [],
+});
+
+/** A module that moves the vendor's answer into a blob (GRA-186), for the job whose dry run writes one. */
+const BLOB_WRITER_MODULE = [
+  "export default async (input: Input, ctx: Context) => {",
+  `  const res = await ctx.fetch(\`/items?limit=${D}{input.limit ?? 5}\`);`,
+  `  if (!res.ok) throw new Error(\`GET ${D}{res.status}: ${D}{await res.text()}\`);`,
+  '  const file = await ctx.blob.write(new TextEncoder().encode(await res.text()), { contentType: "application/json" });',
+  "  return { file };",
+  "};",
+  "",
+].join("\n");
+
 let sandbox: FakeSandboxBackend;
 const runnerEvents: AcquireRunnerEvent[] = [];
+const toolEvents: ToolCallEvent[] = [];
 let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
@@ -158,6 +280,13 @@ beforeAll(async () => {
     respond: (request) => {
       const url = new URL(request.url);
       if (url.pathname === "/v2/items") return Response.json(VENDOR_BODY);
+      // The connection's second host, reached by name (GRA-213): Open-Meteo's geocoding API beside
+      // its forecast API, as a host the module knows when it is written.
+      if (url.host === "files.demo.example" && url.pathname === "/v1/search") {
+        return Response.json({
+          results: [{ name: url.searchParams.get("name"), latitude: 52.52 }],
+        });
+      }
       // A vendor that points elsewhere, as Open-Meteo does for a keyed request (GRA-65): once to a
       // host the connection declares, once to one it does not. The real proxy hands both back.
       if (url.pathname === "/v2/moved-home") {
@@ -199,6 +328,28 @@ beforeAll(async () => {
       }
       if (url.pathname === "/v2/orders" && request.method === "POST") {
         return Response.json({ id: "ord_1", status: "created" }, { status: 201 });
+      }
+      // A file the vendor answers as bytes with a filename (GRA-190): what a producing tool moves
+      // into a blob; and the upload a consuming tool posts the blob to.
+      if (url.pathname === "/v2/export") {
+        return new Response(EXPORT_BYTES, {
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": 'attachment; filename="invoice.pdf"',
+          },
+        });
+      }
+      if (url.pathname === "/v2/files/upload" && request.method === "POST") {
+        return Response.json({ ok: true, file: { id: "F1" } }, { status: 201 });
+      }
+      // A binary download (GRA-201): a proof read of it must not carry the bytes into a row.
+      if (url.pathname === "/v2/workbook") {
+        return new Response(WORKBOOK_BYTES, {
+          headers: {
+            "content-type": WORKBOOK_TYPE,
+            "content-length": String(WORKBOOK_BYTES.byteLength),
+          },
+        });
       }
       return Response.json({ error: "not found" }, { status: 404 });
     },
@@ -252,6 +403,8 @@ beforeAll(async () => {
     refusals: [],
     advice: [],
     annotations: { readOnly: true, destructive: false },
+    contextMembersUsed: [],
+    blobReadFields: [],
   });
 
   const fake = createFakeDeps(store);
@@ -261,7 +414,15 @@ beforeAll(async () => {
     store: toolbox,
     mirror: createNoopToolboxMirror(),
     sandbox,
-    metadata: createFakeMetadataSource({}),
+    // The registry is asked about every declared package, an allowlisted one included (GRA-176),
+    // so the one SDK a draft in this file declares has the facts the age and download rules read.
+    metadata: createFakeMetadataSource({
+      "@linear/sdk": {
+        publishedAt: new Date("2021-01-01T00:00:00Z"),
+        weeklyDownloads: 120_000,
+        hasProvenance: true,
+      },
+    }),
     policy: DEFAULT_PACKAGE_POLICY,
     tool: fake.tool,
     // The publish's check is the one the deps name at call time, so a test that swaps in the real
@@ -294,6 +455,7 @@ beforeAll(async () => {
     listChangedWindowMs: 50,
     toolbox,
     publishTool: (args) => publishToolVersion(publish, args),
+    onToolCall: (event) => toolEvents.push(event),
     handoff: {
       consoleUrl: "http://console.graft.test",
       secret: "graft-acquire-test-handoff-secret-long-enough-32",
@@ -461,7 +623,7 @@ describe("a job that passes first time", () => {
       },
       write(
         "docs",
-        draft({ proofReads: ["/items?limit=1"] }),
+        draft({ proofReads: [{ path: "/items?limit=1" }] }),
         "Drafted list-items around GET /items.",
       ),
       {
@@ -631,7 +793,7 @@ describe("the toolbox first (GRA-154)", () => {
   /** A goal a live tool of the vendor already covers is answered, not rebuilt; the agent may insist. */
   it("answers similar_tools_exist with the tools and their schemas, opens no job, and builds with ignoreExisting", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     const a = await connect(TOKEN_A);
@@ -680,12 +842,12 @@ describe("a proof-only answer (GRA-153)", () => {
   /** The model proves the second path with the id the first read returned — a turn, not an attempt. */
   it("runs the added reads against the same draft, shows every read so far, and publishes on proceed with one attempt", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       {
         on: "proof",
         answer: {
           kind: "prove",
-          proofReads: ["/items?limit=2"],
+          proofReads: [{ path: "/items?limit=2" }],
           note: "The list answered; one more page.",
         },
       },
@@ -714,6 +876,11 @@ describe("a proof-only answer (GRA-153)", () => {
           (row) => row.kind === "model" && row.text.startsWith("Proving attempt 1 further:"),
         ),
       ).toBe(true);
+      // Setup's building step shows the lines verbatim, and console copy has no em dash (GRA-212).
+      expect(status.progress).toContain(
+        "Attempt 1: 1 more proof read(s): The list answered; one more page.",
+      );
+      for (const line of status.progress) expect(line).not.toContain("\u2014");
     } finally {
       await a.close();
       await runner.idle();
@@ -725,13 +892,17 @@ describe("a proof-only answer (GRA-153)", () => {
       write(
         "goal",
         draft({
-          proofReads: ["/items?limit=1", "/items?limit=2", "/items?limit=3", "/items?limit=4"],
+          proofReads: [1, 2, 3, 4].map((n) => ({ path: `/items?limit=${n}` })),
         }),
         "Drafted list-items.",
       ),
       {
         on: "proof",
-        answer: { kind: "prove", proofReads: ["/items/itm_1", "/items/itm_2"], note: "Two more." },
+        answer: {
+          kind: "prove",
+          proofReads: [{ path: "/items/itm_1" }, { path: "/items/itm_2" }],
+          note: "Two more.",
+        },
       },
       { on: "proof", answer: { kind: "proceed", note: "Enough was proven." } },
     ]);
@@ -749,6 +920,157 @@ describe("a proof-only answer (GRA-153)", () => {
       expect(refused && refused.kind === "proof" ? refused.refused : null).toContain(
         "named 2 more read(s), and this attempt has 1 of 5 left",
       );
+    } finally {
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+});
+
+/**
+ * GRA-213: a connection's second declared host, known when the module is written (Open-Meteo's
+ * geocoding API beside its forecast API), has one sanctioned form for a module and a proof read
+ * alike: a path and the `host`, sent through the proxy's host route. Here the demo connection's
+ * `files.demo.example` plays the geocoding host, behind the real proxy and the real runner.
+ */
+describe("a connection's second host, named (GRA-213)", () => {
+  const SEARCH_SCHEMA = {
+    type: "object",
+    properties: { name: { type: "string" } },
+    required: ["name"],
+    additionalProperties: false,
+  };
+  const SEARCH_MODULE = [
+    "export default async (input: Input, ctx: Context) => {",
+    '  const res = await ctx.fetch("/v1/search?name=" + String(input.name), { host: "files.demo.example" });',
+    `  if (!res.ok) throw new Error(\`GET /v1/search ${D}{res.status}: ${D}{await res.text()}\`);`,
+    "  const { results } = (await res.json()) as { results: { name: string; latitude: number }[] };",
+    "  return { name: results[0]?.name ?? null, latitude: results[0]?.latitude ?? null };",
+    "};",
+    "",
+  ].join("\n");
+  const searchDraft = (proofReads: ModuleDraft["proofReads"]): ModuleDraft => ({
+    name: "search-places",
+    description: "Finds a place by name in Demo Orders' geocoding API.",
+    inputSchema: SEARCH_SCHEMA,
+    files: [{ path: "index.ts", content: SEARCH_MODULE }],
+    testInput: { name: "Berlin" },
+    proofReads,
+  });
+
+  it("checks a module reading the second host through { host }, proves the read there, and passes the dry run on it", async () => {
+    deps.checkModule = checkModule;
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        searchDraft([{ path: "/v1/search?name=Berlin", host: "files.demo.example" }]),
+        "Drafted search-places on the geocoding host.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "The geocoding read answered." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    const eventsBefore = vendor.events.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Find a place by name",
+        ignoreExisting: true,
+      });
+      expect(status.status).toBe("succeeded");
+      expect(status.result).toMatchObject({
+        tool: authoredToolName("demo", "search-places"),
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      });
+      // Every request, the proof read's and the dry run's, reached the second host with the
+      // credential the proxy injected, and none reached the primary.
+      const sent = vendor.requests.slice(requestsBefore);
+      expect(sent.map((r) => r.url)).toEqual([
+        "https://files.demo.example/v1/search?name=Berlin",
+        "https://files.demo.example/v1/search?name=Berlin",
+      ]);
+      expect(sent.every((r) => r.headers.get("x-demo-key") === API_KEY)).toBe(true);
+      expect(vendor.events.slice(eventsBefore).map((e) => e.host)).toEqual([
+        "files.demo.example",
+        "files.demo.example",
+      ]);
+      // The model was shown the read on its host, and the trace says where it went.
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      expect(proof?.kind === "proof" ? proof.reads : null).toEqual([
+        expect.objectContaining({
+          path: "/v1/search?name=Berlin",
+          host: "files.demo.example",
+          ok: true,
+          status: 200,
+        }),
+      ]);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(traces.filter((row) => row.kind === "proof").map((row) => row.text)).toEqual([
+        "Proof read GET /v1/search?name=Berlin on files.demo.example: 200.",
+      ]);
+      // The dry run's report names the host, as the host route's reads are recorded (query dropped).
+      const version = store.versions.get(attempts[0]?.versionId ?? "");
+      expect(version?.dryRunOutcome).toMatchObject({
+        passed: true,
+        reads: [{ method: "GET", path: "https://files.demo.example/v1/search?…", status: 200 }],
+        moduleResult: { name: "Berlin", latitude: 52.52 },
+      });
+    } finally {
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+      await runner.idle();
+    }
+  }, 60_000);
+
+  it("refuses a proof read naming a host the connection does not declare, with a sentence and no request, and keeps the draft unpublished", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        searchDraft([
+          { path: "/items?limit=1" },
+          { path: "/v1/search?name=Berlin", host: "geocoding.other.example" },
+        ]),
+        "Drafted search-places.",
+      ),
+      { on: "proof", answer: { kind: "give_up", reason: "The host is not the connection's." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Find a place by name on another host",
+        ignoreExisting: true,
+      });
+      expect(status.status).toBe("failed");
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const reads = proof?.kind === "proof" ? proof.reads : [];
+      expect(reads.map((r) => [r.path, r.host, r.ok, r.status])).toEqual([
+        ["/items?limit=1", null, true, 200],
+        ["/v1/search?name=Berlin", "geocoding.other.example", false, null],
+      ]);
+      expect(reads[1]?.error).toBe(
+        "The proof read names geocoding.other.example, which this connection does not declare (it declares api.demo.example, files.demo.example), so it was not run. " +
+          "A proof read's host is one of those, the same host the module passes as ctx.fetch(path, { host }); name one of them, or null for the primary host. " +
+          "If the tool needs geocoding.other.example, answer give_up with a reason that names it, so the person can connect the vendor with that host in its set.",
+      );
+      // Only the declared read left; nothing was sent for the other host.
+      expect(vendor.requests.slice(requestsBefore).map((r) => new URL(r.url).host)).toEqual([
+        "api.demo.example",
+      ]);
+      const { attempts, traces } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.versionId])).toEqual([[1, null]]);
+      expect(
+        traces.some(
+          (row) =>
+            row.kind === "proof" &&
+            row.text.startsWith(
+              "Proof read GET /v1/search?name=Berlin on geocoding.other.example refused: The proof read names geocoding.other.example",
+            ),
+        ),
+      ).toBe(true);
     } finally {
       await a.close();
       await runner.idle();
@@ -781,6 +1103,8 @@ describe("a job that fails and tries again", () => {
       ],
       advice: [],
       annotations: { readOnly: false, destructive: true },
+      contextMembersUsed: [],
+      blobReadFields: [],
     }) as never;
 
   /**
@@ -790,7 +1114,7 @@ describe("a job that fails and tries again", () => {
    */
   it("writes the draft through the toolbox store when the publish finds nothing at it, and publishes on that", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     const publishBefore = deps.publishTool;
@@ -843,7 +1167,7 @@ describe("a job that fails and tries again", () => {
   /** GRA-141: a store that still misses after the write is waited for, once per configured delay, before the model hears of it. */
   it("waits and asks the store again while it misses, and publishes when it answers", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000, storeMissRetryDelaysMs: [5, 5, 5] };
@@ -880,7 +1204,7 @@ describe("a job that fails and tries again", () => {
   /** Greptile on #114: a store write that fails is traced and the waits still run; the job does not end on it. */
   it("goes on to the waits when writing the draft through the store fails", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     deps.acquire = { maxAttempts: 4, tokenCeiling: 400_000, storeMissRetryDelaysMs: [5, 5] };
@@ -926,7 +1250,7 @@ describe("a job that fails and tries again", () => {
   /** GRA-141: the floor. A store that never answers reaches the model as `publish_refused`, as before. */
   it("shows the model the draft-missing refusal only once the store write and every wait have missed", async () => {
     deps.model = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
       {
         on: "publish_refused",
@@ -965,7 +1289,7 @@ describe("a job that fails and tries again", () => {
 
   it("acquire waits for the job and answers the result when it settles in time; acquire_status waits for news", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     deps.model = scripted;
@@ -1004,6 +1328,64 @@ describe("a job that fails and tries again", () => {
     }
   }, 30_000);
 
+  /**
+   * A job runs on the scheduler, not on the call that queued it (Greptile on #144): the blobs its
+   * dry run writes while the `acquire` call is still waiting are counted on the job's own event,
+   * and the call's `tool_called` event reports none.
+   */
+  it("counts a job's dry-run blobs on the job's finished event, and none on the acquire call that waited for it", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({
+          name: "save-items",
+          files: [{ path: "index.ts", content: BLOB_WRITER_MODULE }],
+          proofReads: [{ path: "/items?limit=1" }],
+        }),
+        "Drafted save-items.",
+      ),
+      { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
+    ]);
+    deps.model = scripted;
+    const waitBefore = deps.handoff.waitMs;
+    deps.handoff = { ...deps.handoff, waitMs: 20_000, pollMs: 25 };
+    const blobsBefore = store.blobs.length;
+    const runnerBefore = runnerEvents.length;
+    const a = await connect(TOKEN_A);
+    try {
+      const settled = body<AcquireStatus>(
+        await a.call("acquire", {
+          connectionId: CONN_DEMO,
+          goal: "Save the items as a file",
+          ignoreExisting: true,
+        }),
+      );
+      expect(settled.status).toBe("succeeded");
+      await runner.idle();
+
+      // The dry run wrote one blob, the job's row, for the job's agent.
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({
+        agentId: AGENT_A,
+        contentType: "application/json",
+      });
+
+      // Counted where the job reports it, and nowhere on the call that queued it and waited.
+      const finished = runnerEvents
+        .slice(runnerBefore)
+        .find((event) => event.kind === "finished" && event.jobId === settled.jobId);
+      expect(finished).toMatchObject({ kind: "finished", blobsWritten: 1, blobsDropped: 0 });
+      const call = toolEvents.findLast((event) => event.tool === "acquire");
+      expect(call).toMatchObject({ outcome: "ok", detail: { jobId: settled.jobId } });
+      expect(call?.detail?.blobs ?? 0).toBe(0);
+      expect(call?.detail?.blobsDropped ?? 0).toBe(0);
+    } finally {
+      deps.handoff = { ...deps.handoff, waitMs: waitBefore, pollMs: undefined };
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
   it("acquire_status holds its call until a progress line newer than the caller's arrives", async () => {
     // A model turn that waits to be released: the job sits in its first turn until `release`.
     let release: () => void = () => undefined;
@@ -1011,7 +1393,7 @@ describe("a job that fails and tries again", () => {
       release = resolve;
     });
     const scripted = createScriptedModel([
-      write("goal", draft({ proofReads: ["/items?limit=1"] }), "Drafted list-items."),
+      write("goal", draft({ proofReads: [{ path: "/items?limit=1" }] }), "Drafted list-items."),
       { on: "proof", answer: { kind: "proceed", note: "Publishing." } },
     ]);
     deps.model = {
@@ -1145,13 +1527,13 @@ describe("a job that fails and tries again", () => {
     const scripted = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-proven", path: "/nope", proofReads: ["/nope"] }),
+        draft({ name: "list-proven", path: "/nope", proofReads: [{ path: "/nope" }] }),
         "Drafted around GET /nope.",
       ),
       { on: "proof", answer: { kind: "proceed", note: "Publishing despite the 404." } },
       write(
         "proof",
-        draft({ name: "list-proven", proofReads: ["/items?limit=1"] }),
+        draft({ name: "list-proven", proofReads: [{ path: "/items?limit=1" }] }),
         "The documented path is /items.",
       ),
       { on: "proof", answer: { kind: "proceed", note: "Every read answered." } },
@@ -1202,7 +1584,7 @@ describe("a job that fails and tries again", () => {
     deps.model = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-stubborn", path: "/nope", proofReads: ["/nope"] }),
+        draft({ name: "list-stubborn", path: "/nope", proofReads: [{ path: "/nope" }] }),
         "Drafted around GET /nope.",
       ),
       { on: "proof", answer: { kind: "proceed", note: "Publishing anyway." } },
@@ -1235,6 +1617,71 @@ describe("a job that fails and tries again", () => {
     }
   }, 30_000);
 
+  it("names a proof read whose run failed with the runner's sentence and its stderr, joined without an em dash", async () => {
+    // The probe is Graft's own module; a run of it the runner cannot finish (the process exits
+    // here, as a kill or a timeout ends it) is reported as the run's sentence and its stderr tail,
+    // which reach the model and the trace, and Graft's copy has no em dash (GRA-212).
+    const ensure = sandbox.ensure;
+    sandbox.ensure = async (options) => {
+      const opened = await ensure(options);
+      // A view of the backing's handle, never the handle itself: the backing keeps one per agent,
+      // and a later test must write the real probe through it.
+      const real = opened.handle;
+      const handle: typeof real = Object.create(real);
+      handle.writeTree = (files, destination) =>
+        real.writeTree(
+          destination.endsWith("/.probe")
+            ? [
+                {
+                  path: "index.mjs",
+                  content: [
+                    "export default async () => {",
+                    '  console.error("the probe wrote to stderr");',
+                    "  process.exit(3);",
+                    "};",
+                    "",
+                  ].join("\n"),
+                },
+              ]
+            : files,
+          destination,
+        );
+      return { ...opened, handle };
+    };
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "list-probed", proofReads: [{ path: "/items?limit=1" }] }),
+        "Drafted list-probed.",
+      ),
+      { on: "proof", answer: { kind: "give_up", reason: "The probe would not run." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "List the items through a probe that throws",
+      });
+      expect(status.status).toBe("failed");
+      const shown = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const read = shown?.kind === "proof" ? shown.reads[0] : undefined;
+      expect(read?.ok).toBe(false);
+      // The run's sentence, then its stderr tail after a colon.
+      expect(read?.error).toBe(
+        "The tool failed (exit code 3): the probe wrote to stderr: the probe wrote to stderr",
+      );
+      expect(read?.error).not.toContain("\u2014");
+      const failed = rowsOf(jobId).traces.find((row) => row.kind === "vendor_error");
+      expect(failed?.text).toContain("the probe wrote to stderr");
+      expect(failed?.text).not.toContain("\u2014");
+      for (const line of status.progress) expect(line).not.toContain("\u2014");
+    } finally {
+      sandbox.ensure = ensure;
+      await a.close();
+    }
+  }, 30_000);
+
   /**
    * The network's answer is not the vendor's (GRA-79): the job ends on the first proof read the
    * proxy could not make, naming the host, the reason and the code, and the model is never shown
@@ -1244,7 +1691,11 @@ describe("a job that fails and tries again", () => {
     const scripted = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-unreachable", path: "/unreachable", proofReads: ["/unreachable"] }),
+        draft({
+          name: "list-unreachable",
+          path: "/unreachable",
+          proofReads: [{ path: "/unreachable" }],
+        }),
         "Reading /unreachable first.",
       ),
     ]);
@@ -1495,6 +1946,7 @@ describe("a job that fails and tries again", () => {
         expect.stringContaining("v2 is already current"),
       );
       expect(status.progress.at(-1)).toContain("so demo__list-raced runs as v2");
+      expect(status.progress.at(-1)).not.toContain("\u2014");
     } finally {
       deps.tool.recordToolVersionDryRun = record;
       await a.close();
@@ -1746,6 +2198,9 @@ describe("a job that fails and tries again", () => {
         status: "failed",
         failure:
           "sandbox_unavailable: The sandbox is unavailable: Drives feature is not enabled for this workspace; authorization: Bearer [redacted] (403)",
+        // No sandbox, so no run and no blob: the job's own tally, zeros included (GRA-186).
+        blobsWritten: 0,
+        blobsDropped: 0,
         attempts: 1,
         tokenSpend: 600,
       });
@@ -1790,7 +2245,11 @@ describe("a job that fails and tries again", () => {
 
   it("tells the model a redirected proof read is about the host set: an undeclared host is named, and give_up carries it", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ name: "list-moved", proofReads: ["/moved"] }), "Reading /moved."),
+      write(
+        "goal",
+        draft({ name: "list-moved", proofReads: [{ path: "/moved" }] }),
+        "Reading /moved.",
+      ),
       {
         on: "proof",
         answer: {
@@ -1849,7 +2308,7 @@ describe("a job that fails and tries again", () => {
     const scripted = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-moved-rel", proofReads: ["/moved-relative#top"] }),
+        draft({ name: "list-moved-rel", proofReads: [{ path: "/moved-relative#top" }] }),
         "Reading.",
       ),
       { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
@@ -1873,7 +2332,11 @@ describe("a job that fails and tries again", () => {
 
   it("says a redirect to another port is out of the proxy's reach, whatever the host set declares", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ name: "list-moved-port", proofReads: ["/moved-port"] }), "Reading."),
+      write(
+        "goal",
+        draft({ name: "list-moved-port", proofReads: [{ path: "/moved-port" }] }),
+        "Reading.",
+      ),
       { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
     ]);
     deps.model = scripted;
@@ -1890,9 +2353,13 @@ describe("a job that fails and tries again", () => {
     }
   });
 
-  it("describes a redirect to a declared host as the module's to follow through ctx.proxyBase", async () => {
+  it("describes a redirect to a declared host as the module's to follow with ctx.fetch(path, { host }), and the proof's to read there", async () => {
     const scripted = createScriptedModel([
-      write("goal", draft({ name: "list-moved-home", proofReads: ["/moved-home"] }), "Reading."),
+      write(
+        "goal",
+        draft({ name: "list-moved-home", proofReads: [{ path: "/moved-home" }] }),
+        "Reading.",
+      ),
       { on: "proof", answer: { kind: "give_up", reason: "Stopping here for the test." } },
     ]);
     deps.model = scripted;
@@ -1909,8 +2376,14 @@ describe("a job that fails and tries again", () => {
       expect(read?.error).toContain(
         "redirected GET /moved-home to files.demo.example/v3/archive?since=2024, a host this connection declares",
       );
+      // GRA-213: the hand-written form first, the proof read's shape beside it, the SDK's base last.
+      expect(read?.error).toContain(
+        'ctx.fetch("/v3/archive?since=2024", { host: "files.demo.example" })',
+      );
+      expect(read?.error).toContain(
+        'the proof read is { path: "/v3/archive?since=2024", host: "files.demo.example" }',
+      );
       expect(read?.error).toContain('ctx.proxyBase("files.demo.example")');
-      expect(read?.error).toContain("/v3/archive?since=2024 is the path the vendor wants there");
     } finally {
       await a.close();
     }
@@ -1922,7 +2395,11 @@ describe("what the rows hold", () => {
     deps.model = createScriptedModel([
       write(
         "goal",
-        draft({ name: "list-secrets", path: "/secret-echo", proofReads: ["/secret-echo"] }),
+        draft({
+          name: "list-secrets",
+          path: "/secret-echo",
+          proofReads: [{ path: "/secret-echo" }],
+        }),
         "Drafted list-secrets around GET /secret-echo.",
       ),
       { on: "proof", answer: { kind: "give_up", reason: "The vendor refuses the credential." } },
@@ -1972,6 +2449,57 @@ describe("what the rows hold", () => {
     }
   }, 30_000);
 
+  it("records a binary proof read as a sentence, never its bytes: the row is written and the job goes on to the model (GRA-201)", async () => {
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        draft({ name: "read-workbook", path: "/workbook", proofReads: [{ path: "/workbook" }] }),
+        "Drafted read-workbook around GET /workbook.",
+      ),
+      {
+        on: "proof",
+        answer: { kind: "give_up", reason: "The workbook is bytes, not a shape to build on." },
+      },
+    ]);
+    const a = await connect(TOKEN_A);
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Read the workbook",
+      });
+      // The model was asked, and answered; the job did not die on the trace write.
+      expect(status.status).toBe("failed");
+      expect(status.result).toMatchObject({ failure: "model_gave_up" });
+
+      const { job, attempts, traces } = rowsOf(jobId);
+      const proof = traces.find((row) => row.kind === "proof");
+      expect(proof?.text).toBe("Proof read GET /workbook: 200.");
+      expect(proof?.data).toEqual({
+        path: "/workbook",
+        host: null,
+        status: 200,
+        body: WORKBOOK_SENTENCE,
+      });
+      const everything = JSON.stringify({ job, attempts, traces, status });
+      expect(everything).not.toContain("\u0000");
+      expect(everything).not.toContain("PK\u0003\u0004");
+      // A 200 still proves the path: the read passed, and the model saw the sentence in its place.
+      const model = deps.model as ReturnType<typeof createScriptedModel>;
+      const situation = model.conversations[0]?.situations[1];
+      expect(situation?.kind).toBe("proof");
+      expect(situation?.kind === "proof" ? situation.reads : []).toEqual([
+        expect.objectContaining({
+          path: "/workbook",
+          ok: true,
+          status: 200,
+          body: WORKBOOK_SENTENCE,
+        }),
+      ]);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
   it("never writes to the vendor: a tool that creates an order is dry-run with the write previewed, and the vendor saw only reads", async () => {
     deps.checkModule = checkModule;
     deps.model = createScriptedModel([
@@ -1983,7 +2511,7 @@ describe("what the rows hold", () => {
           inputSchema: CREATE_ORDER_SCHEMA,
           files: [{ path: "index.ts", content: CREATE_ORDER_MODULE }],
           testInput: { itemId: "itm_1", quantity: 2 },
-          proofReads: ["/items?limit=1"],
+          proofReads: [{ path: "/items?limit=1" }],
         },
         "Drafted create-order around POST /orders.",
       ),
@@ -2023,6 +2551,8 @@ describe("what the rows hold", () => {
         refusals: [],
         advice: [],
         annotations: { readOnly: true, destructive: false },
+        contextMembersUsed: [],
+        blobReadFields: [],
       });
       await a.close();
     }
@@ -2112,7 +2642,364 @@ describe("what the rows hold", () => {
         refusals: [],
         advice: [],
         annotations: { readOnly: true, destructive: false },
+        contextMembersUsed: [],
+        blobReadFields: [],
       });
+      await a.close();
+    }
+  }, 60_000);
+});
+
+/**
+ * A file between two tools (GRA-190; ADR 0023), as the loop authors each half: a producing tool
+ * whose module writes the vendor's body as a blob, and a consuming tool whose dry run has to have a
+ * blob to read — the one the test input names when it is live, a fixture the job mints when it
+ * names none or a dead one. Both through the real check, since `ctx.blob` is what it types.
+ */
+describe("a tool that moves a file (GRA-190)", () => {
+  const REF = /^blob:\/\/[0-9a-f-]{36}$/;
+  const DEAD_REF = "blob://00000000-0000-4000-8000-000000000000";
+  const FIXTURE_LINE = new RegExp(
+    `so a fixture blob \\(\\d+ bytes of ${FIXTURE_BLOB_CONTENT_TYPE}, ${FIXTURE_BLOB_NAME.replace(".", "\\.")}\\) stands in`,
+  );
+  /** The ref the producing tool answers in (a), read by (b). */
+  let liveRef = "";
+  /** A failed job's result as the assertion's message, so the failure is named rather than "failed". */
+  const failureOf = (status: AcquireStatus) =>
+    status.status === "succeeded" ? "" : JSON.stringify(status.result, null, 1);
+
+  const dryRunOf = (jobId: string) => {
+    const { attempts } = rowsOf(jobId);
+    return store.versions.get(attempts.at(-1)?.versionId ?? "")?.dryRunOutcome as {
+      passed: boolean;
+      writesPreviewed: { method: string; path: string }[];
+      moduleResult: Record<string, unknown> | null;
+    };
+  };
+
+  it("substitutes every dead ref, nested included, and nothing else", () => {
+    const dead = new Set([DEAD_REF]);
+    expect(
+      substituteBlobRefs(
+        {
+          file: DEAD_REF,
+          channel: "finance",
+          more: [DEAD_REF, "blob://other"],
+          meta: { f: DEAD_REF },
+        },
+        dead,
+        "blob://fixture",
+      ),
+    ).toEqual({
+      file: "blob://fixture",
+      channel: "finance",
+      more: ["blob://fixture", "blob://other"],
+      meta: { f: "blob://fixture" },
+    });
+  });
+
+  it("(a) a producing tool whose module writes a blob publishes, dry-runs and promotes; its run answers the ref and the ledger and the vendor's bytes are the blob", async () => {
+    deps.checkModule = checkModule;
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        {
+          name: "export-file",
+          description: "Downloads the Demo Orders export as a file.",
+          inputSchema: EXPORT_FILE_SCHEMA,
+          files: [{ path: "index.ts", content: EXPORT_FILE_MODULE }],
+          testInput: { id: "exp_1" },
+          proofReads: [],
+        },
+        "Drafted export-file: the export's bytes go to ctx.blob.write.",
+      ),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Download the latest export as a file",
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      expect(status.result).toMatchObject({
+        tool: EXPORT_FILE,
+        // Writing a blob moves no annotation (ADR 0023): a download that writes one stays read-only.
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      });
+      expect(status.progress.join("\n")).not.toContain("fixture");
+      // The dry run wrote a real blob under the mount and it got its row, with the version.
+      const dry = dryRunOf(jobId);
+      expect(dry).toMatchObject({ passed: true, writesPreviewed: [] });
+      expect(dry.moduleResult?.file).toMatch(REF);
+      const { attempts } = rowsOf(jobId);
+      expect(store.blobs.slice(blobsBefore)).toEqual([
+        expect.objectContaining({
+          personId: PERSON,
+          agentId: AGENT_A,
+          versionId: attempts[0]?.versionId,
+          bytes: EXPORT_BYTES.length,
+          contentType: "application/pdf",
+          name: "invoice.pdf",
+        }),
+      ]);
+
+      // The first-class run: the ref where a caller would look, the ledger beside it, no byte on the wire.
+      const result = await a.call("run_tool", {
+        vendor: "demo",
+        name: "export-file",
+        input: { id: "exp_2" },
+      });
+      expect(result.isError).toBeFalsy();
+      const answer = body<{
+        result: { file: string; name: string };
+        blobs: Record<string, unknown>[];
+      }>(result);
+      expect(answer.result).toEqual({ file: expect.stringMatching(REF), name: "invoice.pdf" });
+      expect(answer.blobs).toEqual([
+        {
+          ref: answer.result.file,
+          bytes: EXPORT_BYTES.length,
+          contentType: "application/pdf",
+          name: "invoice.pdf",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      liveRef = answer.result.file;
+      const id = liveRef.slice("blob://".length);
+      const data = await readFile(join(sandbox.blobsRoot(AGENT_A), id, "data"));
+      expect(new Uint8Array(data)).toEqual(EXPORT_BYTES);
+    } finally {
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+    }
+  }, 60_000);
+
+  it("(b) a consuming tool whose test input names a live ref dry-runs against it, the write is intercepted, and no fixture is minted", async () => {
+    expect(liveRef).toMatch(REF);
+    deps.checkModule = checkModule;
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        uploadDraft({ file: liveRef, channel: "finance" }),
+        "Drafted upload-file around POST /files/upload with the blob in a FormData.",
+      ),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = vendor.events.length;
+    const requestsBefore = vendor.requests.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Upload a file to a channel",
+        hints: `The file to upload is ${liveRef}`,
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      expect(status.result).toMatchObject({
+        tool: UPLOAD_FILE,
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      });
+      expect(status.progress.join("\n")).not.toContain("fixture");
+      const { traces } = rowsOf(jobId);
+      expect(traces.map((row) => row.text)).toContain(
+        "The test input names 1 live blob(s); the dry run reads it.",
+      );
+      // The write stopped at the proxy as a preview; the vendor saw no request at all.
+      expect(vendor.events.slice(eventsBefore).map((e) => e.outcome)).toContain(
+        "dry_run_intercepted",
+      );
+      expect(vendor.requests.slice(requestsBefore)).toEqual([]);
+      const dry = dryRunOf(jobId);
+      expect(dry.passed).toBe(true);
+      expect(dry.writesPreviewed).toEqual([
+        expect.objectContaining({ method: "POST", path: expect.stringContaining("/files/upload") }),
+      ]);
+      expect(dry.moduleResult).toMatchObject({ uploaded: liveRef, bytes: EXPORT_BYTES.length });
+      expect(store.blobs).toHaveLength(blobsBefore);
+    } finally {
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+    }
+  }, 60_000);
+
+  it("(c) with no ref in the test input, the job mints a fixture blob through the runner, says so, dry-runs against it and passes; the draft's test input is untouched", async () => {
+    deps.checkModule = checkModule;
+    const draft = uploadDraft({ channel: "finance" });
+    deps.model = createScriptedModel([
+      write("goal", draft, "Drafted upload-file; no file to hand, so the test input names none."),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    // Every budget grant the job takes, with what an admission made while it was held would get
+    // (Greptile on #149): the fixture's write reserves its budget as a run does.
+    const registry = deps.inFlight as InFlightRegistry;
+    const grants: { bytes: number; outstanding: number; overlapping: Promise<number> }[] = [];
+    deps.inFlight = {
+      ...registry,
+      grant: (agentId, bytes) => {
+        const release = registry.grant(agentId, bytes);
+        grants.push({
+          bytes,
+          outstanding: registry.outstandingBudget(agentId),
+          overlapping: admitBlobs(deps, { personId: PERSON, agentId }, {}).then((door) =>
+            door.ok ? door.admission.budgetBytes : -1,
+          ),
+        });
+        return release;
+      },
+    };
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Upload a file to a channel",
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      const line = status.progress.find((entry) => FIXTURE_LINE.test(entry));
+      expect(line).toMatch(
+        /^Attempt 1: the test input names no blob and the module reads one from input\.file, so a fixture blob \(\d+ bytes of text\/plain, fixture\.txt\) stands in as input\.file in the dry run's input alone; the test input itself is unchanged\.$/,
+      );
+      // Two grants: the fixture's, then the dry run's. The fixture's was the whole remainder and
+      // outstanding while it wrote, so an admission overlapping it got what was left after it;
+      // the dry run's, taken after the release, is the remainder after the fixture's bytes alone.
+      expect(grants).toHaveLength(2);
+      const [fixtureGrant, dryRunGrant] = grants as [
+        (typeof grants)[number],
+        (typeof grants)[number],
+      ];
+      expect(fixtureGrant.outstanding).toBe(fixtureGrant.bytes);
+      expect(fixtureGrant.bytes).toBeGreaterThan(0);
+      expect(await fixtureGrant.overlapping).toBe(
+        Math.max(
+          0,
+          BLOB_QUOTA_BYTES - (BLOB_QUOTA_BYTES - fixtureGrant.bytes) - fixtureGrant.bytes,
+        ),
+      );
+      expect(dryRunGrant.outstanding).toBe(dryRunGrant.bytes);
+      // One row for the fixture: the agent's, a few hundred bytes of text, no version, the normal TTL.
+      const rows = store.blobs.slice(blobsBefore);
+      expect(rows).toHaveLength(1);
+      const fixture = rows[0];
+      expect(fixture).toMatchObject({
+        personId: PERSON,
+        agentId: AGENT_A,
+        versionId: null,
+        contentType: FIXTURE_BLOB_CONTENT_TYPE,
+        name: FIXTURE_BLOB_NAME,
+        removedAt: null,
+      });
+      expect(fixture?.bytes).toBeGreaterThan(200);
+      expect(fixture?.bytes).toBeLessThan(1_000);
+      expect(dryRunGrant.bytes).toBe(fixtureGrant.bytes - (fixture?.bytes ?? 0));
+      expect((fixture?.expiresAt.getTime() ?? 0) - Date.now()).toBeGreaterThan(23 * 60 * 60 * 1000);
+      expect(line).toContain(`(${fixture?.bytes} bytes of`);
+      // Written through the same path as any blob: the directory under the agent's mount, whole.
+      const dir = join(sandbox.blobsRoot(AGENT_A), fixture?.id ?? "");
+      expect((await readdir(dir)).sort()).toEqual(["data", "meta.json"]);
+      const text = await readFile(join(dir, "data"), "utf8");
+      expect(text).toContain("A fixture blob.");
+      expect(text).toContain(jobId);
+      expect(text).toContain(UPLOAD_FILE);
+      expect(JSON.parse(await readFile(join(dir, "meta.json"), "utf8"))).toMatchObject({
+        agentId: AGENT_A,
+        toolVersion: null,
+        contentType: FIXTURE_BLOB_CONTENT_TYPE,
+        name: FIXTURE_BLOB_NAME,
+      });
+      // The dry run read the fixture and previewed the upload.
+      const dry = dryRunOf(jobId);
+      expect(dry.passed).toBe(true);
+      expect(dry.moduleResult).toMatchObject({
+        uploaded: `blob://${fixture?.id}`,
+        bytes: fixture?.bytes,
+      });
+      expect(dry.writesPreviewed).toEqual([
+        expect.objectContaining({ method: "POST", path: expect.stringContaining("/files/upload") }),
+      ]);
+      // The substitution was the dry run's alone.
+      expect(draft.testInput).toEqual({ channel: "finance" });
+    } finally {
+      deps.inFlight = registry;
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+    }
+  }, 60_000);
+
+  it("(e) a module that spells ctx.blob.read in a comment and a string, and calls nothing of the kind, mints no fixture", async () => {
+    deps.checkModule = checkModule;
+    deps.model = createScriptedModel([
+      write(
+        "goal",
+        {
+          name: "post-note",
+          description: "Posts a note to a Demo Orders channel.",
+          inputSchema: NOTE_ONLY_SCHEMA,
+          files: [{ path: "index.ts", content: NOTE_ONLY_MODULE }],
+          testInput: { channel: "finance" },
+          proofReads: [],
+        },
+        "Drafted post-note; it reads no blob.",
+      ),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Post a note to a channel",
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      expect(status.progress.join("\n")).not.toContain("fixture");
+      expect(store.blobs).toHaveLength(blobsBefore);
+      const { traces } = rowsOf(jobId);
+      expect(traces.map((row) => row.text).join("\n")).not.toContain("fixture");
+      expect(dryRunOf(jobId).passed).toBe(true);
+    } finally {
+      deps.checkModule = FAKE_CHECK;
+      await a.close();
+    }
+  }, 60_000);
+
+  it("(d) a ref dead at the door is replaced by a fixture the same way, and the line names the ref and the reason", async () => {
+    deps.checkModule = checkModule;
+    const draft = uploadDraft({ file: DEAD_REF, channel: "finance" });
+    deps.model = createScriptedModel([
+      write("goal", draft, "Drafted upload-file with the ref from the hints."),
+    ]);
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Upload a file to a channel",
+        hints: `The file to upload is ${DEAD_REF}`,
+        ignoreExisting: true,
+      });
+      expect(status.status, failureOf(status)).toBe("succeeded");
+      const line = status.progress.find((entry) => FIXTURE_LINE.test(entry));
+      expect(line).toMatch(
+        new RegExp(
+          `^Attempt 1: the test input's ref is dead at the door \\(${DEAD_REF} blob_not_found\\), so a fixture blob \\(\\d+ bytes of text/plain, fixture\\.txt\\) stands in for it in the dry run's input alone; the test input itself is unchanged\\.$`,
+        ),
+      );
+      const rows = store.blobs.slice(blobsBefore);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        agentId: AGENT_A,
+        versionId: null,
+        name: FIXTURE_BLOB_NAME,
+        contentType: FIXTURE_BLOB_CONTENT_TYPE,
+      });
+      const dry = dryRunOf(jobId);
+      expect(dry.passed).toBe(true);
+      expect(dry.moduleResult?.uploaded).toBe(`blob://${rows[0]?.id}`);
+      expect(draft.testInput).toEqual({ file: DEAD_REF, channel: "finance" });
+    } finally {
+      deps.checkModule = FAKE_CHECK;
       await a.close();
     }
   }, 60_000);

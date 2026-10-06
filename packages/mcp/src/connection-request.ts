@@ -708,6 +708,85 @@ export function existingConnectionFor(
 }
 
 /**
+ * What the routing half of `request_connection` did with a proposal (GRA-203; ADR 0024), before
+ * anyone waits for the person. Four answers:
+ *
+ * - `connected`: a connection answers the proposal with no ask — a usable row in this agent's
+ *   scope (`already`), or one a provider with no person step made (`provider`) or widened
+ *   (`widened`) in this call.
+ * - `connection`: this agent's `connection` ask about the proposal, opened here or re-used (an
+ *   open one, or one answered and not yet taken). `payload` is the ask as it stands, which a
+ *   provider may have stepped aside from (GRA-147). `widens` is the row the ask widens (GRA-167)
+ *   when this call routed to a widening, and null otherwise.
+ * - `scope`: this agent's `scope` ask about `connection`, a usable row of the person's the agent
+ *   was not given (GRA-104), opened here or re-used.
+ * - `refused`: the proposal's shape, an existing row's verdict (`connection_exists`, GRA-76) or a
+ *   no-step provider's two guards, with the reason word, the sentence and its details.
+ */
+export type RoutedProposal =
+  | { kind: "connected"; connection: ConnectionOutput; how: "already" | "widened" | "provider" }
+  | {
+      kind: "connection";
+      pendingActionId: string;
+      action: PendingActionRow;
+      payload: ConnectionProposalPayload;
+      widens: ConnectionOutput | null;
+    }
+  | {
+      kind: "scope";
+      pendingActionId: string;
+      action: PendingActionRow;
+      payload: ScopeAskPayload;
+      connection: ConnectionOutput;
+    }
+  | { kind: "refused"; reason: string; message: string; details: Record<string, unknown> };
+
+/**
+ * The routing's answer, with the hosts the normalised proposal reaches and the sign-in hosts set
+ * aside from it (GRA-89) beside it; both are empty when the proposal was refused for its shape.
+ */
+export type ConnectionRouting = RoutedProposal & {
+  hosts: string[];
+  hostsSetAside: string[];
+};
+
+/** What the routing reads and writes: the connection, agent and pending-action seams, and the handoff's TTL. */
+export type ConnectionRoutingDeps = Pick<
+  McpDeps,
+  "connection" | "agent" | "pendingAction" | "listPendingActionsByKind" | "lockPendingActionKey"
+> & { handoff: Pick<McpDeps["handoff"], "ttlMs"> };
+
+/**
+ * The routing half of `request_connection` (GRA-203; ADR 0024): the proposal normalised and routed
+ * to the provider that covers it, a no-step provider's row made at once, an open ask re-used by
+ * its proposal key, the person's existing rows judged, and otherwise a `connection` ask inserted.
+ * It never waits and never polls: the MCP tool waits after it (`requestConnection`), and a console
+ * route that opens the agent's own ask calls it alone. `notifier` is told when a no-step provider
+ * makes the row, as `connected.ts` says the maker must.
+ */
+export async function routeConnectionProposal(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  input: ConnectionProposalInput,
+  deps: ConnectionRoutingDeps,
+  notifier?: Pick<ToolListChangedNotifier, "changed">,
+): Promise<ConnectionRouting> {
+  const verdict = normaliseProposal(input);
+  if (!verdict.ok) {
+    return {
+      kind: "refused",
+      reason: verdict.reason,
+      message: verdict.message,
+      details: verdict.details,
+      hosts: [],
+      hostsSetAside: [],
+    };
+  }
+  const routed = await routeProposal(ctx, scope, verdict.payload, deps, notifier);
+  return { ...routed, hosts: verdict.payload.hosts, hostsSetAside: verdict.hostsSetAside };
+}
+
+/**
  * `request_connection`: propose, and wait for the person to create the connection in the console.
  *
  * A connection to the same vendor reaching every proposed host, already in the agent's scope and
@@ -726,10 +805,31 @@ export async function requestConnection(
   deps: McpDeps,
   notifier?: ToolListChangedNotifier,
 ): Promise<ConnectionRequestOutcome> {
-  const verdict = normaliseProposal(input);
-  if (!verdict.ok) return refuse(verdict.reason, verdict.message, verdict.details);
-  const outcome = await routeProposal(ctx, scope, verdict.payload, deps, notifier);
-  return namingHostsSetAside(outcome, verdict.hostsSetAside, verdict.payload.hosts);
+  const routing = await routeConnectionProposal(ctx, scope, input, deps, notifier);
+  const outcome = await awaitRoutedProposal(ctx, scope, routing, deps, notifier);
+  return namingHostsSetAside(outcome, routing.hostsSetAside, routing.hosts);
+}
+
+/** The wait half: what each routing answer says to the agent, after the person's answer or the wait's end. */
+function awaitRoutedProposal(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  routed: RoutedProposal,
+  deps: McpDeps,
+  notifier?: ToolListChangedNotifier,
+): Promise<ConnectionRequestOutcome> {
+  switch (routed.kind) {
+    case "connected":
+      return Promise.resolve({ isError: false, answer: connected(routed.connection, routed.how) });
+    case "refused":
+      return Promise.resolve(refuse(routed.reason, routed.message, routed.details));
+    case "scope":
+      return awaitScope(ctx, scope, routed.action, routed.connection, deps, notifier);
+    case "connection":
+      return routed.widens
+        ? awaitWidening(ctx, scope, routed.action, routed.widens, deps)
+        : awaitConnectionAsk(ctx, scope, routed.action, routed.payload, deps);
+  }
 }
 
 /**
@@ -774,9 +874,9 @@ async function routeProposal(
   ctx: ServiceContext,
   scope: AgentScope,
   proposal: Omit<ConnectionProposalPayload, "provider">,
-  deps: McpDeps,
-  notifier?: ToolListChangedNotifier,
-): Promise<ConnectionRequestOutcome> {
+  deps: ConnectionRoutingDeps,
+  notifier?: Pick<ToolListChangedNotifier, "changed">,
+): Promise<RoutedProposal> {
   // A keyless proposal passes every link provider by (GRA-166): the keyring's one-click confirmation
   // beats a vendor sign-in the calls never need.
   const provider = await providerFor(
@@ -828,15 +928,20 @@ async function routeProposal(
       // A scope ask the person has answered and this agent has not read yet is taken first, so the
       // call that follows an Allow says so rather than "already connected, no ask was made".
       const answered = await openScopeAskFor(ctx, scope, existing.connection.id, deps);
-      if (answered) return awaitScope(ctx, scope, answered, existing.connection, deps, notifier);
+      if (answered) return scopeAsk(answered, existing.connection);
       // Likewise a widening the person confirmed (GRA-167): the row now covers the proposal, which
       // is why this branch is reached, and the answer is taken so the call says what happened.
       const widened = await answeredWideningFor(ctx, scope, existing.connection.id, deps);
-      if (widened) return awaitWidening(ctx, scope, widened, existing.connection, deps);
-      return { isError: false, answer: connected(existing.connection, "already") };
+      if (widened) return wideningAsk(widened, existing.connection);
+      return { kind: "connected", connection: existing.connection, how: "already" };
     }
     if (existing?.kind === "refuse") {
-      return refuse(existing.reason, existing.message, existing.details);
+      return {
+        kind: "refused",
+        reason: existing.reason,
+        message: existing.message,
+        details: existing.details,
+      };
     }
     if (existing?.kind === "widen") {
       return askToWiden(ctx, scope, existing.connection, existing.addedHosts, payload, deps);
@@ -865,7 +970,7 @@ async function routeProposal(
           )
         );
       });
-      return awaitScope(ctx, scope, action, connection, deps, notifier);
+      return scopeAsk(action, connection);
     }
   }
 
@@ -885,6 +990,42 @@ async function routeProposal(
   const asked = (
     open ? (open.payload as ConnectionProposalPayload) : payload
   ) satisfies ConnectionProposalPayload;
+  return { kind: "connection", pendingActionId: action.id, action, payload: asked, widens: null };
+}
+
+/** A `scope` ask as the routing answers it. */
+function scopeAsk(action: PendingActionRow, connection: ConnectionOutput): RoutedProposal {
+  return {
+    kind: "scope",
+    pendingActionId: action.id,
+    action,
+    payload: action.payload as unknown as ScopeAskPayload,
+    connection,
+  };
+}
+
+/** A widening ask (GRA-167) as the routing answers it: a `connection` ask naming the row it widens. */
+function wideningAsk(action: PendingActionRow, connection: ConnectionOutput): RoutedProposal {
+  return {
+    kind: "connection",
+    pendingActionId: action.id,
+    action,
+    payload: action.payload as unknown as ConnectionProposalPayload,
+    widens: connection,
+  };
+}
+
+/**
+ * A new-connection ask's wait: the awaiting answer worded for the ask as it stands — a link
+ * provider's button, an OAuth client to register, a secret to enter, or a keyless confirmation.
+ */
+function awaitConnectionAsk(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  action: PendingActionRow,
+  asked: ConnectionProposalPayload,
+  deps: McpDeps,
+): Promise<ConnectionRequestOutcome> {
   const askedLink = asked.providerConnect === "link";
   const askedProvider = asked.provider;
 
@@ -968,8 +1109,8 @@ async function askToWiden(
   connection: ConnectionOutput,
   addedHosts: readonly string[],
   proposal: Omit<ConnectionProposalPayload, "provider">,
-  deps: McpDeps,
-): Promise<ConnectionRequestOutcome> {
+  deps: ConnectionRoutingDeps,
+): Promise<RoutedProposal> {
   const union = [...new Set([...connection.hosts, ...addedHosts])];
   const payload: ConnectionProposalPayload = {
     provider: KEYRING_PROVIDER,
@@ -1012,7 +1153,7 @@ async function askToWiden(
       )
     );
   });
-  return awaitWidening(ctx, scope, action, connection, deps);
+  return wideningAsk(action, connection);
 }
 
 /**
@@ -1024,7 +1165,7 @@ async function answeredWideningFor(
   ctx: ServiceContext,
   scope: AgentScope,
   connectionId: string,
-  deps: McpDeps,
+  deps: Pick<McpDeps, "listPendingActionsByKind" | "pendingAction">,
 ): Promise<PendingActionRow | null> {
   const rows = await deps.listPendingActionsByKind(
     ctx.db,
@@ -1093,7 +1234,7 @@ async function openScopeAskFor(
   ctx: ServiceContext,
   scope: AgentScope,
   connectionId: string,
-  deps: McpDeps,
+  deps: Pick<McpDeps, "listPendingActionsByKind" | "pendingAction">,
 ): Promise<PendingActionRow | null> {
   const rows = await deps.listPendingActionsByKind(
     ctx.db,
@@ -1174,9 +1315,9 @@ async function connectWithoutPersonStep(
   scope: AgentScope,
   provider: ConnectionProvider,
   payload: Omit<ConnectionProposalPayload, "provider">,
-  deps: McpDeps,
-  notifier?: ToolListChangedNotifier,
-): Promise<ConnectionRequestOutcome> {
+  deps: ConnectionRoutingDeps,
+  notifier?: Pick<ToolListChangedNotifier, "changed">,
+): Promise<RoutedProposal> {
   const principal = { personId: scope.personId };
   const [scopeIds, connections] = await Promise.all([
     getAgentScope(ctx, scope, deps.agent),
@@ -1196,7 +1337,7 @@ async function connectWithoutPersonStep(
       scopeIds.includes(connection.id) && isConnectionUsable(connection, deps.connection.providers),
   );
   const whole = inScope.find(reaches);
-  if (whole) return { isError: false, answer: connected(whole, "already") };
+  if (whole) return { kind: "connected", connection: whole, how: "already" };
   const narrower = inScope.find((connection) => connection.provider === provider.name);
   if (narrower) {
     const widened = await widenProviderConnectionHosts(
@@ -1207,24 +1348,26 @@ async function connectWithoutPersonStep(
       payload.hosts,
       deps.connection,
     );
-    return { isError: false, answer: connected(widened, "widened") };
+    return { kind: "connected", connection: widened, how: "widened" };
   }
 
   const what = `${payload.displayName} (${payload.vendor})`;
   const existing = sameAccount.find((connection) => connection.provider === provider.name);
   if (existing) {
     if (existing.revokedAt !== null) {
-      return refuse(
-        "connection_revoked",
-        `${what} was connected through the ${provider.name} provider and the person revoked it. Ask them to reconnect it in the console (Connections, then Reconnect on the connection); do not propose it under another provider.`,
-        { connectionId: existing.id, provider: provider.name },
-      );
+      return {
+        kind: "refused",
+        reason: "connection_revoked",
+        message: `${what} was connected through the ${provider.name} provider and the person revoked it. Ask them to reconnect it in the console (Connections, then Reconnect on the connection); do not propose it under another provider.`,
+        details: { connectionId: existing.id, provider: provider.name },
+      };
     }
-    return refuse(
-      "connection_not_in_scope",
-      `${what} is connected through the ${provider.name} provider but is not in this agent's scope. The person can add it in the console, on this agent's page under Scope.`,
-      { connectionId: existing.id, provider: provider.name },
-    );
+    return {
+      kind: "refused",
+      reason: "connection_not_in_scope",
+      message: `${what} is connected through the ${provider.name} provider but is not in this agent's scope. The person can add it in the console, on this agent's page under Scope.`,
+      details: { connectionId: existing.id, provider: provider.name },
+    };
   }
 
   const connection = await ctx.db.transaction(async (tx) => {
@@ -1249,7 +1392,7 @@ async function connectWithoutPersonStep(
   // The connection's execute tool is now in the list of every agent whose scope reaches the row
   // (ADR 0003; `connected.ts`): this one's, and every agent on `all`.
   await notifyAgentsReachingConnection(ctx, principal, connection.id, deps, notifier);
-  return { isError: false, answer: connected(connection, "provider") };
+  return { kind: "connected", connection, how: "provider" };
 }
 
 /**

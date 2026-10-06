@@ -24,11 +24,15 @@ one that runs in CI (ADR 0002, ADR 0013).
 - **`writeTree`** and **`downloadDirectory`** ride the archive endpoints as tar streams — `docker cp`
   without the CLI — with every directory entry owned by the sandbox user, so what the backing writes
   the tool can write beside.
-- **`mountToolbox`** mounts the named volume `<toolboxVolumePrefix>-<toolboxId>` at the path. A
-  running container cannot take a new mount, so the sandbox is recreated around it — same name, same
-  network, every toolbox it had plus this one. Only the volumes survive: mount before writing anything
-  else. Mounting the same toolbox at the same path again is a no-op. The image owns `/tools` as
-  `graft`, so a fresh volume mounted there is writable from the first file.
+- **`mountToolbox`** mounts the named volume `<toolboxVolumePrefix>-<toolboxId>` at the path, and,
+  when given `blobs`, the agent's blobs directory (`.blobs/<agentId>` beside the toolboxes, ADR 0023)
+  as the volume `<toolboxVolumePrefix>-.blobs-<agentId>` at its own path, `/blobs`. A running
+  container cannot take a new mount, so the sandbox is recreated around it, same name, same
+  network, every mount it had plus these, once for both. Only the volumes survive: mount before
+  writing anything else. Mounting the same toolbox at the same path again is a no-op, and a call
+  without `blobs` leaves a blobs mount the sandbox has. The image owns `/tools` as `graft`, so a
+  fresh volume mounted there is writable from the first file; a blobs directory is chowned to
+  `graft` as it is made.
 - **`install`** is its own container from the same image on the install network (default: the
   daemon's `bridge`), as root, with `npm` on its path: `npm ci` when the version directory has a
   lockfile, `npm install --save-exact` when it does not, scripts disabled both ways, registry from the
@@ -104,14 +108,16 @@ restart keeps every toolbox, and a `docker volume prune` is what would lose them
 
 **The toolbox, when the server is a container too.** The server writes versions as files through
 `@graft/toolbox`'s store; a sandbox mounts the toolbox as a volume; the two have to be one tree. On a
-host-run server, `toolboxHostRoot` binds `<GRAFT_TOOLBOX_ROOT>/<toolboxId>` into each sandbox. A
+host-run server, `toolboxHostRoot` binds `<GRAFT_TOOLBOX_ROOT>/<toolboxId>` into each sandbox, and
+`<GRAFT_TOOLBOX_ROOT>/.blobs/<agentId>` at `/blobs` the same way. A
 containerised server's `GRAFT_TOOLBOX_ROOT` is not a host path the daemon can bind, so the compose
 file uses the third option, `toolboxVolume` (`GRAFT_TOOLBOX_VOLUME`): **one named volume holding
 every toolbox as a subdirectory**, mounted whole into the server and into each sandbox by its own
-subpath (`VolumeOptions.Subpath`, which is why the backing asks for Engine API 1.45, Docker 26). A
-sandbox sees its toolbox and nothing beside it. The subdirectory is made before the first mount by a
-short-lived container from the image, since the server may not have the volume in reach; the
-volume itself is compose's to create and `docker compose down -v` is what removes it.
+subpath (`VolumeOptions.Subpath`, which is why the backing asks for Engine API 1.45, Docker 26); an
+agent's blobs directory is the subpath `.blobs/<agentId>` of the same volume (ADR 0023). A sandbox
+sees its toolbox and its own blobs and nothing beside them. Each subdirectory is made before the
+first mount by a short-lived container from the image, since the server may not have the volume in
+reach; the volume itself is compose's to create and `docker compose down -v` is what removes it.
 
 ## The install network
 

@@ -9,15 +9,18 @@ import { createCredentialVault } from "@graft/vault";
 import { selectBackings } from "../backings";
 
 /**
- * Run one working-set sweep by hand and print the report (ADR 0009; `@graft/mcp`'s `runSweep`):
+ * Run one sweep by hand and print the report (ADR 0009; `@graft/mcp`'s `runSweep`): the
+ * working-set pass and, since GRA-189, the blob pass beside it (ADR 0023), whose actions are the
+ * report's `blobs.actions`, over every agent with blobs, revoked ones included (GRA-195).
  *
- *   pnpm --filter @graft/server sweep            # demote what the rule says, print the report
- *   pnpm --filter @graft/server sweep -- --plan  # print what it would demote; change nothing
+ *   pnpm --filter @graft/server sweep            # demote, remove, mark and adopt what the rules say
+ *   pnpm --filter @graft/server sweep -- --plan  # print what it would do; change nothing
  *
  * Reads the environment the server does. Two things this process cannot do that the server's own
  * sweep can: it has no sessions to notify, so a running server's harnesses learn of a demotion at
  * their next `tools/list` rather than from `tools/list_changed`; and it has no view of that server's
- * in-flight registry, so it cannot skip an agent with a run in flight. With a server up, prefer
+ * in-flight registry, so it cannot skip an agent with a run in flight, and a run in flight may be
+ * writing a blob, whose `.tmp` this process would judge by age alone. With a server up, prefer
  * `--plan`, or stop the server first. The scheduled sweep inside the server
  * (`GRAFT_SWEEP_INTERVAL_SECONDS`) is the one that runs for real.
  */
@@ -36,13 +39,15 @@ const db = createDb(env.GRAFT_DATABASE_URL);
 // nothing, but the connection deps carry the vault's encrypt half whichever form is running.
 const backings = await selectBackings(env, { raw: process.env });
 const vault = createCredentialVault(backings.keyring);
-// No sandbox and no key pair: the sweep runs nothing, it only reads and demotes. The handoff is the
-// deps' shape and never used here — a sweep asks nobody anything.
+// No sandbox and no key pair: the sweep runs nothing, it only reads, demotes and removes. The blob
+// store is the form's, the same tree the server's sweep reads. The handoff is the deps' shape and
+// never used here, since a sweep asks nobody anything.
 const deps = createMcpDeps({
   db,
   connection: createConnectionDeps({ encrypt: vault.encrypt }),
   sandbox: null,
   keys: null,
+  blobStore: backings.blobStore,
   proxyPublicUrl: env.GRAFT_PROXY_PUBLIC_URL,
   handoff: {
     consoleUrl: env.GRAFT_CONSOLE_URL,
