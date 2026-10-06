@@ -57,9 +57,10 @@ export type ModuleFile = { path: string; content: string };
 /**
  * A module as the model drafts it: what the publish takes, plus the test input the dry run needs
  * and the reads that prove the credential and the request shape before anything is published
- * (the skill's step 4). `proofReads` are vendor-relative `GET` paths, `/items?limit=1`; the job
- * runs each through the connection's execute path with the dry-run claim on and hands the answers
- * back as `ProofRead`s. Empty skips the step.
+ * (the skill's step 4). `proofReads` are vendor-relative `GET` paths, `/items?limit=1`, each on
+ * the primary host or on another host the connection declares (`ProofReadTarget`); the job runs
+ * each through the connection's execute path with the dry-run claim on and hands the answers back
+ * as `ProofRead`s. Empty skips the step.
  */
 export type ModuleDraft = {
   /** Kebab-case; with the vendor, the tool's identity. */
@@ -70,8 +71,23 @@ export type ModuleDraft = {
   /** `index.ts` and any siblings; a `package.json` when the module declares a package (ADR 0013). */
   files: ModuleFile[];
   testInput: Record<string, unknown>;
-  proofReads: string[];
+  proofReads: ProofReadTarget[];
 };
+
+/**
+ * One proof read as the model asks for it: a `GET` path on the connection's primary host, or, with
+ * `host`, a path from the root of another host the connection declares. The same pair a module
+ * passes as `ctx.fetch(path, { host })`, and sent the same way, through the proxy's host route
+ * (GRA-213): Open-Meteo's `/v1/search` is proven on `geocoding-api.open-meteo.com`, not on the
+ * forecast host the connection names first. The job refuses a host the connection does not declare
+ * before any read is made.
+ */
+export type ProofReadTarget = { path: string; host?: string };
+
+/** A proof read named as the job's lines and the prompt name it: `/v1/search on geocoding-api.open-meteo.com`, or the path alone. */
+export function proofReadLabel(target: { path: string; host?: string | null }): string {
+  return target.host ? `${target.path} on ${target.host}` : target.path;
+}
 
 /** A diagnostic as the check and the publish report one — `@graft/check`'s `Diagnostic`, structurally. */
 export type ModelDiagnostic = {
@@ -91,6 +107,8 @@ export type DocPage =
 /** One proof read's answer: the vendor's status and the head of its body, credentials redacted. */
 export type ProofRead = {
   path: string;
+  /** The declared host the read named (GRA-213); null for a read on the primary host. */
+  host: string | null;
   ok: boolean;
   status: number | null;
   body: string | null;
@@ -181,7 +199,7 @@ export type ModelSituationKind = ModelSituation["kind"];
 export type ModelAnswer =
   | { kind: "read_docs"; urls: string[]; note: string }
   | { kind: "write_module"; draft: ModuleDraft; note: string }
-  | { kind: "prove"; proofReads: string[]; note: string }
+  | { kind: "prove"; proofReads: ProofReadTarget[]; note: string }
   | { kind: "proceed"; note: string }
   | { kind: "give_up"; reason: string };
 
@@ -198,6 +216,63 @@ export type ModelAdapter = {
   /** Which backing this is — `scripted`, or the provider's name — for the trace. */
   readonly name: string;
   open(context: ModelJobContext): ModelConversation;
+  /**
+   * Setup's goal suggestions (GRA-209): up to three short read-only goals for a vendor the person
+   * just connected, from the triage model. Optional, so an adapter that cannot propose (a test's
+   * stand-in) answers none by being without it; the provider's, the scripted one and the router
+   * all carry it. It answers rather than throws for want of goals: a refusal, a timeout or an
+   * unusable answer is an empty `goals` with the `outcome` saying which.
+   */
+  proposeGoals?(request: GoalProposalRequest): Promise<GoalProposal>;
+};
+
+/**
+ * What a goal proposal is about: the vendor as the person connected it, and the starter's curated
+ * goal when the vendor is a starter one (`@graft/core`'s `setup/starter-vendors.ts`). Never a
+ * credential.
+ */
+export type GoalProposalRequest = {
+  /** Whose proposal this is; the router picks the person's own key by it (ADR 0014), as a job's `personId`. */
+  personId: string;
+  /** What the call serves, for the trace where a job's id would go (`setup:<personId>`). */
+  traceId: string;
+  vendor: string;
+  displayName: string;
+  primaryHost: string;
+  /**
+   * The connection's hosts, which a proposal must name one of (GRA-217): a read on another host
+   * (Drive's file list for a Sheets connection) is one the connection cannot make.
+   */
+  hosts: readonly string[];
+  docsUrl: string | null;
+  curatedGoal: string | null;
+};
+
+/**
+ * How a proposal ended. `proposed` carries goals; every other outcome carries none: the model
+ * answered an empty list (`declined`), answered out of shape or with nothing usable (`unusable`),
+ * ran past its bound (`timeout`), the call failed (`failed`), or no model answers this person
+ * (`unavailable`).
+ */
+export type GoalProposalOutcome =
+  | "proposed"
+  | "declined"
+  | "unusable"
+  | "timeout"
+  | "failed"
+  | "unavailable";
+
+export type GoalProposal = {
+  goals: string[];
+  outcome: GoalProposalOutcome;
+  usage: ModelUsage;
+  /** The failure's message, for the log, when `outcome` is `failed`. */
+  error?: string;
+  /**
+   * How many of the model's proposals were dropped as ungrounded (a host outside the connection's,
+   * or an input with no default), for the log; absent when none was.
+   */
+  dropped?: number;
 };
 
 /** Which answers a situation admits; the job refuses the others as a model failure, by name. */

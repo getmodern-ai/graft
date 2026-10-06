@@ -32,6 +32,7 @@ export function AgentsTable({
   error,
   retrying,
   onRetry,
+  offerSetup = false,
 }: {
   agents: readonly AgentTableRow[];
   isPending: boolean;
@@ -39,6 +40,8 @@ export function AgentsTable({
   error: unknown;
   retrying: boolean;
   onRetry: () => void;
+  /** A person who skipped Setup (ADR 0024) is offered it again from the empty table. */
+  offerSetup?: boolean;
 }) {
   const groups = [
     { label: "Active", agents: agents.filter((agent) => !agent.revokedAt) },
@@ -55,7 +58,8 @@ export function AgentsTable({
           <TableHead className="hidden lg:table-cell lg:w-32">Working set</TableHead>
           <TableHead className="hidden lg:table-cell lg:w-28">Idle window</TableHead>
           <TableHead className="w-26 md:w-36">Created</TableHead>
-          <TableHead className="w-20 md:w-24">Status</TableHead>
+          {/* Wide enough for the longest chip, *Awaiting harness* (ADR 0024). */}
+          <TableHead className="w-30 md:w-36">Status</TableHead>
           <TableHead className="w-12">
             <span className="sr-only">Actions</span>
           </TableHead>
@@ -76,7 +80,22 @@ export function AgentsTable({
           </TableBodyNote>
         ) : agents.length === 0 ? (
           <TableBodyNote colSpan={COLUMNS} className="text-center">
-            No agents yet. Create one to connect your harness.
+            No agents yet. Create one to connect your harness
+            {offerSetup ? (
+              <>
+                , or let Setup walk you through a first connection and tool.{" "}
+                <Button
+                  variant="link"
+                  className="h-auto p-0 text-info"
+                  nativeButton={false}
+                  render={<Link to="/setup" />}
+                >
+                  Set up Graft
+                </Button>
+              </>
+            ) : (
+              "."
+            )}
           </TableBodyNote>
         ) : (
           groups.map((group) =>
@@ -107,7 +126,11 @@ export function AgentsTable({
                       {agent.tokenPrefix ? (
                         <code className="font-mono text-xs">{agent.tokenPrefix}…</code>
                       ) : (
-                        <span className="text-muted-foreground">OAuth</span>
+                        // No token: an OAuth agent's, or one awaiting its harness (ADR 0024),
+                        // whose token is issued at Setup's finish step if its harness takes one.
+                        <span className="text-muted-foreground">
+                          {agent.connectedVia ? "OAuth" : "Not issued"}
+                        </span>
                       )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">

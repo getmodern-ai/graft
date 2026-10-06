@@ -44,6 +44,7 @@ describe("every owned table", () => {
       "mcp_token",
       "pending_action",
       "person_model_key",
+      "setup",
       "tool_version",
       "usage_ledger",
       "working_set",

@@ -62,7 +62,7 @@ describe("readConsentMessage", () => {
     const connected: OAuthCallbackOutcome = {
       status: "connected",
       connectionId: "conn_1",
-      message: "Mail is connected — the console updates on its own.",
+      message: "Mail is connected. The console updates on its own.",
     };
     expect(readConsentMessage({ origin, data: posted(connected) }, origin, "conn_1")).toEqual({
       type: "graft:oauth",

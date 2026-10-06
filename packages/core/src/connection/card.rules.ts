@@ -38,5 +38,17 @@ export function askAnsweredMessage(pendingActionId: string): AskAnsweredMessage 
   return { type: ASK_ANSWERED_MESSAGE_TYPE, pendingActionId };
 }
 
+/**
+ * The message the Setup page posts to its opener once Setup is finished under `from=card`
+ * (GRA-210): the same `graft:ask` type, naming no ask, since the card's `setup` kind is an offer
+ * `find_tool` made and not a pending action. The card polls nothing for it; the person asks again
+ * in the chat.
+ */
+export type SetupCompletedMessage = { type: "graft:ask"; setup: "completed" };
+
+export function setupCompletedMessage(): SetupCompletedMessage {
+  return { type: ASK_ANSWERED_MESSAGE_TYPE, setup: "completed" };
+}
+
 /** How long a page the card opened stays up after its work is done before closing itself. */
 export const FROM_CARD_CLOSE_MS = 1500;

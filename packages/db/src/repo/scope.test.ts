@@ -16,6 +16,7 @@ import {
 import {
   addAgentConnection,
   findAgentForUpdate,
+  issueAgentToken,
   listAgentConnectionIds,
   listAgentIdsForConnection,
   listAgentPersonIds,
@@ -651,6 +652,35 @@ describe("person-scoped statements take the person", () => {
     const s = only();
     expect(s.sql).toContain('"agent"."person_id" = $');
     expect(s.sql).toContain('"agent"."revoked_at" is null');
+  });
+
+  /** Setup's token route (GRA-208; ADR 0024): the hash lands only on an agent still awaiting its harness. */
+  it("issuing a token takes the person and holds the agent to the awaiting state in the predicate", async () => {
+    await issueAgentToken(db, "person_1", "agent_1", { tokenHash: "h", tokenPrefix: "grft_abc" });
+    const s = only();
+    expect(s.sql).toContain('"agent"."person_id" = $');
+    expect(s.sql).toContain('"agent"."revoked_at" is null');
+    expect(s.sql).toContain('"agent"."token_hash" is null');
+    expect(s.sql).toContain('"agent"."connected_via_client_id" is null');
+    expect(s.params).toEqual(expect.arrayContaining(["h", "grft_abc", "agent_1", "person_1"]));
+  });
+
+  /** Setup's re-issue: the hash replaced only while it is still the one the re-issue read. */
+  it("re-issuing a token holds the hash to the one it replaces, beside the person and the state", async () => {
+    await issueAgentToken(
+      db,
+      "person_1",
+      "agent_1",
+      { tokenHash: "h2", tokenPrefix: "grft_def" },
+      "h1",
+    );
+    const s = only();
+    expect(s.sql).toContain('"agent"."person_id" = $');
+    expect(s.sql).toContain('"agent"."revoked_at" is null');
+    expect(s.sql).toContain('"agent"."token_hash" = $');
+    expect(s.sql).not.toContain('"agent"."token_hash" is null');
+    expect(s.sql).toContain('"agent"."connected_via_client_id" is null');
+    expect(s.params).toEqual(expect.arrayContaining(["h2", "grft_def", "h1", "person_1"]));
   });
 
   it("answering a pending action refuses an answered or expired one in the predicate", async () => {

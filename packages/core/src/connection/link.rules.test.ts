@@ -32,7 +32,7 @@ describe("the link callback's outcome", () => {
       status: "connected",
       pendingActionId: "pa_1",
       connectionId: "conn_1",
-      message: "Gmail is connected — the console updates on its own.",
+      message: "Gmail is connected. The console updates on its own.",
     });
     expect(url.startsWith("http://console.graft.test/link/callback?")).toBe(true);
     const search = Object.fromEntries(new URL(url).searchParams);
@@ -40,7 +40,7 @@ describe("the link callback's outcome", () => {
       status: "connected",
       pendingActionId: "pa_1",
       connectionId: "conn_1",
-      message: "Gmail is connected — the console updates on its own.",
+      message: "Gmail is connected. The console updates on its own.",
     });
 
     const failed = new URL(

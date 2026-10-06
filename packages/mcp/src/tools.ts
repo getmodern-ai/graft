@@ -20,7 +20,7 @@ import { agentDrivesByHand, hiddenToolRefusal } from "./by-hand";
 import { toolAskResult } from "./card-client";
 import type { SessionContext } from "./context";
 import type { ToolCallEvent } from "./deps";
-import { toolError, toolRefusal, toolResult } from "./result";
+import { isPlainObject, toolError, toolRefusal, toolResult } from "./result";
 import { runAuthoredTool } from "./run";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
 import { AUTHORING_TOOLS } from "./tools/authoring";
@@ -229,6 +229,8 @@ function toolDetail(
       return {
         ...(query ? { queryWords: queryWords(query).length } : {}),
         ...(hits !== undefined ? { hits } : {}),
+        // Setup offered in the chat (GRA-210; `setup-offer.ts`), counted only when it was.
+        ...(isPlainObject(body.setup) ? { setupOffered: true } : {}),
       };
     }
     case "acquire": {

@@ -169,12 +169,18 @@ describe("the ask card over the session", () => {
       // The three asking meta-tools, run_tool, and every tool outside the fixed set — the
       // execute__ tools and the authored tools in the list — whose first write is the tool ask
       // (GRA-116): a host renders a card only for a tool whose definition names the resource.
+      // And find_tool, whose answer may carry the Setup offer's card (GRA-210).
       const asking = tools
         .map((tool) => tool.name)
         .filter(
           (name) =>
-            ["acquire", "request_connection", "request_credential", "run_tool"].includes(name) ||
-            !META_TOOL_NAMES.includes(name),
+            [
+              "acquire",
+              "find_tool",
+              "request_connection",
+              "request_credential",
+              "run_tool",
+            ].includes(name) || !META_TOOL_NAMES.includes(name),
         )
         .sort();
       expect(rendering).toEqual(asking);

@@ -157,7 +157,7 @@ describe("a clean module", () => {
     });
     expect(result.refusals).toEqual([]);
     expect(CONTEXT_DECLARATION).toBe(
-      "{ fetch(path: string, init?: RequestInit): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }",
+      "{ fetch(path: string, init?: RequestInit & { host?: string }): Promise<Response>; proxyBase(host?: string): string; proxyKey: string; connection: string | null; blob: { write(data: Uint8Array | Blob | ReadableStream<Uint8Array>, opts: { contentType: string; name?: string }): Promise<string>; read(ref: string): Promise<Blob>; stat(ref: string): Promise<{ bytes: number; contentType: string; name?: string; expiresAt: string }> } }",
     );
   });
 
@@ -750,10 +750,56 @@ describe("banned surface", () => {
       ["fetch-absolute-url", 4],
     ]);
     expect(result.refusals[0]?.message).toBe(
-      "ctx.fetch is given a literal absolute URL (https://api.vendor.com/orders); the proxy supplies the host from the connection, and a host written into the module is refused. A URL a vendor hands back at run time, on one of the connection's hosts, may be passed as it is.",
+      "ctx.fetch is given a literal absolute URL (https://api.vendor.com/orders); the proxy supplies the host from the connection, and a URL written into the module is refused. A URL a vendor hands back at run time, on one of the connection's hosts, may be passed as it is.",
     );
     expect(result.refusals[0]?.hint).toContain('"/v1/orders"');
+    expect(result.refusals[0]?.hint).toContain(
+      'ctx.fetch("/v1/search", { host: "geocoding-api.example.com" })',
+    );
     expect(result.refusals[0]?.hint).toContain("as the value you read, never as a literal");
+  });
+
+  /**
+   * GRA-213: a declared host the module knows in advance (Open-Meteo's geocoding host beside its
+   * forecast host) is named with the `host` option beside a path. The literal there is admitted,
+   * because the proxy judges it against the connection's hosts on the host route (ADR 0010 as
+   * amended 2026-09-24); the type admits it on `Context`, the method still counts, and a literal
+   * absolute URL beside a host is still refused.
+   */
+  it("admits a literal host in fetch's init beside a path, counts its method, and still refuses a literal URL beside one", () => {
+    const admitted = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  const geo = await ctx.fetch("/v1/search?name=" + String(input.itemId), {',
+        '    host: "geocoding-api.open-meteo.com",',
+        "  });",
+        '  const note = await ctx.fetch("/v1/notes", { host: "notes.open-meteo.com", method: "POST", body: input.notes });',
+        `  return { geo: geo.status, note: note.status, ${READS_INPUT} };`,
+        "};",
+      ].join("\n"),
+    });
+    expect(admitted.refusals).toEqual([]);
+    expect(admitted.annotations).toEqual({ readOnly: false, destructive: false });
+
+    const typed = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  const res = await ctx.fetch("/v1/search", { host: 42 });',
+        `  return { status: res.status, ${READS_INPUT} };`,
+        "};",
+      ].join("\n"),
+    });
+    expect(rules(typed.refusals)).toEqual(["type-error"]);
+
+    const literal = check({
+      "index.ts": [
+        "export default async (input: Input, ctx: Context) => {",
+        '  const res = await ctx.fetch("https://geocoding-api.open-meteo.com/v1/search", { host: "geocoding-api.open-meteo.com" });',
+        `  return { status: res.status, ${READS_INPUT} };`,
+        "};",
+      ].join("\n"),
+    });
+    expect(rules(literal.refusals)).toEqual(["fetch-absolute-url"]);
   });
 
   /**

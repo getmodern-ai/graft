@@ -55,7 +55,7 @@ export function ConnectionFormFields({
     <>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field data-invalid={invalid("vendor")}>
-          <FieldLabel htmlFor={id("vendor")}>Vendor</FieldLabel>
+          <FieldLabel htmlFor={id("vendor")}>Integration</FieldLabel>
           <Input
             id={id("vendor")}
             value={draft.vendor}
@@ -67,7 +67,8 @@ export function ConnectionFormFields({
             onChange={(event) => onChange({ ...draft, vendor: event.target.value })}
           />
           <FieldDescription>
-            A kebab-case slug. Tools authored against this connection are bound to it.
+            The integration's slug, in kebab case. Tools authored against this connection are bound
+            to it.
           </FieldDescription>
           {errors.vendor ? <FieldError>{errors.vendor}</FieldError> : null}
         </Field>
@@ -93,7 +94,7 @@ export function ConnectionFormFields({
           id={id("primaryHost")}
           value={draft.primaryHost}
           disabled={disabled}
-          placeholder="https://api.vendor.example/v1"
+          placeholder="https://api.example.com/v1"
           autoComplete="off"
           spellCheck={false}
           inputMode="url"
@@ -102,8 +103,8 @@ export function ConnectionFormFields({
           onChange={(event) => onChange({ ...draft, primaryHost: event.target.value })}
         />
         <FieldDescription>
-          The https base URL vendor paths resolve against. Private, loopback, link-local and
-          cloud-metadata hosts are refused here and again by the proxy.
+          The https base URL the integration's paths resolve against. Private, loopback, link-local
+          and cloud-metadata hosts are refused here and again by the proxy.
         </FieldDescription>
         {errors.primaryHost ? <FieldError>{errors.primaryHost}</FieldError> : null}
       </Field>
@@ -117,7 +118,7 @@ export function ConnectionFormFields({
           id={id("hosts")}
           value={draft.hosts}
           disabled={disabled}
-          placeholder={"files.vendor.example\nupload.vendor.example"}
+          placeholder={"files.example.com\nupload.example.com"}
           autoComplete="off"
           spellCheck={false}
           className="min-h-12 font-mono"
@@ -125,8 +126,8 @@ export function ConnectionFormFields({
           onChange={(event) => onChange({ ...draft, hosts: event.target.value })}
         />
         <FieldDescription>
-          One hostname per line, for a vendor whose API spans several. The primary's own host is
-          always included.
+          One hostname per line, for an integration whose API spans several. The primary's own host
+          is always included.
         </FieldDescription>
         {errors.hosts ? <FieldError>{errors.hosts}</FieldError> : null}
       </Field>
@@ -153,7 +154,8 @@ export function ConnectionFormFields({
           </SelectContent>
         </Select>
         <FieldDescription>
-          How the proxy presents the credential to the vendor. The secret fields below follow it.
+          How the proxy presents the credential to the integration. The secret fields below follow
+          it.
         </FieldDescription>
       </Field>
 
@@ -203,12 +205,14 @@ export function ConnectionFormFields({
  * to (ADR 0010), named beside the secret inputs so the person reads them before typing (ADR 0006).
  * The title follows the scheme (`hostsNoticeTitle`): a keyless scheme has no credential to send, so
  * it says the vendor is reached there. An `Alert`, the primitive's own frame, as every notice in
- * this form is.
+ * this form is, but a `note` rather than the primitive's `alert` (GRA-212): it is standing
+ * information that re-renders as the hosts are typed, and an assertive live region would
+ * interrupt a screen reader on every render.
  */
 export function HostsNotice({ draft }: { draft: ConnectionDraft }) {
   const hosts = hostsOf(draft);
   return (
-    <Alert>
+    <Alert role="note">
       <LanguageIcon />
       <AlertTitle>{hostsNoticeTitle(draft)}</AlertTitle>
       {hosts ? (

@@ -12,10 +12,12 @@ import {
   defaultBlobDeps,
   defaultLedgerDeps,
   defaultPendingActionDeps,
+  defaultSetupDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
   type LedgerDeps,
   type PendingActionDeps,
+  type SetupDeps,
   type ToolDeps,
   type WorkingSetDeps,
 } from "@graft/core";
@@ -141,6 +143,12 @@ export type McpDeps = {
   lockPendingActionKey: typeof lockPendingActionKey;
   /** The handoff's configuration — the console's URL, the signing secret, the wait and the TTL (`handoff.ts`). */
   handoff: HandoffConfig;
+  /**
+   * The person's Setup record, read by `find_tool`'s offer of Setup (GRA-210; `setup-offer.ts`):
+   * the record's clocks say whether Setup is finished or skipped. `defaultSetupDeps` in
+   * `createMcpDeps`; the fake store's records in a test.
+   */
+  setup: SetupDeps;
   /**
    * Where the callback route of an authorization-code consent answers — `oauthRedirectUri(GRAFT_AUTH_URL)`
    * (`@graft/core`) — so `request_connection` can tell the agent the one value the person has to paste
@@ -301,6 +309,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     approval: defaultApprovalDeps,
     pendingAction: defaultPendingActionDeps,
     acquireJob: defaultAcquireJobDeps,
+    setup: defaultSetupDeps,
     listPendingActionsByKind,
     lockPendingActionKey,
     findMcpClient,

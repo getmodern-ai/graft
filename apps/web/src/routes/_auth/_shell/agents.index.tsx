@@ -17,6 +17,7 @@ import { useScreenTitle } from "@/components/shell/screen-title";
 import { Button } from "@/components/ui/button";
 import { agentsQuery } from "@/lib/agent-queries";
 import { connectionsQuery } from "@/lib/connection-queries";
+import { setupQuery } from "@/lib/setup-queries";
 
 /**
  * The loader *starts* both reads and awaits neither, so the screen paints at once — header, table
@@ -41,6 +42,8 @@ function AgentsRoute() {
   // swallow the whole screen for.
   const agents = useQuery(agentsQuery);
   const connections = useQuery(connectionsQuery);
+  // The shell's intercept read it already; a person who skipped is offered Setup again.
+  const setup = useQuery(setupQuery);
   const [creating, setCreating] = useState(false);
   const rows = agents.data?.agents ?? [];
 
@@ -71,6 +74,7 @@ function AgentsRoute() {
         error={agents.error}
         retrying={agents.isFetching}
         onRetry={() => void agents.refetch()}
+        offerSetup={Boolean(setup.data?.setup?.skippedAt && !setup.data.setup.completedAt)}
       />
 
       <CreateAgentDialog

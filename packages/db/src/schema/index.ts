@@ -13,6 +13,7 @@ export * from "./connection";
 export * from "./mcp-oauth";
 export * from "./pending-action";
 export * from "./person-model-key";
+export * from "./setup";
 export * from "./tool";
 export * from "./usage";
 export * from "./working-set";
