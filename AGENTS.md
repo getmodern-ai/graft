@@ -1332,10 +1332,11 @@ it shows is in its query. **The handoff page sits under the guard but outside th
 (`routes/_auth/pending.$id.tsx`; GRA-144, ADR 0006 as amended 2026-09-21): the link an agent relays
 opens one ask under the mark and closes itself once answered — `lib/handoff-page.ts` decides how,
 tested — while `/pending` (the list, in the shell) stays the console's inbox and answers every ask
-inline. `routes/_auth/_shell/consent.tsx` is the other consent — an MCP client's
-(ADR 0018) — and sits under both: the guard, so a chat product's "connect" reaches a person with no
-session by way of sign-in and back, and the shell, because it is a screen of the console like any
-other; `components/agent/consent-card.tsx` is its form, composed from the create-agent dialog's.
+inline. `routes/_auth/consent.tsx` is the other consent — an MCP client's (ADR 0018) — and
+sits beside it, under the guard and outside the shell (GRA-219): the guard, so a chat product's
+"connect" reaches a person with no session by way of sign-in and back, and no shell, because the
+person is on their way back to the chat and the console's sidebar is only a way out;
+`components/agent/consent-card.tsx` is its form, composed from the create-agent dialog's.
 `src/lib/*-queries.ts` hold the query options and mutations per aggregate, `src/lib/api.ts` is the
 one `fetch`, and every wire type is imported from `@graft/server/api`, `@graft/core`, `@graft/db` or
 `@graft/mcp` and passed through `Jsonified<T>` — never written a second time. The pending-actions

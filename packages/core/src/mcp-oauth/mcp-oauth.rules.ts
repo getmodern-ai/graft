@@ -31,7 +31,7 @@ export const PROTECTED_RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-re
 /** RFC 8414 §3: the authorization server's document, at the issuer's root. */
 export const AUTHORIZATION_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
 
-/** The console route the authorization endpoint sends the browser to (`apps/web/src/routes/_auth/_shell/consent.tsx`). */
+/** The console route the authorization endpoint sends the browser to (`apps/web/src/routes/_auth/consent.tsx`). */
 export const MCP_CONSENT_PATH = "/consent";
 
 /** An origin with no path, query or fragment and no trailing slash — what an issuer and a resource are built on. */
