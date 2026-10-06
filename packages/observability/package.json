@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@graft/model": "workspace:*",
-    "evlog": "^2.27.1"
+    "evlog": "^2.30.0"
   },
   "devDependencies": {
     "@graft/config": "workspace:*",
