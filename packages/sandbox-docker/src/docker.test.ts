@@ -334,6 +334,89 @@ describe.skipIf(docker.reason !== undefined)("docker sandbox backing", () => {
       }
     });
 
+    it("mounts an agent's blobs directory as the subpath .blobs/<agentId> of the shared volume, beside the toolboxes, owned by the sandbox user, in one recreate with the toolbox (ADR 0023)", async () => {
+      const volume = `${fixture.prefix}-shared-blobs`;
+      await fixture.engine.json("POST", "/volumes/create", { body: { Name: volume } });
+      const shared = createDockerSandboxBackend({
+        image: fixture.image,
+        network: fixture.network,
+        prefix: `${fixture.prefix}-shared-blobs`,
+        toolboxVolume: volume,
+      });
+      try {
+        const { handle } = await shared.ensure({ name: "blobs-a" });
+        await handle.mountToolbox({
+          toolboxId: "person-a",
+          mountPath: "/tools",
+          blobs: { agentId: "agent-a", mountPath: "/blobs" },
+        });
+        await handle.writeTree([{ path: "data", content: "bytes" }], "/blobs/blob-1");
+
+        expect(await handle.exec("stat -c %u /blobs")).toBe(String(SANDBOX_UID));
+        expect(await handle.exec("ls /tools")).toBe("");
+        // One container carries both mounts, each at its own target with its own subpath.
+        const container = await fixture.engine.json<{
+          HostConfig: { Mounts: { Target: string; VolumeOptions?: { Subpath?: string } }[] };
+        }>("GET", `/containers/${shared.containerName("blobs-a")}/json`);
+        expect(
+          container.HostConfig.Mounts.map((mount) => [mount.Target, mount.VolumeOptions?.Subpath]),
+        ).toEqual([
+          ["/tools", "person-a"],
+          ["/blobs", ".blobs/agent-a"],
+        ]);
+
+        // In the volume the blobs are beside the toolbox, not in it: the tree a server mounting it
+        // whole sees, and what the filesystem blob store at that root reads.
+        const { Id } = await fixture.engine.json<{ Id: string }>("POST", "/containers/create", {
+          body: {
+            Image: fixture.image,
+            Cmd: [
+              "sh",
+              "-c",
+              "ls -A /toolboxes && ls /toolboxes/.blobs && cat /toolboxes/.blobs/agent-a/blob-1/data",
+            ],
+            HostConfig: {
+              NetworkMode: fixture.network,
+              Mounts: [{ Type: "volume", Source: volume, Target: "/toolboxes" }],
+            },
+          },
+        });
+        try {
+          await fixture.engine.json("POST", `/containers/${Id}/start`);
+          await fixture.engine.json("POST", `/containers/${Id}/wait`);
+          const logs = await demux(
+            await fixture.engine.stream("GET", `/containers/${Id}/logs`, {
+              query: { stdout: true, stderr: true },
+            }),
+          );
+          expect(logs.stdout.split("\n").filter(Boolean)).toEqual([
+            ".blobs",
+            "person-a",
+            "agent-a",
+            "bytes",
+          ]);
+        } finally {
+          await fixture.engine
+            .json("DELETE", `/containers/${Id}`, { query: { force: true } })
+            .catch(() => undefined);
+        }
+      } finally {
+        for (const sandbox of await shared.list()) await shared.destroy(sandbox.name);
+        await fixture.engine
+          .json("DELETE", `/volumes/${volume}`, { query: { force: true } })
+          .catch(() => undefined);
+      }
+    });
+
+    it("names a blobs volume so it can never collide with a toolbox volume under one prefix", () => {
+      expect(fixture.backend.blobsVolumeName("agent-a")).toBe(
+        `${fixture.prefix}-toolbox-.blobs-agent-a`,
+      );
+      expect(fixture.backend.toolboxVolumeName("person-a")).toBe(
+        `${fixture.prefix}-toolbox-person-a`,
+      );
+    });
+
     it("install vendors a real dependency into the version directory, lockfile beside it, owned by the sandbox user", async () => {
       const handle = await ensure("install");
       await handle.mountToolbox({ toolboxId: "installs", mountPath: "/tools" });

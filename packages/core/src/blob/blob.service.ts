@@ -1,0 +1,207 @@
+import type { BlobRow } from "@graft/db/repo/blob";
+
+import type { ServiceContext } from "../context";
+import { ServiceError } from "../errors";
+import type { AgentScope } from "../tenancy";
+import type { BlobDeps } from "./blob.deps";
+import type { AdoptedBlob } from "./blob-sweep.decision";
+
+/**
+ * The blob rows (CONTEXT.md, *Blob*; ADR 0023): what the server knows of a file one tool wrote for
+ * another. The bytes never come here — they are in the blob store, under the agent's mount — and
+ * neither does a ref: the MCP layer reads `blob://<id>` off the runner's ledger and hands this
+ * service the id, so the row's key is the blob's id and the wire's vocabulary stays the wire's.
+ * Every function takes the `AgentScope`, which the repo puts in the SQL (ADR 0007).
+ */
+
+/** One blob as the runner's ledger described it, keyed by the id inside its ref. */
+export type BlobWrittenInput = {
+  id: string;
+  bytes: number;
+  contentType: string;
+  name?: string | null;
+  expiresAt: Date;
+};
+
+/**
+ * Record every blob one run wrote, in one statement, for the agent whose sandbox wrote them and the
+ * version whose run it was (null for a runner invoked by hand, or a detached run polled later).
+ * Nothing to record is nothing written. A line that could not have come from the runner — a size
+ * that is not a whole number, an empty media type, an expiry that is not a date — is refused whole,
+ * since the runner is the only writer and such a line is a bug and not data.
+ */
+export async function recordBlobsWritten(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  input: { versionId: string | null; blobs: readonly BlobWrittenInput[] },
+  deps: BlobDeps,
+): Promise<BlobRow[]> {
+  if (input.blobs.length === 0) return [];
+  const createdAt = deps.now();
+  for (const entry of input.blobs) {
+    if (entry.id.trim().length === 0) {
+      throw new ServiceError("BAD_REQUEST", "A blob row names the blob's id");
+    }
+    if (!Number.isInteger(entry.bytes) || entry.bytes < 0) {
+      throw new ServiceError("BAD_REQUEST", "A blob's size is a whole number of bytes");
+    }
+    if (entry.contentType.trim().length === 0) {
+      throw new ServiceError("BAD_REQUEST", "A blob row names the blob's media type");
+    }
+    if (Number.isNaN(entry.expiresAt.getTime())) {
+      throw new ServiceError("BAD_REQUEST", "A blob row names when the blob expires");
+    }
+  }
+  return deps.insertBlobs(
+    ctx.db,
+    input.blobs.map((entry) => ({
+      id: entry.id,
+      personId: scope.personId,
+      agentId: scope.agentId,
+      versionId: input.versionId,
+      bytes: entry.bytes,
+      contentType: entry.contentType,
+      name: entry.name ?? null,
+      expiresAt: entry.expiresAt,
+      createdAt,
+    })),
+  );
+}
+
+/** One blob of this agent's by id, or null — another agent's, another person's and none are the same answer. */
+export async function getBlob(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  blobId: string,
+  deps: BlobDeps,
+): Promise<BlobRow | null> {
+  return deps.findBlob(ctx.db, scope, blobId);
+}
+
+/**
+ * The blobs among `blobIds` that are this agent's, in one read: the door's lookup of every ref an
+ * input names (GRA-187). An id absent from the answer has no row under this scope; whether nobody
+ * wrote it or another agent did is not told apart here or anywhere (ADR 0023).
+ */
+export async function getBlobs(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  blobIds: readonly string[],
+  deps: BlobDeps,
+): Promise<BlobRow[]> {
+  return deps.findBlobs(ctx.db, scope, blobIds);
+}
+
+/**
+ * The bytes this agent holds live now: every blob not removed and not yet expired, summed in one
+ * read, which is what the door measures against the quota before a run (GRA-187). The clock is the seam's,
+ * so a suite can move it.
+ */
+export async function liveBlobBytes(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  deps: BlobDeps,
+): Promise<number> {
+  return deps.sumLiveBlobBytes(ctx.db, scope, deps.now());
+}
+
+/** This agent's blobs, newest first, removed ones included. */
+export async function listBlobs(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  deps: BlobDeps,
+): Promise<BlobRow[]> {
+  return deps.listBlobs(ctx.db, scope);
+}
+
+/** This agent's blobs the sweep has not yet removed, soonest to expire first: what the sweep judges (GRA-189). */
+export async function listUnremovedBlobs(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  deps: BlobDeps,
+): Promise<BlobRow[]> {
+  return deps.listUnremovedBlobs(ctx.db, scope);
+}
+
+/** One agent the blob pass walks: its id, and its person where the database still names one. */
+export type BlobSweepAgent = {
+  agentId: string;
+  /**
+   * Null for an agent the database no longer holds (deleted by hand, or with its person), whose
+   * directories the store still lists: there is no row to judge and none to adopt into, so the
+   * pass treats what is there as junk once past the TTL and never writes a row for it.
+   */
+  personId: string | null;
+};
+
+/**
+ * The blob pass's roster (GRA-195; ADR 0023, "the sweep deletes"): every agent with at least one
+ * unremoved blob row, with its person off the rows, in union with every agent id the blob store
+ * lists a directory for (`BlobStore.listAgents`, the caller's read), with its person off the agent
+ * table where that still holds the row, revoked or not. The working-set sweep's roster
+ * (`listActiveAgentScopes`) is the live agents; this one is whoever has bytes or rows, so a revoked
+ * agent's blobs expire, are removed and are marked on the same rule as any other's, and an agent
+ * deleted by hand has its directories cleared. Sorted by agent id, so a report reads the same from
+ * pass to pass.
+ */
+export async function listBlobSweepAgents(
+  ctx: ServiceContext,
+  directoryAgentIds: readonly string[],
+  deps: BlobDeps,
+): Promise<BlobSweepAgent[]> {
+  const withRows = await deps.listAgentsWithUnremovedBlobs(ctx.db);
+  const agents = new Map<string, string | null>(withRows.map((row) => [row.agentId, row.personId]));
+  const unresolved = [...new Set(directoryAgentIds)].filter((agentId) => !agents.has(agentId));
+  const resolved = await deps.listAgentPersonIds(ctx.db, unresolved);
+  for (const row of resolved) agents.set(row.agentId, row.personId);
+  for (const agentId of unresolved) if (!agents.has(agentId)) agents.set(agentId, null);
+  return [...agents.entries()]
+    .map(([agentId, personId]) => ({ agentId, personId }))
+    .sort((a, b) => (a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0));
+}
+
+/**
+ * The sweep removed this blob's directory, or found it already gone: the row stays with
+ * `removed_at`, so the door says expired rather than not found (ADR 0023; GRA-187). Answers whether
+ * this call marked it; a row already marked, or not this agent's, is false and nothing is written.
+ */
+export async function markBlobRemoved(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  blobId: string,
+  deps: BlobDeps,
+): Promise<boolean> {
+  return deps.markBlobRemoved(ctx.db, scope, blobId, deps.now());
+}
+
+/**
+ * The row for a committed directory the sweep found no row for (ADR 0023: a run killed after its
+ * rename leaves a directory with a sidecar and no row), as the decision built it from the store's
+ * measurements and the clamped sidecar (`adoptedBlobOf`). The person is the scope's, the agent the
+ * directory's (the sidecar's own `agentId` was judged by the decision), and the version is the
+ * sidecar's `toolVersion`. Null when a row with that id already exists: the run wrote it meanwhile
+ * (its insert is idempotent on the id since #144, so the two orders agree), or the sweep once
+ * removed it and its directory has come back; the caller reads the null as "a row exists now".
+ */
+export async function adoptBlob(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  blobId: string,
+  row: AdoptedBlob,
+  deps: BlobDeps,
+): Promise<BlobRow | null> {
+  if (blobId.trim().length === 0) {
+    throw new ServiceError("BAD_REQUEST", "A blob row names the blob's id");
+  }
+  return deps.insertAdoptedBlob(ctx.db, {
+    id: blobId,
+    personId: scope.personId,
+    agentId: scope.agentId,
+    versionId: row.toolVersion,
+    bytes: row.bytes,
+    contentType: row.contentType,
+    name: row.name,
+    expiresAt: row.expiresAt,
+    createdAt: row.writtenAt,
+  });
+}

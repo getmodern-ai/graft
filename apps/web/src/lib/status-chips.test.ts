@@ -67,6 +67,7 @@ describe("status chips", () => {
     expect(AWAITING_RECONNECTION_CHIP.variant).toBe("outline");
     expect(NO_PASSING_VERSION_CHIP.variant).toBe("outline");
     expect(MODEL_KEY_STATUS_CHIP.unset.variant).toBe("outline");
+    expect(AGENT_STATUS_CHIP.awaiting_harness.variant).toBe("outline");
   });
 
   it("keeps the three tool annotations visually distinct", () => {
@@ -80,9 +81,23 @@ describe("status chips", () => {
     expect(toolAnnotationChip(true, true)).toBe(TOOL_ANNOTATION_CHIP["read-only"]);
   });
 
-  it("reads an agent's status off its revocation", () => {
-    expect(agentStatusChip({ revokedAt: null })).toBe(AGENT_STATUS_CHIP.active);
-    expect(agentStatusChip({ revokedAt: "2026-09-11T00:00:00.000Z" })).toBe(
+  it("reads an agent's status off its revocation, its token and its client", () => {
+    const tokened = { tokenPrefix: "grft_abc", connectedVia: null };
+    expect(agentStatusChip({ revokedAt: null, ...tokened })).toBe(AGENT_STATUS_CHIP.active);
+    expect(
+      agentStatusChip({
+        revokedAt: null,
+        tokenPrefix: null,
+        connectedVia: { clientId: "c_1", clientName: "Claude" },
+      }),
+    ).toBe(AGENT_STATUS_CHIP.active);
+    expect(agentStatusChip({ revokedAt: "2026-09-11T00:00:00.000Z", ...tokened })).toBe(
+      AGENT_STATUS_CHIP.revoked,
+    );
+    // Setup's agent before any harness reached it (ADR 0024), and revoked once it was.
+    const bare = { tokenPrefix: null, connectedVia: null };
+    expect(agentStatusChip({ revokedAt: null, ...bare })).toBe(AGENT_STATUS_CHIP.awaiting_harness);
+    expect(agentStatusChip({ revokedAt: "2026-09-11T00:00:00.000Z", ...bare })).toBe(
       AGENT_STATUS_CHIP.revoked,
     );
   });

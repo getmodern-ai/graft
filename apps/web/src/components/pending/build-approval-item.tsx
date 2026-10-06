@@ -46,9 +46,9 @@ export function BuildApprovalItem({
           </Label>
         </ItemTitle>
         <ItemDescription className="line-clamp-none">
-          Code Graft's model writes for {agentName} will run against this connection — reads only,
-          every write previewed and never sent — until the agent's first real use, which asks you
-          once; off, the agent's first build asks you with a link of its own.
+          Code Graft's model writes for {agentName} will run against this connection until the
+          agent's first real use, which asks you once: reads only, with every write previewed and
+          never sent. Off, the agent's first build asks you with a link of its own.
         </ItemDescription>
       </ItemContent>
     </Item>

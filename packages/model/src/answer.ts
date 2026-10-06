@@ -6,6 +6,7 @@ import {
   type ModelAnswer,
   type ModelSituationKind,
   type ModuleDraft,
+  type ProofReadTarget,
 } from "./types";
 
 /**
@@ -20,6 +21,23 @@ import {
  * schema that is not an object — is reported as a list of sentences the adapter puts back to the
  * model for one repair turn (`./provider.ts`) before the job counts it as a model failure.
  */
+
+/**
+ * One proof read on the wire: a path, and the host it is read on, null for the primary host
+ * (GRA-213). Every property present, as a strict schema wants, so "no host" is `null` rather than
+ * an absent key; the reader turns it into the `ProofReadTarget` the job takes.
+ */
+export const WIRE_PROOF_READ_SCHEMA = z.strictObject({
+  path: z
+    .string()
+    .describe("A GET path from the host's root, starting with /: /v1/search?name=Berlin."),
+  host: z
+    .string()
+    .nullable()
+    .describe(
+      "Null for the connection's primary host; otherwise another host the connection declares, the same host the module passes as ctx.fetch(path, { host }).",
+    ),
+});
 
 export const WIRE_DRAFT_SCHEMA = z.strictObject({
   name: z.string().describe("The tool's name, kebab-case: create-order, list-items."),
@@ -38,9 +56,9 @@ export const WIRE_DRAFT_SCHEMA = z.strictObject({
     .string()
     .describe("An input the dry run calls the tool with, valid against the schema, as JSON text."),
   proofReads: z
-    .array(z.string())
+    .array(WIRE_PROOF_READ_SCHEMA)
     .describe(
-      "Vendor-relative GET paths that prove the credential and the request shape before publishing, one per distinct path the module reads, at most five: /items?limit=1. Empty to skip.",
+      "GET reads that prove the credential and the request shape before publishing, one per distinct path the module reads, on the host the module reads it from, at most five: { path: /items?limit=1, host: null }. Empty to skip.",
     ),
 });
 
@@ -61,15 +79,56 @@ export const WIRE_ANSWER_SCHEMA = z.strictObject({
     ),
   urls: z.array(z.string()).describe("For read_docs, the pages to read. Empty otherwise."),
   proofReads: z
-    .array(z.string())
+    .array(WIRE_PROOF_READ_SCHEMA)
     .describe(
-      "For prove, more vendor-relative GET paths to run against the current draft before deciding — built from what earlier reads returned. Empty otherwise.",
+      "For prove, more GET reads to run against the current draft before deciding — built from what earlier reads returned, each on the host the module reads it from. Empty otherwise.",
     ),
   draft: WIRE_DRAFT_SCHEMA.nullable().describe("For write_module, the module. Null otherwise."),
 });
 
 export type WireAnswer = z.infer<typeof WIRE_ANSWER_SCHEMA>;
 export type WireDraft = z.infer<typeof WIRE_DRAFT_SCHEMA>;
+export type WireProofRead = z.infer<typeof WIRE_PROOF_READ_SCHEMA>;
+
+/**
+ * What a proof read's host may be: a host name, no port, no path, no credentials, as the proxy's
+ * host segment admits one (`HOSTNAME` in `@graft/proxy`'s `app.ts`, spelt again because this
+ * package imports nothing of Graft's). Whether it is one of the connection's hosts is the job's
+ * judgement, which has the connection; this is only the shape.
+ */
+const PROOF_READ_HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
+
+/** The wire's proof reads as the job takes them: trimmed, the host lower-cased, a null or empty host dropped, an empty path dropped. */
+function readProofReads(reads: readonly WireProofRead[]): ProofReadTarget[] {
+  return reads
+    .map((read) => {
+      const path = read.path.trim();
+      const host = read.host?.trim().toLowerCase() ?? "";
+      return host.length > 0 ? { path, host } : { path };
+    })
+    .filter((read) => read.path.length > 0);
+}
+
+/** A proof read back in wire form: `host` present, null for the primary. */
+function wireProofReads(reads: readonly ProofReadTarget[]): WireProofRead[] {
+  return reads.map((read) => ({ path: read.path, host: read.host ?? null }));
+}
+
+/** What is wrong with one proof read's shape, as sentences; the connection's hosts are the job's to judge. */
+function proofReadProblems(read: ProofReadTarget): string[] {
+  const problems: string[] = [];
+  if (!read.path.startsWith("/")) {
+    problems.push(
+      `proof read "${read.path}" is not a vendor-relative path; give the path from the host's root, starting with /, and name another host the connection declares in "host"`,
+    );
+  }
+  if (read.host !== undefined && !PROOF_READ_HOST.test(read.host)) {
+    problems.push(
+      `proof read host "${read.host}" is not a host name; name one of the connection's hosts, such as api.example.com, or null for the primary`,
+    );
+  }
+  return problems;
+}
 
 /**
  * What the publish refuses a description over (`@graft/core`'s `TOOL_DESCRIPTION_MAX_LENGTH`).
@@ -118,9 +177,7 @@ export function draftProblems(draft: ModuleDraft): string[] {
     }
   }
   if (!isRecord(draft.testInput)) problems.push("testInput is not an object");
-  for (const path of draft.proofReads) {
-    if (!path.startsWith("/")) problems.push(`proof read "${path}" is not a vendor-relative path`);
-  }
+  for (const read of draft.proofReads) problems.push(...proofReadProblems(read));
   if (draft.proofReads.length > MAX_PROOF_READS) {
     problems.push(
       `proofReads names ${draft.proofReads.length} paths and the job runs at most ${MAX_PROOF_READS}; keep the ones whose answers the module parses`,
@@ -180,7 +237,7 @@ export function readWireAnswer(wire: WireAnswer, situation: ModelSituationKind):
         inputSchema: parseJsonObject(wire.draft.inputSchemaJson, "inputSchemaJson", problems),
         files: wire.draft.files.map((file) => ({ path: file.path.trim(), content: file.content })),
         testInput: parseJsonObject(wire.draft.testInputJson, "testInputJson", problems),
-        proofReads: wire.draft.proofReads.map((path) => path.trim()).filter((p) => p.length > 0),
+        proofReads: readProofReads(wire.draft.proofReads),
       };
       if (draft.files.length === 0) problems.push("the draft has no files");
       problems.push(...draftProblems(draft));
@@ -189,21 +246,18 @@ export function readWireAnswer(wire: WireAnswer, situation: ModelSituationKind):
         : { ok: true, answer: { kind: "write_module", draft, note: wire.note.trim() } };
     }
     case "prove": {
-      const paths = wire.proofReads.map((path) => path.trim()).filter((p) => p.length > 0);
-      if (paths.length === 0) problems.push("prove names no path to read");
-      for (const path of paths) {
-        if (!path.startsWith("/"))
-          problems.push(`proof read "${path}" is not a vendor-relative path`);
-      }
-      if (paths.length > MAX_PROOF_READS) {
+      const reads = readProofReads(wire.proofReads);
+      if (reads.length === 0) problems.push("prove names no path to read");
+      for (const read of reads) problems.push(...proofReadProblems(read));
+      if (reads.length > MAX_PROOF_READS) {
         problems.push(
-          `prove names ${paths.length} paths and an attempt runs at most ${MAX_PROOF_READS} in all`,
+          `prove names ${reads.length} paths and an attempt runs at most ${MAX_PROOF_READS} in all`,
         );
       }
       if (wire.note.trim().length === 0) problems.push("note is empty");
       return problems.length > 0
         ? { ok: false, problems }
-        : { ok: true, answer: { kind: "prove", proofReads: paths, note: wire.note.trim() } };
+        : { ok: true, answer: { kind: "prove", proofReads: reads, note: wire.note.trim() } };
     }
     case "proceed": {
       if (wire.note.trim().length === 0) problems.push("note is empty");
@@ -236,7 +290,7 @@ export function wireOf(answer: ModelAnswer): WireAnswer {
         kind: "prove",
         note: answer.note,
         urls: [],
-        proofReads: answer.proofReads,
+        proofReads: wireProofReads(answer.proofReads),
         draft: null,
       };
     case "write_module":
@@ -251,7 +305,7 @@ export function wireOf(answer: ModelAnswer): WireAnswer {
           inputSchemaJson: JSON.stringify(answer.draft.inputSchema),
           files: answer.draft.files,
           testInputJson: JSON.stringify(answer.draft.testInput),
-          proofReads: answer.draft.proofReads,
+          proofReads: wireProofReads(answer.draft.proofReads),
         },
       };
     case "proceed":

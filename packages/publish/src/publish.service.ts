@@ -41,7 +41,6 @@ import {
 import type { PackageMetadataSource } from "./metadata";
 import {
   evaluatePackage,
-  isAllowlisted,
   isExactVersion,
   isValidPackageName,
   type PackagePolicyConfig,
@@ -58,9 +57,10 @@ import {
  *  3. `package.json` is read for the declared packages; any other dependency section is a refusal.
  *  4. The check runs over the files with those dependencies (ADR 0010, ADR 0013 rules included). A
  *     refusal returns the check's diagnostics and nothing is written.
- *  5. Every declared package is put to the package policy (`./policy.ts`); allowlisted names skip
- *     the registry. Every failing package is a diagnostic, all of them at once, so the model fixes
- *     the manifest in one edit.
+ *  5. Every declared package is put to the package policy (`./policy.ts`), the registry asked about
+ *     every name the first two rules did not already refuse — an allowlisted one included, since
+ *     the allowlist waives provenance alone (GRA-176). Every failing package is a diagnostic, all
+ *     of them at once, so the model fixes the manifest in one edit.
  *  6. The version directory `tools/<vendor>/<name>/v<N>` is written from the draft's files, the
  *     manifest carrying `"type": "module"` (`normaliseManifest`).
  *  7. When packages are declared, the sandbox backend's `install` runs — ADR 0013's build step, the
@@ -359,9 +359,10 @@ async function readDraft(
 
 /**
  * Every declared package against the policy. The registry is asked only where its answer can change
- * the verdict: not for an allowlisted name, and not for a name or a version the policy's first rules
- * refuse on the manifest alone — so a range spec is an `exact-version` refusal even while the
- * registry is down, never a `registry-unavailable` one.
+ * the verdict: not for a name or a version the policy's first rules refuse on the manifest alone —
+ * so a range spec is an `exact-version` refusal even while the registry is down, never a
+ * `registry-unavailable` one. An allowlisted name *is* asked about, since the allowlist waives
+ * provenance alone and the age and download rules still read the registry's answer (GRA-176).
  */
 async function applyPolicy(
   dependencies: readonly ManifestDependency[],
@@ -370,10 +371,7 @@ async function applyPolicy(
   const now = deps.now();
   const refusals: PublishDiagnostic[] = [];
   for (const dependency of dependencies) {
-    const needsRegistry =
-      isValidPackageName(dependency.name) &&
-      isExactVersion(dependency.spec) &&
-      !isAllowlisted(dependency.name, deps.policy.allowlist);
+    const needsRegistry = isValidPackageName(dependency.name) && isExactVersion(dependency.spec);
     let metadata = null;
     if (needsRegistry) {
       try {

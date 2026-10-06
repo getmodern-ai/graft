@@ -3,11 +3,15 @@ import {
   DAY_MS,
   listWorkingSet,
   promoteTool,
+  recordBlobsWritten,
+  revokeAgent,
   type ServiceContext,
+  BLOB_TMP_SUFFIX as SWEEP_BLOB_TMP_SUFFIX,
   touchToolUsed,
   updateAgentLimits,
 } from "@graft/core";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
+import { BLOB_TMP_SUFFIX, type BlobStore } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
@@ -20,7 +24,7 @@ import type { McpDeps } from "./deps";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { openAgentSession } from "./session";
-import { runSweep, type SweepReport, startSweep } from "./sweep";
+import { type BlobSweptEvent, runSweep, type SweepReport, startSweep } from "./sweep";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { authoredToolName } from "./tool-names";
 
@@ -65,6 +69,8 @@ beforeAll(() => {
       refusals: [],
       advice: [],
       annotations: { readOnly: true, destructive: false },
+      contextMembersUsed: [],
+      blobReadFields: [],
     }),
     runnerFiles: async () => [],
     skills: async () => [],
@@ -406,5 +412,618 @@ describe("the scheduler", () => {
     const count = reports.length;
     await new Promise((r) => setTimeout(r, 150));
     expect(reports.length).toBe(count);
+  });
+});
+
+/**
+ * The blob pass (ADR 0023, "the sweep deletes"; GRA-189) over an in-memory `BlobStore` and the fake
+ * rows: what the store and the record look like after a sweep, and what the hook was told. The
+ * decision's clauses are `@graft/core`'s `blob-sweep.decision.test.ts`; this is the applier.
+ */
+describe("the blob pass", () => {
+  const HOUR = 60 * 60 * 1000;
+  const ABANDONED_AFTER_MS = HOUR;
+  const EMPTY_COUNTS = {
+    agents: 0,
+    kept: 0,
+    removed: 0,
+    marked: 0,
+    adopted: 0,
+    orphansRemoved: 0,
+    tmpRemoved: 0,
+    deferred: 0,
+    bytesRemoved: 0,
+  };
+
+  type Dir = { data?: string; meta?: string; lastWrittenAt: Date };
+
+  /** An agent's blobs directory as a map of names to what each holds, with the six verbs over it. */
+  function fakeBlobStore() {
+    const dirs = new Map<string, Map<string, Dir>>();
+    const removed: { agentId: string; name: string }[] = [];
+    /** Every agent `list` was asked about, in order: who the pass walked. */
+    const listed: string[] = [];
+    const agentDirs = (agentId: string) => {
+      const existing = dirs.get(agentId);
+      if (existing) return existing;
+      const made = new Map<string, Dir>();
+      dirs.set(agentId, made);
+      return made;
+    };
+    const store: BlobStore = {
+      listAgents: async () => [...dirs.keys()].sort(),
+      list: async (agentId) => {
+        listed.push(agentId);
+        return [...(dirs.get(agentId)?.keys() ?? [])].sort();
+      },
+      // Null is the store's own not-found signal (`BlobStore.readMeta`), for a directory or a sidecar that is not there.
+      readMeta: async (agentId, blobId) => dirs.get(agentId)?.get(blobId)?.meta ?? null,
+      exists: async (agentId, blobId) => dirs.get(agentId)?.has(blobId) ?? false,
+      remove: async (agentId, name) => {
+        if (dirs.get(agentId)?.delete(name)) removed.push({ agentId, name });
+      },
+      stat: async (agentId, name) => {
+        const dir = dirs.get(agentId)?.get(name);
+        if (!dir) return null;
+        return { lastWrittenAt: dir.lastWrittenAt, bytes: dir.data?.length ?? null };
+      },
+    };
+    return {
+      store,
+      removed,
+      listed,
+      put: (agentId: string, name: string, dir: Dir) => agentDirs(agentId).set(name, dir),
+      has: (agentId: string, name: string) => dirs.get(agentId)?.has(name) ?? false,
+    };
+  }
+
+  const sidecarOf = (
+    agentId: string,
+    bytes: number,
+    writtenAt: Date,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    JSON.stringify({
+      bytes,
+      contentType: "application/pdf",
+      name: "invoice.pdf",
+      writtenAt: writtenAt.toISOString(),
+      expiresAt: new Date(writtenAt.getTime() + 24 * HOUR).toISOString(),
+      agentId,
+      toolVersion: null,
+      ...overrides,
+    });
+
+  /** A blob as a run would leave it: the row, and the directory with data and sidecar. */
+  async function writeBlob(
+    fake: ReturnType<typeof fakeBlobStore>,
+    agentId: string,
+    id: string,
+    writtenAt: Date,
+    bytes = 10,
+  ) {
+    const data = "x".repeat(bytes);
+    fake.put(agentId, id, {
+      data,
+      meta: sidecarOf(agentId, bytes, writtenAt),
+      lastWrittenAt: writtenAt,
+    });
+    await recordBlobsWritten(
+      ctx,
+      scopeOf(agentId),
+      {
+        versionId: null,
+        blobs: [
+          {
+            id,
+            bytes,
+            contentType: "application/pdf",
+            name: "invoice.pdf",
+            expiresAt: new Date(writtenAt.getTime() + 24 * HOUR),
+          },
+        ],
+      },
+      deps.blob,
+    );
+  }
+
+  const rowOf = (id: string) => store.blobs.find((row) => row.id === id);
+  const sweepWith = (
+    fake: ReturnType<typeof fakeBlobStore>,
+    events: BlobSweptEvent[],
+    apply = true,
+  ) =>
+    runSweep(
+      ctx,
+      { ...deps, blobStore: fake.store, onBlobSwept: (event) => events.push(event) },
+      clock,
+      { apply, abandonedWriteMs: ABANDONED_AFTER_MS },
+    );
+
+  it("removes an expired blob's directory and marks its row, marks a row whose directory is already gone, keeps a live one, and fires blob_swept per removal with the bytes", async () => {
+    const agent = addAgent("blobs-expired");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    await writeBlob(fake, agent.id, "old-here", new Date(clock.getTime() - 30 * HOUR), 1_024);
+    await writeBlob(fake, agent.id, "old-gone", new Date(clock.getTime() - 30 * HOUR), 512);
+    await fake.store.remove(agent.id, "old-gone");
+    fake.removed.length = 0;
+    await writeBlob(fake, agent.id, "fresh", new Date(clock.getTime() - HOUR), 7);
+
+    const report = await sweepWith(fake, events);
+
+    expect(fake.has(agent.id, "old-here")).toBe(false);
+    expect(fake.has(agent.id, "fresh")).toBe(true);
+    expect(fake.removed).toEqual([{ agentId: agent.id, name: "old-here" }]);
+    expect(rowOf("old-here")?.removedAt).toEqual(clock);
+    expect(rowOf("old-gone")?.removedAt).toEqual(clock);
+    expect(rowOf("fresh")?.removedAt).toBeNull();
+    // The rows stay: the door reads `removed_at` as expired, never not found (GRA-187).
+    expect(rowOf("old-here")).toBeDefined();
+    expect(events).toEqual([
+      { agentId: agent.id, personId: PERSON, blobId: "old-here", bytes: 1_024, cause: "expired" },
+    ]);
+    expect(report.blobs).toMatchObject({
+      kept: 1,
+      removed: 1,
+      marked: 1,
+      adopted: 0,
+      orphansRemoved: 0,
+      tmpRemoved: 0,
+      bytesRemoved: 1_024,
+    });
+    // Soonest to expire first, then by id, as the repo orders them.
+    expect(report.blobs.actions).toEqual([
+      { agentId: agent.id, action: "mark", blobId: "old-gone", bytes: 512 },
+      { agentId: agent.id, action: "remove", blobId: "old-here", bytes: 1_024, mark: true },
+    ]);
+
+    // A second sweep has nothing to say about them.
+    const again = await sweepWith(fake, events);
+    expect(again.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([]);
+    expect(events).toHaveLength(1);
+  });
+
+  it("adopts a committed directory with a sidecar and no row, with the sidecar's expiry, and removes it once that passes", async () => {
+    const agent = addAgent("blobs-orphan");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    const writtenAt = new Date(clock.getTime() - 2 * HOUR);
+    fake.put(agent.id, "orphan", {
+      data: "y".repeat(33),
+      meta: sidecarOf(agent.id, 33, writtenAt, { toolVersion: "ver_9", name: "rows.csv" }),
+      lastWrittenAt: writtenAt,
+    });
+
+    const report = await sweepWith(fake, events);
+    expect(report.blobs.actions).toEqual([
+      expect.objectContaining({ agentId: agent.id, action: "adopt", blobId: "orphan" }),
+    ]);
+    expect(rowOf("orphan")).toMatchObject({
+      personId: PERSON,
+      agentId: agent.id,
+      versionId: "ver_9",
+      bytes: 33,
+      contentType: "application/pdf",
+      name: "rows.csv",
+      expiresAt: new Date(writtenAt.getTime() + 24 * HOUR),
+      createdAt: writtenAt,
+      removedAt: null,
+    });
+    expect(fake.has(agent.id, "orphan")).toBe(true);
+    expect(events).toEqual([]);
+
+    // Past the sidecar's expiry it is a row like any other.
+    advance(1);
+    const later = await sweepWith(fake, events);
+    expect(later.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([
+      { agentId: agent.id, action: "remove", blobId: "orphan", bytes: 33, mark: true },
+    ]);
+    expect(fake.has(agent.id, "orphan")).toBe(false);
+    expect(rowOf("orphan")?.removedAt).toEqual(clock);
+    expect(events).toEqual([
+      { agentId: agent.id, personId: PERSON, blobId: "orphan", bytes: 33, cause: "expired" },
+    ]);
+  });
+
+  it("removes a committed directory with no row and no readable sidecar as junk, telling the hook the bytes the store saw", async () => {
+    const agent = addAgent("blobs-junk");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    fake.put(agent.id, "no-sidecar", { data: "z".repeat(5), lastWrittenAt: clock });
+    fake.put(agent.id, "bad-sidecar", { data: "z", meta: "{oops", lastWrittenAt: clock });
+    fake.put(agent.id, "theirs", {
+      data: "zz",
+      meta: sidecarOf("someone_else", 2, clock),
+      lastWrittenAt: clock,
+    });
+
+    const report = await sweepWith(fake, events);
+    expect(fake.removed.map((r) => r.name).sort()).toEqual(["bad-sidecar", "no-sidecar", "theirs"]);
+    expect(report.blobs).toMatchObject({ orphansRemoved: 3, adopted: 0, bytesRemoved: 8 });
+    expect(events.map((e) => [e.blobId, e.bytes, e.cause])).toEqual([
+      ["bad-sidecar", 1, "orphan"],
+      ["no-sidecar", 5, "orphan"],
+      ["theirs", 2, "orphan"],
+    ]);
+    expect(store.blobs.some((row) => row.agentId === agent.id)).toBe(false);
+  });
+
+  it("keeps a .tmp written to inside the bound and clears one older than it, with no blob_swept for either", async () => {
+    const agent = addAgent("blobs-tmp");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    const writing = `writing${BLOB_TMP_SUFFIX}`;
+    const abandoned = `abandoned${BLOB_TMP_SUFFIX}`;
+    fake.put(agent.id, writing, {
+      data: "half",
+      lastWrittenAt: new Date(clock.getTime() - HOUR / 2),
+    });
+    fake.put(agent.id, abandoned, {
+      data: "half",
+      lastWrittenAt: new Date(clock.getTime() - 2 * HOUR),
+    });
+
+    const report = await sweepWith(fake, events);
+    expect(fake.has(agent.id, writing)).toBe(true);
+    expect(fake.has(agent.id, abandoned)).toBe(false);
+    expect(report.blobs).toMatchObject({ kept: 1, tmpRemoved: 1, bytesRemoved: 4 });
+    expect(report.blobs.actions).toEqual([
+      { agentId: agent.id, action: "remove_tmp", name: abandoned, bytes: 4 },
+    ]);
+    expect(events).toEqual([]);
+    expect(store.blobs.some((row) => row.agentId === agent.id)).toBe(false);
+
+    // Once the write has stopped for longer than a run may live, it goes too.
+    advance(1);
+    await sweepWith(fake, events);
+    expect(fake.has(agent.id, writing)).toBe(false);
+  });
+
+  it("skips an agent with a run in flight, blobs included, and sweeps them on the next pass", async () => {
+    const agent = addAgent("blobs-busy");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    await writeBlob(fake, agent.id, "busy-old", new Date(clock.getTime() - 30 * HOUR));
+    const a = await connect(agent.token);
+    try {
+      const pending = a.call("run_command", { command: "sleep 1" });
+      await until(() => inFlight.has(agent.id));
+
+      const during = await sweepWith(fake, events);
+      expect(during.skipped).toContain(agent.id);
+      expect(fake.has(agent.id, "busy-old")).toBe(true);
+      expect(rowOf("busy-old")?.removedAt).toBeNull();
+
+      expect(body(await pending)).toMatchObject({ exitCode: 0 });
+      const after = await sweepWith(fake, events);
+      expect(after.skipped).not.toContain(agent.id);
+      expect(fake.has(agent.id, "busy-old")).toBe(false);
+      expect(rowOf("busy-old")?.removedAt).toEqual(clock);
+    } finally {
+      await a.close();
+    }
+  });
+
+  it("under apply: false plans every blob action and touches neither the store nor a row, and with no blob store judges nothing", async () => {
+    const agent = addAgent("blobs-planned");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    await writeBlob(fake, agent.id, "plan-old", new Date(clock.getTime() - 30 * HOUR), 9);
+    fake.put(agent.id, "plan-orphan", {
+      data: "q",
+      meta: sidecarOf(agent.id, 1, clock),
+      lastWrittenAt: clock,
+    });
+    fake.put(agent.id, `plan${BLOB_TMP_SUFFIX}`, {
+      lastWrittenAt: new Date(clock.getTime() - 9 * HOUR),
+    });
+
+    const plan = await sweepWith(fake, events, false);
+    expect(plan.blobs.actions.filter((a) => a.agentId === agent.id).map((a) => a.action)).toEqual([
+      "remove",
+      "adopt",
+      "remove_tmp",
+    ]);
+    expect(plan.blobs).toMatchObject({ removed: 1, adopted: 1, tmpRemoved: 1, bytesRemoved: 0 });
+    expect(fake.removed).toEqual([]);
+    expect(rowOf("plan-old")?.removedAt).toBeNull();
+    expect(rowOf("plan-orphan")).toBeUndefined();
+    expect(events).toEqual([]);
+
+    const none = await runSweep(ctx, { ...deps, blobStore: null }, clock);
+    expect(none.blobs).toEqual({ ...EMPTY_COUNTS, actions: [] });
+    expect(fake.has(agent.id, "plan-old")).toBe(true);
+  });
+
+  it("names an agent whose blob pass threw and sweeps the others regardless", async () => {
+    const broken = addAgent("blobs-broken");
+    const fine = addAgent("blobs-fine");
+    const fake = fakeBlobStore();
+    await writeBlob(fake, broken.id, "broken-old", new Date(clock.getTime() - 30 * HOUR));
+    await writeBlob(fake, fine.id, "fine-old", new Date(clock.getTime() - 30 * HOUR));
+    const failing: BlobStore = {
+      ...fake.store,
+      remove: async (agentId, name) => {
+        if (agentId === broken.id) throw new Error("volume read-only");
+        return fake.store.remove(agentId, name);
+      },
+    };
+
+    const report = await runSweep(ctx, { ...deps, blobStore: failing }, clock, {
+      abandonedWriteMs: ABANDONED_AFTER_MS,
+    });
+    expect(report.failed).toEqual([{ agentId: broken.id, error: "volume read-only" }]);
+    // The directory first, then the row: a throw between the two leaves a `mark` for next time.
+    expect(rowOf("broken-old")?.removedAt).toBeNull();
+    expect(fake.has(fine.id, "fine-old")).toBe(false);
+    expect(rowOf("fine-old")?.removedAt).toEqual(clock);
+  });
+
+  it("reads an adoption whose id is taken as a row that exists now, keeps the blob and removes nothing (a run landed its row between the read and the adopt)", async () => {
+    const agent = addAgent("blobs-race-adopt");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    const writtenAt = new Date(clock.getTime() - HOUR);
+    fake.put(agent.id, "landed", {
+      data: "live",
+      meta: sidecarOf(agent.id, 4, writtenAt),
+      lastWrittenAt: writtenAt,
+    });
+    // The run's row lands after the sweep read the rows and before it adopts: the fake's `stat`
+    // is where the pass is mid-read, so the row is written from there.
+    const racing: BlobStore = {
+      ...fake.store,
+      stat: async (agentId, name) => {
+        if (name === "landed" && !rowOf("landed")) {
+          await recordBlobsWritten(
+            ctx,
+            scopeOf(agentId),
+            {
+              versionId: "ver_live",
+              blobs: [
+                {
+                  id: "landed",
+                  bytes: 4,
+                  contentType: "application/pdf",
+                  expiresAt: new Date(writtenAt.getTime() + 24 * HOUR),
+                },
+              ],
+            },
+            deps.blob,
+          );
+        }
+        return fake.store.stat(agentId, name);
+      },
+    };
+
+    const report = await runSweep(
+      ctx,
+      { ...deps, blobStore: racing, onBlobSwept: (event) => events.push(event) },
+      clock,
+      { abandonedWriteMs: ABANDONED_AFTER_MS },
+    );
+    expect(report.failed).toEqual([]);
+    expect(report.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([]);
+    expect(report.blobs.adopted).toBe(0);
+    expect(fake.has(agent.id, "landed")).toBe(true);
+    expect(fake.removed).toEqual([]);
+    expect(rowOf("landed")).toMatchObject({ versionId: "ver_live", removedAt: null });
+    expect(events).toEqual([]);
+  });
+
+  it("defers the rest of an agent's pass when a run starts after the pass began, says so on the report, and finishes next tick", async () => {
+    const agent = addAgent("blobs-race-run");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    await writeBlob(fake, agent.id, "expired-a", new Date(clock.getTime() - 30 * HOUR), 3);
+    await writeBlob(fake, agent.id, "expired-b", new Date(clock.getTime() - 30 * HOUR), 5);
+    fake.put(agent.id, "junk", { data: "j", lastWrittenAt: clock });
+    // A run begins while the pass is reading the directories, after the in-flight check that let it start.
+    let release: (() => void) | null = null;
+    const racing: BlobStore = {
+      ...fake.store,
+      list: async (agentId) => {
+        if (agentId === agent.id && release === null) release = inFlight.begin(agent.id);
+        return fake.store.list(agentId);
+      },
+    };
+    const sweeping = {
+      ...deps,
+      blobStore: racing,
+      onBlobSwept: (event: BlobSweptEvent) => events.push(event),
+    };
+
+    const during = await runSweep(ctx, sweeping, clock, { abandonedWriteMs: ABANDONED_AFTER_MS });
+    expect(during.skipped).not.toContain(agent.id);
+    expect(during.deferred).toEqual([agent.id]);
+    // Three actions (two removes, one orphan) were decided and none applied.
+    expect(during.blobs.deferred).toBe(3);
+    expect(during.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([]);
+    expect(fake.removed).toEqual([]);
+    expect(rowOf("expired-a")?.removedAt).toBeNull();
+    expect(events).toEqual([]);
+
+    // The run ends; the next tick applies what was deferred.
+    expect(release).not.toBeNull();
+    (release as unknown as () => void)();
+    expect(inFlight.has(agent.id)).toBe(false);
+    const after = await runSweep(ctx, sweeping, clock, { abandonedWriteMs: ABANDONED_AFTER_MS });
+    expect(after.deferred).toEqual([]);
+    expect(fake.removed.map((r) => r.name).sort()).toEqual(["expired-a", "expired-b", "junk"]);
+    expect(rowOf("expired-a")?.removedAt).toEqual(clock);
+    expect(rowOf("expired-b")?.removedAt).toEqual(clock);
+    expect(events).toHaveLength(3);
+  });
+
+  it("treats a failed sidecar read as the agent's failure, never as an absent sidecar: the directory stays and is judged next tick", async () => {
+    const agent = addAgent("blobs-unreadable");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    const writtenAt = new Date(clock.getTime() - HOUR);
+    fake.put(agent.id, "flaky", {
+      data: "ok",
+      meta: sidecarOf(agent.id, 2, writtenAt),
+      lastWrittenAt: writtenAt,
+    });
+    let failReads = true;
+    const flaky: BlobStore = {
+      ...fake.store,
+      readMeta: async (agentId, blobId) => {
+        if (failReads && agentId === agent.id) throw new Error("EIO: backing unavailable");
+        return fake.store.readMeta(agentId, blobId);
+      },
+    };
+    const sweeping = {
+      ...deps,
+      blobStore: flaky,
+      onBlobSwept: (event: BlobSweptEvent) => events.push(event),
+    };
+
+    const failed = await runSweep(ctx, sweeping, clock, { abandonedWriteMs: ABANDONED_AFTER_MS });
+    expect(failed.failed).toEqual([{ agentId: agent.id, error: "EIO: backing unavailable" }]);
+    expect(fake.has(agent.id, "flaky")).toBe(true);
+    expect(fake.removed).toEqual([]);
+    expect(rowOf("flaky")).toBeUndefined();
+    expect(events).toEqual([]);
+
+    // Once the read works, the same directory is adopted, not removed.
+    failReads = false;
+    const recovered = await runSweep(ctx, sweeping, clock, {
+      abandonedWriteMs: ABANDONED_AFTER_MS,
+    });
+    expect(recovered.failed).toEqual([]);
+    expect(rowOf("flaky")).toMatchObject({ bytes: 2, removedAt: null });
+    expect(fake.has(agent.id, "flaky")).toBe(true);
+  });
+
+  it("adopts from what the store measured, not from the sidecar: the real size, and an expiry clamped to the last write plus the TTL", async () => {
+    const agent = addAgent("blobs-forged");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    const lastWrittenAt = new Date(clock.getTime() - HOUR);
+    fake.put(agent.id, "forged", {
+      data: "x".repeat(900),
+      meta: sidecarOf(agent.id, 1, lastWrittenAt, {
+        expiresAt: new Date(clock.getTime() + 365 * 24 * HOUR).toISOString(),
+        writtenAt: new Date(clock.getTime() + 10 * 24 * HOUR).toISOString(),
+      }),
+      lastWrittenAt,
+    });
+
+    await sweepWith(fake, events);
+    expect(rowOf("forged")).toMatchObject({
+      bytes: 900,
+      createdAt: lastWrittenAt,
+      expiresAt: new Date(lastWrittenAt.getTime() + 24 * HOUR),
+    });
+  });
+
+  it("sweeps a revoked agent's blobs on the same rule (GRA-195): an expired one is removed and marked and its junk cleared on the next pass, a live one stays until its expiry, and the roster is whoever has rows or a directory", async () => {
+    const agent = addAgent("blobs-revoked");
+    const idle = addAgent("blobs-idle");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    await writeBlob(fake, agent.id, "revoked-old", new Date(clock.getTime() - 30 * HOUR), 64);
+    await writeBlob(fake, agent.id, "revoked-live", new Date(clock.getTime() - HOUR), 16);
+    fake.put(agent.id, "revoked-junk", {
+      data: "?",
+      lastWrittenAt: new Date(clock.getTime() - 2 * HOUR),
+    });
+    expect(await revokeAgent(ctx, principal, agent.id, deps.agent)).toMatchObject({
+      id: agent.id,
+      revokedAt: clock,
+    });
+
+    const report = await sweepWith(fake, events);
+
+    // Out of the working-set roster (its token resolves to nothing), in the blob pass's.
+    expect(fake.listed).toContain(agent.id);
+    expect(report.blobs.agents).toBe(new Set(fake.listed).size);
+    // An agent with neither a row nor a directory is nobody's business this pass.
+    expect(fake.listed).not.toContain(idle.id);
+    expect(report.skipped).not.toContain(agent.id);
+    expect(report.failed).toEqual([]);
+    expect(fake.has(agent.id, "revoked-old")).toBe(false);
+    expect(rowOf("revoked-old")?.removedAt).toEqual(clock);
+    expect(fake.has(agent.id, "revoked-junk")).toBe(false);
+    expect(fake.has(agent.id, "revoked-live")).toBe(true);
+    expect(rowOf("revoked-live")?.removedAt).toBeNull();
+    expect(events).toEqual([
+      { agentId: agent.id, personId: PERSON, blobId: "revoked-old", bytes: 64, cause: "expired" },
+      { agentId: agent.id, personId: PERSON, blobId: "revoked-junk", bytes: 1, cause: "orphan" },
+    ]);
+    expect(report.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([
+      { agentId: agent.id, action: "remove", blobId: "revoked-old", bytes: 64, mark: true },
+      { agentId: agent.id, action: "remove_orphan", blobId: "revoked-junk", bytes: 1 },
+    ]);
+
+    // Past its expiry the live one goes too: the same 24 hour rule as any agent's, revoked or not.
+    const later = new Date(clock.getTime() + 25 * HOUR);
+    const after = await runSweep(
+      ctx,
+      { ...deps, blobStore: fake.store, onBlobSwept: (event) => events.push(event) },
+      later,
+      { abandonedWriteMs: ABANDONED_AFTER_MS },
+    );
+    expect(after.blobs.actions).toContainEqual({
+      agentId: agent.id,
+      action: "remove",
+      blobId: "revoked-live",
+      bytes: 16,
+      mark: true,
+    });
+    expect(fake.has(agent.id, "revoked-live")).toBe(false);
+    // Marked at the service's clock, as every mark is; the row stays for the door.
+    expect(rowOf("revoked-live")).toMatchObject({ id: "revoked-live", removedAt: clock });
+    expect(events).toHaveLength(3);
+  });
+
+  it("walks an agent the database no longer holds off the store's listing alone (GRA-195): its directories are kept inside the TTL, then cleared as junk with no row written and no event, and a stale .tmp goes by the bound", async () => {
+    const agent = addAgent("blobs-deleted");
+    const fake = fakeBlobStore();
+    const events: BlobSweptEvent[] = [];
+    await writeBlob(fake, agent.id, "deleted-blob", new Date(clock.getTime() - 2 * HOUR), 32);
+    fake.put(agent.id, `deleted${BLOB_TMP_SUFFIX}`, {
+      data: "xx",
+      lastWrittenAt: new Date(clock.getTime() - 9 * HOUR),
+    });
+    // Deleted by hand: the agent row goes and, by the schema's cascade, every blob row with it.
+    store.agents.delete(agent.id);
+    for (let index = store.blobs.length - 1; index >= 0; index -= 1) {
+      if (store.blobs[index]?.agentId === agent.id) store.blobs.splice(index, 1);
+    }
+
+    const first = await sweepWith(fake, events);
+    expect(fake.listed).toContain(agent.id);
+    expect(first.failed).toEqual([]);
+    expect(first.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([
+      { agentId: agent.id, action: "remove_tmp", name: `deleted${BLOB_TMP_SUFFIX}`, bytes: 2 },
+    ]);
+    // Inside the TTL: kept, and never adopted, since there is no agent to adopt it into.
+    expect(fake.has(agent.id, "deleted-blob")).toBe(true);
+    expect(rowOf("deleted-blob")).toBeUndefined();
+
+    const later = new Date(clock.getTime() + 25 * HOUR);
+    const second = await runSweep(
+      ctx,
+      { ...deps, blobStore: fake.store, onBlobSwept: (event) => events.push(event) },
+      later,
+      { abandonedWriteMs: ABANDONED_AFTER_MS },
+    );
+    expect(second.failed).toEqual([]);
+    expect(second.blobs.actions.filter((a) => a.agentId === agent.id)).toEqual([
+      { agentId: agent.id, action: "remove_orphan", blobId: "deleted-blob", bytes: 32 },
+    ]);
+    expect(fake.has(agent.id, "deleted-blob")).toBe(false);
+    expect(rowOf("deleted-blob")).toBeUndefined();
+    // The bytes are counted; nobody is told, since the event names a person and there is none.
+    expect(second.blobs.bytesRemoved).toBeGreaterThanOrEqual(32);
+    expect(events.filter((event) => event.agentId === agent.id)).toEqual([]);
+  });
+
+  /** The decision's copy of the suffix, pinned to the store's (`@graft/toolbox`'s `layout.ts` says why there are two). */
+  it("spells the .tmp suffix as the store does", () => {
+    expect(SWEEP_BLOB_TMP_SUFFIX).toBe(BLOB_TMP_SUFFIX);
   });
 });

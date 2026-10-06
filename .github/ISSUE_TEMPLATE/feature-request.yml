@@ -1,0 +1,40 @@
+name: Feature request
+description: Something you wanted Graft or an agent to do that it could not.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Graft ships no integration catalogue (ADR 0001): there is no list of vendors to add to. Most
+        "add vendor X" requests turn out to be "acquire could not author a tool against X" bugs, so
+        this form asks for what the agent actually tried.
+  - type: textarea
+    id: task
+    attributes:
+      label: The task the agent could not do
+      description: What you asked the agent to do, in your own words.
+    validations:
+      required: true
+  - type: input
+    id: vendor
+    attributes:
+      label: Vendor or API
+      description: The vendor, product or API the task needed.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you tried
+      description: The connection, the goal you gave acquire, and what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: acquire-failure
+    attributes:
+      label: Acquire failure message
+      description: If acquire refused or failed, the failure message and any diagnostics it returned.
+    validations:
+      required: false

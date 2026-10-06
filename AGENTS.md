@@ -14,6 +14,119 @@ Guidance for coding agents working in this repository. `CLAUDE.md` is a symlink 
    verified by hand and what was not, the deviations and their reasons — and is where the thing a
    later ticket trips over is written down. An ADR records a decision; Linear holds the ticket.
 
+## Skills
+
+Content lives in `.agents/skills/<name>/SKILL.md`; `.claude/skills/*` are symlinks to it, so a
+skill is authored once and Claude Code and Codex read the same copy. Always edit the file under
+`.agents/`, never through the symlink directory.
+
+Presence in `skills-lock.json` marks the boundary: a listed skill is **vendored** from an upstream
+source and pinned by content hash, so a local edit is lost on the next sync. Today every entry is
+one of [`mattpocock/skills`](https://github.com/mattpocock/skills), all thirty-eight of them,
+vendored whole under MIT (`.agents/skills/LICENSE` is his notice; GRA-179). Taking a subset was
+tried in Cando and abandoned: they cross-reference heavily, so any subset leaves the flows they
+describe dead-ending on skills nobody installed. A skill of our own would go beside them and stay
+out of the lockfile; there is none yet, and the Hermes skill under `skills/` is a product, not a
+skill for working here.
+
+Biome does **not** look inside `.agents/skills` (`biome.json`): vendored files answer to their
+upstream, and in Cando the reformatting reappeared on every sync until the exclusion.
+
+### Keeping them current
+
+```bash
+npx skills update -p -y                  # refresh everything already in the lockfile
+npx skills add mattpocock/skills         # pick up skills that did not exist when we last looked
+```
+
+`update` iterates `skills-lock.json`, so it can only refresh what is already listed; a skill
+published upstream after our last `add` is invisible to it. Three things to know, the first two
+from Cando's experience of the same CLI and the third reproduced here on 2026-09-22:
+
+- **`matt-code-review` cannot auto-update.** The CLI resolves the upstream skill by its *local*
+  name rather than by `skillPath`, so it looks for `matt-code-review` in his repository, finds
+  nothing, and reports a failure. Nothing is damaged, but it receives no upstream changes. To
+  refresh it by hand, `add` it under its own name somewhere disposable and copy the file across,
+  then put the `name:` line back.
+- **`update -p` updates *every* vendored skill.** Run it deliberately, in a pull request about that.
+- **On a laptop with `~/.openclaw`, `update` links the skills into the root `skills/` directory.**
+  The CLI relinks every agent it detects as installed, and its OpenClaw definition names the bare
+  `skills/` as that agent's project directory, which here is the Hermes skill's home (MIT,
+  `skills/LICENSE`). They show up as untracked `skills/<name>` symlinks; delete them before
+  committing (`find skills -maxdepth 1 -type l -delete`) and never commit them. Install only ever
+  named `claude-code` and `codex`, so a fresh `add` does not do this.
+
+### Which to reach for
+
+**Start with `/ask-matt`.** It is the router over the rest and holds the map: which skill opens
+which flow, where the on-ramps merge, and where a phase boundary makes it safe to compact.
+Reproducing that map here would let the copy rot. The main path, for orientation:
+
+```
+grill-with-docs → to-spec → to-tickets → implement → matt-code-review
+                                           ├ tdd
+                                           └ diagnosing-bugs
+```
+
+with `/triage` on-ramping raw incoming issues, `/diagnosing-bugs` on-ramping breakage,
+`/wayfinder` for an effort too foggy to hold in a single session, and `/implement-spec` when a
+whole spec's ticket graph is to land on one branch. One rule from `ask-matt` worth knowing before
+you read it: keep grilling, spec and tickets in **one unbroken context window** (don't compact
+until after `/to-tickets`) so all three build on the same thinking;
+`.agents/skills/ask-matt/PHASE-BOUNDARIES.md` says where compaction is safe.
+
+Four are here for completeness rather than use: `scaffold-exercises` and `migrate-to-shoehorn`
+target his course repositories, and `setup-pre-commit` and `git-guardrails-claude-code` would
+install tooling this repository has deliberately not adopted (Biome, not Prettier plus Husky);
+the guard script's substring match also misses `git -C <dir> push`, so it would not be the
+protection it says it is (Greptile on #137). `improve-codebase-architecture` writes an HTML report
+that loads Tailwind and Mermaid from public CDNs, so the file names and module shape it draws are
+shown to those scripts when it is opened; fine for this public repository, and worth knowing before
+running it over a private checkout that links `packages/cloud-backings/`.
+`/pr` proposes a body shape (Summary, Evidence, Merge Danger) that is a fine skeleton, but the
+body of a pull request here is the build record *Before anything else* describes, and that content
+comes first.
+
+**Why `matt-code-review` and not `code-review`.** Claude Code ships a built-in `code-review`, and
+the built-in wins the name; his was installed and simply unreachable in Cando. So it is aliased:
+the directory, the lockfile key and the frontmatter `name` all say `matt-code-review`, while
+`skillPath` still points at `skills/engineering/code-review/SKILL.md` upstream. The two answer
+different questions: the built-in finds correctness bugs and simplifications in a diff and can post
+inline comments; his checks a branch against documented standards *and* against the ticket that
+asked for it, in parallel sub-agents. One consequence: `implement`, `implement-spec` and `ask-matt`
+end with "use `/code-review`", which resolves to the built-in. Reach for `matt-code-review` by hand
+when you want the spec axis, and do not edit the vendored files to fix it.
+
+**These skills assume an issue tracker, and ours is Linear, not GitHub Issues.** They default to
+`gh issue create`. The real workflow is recorded in `docs/agents/` (the **Agent skills** section
+below). Read it before using `triage`, `to-tickets`, `to-spec` or `wayfinder`, or they will reach
+for the wrong CLI.
+
+> **Leave "PRs as a request surface" set to `no`.** It is recorded that way in
+> `docs/agents/issue-tracker.md`. `triage` step 3 verifies a PR by checking it out and running its
+> tests, which for a PR from outside the organisation means executing contributor-controlled code
+> in a session holding credentials. This repository is public and takes outside contributions, so
+> the flag is load-bearing here in a way it was not in Cando. It cannot be fixed by editing
+> `triage/SKILL.md`; that file is vendored.
+
+## Agent skills
+
+Per-repository configuration the vendored engineering skills read. `setup-matt-pocock-skills`
+would write these; here they were written by hand from Cando's (GRA-179), so edit the files
+directly rather than running it, unless you are switching trackers outright. *Agent* in that
+directory means the coding agent; everywhere else it is `CONTEXT.md`'s word.
+
+- **Issue tracker**: Linear, in the Graft team, through the MCP server configured in the person's
+  own tooling. Work groups initiative → project → issue; a spec's tickets go in the spec's project
+  as sub-issues. `docs/agents/issue-tracker.md`, which also carries the "PRs as a request surface"
+  flag, the pull-request rules and the Linear equivalents of the wayfinding operations.
+- **Triage labels**: the five canonical roles, unaliased: `needs-triage`, `needs-info`,
+  `ready-for-agent`, `ready-for-human`, `wontfix`. All exist in the Graft team. They are a *state*
+  axis and compose with the type labels (`Bug`, `Feature`, `Improvement`, `Infra`).
+  `docs/agents/triage-labels.md`.
+- **Domain docs**: single-context, one `CONTEXT.md` and one `docs/adr/` at the root, despite the
+  monorepo. `docs/agents/domain.md`.
+
 ## Working agreement
 
 - **Every pull request has a Linear ticket** in the Graft project, and the PR references it.
@@ -84,10 +197,11 @@ pnpm run db:studio     # Drizzle Studio
 ### The compose file is the development environment
 
 `docker-compose.yml` at the root is the self-hosted form (ADR 0002) and, from GRA-33 on, the way this
-repository is run whole: `docker compose up -d` brings up Postgres, builds the sandbox image, and runs
-the server image — server, proxy, MCP endpoint and console in one container — with migrations applied
-and an admin opened on first start. README, "Self-hosting", is the walkthrough; the compose file's
-comments are the reference for each name. Two ways to use it while developing:
+repository is run whole: `docker compose pull` fetches the two published images, and `docker compose
+up -d` brings up Postgres and runs the server image — server, proxy, MCP endpoint and console in one
+container — with migrations applied and an admin opened on first start. `--build` builds this
+checkout's Dockerfiles over the tags instead (GRA-194). README, "Self-hosting", is the walkthrough;
+the compose file's comments are the reference for each name. Two ways to use it while developing:
 
 - **Postgres alone** (`pnpm run db:start`) and the server from source on the host (`pnpm run dev`) —
   the inner loop, where `tsx watch` and Vite reload. `apps/server/.env` names the database for it.
@@ -125,7 +239,7 @@ ours, so put it back after a run. The CLI is the `auth` package since Better Aut
 (`@better-auth/cli` stopped at 1.4.21), published in lockstep with the library, and the script runs
 the version matching the installed `better-auth`, so the generator and the runtime cannot drift.
 Regenerate rather than edit when the auth configuration or that version changes, then
-`db:generate`: Better Auth 1.7.3 validates the schema at init and refuses a required column it
+`db:generate`: Better Auth since 1.7.3 validates the schema at init and refuses a required column it
 never writes (GRA-86, migration 0008).
 
 **Two suites need Postgres**: `apps/server/src/database.integration.test.ts`, which migrates a fresh
@@ -187,7 +301,10 @@ handoffs (GRA-28), which share the wait and the TTL — and `GRAFT_PENDING_ACTIO
 24) how long that action stays answerable (ADR 0006, ADR 0008). `GRAFT_CARD_HOSTS` (default
 `claude.ai,chatgpt.com`) names the chat products whose OAuth clients may answer the ask card, by the
 host of their registered redirect URIs, and is the whole of that rule (GRA-84, GRA-150; the
-paragraph on the card below). `packages/env/src/schema.ts` is the rules as code.
+paragraph on the card below). `GRAFT_PROXY_MAX_BODY_BYTES` (default 10 MiB, floor 1 MiB) is the
+proxy's body cap on both legs, passed into the proxy's options beside `followRedirects` and named on
+the boot line only when raised (GRA-183; ADR 0010). `packages/env/src/schema.ts` is the rules as
+code.
 
 **An OAuth consent (ADR 0005) adds no variable, two server routes and one console route.**
 `GET /api/oauth/redirect-uri` is `GRAFT_AUTH_URL` plus `/api/oauth/callback`, computed by one function
@@ -379,7 +496,8 @@ where `apps/server/tsdown.config.ts` copies it and the Dockerfile's `build` stag
 Every tool that can ask carries `_meta.ui.resourceUri` unconditionally (Claude.ai declares no
 extension): `acquire`, `request_connection`, `request_credential`, and — since a host renders a card
 only for a tool whose definition names the resource (GRA-116's live check, 2026-09-20) — `run_tool`,
-every `execute__<id>` and every authored tool in the list, whose first write answers the tool ask;
+every `execute__<id>` and every authored tool in the list, whose first write answers the tool ask,
+and `find_tool`, whose answer may carry the Setup offer's card (GRA-210, the paragraph on it below);
 ChatGPT's alias `openai/outputTemplate` rides beside it, and the
 resource carries the `openai/widget*` aliases of its `ui` keys (GRA-112); their awaiting results
 carry the card's data under `structuredContent.card` beside GRA-55's unchanged `url`, `message` and
@@ -512,6 +630,231 @@ where it was (`packages/publish`, step 8). The job's "did not run" progress line
 refusal's `reason: message` rather than the word `refused`. `packages/mcp/src/server.test.ts` (the
 GRA-122 describe), `acquire.test.ts` and `publish.service.test.ts` are the suites.
 
+**A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
+directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
+`.blobs/<agentId>/` beside the toolboxes on the toolbox volume (the Agent Drive in the hosted form),
+which the agent's sandbox mounts alone at `/blobs` as it mounts the toolbox at `/tools`; the scope
+is that mount, since a vendored dependency runs in-process and the check never reads it. The runner's
+`ctx.blob.write` writes into a temporary directory and renames it once, `ctx.blob.read` answers a
+`Blob`; the ref `blob://<id>` is a plain string in a tool's result and the next tool's input, and the
+runner's ledger comes back beside the result as `blobs` so the server writes one `blob` row per file
+through a blob store seam beside the toolbox store. The check bans `fs`, `fs/promises`,
+`worker_threads`, `vm`, `module`, `cluster` and `inspector` as defence in depth, the runner refuses a
+ref that does not resolve under `/blobs`, and the door refuses `blob_not_found`, `blob_expired` and
+`blob_quota` before a sandbox is touched, on every path that invokes the runner for an agent:
+`run_tool`, every authored tool in the list, `execute__<connection>` and `run_command` (GRA-200). 24
+hours, 256 MiB per blob, 1 GiB live per agent, all constants; writing one never asks. The working-set sweep's timer runs a second pass that removes
+expired blobs through the blob store and keeps the row with `removed_at`. The proxy's cap is
+`GRAFT_PROXY_MAX_BODY_BYTES` (default 10 MiB; ADR 0010 as amended 2026-09-22), so a self-host moves
+a file larger than that only once its operator raises it. The spec is GRA-181 and its sub-issues are
+the build order.
+
+**The write path is GRA-186.** `ctx` is five frozen names, `blob` the fifth: `ctx.blob.write(data,
+{ contentType, name? })` takes a `Uint8Array`, a `Blob` or a `ReadableStream<Uint8Array>`, streams
+it into `/blobs/<id>.tmp/`, writes the sidecar (`bytes`, `contentType`, `name`, `writtenAt`,
+`expiresAt`, `agentId`, `toolVersion`) and renames the directory once; `stat` reads the sidecar;
+`read` answers a lazy `Blob` (the paragraph on GRA-187 below). The runner's stdout contract is now
+an **envelope**, `{ result, blobs }`, on the sync, detached and dry-run paths alike
+(`readRunnerEnvelope` in `@graft/runner`). Since GRA-193 each server seeds the runner and the skills
+under `/graft/<sha256 of both>/` when that directory is absent and runs from it, handing every
+command the path as `GRAFT_RUNNER`, so every sync run goes through this server's runner and
+`run.ts`'s `unwrapEnvelope` refuses stdout with no envelope as a module that printed to stdout
+itself (GRA-199); the one bare result still read is a detached run's result file written by a
+runner older than the envelope and polled after an upgrade, in `sandbox.ts`'s `readRunnerResult`.
+Three per-exec variables ride beside the token and are deleted with it before the module loads:
+`GRAFT_AGENT` and `GRAFT_TOOL_VERSION` for the sidecar, never for a path (`GRAFT_AGENT` is
+`blob-door.ts`'s `blobAgentEnvironment`, on every capability run and inside `blobRunEnvironment`,
+since an `execute__` command may invoke `$GRAFT_RUNNER` on a by-hand module), and `GRAFT_BLOBS_DIR`, the
+mount path, a variable for the reason `GRAFT_RESULT_PATH` is one (a backing that maps the sandbox's
+paths maps the environment's values; the fake does). On the wire a run that wrote nothing answers
+exactly what it did; one that wrote answers `{ result, blobs: [{ ref, bytes, contentType, name?,
+expiresAt }] }` in the text block and `structuredContent`, the list cut at `MAX_RESULT_BLOBS` (32)
+with a count and a note; `wait_for_process` puts the same list beside a detached run's `result`. The
+`blob` table (`packages/db/src/schema/blob.ts`, migration 0011) is keyed by the id inside the ref and
+carries the person and the agent, so `repo/blob.ts` names both in every statement; `@graft/core`'s
+`recordBlobsWritten` writes the rows from the ledger, `packages/mcp/src/blobs.ts` calls it from the
+sync run (with the version) and the poll (without one, since a poll cannot know it) and fires
+`McpDeps.onBlobWritten`, which the server captures as `blob_written` with the size and the media type
+and never the name.
+
+**The read path and the door are GRA-187.** `ctx.blob.read(ref)` answers `fs.openAsBlob` over
+`/blobs/<id>/data`, typed from the sidecar, so `.stream()` reads the file in 64 KiB chunks and a
+`FormData` upload never holds it whole; a ref that does not resolve there is `blob_not_found` with
+the ref in the sentence, whether it is not of the scheme, fails the id rule, names a `.tmp`, names
+nothing, or reaches a symlink at the directory or either file (`lstat`, as the store judges the
+tree from outside). The runner checks no expiry: **the door is the expiry's one judge.**
+`packages/mcp/src/blob-door.ts`'s `admitBlobs` runs in `run.ts` after the input is validated and
+before the approval gate, for a dry run too, so `acquire`'s job learns of a dead ref there: the
+agent's live bytes (`sumLiveBlobBytes`: `removed_at` null and `expires_at` ahead, one statement)
+against `BLOB_QUOTA_BYTES` answers `blob_quota` with `bytes` and `quota` on every run, a ref in the
+input or not; then every `blob://` string leaf of the input, arrays and nested objects included, is
+looked up under the person and the agent in one statement (`findBlobs`) and the first without a row
+is `blob_not_found` with `ref`, another agent's row answering the same sentence, and the first past
+its expiry (`@graft/core`'s `isBlobExpired`, `expiresAt <= now`, the sweep's and `sumLiveBlobBytes`'s
+rule too, GRA-199) or with `removed_at` set is `blob_expired` with `ref`, naming `BLOB_TTL_HOURS`.
+Each is a refusal in the run's own shape (`isError: true`, a `refused` ledger row) and none asks (ADR 0008).
+The quota lives beside the scheme, the cap and the TTL in `@graft/runner`'s `runner-source.ts`,
+the one file that spells the three numbers; `judgeBlobQuota` and `judgeBlobRefs` are pure and
+`blob-door.test.ts` pins the sentences, `server.test.ts` the loop end to end over the fake sandbox.
+**A run the door admits is handed its budget** (Greptile on #145): the door's check runs once,
+before the run, so `run.ts` puts `BLOB_QUOTA_BYTES - liveBytes` into the exec as
+`GRAFT_BLOB_BUDGET_BYTES` (the quota beside it as `GRAFT_BLOB_QUOTA_BYTES`, for the sentence), both
+deleted with the rest before the module loads, and the runner keeps the total it has committed and
+refuses the write that would pass the budget as `blob_quota` as the bytes stream in, at the smaller
+of the per-blob cap and the budget, removing the `.tmp` directory as `blob_too_large` does; a
+refused write is on no ledger. Unset, as under a server older than the variable or a runner run by
+hand, the per-blob cap alone bounds a write. **`execute__` commands and `run_command` pass the same
+door** (GRA-200): `tools/execute.ts` and `tools/authoring.ts` call `admitBlobs` before the exec (the
+quota alone, since a shell command is not JSON the runner reads), refuse `blob_quota` in their own
+shape with no exec, put the two variables into the process's environment beside the runner's path,
+and hold the grant on the in-flight registry until the process settles, a detached one's on its
+process name through `heldInFlight`'s `budgetBytes`; `isPolledProcess` in `sandbox.ts` is the one
+spelling of the runner-answer shape the three readers of a ledger share. Two rules from Greptile's
+review of #157: **the admission and its grant are one step** (`admitUnderGrant` in `in-flight.ts`,
+serialised per agent through `InFlightRegistry.admit`, on `run.ts`'s path too), since two
+admissions interleaved across the door's await both read the remainder before either reserved it;
+and **the record of a run's blobs is an adoption from the store** (`blob-budget.ts`): a by-hand
+command can hand the runner any `GRAFT_BLOB_BUDGET_BYTES` it likes, print any ledger and edit any
+sidecar, so when the server records a run's ledger (`recordBlobsWithinQuota`, at the three record
+sites and at `wait_for_process`) it takes nothing from the ledger but the ids and builds each row as
+the sweep builds an orphan's (`adoptedBlobOf`, `parseBlobSidecar`): `bytes` as the store measured,
+name and media type from the sidecar under the write rules, `expiresAt` never past the write plus
+the TTL with the store's last write capped at now, the version the caller's; an entry the store
+cannot `stat`, whose sidecar fails the rules or names another agent, is dropped; an entry naming a
+blob with a row already is listed from its row alone while the row is live and the directory is
+there (never removed or re-recorded; a second poll of a finished process names the same blob) and
+dropped otherwise. The quota is then judged over the live rows plus this run's measured bytes; past
+it the newest are removed through the `BlobStore` until the rest fit, get no row, and the run is
+answered a `blob_quota` failure naming the overshoot (`blobQuotaOvershoot`, `withRecordedBlobs`
+putting the recorded list in place of the declared one). The whole record is one step per agent
+under `InFlightRegistry.exclusive`, the critical section admissions take, so two runs finishing
+together cannot both find room. The record reads nothing off the grant, which expires with a
+detached hold while the result stays pollable; the quota is the promise. The newest go because the
+earlier writes are what an honest runner would have committed. Three more rules from Greptile's review of #148: the runner reserves
+against the budget **as each chunk lands**, one shared figure across every write in flight, so two
+writes started together cannot both fit a remainder only one fits; the door subtracts **what it has
+already handed to this agent's runs still in flight** (`InFlightRegistry.grant` and
+`outstandingBudget`, `in-flight.ts`; a detached run's grant rides on its process name until its
+poll settles it), a per-process record as the in-flight hold is, with ADR 0023's option C as the
+shape for the day two replicas admit one agent's runs; and **a failed run reports the blobs it
+committed**: a module that writes and then throws prints the same `ENVELOPE_MARKER` line a result's
+envelope sits behind (`__GRAFT_ENVELOPE__:1`, `@graft/runner`) and `{ result: null, blobs }` on
+stdout before the error (the result file on the detached path), so `readRunnerEnvelope` is the one
+reader; `run.ts` records the rows off it and the failure names the refs, while a timeout prints
+nothing and its blobs are the sweep's to adopt (GRA-189).
+
+**The sweep's blob pass is GRA-189** (ADR 0023, "the sweep deletes"). On the working-set timer,
+after the working-set pass for an agent and under the same in-flight skip, `packages/mcp/src/sweep.ts`
+reads the agent's unremoved rows (`listUnremovedBlobs`) and what `McpDeps.blobStore` lists, reads the
+sidecar and the age (`BlobStore.stat`, new here: the newest modification time among the directory,
+`data` and `meta.json`, and `data`'s size) of every directory no row claims, and applies what
+`packages/core/src/blob/blob-sweep.decision.ts` decides, a pure function in the working-set
+decision's shape with seven outcomes: `keep` (a live row, with or without its directory, since a
+write may still be landing; a `.tmp` inside the bound), `remove` (a row past its expiry whose
+directory is there: the directory goes through the store, then `markBlobRemoved` sets `removed_at`,
+in that order so a throw between the two leaves a `mark` and never a marked row with bytes on disk),
+`mark` (a row past its expiry whose directory is gone), `adopt` (a directory with a readable sidecar
+and no row: `adoptedBlobOf` builds the row from what the store measured and the sidecar clamped to
+it, since a sidecar is sandbox-written and untrusted: `bytes` is `data`'s real size, `writtenAt` the
+sidecar's unless missing or later than the store's last write, `expiresAt` never past `writtenAt`
+plus the TTL, `name` and `contentType` held to `BLOB_NAME_RULES` and `BLOB_CONTENT_TYPE_RULES`;
+`adoptBlob` writes it, `insertAdoptedBlob` doing nothing on a conflict, which the applier reads as
+"a row exists now" and keeps the blob; the next pass judges it as a row), `remove_orphan` (a
+directory with no row and no sidecar the sweep can adopt from: absent, unparseable, breaking a write
+rule or naming another agent; junk, since the rename is the commit and the sidecar precedes it), and
+`remove_tmp` (a `<blobId>.tmp` last written to longer ago than `ABANDONED_BLOB_WRITE_SECONDS` in
+`bounds.ts`, the detached ceiling plus the sync ceiling; `RunSweepOptions.abandonedWriteMs` is the
+test seam). Expiry is `isBlobExpired`'s `<=` (GRA-199). Only `BlobStore.readMeta`'s `null`, the store's own not-found signal,
+reads as "no sidecar"; any other read error ends the agent's pass with the error on the report and
+the blob is judged again next tick. A run that starts after an agent's pass began is caught before
+every destructive action: the rest of that pass is deferred (`SweepBlobCounts.deferred`,
+`SweepReport.deferred`) and finished next tick. The counts ride on
+`SweepReport.blobs` and the server puts them on the sweep's wide event under `sweep.blobs`;
+`McpDeps.onBlobSwept` fires once per `remove` and `remove_orphan` and the server captures it as
+`blob_swept` with `bytes` and `cause`, never the name; a cleared `.tmp` was never a blob and fires
+nothing. `sweep -- --plan` prints the blob actions under `blobs.actions` beside the demotions.
+
+**The blob pass's roster is its own, not the working-set sweep's** (GRA-195). The working-set pass
+walks the live agents (`listActiveAgentScopes`); the blob pass walks the union of every agent with
+at least one unremoved `blob` row (`listAgentsWithUnremovedBlobs` in `packages/db/src/repo/blob.ts`,
+the person off the rows) and every agent the blob store lists a directory for
+(`BlobStore.listAgents()`, new here: the agent ids under `.blobs/`, sorted, a symlink or a name that
+is not an agent id skipped), with the person of a directory-only agent read off the agent table
+(`listAgentPersonIds` in `repo/agent.ts`, revoked agents included); `@graft/core`'s
+`listBlobSweepAgents` is the union, and both reads are deliberately unscoped and pinned by name in
+`repo/scope.test.ts` beside `listAllActiveAgents`, since the sweep has no person to scope by. So a
+revoked agent's blobs expire, are removed and are marked on the same 24 hour rule as any other's
+and its bytes stop counting; the in-flight skip is a no-op for it, since it can have no run. An
+agent the database no longer holds (deleted by hand, its blob rows cascaded away) is walked with no
+person: the decision is asked with `agentExists: false`, nothing is adopted, a committed directory
+is junk once its last write is past the TTL (`remove_orphan`) and `keep` (reason `unclaimed`) until
+then, a `.tmp` goes by the bound, and no `blob_swept` fires, since there is no person to name.
+`SweepBlobCounts.agents` counts the agents the pass walked, on the wide event under `sweep.blobs`;
+`sweep -- --plan` shows a revoked agent's actions like any other's. A hosted blob store (GRA-192)
+implements `listAgents` beside the five verbs or `assertCloudBackings` refuses it at boot.
+
+**`acquire` authors both halves, and the playbook carries the one rule (GRA-190).** The authoring
+skill's *Moving a file between tools* section says when to write a blob and when to return data, how
+to pipe a response into `ctx.blob.write` (`res.body`, the type and name off the headers, base64 in
+JSON decoded with `Buffer.from(data, "base64url")` first), how to read one into a `FormData`, where
+the ref goes in the result and that a consuming input takes it as a plain string, and the four
+refusal names; `skills.test.ts` pins its sentences to the runner's constants. **A consuming tool's
+dry run has a blob to read**: `job.ts`'s `dryRunInput` judges the test input's refs with the door's
+own functions before the dry run and, for a dead one, or for none where the module reads
+`ctx.blob.read(input.<field>)` (the check's `contextMembersUsed` and `blobReadFields`, bound by the
+checker to the default export's two parameters, one level of destructuring followed, so a name in a
+comment, a helper's own `.blob.read`, a helper file or a shadowing nested function records
+nothing), mints a
+**fixture blob** through the runner under a budget grant held and released as a run's is
+(`admitUnderGrant` in `in-flight.ts`, GRA-200, and `blobRunEnvironment` in `blob-door.ts`, GRA-199;
+`FIXTURE_MODULE` beside the probe:
+a few hundred bytes of `text/plain` named `fixture.txt`, the agent's, the normal TTL, a row with no
+version) and substitutes its ref in the dry run's input alone, saying so in an `Attempt N:` line;
+the draft's `testInput` is never written, and fixtures are never reused across jobs. The door's
+`walkStringLeaves` walks an input with a stack, never the call stack, and is the one walker:
+`blobRefsIn` reads refs off it, `job.ts`'s `substituteBlobRefs` replaces through it and
+`@graft/evals`'s scorers read a result through it (GRA-199); one nested past `MAX_INPUT_DEPTH` (64)
+is refused `input_invalid` naming the bound. The rule on
+the wire is `session.ts`'s `BLOB_RULE`, in `run_tool`'s paragraph and word for word in the Hermes
+skill: a file moves between tools as a `blob://` ref, never as content, and the producing tool runs
+before the consuming one is acquired. The budget was measured first (2,045 of 2,048) and the clause
+paid for by tightening facts the descriptions carry; `SERVER_INSTRUCTIONS`'s comment lists them. The
+facts are the descriptions': `blobs.ts`'s `BLOB_RESULT_FACT` (the list's five fields, the three
+refusals) on `run_tool` and appended to every authored tool's definition in `tools.ts`, and
+`meta.ts`'s `ACQUIRE_BLOB_FACT` on `acquire`, whose `hints` may carry the ref.
+
+**`ctx.fetch` takes an absolute URL on one of the connection's hosts** (GRA-197; ADR 0010 as
+amended 2026-09-23). The runner (`packages/runner/src/runner.mjs`, `hostRoute`) rewrites an absolute
+`https://` URL onto the proxy's host form for its host, `${proxy}/c/<conn>/h/<host><path><query>`,
+the same route `ctx.proxyBase(host)` names, so the proxy judges the host against the connection's
+`hosts` as it does an SDK's call and refuses one the person did not confirm with its existing
+`403 host_not_in_set`; the runner holds no host list and adds no variable. Refused in the runner
+before any request leaves, each with a sentence: a URL that is not `https:`, one carrying
+credentials (`user:pass@`, the host named and the credentials not), one whose host fails
+`HOST_PATTERN`. A relative path resolves as before, `redirect: "manual"` stays, and a dry run
+records such a call as the parsed URL's scheme, host and path only, the query dropped and marked
+`?…` and the fragment dropped (`recordableTarget`), since a vendor-issued URL may carry a signature
+or a capability in either and the report reaches the authoring model's prompt. The check's `fetch-absolute-url`
+still refuses a *literal* absolute URL at a `.fetch(` call and its sentence says a URL a vendor
+hands back at run time may be passed as it is; `global-fetch` and `sdk-not-bound` are unchanged.
+The authoring skill's `ctx.fetch` bullet says so, and says to prefer `ctx.fetch` over a vendor SDK
+for a write flow, since an SDK that retries on a body it does not expect times out against the dry
+run's 202 preview (GRA-198 decides whether the preview changes shape instead). `SERVER_INSTRUCTIONS`
+and the Hermes skill carry no sentence on it: the budget stood at 2,039 of 2,048, and the rule is
+for the model that writes the module, which is Graft's. This is what let Slack's
+`files.getUploadURLExternal` flow (a `POST` of the bytes to `files.slack.com`) be authored without
+an SDK. **A declared host known when the module is written is named with `host`** (GRA-213; ADR
+0010 as amended 2026-09-24): `ctx.fetch("/v1/search", { host: "geocoding-api.open-meteo.com" })`
+takes a path from that host's root, the runner judges the host by `HOST_PATTERN`, takes it off the
+init and sends the call exactly as `https://<host><path>` would go, so the proxy's
+`host_not_in_set` is still the judgement and a dry run records it as scheme, host and path; the
+check admits a literal in that position (`CONTEXT_DECLARATION`'s init is `RequestInit & { host?:
+string }`) and keeps refusing a literal absolute URL. `acquire`'s proof reads carry the same
+optional `host` (`@graft/model`'s `ProofReadTarget`, `{ path, host: string | null }` on the wire,
+a bare path still read from a script): the probe passes it to `ctx.fetch`, and `job.ts` refuses a
+host outside the connection's set (`hostSetOf`) before any read, as a failed read naming the
+declared hosts. The authoring skill says both, and that `ctx.proxyBase` stays for SDKs.
+
 ### The self-hosted image
 
 `apps/server/Dockerfile`, built from the repository root, is the one image (GRA-33). Its stages:
@@ -538,9 +881,11 @@ Docker socket is mounted (arrangement 1 of `packages/sandbox-docker/README.md`; 
 sibling is arrangement 2) with `group_add: ${GRAFT_DOCKER_GID:-0}` for the socket's group. The
 toolbox is the named volume `<project>_toolboxes`, mounted at `GRAFT_TOOLBOX_ROOT` and named again in
 `GRAFT_TOOLBOX_VOLUME` so the backing mounts each toolbox into its sandbox as a subpath of the same
-volume — one tree (`packages/toolbox/README.md`). Service `sandbox` has `scale: 0`: it builds the
-sandbox image under the name `GRAFT_SANDBOX_IMAGE` carries and starts nothing. Health checks:
-`pg_isready` and `GET /api/health`; `graft` waits for Postgres healthy.
+volume — one tree (`packages/toolbox/README.md`). Service `sandbox` has `scale: 0`: it names the
+sandbox image at the same reference `GRAFT_SANDBOX_IMAGE` defaults to, so `docker compose pull`
+leaves it on the daemon under the name the server creates sandboxes by, keeps a `build:` for
+patching it, and starts nothing. Health checks: `pg_isready` and `GET /api/health`; `graft` waits
+for Postgres healthy.
 
 CI builds the image on every pull request and asserts that it refuses to start naming what is missing:
 run with no environment, `GRAFT_DATABASE_URL`, `GRAFT_AUTH_SECRET` and `GRAFT_HANDOFF_SECRET`; run with
@@ -549,7 +894,19 @@ which only runs once every field is present; run with every field under `GRAFT_B
 sentence that `@graft/cloud-backings` is not installed — the open image's proof that it carries no
 hosted backings (GRA-38), which needs no database because the selector runs before the pool is opened.
 `.github/workflows/release.yml` pushes `ghcr.io/getmodern-ai/graft` and `graft-sandbox` on a `v*` tag,
-for `linux/amd64` and `linux/arm64`. The conformance suite against a running compose project is
+for `linux/amd64` and `linux/arm64`: one build leg per image and platform, amd64 on `ubuntu-latest`
+and arm64 on GitHub's native `ubuntu-24.04-arm`, each pushing by digest, and a merge job per image
+writing the tags over one manifest list (GRA-180). Nothing emulates an architecture; the QEMU
+cross-build this replaced cost the first tag over two and a half hours on the server image. A
+`workflow_dispatch` with an optional `ref` is how the file is exercised without cutting a release.
+
+**`v0.1.0`, 2026-09-22, is the first tag**, and what a release writes is four tags per image —
+`0.1.0`, `0.1`, `0` and `latest`, no `v` — beside the commit SHA, over one manifest list per image
+naming both platforms. `docker-compose.yml` and `.env.example` pin `GRAFT_IMAGE_TAG` to that
+version rather than leaving it on `latest` (GRA-194): a checkout then runs the release its README
+was written for, an upgrade is a tag in `.env` and a `pull`, and `GRAFT_IMAGE_TAG=latest` is how a
+self-hoster opts into following the newest release. A release moves that default in both files.
+The conformance suite against a running compose project is
 `packages/sandbox-docker/src/compose.test.ts`, opt-in by `GRAFT_COMPOSE_NETWORK` and
 `GRAFT_SANDBOX_IMAGE`; its header has the command.
 
@@ -559,10 +916,12 @@ window, then the least recently used beyond the cap — never a tool used inside
 while the agent has a run in flight — and fires `tools/list_changed`. Each demotion is a
 `working_set_change` row with cause `idle` or `cap`, which `GET /api/agents/:id/working-set/changes`
 reads for the console. The rule itself is `packages/core/src/working-set/sweep.decision.ts`, a pure
-function; `packages/mcp/src/sweep.ts` applies it. `pnpm --filter @graft/server sweep -- --plan`
-prints what a sweep would do without doing it; without `--plan` it demotes, from a process that can
-neither see a running server's in-flight runs nor notify its sessions, so use that form with the
-server stopped.
+function; `packages/mcp/src/sweep.ts` applies it, and on the same tick runs the blob pass over its
+own roster, revoked agents included (the paragraphs *The sweep's blob pass is GRA-189* and *The blob
+pass's roster is its own* above). `pnpm --filter @graft/server sweep -- --plan`
+prints what a sweep would do without doing it; without `--plan` it demotes and removes, from a
+process that can neither see a running server's in-flight runs nor notify its sessions, so use that
+form with the server stopped.
 
 ### The console
 
@@ -643,11 +1002,267 @@ word *connection* is a vendor account (CONTEXT.md) and the screen beside this on
 never says it. The dialog shares creation's setup (`harness-setup.tsx`: the URL, a harness
 picker, the token's place and the configuration in that harness's shape — GRA-152) but cannot
 retrieve the token; the token line carries a saved-token placeholder (ADR 0007). OAuth agents get
-the URL and consent instructions. Agent names are links to the standalone `/agents/:agentId` page,
+the URL and consent instructions. An agent *awaiting its harness* (Setup's, no token and no client)
+gets both: the URL, whose consent page chooses it, and *Issue a token*
+(`POST /api/agents/:id/token`, GRA-208), which shows the token once as creation does. Agent names are links to the standalone `/agents/:agentId` page,
 and every row's menu has View agent, revoked rows included; the detail drawer is deferred. That
 page keeps scope and limit editors, the working set, approvals, history and standalone revocation;
 revoked records are read-only. `GET /api/agents` includes `workingSetCount`, counted against each
 person-scoped agent in the same statement; the table shows count/cap with Cando's status dot.
+
+**Setup is one record per person and three routes** (GRA-204; ADR 0024). The `setup` table
+(`packages/db/src/schema/setup.ts`, migration 0012) keys on the person: the step reached, the
+harness, the agent, the open connection ask, the connection, the acquire job, the tool, and
+`started_at`, `completed_at`, `skipped_at`; `repo/setup.ts` names the person in every statement,
+pinned in `repo/setup.test.ts`, and `lockSetup` makes the row and locks it so two starts, or a start and a skip, serialise.
+`@graft/core/setup/` holds the service (`getSetupState`, `startSetup`, `skipSetup`), the
+browser-safe rules (`shouldShowSetup` over the record and the person's connection and tool counts,
+`isAwaitingHarness` over an agent, `currentSetupStep`) and the harness data (`SETUP_HARNESSES`:
+the seven in the marketing site's order, each with its kind, `oauth` or `token`, the site's label
+and the finish step's connection `steps`; since GRA-208 it is also `setup-prompt.ts`'s list,
+`SETUP_PROMPT_HARNESSES`, which `GET /api/setup-prompt` answers as `{ id, label, description }`). `GET
+/api/setup` answers `SetupState` (the record, `step`, `show`, the agent it runs as, the active
+agents); `POST /api/setup/start` (`SetupStartBody`) mints an agent with no token and no client
+through `createAgentAwaitingHarness` when the person has none, adopts the one when there is one,
+and needs `agentId` among several; `POST /api/setup/skip` sets `skipped_at`. Both are rows in
+`analytics-routes.ts` carrying `harness`, read off the answer by the row's `properties`. The console:
+`routes/_auth/setup.tsx` is under the guard and outside the shell; `_shell/route.tsx`'s `beforeLoad`
+redirects to it on `show`, except `/consent` and `/pending` (`lib/setup-intercept.ts`); one
+component per step under `components/setup/`, wired in `setup-step.tsx`'s map, each moving the
+record through `useSetupMutation`, which writes the answered state into the one `["setup"]` entry.
+The agents table draws *Awaiting harness* (`AGENT_STATUS_CHIP.awaiting_harness`, outline) and
+offers *Set up Graft* in its empty body to a person who skipped.
+
+**The integration and connect steps are the agent's own connection ask** (GRA-206). The starters
+are `@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs,
+the keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
+`outcome` sentence); adding one is one entry. **Starters are one-click only** (GRA-216): the list is
+common services a link provider connects by OAuth (Gmail, Google Calendar, Google Drive, Slack,
+Notion, GitHub, HubSpot) plus Open-Meteo, the keyless one, each task a `GET`, since the check counts
+a `POST` as a write and the result step runs only a read-only tool (so no Linear, whose API is
+GraphQL). **Every task needs nothing the person has to look up** (GRA-217): no id, no name, no link;
+Open-Meteo's city, with its default, is the one input, and every other starter's `hints` names its
+one endpoint and says the tool takes no input (`starter-vendors.test.ts` pins both). That is why
+Google Drive's file list replaced Google Sheets, whose rows need a spreadsheet's id and a range; a
+starter's vendor slug is the catalogue's app with hyphens read as underscores (`google-drive` is
+Pipedream's `google_drive`). The keyring's scheme on each entry stays truthful for the form path a link provider steps
+aside to (GRA-147). `setupVendorOptions` is the pure filter and order over each starter's covering
+provider: only `link`, `none` and `keyless` (a `none` scheme the form provider lists) are offered,
+in that order, and a starter the keyring would connect with a pasted key or an operator's own OAuth
+client is dropped, so the keyring alone offers Open-Meteo alone; `SetupConnectKind` has no `form`.
+`GET /api/setup/vendors`
+asks `providerFor` per starter in `Backings.providers` order (`apps/server/src/setup-connect.ts`);
+the console never computes coverage. `POST /api/setup/connect` (`SetupConnectBody`: `{ starterId }`
+or `{ connectionId }`) calls GRA-203's `routeConnectionProposal` as the setup's agent, through
+`ApiOptions.connectionRouting` (the server binds its `McpDeps`), and moves the record through
+`moveSetupConnect`: an ask to `connect` with `pendingActionId` (a repeat re-uses it by proposal
+key), a connection made or found at once, or *Another integration*'s ordinary-form connection (added to
+the agent's scope), to `goal`. `GET /api/setup` reads the ask the record waits on and never takes
+a live answer: answered with a connection (or a `scope` ask allowed) that is still live, usable and
+in the agent's scope it moves to `goal` naming it; declined, expired, gone, or answered with a
+connection revoked or taken out of the scope since (that answer is taken, so the routing stops
+handing it back, under the record's lock so two reads take it once), back to `vendor`, and on
+`goal` a connection that stopped standing takes it back too, judged again under the lock
+(`moveSetupConnect`'s `confirm`) so a restore meanwhile stands. The connect route that finds such
+an answer (or finds a poll reopened the record for it) routes once more, and that second routing's
+move lands only on the record as it was seen on `vendor`, its `updatedAt` unchanged
+(`fromVendorAt`; `saveSetup` moves it forward by at least a millisecond on every write), so the choice in flight wins over a poll and any choice another tab made since
+stands, even one that closed and left the record on `vendor` again. A stale answer is judged again
+under the lock before it is taken, so one made good meanwhile is left for the next read. `setup_step_completed` carries `step`: `vendor` from the connect route's row, `connect`
+captured by the request whose move changed the record (`SetupMoveResult.moved`), so two reads of
+one answer count once. A listed agent's scope grown by Setup (*Another integration*, a `scope` ask
+answered in the console) is announced to its session, since no waiting call of its own does. The
+console's connect step draws the open ask from the inbox's list with `PendingActionCard` under
+`origin="setup"` (no model provenance, the proposal editor folded behind *Edit the connection*;
+the inbox and the handoff page pass nothing and draw the cards as before), and polls both reads
+every 3 s so an answer given in the inbox or a chat card moves it too. The goal step's starter is
+`starterVendorFor(connection.vendor)`.
+
+**Build is the build approval, and the building step reads the job** (GRA-207; ADR 0024,
+`apps/server/src/setup-build.ts`). `GET /api/setup/goal` answers `SetupGoalContext`: the record's
+connection, `starterId`, the curated `goal` (empty for another vendor) and `build`, which is
+`{ available: false, reason: "acquire_unconfigured", message }` whenever `@graft/mcp`'s
+`acquireConfigured` (the `acquire` door's own model check) says no; the console then shows the
+message naming the variables and disables Build. `POST /api/setup/build` (`SetupBuildBody`:
+`{ goal }`) is `@graft/core`'s `startSetupBuild`, one transaction under `lockSetup`: from `goal`
+only, the connection not revoked (refused `connection_revoked`; a revoked row stays in a resolved
+scope) and still in the agent's scope, `grantBuildApproval` for the pair (the standing
+row answered when the connection card already granted it), `createAcquireJob` with Setup's own
+first line and `setupBuildHints` as `hints` (the starter's documentation, after the starter's own
+`hints` when the goal is its curated one unchanged; GRA-209), the record to `building` naming the job;
+the route then kicks the runner. No pending action is opened, and `similar_tools_exist` is not
+asked. `ApiOptions.acquire` is the model, the job's deps and the runner (the server binds its
+`McpDeps`). `GET /api/agents/:id/acquire-jobs/:jobId` answers `acquire_status`'s shape
+(`acquireStatusOf`) for one of the person's agents, never held; another person's agent or job is a
+404. `GET /api/setup` learns a succeeded job's tool through `moveSetupBuild`'s `built`: `building`
+to `result` with `toolId`, or the tool noted on `finish`, or on `completed` when Finish Setup
+came first. A failed job leaves the record on `building`; `POST /api/setup/goal` (*Change the
+goal*) goes back to `goal` with the job cleared,
+refused while the job may still pass, and `POST /api/setup/continue` (*Continue while it runs*)
+goes to `finish` with the job kept. `setup_step_completed` adds `goal` (the build route's row) and
+`building` (captured by the read whose move named the tool, `SetupMoveResult.moved`). The console's building step polls the job route
+every 2 s and draws each line beside its stage's sentence on the stage's first line
+(`lib/setup-progress.ts`'s `progressStage` and `explainProgress`, keyed on `acquire/job.ts`'s
+lines; a new progress line there wants a rule and a case in `setup-progress.test.ts`).
+
+**The goal step's chips come from the triage model, and the curated goal is in the person's
+voice** (GRA-209). A starter's `goal` is what the person reads as their own, short and in the
+first person; the detail the model needs (the input's field, the endpoints, *Read only*) is the
+starter's `hints`, which reaches the job only beside the curated goal unchanged. `ModelAdapter`
+carries an optional `proposeGoals` (`@graft/model`'s `propose-goals.ts`, shaped as `triage.ts`'s
+calls: the triage model, a strict output, one attempt, traced with `situation: "propose_goals"`
+and the request's `traceId`, `setup:<personId>`, where a job's id would be; bounded at
+`GOAL_PROPOSAL_TIMEOUT_MS`, 8 s, and never throwing). **A chip must end in a tool that runs with
+nothing to look up** (GRA-217): the request carries the connection's `hosts`, the model answers
+each proposal as `{ task, host, inputs: [{ name, default }] }`, and `goal-grounding.ts`'s
+`groundedGoals` keeps one only when its host is one of the connection's and every input has a
+default, the dropped count riding on the wide event as `goalSuggestions.dropped`; the system prompt
+states the rules. The provider's adapter implements it, the scripted one answers
+`scriptedGoals(displayName)` through the same `goalProposalOf` (each on the connection's first
+host, no input), and the router sends it where the person's jobs
+go, so a person's own key carries their vendor's name to their provider alone. `GET
+/api/setup/goal/suggestions` answers `SetupGoalSuggestions`, `{ suggestions }`, up to three or
+none: none and no call where Build is unavailable, the record is not on an open goal step
+(skipped, completed or elsewhere) or its connection is gone or revoked, none where the proposal
+declined, timed out, failed or answered nothing usable; the outcome rides on the wide event under
+`goalSuggestions`, never the goals. The route is a read, outside the `api` rate-limit bucket, so
+the model is asked **once per person and connection** inside a window, and the answer held in
+flight and after (`createGoalSuggestionMemo` in `setup-build.ts`, one per process; `cached: true`
+on the wide event): an hour for a proposal, two minutes from when it settled for any other outcome
+or a throw, so a timeout does not hide the chips for the hour. It is its own route so the goal step draws at
+once; `components/setup/goal-suggestions.tsx` asks it after, keyed by the connection outside
+`["setup"]`, and draws outline `Button` chips that fill the field, or nothing.
+
+**The result step runs the tool, and the finish step connects the harness** (GRA-208; ADR 0024,
+`apps/server/src/setup-finish.ts` and `tool-run.ts`). `GET /api/setup/tool` answers
+`SetupToolContext`: the record's agent and harness, the connection, the job's goal and status (with
+the failure's sentence), the tool once it landed (wire name, input schema, `readOnly`) and the
+starter's `runInput`. `POST /api/agents/:id/tools/:vendor/:name/run` (`ToolRunBody`: `{ input? }`)
+is the console's second caller of a run: `@graft/mcp`'s `runAuthoredTool` with the server's
+`McpDeps` (`ApiOptions.run`), synchronous at `DEFAULT_COMMAND_TIMEOUT_SECONDS`, `NO_ELICITATION`,
+never a dry run, answering `AgentToolRunOutput` (`{ ok: true, result }` or `{ ok: false, reason,
+message, answer }`, the run's own refusal or failure); a tool whose annotation is not read-only is
+`409 tool_not_read_only` and one outside the agent's working set `409 tool_not_in_working_set`,
+both before the run and again on the run's own read of the tool inside the agent's in-flight hold
+(`AuthoredRunArgs.admit`), so a republish or a demotion in between cannot reach the gate or the
+sandbox and no ask is ever opened from the console; another person's agent is a 404.
+`POST /api/setup/result` is `moveSetupBuild`'s `finish` (`result` to `finish`), and
+`POST /api/setup/finish` is `@graft/core`'s `finishSetup`: from `finish` only, one transaction
+under `lockSetup`, the record to `completed` and, for a `token` harness whose agent is still
+awaiting it, the token issued through `issueAwaitingAgentToken` and answered once beside the state
+(`SetupFinishOutput`); a second finish is `409 setup_completed`. `POST /api/agents/:id/token` is the
+same issue for *Connect a harness* and the finish step's *Issue the token*; the write
+(`issueAgentToken` in `repo/agent.ts`) holds the awaiting rule in its statement, so two issues mint
+one token. The route is `@graft/core`'s `issueConsoleAgentToken`, which also **replaces** the token
+of the agent Setup runs as while the record is not completed and no client holds the agent (ADR
+0024 as amended 2026-09-25; Greptile on #172): the page held the only plaintext, so a reload lost
+it. The replacement is judged again under `lockSetup` and written with `issueAgentToken`'s
+`replacing`, the hash it read, so the old token stops resolving and nothing lands after the finish;
+the finish step offers it as *Issue a new token* on the saved-token block (`finishSections`'
+`reissue`, `tokenReplaceable`). Any other agent with a token is still `409
+agent_not_awaiting_harness`. `setup_step_completed` adds `result`,
+and `setup_completed` carries the harness. The console: `result-step.tsx` draws the input from
+**the tool's own `inputSchema`** (GRA-217, `lib/setup-run-input.ts`'s `runInputView`): a field per
+string, number, integer, boolean, enum or list of scalars, starting at the starter's `runInput`
+only where the field names match, else the schema's `default` or first `examples` entry; a
+required field with no value says *This tool needs …* and Run waits (`canRun`), the required fields
+drawn first since a stored schema's keys come back in jsonb's order; JSON only for a
+schema too complex to draw (a nested object, a list of objects, a union, a composed root), where a
+required key still at the skeleton's empty object or list counts as missing. It runs the tool once
+on arrival only when the tool takes no input (`lib/setup-result.ts`'s `runsOnArrival`; a tool with
+inputs, Open-Meteo's prefilled city included, waits for Run) and shows the answer in `CodeBlock`; a
+refusal or a failure is one sentence with the raw text, cut to 500 characters, behind *Details*
+(`lib/short-failure.ts`'s `shortFailure` and `runFailure`: an HTML body reads *The integration
+answered with a web page instead of data (status N)*), and the building step's and the finish
+step's failure reasons go through the same `shortFailure`; `finish-step.tsx` draws, by `lib/setup-finish.ts`'s `finishVariant`, the token once
+with the configuration blocks, the URL and the harness's steps ending on the consent page, or
+(a record that adopted an agent, `harness` null) the first request to ask in the chat, with
+`SetupPromptBlock` personalised with the agent, the connection and the tool (arriving while the
+job runs, the state read every 3 s). The finish's answer, token included, is held in
+`routes/_auth/setup.tsx`'s state, never the query cache, so the step keeps showing it once the
+record reads `completed`. The consent card pre-selects the person's one agent awaiting its harness
+and falls back to *A new agent* with none or several (`lib/consent-default.ts`).
+
+**The rail is navigable, every step has one footer, and Finish Setup leaves** (GRA-215).
+`POST /api/setup/back` (`SetupBackBody`: `{ step }`) is `@graft/core`'s `moveSetupBack`: under
+`lockSetup`, only to a step `setupBackTargets` names (every step before the record's that it holds
+what for, `setupStepReachable`: connect needs an ask or a connection, the goal a connection, the
+building step a job, the result a tool), refused `setup_step_ahead`, `setup_step_unavailable` (the
+result a record passed by *Continue while it runs*) or `setup_completed`. **Looking back discards
+nothing**: the connection, the job and the tool stay, a running job keeps running and is learned
+again on the building step. `POST /api/setup/next` (`SetupNextBody`) is `moveSetupOn`, Continue on a
+step returned to with nothing changed: `harness` to `vendor` (a different harness only while
+Setup's own agent awaits it, renaming it where its name was the old harness's default, else
+`harness_fixed`), `connect` to `goal` with the connection made, `goal` to `building` with the held
+job, `building` to `result` with the tool; `from` must be the record's step (`setup_step`). What
+leaves a held job behind is a forward action that says so: the connect moves drop the job and tool
+when a different connection replaces the one they were acquired against (an ask leaves them until
+it is answered; a reopen or a lost connection clears them), and while the held job is queued or
+running a choice of another vendor (`POST /api/setup/connect`, judged on the vendor, then again on
+the row the same starter's routing resolves or the ask it hands back settles on, GRA-216's review)
+or a Build (`startSetupBuild`) is refused `job_running` unless the body carries `discardJob: true`,
+which the console sends after `DiscardJobDialog`. `SetupGoalContext.job` is the held job, whose
+goal the goal step shows and offers Continue to while the text is unchanged. Neither route is a
+mutation-table row. The console: `SetupRail` and `SetupProgress` link the steps
+`setupRail(step, record)` marks (`lib/setup-steps.ts`, with `backTargetOf` for the footer),
+labelled *Integration* and *Task*;
+`SetupFooter` (Back bottom left through `useSetupBack`, the step's primary bottom right) closes
+every step, the connect step's open ask keeping its card's own Connect as the primary; the building
+step is `progressCard` (`lib/setup-progress.ts`: a plain label per stage, the newest line, the
+attempt past the first, the lines behind *Details*); the finish is `finishSections`
+(`lib/setup-finish.ts`): the prompt with the URL and steps behind *Set it up by hand* for an OAuth
+harness, the token block issued by the footer's *Issue the token* (`POST /api/agents/:id/token`)
+before Finish Setup plus the prompt for a token harness, the one request for an adopted agent. One
+press of Finish Setup completes and, unless the card opened the page, lands on `/agents/$agentId`
+with `setupFinishedToast` (`lib/setup-page.ts`'s `afterSetupFinish`: `leave`, `close`, or `stay`
+only for a token the finish itself issued); GRA-208 stayed on every console visit and needed a
+second press on *Open the console*.
+
+**Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
+amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects
+and *task* for what the first tool should do: Setup's steps (*Choose an integration*, *What should
+your first tool do?*, the *Task* field, *Suggested tasks*, *Another integration*), the console's
+connection screens and pending cards, the ask card's rendered text, and the server's sentences a
+person reads (Setup's refusals, the OAuth callback's). Code identifiers (`vendor`, `STARTER_VENDORS`,
+the `<vendor>__<name>` wire form, columns, the record's step values `vendor` and `goal`, the
+analytics `step`), and model-facing text (`SERVER_INSTRUCTIONS`, tool descriptions, the authoring
+skill, `handoff-message.ts`, the acquire job's own progress lines) keep *vendor* and *goal*. The one
+bridge is the connection form's slug error: `validateVendor`'s sentence is shared with a model's
+refusal, so `lib/connection-form.ts` rewords it for the field.
+
+**`find_tool` offers Setup in the chat, as a card where the client renders one** (GRA-210; GRA-202,
+*The in-chat door*; ADR 0024). For an agent whose person has no connection at all (revoked rows
+count, as the show rule counts them) and whose Setup is neither completed nor skipped
+(`@graft/core`'s `shouldOfferSetup`), `find_tool` answers `setup: { url, message }` beside `tools`
+and `connections`: `url` is `setupUrl(GRAFT_CONSOLE_URL, agentId)`, `/setup?agent=<id>`, and
+`message` is `handoff-message.ts`'s `setupOfferMessage` in the console form (GRA-55's relay
+clause). The record is read (`getSetupRecord`, `McpDeps.setup`) only when the person's connection
+count, which `find_tool` already holds, is zero; `packages/mcp/src/setup-offer.ts` is the rule's
+home. A record running as another of the person's active agents suppresses the offer, since the
+page would resume Setup as that agent (GRA-216's review). It is **not an ask**: no pending action, no signature, no expiry, `isError` unset, and
+`answer_ask` has nothing to admit. For a `clientRendersCards` session the message takes its card
+form, `cardShown: true` rides inside `setup` beside `url`, and `structuredContent.card` is a
+`SetupCard` (`@graft/ask-card/shape`: `{ kind: "setup", agentName, url }`, beside `AskCard` in
+`CardData`; `readCardData` reads either). The card (`render.ts`'s `renderSetup`, dispatched by
+`renderCard`) draws a title, a sentence, the agent, a sentence saying to ask again once done, and
+one button, *Set up your first tool*, that opens the URL with `from=card` through `ui/open-link`;
+it polls nothing. Where the host refuses the window, the card shows the bare URL to copy
+(`setupOpenRefusedOf`), since the card-form message tells the model not to send a link and to
+give that URL only when the person says they cannot see the card or it could not open Setup.
+**One card per session** (GRA-212): the card, the card-form message and
+`cardShown` ride on the first `find_tool` answer of an MCP session that carries the offer, held
+per session in `setup-offer.ts` as `clientRendersCards` holds its verdict; every later answer in
+that session carries `setup` in the console form and no card, since a host mounts the card for
+every result of a tool that names it and ChatGPT called `find_tool` five times in one turn. A
+session the server re-opens (GRA-129) is a new one. `find_tool`'s description gained one
+capability sentence and `SERVER_INSTRUCTIONS` is unchanged. The wide event counts `setupOffered: true` when it was made.
+The console's `/setup` validates `?agent=&from=` (`lib/setup-page.ts`'s `readSetupSearch`); the
+harness step starts as the named agent when it is one of the person's active agents, even among
+several (`agentToAdopt`); a page the card opened shows an `Alert` saying so and, once
+`POST /api/setup/finish` succeeds with no token, posts `{ type: "graft:ask", setup: "completed" }`
+(`card.rules.ts`'s `setupCompletedMessage`) to its opener and closes itself after
+`FROM_CARD_CLOSE_MS` (`afterSetupFinish`); a finish that issued a token stays, since the token is
+shown once. `packages/mcp/src/setup-offer.test.ts` is the suite.
 
 **Screens follow Cando's patterns** (GRA-47). Every list is a `DataTable layout="grid"` with the
 column widths declared on `TableHead` — a mobile width and an `md:` one, the prose column left
@@ -735,10 +1350,11 @@ it shows is in its query. **The handoff page sits under the guard but outside th
 (`routes/_auth/pending.$id.tsx`; GRA-144, ADR 0006 as amended 2026-09-21): the link an agent relays
 opens one ask under the mark and closes itself once answered — `lib/handoff-page.ts` decides how,
 tested — while `/pending` (the list, in the shell) stays the console's inbox and answers every ask
-inline. `routes/_auth/_shell/consent.tsx` is the other consent — an MCP client's
-(ADR 0018) — and sits under both: the guard, so a chat product's "connect" reaches a person with no
-session by way of sign-in and back, and the shell, because it is a screen of the console like any
-other; `components/agent/consent-card.tsx` is its form, composed from the create-agent dialog's.
+inline. `routes/_auth/consent.tsx` is the other consent — an MCP client's (ADR 0018) — and
+sits beside it, under the guard and outside the shell (GRA-219): the guard, so a chat product's
+"connect" reaches a person with no session by way of sign-in and back, and no shell, because the
+person is on their way back to the chat and the console's sidebar is only a way out;
+`components/agent/consent-card.tsx` is its form, composed from the create-agent dialog's.
 `src/lib/*-queries.ts` hold the query options and mutations per aggregate, `src/lib/api.ts` is the
 one `fetch`, and every wire type is imported from `@graft/server/api`, `@graft/core`, `@graft/db` or
 `@graft/mcp` and passed through `Jsonified<T>` — never written a second time. The pending-actions
@@ -865,7 +1481,11 @@ and the sweep's lines ride under `acquire` and `sweep`. Product events are captu
 two chokepoints and nowhere in the console: the API's mutation routes
 (`apps/server/src/analytics-routes.ts`, one table from method and path to event) for what a person
 does there, and the MCP hook and the acquire runner for what happens over MCP (`tool_called`,
-`acquire_completed`, `acquire_failed`); both name the person by id. The vendors behind the hosted
+`acquire_completed`, `acquire_failed`); both name the person by id. The Setup read,
+`GET /api/setup`, is the one other place (ADR 0024; GRA-206): a step the person completes
+elsewhere, an ask answered in the inbox or a chat's card or a job that finished, is learned on the
+read, so `setup_step_completed` is captured there, once, when the guarded move of the record
+succeeds. The vendors behind the hosted
 form and their variables are graft-cloud's, in its private package's `observability/` and `env.ts`.
 **A sign-up is the one event the account raises itself** (GRA-157): `createAuth`'s
 `onPersonSignedUp` fires from Better Auth's own hooks when a person exists *and* is verified — the
@@ -922,17 +1542,23 @@ seconds abandoned the job and ran its own code through `execute__`).
 
 ### The evals
 
-`packages/evals` (ADR 0012: the eval suite is the gate; GRA-31) runs the real loop against two fake
+`packages/evals` (ADR 0012: the eval suite is the gate; GRA-31) runs the real loop against fake
 vendors behind the real proxy with the provider-backed model and grades what it did with deterministic
 scorers: reads before publish, publish before the first write, no vendor host in the model's code, a
-dry run before any ask, the first write through the published tool, and the supporting facts. It is an
-app-like leaf nothing imports, which is what keeps it out of the server's Docker image
-(`apps/server/Dockerfile`'s `prod-deps` installs `--filter "@graft/server..."`); a server dependency on
-it would pull it in.
+dry run before any ask, the first write through the published tool, and the supporting facts. The
+`blob` scenario (GRA-191; ADR 0023) runs the loop twice on one world, a producing tool against a
+fake that serves a 3 MiB file and a consuming tool against a fake that takes a multipart upload, the
+first tool's `blob://` ref handed into the second's goal and input, and adds five scorers over the
+chain: no sentinel of the file in any model turn, the ref answered and carried, the consuming dry
+run given a blob to read and its write intercepted, the second vendor's sha256 equal to the first's,
+both modules on `ctx.blob`. It is an app-like leaf nothing imports, which is what keeps it out of
+the server's Docker image (`apps/server/Dockerfile`'s `prod-deps` installs
+`--filter "@graft/server..."`); a server dependency on it would pull it in.
 
 ```bash
 pnpm --filter @graft/evals eval                      # every scenario; needs GRAFT_MODEL_PROVIDER + GRAFT_MODEL_API_KEY
 pnpm --filter @graft/evals eval -- --scenario write  # one by name
+pnpm --filter @graft/evals eval -- --scenario blob   # the two-vendor blob chain
 pnpm --filter @graft/evals eval -- --scripted        # the harness's own test: canned answers, no key, no spend
 ```
 
@@ -995,8 +1621,7 @@ required check. `.agents/skills` is excluded from Biome because vendored files a
 upstream. `.claude/worktrees` is excluded root-relative on purpose: a `**/` pattern matches the
 *containing* path too, so running Biome inside a checkout that sits under a `worktrees/` directory
 would exclude the whole checkout and lint nothing (Cando's CAN-147; reproduced here before writing
-the pattern). Skills for the vendored engineering workflow will be added now that there is code to
-work on.
+the pattern). The vendored engineering workflow is the **Skills** section above.
 
 ## Conventions
 

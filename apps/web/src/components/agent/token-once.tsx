@@ -9,7 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
  * harness's environment and the `mcpServers` block that reads it from there — the block itself
  * carries no secret (`mcp-snippet.ts`).
  */
-export function TokenOnce({ token }: { token: string }) {
+export function TokenOnce({ token, agentName }: { token: string; agentName: string }) {
   return (
     // `min-w-0`: this is a grid item of `DialogContent`, and a grid track's `auto` minimum takes the
     // widest unbreakable line inside it — the `export` line below is longer than the dialog — so
@@ -25,7 +25,7 @@ export function TokenOnce({ token }: { token: string }) {
       </Alert>
 
       <CodeBlock label="The agent's token" code={token} copyLabel="Copy token" />
-      <HarnessSetup token={token} />
+      <HarnessSetup token={token} agentName={agentName} />
     </div>
   );
 }

@@ -211,3 +211,14 @@ verdict, the default mode and the notice's words from `rendersCards` and the red
 its own test; `consent-card.tsx` only renders it. A self-hoster whose own chat product is on
 `GRAFT_CARD_HOSTS` is vouched for by the same list that admits its cards, so there is one thing to
 configure and not two.
+## Amendment 2026-09-23: an OAuth agent may exist before its consent
+
+Setup (ADR 0024) mints the person's first agent at its harness step, before any client has asked,
+so that the connection, the build approval, the acquire job and the run that follow all run as the
+agent the harness will be. Such an agent has no token and no client and is **awaiting its harness**,
+a state read off the row and never a column. The consent's "name an agent they already have" branch
+is how the client comes to act as it: the consent card pre-selects the person's one agent awaiting
+its harness and falls back to *A new agent* with none or several. Nothing in the authorization server
+changes: `connectExistingAgentToClient` already admits any active agent of the person's, and the
+issued tokens' subject is that agent as before. The consent still mints the agent in every flow that
+did not begin in Setup.

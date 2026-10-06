@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createFakeSandboxBackend } from "@graft/sandbox/fake";
 import { afterAll, describe, expect, it } from "vitest";
 
+import { createFilesystemBlobStore } from "./blob-store";
 import { toolboxStoreConformance } from "./conformance";
 import { createFilesystemToolboxStore } from "./filesystem";
 
@@ -73,6 +74,22 @@ describe("with the fake sandbox backing", () => {
 
       await handle.writeTree([{ path: "index.ts", content: "draft" }], "/tools/.drafts/job-1");
       expect(await store.read("person-1", ".drafts/job-1/index.ts")).toBe("draft");
+
+      // The blobs tree is the same root's `.blobs/<agentId>`, and the fake mounts that one directory
+      // at `/blobs` (ADR 0023). The fake spells `.blobs` itself, since it cannot import this
+      // package; this is where the two spellings are pinned together.
+      const blobs = createFilesystemBlobStore({ root: join(sandbox.root, "toolboxes") });
+      expect(blobs.agentRoot("agent-1")).toBe(sandbox.blobsRoot("agent-1"));
+      await handle.mountToolbox({
+        toolboxId: "person-1",
+        mountPath: "/tools",
+        blobs: { agentId: "agent-1", mountPath: "/blobs" },
+      });
+      await handle.writeTree([{ path: "meta.json", content: '{"bytes":1}' }], "/blobs/blob-1");
+      expect(await blobs.readMeta("agent-1", "blob-1")).toBe('{"bytes":1}');
+      expect(await blobs.list("agent-1")).toEqual(["blob-1"]);
+      // Beside the toolbox, not in it: nothing of the blob is under `/tools`.
+      expect(await handle.ls("/tools")).not.toContain("/tools/.blobs");
     } finally {
       await sandbox.close();
     }
