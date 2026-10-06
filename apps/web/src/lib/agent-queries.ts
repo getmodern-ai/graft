@@ -79,6 +79,16 @@ export function createAgent(input: CreateAgentInput) {
   return api<CreatedAgent>("/agents", { method: "POST", body: input });
 }
 
+/**
+ * The static token of an agent awaiting its harness (`POST /api/agents/:id/token`, GRA-208), shown
+ * once as `createAgent`'s is; the server refuses any other agent.
+ */
+export function issueAgentToken(agentId: string) {
+  return api<{ agent: Agent; token: string }>(`/agents/${encodeURIComponent(agentId)}/token`, {
+    method: "POST",
+  });
+}
+
 export type AgentLimitsPatch = {
   name?: string;
   workingSetCap?: number;

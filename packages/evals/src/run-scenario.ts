@@ -1,6 +1,6 @@
 import type { AcquireStatus, AcquireSuccess } from "@graft/mcp";
 
-import type { Scenario } from "./scenarios";
+import type { Scenario, Stage } from "./scenarios";
 import type { ScenarioRun, ToolUse } from "./scorers";
 import { AGENT, body, type World } from "./world";
 
@@ -9,6 +9,11 @@ import { AGENT, body, type World } from "./world";
  * until the job settles — each new progress line handed to `onProgress`, which is what the agent
  * relays to the person — then the published tool called once as the agent would, with the ask
  * answered as the person would. What comes out is the run the scorers read.
+ *
+ * A chained scenario (GRA-191; ADR 0023) does that twice on the same world: the first tool's
+ * answer is handed to the chain, which makes the second stage from it, the way an agent puts the
+ * `blob://` ref one tool answered into the goal it hands `acquire` and the input it hands the tool
+ * that follows. The first stage's run carries the second's as `next`.
  */
 
 export type RunOptions = {
@@ -25,19 +30,35 @@ export async function runScenario(
   scenario: Scenario,
   options: RunOptions = {},
 ): Promise<ScenarioRun> {
+  const first = await runStage(world, scenario, scenario, options);
+  if (!scenario.chain || !first.use) return first;
+  const handoff = scenario.chain.handoff(first.use.final);
+  if (handoff === null) return first;
+  const next = await runStage(world, scenario, scenario.chain.stage(handoff), options);
+  return { ...first, handoff, next };
+}
+
+async function runStage(
+  world: World,
+  scenario: Scenario,
+  stage: Stage,
+  options: RunOptions,
+): Promise<ScenarioRun> {
   const startedAt = Date.now();
   const requestsBefore = world.requests.length;
   const eventsBefore = world.vendor.events.length;
   const ledgerBefore = world.store.usage.length;
-  if (scenario.sdk) await world.placeSdk(scenario.sdk.package);
+  const turnsBefore = world.turns.length;
+  const uploadsBefore = world.received.length;
+  if (stage.sdk) await world.placeSdk(stage.sdk.package);
 
   const harness = await world.connect();
   try {
     const started = body<{ jobId: string }>(
       await harness.call("acquire", {
-        connectionId: scenario.connectionId,
-        goal: scenario.goal,
-        hints: scenario.hints,
+        connectionId: stage.connectionId,
+        goal: stage.goal,
+        hints: stage.hints,
       }),
     );
     if (typeof started.jobId !== "string") {
@@ -73,7 +94,7 @@ export async function runScenario(
     let use: ToolUse | null = null;
     if (result && tool) {
       const [vendor, name] = result.tool.split("__");
-      const input = fillInput(tool.inputSchema, scenario.use.values);
+      const input = fillInput(tool.inputSchema, stage.use.values);
       const call = () => harness.call("run_tool", { vendor, name, input });
       const first = body<Awaiting>(await call());
       let ask = null;
@@ -99,6 +120,7 @@ export async function runScenario(
 
     return {
       scenario,
+      stage,
       status,
       job,
       attempts,
@@ -120,6 +142,10 @@ export async function runScenario(
         .map((row) => ({ ...row, position: positionOf(world, row) }))
         .sort((a, b) => a.position - b.position),
       ledger: world.store.usage.slice(ledgerBefore),
+      model: world.turns.slice(turnsBefore),
+      uploads: world.received.slice(uploadsBefore),
+      handoff: null,
+      next: null,
       ms: Date.now() - startedAt,
       // The job's own figure is the total every turn was charged against the ceiling; the attempts'
       // split is known only for attempts that finished, so an abandoned one leaves it short.

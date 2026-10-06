@@ -88,6 +88,14 @@ export type MountToolboxArgs = {
   toolboxId: string;
   /** Where the toolbox appears inside the sandbox, e.g. `/tools`. Absolute. */
   mountPath: string;
+  /**
+   * The agent's blobs directory, mounted alone beside the toolbox (ADR 0023: the scope is the
+   * mount). The backing keeps it where it keeps the toolboxes (`.blobs/<agentId>` beside them,
+   * `@graft/toolbox`'s layout) and shows that directory and nothing above it at `mountPath`, which
+   * is `/blobs`. It rides on the toolbox's call so a backing that recreates the sandbox to attach a
+   * mount does so once for both; absent, a blobs mount the sandbox already has is left as it is.
+   */
+  blobs?: { agentId: string; mountPath: string };
 };
 
 export type SandboxHandle = {
@@ -107,10 +115,11 @@ export type SandboxHandle = {
    */
   waitForProcess(name: string, options: WaitForProcessOptions): Promise<SandboxProcessResult>;
   /**
-   * Make the toolbox visible at a path. Idempotent for the same toolbox and path.
+   * Make the toolbox visible at a path, and the agent's blobs directory at its own when `blobs` is
+   * given. Idempotent for the same ids and paths.
    *
    * Mount before writing anything else to the sandbox. A backing may have to recreate the sandbox to
-   * attach a mount, and only the toolbox is guaranteed to survive that; `@graft/sandbox-docker` is
+   * attach a mount, and only the mounts are guaranteed to survive that; `@graft/sandbox-docker` is
    * one that does, and says so on its `mountToolbox`.
    */
   mountToolbox(args: MountToolboxArgs): Promise<void>;

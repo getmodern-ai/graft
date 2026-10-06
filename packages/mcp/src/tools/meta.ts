@@ -17,9 +17,10 @@ import { AUTH_SCHEMES } from "@graft/proxy/types";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import { awaitJobNews, STATUS_WAIT_MS } from "../acquire/await";
-import { acquireStatusOf } from "../acquire/shapes";
+import { ACQUIRE_UNCONFIGURED, acquireConfigured, acquireStatusOf } from "../acquire/shapes";
 import { requireBuildApproval } from "../approval";
 import { ASK_CARD_TOOL_META } from "../ask-card";
+import { BLOB_RESULT_FACT } from "../blobs";
 import {
   clampTimeout,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -36,8 +37,9 @@ import {
   requestCredential,
 } from "../connection-request";
 import type { SessionContext } from "../context";
-import { isPlainObject, toolRefusal, toolResult } from "../result";
+import { isPlainObject, toolRefusal, toolResult, withCard } from "../result";
 import { runAuthoredTool } from "../run";
+import { setupOfferFor } from "../setup-offer";
 import { authoredToolName } from "../tool-names";
 import { similarTools } from "./acquire-similar";
 import { answerAsk } from "./answer-ask";
@@ -107,7 +109,8 @@ const findTool: MetaTool = {
     description:
       "Used first, before acquire, for a task no listed tool covers: searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description, matching every word of the query in any order; a tool no version of which has passed its dry run is not listed. " +
       "Each hit carries vendor and name (the arguments promote, demote and run_tool take), its inputSchema (the shape run_tool's input must match), whether it is in the agent's working set, and its read-only and destructive hints. " +
-      "A hit that is not promoted is one promote call from the agent's list. The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named.",
+      "A hit that is not promoted is one promote call from the agent's list. The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named. " +
+      "While the person has no connection at all and has neither finished nor skipped Setup, the answer also carries setup, a url to the console's Setup page for this agent, where a first vendor is connected and a first tool acquired, and a message in the shape of a handoff, shown as a card on a chat product that renders one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -120,8 +123,11 @@ const findTool: MetaTool = {
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true, destructiveHint: false },
+    // The ask card renders the Setup offer for this tool's results (GRA-210; `../setup-offer.ts`).
+    _meta: ASK_CARD_TOOL_META,
   },
-  handle: async (args, { ctx, principal, scope, deps }) => {
+  handle: async (args, session) => {
+    const { ctx, principal, scope, deps } = session;
     const query = typeof args.query === "string" ? args.query : "";
     if (queryWords(query).length === 0) {
       return toolRefusal(
@@ -164,14 +170,21 @@ const findTool: MetaTool = {
       inputSchema: tool.inputSchema,
       annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
     }));
-    return toolResult({
-      tools: hits,
-      connections,
-      note:
-        hits.length === 0
-          ? "Nothing in the toolbox matches. If the vendor is among connections, acquire authors a new tool against its connectionId; if not, request_connection comes first."
-          : "promote a tool to add it to your list; run_tool runs one without promoting it.",
-    });
+    // A person with no connection at all, and Setup neither finished nor skipped, is offered
+    // Setup (GRA-210): a plain result with the card beside it, since no ask stands behind it.
+    const offer = await setupOfferFor(session, allConnections.length);
+    return withCard(
+      toolResult({
+        tools: hits,
+        connections,
+        ...(offer ? { setup: offer.setup } : {}),
+        note:
+          hits.length === 0
+            ? "Nothing in the toolbox matches. If the vendor is among connections, acquire authors a new tool against its connectionId; if not, request_connection comes first."
+            : "promote a tool to add it to your list; run_tool runs one without promoting it.",
+      }),
+      offer?.card,
+    );
   },
 };
 
@@ -256,6 +269,7 @@ const runTool: MetaTool = {
       "A tool that changes something may answer awaiting_approval with a url on its first call: a handoff whose next step is the person's, in the console; the same call with the same arguments, once they have answered, runs the tool. " +
       "With dryRun: true reads reach the vendor and every other method stops at the proxy with a preview of the request; the answer is a dry-run report and nothing changes at the vendor. " +
       `A call expected to take more than about ${DETACHED_ADVICE_SECONDS} seconds takes detached: true and timeoutSeconds up to ${MAX_DETACHED_TIMEOUT_SECONDS} (default ${DEFAULT_DETACHED_TIMEOUT_SECONDS}), and answers a processName that wait_for_process polls; a dry run is waited for whatever detached says. ` +
+      `${BLOB_RESULT_FACT} ` +
       "Marked destructive because the hint is the carried tool's, which the host cannot know per call: the tool's own annotations are in find_tool's hit and the acquire result.",
     inputSchema: {
       type: "object",
@@ -320,6 +334,15 @@ function toolNotFound(key: { vendor: string; name: string }): CallToolResult {
   );
 }
 
+/**
+ * What `acquire`'s description says of a tool that reads a blob (GRA-190; ADR 0023): where the
+ * ref the job dry-runs against comes from, and what the job does with none. A fact about the job
+ * (`../acquire/job.ts`'s fixture blob), in the third person; the rule that the producing tool runs
+ * first is the instructions' (`../session.ts`'s `BLOB_RULE`).
+ */
+export const ACQUIRE_BLOB_FACT =
+  "For a tool that reads a file, the goal or hints may name the blob:// ref an earlier tool answered: the model puts it in the draft's test input and the dry run reads that blob; with no ref, or a dead one, the job mints a fixture blob of text for the dry run alone and says so in a progress line.";
+
 /** The line a job carries before its runner has said anything — what `acquire` answers with at once. */
 export const FIRST_PROGRESS_LINE =
   "Queued: Graft's model will read the vendor's documentation, draft the tool, prove it with reads, publish and dry-run it, then promote it into your working set. acquire_status with the jobId answers when there is news.";
@@ -331,7 +354,8 @@ const acquire: MetaTool = {
       "Used when find_tool found nothing that covers the task and the vendor has a connection in the agent's scope: starts the job in which Graft's model reads the vendor's documentation, writes the smallest module that makes the call, checks it, proves it with reads, publishes it, dry-runs it and promotes it into the agent's working set. " +
       "Waits a short while for the job: a job that finishes in time answers with result, as acquire_status does; otherwise answers { jobId, status, progress } and acquire_status reads the job from then on, itself waiting for news. " +
       "The first acquire against a connection may instead answer awaiting_approval with a url, unless the person granted the build approval when they confirmed the connection: a handoff whose next step is the person's, in the console or on the ask card; the same call with the same arguments, once they have answered, starts the job. " +
-      "When the toolbox already holds a tool of the vendor whose name and description cover the goal, answers similar_tools_exist naming those tools with the inputSchema run_tool takes, and starts no job; the same call with ignoreExisting: true starts one.",
+      "When the toolbox already holds a tool of the vendor whose name and description cover the goal, answers similar_tools_exist naming those tools with the inputSchema run_tool takes, and starts no job; the same call with ignoreExisting: true starts one. " +
+      `${ACQUIRE_BLOB_FACT}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -342,7 +366,8 @@ const acquire: MetaTool = {
         goal: { type: "string", description: "What the tool must do, in a sentence or two." },
         hints: {
           type: "string",
-          description: "Anything already known: an endpoint, a documentation URL, a field name.",
+          description:
+            "Anything already known: an endpoint, a documentation URL, a field name, or the blob:// ref an earlier tool answered when the tool is to read that file.",
         },
         ignoreExisting: {
           type: "boolean",
@@ -409,9 +434,9 @@ const acquire: MetaTool = {
         `Connection ${connectionId} is not in this agent's scope, so nothing can be authored against it. request_connection proposes a new connection for the person to confirm; an existing one is added to the scope in the console.`,
       );
     }
-    if (!deps.model) {
+    if (!acquireConfigured(deps)) {
       return toolRefusal(
-        "acquire_unconfigured",
+        ACQUIRE_UNCONFIGURED,
         "This deployment has no model configured, so Graft cannot author a tool. Say so rather than retrying; the advanced tools (write_file, check_tool, publish_tool) still let you drive the loop yourself.",
       );
     }

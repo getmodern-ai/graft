@@ -11,7 +11,10 @@ import { openWorld } from "./world";
  * the skill to the letter is a broken scorer — and it runs the real loop, the real check and the
  * real proxy the evals run, on every commit and with no key. The SDK scenario also proves that
  * `@graft/check` accepts an `@octokit/rest` client bound to `ctx.proxyKey` and `ctx.proxyBase()`
- * (ADR 0010), and that the proxy hands the vendor stripped paths with its own credential.
+ * (ADR 0010), and that the proxy hands the vendor stripped paths with its own credential. The blob
+ * scenario (GRA-191) runs the loop twice on one world and proves the chain end to end: a 3 MiB file
+ * through the proxy into a blob, the ref into the second job's test input and the second tool's
+ * input, the bytes out to the second vendor intact, and no sentinel of the file in any model turn.
  */
 
 const BOUNDS = { maxAttempts: 3, tokenCeiling: 400_000 };
@@ -27,13 +30,24 @@ describe("the evals harness under scripted answers", () => {
         expect(red, red.map((score) => `${score.name}: ${score.detail ?? ""}`).join("\n")).toEqual(
           [],
         );
-        expect(run.status.status).toBe("succeeded");
-        expect(run.status.attempts).toBe(1);
-        // The settle point the scorers order asks by (GRA-63): the job's result trace is at or
-        // before it and every ask the tool's use created is after it, whatever the clock said.
-        const result = run.traces.find((trace) => trace.kind === "result");
-        expect(result && world.record.positionOf(result.id)).toBeLessThanOrEqual(run.settled);
-        for (const ask of run.asks) expect(ask.position).toBeGreaterThan(run.settled);
+        for (const stage of [run, ...(run.next ? [run.next] : [])]) {
+          expect(stage.status.status).toBe("succeeded");
+          expect(stage.status.attempts).toBe(1);
+          // The settle point the scorers order asks by (GRA-63): the job's result trace is at or
+          // before it and every ask the tool's use created is after it, whatever the clock said.
+          const result = stage.traces.find((trace) => trace.kind === "result");
+          expect(result && world.record.positionOf(result.id)).toBeLessThanOrEqual(stage.settled);
+          for (const ask of stage.asks) expect(ask.position).toBeGreaterThan(stage.settled);
+        }
+        if (scenario.chain) {
+          // The chain ran on the ref the first tool answered, and the second job's dry run read
+          // that blob rather than a fixture: the harness handed a live ref, as the rule says to.
+          expect(run.handoff).toMatch(/^blob:\/\/[0-9a-f-]{36}$/);
+          expect(run.next).not.toBeNull();
+          expect(run.next?.traces.map((trace) => trace.text)).toContain(
+            "The test input names 1 live blob(s); the dry run reads it.",
+          );
+        }
       } finally {
         await world.close();
       }

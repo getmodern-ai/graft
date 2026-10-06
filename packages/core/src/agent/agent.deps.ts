@@ -4,6 +4,7 @@ import {
   findAgentByTokenHash,
   findAgentForUpdate,
   insertAgent,
+  issueAgentToken,
   listAgentConnectionIds,
   listAgents,
   listAllActiveAgents,
@@ -23,6 +24,8 @@ import { findAgentByMcpAccessTokenHash, revokeMcpTokensForAgent } from "@graft/d
  */
 export type AgentDeps = {
   insertAgent: typeof insertAgent;
+  /** The static token onto an agent awaiting its harness, guarded in the statement (ADR 0024). */
+  issueAgentToken: typeof issueAgentToken;
   findAgent: typeof findAgent;
   /** The agent row locked for a scope write, so a narrowing and a grant serialise on it. */
   findAgentForUpdate: typeof findAgentForUpdate;
@@ -55,6 +58,7 @@ export type AgentDeps = {
 
 export const defaultAgentDeps: AgentDeps = {
   insertAgent,
+  issueAgentToken,
   findAgent,
   findAgentForUpdate,
   findAgentByTokenHash,

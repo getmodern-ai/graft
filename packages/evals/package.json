@@ -21,14 +21,14 @@
     "@graft/runner": "workspace:*",
     "@graft/sandbox": "workspace:*",
     "@graft/toolbox": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "dotenv": "catalog:"
   },
   "devDependencies": {
     "@graft/config": "workspace:*",
     "@octokit/rest": "^22.0.1",
     "@types/node": "catalog:",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.15",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

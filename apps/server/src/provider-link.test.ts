@@ -13,6 +13,7 @@ import {
   createToolListChangedNotifier,
   executeToolName,
   openAgentSession,
+  readRunnerEnvelope,
 } from "@graft/mcp";
 import { createFakeDeps, createFakeStore, type FakeStore } from "@graft/mcp/testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "@graft/mcp/testing/fake-vendor";
@@ -90,7 +91,7 @@ const MODULE = `export default async (input, ctx) => {
   return await res.json();
 };
 `;
-const RUN_LIST = `echo '{}' | node /graft/runner.mjs ${sandboxPath("tools/gmail/list-messages/v1")}`;
+const RUN_LIST = `echo '{}' | node "$GRAFT_RUNNER" ${sandboxPath("tools/gmail/list-messages/v1")}`;
 
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
@@ -507,8 +508,10 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       expect(result.isError, JSON.stringify(body(result))).toBeFalsy();
       const run = body(result);
       expect(run).toMatchObject({ exitCode: 0 });
-      expect(JSON.parse(String(run.output))).toMatchObject({
-        messages: [{ id: "18f1", threadId: "18f1" }],
+      // The runner prints its envelope (GRA-186): the module's result beside the blobs it wrote.
+      expect(readRunnerEnvelope(String(run.output))).toMatchObject({
+        result: { messages: [{ id: "18f1", threadId: "18f1" }] },
+        blobs: [],
       });
 
       const [left] = vendor.requests;

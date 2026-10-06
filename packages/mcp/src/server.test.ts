@@ -1,17 +1,29 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { join, posix } from "node:path";
 
 import type { ModuleCheck } from "@graft/check";
 import { setConnectionCredential } from "@graft/core";
+import type { BlobRow } from "@graft/db/repo/blob";
 import {
   createFakeMetadataSource,
   createPublishDeps,
   DEFAULT_PACKAGE_POLICY,
   publishToolVersion,
 } from "@graft/publish";
-import { loadSkills, runnerFiles } from "@graft/runner";
+import {
+  loadRunnerSource,
+  loadSkills,
+  RUNNER_DIR,
+  RUNNER_FILE,
+  readRunnerEnvelope,
+  runnerFiles,
+} from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
-import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
+import {
+  createFilesystemBlobStore,
+  createFilesystemToolboxStore,
+  createNoopToolboxMirror,
+} from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
@@ -21,11 +33,15 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { NO_ELICITATION } from "./approval";
-import type { McpDeps } from "./deps";
+import { BLOB_RESULT_FACT, type BlobWrittenEvent } from "./blobs";
+import type { McpDeps, ToolCallEvent } from "./deps";
+import { createInFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import { revokeConnectionAndNotify } from "./revoke";
 import { runAuthoredTool } from "./run";
+import { seededRunnerPath } from "./sandbox";
 import { openAgentSession } from "./session";
+import { type BlobSweptEvent, runSweep } from "./sweep";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
 import { authoredToolName, executeToolName } from "./tool-names";
@@ -74,11 +90,116 @@ const LIST_ITEMS_MODULE = `export default async (input, ctx) => {
 };
 `;
 
+/**
+ * A module that moves the vendor's answer into a blob rather than through the model (GRA-186; ADR
+ * 0023): the bytes go to `ctx.blob.write`, the result carries the ref and a count, and nothing of
+ * the body.
+ */
+/** A module whose result wears the server's own keys, and writes one blob (Greptile on #144). */
+const DECOY_MODULE = `export default async (_input, ctx) => {
+  await ctx.blob.write(new TextEncoder().encode("decoy"), { contentType: "text/plain" });
+  return { result: "x", truncated: true, blobs: ["y"] };
+};
+`;
+
+/** A module whose result wears the wide event's counter keys, and writes nothing (Greptile on #144). */
+const DECOY_COUNTS_MODULE = `export default async () => ({ blobs: ["vendor data"], blobsDropped: 3 });
+`;
+
+const SAVE_REPORT = authoredToolName("demo", "save-report");
+const SAVE_REPORT_MODULE = `export default async (input, ctx) => {
+  const res = await ctx.fetch(\`/items?limit=\${input.limit ?? 5}\`);
+  if (!res.ok) throw new Error(\`GET /items \${res.status}: \${await res.text()}\`);
+  const body = await res.text();
+  const file = await ctx.blob.write(new TextEncoder().encode(body), { contentType: "application/json", name: "items.json" });
+  return { file, count: JSON.parse(body).items.length, stat: await ctx.blob.stat(file) };
+};
+`;
+
+/**
+ * The consuming half (GRA-187; ADR 0023): the ref one tool answered arrives in this tool's input,
+ * `ctx.blob.read` answers a `Blob`, and it goes to the vendor in a multipart body. The result
+ * names the ref, the size and the type, never a byte. The schema names where a ref may sit, a
+ * list and an object among them, so the door's walk over nested input is exercised.
+ */
+const UPLOAD_FILE = authoredToolName("demo", "upload-file");
+const UPLOAD_FILE_SCHEMA = {
+  type: "object",
+  properties: {
+    file: { type: "string" },
+    name: { type: "string" },
+    channel: { type: "string" },
+    attachments: { type: "array", items: { type: "string" } },
+    meta: { type: "object" },
+  },
+  required: ["file"],
+  additionalProperties: false,
+};
+const UPLOAD_FILE_MODULE = `export default async (input, ctx) => {
+  const file = await ctx.blob.read(input.file);
+  const form = new FormData();
+  form.append("channel", input.channel ?? "general");
+  form.append("file", file, input.name ?? "upload.bin");
+  const res = await ctx.fetch("/files/upload", { method: "POST", body: form });
+  if (!res.ok) throw new Error(\`POST /files/upload \${res.status}: \${await res.text()}\`);
+  return { uploaded: input.file, status: res.status, bytes: file.size, contentType: file.type };
+};
+`;
+
+/**
+ * Slack's upload shape (GRA-197; ADR 0010 as amended 2026-09-23): a read on the primary host answers
+ * an absolute URL on a second host of the connection, and the bytes are `POST`ed to that URL as it
+ * came back, through `ctx.fetch`. The runner routes it onto the proxy's host form and the proxy
+ * judges the host. `input.url` lets a test name a host the connection does not declare instead.
+ */
+const UPLOAD_TO_HOST = authoredToolName("demo", "upload-to-host");
+const UPLOAD_TO_HOST_SCHEMA = {
+  type: "object",
+  properties: { bytes: { type: "string" }, url: { type: "string" } },
+  required: ["bytes"],
+  additionalProperties: false,
+};
+const UPLOAD_TO_HOST_MODULE = `export default async (input, ctx) => {
+  const res = await ctx.fetch("/upload-url");
+  if (!res.ok) throw new Error(\`GET /upload-url \${res.status}\`);
+  const { upload_url } = await res.json();
+  const put = await ctx.fetch(input.url ?? upload_url, { method: "POST", body: input.bytes });
+  return { status: put.status, body: await put.json() };
+};
+`;
+const UPLOAD_URL = "https://files.demo.example/upload/v1/abc?x=1";
+
+/**
+ * A module that writes two 1 MiB blobs in one run and catches the second's refusal (GRA-187, after
+ * Greptile on #145): under a budget of 1.5 MiB the first commits and the second is `blob_quota`.
+ */
+const WRITE_TWO = authoredToolName("demo", "write-two");
+const WRITE_TWO_MODULE = `export default async (_input, ctx) => {
+  const bytes = new Uint8Array(1024 * 1024).fill(2);
+  const first = await ctx.blob.write(bytes, { contentType: "application/octet-stream", name: "one.bin" });
+  try {
+    return { first, second: await ctx.blob.write(bytes, { contentType: "application/octet-stream", name: "two.bin" }) };
+  } catch (error) {
+    return { first, second: { code: error.code ?? null, message: error.message } };
+  }
+};
+`;
+
+/** A module that writes a blob and then throws (GRA-187, after Greptile on #148): the row must still land. */
+const WRITE_THEN_THROW = authoredToolName("demo", "write-then-throw");
+const WRITE_THEN_THROW_MODULE = `export default async (_input, ctx) => {
+  const file = await ctx.blob.write(new TextEncoder().encode("kept before the fall"), { contentType: "text/plain", name: "kept.txt" });
+  throw new Error(\`fell over after writing \${file}\`);
+};
+`;
+
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
 let checked: Parameters<ModuleCheck>[0][];
+const blobEvents: BlobWrittenEvent[] = [];
+const toolEvents: ToolCallEvent[] = [];
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
@@ -89,6 +210,8 @@ beforeAll(async () => {
         id: CONN_DEMO,
         personId: PERSON,
         primaryHost: "https://api.demo.example/v2",
+        // The second host the upload URL is on (GRA-197).
+        hosts: ["files.demo.example"],
         credential: { apiKey: API_KEY },
       },
       // Two live Rebind accounts, for the tool that follows one once its own row is revoked (GRA-122).
@@ -105,6 +228,16 @@ beforeAll(async () => {
         credential: { apiKey: "rebind-second-key" },
       },
     ],
+    // The two legs of the upload (GRA-197): the primary host answers the URL, the second host takes
+    // the bytes and says which host it is. Everything else is the default body.
+    respond: (request) => {
+      const url = new URL(request.url);
+      if (url.hostname === "files.demo.example") {
+        return Response.json({ uploaded: true, host: url.hostname, path: url.pathname });
+      }
+      if (url.pathname.endsWith("/upload-url")) return Response.json({ upload_url: UPLOAD_URL });
+      return Response.json(VENDOR_BODY, { status: 200 });
+    },
   });
   sandbox = createFakeSandboxBackend();
 
@@ -118,6 +251,27 @@ beforeAll(async () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "index.ts"), LIST_ITEMS_MODULE);
   }
+  const saveReport = join(sandbox.toolboxRoot(PERSON), "tools/demo/save-report/v1");
+  await mkdir(saveReport, { recursive: true });
+  await writeFile(join(saveReport, "index.ts"), SAVE_REPORT_MODULE);
+  const decoy = join(sandbox.toolboxRoot(PERSON), "tools/demo/decoy/v1");
+  await mkdir(decoy, { recursive: true });
+  await writeFile(join(decoy, "index.ts"), DECOY_MODULE);
+  const decoyCounts = join(sandbox.toolboxRoot(PERSON), "tools/demo/decoy-counts/v1");
+  await mkdir(decoyCounts, { recursive: true });
+  await writeFile(join(decoyCounts, "index.ts"), DECOY_COUNTS_MODULE);
+  const uploadFile = join(sandbox.toolboxRoot(PERSON), "tools/demo/upload-file/v1");
+  await mkdir(uploadFile, { recursive: true });
+  await writeFile(join(uploadFile, "index.ts"), UPLOAD_FILE_MODULE);
+  const writeTwo = join(sandbox.toolboxRoot(PERSON), "tools/demo/write-two/v1");
+  await mkdir(writeTwo, { recursive: true });
+  await writeFile(join(writeTwo, "index.ts"), WRITE_TWO_MODULE);
+  const writeThenThrow = join(sandbox.toolboxRoot(PERSON), "tools/demo/write-then-throw/v1");
+  await mkdir(writeThenThrow, { recursive: true });
+  await writeFile(join(writeThenThrow, "index.ts"), WRITE_THEN_THROW_MODULE);
+  const uploadToHost = join(sandbox.toolboxRoot(PERSON), "tools/demo/upload-to-host/v1");
+  await mkdir(uploadToHost, { recursive: true });
+  await writeFile(join(uploadToHost, "index.ts"), UPLOAD_TO_HOST_MODULE);
 
   store = createFakeStore();
   store.addConnection({
@@ -126,6 +280,7 @@ beforeAll(async () => {
     vendor: "demo",
     displayName: "Demo Orders",
     primaryHost: "https://api.demo.example/v2",
+    hosts: ["files.demo.example"],
   });
   // The person's, but in neither agent's scope.
   store.addConnection({
@@ -175,6 +330,44 @@ beforeAll(async () => {
     path: "tools/demo/list-items/v1",
   });
   store.addTool({
+    id: "tool_save_report",
+    personId: PERSON,
+    vendor: "demo",
+    name: "save-report",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Keep what the vendor answered as a file.",
+    inputSchema: LIST_ITEMS_SCHEMA,
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/save-report/v1",
+  });
+  // In the toolbox and not promoted: reached through run_tool.
+  store.addTool({
+    id: "tool_decoy",
+    personId: PERSON,
+    vendor: "demo",
+    name: "decoy",
+    description: "Answers a result shaped like the server's own, and writes a blob.",
+    inputSchema: { type: "object" },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/decoy/v1",
+  });
+  store.addTool({
+    id: "tool_decoy_counts",
+    personId: PERSON,
+    vendor: "demo",
+    name: "decoy-counts",
+    description: "Answers a result wearing the wide event's counter keys, and writes nothing.",
+    inputSchema: { type: "object" },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/decoy-counts/v1",
+  });
+  store.addTool({
     id: "tool_other_ping",
     personId: PERSON,
     vendor: "other",
@@ -200,9 +393,80 @@ beforeAll(async () => {
   });
   // Promoted for agent A alone; agent B holds the same toolbox with an empty working set.
   store.promote(AGENT_A, "tool_list_items");
+  store.promote(AGENT_A, "tool_save_report");
+  store.addTool({
+    id: "tool_upload_file",
+    personId: PERSON,
+    vendor: "demo",
+    name: "upload-file",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Send a kept file upstream as an upload.",
+    inputSchema: UPLOAD_FILE_SCHEMA,
+    // A write, as a vendor upload is: it asks once like any write (ADR 0008), and the yes is
+    // recorded below so this suite is about the run and not the ask.
+    readOnly: false,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/upload-file/v1",
+  });
+  store.promote(AGENT_A, "tool_upload_file");
+  store.addTool({
+    id: "tool_write_two",
+    personId: PERSON,
+    vendor: "demo",
+    name: "write-two",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Keeps two copies of a fixed page.",
+    inputSchema: { type: "object", additionalProperties: false },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/write-two/v1",
+  });
+  store.promote(AGENT_A, "tool_write_two");
+  store.addTool({
+    id: "tool_write_then_throw",
+    personId: PERSON,
+    vendor: "demo",
+    name: "write-then-throw",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Keeps a page and then falls over.",
+    inputSchema: { type: "object", additionalProperties: false },
+    readOnly: true,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/write-then-throw/v1",
+  });
+  store.promote(AGENT_A, "tool_write_then_throw");
+  store.addTool({
+    id: "tool_upload_to_host",
+    personId: PERSON,
+    vendor: "demo",
+    name: "upload-to-host",
+    // Worded clear of the words the find_tool tests search for.
+    description: "Sends bytes to the address the vendor hands back.",
+    inputSchema: UPLOAD_TO_HOST_SCHEMA,
+    readOnly: false,
+    destructive: false,
+    defaultConnectionId: CONN_DEMO,
+    path: "tools/demo/upload-to-host/v1",
+  });
+  store.promote(AGENT_A, "tool_upload_to_host");
   // Agent A may run code against Demo (the build approval, ADR 0008); the asks themselves are
   // `approval.test.ts`'s subject, and this suite is about everything that happens once they pass.
   store.grantBuild(AGENT_A, CONN_DEMO);
+  for (const toolId of ["tool_upload_file", "tool_upload_to_host"]) {
+    store.approvals.set(`${AGENT_A} ${toolId}`, {
+      agentId: AGENT_A,
+      toolId,
+      decision: "allow",
+      decidedAt: new Date(),
+      askEveryCall: false,
+      owner: "person",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
 
   checked = [];
   const fakeCheck: ModuleCheck = async (input) => {
@@ -212,6 +476,8 @@ beforeAll(async () => {
       refusals: [],
       advice: [],
       annotations: { readOnly: true, destructive: false },
+      contextMembersUsed: [],
+      blobReadFields: [],
     };
   };
 
@@ -232,6 +498,8 @@ beforeAll(async () => {
 
   deps = {
     ...fake,
+    // The registry the door's budget grants live on (GRA-187); the sweep's use of it is `sweep.test.ts`.
+    inFlight: createInFlightRegistry(),
     sandbox,
     keys,
     proxyPublicUrl: vendor.url,
@@ -251,7 +519,12 @@ beforeAll(async () => {
       }),
     listChangedWindowMs: 300,
     toolbox,
+    // The store the record-time budget check removes through (GRA-200; `blob-budget.ts`), over the
+    // same tree the sandbox's `/blobs` links into.
+    blobStore: createFilesystemBlobStore({ root: join(sandbox.root, "toolboxes") }),
     publishTool: (args) => publishToolVersion(publish, args),
+    onBlobWritten: (event) => blobEvents.push(event),
+    onToolCall: (event) => toolEvents.push(event),
     handoff: {
       consoleUrl: "http://console.graft.test",
       secret: "graft-mcp-test-handoff-secret-that-is-long-enough",
@@ -262,6 +535,7 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  deps.inFlight?.close();
   await sandbox.close();
   await vendor.close();
 });
@@ -329,10 +603,16 @@ describe("the tool list", () => {
         ...META_TOOL_NAMES,
         executeToolName(CONN_DEMO),
         LIST_ITEMS,
+        SAVE_REPORT,
+        UPLOAD_FILE,
+        WRITE_TWO,
+        WRITE_THEN_THROW,
+        UPLOAD_TO_HOST,
       ]);
       const listItems = tools.find((tool) => tool.name === LIST_ITEMS);
       expect(listItems).toMatchObject({
-        description: "List items from Demo Orders.",
+        // The row's prose, then the blob fact every authored tool carries (GRA-190; `tools.ts`).
+        description: `List items from Demo Orders. ${BLOB_RESULT_FACT}`,
         inputSchema: LIST_ITEMS_SCHEMA,
         annotations: { readOnlyHint: true, destructiveHint: false },
       });
@@ -445,6 +725,1201 @@ describe("a first-class call", () => {
       await a.close();
     }
   });
+});
+
+/**
+ * `ctx.fetch` with an absolute URL (GRA-197; ADR 0010 as amended 2026-09-23), end to end: the module
+ * reads an upload URL off the primary host and posts the bytes to it as it came back, on a second
+ * host of the connection. The runner rewrites it onto the proxy's host form, the proxy judges the
+ * host against the connection's set and injects the credential, and a host the connection does not
+ * declare is the proxy's existing refusal, which the module sees as a status.
+ */
+describe("ctx.fetch with an absolute URL on a second host of the connection (GRA-197)", () => {
+  it("reaches the second host through the proxy with the credential injected, the bytes intact and never the token", async () => {
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const result = await a.call(UPLOAD_TO_HOST, { bytes: "the bytes" });
+      expect(result.isError).toBeFalsy();
+      expect(body(result)).toEqual({
+        status: 200,
+        body: { uploaded: true, host: "files.demo.example", path: "/upload/v1/abc" },
+      });
+
+      const sent = vendor.requests.slice(requestsBefore);
+      expect(sent.map((request) => [request.method, request.url])).toEqual([
+        ["GET", "https://api.demo.example/v2/upload-url"],
+        ["POST", UPLOAD_URL],
+      ]);
+      const put = sent[1];
+      expect(put?.headers.get("x-demo-key")).toBe(API_KEY);
+      expect(put?.headers.get("authorization")).toBeNull();
+      for (const [, value] of put?.headers ?? []) expect(value).not.toMatch(/^eyJ/);
+      expect(Buffer.from(put?.body ?? []).toString("utf8")).toBe("the bytes");
+      expect(vendor.events.at(-1)).toMatchObject({
+        outcome: "forwarded",
+        connectionId: CONN_DEMO,
+        host: "files.demo.example",
+        path: "/upload/v1/abc",
+        dryRun: false,
+      });
+      expect(store.usage.at(-1)).toMatchObject({ toolName: UPLOAD_TO_HOST, outcome: "ok" });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("is refused by the proxy for a host the connection does not declare, with its existing host refusal, which the module sees as the status", async () => {
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const result = await a.call(UPLOAD_TO_HOST, {
+        bytes: "the bytes",
+        url: "https://files.other.example/upload/v1/abc",
+      });
+      expect(result.isError).toBeFalsy();
+      expect(body(result)).toEqual({
+        status: 403,
+        body: {
+          error: "forbidden",
+          reason: "host_not_in_set",
+          message: "The host in the path is not one the connection declares",
+        },
+      });
+
+      // The read left; the write never did.
+      expect(vendor.requests.slice(requestsBefore).map((request) => request.url)).toEqual([
+        "https://api.demo.example/v2/upload-url",
+      ]);
+      // The proxy's outcome word is the reason itself, and no vendor host was resolved.
+      expect(vendor.events.at(-1)).toMatchObject({
+        outcome: "host_not_in_set",
+        connectionId: CONN_DEMO,
+        host: null,
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+});
+
+/**
+ * A tool that writes a blob (GRA-186; ADR 0023): the ref is in the result where the module put it,
+ * the ledger rides beside it as `blobs` in the text block and in `structuredContent`, the bytes are
+ * on the agent's blobs mount and nowhere in the answer, and the server holds one row per blob.
+ */
+describe("a tool that writes a blob", () => {
+  const REF = /^blob:\/\/[0-9a-f-]{36}$/;
+
+  it("returns the ref in the result and the ledger beside it, writes the bytes under the agent's mount alone, and one blob row for the person and agent", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    const before = Date.now();
+    try {
+      const result = await a.call(SAVE_REPORT, { limit: 1 });
+      expect(result.isError).toBeFalsy();
+      const text = (result.content[0] as { text: string }).text;
+      const answer = body(result) as {
+        result: { file: string; count: number; stat: Record<string, unknown> };
+        blobs: Record<string, unknown>[];
+      };
+      expect(answer.result.file).toMatch(REF);
+      expect(answer.result.count).toBe(1);
+      const id = answer.result.file.slice("blob://".length);
+      // The vendor's body went into the blob, not the answer: not a byte of it is on the wire.
+      expect(text).not.toContain("Widget");
+      expect(text).not.toContain(JSON.stringify(VENDOR_BODY));
+
+      // The bytes, under this agent's directory beside the toolboxes and under /blobs in its
+      // sandbox, and nowhere under /tools (ADR 0023: the scope is the mount).
+      const dir = join(sandbox.blobsRoot(AGENT_A), id);
+      expect((await readdir(dir)).sort()).toEqual(["data", "meta.json"]);
+      const data = await readFile(join(dir, "data"), "utf8");
+      expect(JSON.parse(data)).toEqual(VENDOR_BODY);
+      expect(await readdir(sandbox.blobsRoot(AGENT_A))).not.toContain(`${id}.tmp`);
+      expect(await readdir(join(sandbox.sandboxRoot(`agent-${AGENT_A}`), "blobs"))).toContain(id);
+      await expect(stat(join(sandbox.toolboxRoot(PERSON), ".blobs"))).rejects.toThrow();
+      const meta = JSON.parse(await readFile(join(dir, "meta.json"), "utf8"));
+      expect(meta).toMatchObject({
+        bytes: data.length,
+        contentType: "application/json",
+        name: "items.json",
+        agentId: AGENT_A,
+        toolVersion: "tool_save_report_v1",
+      });
+
+      // The ledger beside the result, in the text block and in structuredContent alike: the row
+      // the server adopted from the store (GRA-200; `blob-budget.ts`), which is the sidecar's line
+      // with an expiry never later than the store's last write plus 24 hours. A Linux file's mtime
+      // is coarse-grained and can sit a few milliseconds before the runner's own clock, so the
+      // adopted expiry may be that much earlier than the sidecar's; stat inside the module read
+      // the sidecar itself.
+      const [wireLine] = answer.blobs as { expiresAt: string }[];
+      if (!wireLine) throw new Error("the answer names no blob");
+      expect(wireLine).toEqual({
+        ref: answer.result.file,
+        bytes: data.length,
+        contentType: "application/json",
+        name: "items.json",
+        expiresAt: wireLine.expiresAt,
+      });
+      expect(Date.parse(wireLine.expiresAt)).toBeLessThanOrEqual(Date.parse(meta.expiresAt));
+      expect(Date.parse(wireLine.expiresAt)).toBeGreaterThan(Date.parse(meta.expiresAt) - 1_000);
+      expect(result.structuredContent).toEqual({ result: answer.result, blobs: [wireLine] });
+      expect(answer.result.stat).toEqual({
+        bytes: data.length,
+        contentType: "application/json",
+        name: "items.json",
+        expiresAt: meta.expiresAt,
+      });
+      const expiresAt = Date.parse(meta.expiresAt);
+      expect(expiresAt - Date.parse(meta.writtenAt)).toBe(24 * 60 * 60 * 1000);
+      expect(expiresAt).toBeGreaterThan(before + 23 * 60 * 60 * 1000);
+
+      // One row, the person's and the agent's, keyed by the id inside the ref, and one event.
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({
+        id,
+        personId: PERSON,
+        agentId: AGENT_A,
+        versionId: "tool_save_report_v1",
+        bytes: data.length,
+        contentType: "application/json",
+        name: "items.json",
+        removedAt: null,
+      });
+      // The row carries the adopted expiry, the same one the wire names.
+      expect(store.blobs.at(-1)?.expiresAt.toISOString()).toBe(wireLine.expiresAt);
+      expect(blobEvents.slice(eventsBefore)).toEqual([
+        {
+          agentId: AGENT_A,
+          personId: PERSON,
+          versionId: "tool_save_report_v1",
+          bytes: data.length,
+          contentType: "application/json",
+        },
+      ]);
+      // The run is still one ledger line, as before.
+      expect(store.usage.at(-1)).toMatchObject({ toolId: "tool_save_report", outcome: "ok" });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("a tool that writes no blob answers exactly what it did before, with no blobs key", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const result = await a.call(LIST_ITEMS, { limit: 2 });
+      expect(body(result)).toEqual(VENDOR_BODY);
+      expect(result.structuredContent).toEqual(VENDOR_BODY);
+      expect(store.blobs).toHaveLength(blobsBefore);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("a detached run's blobs come back from wait_for_process with their rows written then, and no version", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const started = body(
+        await a.call("run_tool", { vendor: "demo", name: "save-report", detached: true }),
+      );
+      expect(started).toMatchObject({ status: "running" });
+      // The start knows nothing of a blob yet: the row lands when the poll reads the envelope.
+      expect(store.blobs).toHaveLength(blobsBefore);
+
+      const processName = started.processName as string;
+      const waited = body(await a.call("wait_for_process", { processName, maxWaitSeconds: 10 }));
+      expect(waited).toMatchObject({ status: "completed", exitCode: 0 });
+      const file = (waited.result as { file: string }).file;
+      expect(file).toMatch(REF);
+      expect(waited.blobs).toEqual([
+        {
+          ref: file,
+          bytes: expect.any(Number),
+          contentType: "application/json",
+          name: "items.json",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({
+        id: file.slice("blob://".length),
+        personId: PERSON,
+        agentId: AGENT_A,
+        versionId: null,
+      });
+      // Polled again, the same finished process writes no second row and fires no second event:
+      // the insert is idempotent on the id (`repo/blob.ts`), and the fake mirrors it.
+      const eventsAfterFirst = blobEvents.length;
+      const again = body(await a.call("wait_for_process", { processName, maxWaitSeconds: 1 }));
+      expect(again).toMatchObject({
+        status: "completed",
+        blobs: [expect.objectContaining({ ref: file })],
+      });
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(blobEvents).toHaveLength(eventsAfterFirst);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /** Whether the server cut a result is the server's word, never read off a key the module chose. */
+  it("keeps a module's own result, truncated and blobs keys inside its result, under the real ledger", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    try {
+      const result = await a.call("run_tool", { vendor: "demo", name: "decoy" });
+      expect(result.isError).toBeFalsy();
+      const answer = body(result) as { result: unknown; blobs: Record<string, unknown>[] };
+      expect(answer.result).toEqual({ result: "x", truncated: true, blobs: ["y"] });
+      expect(answer.blobs).toHaveLength(1);
+      expect(answer.blobs[0]?.ref).toMatch(REF);
+      expect(answer.blobs[0]?.bytes).toBe(5);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /** The wide event's counts come from the parsed ledger, never from the answer's keys (Greptile on #144). */
+  it("counts zero written and zero dropped for a module whose result wears the counter keys, and fires no blob_written", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    try {
+      const result = await a.call("run_tool", { vendor: "demo", name: "decoy-counts" });
+      expect(result.isError).toBeFalsy();
+      // The answer is the module's, keys and all: nothing was written, so nothing was wrapped.
+      expect(body(result)).toEqual({ blobs: ["vendor data"], blobsDropped: 3 });
+      const event = toolEvents.at(-1);
+      expect(event).toMatchObject({ tool: "run_tool", outcome: "ok" });
+      expect(event?.detail).toEqual({
+        tool: authoredToolName("demo", "decoy-counts"),
+        blobs: 0,
+        blobsDropped: 0,
+      });
+      expect(store.blobs).toHaveLength(blobsBefore);
+      expect(blobEvents).toHaveLength(eventsBefore);
+
+      // And a run that did write is counted from its ledger, once.
+      await a.call(SAVE_REPORT, { limit: 1 });
+      expect(toolEvents.at(-1)?.detail).toEqual({ blobs: 1, blobsDropped: 0 });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /** The synchronous execute path reads the same envelope off the command's stdout (Greptile on #144). */
+  it("records the blobs a runner invoked through execute__<connection> wrote, with no version, and names them beside the output", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    try {
+      const ran = body(
+        await a.call(executeToolName(CONN_DEMO), {
+          command: `echo '{"limit":1}' | node "$GRAFT_RUNNER" /tools/tools/demo/save-report/v1`,
+        }),
+      );
+      expect(ran.exitCode).toBe(0);
+      const envelope = readRunnerEnvelope(String(ran.output));
+      if (!envelope) throw new Error("the command's output carries no envelope");
+      const file = (envelope.result as { file: string }).file;
+      expect(file).toMatch(REF);
+      expect(ran.blobs).toEqual([
+        {
+          ref: file,
+          bytes: expect.any(Number),
+          contentType: "application/json",
+          name: "items.json",
+          expiresAt: expect.any(String),
+        },
+      ]);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({
+        id: file.slice("blob://".length),
+        personId: PERSON,
+        agentId: AGENT_A,
+        versionId: null,
+      });
+      expect(blobEvents.slice(eventsBefore)).toEqual([
+        expect.objectContaining({ agentId: AGENT_A, versionId: null }),
+      ]);
+      // The sidecar names the agent, since the command's environment carried `GRAFT_AGENT`
+      // (`blobAgentEnvironment`, on every capability run; Greptile on #159), and no version, since
+      // a by-hand invocation has none: what the sweep adopts the blob under if the row is lost.
+      const meta = JSON.parse(
+        await readFile(
+          join(sandbox.blobsRoot(AGENT_A), file.slice("blob://".length), "meta.json"),
+          "utf8",
+        ),
+      ) as { agentId?: unknown; toolVersion?: unknown };
+      expect(meta.agentId).toBe(AGENT_A);
+      expect(meta.toolVersion ?? null).toBeNull();
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+});
+
+/**
+ * The loop closed (GRA-187; ADR 0023): the ref one tool answered is the next tool's input, the
+ * vendor receives the bytes in a multipart body, and neither result carries a byte. Then the door:
+ * a ref that cannot be read is refused before a sandbox is touched, and so is every run of an
+ * agent at the quota. "Before a sandbox is touched" is asserted on the fake backing's process list
+ * for the agent's sandbox, which a run would grow by one.
+ */
+describe("a second tool reads the blob, and the door refuses a dead ref (GRA-187)", () => {
+  const SANDBOX_A = `agent-${AGENT_A}`;
+  const DEAD_REF = "blob://0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a21";
+  const GIB = 1024 * 1024 * 1024;
+
+  /** A row as the fake store holds it, for the door's cases that need one the runner never wrote. */
+  const row = (id: string, agentId: string, overrides: Partial<BlobRow> = {}): BlobRow => ({
+    id,
+    personId: PERSON,
+    agentId,
+    versionId: null,
+    bytes: 1024,
+    contentType: "application/octet-stream",
+    name: null,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    removedAt: null,
+    owner: "person",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  });
+  const withRows = async (rows: BlobRow[], run: () => Promise<void>) => {
+    store.blobs.push(...rows);
+    try {
+      await run();
+    } finally {
+      for (const added of rows) {
+        const at = store.blobs.indexOf(added);
+        if (at !== -1) store.blobs.splice(at, 1);
+      }
+    }
+  };
+  /**
+   * Agent B holds no approval, so a run of B's that passes the door reaches the gate and leaves an
+   * ask open (`waitMs: 0`): that ask is the evidence the door let it through, and it is taken away
+   * again so a later test's count of open asks starts where it did.
+   */
+  const askedPastTheDoor = async (run: () => Promise<CallToolResult>) => {
+    const before = new Set(store.pendingActions.keys());
+    try {
+      const result = await run();
+      expect(body(result)).toMatchObject({ error: "awaiting_approval" });
+    } finally {
+      for (const id of store.pendingActions.keys()) {
+        if (!before.has(id)) store.pendingActions.delete(id);
+      }
+    }
+  };
+  /** The refusal the door answers, checked whole: the shape, the flag, the ledger row, and no exec. */
+  const expectRefusedAtDoor = (
+    result: CallToolResult,
+    execsBefore: number,
+    expected: Record<string, unknown>,
+  ) => {
+    expect(result.isError).toBe(true);
+    expect(body(result)).toEqual({ error: "refused", ...expected });
+    expect(result.structuredContent).toEqual({ error: "refused", ...expected });
+    expect(sandbox.processNames(SANDBOX_A)).toHaveLength(execsBefore);
+    expect(store.usage.at(-1)).toMatchObject({ outcome: "refused" });
+  };
+
+  it("tool A writes a blob, tool B reads its ref from the input and the vendor receives the exact bytes as a multipart part, and no result carries a byte", async () => {
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const wrote = await a.call(SAVE_REPORT, { limit: 1 });
+      expect(wrote.isError).toBeFalsy();
+      const ref = (body(wrote) as { result: { file: string } }).result.file;
+      const id = ref.slice("blob://".length);
+      const data = await readFile(join(sandbox.blobsRoot(AGENT_A), id, "data"));
+      expect(JSON.parse(data.toString("utf8"))).toEqual(VENDOR_BODY);
+
+      const read = await a.call(UPLOAD_FILE, { file: ref, name: "items.json", channel: "ops" });
+      expect(read.isError).toBeFalsy();
+      const answer = body(read);
+      expect(answer).toEqual({
+        uploaded: ref,
+        status: 200,
+        bytes: data.length,
+        contentType: "application/json",
+      });
+      // The consuming tool wrote no blob, so its answer is the module's alone: no `blobs` key.
+      expect(read.structuredContent).toEqual(answer);
+      for (const result of [wrote, read]) {
+        const text = (result.content[0] as { text: string }).text;
+        expect(text).not.toContain("Widget");
+        expect(text).toContain(ref);
+      }
+
+      // The vendor saw one POST with a multipart body whose file part is the blob, byte for byte.
+      const sent = vendor.requests.slice(requestsBefore).at(-1);
+      expect(sent?.method).toBe("POST");
+      expect(sent?.url).toBe("https://api.demo.example/v2/files/upload");
+      const contentType = sent?.headers.get("content-type") ?? "";
+      expect(contentType).toMatch(/^multipart\/form-data; boundary=/);
+      const form = await new Response(sent?.body, {
+        headers: { "content-type": contentType },
+      }).formData();
+      expect(form.get("channel")).toBe("ops");
+      const part = form.get("file");
+      expect(part).toBeInstanceOf(File);
+      const file = part as File;
+      expect(file.name).toBe("items.json");
+      expect(file.type).toBe("application/json");
+      expect(Buffer.from(await file.arrayBuffer()).equals(data)).toBe(true);
+      expect(store.usage.at(-1)).toMatchObject({ toolId: "tool_upload_file", outcome: "ok" });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("refuses blob_not_found for a made-up ref and for another agent's real ref with one sentence, a ref nested in an array or an object included, before any exec", async () => {
+    const a = await connect(TOKEN_A);
+    const b = await connect(TOKEN_B);
+    try {
+      // A real blob of agent B's: the row is there, and agent A is told what it is told of nothing.
+      const theirs = row("b0b0b0b0-0000-4000-8000-000000000001", AGENT_B);
+      await withRows([theirs], async () => {
+        const live = row("a1a1a1a1-0000-4000-8000-000000000001", AGENT_A);
+        await withRows([live], async () => {
+          const execs = sandbox.processNames(SANDBOX_A).length;
+          const madeUp = await a.call(UPLOAD_FILE, { file: DEAD_REF });
+          expectRefusedAtDoor(madeUp, execs, {
+            reason: "blob_not_found",
+            ref: DEAD_REF,
+            message: `${DEAD_REF} names no blob this agent holds. Run the tool that produced it again and pass the ref it answers.`,
+          });
+          const another = await a.call(UPLOAD_FILE, { file: `blob://${theirs.id}` });
+          expectRefusedAtDoor(another, execs, {
+            reason: "blob_not_found",
+            ref: `blob://${theirs.id}`,
+            message: `blob://${theirs.id} names no blob this agent holds. Run the tool that produced it again and pass the ref it answers.`,
+          });
+          expect((body(another).message as string).replace(theirs.id, "<id>")).toBe(
+            (body(madeUp).message as string).replace(DEAD_REF.slice("blob://".length), "<id>"),
+          );
+          // A live ref where the schema says, a dead one deeper: the walk finds it in a list...
+          const inList = await a.call(UPLOAD_FILE, {
+            file: `blob://${live.id}`,
+            attachments: [`blob://${live.id}`, DEAD_REF],
+          });
+          expectRefusedAtDoor(inList, execs, {
+            reason: "blob_not_found",
+            ref: DEAD_REF,
+            message: expect.stringContaining(DEAD_REF),
+          });
+          // ...and inside an object under a key no schema names.
+          const inObject = await a.call(UPLOAD_FILE, {
+            file: `blob://${live.id}`,
+            meta: { source: { previous: DEAD_REF } },
+          });
+          expectRefusedAtDoor(inObject, execs, {
+            reason: "blob_not_found",
+            ref: DEAD_REF,
+            message: expect.stringContaining(DEAD_REF),
+          });
+          // Agent B, whose row it is, is not refused at the door for its own ref: the same call
+          // passes it and reaches the approval gate, which asks (ADR 0008) since B holds no yes.
+          await askedPastTheDoor(() =>
+            b.call("run_tool", {
+              vendor: "demo",
+              name: "upload-file",
+              input: { file: `blob://${theirs.id}` },
+            }),
+          );
+        });
+      });
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  }, 30_000);
+
+  it("refuses blob_expired for a row past its expiry and for a removed one, naming the TTL, before any exec", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const expired = row("e1e1e1e1-0000-4000-8000-000000000001", AGENT_A, {
+        expiresAt: new Date(Date.now() - 1000),
+      });
+      const removed = row("e1e1e1e1-0000-4000-8000-000000000002", AGENT_A, {
+        removedAt: new Date(),
+      });
+      await withRows([expired, removed], async () => {
+        const execs = sandbox.processNames(SANDBOX_A).length;
+        for (const dead of [expired, removed]) {
+          const ref = `blob://${dead.id}`;
+          const result = await a.call(UPLOAD_FILE, { file: ref });
+          expectRefusedAtDoor(result, execs, {
+            reason: "blob_expired",
+            ref,
+            message: `${ref} has expired: a blob lives 24 hours from its write, and this one's time has passed. Run the tool that produced it again and pass the new ref.`,
+          });
+        }
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("hands the run what it may still commit: with 1.5 MiB left of the quota a tool writing two 1 MiB blobs commits one, gets blob_quota on the second, and one row lands", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const already = store.blobs
+        .filter((b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date())
+        .reduce((total, b) => total + b.bytes, 0);
+      const filler = row("d0d0d0d0-0000-4000-8000-000000000001", AGENT_A, {
+        bytes: GIB - 1.5 * 1024 * 1024 - already,
+      });
+      await withRows([filler], async () => {
+        const blobsBefore = store.blobs.length;
+        const dirsBefore = (await readdir(sandbox.blobsRoot(AGENT_A))).length;
+        const result = await a.call(WRITE_TWO, {});
+        expect(result.isError).toBeFalsy();
+        const answer = body(result) as {
+          result: { first: string; second: { code: string; message: string } };
+          blobs: { ref: string; bytes: number }[];
+        };
+        expect(answer.result.first).toMatch(/^blob:\/\//);
+        expect(answer.result.second).toEqual({
+          code: "blob_quota",
+          message:
+            "blob_quota: the blob would carry this run past the 0.5 MiB left of its budget: the agent's live blobs are at the 1024 MiB quota. A blob expires 24 hours after its write and stops counting then; write less, or run again once one has.",
+        });
+        // The ledger, the rows and the disk all hold the first blob and nothing of the second.
+        expect(answer.blobs).toEqual([
+          expect.objectContaining({ ref: answer.result.first, bytes: 1024 * 1024 }),
+        ]);
+        expect(store.blobs).toHaveLength(blobsBefore + 1);
+        expect(store.blobs.at(-1)).toMatchObject({
+          id: answer.result.first.slice("blob://".length),
+          agentId: AGENT_A,
+          bytes: 1024 * 1024,
+        });
+        const entries = await readdir(sandbox.blobsRoot(AGENT_A));
+        expect(entries).toHaveLength(dirsBefore + 1);
+        expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
+        expect(store.usage.at(-1)).toMatchObject({ toolId: "tool_write_two", outcome: "ok" });
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("a module that writes and then throws still gets its row and its blob_written event, and the failure names the ref", async () => {
+    const a = await connect(TOKEN_A);
+    const blobsBefore = store.blobs.length;
+    const eventsBefore = blobEvents.length;
+    try {
+      const result = await a.call(WRITE_THEN_THROW, {});
+      expect(result.isError).toBe(true);
+      const answer = body(result) as {
+        error: string;
+        exitCode: number;
+        stderrTail: string;
+        blobs: { ref: string; bytes: number; name: string }[];
+      };
+      expect(answer.error).toMatch(/^The tool failed \(exit code 1\)/);
+      expect(answer.stderrTail).toContain("fell over after writing blob://");
+      expect(answer.blobs).toEqual([
+        expect.objectContaining({ bytes: 20, contentType: "text/plain", name: "kept.txt" }),
+      ]);
+      const id = answer.blobs[0]?.ref.slice("blob://".length) ?? "";
+      expect(await readFile(join(sandbox.blobsRoot(AGENT_A), id, "data"), "utf8")).toBe(
+        "kept before the fall",
+      );
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      expect(store.blobs.at(-1)).toMatchObject({ id, agentId: AGENT_A, bytes: 20 });
+      expect(blobEvents.slice(eventsBefore)).toEqual([
+        expect.objectContaining({ agentId: AGENT_A, bytes: 20, contentType: "text/plain" }),
+      ]);
+      expect(store.usage.at(-1)).toMatchObject({
+        toolId: "tool_write_then_throw",
+        outcome: "error",
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("two overlapping runs share the remainder: a detached run holds its grant until its poll settles it, and a run admitted meanwhile is handed what is left", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      const already = store.blobs
+        .filter((b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date())
+        .reduce((total, b) => total + b.bytes, 0);
+      // 2.5 MiB left of the quota. The detached write-two run is handed all of it and commits 2 MiB.
+      const filler = row("f0f0f0f0-0000-4000-8000-000000000001", AGENT_A, {
+        bytes: GIB - 2.5 * 1024 * 1024 - already,
+      });
+      await withRows([filler], async () => {
+        const started = body(
+          await a.call("run_tool", { vendor: "demo", name: "write-two", detached: true }),
+        );
+        expect(started).toMatchObject({ status: "running" });
+        const processName = started.processName as string;
+        expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(2.5 * 1024 * 1024);
+
+        // Admitted while the first is outstanding: nothing left, so its first write is refused.
+        const meanwhile = body(await a.call(WRITE_TWO, {})) as {
+          result?: { second: { code: string } };
+          refused?: string;
+        };
+        // write-two's first write is uncaught, so the run fails at it and the failure says so.
+        expect(meanwhile).toMatchObject({
+          error: expect.stringMatching(/^The tool failed \(exit code 1\)/),
+          stderrTail: expect.stringContaining(
+            "blob_quota: the blob would carry this run past the 0 MiB left",
+          ),
+        });
+
+        const waited = body(await a.call("wait_for_process", { processName, maxWaitSeconds: 10 }));
+        expect(waited).toMatchObject({ status: "completed", exitCode: 0 });
+        expect((waited.result as { second: unknown }).second).toMatch(/^blob:\/\//);
+        expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+
+        // Settled: the grant is back, and the live rows now hold the 2 MiB it committed, so the next
+        // run is handed 0.5 MiB and its first 1 MiB write is refused naming that.
+        const after = body(await a.call(WRITE_TWO, {}));
+        expect(after).toMatchObject({
+          stderrTail: expect.stringContaining("past the 0.5 MiB left of its budget"),
+        });
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  it("refuses blob_quota for an agent whose live rows sum to the cap, with or without a ref in the input, and counts neither an expired nor a removed row", async () => {
+    const a = await connect(TOKEN_A);
+    try {
+      // The blobs earlier tests wrote for agent A are live too and count; the rows added here bring
+      // the live sum to one byte under the quota.
+      const already = store.blobs
+        .filter((b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date())
+        .reduce((total, b) => total + b.bytes, 0);
+      const live = [
+        row("c0c0c0c0-0000-4000-8000-000000000001", AGENT_A, { bytes: GIB / 2 }),
+        row("c0c0c0c0-0000-4000-8000-000000000002", AGENT_A, { bytes: GIB / 2 - 1 - already }),
+      ];
+      const dead = [
+        row("c0c0c0c0-0000-4000-8000-000000000003", AGENT_A, {
+          bytes: GIB,
+          expiresAt: new Date(Date.now() - 1000),
+        }),
+        row("c0c0c0c0-0000-4000-8000-000000000004", AGENT_A, { bytes: GIB, removedAt: new Date() }),
+      ];
+      // One byte under the quota, with a gibibyte of expired and removed rows beside: the run goes.
+      await withRows([...live, ...dead], async () => {
+        const under = await a.call(LIST_ITEMS, { limit: 1 });
+        expect(under.isError).toBeFalsy();
+        expect(body(under)).toEqual(VENDOR_BODY);
+      });
+      // At the quota: every run of this agent is refused, a ref in the input or not, and the number
+      // is the live sum. Another agent is not at it.
+      const topUp = row("c0c0c0c0-0000-4000-8000-000000000005", AGENT_A, { bytes: 1 });
+      await withRows([...live, ...dead, topUp], async () => {
+        const execs = sandbox.processNames(SANDBOX_A).length;
+        const refusal = {
+          reason: "blob_quota",
+          bytes: GIB,
+          quota: GIB,
+          message:
+            "This agent's live blobs come to 1024 MiB, at or over the 1024 MiB quota, so no tool can run for it until some expire: any tool may write a blob. A blob lives 24 hours from its write and stops counting once it has expired, the oldest first. Run the tool again once one has.",
+        };
+        expectRefusedAtDoor(await a.call(LIST_ITEMS, { limit: 1 }), execs, refusal);
+        expectRefusedAtDoor(
+          await a.call(UPLOAD_FILE, { file: `blob://${live[0]?.id}` }),
+          execs,
+          refusal,
+        );
+        const dry = await a.call("run_tool", {
+          vendor: "demo",
+          name: "list-items",
+          input: { limit: 1 },
+          dryRun: true,
+        });
+        expectRefusedAtDoor(dry, execs, refusal);
+        expect(store.usage.at(-1)).toMatchObject({ dryRun: true, outcome: "refused" });
+
+        const b = await connect(TOKEN_B);
+        try {
+          // A read asks nothing (ADR 0008), so B's run goes all the way to the vendor.
+          const theirs = await b.call("run_tool", { vendor: "demo", name: "list-items" });
+          expect(body(theirs)).toEqual(VENDOR_BODY);
+        } finally {
+          await b.close();
+        }
+      });
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
+
+  /**
+   * The by-hand paths pass the same door (GRA-200; ADR 0023, "1 GiB live per agent, refused at the
+   * door as `blob_quota` before the run"): `execute__<connection>` and `run_command` may run the
+   * runner, and the module it loads may write a blob, so an agent at its quota is refused before
+   * any exec, an admitted command is handed the budget and the quota in its environment, and the
+   * grant is outstanding until the process settles: a waited command's when it returns, whatever it
+   * exited with, a detached one's until `wait_for_process` sees it finish.
+   */
+  describe("execute__<connection> and run_command pass the door too (GRA-200)", () => {
+    const MIB = 1024 * 1024;
+    const REF = /^blob:\/\/[0-9a-f-]{36}$/;
+    const EXECUTE_DEMO = executeToolName(CONN_DEMO);
+    /** A command that prints what the runner would read: the budget, then the quota. */
+    const PRINT_BUDGET = 'echo "$GRAFT_BLOB_BUDGET_BYTES $GRAFT_BLOB_QUOTA_BYTES"';
+    const RUN_SAVE_REPORT = `echo '{"limit":1}' | node "$GRAFT_RUNNER" /tools/tools/demo/save-report/v1`;
+    const RUN_WRITE_TWO = `echo '{}' | node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1`;
+    const liveBytesOfA = () =>
+      store.blobs
+        .filter((b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date())
+        .reduce((total, b) => total + b.bytes, 0);
+    /** A row that leaves agent A exactly `left` bytes under the quota. */
+    const leaving = (id: string, left: number) =>
+      row(`e0e0e0e0-0000-4000-8000-${id.padStart(12, "0")}`, AGENT_A, {
+        bytes: GIB - left - liveBytesOfA(),
+      });
+
+    it("refuses both blob_quota at the cap, in the door's shape, with no exec and no grant left behind", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("1", 0)], async () => {
+          const execs = sandbox.processNames(SANDBOX_A).length;
+          const blobsBefore = store.blobs.length;
+          const refusal = {
+            reason: "blob_quota",
+            bytes: GIB,
+            quota: GIB,
+            message:
+              "This agent's live blobs come to 1024 MiB, at or over the 1024 MiB quota, so no tool can run for it until some expire: any tool may write a blob. A blob lives 24 hours from its write and stops counting once it has expired, the oldest first. Run the tool again once one has.",
+          };
+          // The execute tool: the refusal, a `refused` ledger row under its name, no process.
+          expectRefusedAtDoor(
+            await a.call(EXECUTE_DEMO, { command: RUN_SAVE_REPORT }),
+            execs,
+            refusal,
+          );
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, toolId: null });
+          // run_command: the same refusal and no process; it writes no ledger row on any outcome.
+          const usageRows = store.usage.length;
+          const ran = await a.call("run_command", { command: RUN_SAVE_REPORT });
+          expect(ran.isError).toBe(true);
+          expect(body(ran)).toEqual({ error: "refused", ...refusal });
+          expect(ran.structuredContent).toEqual({ error: "refused", ...refusal });
+          expect(sandbox.processNames(SANDBOX_A)).toHaveLength(execs);
+          expect(store.usage).toHaveLength(usageRows);
+          // Detached is judged at the same door: nothing to poll, nothing outstanding.
+          const detached = await a.call("run_command", { command: "sleep 30", detached: true });
+          expect(body(detached)).toMatchObject({ error: "refused", reason: "blob_quota" });
+          expect(sandbox.processNames(SANDBOX_A)).toHaveLength(execs);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(store.blobs).toHaveLength(blobsBefore);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("under the cap, hands both processes the budget and the quota, and a waited command's grant is back when it returns, a failing one's too", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("2", 3 * MIB)], async () => {
+          const printed = body(await a.call("run_command", { command: PRINT_BUDGET }));
+          expect(printed.exitCode).toBe(0);
+          expect(String(printed.output).trim()).toBe(`${3 * MIB} ${GIB}`);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+
+          const executed = body(await a.call(EXECUTE_DEMO, { command: PRINT_BUDGET }));
+          expect(executed.exitCode).toBe(0);
+          expect(String(executed.output).trim()).toBe(`${3 * MIB} ${GIB}`);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, outcome: "ok" });
+
+          // A command that fails releases in `finally` all the same, on both paths.
+          const failed = body(await a.call("run_command", { command: "echo nope >&2; exit 3" }));
+          expect(failed.exitCode).toBe(3);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          const executeFailed = await a.call(EXECUTE_DEMO, { command: "exit 4" });
+          expect(body(executeFailed)).toMatchObject({ exitCode: 4 });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, outcome: "error" });
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("the runner holds a by-hand write to the budget: with 0.5 MiB left, write-two through execute__ commits nothing and the output names the remainder", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("3", 0.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          const ran = body(await a.call(EXECUTE_DEMO, { command: RUN_WRITE_TWO }));
+          expect(ran.exitCode).toBe(1);
+          expect(String(ran.output)).toContain(
+            "blob_quota: the blob would carry this run past the 0.5 MiB left of its budget",
+          );
+          expect(ran.blobs).toBeUndefined();
+          expect(store.blobs).toHaveLength(blobsBefore);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * The admission is reserved before anything else is awaited (Greptile on #157): two calls of
+     * one agent overlapping under 1.5 MiB left are handed 1.5 MiB and then 0, never 1.5 MiB twice.
+     */
+    it("reserves the admission at once: two overlapping execute__ calls are handed the remainder and then nothing", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("5", 1.5 * MIB)], async () => {
+          const [first, second] = await Promise.all([
+            a.call(EXECUTE_DEMO, { command: `sleep 1; ${PRINT_BUDGET}` }),
+            a.call(EXECUTE_DEMO, { command: PRINT_BUDGET }),
+          ]);
+          const budgets = [first, second]
+            .map((result) => Number(String(body(result).output).trim().split(" ")[0]))
+            .sort((x, y) => y - x);
+          expect(budgets).toEqual([1.5 * MIB, 0]);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * The record is the rule and the envelope is a claim (Greptile on #157; `blob-budget.ts`): a
+     * by-hand command may hand the runner any budget it likes and print any ledger, so the ledger
+     * is measured against the store and the rows when the server records it and judged against the
+     * quota over the measured bytes, the newest blobs removed from the mount and given no row until
+     * the rest fit, and the run answered a `blob_quota` failure. The first write stands: it is what
+     * an honest runner would have committed under the same budget.
+     */
+    const OVERRIDE_WRITE_TWO = `echo '{}' | GRAFT_BLOB_BUDGET_BYTES=${GIB} node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1`;
+    const expectHeldToBudget = async (result: CallToolResult, blobsBefore: number) => {
+      expect(result.isError).toBe(true);
+      const ran = body(result);
+      expect(ran.exitCode).toBe(0);
+      expect(String(ran.error)).toBe(
+        "blob_quota: this run committed 2 MiB of blobs, and with the agent's 1022.5 MiB live before it that comes to 1024.5 MiB, 0.5 MiB past the 1024 MiB quota. The newest 1 (1 MiB) were removed and have no ref; the 1 before them stand. A blob stops counting 24 hours after its write.",
+      );
+      expect(ran).toMatchObject({ blobsRemoved: 1, removedBytes: MIB, quota: GIB });
+      // The runner, told a gibibyte, committed both; the server kept the first and removed the second.
+      const written = (ran.result ?? readRunnerEnvelope(String(ran.output))?.result) as {
+        first: string;
+        second: string;
+      };
+      expect(written.first).toMatch(REF);
+      expect(written.second).toMatch(REF);
+      const firstId = written.first.slice("blob://".length);
+      const secondId = written.second.slice("blob://".length);
+      expect(ran.blobs).toEqual([expect.objectContaining({ ref: written.first, bytes: MIB })]);
+      expect(store.blobs).toHaveLength(blobsBefore + 1);
+      // The row carries what the store measured, whatever the ledger said of it.
+      expect(store.blobs.find((b) => b.id === firstId)).toMatchObject({ bytes: MIB });
+      expect(store.blobs.some((b) => b.id === secondId)).toBe(false);
+      await expect(stat(join(sandbox.blobsRoot(AGENT_A), firstId, "data"))).resolves.toBeDefined();
+      await expect(stat(join(sandbox.blobsRoot(AGENT_A), secondId))).rejects.toThrow();
+      expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+    };
+
+    it("holds a by-hand ledger to the admitted budget: a command overriding the variable writes 2 MiB against 1.5 MiB, keeps the first blob, loses the second from /blobs and the rows, and is answered a blob_quota failure", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("6", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          await expectHeldToBudget(
+            await a.call(EXECUTE_DEMO, { command: OVERRIDE_WRITE_TWO }),
+            blobsBefore,
+          );
+          expect(store.usage.at(-1)).toMatchObject({ toolName: EXECUTE_DEMO, outcome: "error" });
+        });
+        // The same through run_command, which carries no token but runs the runner all the same.
+        await withRows([leaving("7", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          await expectHeldToBudget(
+            await a.call("run_command", { command: OVERRIDE_WRITE_TWO }),
+            blobsBefore,
+          );
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * A detached start's grant lives on the registry until its hold's time is up, and the result
+     * stays pollable after that (Greptile on #157, the second review): the poll reads nothing off
+     * the grant and judges the quota itself, so a late poll is held all the same. The hold's
+     * expiry is stood in for by `settle`, which is what the hold's own timer calls.
+     */
+    it("holds a detached by-hand ledger to the quota when wait_for_process records it, polled after the registry's hold has expired", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("8", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          const started = body(
+            await a.call(EXECUTE_DEMO, { command: OVERRIDE_WRITE_TWO, detached: true }),
+          );
+          expect(started).toMatchObject({ status: "running" });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(1.5 * MIB);
+          // The hold's time is up: the grant is gone and nothing on the registry knows the start.
+          deps.inFlight?.settle(AGENT_A, started.processName as string);
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          expect(deps.inFlight?.has(AGENT_A)).toBe(false);
+          const waited = await a.call("wait_for_process", {
+            processName: started.processName,
+            maxWaitSeconds: 10,
+          });
+          expect(body(waited)).toMatchObject({ status: "completed" });
+          await expectHeldToBudget(waited, blobsBefore);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * Nothing declared in the envelope is evidence (Greptile on #157, the second review): the store
+     * measures the bytes, the rows say whose a blob is, and a directory that is not there is
+     * nothing.
+     */
+    it("measures a by-hand ledger against the store: declared zero bytes are recorded at the measured 1 MiB and judged on that", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("9", 1.5 * MIB)], async () => {
+          const blobsBefore = store.blobs.length;
+          // The runner's true envelope, with every size rewritten to zero on the way out.
+          const forged = `${OVERRIDE_WRITE_TWO} | sed 's/"bytes":${MIB}/"bytes":0/g'`;
+          const result = await a.call("run_command", { command: forged });
+          expect(String(body(result).output)).toContain('"bytes":0');
+          await expectHeldToBudget(result, blobsBefore);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    /**
+     * The sidecar is a file the command can edit (Greptile on #157, the third review): the row is
+     * adopted from it under the sweep's rules, so a far-future expiry is clamped to the write plus
+     * the TTL and the envelope's copy of it is never read.
+     */
+    it("adopts a by-hand blob's row from the store under the sweep's rules: a sidecar and envelope forged to expire in 2099 are recorded to expire in 24 hours", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const blobsBefore = store.blobs.length;
+        // The runner's true run, then every sidecar it wrote and the envelope rewritten to 2099.
+        const forge = [
+          'const fs=require("fs");',
+          'const text=fs.readFileSync("/tmp/gra200-forge.out","utf8");',
+          'const json=JSON.parse(text.slice(text.indexOf("\\n")+1));',
+          "for(const b of json.blobs){",
+          'const p="/blobs/"+b.ref.slice(7)+"/meta.json";',
+          'const m=JSON.parse(fs.readFileSync(p,"utf8"));',
+          'm.expiresAt="2099-01-01T00:00:00.000Z";b.expiresAt=m.expiresAt;',
+          "fs.writeFileSync(p,JSON.stringify(m));}",
+          'process.stdout.write("__GRAFT_ENVELOPE__:1\\n"+JSON.stringify(json)+"\\n");',
+        ].join("");
+        const command = `echo '{}' | node "$GRAFT_RUNNER" /tools/tools/demo/write-two/v1 > /tmp/gra200-forge.out && node -e '${forge}'`;
+        const result = await a.call("run_command", { command });
+        expect(result.isError).toBeFalsy();
+        const ran = body(result);
+        expect(ran.exitCode).toBe(0);
+        expect(String(ran.output)).toContain("2099-01-01");
+        const blobs = ran.blobs as { ref: string; expiresAt: string }[];
+        expect(blobs).toHaveLength(2);
+        expect(store.blobs).toHaveLength(blobsBefore + 2);
+        const latest = Date.now() + 24 * 60 * 60 * 1000 + 60_000;
+        for (const blob of blobs) {
+          expect(Date.parse(blob.expiresAt)).toBeLessThanOrEqual(latest);
+          const stored = store.blobs.find((b) => b.id === blob.ref.slice("blob://".length));
+          expect(stored?.expiresAt.getTime()).toBeLessThanOrEqual(latest);
+          expect(stored?.bytes).toBe(MIB);
+        }
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("lists a forged entry naming another blob at 900 MiB from its row and drops one naming no directory, touching neither the blob nor its row and recording nothing", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const theirs = store.blobs.find(
+          (b) => b.agentId === AGENT_A && b.removedAt === null && b.expiresAt > new Date(),
+        );
+        if (!theirs) throw new Error("an earlier test left agent A no live blob");
+        const rowBefore = { ...theirs };
+        const blobsBefore = store.blobs.length;
+        const missing = "0f6b6c4e-6d4b-4a8b-9e6e-7c9d5b5f3a22";
+        const envelope = JSON.stringify({
+          result: null,
+          blobs: [
+            {
+              ref: `blob://${theirs.id}`,
+              bytes: 900 * MIB,
+              contentType: "application/octet-stream",
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            },
+            {
+              ref: `blob://${missing}`,
+              bytes: MIB,
+              contentType: "application/octet-stream",
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        });
+        const result = await a.call(EXECUTE_DEMO, {
+          command: `printf '%s\\n%s\\n' '__GRAFT_ENVELOPE__:1' '${envelope}'`,
+        });
+        expect(result.isError).toBeFalsy();
+        const ran = body(result);
+        expect(ran.exitCode).toBe(0);
+        // Nothing of the declared ledger reaches the agent as fact: the known blob at its row's
+        // bytes, not 900 MiB, and the one that names no directory dropped.
+        expect(ran.blobs).toEqual([
+          {
+            ref: `blob://${theirs.id}`,
+            bytes: theirs.bytes,
+            contentType: theirs.contentType,
+            ...(theirs.name !== null ? { name: theirs.name } : {}),
+            expiresAt: theirs.expiresAt.toISOString(),
+          },
+        ]);
+        expect(ran.blobsDropped).toBe(1);
+        expect(ran.error).toBeUndefined();
+        expect(store.blobs).toHaveLength(blobsBefore);
+        expect(store.blobs.find((b) => b.id === theirs.id)).toEqual(rowBefore);
+        expect(store.blobs.some((b) => b.id === missing)).toBe(false);
+        await expect(
+          stat(join(sandbox.blobsRoot(AGENT_A), theirs.id, "data")),
+        ).resolves.toBeDefined();
+        expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("a detached command on either path holds its grant on the process name until wait_for_process settles it", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        await withRows([leaving("4", 3 * MIB)], async () => {
+          const started = body(
+            await a.call("run_command", { command: "sleep 1; echo done", detached: true }),
+          );
+          expect(started).toMatchObject({ status: "running" });
+          // The call's own grant is released; the process carries the same figure.
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(3 * MIB);
+          // A second detached start meanwhile is handed what is left of the remainder: nothing.
+          const executed = body(
+            await a.call(EXECUTE_DEMO, {
+              command: `sleep 1; ${PRINT_BUDGET} > /tmp/gra-200-budget.txt`,
+              detached: true,
+            }),
+          );
+          expect(executed).toMatchObject({ status: "running" });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(3 * MIB);
+
+          const first = body(
+            await a.call("wait_for_process", {
+              processName: started.processName,
+              maxWaitSeconds: 10,
+            }),
+          );
+          expect(first).toMatchObject({ status: "completed", exitCode: 0 });
+          // The first's 3 MiB is back; what remains outstanding is the second's grant, the 0 it
+          // was handed while the first held the remainder.
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          const second = body(
+            await a.call("wait_for_process", {
+              processName: executed.processName,
+              maxWaitSeconds: 10,
+            }),
+          );
+          expect(second).toMatchObject({ status: "completed", exitCode: 0 });
+          expect(deps.inFlight?.outstandingBudget(AGENT_A)).toBe(0);
+          const budgetSeen = body(await a.call("read_file", { path: "/tmp/gra-200-budget.txt" }));
+          expect(String(budgetSeen.content).trim()).toBe(`0 ${GIB}`);
+        });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+  });
+
+  /**
+   * The sweep's blob pass over what a real run wrote (GRA-189; ADR 0023, "the sweep deletes"): the
+   * filesystem blob store over the fake sandbox's own toolbox root, which is the tree `/blobs` is a
+   * link into, and a clock a day on. The door's `blob_expired` reading of the row is GRA-187's.
+   */
+  it("a sweep with the clock past the TTL removes the blob's directory from the agent's /blobs and keeps the row with removed_at", async () => {
+    const a = await connect(TOKEN_A);
+    const swept: BlobSweptEvent[] = [];
+    try {
+      const answer = body(await a.call(SAVE_REPORT, { limit: 1 })) as {
+        result: { file: string };
+      };
+      const id = answer.result.file.slice("blob://".length);
+      const row = () => store.blobs.find((blob) => blob.id === id);
+      expect(row()?.removedAt).toBeNull();
+      const hostDir = join(sandbox.blobsRoot(AGENT_A), id);
+      const mountDir = join(sandbox.sandboxRoot(`agent-${AGENT_A}`), "blobs", id);
+      expect((await readdir(mountDir)).sort()).toEqual(["data", "meta.json"]);
+
+      const blobStore = createFilesystemBlobStore({ root: join(sandbox.root, "toolboxes") });
+      const sweeping: McpDeps = { ...deps, blobStore, onBlobSwept: (event) => swept.push(event) };
+
+      // Inside the TTL: kept, and nothing on disk moves.
+      const early = await runSweep({ db: deps.db }, sweeping, new Date());
+      expect(early.blobs.actions.filter((action) => action.agentId === AGENT_A)).toEqual([]);
+      expect(await blobStore.exists(AGENT_A, id)).toBe(true);
+
+      // A day and an hour on: removed through the store, the row marked, one event with the bytes.
+      const later = new Date(Date.now() + 25 * 60 * 60 * 1000);
+      const report = await runSweep({ db: deps.db }, sweeping, later);
+      expect(report.failed).toEqual([]);
+      expect(report.blobs.actions).toContainEqual({
+        agentId: AGENT_A,
+        action: "remove",
+        blobId: id,
+        bytes: row()?.bytes,
+        mark: true,
+      });
+      await expect(stat(hostDir)).rejects.toThrow();
+      await expect(stat(mountDir)).rejects.toThrow();
+      expect(await blobStore.exists(AGENT_A, id)).toBe(false);
+      // Marked at the service's clock (the fake store's, real time here), as `created_at` is.
+      expect(row()).toMatchObject({ id, agentId: AGENT_A, removedAt: expect.any(Date) });
+      expect(swept).toContainEqual({
+        agentId: AGENT_A,
+        personId: PERSON,
+        blobId: id,
+        bytes: row()?.bytes,
+        cause: "expired",
+      });
+      // The toolbox beside the blobs is untouched: nothing under tools/ is ever in a plan.
+      expect(
+        await stat(join(sandbox.toolboxRoot(PERSON), "tools/demo/save-report/v1/index.ts")),
+      ).toBeTruthy();
+    } finally {
+      await a.close();
+    }
+  }, 30_000);
 });
 
 describe("promote and demote", () => {
@@ -1224,6 +2699,32 @@ describe("the advanced set", () => {
       expect(env.NODE_USE_ENV_PROXY).toBe("1");
       expect(env.GRAFT_TOKEN).toBeUndefined();
       expect(env.GRAFT_PROXY_URL).toBeUndefined();
+      // The agent rides on every path that can invoke the runner (`blobRunEnvironment`; Greptile
+      // on #159), so a blob a by-hand module writes through `$GRAFT_RUNNER` names its agent in the
+      // sidecar, which is what the sweep adopts it under if the row is lost.
+      expect(env.GRAFT_AGENT).toBe(AGENT_A);
+      await a.call("write_file", {
+        path: "probe/blob/index.mjs",
+        content:
+          'export default async (input, ctx) => ({ ref: await ctx.blob.write(new TextEncoder().encode("by hand"), { contentType: "text/plain", name: "hand.txt" }) });',
+      });
+      const wrote = body(
+        await a.call("run_command", {
+          command: `echo '{}' | node "$GRAFT_RUNNER" /tools/.drafts/${AGENT_A}/probe/blob`,
+        }),
+      );
+      expect(wrote.exitCode).toBe(0);
+      const envelope = readRunnerEnvelope(String(wrote.output));
+      if (!envelope) throw new Error("the command's output carries no envelope");
+      const ref = (envelope.result as { ref: string }).ref;
+      const meta = JSON.parse(
+        await readFile(
+          join(sandbox.blobsRoot(AGENT_A), ref.slice("blob://".length), "meta.json"),
+          "utf8",
+        ),
+      ) as { agentId?: unknown; toolVersion?: unknown };
+      expect(meta.agentId).toBe(AGENT_A);
+      expect(meta.toolVersion ?? null).toBeNull();
 
       const escaped = await a.call("write_file", { path: "../outside.txt", content: "x" });
       expect(body(escaped)).toMatchObject({ error: "refused", reason: "input_invalid" });
@@ -1427,6 +2928,59 @@ describe("publish_tool", () => {
       });
       expect(body(badName)).toMatchObject({ error: "refused", reason: "input_invalid" });
       expect([...store.tools.values()].some((row) => row.name === "x")).toBe(false);
+    } finally {
+      await a.close();
+    }
+  });
+});
+
+/**
+ * A sandbox first seeded with a runner that had no `ctx.blob` runs the server's runner on its next
+ * open (GRA-193; ADR 0013 as corrected, ADR 0023): the sandbox is the agent's and is never
+ * destroyed, and each server seeds its own `/graft/<hash>/` and runs from it, so what an older
+ * server left at the fixed path is never what runs. Proved both ways: with the stripped runner
+ * standing at this server's own path (present means seeded), the blob tool fails inside the module;
+ * with that directory absent, as in a sandbox that never met this server, the same call seeds and
+ * succeeds, and the older runner at `/graft/runner.mjs` is untouched.
+ */
+describe("a sandbox seeded before ctx.blob existed", () => {
+  const BLOB_MEMBER = "blob: Object.freeze({ write: blobWrite, read: blobRead, stat: blobStat }),";
+
+  it("runs a tool that writes a blob from the server's own runner directory, whatever an older server left at the fixed path", async () => {
+    const source = await loadRunnerSource();
+    expect(source).toContain(BLOB_MEMBER);
+    const stripped = (source ?? "").replace(BLOB_MEMBER, "");
+    const sandboxName = `agent-${AGENT_A}`;
+    const { handle } = await sandbox.ensure({ name: sandboxName });
+    const runner = await seededRunnerPath(deps);
+    expect(runner).toMatch(/^\/graft\/[0-9a-f]{64}\/runner\.mjs$/);
+    // An older server's runner at its fixed path, and the same bytes standing in at this server's
+    // path: the open finds its runner present and leaves it, so the stripped one runs.
+    await handle.writeTree([{ path: RUNNER_FILE, content: stripped }], RUNNER_DIR);
+    await handle.writeTree([{ path: RUNNER_FILE, content: stripped }], posix.dirname(runner));
+
+    const a = await connect(TOKEN_A);
+    try {
+      const before = await a.call(SAVE_REPORT, { limit: 1 });
+      expect(before.isError).toBe(true);
+      // `ctx.blob` is undefined in that runner, and the module's first use of it is `.write`.
+      expect((before.content[0] as { text: string }).text).toContain(
+        "Cannot read properties of undefined (reading 'write')",
+      );
+
+      // Behind the seam, this server's directory removed: the sandbox as one that never met this
+      // server holds it. The open seeds it whole and the blob write goes through.
+      await rm(join(sandbox.sandboxRoot(sandboxName), posix.dirname(runner)), {
+        recursive: true,
+        force: true,
+      });
+      const after = await a.call(SAVE_REPORT, { limit: 1 });
+      expect(after.isError).toBeFalsy();
+      const answer = body(after) as { result: { file: string }; blobs: unknown[] };
+      expect(answer.result.file).toMatch(/^blob:\/\/[0-9a-f-]{36}$/);
+      expect(answer.blobs).toHaveLength(1);
+      expect(await handle.read(runner)).toBe(source);
+      expect(await handle.read(`${RUNNER_DIR}/${RUNNER_FILE}`)).toBe(stripped);
     } finally {
       await a.close();
     }

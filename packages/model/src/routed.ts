@@ -1,4 +1,10 @@
-import type { ModelAdapter, ModelConversation, ModelJobContext } from "./types";
+import type {
+  GoalProposal,
+  GoalProposalRequest,
+  ModelAdapter,
+  ModelConversation,
+  ModelJobContext,
+} from "./types";
 
 /**
  * One adapter in front of two: the person's own, when they have brought a key, or the
@@ -45,6 +51,20 @@ export class ModelUnavailableError extends Error {
 export function createRoutedModel(options: RoutedModelOptions): ModelAdapter {
   return {
     name: ROUTED_MODEL_NAME,
+    // Setup's goal suggestions (GRA-209) go the way the person's jobs go: their own key's
+    // provider, else the fixed model, else none. `onRoute` is a job's and is not told.
+    async proposeGoals(request: GoalProposalRequest): Promise<GoalProposal> {
+      const own = await options.resolve(request.personId);
+      const adapter = own ?? options.fixed;
+      if (!adapter?.proposeGoals) {
+        return {
+          goals: [],
+          outcome: "unavailable",
+          usage: { inputTokens: 0, outputTokens: 0 },
+        };
+      }
+      return adapter.proposeGoals(request);
+    },
     open(context: ModelJobContext): ModelConversation {
       let delegate: Promise<ModelConversation> | null = null;
       const resolveOnce = (): Promise<ModelConversation> => {

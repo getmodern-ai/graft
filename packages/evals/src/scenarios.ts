@@ -1,4 +1,15 @@
 import { DEMO_API_KEY, DEMO_DOCS_URL, DEMO_HOSTNAME, DEMO_ITEMS, DEMO_VENDOR } from "./demo-vendor";
+import { DROP_DOCS_URL, DROP_FOLDER, DROP_HOSTNAME, DROP_TOKEN, DROP_VENDOR } from "./drop-vendor";
+import {
+  FILES_API_KEY,
+  FILES_DOCS_URL,
+  FILES_HOSTNAME,
+  FILES_VENDOR,
+  REPORT,
+  REPORT_CONTENT_TYPE,
+  REPORT_ID,
+  REPORT_NAME,
+} from "./files-vendor";
 import {
   GITHUB_DOCS_URL,
   GITHUB_HOSTNAME,
@@ -10,29 +21,38 @@ import {
 } from "./github-vendor";
 import {
   asksMatchAnnotations,
+  blobReadInDryRun,
+  blobRefsIn,
+  bytesArrivedIntact,
   checkAccepted,
   credentialNeverRecorded,
   dryRunBeforeAnyAsk,
   firstWriteThroughPublishedTool,
+  modulesUseCtxBlob,
+  noBlobBytesInModelTurns,
   noVendorHostInCode,
   publishBeforeFirstWrite,
   readsBeforePublish,
+  refTravels,
   type ScenarioRun,
   type Score,
   sdkBoundToProxy,
   succeeded,
+  tooDeepDetail,
   toolWorks,
   withinBudget,
   writePreviewed,
 } from "./scorers";
-import { CONN_DEMO, CONN_GITHUB } from "./world";
+import { CONN_DEMO, CONN_DROP, CONN_FILES, CONN_GITHUB } from "./world";
 
 /**
- * What we hold the model to: three acquisitions against the fake vendors, each scored by the
+ * What we hold the model to: four scenarios against the fake vendors, each scored by the
  * deterministic scorers for the properties GRA-31 names. A read tool, a write tool whose dry run
  * previews the write and whose first real write goes through the published tool after the person's
- * yes, and a tool that needs an SDK and must bind it to the proxy. The goals and hints are what a
- * harness's agent would send: the person's ask in a sentence, and the documentation URL it knows.
+ * yes, a tool that needs an SDK and must bind it to the proxy, and a file moved between two vendors
+ * through a blob (GRA-191; ADR 0023): two acquisitions on one world, the second's goal and input
+ * carrying the ref the first tool answered. The goals and hints are what a harness's agent would
+ * send: the person's ask in a sentence, and the documentation URL it knows.
  */
 
 export type ToolUseSpec = {
@@ -47,9 +67,8 @@ export type ToolUseSpec = {
   expect: (answer: unknown) => string | null;
 };
 
-export type Scenario = {
-  name: string;
-  because: string;
+/** One acquisition and one use of the tool it produced: what `runScenario` drives, once or twice. */
+export type Stage = {
   connectionId: string;
   vendor: string;
   goal: string;
@@ -57,6 +76,24 @@ export type Scenario = {
   /** The package the module is expected to use, placed for the fake sandbox before the job. */
   sdk?: { package: string; version: string };
   use: ToolUseSpec;
+};
+
+/**
+ * A second stage on the same world, made from what the first tool answered (GRA-191): `handoff`
+ * picks the thing that travels (a `blob://` ref) out of the first tool's final answer, and `stage`
+ * words the second acquisition and its input around it, as an agent that ran the producing tool
+ * before acquiring the consuming one would. A null handoff means the first tool answered nothing to
+ * carry, and the second stage does not run; the scorers say so.
+ */
+export type Chain = {
+  handoff(final: unknown): string | null;
+  stage(handoff: string): Stage;
+};
+
+export type Scenario = Stage & {
+  name: string;
+  because: string;
+  chain?: Chain;
   score(run: ScenarioRun, bounds: { maxAttempts: number; tokenCeiling: number }): Score[];
 };
 
@@ -190,4 +227,106 @@ export const githubOpenIssues: Scenario = {
   ],
 };
 
-export const scenarios: Scenario[] = [listItems, createOrder, githubOpenIssues];
+/** A stage's scores under the vendor's name, since a chained scenario runs the common scorers twice. */
+const under = (vendor: string, scores: Score[]): Score[] =>
+  scores.map((score) => ({ ...score, name: `${vendor}/${score.name}` }));
+
+export const moveReport: Scenario = {
+  name: "blob: move a report from Files to Drop through a blob",
+  because:
+    "The workflow ADR 0023 exists for: a producing tool writes the vendor's bytes to a blob and answers the ref, a consuming tool reads the ref and uploads the bytes to the second vendor, and no byte of the file enters a model turn.",
+  connectionId: CONN_FILES,
+  vendor: FILES_VENDOR,
+  goal: "Download a report from Files by its id and hand it on as a blob for another tool to upload.",
+  hints: `The API documentation is at ${FILES_DOCS_URL}. GET /files lists the files and GET /files/{id} answers one's bytes; the report to prove it against is ${REPORT_ID}.`,
+  use: {
+    values: {
+      id: REPORT_ID,
+      fileId: REPORT_ID,
+      file_id: REPORT_ID,
+      file: REPORT_ID,
+      reportId: REPORT_ID,
+      report_id: REPORT_ID,
+    },
+    expect: (answer) => {
+      const found = blobRefsIn(answer);
+      if (found.tooDeep) return tooDeepDetail("the answer");
+      if (found.refs.length === 0) {
+        return `no blob:// ref in ${JSON.stringify(answer).slice(0, 120)}`;
+      }
+      const blobs = isRecord(answer) && Array.isArray(answer.blobs) ? answer.blobs : [];
+      const whole = blobs.some((entry) => isRecord(entry) && entry.bytes === REPORT.bytes.length);
+      return whole ? null : `the blobs ledger names no blob of ${REPORT.bytes.length} bytes`;
+    },
+  },
+  chain: {
+    // A final answer the walk could not finish hands nothing on, and `ref_travels` says why.
+    handoff: (final) => {
+      const found = blobRefsIn(final);
+      return found.tooDeep ? null : (found.refs[0] ?? null);
+    },
+    stage: (ref) => ({
+      connectionId: CONN_DROP,
+      vendor: DROP_VENDOR,
+      goal: `Upload a file held as a blob into the ${DROP_FOLDER} folder in Drop.`,
+      hints: `The API documentation is at ${DROP_DOCS_URL}. Uploads are POST /uploads as multipart/form-data with the file under the part named file. The file to upload is ${ref}, named ${REPORT_NAME}.`,
+      use: {
+        values: {
+          file: ref,
+          blob: ref,
+          blobRef: ref,
+          blob_ref: ref,
+          ref: ref,
+          fileRef: ref,
+          file_ref: ref,
+          attachment: ref,
+          source: ref,
+          name: REPORT_NAME,
+          filename: REPORT_NAME,
+          fileName: REPORT_NAME,
+          file_name: REPORT_NAME,
+          contentType: REPORT_CONTENT_TYPE,
+          content_type: REPORT_CONTENT_TYPE,
+          mimeType: REPORT_CONTENT_TYPE,
+          folder: DROP_FOLDER,
+          folderId: DROP_FOLDER,
+          folder_id: DROP_FOLDER,
+          destination: DROP_FOLDER,
+        },
+        expect: (answer) => {
+          if (!isRecord(answer)) {
+            return `expected the stored upload, got ${JSON.stringify(answer).slice(0, 120)}`;
+          }
+          return /"up_\d+"/.test(JSON.stringify(answer))
+            ? null
+            : `no upload id in ${JSON.stringify(answer).slice(0, 120)}`;
+        },
+      },
+    }),
+  },
+  score: (run, bounds) => [
+    ...under(FILES_VENDOR, common(run, bounds, [FILES_HOSTNAME], [FILES_API_KEY])),
+    ...(run.next
+      ? under(DROP_VENDOR, [
+          ...common(run.next, bounds, [DROP_HOSTNAME], [DROP_TOKEN]),
+          writePreviewed(run.next, { method: "POST", path: "/uploads" }),
+          firstWriteThroughPublishedTool(run.next),
+        ])
+      : [
+          {
+            name: `${DROP_VENDOR}/succeeded`,
+            pass: false,
+            detail: run.use
+              ? "the producing tool answered no blob:// ref, so the consuming stage never ran"
+              : "the producing tool was never used, so the consuming stage never ran",
+          },
+        ]),
+    noBlobBytesInModelTurns(run, REPORT),
+    refTravels(run),
+    blobReadInDryRun(run),
+    bytesArrivedIntact(run, REPORT),
+    modulesUseCtxBlob(run),
+  ],
+};
+
+export const scenarios: Scenario[] = [listItems, createOrder, githubOpenIssues, moveReport];

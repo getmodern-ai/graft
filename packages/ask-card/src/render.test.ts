@@ -7,7 +7,14 @@ import {
   factsOf,
   MODEL_WORDS_NOTE,
   renderAsk,
+  renderCard,
+  SETUP_BUTTON,
+  SETUP_EYEBROW,
+  SETUP_OPENED_SENTENCE,
+  SETUP_TITLE,
   schemeLabel,
+  setupAskAgainOf,
+  setupDescriptionOf,
   titleOf,
   WAITING_SENTENCE,
 } from "./render";
@@ -18,7 +25,10 @@ import {
   readAnswerOutcome,
   readAskCard,
   readAskStatusOutcome,
+  readCardData,
+  readSetupCard,
   readStartLinkOutcome,
+  type SetupCard,
   type StartLinkOutcome,
   withFromCard,
 } from "./shape";
@@ -265,7 +275,7 @@ describe("a tool's first-use approval (GRA-116)", () => {
     const root = renderAsk(TOOL, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "tool", answerable: "true" });
     expect(root.querySelector("h1")?.textContent).toBe("Allow Claude to run demo__create-order?");
-    expect(root.textContent).toContain("changes data at the vendor");
+    expect(root.textContent).toContain("changes data in Demo Orders");
     expect(root.textContent).toContain("Your answer holds for this agent's next calls");
     expect(root.querySelector(".ask-quote blockquote")?.textContent).toBe(TOOL.tool?.description);
     expect(root.querySelector(".ask-badge")?.textContent).toBe(MODEL_WORDS_NOTE);
@@ -531,7 +541,7 @@ describe("a connection a link provider covers", () => {
   it("names how the provider connects in the Scheme row, never the keyring label the proposal carries", () => {
     const scheme = factsOf(LINK).find((fact) => fact.label === "Scheme");
     expect(scheme?.value).toBe(
-      "Sign-in at the vendor through broker; no client to register, nothing typed in Graft",
+      "Sign-in to Gmail through broker; no client to register, nothing typed in Graft",
     );
     expect(scheme?.value).not.toContain("a client you register");
     // The same proposal on the keyring keeps the keyring label.
@@ -547,7 +557,7 @@ describe("a connection a link provider covers", () => {
     const root = renderAsk(LINK, handlers(), document);
     expect(root.dataset).toMatchObject({ kind: "connection", answerable: "false" });
     expect(root.querySelector("h1")?.textContent).toBe("Connect Gmail (gmail) through broker?");
-    expect(root.textContent).toContain("sign in at the vendor on broker's page");
+    expect(root.textContent).toContain("sign in to Gmail on broker's page");
     expect(root.textContent).toContain("nothing is typed here");
     const box = root.querySelector("input[type=checkbox]") as HTMLInputElement;
     expect(box.checked).toBe(true);
@@ -703,5 +713,122 @@ describe("reading the wire", () => {
       "http://console.graft.test/pending/pa_1?t=abc&from=card",
     );
     expect(withFromCard("not a url")).toBe("not a url");
+  });
+});
+
+/**
+ * The Setup offer (GRA-210): `find_tool`'s card for an agent whose person has no connection. No
+ * ask stands behind it, so it draws one button that opens the Setup page with `from=card`, answers
+ * nothing and polls nothing, and says to ask again once done.
+ */
+describe("the Setup offer", () => {
+  const SETUP: SetupCard = {
+    kind: "setup",
+    agentName: "Claude",
+    url: "http://console.graft.test/setup?agent=agent_claude",
+  };
+
+  it("draws the title, the sentence, the agent, the ask-again sentence and one button", () => {
+    const root = renderCard(SETUP, handlers(), document);
+    expect(root.dataset).toMatchObject({ kind: "setup", answerable: "false" });
+    expect(root.querySelector(".ask-eyebrow")?.textContent).toBe(SETUP_EYEBROW);
+    expect(root.querySelector("h1")?.textContent).toBe(SETUP_TITLE);
+    expect(root.querySelector(".ask-description")?.textContent).toBe(setupDescriptionOf(SETUP));
+    expect(root.textContent).toContain("Claude has no integration connected yet.");
+    expect(root.querySelector(".ask-note")?.textContent).toBe(setupAskAgainOf(SETUP));
+    expect(setupAskAgainOf(SETUP)).toContain("Ask again here");
+    expect(buttons(root)).toEqual([SETUP_BUTTON]);
+    expect(SETUP_BUTTON).toBe("Set up your first tool");
+    expect(root.querySelector("input")).toBeNull();
+  });
+
+  it("opens the Setup page with from=card, answers nothing and polls nothing", async () => {
+    const h = handlers();
+    const root = renderCard(SETUP, h, document);
+    root.querySelector("button")?.click();
+    await until(() => status(root)?.textContent === SETUP_OPENED_SENTENCE);
+    expect(h.openLink).toHaveBeenCalledWith(
+      "http://console.graft.test/setup?agent=agent_claude&from=card",
+    );
+    // Well past several poll intervals, and still nothing asked of Graft.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.answer).not.toHaveBeenCalled();
+    expect(h.status).not.toHaveBeenCalled();
+    expect(h.startLink).not.toHaveBeenCalled();
+    // The button stays, so a window closed early opens again.
+    const again = root.querySelector("button");
+    expect(again?.disabled).toBe(false);
+    again?.click();
+    await flush();
+    expect(h.openLink).toHaveBeenCalledTimes(2);
+    h.stop();
+  });
+
+  it("shows Setup's address to copy when the host refuses to open the window", async () => {
+    const h = handlers();
+    h.openLink.mockRejectedValueOnce(new Error("blocked"));
+    const root = renderCard(SETUP, h, document);
+    expect(root.querySelector(".ask-address")).toBeNull();
+    root.querySelector("button")?.click();
+    await until(() => status(root)?.dataset.tone === "refused");
+    expect(status(root)?.textContent).toBe(
+      `The chat could not open the window (blocked). Setup opens at this address in a browser, and ${SETUP.agentName} can give it to you too:`,
+    );
+    const address = root.querySelector<HTMLElement>(".ask-address");
+    // The bare address: a browser tab has no card to tell, so it carries no from=card.
+    expect(address?.textContent).toBe(SETUP.url);
+    expect(address?.hidden).toBe(false);
+    // A later click the host allows hides it again.
+    root.querySelector("button")?.click();
+    await until(() => status(root)?.dataset.tone === "waiting");
+    expect(address?.hidden).toBe(true);
+  });
+
+  it("holds the button while the host is opening the window, so a stale refusal cannot win", async () => {
+    const h = handlers();
+    let refuse: (error: Error) => void = () => {};
+    h.openLink.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+    const root = renderCard(SETUP, h, document);
+    const open = root.querySelector("button");
+    open?.click();
+    await flush();
+    expect(open?.disabled).toBe(true);
+    // A second press while the first is pending starts nothing.
+    open?.click();
+    await flush();
+    expect(h.openLink).toHaveBeenCalledTimes(1);
+    refuse(new Error("blocked"));
+    await until(() => status(root)?.dataset.tone === "refused");
+    expect(open?.disabled).toBe(false);
+    // The next attempt, once the first has settled, is the one the card shows.
+    open?.click();
+    await until(() => status(root)?.dataset.tone === "waiting");
+    expect(status(root)?.textContent).toBe(SETUP_OPENED_SENTENCE);
+    expect(root.querySelector<HTMLElement>(".ask-address")?.hidden).toBe(true);
+    expect(h.openLink).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders an ask through the same entry, unchanged", () => {
+    const root = renderCard(BUILD, handlers(), document);
+    expect(root.dataset.kind).toBe("build");
+    expect(buttons(root)).toEqual(["Deny", "Allow"]);
+  });
+
+  it("is read off the wire as the Setup card, and never as an ask", () => {
+    const result = {
+      setup: { url: SETUP.url, message: "Relay it.", cardShown: true },
+      card: SETUP,
+    };
+    expect(readCardData(result)).toEqual(SETUP);
+    expect(readSetupCard(result)).toEqual(SETUP);
+    expect(readAskCard(result)).toBeNull();
+    expect(readCardData({ reason: "awaiting_approval", card: BUILD })).toEqual(BUILD);
+    expect(readSetupCard({ card: { kind: "setup", agentName: "Claude" } })).toBeNull();
+    expect(readCardData({ tools: [], connections: [] })).toBeNull();
   });
 });

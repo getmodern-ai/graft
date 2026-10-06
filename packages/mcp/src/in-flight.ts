@@ -1,5 +1,6 @@
 import { WAIT_SLACK_SECONDS } from "./bounds";
 import { isPlainObject } from "./result";
+import { isPolledProcess } from "./sandbox";
 
 /**
  * Which agents have a run in flight — the guard ADR 0009 puts on the rule: demotion is deferred
@@ -24,8 +25,31 @@ import { isPlainObject } from "./result";
 export type InFlightRegistry = {
   /** A call is in flight from now until the returned function runs; running it twice is a no-op. */
   begin(agentId: string): () => void;
-  /** A detached process is in flight by name until settled, or until `ttlMs` has passed. */
-  track(agentId: string, processName: string, ttlMs: number): void;
+  /**
+   * The blob budget the door handed a run of this agent's (GRA-187; `blob-door.ts`), held from now
+   * until the returned function runs. Two runs admitted from the same rows would otherwise each be
+   * handed the whole remainder (Greptile on #148): the door subtracts `outstandingBudget` first.
+   * A run that starts detached moves its grant onto the process name (`track`'s `budgetBytes`)
+   * before releasing this one, so the agent is never momentarily ungranted between the two.
+   */
+  grant(agentId: string, budgetBytes: number): () => void;
+  /** Bytes granted to this agent's runs still in flight: every open grant and every tracked process's. */
+  outstandingBudget(agentId: string): number;
+  /**
+   * The agent's critical section: run `work` after every earlier `exclusive` of this agent's has
+   * settled, and before any later one starts (GRA-200, after Greptile on #157). Two steps take it.
+   * The door's admission and its grant (`admitUnderGrant`): the door reads `outstandingBudget` and
+   * answers a budget, the caller grants it one await later, and two admissions interleaved across
+   * that await both read the remainder before either reserved it. And the record of a run's blobs
+   * (`blob-budget.ts`): two runs finishing together would each read the same live total, each find
+   * room, and together pass the quota. Neither step nests inside the other.
+   */
+  exclusive<T>(agentId: string, work: () => Promise<T>): Promise<T>;
+  /**
+   * A detached process is in flight by name until settled, or until `ttlMs` has passed; the budget
+   * the door handed its run, when it has one, is outstanding for as long.
+   */
+  track(agentId: string, processName: string, ttlMs: number, budgetBytes?: number): void;
   /** `wait_for_process` saw the process finish. A name not tracked is ignored. */
   settle(agentId: string, processName: string): void;
   has(agentId: string): boolean;
@@ -33,33 +57,41 @@ export type InFlightRegistry = {
   close(): void;
 };
 
+type Detached = { timer: ReturnType<typeof setTimeout>; budgetBytes: number };
+
 type AgentHolds = {
   calls: number;
-  detached: Map<string, ReturnType<typeof setTimeout>>;
+  /** The sum of every open call grant (`grant`), in bytes. */
+  granted: number;
+  detached: Map<string, Detached>;
 };
 
 export function createInFlightRegistry(): InFlightRegistry {
   const agents = new Map<string, AgentHolds>();
+  /** The tail of each agent's critical-section chain (`exclusive`); dropped once its chain drains. */
+  const chains = new Map<string, Promise<void>>();
 
   const holdsOf = (agentId: string): AgentHolds => {
     let holds = agents.get(agentId);
     if (!holds) {
-      holds = { calls: 0, detached: new Map() };
+      holds = { calls: 0, granted: 0, detached: new Map() };
       agents.set(agentId, holds);
     }
     return holds;
   };
 
   const prune = (agentId: string, holds: AgentHolds) => {
-    if (holds.calls === 0 && holds.detached.size === 0) agents.delete(agentId);
+    if (holds.calls === 0 && holds.granted === 0 && holds.detached.size === 0) {
+      agents.delete(agentId);
+    }
   };
 
   const settle = (agentId: string, processName: string) => {
     const holds = agents.get(agentId);
     if (!holds) return;
-    const timer = holds.detached.get(processName);
-    if (timer === undefined) return;
-    clearTimeout(timer);
+    const entry = holds.detached.get(processName);
+    if (entry === undefined) return;
+    clearTimeout(entry.timer);
     holds.detached.delete(processName);
     prune(agentId, holds);
   };
@@ -76,14 +108,47 @@ export function createInFlightRegistry(): InFlightRegistry {
         prune(agentId, holds);
       };
     },
-    track(agentId, processName, ttlMs) {
+    grant(agentId, budgetBytes) {
+      const holds = holdsOf(agentId);
+      const bytes = Math.max(0, budgetBytes);
+      holds.granted += bytes;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        holds.granted -= bytes;
+        prune(agentId, holds);
+      };
+    },
+    outstandingBudget(agentId) {
+      const holds = agents.get(agentId);
+      if (!holds) return 0;
+      let total = holds.granted;
+      for (const entry of holds.detached.values()) total += entry.budgetBytes;
+      return total;
+    },
+    exclusive(agentId, work) {
+      const previous = chains.get(agentId) ?? Promise.resolve();
+      // A step that threw ahead of this one is that caller's to answer; the chain goes on.
+      const result = previous.then(work);
+      const settled = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      chains.set(agentId, settled);
+      settled.then(() => {
+        if (chains.get(agentId) === settled) chains.delete(agentId);
+      });
+      return result;
+    },
+    track(agentId, processName, ttlMs, budgetBytes = 0) {
       const holds = holdsOf(agentId);
       const previous = holds.detached.get(processName);
-      if (previous !== undefined) clearTimeout(previous);
+      if (previous !== undefined) clearTimeout(previous.timer);
       const timer = setTimeout(() => settle(agentId, processName), Math.max(0, ttlMs));
       // A tracked process must not hold the server open past its last session.
       timer.unref?.();
-      holds.detached.set(processName, timer);
+      holds.detached.set(processName, { timer, budgetBytes: Math.max(0, budgetBytes) });
     },
     settle,
     has(agentId) {
@@ -92,12 +157,35 @@ export function createInFlightRegistry(): InFlightRegistry {
     },
     close() {
       for (const holds of agents.values()) {
-        for (const timer of holds.detached.values()) clearTimeout(timer);
+        for (const entry of holds.detached.values()) clearTimeout(entry.timer);
         holds.detached.clear();
       }
       agents.clear();
     },
   };
+}
+
+/**
+ * The door's admission and its grant as one step for the agent (GRA-200, after Greptile on #157):
+ * `admit` is the door (`blob-door.ts`'s `admitBlobs`, over whatever input the path carries), run
+ * under the agent's critical section (`exclusive`), and an admission's budget is granted before
+ * the section is left, so the next admission reads it in `outstandingBudget`. A refusal grants
+ * nothing. The returned `release` is the grant's, for the caller's `finally`; with no registry
+ * there is nothing to reserve against and it is a no-op. Every path that passes the door takes it
+ * through here (`run.ts`, `tools/execute.ts`, `run_command`).
+ */
+export async function admitUnderGrant<A extends { budgetBytes: number }, R>(
+  registry: InFlightRegistry | undefined,
+  agentId: string,
+  admit: () => Promise<{ ok: true; admission: A } | { ok: false; refusal: R }>,
+): Promise<{ ok: true; admission: A; release: () => void } | { ok: false; refusal: R }> {
+  const step = async () => {
+    const door = await admit();
+    if (!door.ok) return door;
+    const release = registry?.grant(agentId, door.admission.budgetBytes) ?? (() => {});
+    return { ok: true as const, admission: door.admission, release };
+  };
+  return registry ? registry.exclusive(agentId, step) : step();
 }
 
 /**
@@ -114,32 +202,42 @@ export function detachedHoldMs(timeoutSeconds: number): number {
  * shape (`sandbox.ts`): `status: "running"` with a `processName` and its `timeoutSeconds`. Anything
  * else — a waited command's result, a refusal, a failure — holds nothing, because the call's own hold
  * covered it. Called before the call's release, so the agent is never momentarily unheld between the
- * two.
+ * two. `budgetBytes` is the blob budget the door handed the call (GRA-200; `blob-door.ts`): a
+ * detached start carries it on the process name, as `run.ts`'s does, so the by-hand paths' grant
+ * outlives the call for as long as the process may write.
  */
 export function trackDetachedStart(
   registry: InFlightRegistry | undefined,
   agentId: string,
   answer: unknown,
+  budgetBytes?: number,
 ): void {
-  if (!registry || !isPlainObject(answer) || answer.status !== "running") return;
-  if (typeof answer.processName !== "string" || typeof answer.timeoutSeconds !== "number") return;
-  registry.track(agentId, answer.processName, detachedHoldMs(answer.timeoutSeconds));
+  // `runCommand` answers `{ answer, blobs }` since GRA-186 (`sandbox.ts`'s `PolledProcess`); the
+  // detached start is the `answer` inside it.
+  const start = isPolledProcess(answer) ? answer.answer : answer;
+  if (!registry || !isPlainObject(start) || start.status !== "running") return;
+  if (typeof start.processName !== "string" || typeof start.timeoutSeconds !== "number") return;
+  registry.track(agentId, start.processName, detachedHoldMs(start.timeoutSeconds), budgetBytes);
 }
 
 /**
  * Run `work` with the agent held, and keep the hold by process name when the answer is a detached
  * start — the one wrapper the call paths share (`run.ts`, `tools/execute.ts`, `run_command`), so
- * none can hold and forget to release, or release before the detached hold is in place.
+ * none can hold and forget to release, or release before the detached hold is in place. A caller
+ * that took a budget grant for the call passes `budgetBytes`, and a detached start keeps it too
+ * (`trackDetachedStart`); the caller releases its own grant once this returns, so the two never
+ * leave a gap.
  */
 export async function heldInFlight<T>(
   registry: InFlightRegistry | undefined,
   agentId: string,
   work: () => Promise<T>,
+  budgetBytes?: number,
 ): Promise<T> {
   const release = registry?.begin(agentId);
   try {
     const answer = await work();
-    trackDetachedStart(registry, agentId, answer);
+    trackDetachedStart(registry, agentId, answer, budgetBytes);
     return answer;
   } finally {
     release?.();

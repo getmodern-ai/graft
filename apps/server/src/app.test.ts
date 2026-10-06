@@ -2,8 +2,10 @@ import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createGatewayProvider, keyringProvider, toProxyConnection } from "@graft/core";
 import type { ConnectionRow } from "@graft/db/repo/connection";
+import { PROXY_MAX_BODY_BYTES_DEFAULT, serverSchema } from "@graft/env/schema";
 import {
   createUpstreamFetch,
+  DEFAULT_PROXY_OPTIONS,
   DRY_RUN_HEADER,
   type ProxyEvent,
   type UpstreamRequest,
@@ -20,7 +22,7 @@ import { initLogger } from "evlog";
 import { decodeProtectedHeader, exportPKCS8, exportSPKI, generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createServer, type ServerDeps } from "./app";
+import { createServer, proxyBodyCapClause, type ServerDeps } from "./app";
 import { type ConnectionSeed, createInMemoryConnections, seedConnections } from "./connections";
 
 /**
@@ -325,6 +327,65 @@ describe("the proxy with the real verifier and the real vault", () => {
     expect(call.status).toBe(503);
     expect(await call.json()).toMatchObject({ reason: "proxy_unconfigured" });
     expect(jwks.status).toBe(503);
+  });
+});
+
+/**
+ * The body cap is the environment's (GRA-183): what `index.ts` reads from `GRAFT_PROXY_MAX_BODY_BYTES`
+ * reaches the proxy's options, the refusal quotes it, the two defaults are one figure, and the boot
+ * line names the cap only when an operator set it to something other than the default.
+ */
+describe("the proxy's body cap from the environment (GRA-183)", () => {
+  it("is the same ten mebibytes in @graft/env and in @graft/proxy", () => {
+    expect(serverSchema.GRAFT_PROXY_MAX_BODY_BYTES.parse(undefined)).toBe(
+      DEFAULT_PROXY_OPTIONS.maxBodyBytes,
+    );
+    expect(PROXY_MAX_BODY_BYTES_DEFAULT).toBe(DEFAULT_PROXY_OPTIONS.maxBodyBytes);
+  });
+
+  it("reaches the proxy and is quoted in the request leg's refusal", async () => {
+    const h = await harness({ maxBodyBytes: 1024 * 1024 });
+    const res = await h.app.request("/api/proxy/c/conn_1/items", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${await mint()}`,
+        "content-length": String(1024 * 1024 + 1),
+      },
+      body: "x",
+    });
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({
+      error: "payload_too_large",
+      reason: "request_too_large",
+      message: `Request bodies are capped at ${1024 * 1024} bytes`,
+    });
+    expect(h.forwarded).toHaveLength(0);
+  });
+
+  it("runs on the proxy's default when the harness passes nothing", async () => {
+    const h = await harness();
+    const res = await h.app.request("/api/proxy/c/conn_1/items", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${await mint()}`,
+        "content-length": String(DEFAULT_PROXY_OPTIONS.maxBodyBytes + 1),
+      },
+      body: "x",
+    });
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({
+      message: `Request bodies are capped at ${DEFAULT_PROXY_OPTIONS.maxBodyBytes} bytes`,
+    });
+  });
+
+  it("is named on the boot line when raised, in mebibytes or bytes, and not at the default", () => {
+    expect(proxyBodyCapClause(DEFAULT_PROXY_OPTIONS.maxBodyBytes)).toBe("");
+    expect(proxyBodyCapClause(64 * 1024 * 1024)).toBe(", proxy body cap 64 MiB");
+    expect(proxyBodyCapClause(20 * 1024 * 1024)).toBe(", proxy body cap 20 MiB");
+    expect(proxyBodyCapClause(15_000_000)).toBe(", proxy body cap 15000000 bytes");
+    expect(proxyBodyCapClause(1024 * 1024)).toBe(", proxy body cap 1 MiB");
   });
 });
 

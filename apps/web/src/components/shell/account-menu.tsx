@@ -104,13 +104,15 @@ export function AccountMenu() {
           onClick={async () => {
             // `signOutAndForget` rather than a bare `authClient.signOut`, because the `_auth`
             // guard trusts its cached session read — a sign-out that left it behind is one the
-            // guard cannot see (`lib/sign-out.ts`). Navigation is success-only: a refused or
-            // unreachable sign-out leaves the person signed in, and says so.
-            const result = await signOutAndForget(queryClient);
-            if (result.ok) {
+            // guard cannot see (`lib/sign-out.ts`). The navigation to the door is handed in as
+            // its `leave` step and runs before the cache is cleared, so no reader still on this
+            // screen re-asks with a dead session (`lib/sign-out.ts` says how that showed).
+            // Success-only: a refused or unreachable sign-out leaves the person signed in, here,
+            // and says so.
+            const result = await signOutAndForget(queryClient, async () => {
               await navigate({ to: "/login", search: {} });
-              return;
-            }
+            });
+            if (result.ok) return;
             toast.error(
               result.reason === "refused"
                 ? (result.message ?? "Could not sign out")

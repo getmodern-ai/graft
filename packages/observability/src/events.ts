@@ -36,6 +36,17 @@ export type AnalyticsEvent =
   | "scope_changed"
   | "model_key_set"
   | "model_key_removed"
+  // Setup (ADR 0024; GRA-204), at its routes: the start, on the harness step, and the skip. Property
+  // `harness`: the harness picked, or null when Setup adopted an agent that already existed or was
+  // skipped before a harness was picked. `setup_step_completed` (GRA-206) carries `step` too, the
+  // step completed: `vendor` when a vendor is chosen, `connect` when the record learns the
+  // connection, `goal` when Build is pressed and `building` when the record learns the tool the
+  // job acquired (GRA-207), `result` when the result step's Continue is pressed (GRA-208).
+  // `setup_completed` (GRA-208) is the finish, with the harness.
+  | "setup_started"
+  | "setup_step_completed"
+  | "setup_completed"
+  | "setup_skipped"
   // A link provider's connect (ADR 0019), at the server's two link routes (GRA-147): whether the
   // provider's link could be minted, and how the person's return ended. Properties: `provider`,
   // and on the return `outcome` (connected | failed | declined). Counted so a provider that
@@ -45,6 +56,17 @@ export type AnalyticsEvent =
   | "provider_link_returned"
   // Over MCP
   | "tool_called"
+  // A blob a tool wrote (ADR 0023; GRA-186), once per blob, beside the `tool_called` of the run
+  // that wrote it: `bytes`, `content_type` (a kind), `agent_id`, `version_id`. Never the name the
+  // module gave it and never a byte of it.
+  | "blob_written"
+  // A blob directory the sweep removed (ADR 0023, "the sweep deletes"; GRA-189), once per removal:
+  // `bytes` (null when an orphan held no data), `cause` (`expired` for a row past its time,
+  // `orphan` for a committed directory with no row and no readable sidecar), `agent_id`. Never the
+  // name and never a byte; a `.tmp` an abandoned write left is cleared without an event, since it
+  // was never a blob, and junk under an agent the database no longer holds (GRA-195) is cleared
+  // without one too, since there is no person to name.
+  | "blob_swept"
   | "acquire_completed"
   | "acquire_failed";
 

@@ -31,9 +31,9 @@ the public registry. Roadmap.
 
 ## Consequences and accepted risks
 
-- **The Docker form runs each tool as a short-lived container** from one prebuilt image, on an
-  internal network whose only route is the proxy container, with the toolbox mounted as a volume.
-  Installs happen in a separate build container. Blaxel keeps its firewall ruleset as in Cando.
+- **The Docker form runs each agent's tools in one container**, found again by name on every run,
+  from one prebuilt image, on an internal network whose only route is the proxy container, with the
+  toolbox mounted as a volume. Installs happen in a separate build container. Blaxel keeps its firewall ruleset as in Cando.
 - **Published versions are larger** by their dependencies. Accepted; a version is content it can
   run without asking anyone.
 - **Provenance is a real filter now.** The Google, Slack, Octokit and Linear clients all publish

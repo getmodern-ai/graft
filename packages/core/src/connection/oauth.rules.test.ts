@@ -36,7 +36,7 @@ describe("the callback's redirect to the console", () => {
   const connected: OAuthCallbackOutcome = {
     status: "connected",
     connectionId: "c1d2e3f4-0000-4000-8000-000000000001",
-    message: "Mail & co is connected — the console updates on its own.",
+    message: "Mail & co is connected. The console updates on its own.",
   };
 
   it("lands on the console's callback route with the outcome in the query and nothing else", () => {
