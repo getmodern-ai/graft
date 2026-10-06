@@ -1,6 +1,7 @@
 import {
   decodeJwt,
   decodeProtectedHeader,
+  exportJWK,
   exportPKCS8,
   exportSPKI,
   generateKeyPair,
@@ -10,6 +11,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   CAPABILITY_TOKEN_ALG,
+  CAPABILITY_TOKEN_AUDIENCE,
+  CAPABILITY_TOKEN_ISSUER,
   type CapabilityTokenKeys,
   capabilityTokenJwks,
   createCapabilityTokenVerifier,
@@ -59,6 +62,122 @@ function foreign(keys: CapabilityTokenKeys, claims: Record<string, unknown>) {
     .setExpirationTime("5m")
     .sign(keys.privateKey);
 }
+
+/** base64url of a JSON value, as a JWT's two first segments are written. */
+function segment(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+/** The claims our minter writes, as a plain object a forgery can carry. */
+function claimsAt(now: Date): Record<string, unknown> {
+  const issuedAt = Math.floor(now.getTime() / 1000);
+  return {
+    iss: CAPABILITY_TOKEN_ISSUER,
+    aud: CAPABILITY_TOKEN_AUDIENCE,
+    person: "person_1",
+    agent: "agent_1",
+    connections: ["conn_1"],
+    tool: "execute",
+    jti: "j",
+    iat: issuedAt,
+    exp: issuedAt + 300,
+  };
+}
+
+/**
+ * Algorithm confusion, four shapes of it, each token assembled here rather than minted — a library
+ * that refuses to *write* one would otherwise be what the test proves (GRA-176). Every one is
+ * `invalid`, the one word every bad token gets so a prober learns nothing from the answer. Two
+ * things refuse them, and the last case is the only one that separates the two: an Ed25519 public
+ * key cannot be used for HMAC or for nothing at all, so jose's own key check stops the first
+ * three whether or not `algorithms` is pinned, while a token signed with our own key under the
+ * fully-specified `Ed25519` algorithm name verifies unless the pin is there — which is the
+ * regression the pin is worth a test for.
+ */
+describe("a token whose algorithm is not the one we sign with", () => {
+  it("refuses `alg: none` over otherwise valid claims", async () => {
+    const keys = await testKeys();
+    const now = new Date();
+    // The unsecured JWT of RFC 7519 section 6: two segments, a valid claim set, no signature.
+    const unsecured = `${segment({ alg: "none" })}.${segment(claimsAt(now))}.`;
+
+    expect(await verifyCapabilityToken(unsecured, keys.publicKey, now)).toEqual({
+      ok: false,
+      reason: "invalid",
+    });
+    // Spelled with a signature it does not need, it is refused the same way.
+    expect(await verifyCapabilityToken(`${unsecured}AAAA`, keys.publicKey, now)).toEqual({
+      ok: false,
+      reason: "invalid",
+    });
+  });
+
+  /**
+   * The classic confusion: the verification key is public, so a verifier that took the header's
+   * word for the algorithm would accept an HMAC the attacker computed with that key's own bytes.
+   * Both spellings of "the key's bytes" are tried — the SPKI PEM a deployment configures, and the
+   * raw 32 bytes inside it.
+   */
+  it("refuses an HS256 token signed with the verification key's own bytes", async () => {
+    const pair = await generateKeyPair(CAPABILITY_TOKEN_ALG, { crv: "Ed25519", extractable: true });
+    const publicKeyPem = await exportSPKI(pair.publicKey);
+    const keys = await importCapabilityTokenKeys({
+      privateKeyPem: await exportPKCS8(pair.privateKey),
+      publicKeyPem,
+    });
+    const now = new Date();
+    const rawPublicKey = Buffer.from((await exportJWK(pair.publicKey)).x ?? "", "base64url");
+
+    for (const secret of [new TextEncoder().encode(publicKeyPem), new Uint8Array(rawPublicKey)]) {
+      const forged = await new SignJWT(claimsAt(now))
+        .setProtectedHeader({ alg: "HS256", kid: keys.kid, typ: "JWT" })
+        .sign(secret);
+
+      expect(await verifyCapabilityToken(forged, keys.publicKey, now)).toEqual({
+        ok: false,
+        reason: "invalid",
+      });
+    }
+  });
+
+  it("refuses a genuinely signed token whose header was rewritten to name another algorithm", async () => {
+    const keys = await testKeys();
+    const minted = await mintCapabilityToken(INPUT, keys);
+    const [, payload, signature] = minted.split(".") as [string, string, string];
+
+    // The payload and the Ed25519 signature are untouched; only the header's `alg` is another word.
+    for (const alg of ["none", "HS256", "EdDSA "]) {
+      const rewritten = `${segment({ alg, kid: keys.kid, typ: "JWT" })}.${payload}.${signature}`;
+
+      expect(await verifyCapabilityToken(rewritten, keys.publicKey), alg).toEqual({
+        ok: false,
+        reason: "invalid",
+      });
+    }
+    // The same payload and signature under the header we wrote still verify, so the header is the
+    // only thing those refusals turn on.
+    expect((await verifyCapabilityToken(minted, keys.publicKey)).ok).toBe(true);
+  });
+
+  /**
+   * `Ed25519` is the fully-specified name for what `EdDSA` over this curve does, and jose signs and
+   * verifies with it — so this token is well-formed and signed by the very key the proxy trusts,
+   * and only `algorithms: ["EdDSA"]` refuses it. Nothing but the server can write one; the test is
+   * here because it is what fails the day the pin is dropped.
+   */
+  it("refuses our own key's signature under the fully-specified `Ed25519` algorithm name", async () => {
+    const keys = await testKeys();
+    const now = new Date();
+    const token = await new SignJWT(claimsAt(now))
+      .setProtectedHeader({ alg: "Ed25519", kid: keys.kid, typ: "JWT" })
+      .sign(keys.privateKey);
+
+    expect(await verifyCapabilityToken(token, keys.publicKey, now)).toEqual({
+      ok: false,
+      reason: "invalid",
+    });
+  });
+});
 
 describe("capability token", () => {
   it("round-trips: what was minted is what verifies", async () => {
