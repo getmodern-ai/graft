@@ -1,7 +1,13 @@
 import { setupHarness, setupStep } from "@graft/db/schema/setup";
 import { describe, expect, it } from "vitest";
 
-import { readSetupHarness, SETUP_HARNESS_IDS, SETUP_HARNESSES, setupHarnessOf } from "./harness";
+import {
+  readSetupHarness,
+  SETUP_HARNESS_IDS,
+  SETUP_HARNESSES,
+  type SetupHarnessEntry,
+  setupHarnessOf,
+} from "./harness";
 import {
   currentSetupStep,
   isAwaitingHarness,
@@ -164,9 +170,9 @@ describe("the vocabularies", () => {
   });
 
   it("gives every harness its connection steps, in sentences without an em dash", () => {
-    for (const entry of SETUP_HARNESSES) {
+    for (const entry of SETUP_HARNESSES as readonly SetupHarnessEntry[]) {
       expect(entry.steps.length).toBeGreaterThan(0);
-      for (const step of entry.steps) {
+      for (const step of [...entry.steps, ...(entry.afterConsent ?? [])]) {
         expect(step).toMatch(/\.$/);
         expect(step).not.toContain("\u2014");
       }
