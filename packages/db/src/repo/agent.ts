@@ -1,4 +1,4 @@
-import { and, asc, eq, exists, getTableColumns, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, exists, getTableColumns, inArray, isNull, or, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import { agent, agentConnection, type NewAgent } from "../schema/agent";
@@ -8,8 +8,9 @@ import type { AgentScope } from "./scope";
 
 /**
  * Query ownership for the agent aggregate: the agent row and its scope (ADR 0007). Every read and
- * write takes the person's id in the SQL; the token lookup and the sweep's roster are the two
- * deliberate exceptions, and each says why.
+ * write takes the person's id in the SQL; the token lookup, the sweep's roster and the blob pass's
+ * read of whose a directory is (`listAgentPersonIds`) are the three deliberate exceptions, and
+ * each says why.
  */
 
 export type AgentRow = typeof agent.$inferSelect;
@@ -121,6 +122,34 @@ export async function listAllActiveAgents(db: DbOrTx): Promise<AgentRow[]> {
     .orderBy(asc(agent.createdAt), asc(agent.id));
 }
 
+/** An agent's id and its person's, as `listAgentPersonIds` answers them. */
+export type AgentPersonId = { agentId: string; personId: string };
+
+/**
+ * Whose agents these are: the person of every id in `agentIds` that names an agent row, revoked or
+ * not. The blob pass's read for a directory the blob store lists under an agent that has no
+ * unremoved row (GRA-195): a revoked agent whose blobs were all removed, or a run killed before
+ * its row landed. **Deliberately unscoped**, and pinned by name in `scope.test.ts` beside the
+ * roster above: the sweep has no person until this answers, and an id with no row here is an agent
+ * deleted by hand, whose directories are nobody's. It answers the pair and nothing else of the row;
+ * what the pass does next is a statement under that pair. No ids is no statement.
+ */
+export async function listAgentPersonIds(
+  db: DbOrTx,
+  agentIds: readonly string[],
+): Promise<AgentPersonId[]> {
+  if (agentIds.length === 0) return [];
+  // One array parameter (`= any($1)`), not `in ($1, $2, ...)`: the list is every agent the store has
+  // a directory for and no row, which is unbounded, and Postgres refuses a statement past its
+  // parameter limit (Greptile on #152). `sql.param` hands the array to the driver whole; a bare
+  // array in the template expands to `($1, $2, ...)`. The rendered form is pinned in `scope.test.ts`.
+  return db
+    .select({ agentId: agent.id, personId: agent.personId })
+    .from(agent)
+    .where(sql`${agent.id} = any(${sql.param([...agentIds])})`)
+    .orderBy(asc(agent.id));
+}
+
 export async function updateAgent(
   db: DbOrTx,
   personId: string,
@@ -152,6 +181,41 @@ export async function setAgentConnectedVia(
     .set({ connectedViaClientId: via.clientId, connectedViaClientName: via.clientName })
     .where(
       and(eq(agent.id, agentId), eq(agent.personId, personId), isNull(agent.connectedViaClientId)),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Issue a static token to an agent **awaiting its harness** (ADR 0024; `isAwaitingHarness` in
+ * `@graft/core`): the hash and the prefix written only while the agent is active with no token
+ * and no client, all four in the predicate, so a second issue, a revoke or a consent that landed
+ * first matches nothing and the plaintext minted for this call is never stored anywhere. Null for
+ * no such agent of this person, or one that is no longer awaiting.
+ *
+ * `replacing` is the hash of the token a re-issue replaces (Setup's finish step, while Setup is not
+ * completed: `@graft/core`'s `issueConsoleAgentToken`): the predicate then holds the hash to that
+ * one instead of to none, so a write that read a hash another write has since replaced matches
+ * nothing, and the old token stops resolving the moment the new hash lands.
+ */
+export async function issueAgentToken(
+  db: DbOrTx,
+  personId: string,
+  agentId: string,
+  token: { tokenHash: string; tokenPrefix: string },
+  replacing: string | null = null,
+): Promise<AgentRow | null> {
+  const [row] = await db
+    .update(agent)
+    .set({ tokenHash: token.tokenHash, tokenPrefix: token.tokenPrefix })
+    .where(
+      and(
+        eq(agent.id, agentId),
+        eq(agent.personId, personId),
+        isNull(agent.revokedAt),
+        replacing === null ? isNull(agent.tokenHash) : eq(agent.tokenHash, replacing),
+        isNull(agent.connectedViaClientId),
+      ),
     )
     .returning();
   return row ?? null;

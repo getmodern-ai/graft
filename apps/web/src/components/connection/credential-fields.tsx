@@ -35,8 +35,8 @@ export function CredentialFields({
   if (fields.length === 0) {
     return (
       <FieldDescription id={`${idPrefix}-credential-none`}>
-        This scheme sends no credential. The vendor is called as the tool makes the request, through
-        the proxy, at the hosts above and nowhere else.
+        This scheme sends no credential. The integration is called as the tool makes the request,
+        through the proxy, at the hosts above and nowhere else.
       </FieldDescription>
     );
   }

@@ -4,6 +4,8 @@ import {
   ASK_STATUS_POLL_MS,
   type AskCard,
   type AskStatusOutcome,
+  type CardData,
+  type SetupCard,
   type StartLinkInput,
   type StartLinkOutcome,
   withFromCard,
@@ -39,6 +41,11 @@ import {
  * forward: the console button appears under it, since the handoff URL is the floor. The card
  * never writes into the chat: the person's click is the answer, and what the agent says next is
  * the agent's.
+ *
+ * A seventh shape is no ask (GRA-210): **Setup**, `find_tool`'s offer for an agent whose person
+ * has no connection yet (`renderSetup`). One button, *Set up your first tool*, opens the console's
+ * Setup page with `from=card`; the page closes itself when the person finishes, and the card polls
+ * nothing, since no pending action stands behind it. Its sentence says to ask again once done.
  */
 
 export type CardHandlers = {
@@ -88,7 +95,7 @@ export function schemeLabel(scheme: string | null): string {
  * provider's page and the provider holds the token. The row says that, and never the keyring label.
  */
 export function linkSchemeLabel(card: AskCard): string {
-  return `Sign-in at the vendor through ${card.provider ?? "the provider"}; no client to register, nothing typed in Graft`;
+  return `Sign-in to ${card.displayName} through ${card.provider ?? "the provider"}; no client to register, nothing typed in Graft`;
 }
 
 /** The person's own words for the pending-action kind — the eyebrow above the title. */
@@ -153,21 +160,21 @@ export function descriptionOf(card: AskCard): string {
     case "connection":
       if (isLinkAsk(card)) {
         const provider = card.provider ?? "the provider";
-        return `${card.agentName} proposes this connection. You sign in at the vendor on ${provider}'s page, which opens in a new window; the account's token stays with ${provider}, and nothing is typed here.`;
+        return `${card.agentName} proposes this connection. You sign in to ${card.displayName} on ${provider}'s page, which opens in a new window; the account's token stays with ${provider}, and nothing is typed here.`;
       }
       if (card.widens) {
         // A widening (GRA-167): the row exists; the yes adds hosts to it and makes nothing new.
-        return `${card.agentName} proposes that the connection you already have to ${card.displayName} also reach ${card.widens.addedHosts.join(", ")}. The vendor takes no credential, so there is nothing to enter: confirming adds the hosts to that connection; no new connection is made.`;
+        return `${card.agentName} proposes that the connection you already have to ${card.displayName} also reach ${card.widens.addedHosts.join(", ")}. The integration takes no credential, so there is nothing to enter: confirming adds the hosts to that connection; no new connection is made.`;
       }
       return card.answerable
-        ? `${card.agentName} proposes this connection. The vendor takes no credential, so there is nothing to enter: confirming makes the connection and gives it to this agent.`
+        ? `${card.agentName} proposes this connection. The integration takes no credential, so there is nothing to enter: confirming makes the connection and gives it to this agent.`
         : `${card.agentName} proposes this connection. Its credential is entered in Graft's console, which opens in a new window, never here or in the chat; this card updates once it is stored.`;
     case "credential":
-      return `The vendor refused ${card.agentName}'s calls. The new credential is entered in Graft's console, which opens in a new window, never here or in the chat; this card updates once it is stored.`;
+      return `${card.displayName} refused ${card.agentName}'s calls. The new credential is entered in Graft's console, which opens in a new window, never here or in the chat; this card updates once it is stored.`;
     case "tool": {
       const does = card.tool?.destructive
-        ? "can delete or overwrite data at the vendor"
-        : "changes data at the vendor";
+        ? `can delete or overwrite data in ${card.displayName}`
+        : `changes data in ${card.displayName}`;
       const holds = card.tool?.askEveryCall
         ? "You have set this tool to ask every time, so a yes is for this call alone; change that on the agent's page in the console."
         : "Your answer holds for this agent's next calls, a no as much as a yes, until withdrawn on its page in the console.";
@@ -188,7 +195,7 @@ export function toolHintsLabel(tool: NonNullable<AskCard["tool"]>): string {
 export function factsOf(card: AskCard): Array<{ label: string; value: string; mono?: boolean }> {
   const facts: Array<{ label: string; value: string; mono?: boolean }> = [
     { label: "Agent", value: card.agentName },
-    { label: "Vendor", value: card.vendor },
+    { label: "Integration", value: card.vendor },
     { label: "Connection", value: card.displayName },
   ];
   if (card.kind === "tool" && card.toolName) {
@@ -545,4 +552,112 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
   buttons.push(decline, connect);
   actions.append(decline, connect);
   return root;
+}
+
+/** The Setup card's words (GRA-210): the eyebrow, the title, and the button, which says the same. */
+export const SETUP_EYEBROW = "Setup";
+export const SETUP_TITLE = "Set up your first tool";
+export const SETUP_BUTTON = "Set up your first tool";
+
+/** What the Setup card says under its title: what Setup does, and where it happens. */
+export function setupDescriptionOf(card: SetupCard): string {
+  return `${card.agentName} has no integration connected yet. Setup, in Graft's console, connects one and has Graft acquire a first tool for this agent in a few clicks. It opens in a new window, and nothing is typed in the chat.`;
+}
+
+/** The sentence the Setup card always carries: there is nothing to wait for here, so ask again. */
+export function setupAskAgainOf(card: SetupCard): string {
+  return `Once Setup is done, its window closes itself. Ask again here, and ${card.agentName} finds the new tool.`;
+}
+
+/** What the Setup card says once the window is open. */
+export const SETUP_OPENED_SENTENCE =
+  "Setup is open in the window that opened. Ask again here once you have finished.";
+
+/**
+ * What the Setup card says when the host refuses to open the window, above Setup's address drawn
+ * on the card to copy. The agent was told not to send a link while the card is shown, so the card
+ * carries the address itself, and the agent gives the same one when asked
+ * (`@graft/mcp`'s `setupOfferMessage`).
+ */
+export function setupOpenRefusedOf(card: SetupCard, reason: string): string {
+  return `The chat could not open the window (${reason}). Setup opens at this address in a browser, and ${card.agentName} can give it to you too:`;
+}
+
+/**
+ * Render the Setup offer (GRA-210) into a fresh element: the title, the sentence, the agent, the
+ * ask-again sentence and one primary button that opens the Setup page with `from=card` through the
+ * host's link opener. Nothing is answered and nothing is polled; the button is disabled only while
+ * the host's opener is answering, so one attempt settles before the next starts and an older
+ * refusal cannot overwrite a later success, and enabled again after, so a window the person closed
+ * early can be opened again. Where the host refuses to open it, the card shows Setup's address to
+ * copy (`setupOpenRefusedOf`).
+ */
+export function renderSetup(
+  card: SetupCard,
+  handlers: Pick<CardHandlers, "openLink">,
+  doc: Document,
+): HTMLElement {
+  const root = el(doc, "section", "ask");
+  root.dataset.kind = card.kind;
+  root.dataset.answerable = "false";
+  root.setAttribute("aria-label", SETUP_TITLE);
+
+  const header = el(doc, "header");
+  header.append(
+    el(doc, "p", "ask-eyebrow", SETUP_EYEBROW),
+    el(doc, "h1", "ask-title", SETUP_TITLE),
+    el(doc, "p", "ask-description", setupDescriptionOf(card)),
+  );
+  root.append(header);
+
+  const facts = el(doc, "dl", "ask-facts");
+  const row = el(doc, "div");
+  row.append(el(doc, "dt", undefined, "Agent"), el(doc, "dd", undefined, card.agentName));
+  facts.append(row);
+  root.append(facts, el(doc, "p", "ask-note", setupAskAgainOf(card)));
+
+  const actions = el(doc, "div", "ask-actions");
+  const status = el(doc, "p", "ask-outcome");
+  status.setAttribute("role", "status");
+  status.hidden = true;
+  const note = (sentence: string, tone: "waiting" | "refused") => {
+    status.textContent = sentence;
+    status.dataset.tone = tone;
+    status.hidden = false;
+    if (!status.isConnected) actions.after(status);
+  };
+  // The address a browser opens Setup at, shown only when the host refused the window: without
+  // `from=card`, since that page has no card to tell and should not close itself.
+  const address = el(doc, "p", "ask-mono ask-address", card.url);
+  address.hidden = true;
+
+  const open = button(doc, SETUP_BUTTON, "primary", () => {
+    if (open.disabled) return;
+    open.disabled = true;
+    void (async () => {
+      try {
+        await handlers.openLink(withFromCard(card.url));
+      } catch (error) {
+        note(
+          setupOpenRefusedOf(card, error instanceof Error ? error.message : String(error)),
+          "refused",
+        );
+        address.hidden = false;
+        if (!address.isConnected) status.after(address);
+        return;
+      } finally {
+        open.disabled = false;
+      }
+      address.hidden = true;
+      note(SETUP_OPENED_SENTENCE, "waiting");
+    })();
+  });
+  actions.append(open);
+  root.append(actions);
+  return root;
+}
+
+/** Render whatever the result carried: the Setup offer, or an ask (`main.ts`'s one call). */
+export function renderCard(card: CardData, handlers: CardHandlers, doc: Document): HTMLElement {
+  return card.kind === "setup" ? renderSetup(card, handlers, doc) : renderAsk(card, handlers, doc);
 }

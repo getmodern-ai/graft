@@ -59,7 +59,7 @@ const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
 const VENDOR_BODY = { items: [{ id: "itm_1", name: "Widget" }], vendor: "demo" };
 
 /** The list-items module through the runner, as an execute command — the path as a sandbox sees it. */
-const RUN_LIST_ITEMS = `echo '{}' | node /graft/runner.mjs ${sandboxPath("tools/demo/list-items/v1")}`;
+const RUN_LIST_ITEMS = `echo '{}' | node "$GRAFT_RUNNER" ${sandboxPath("tools/demo/list-items/v1")}`;
 
 const LIST_ITEMS = authoredToolName("demo", "list-items");
 const CREATE_ITEM = authoredToolName("demo", "create-item");
@@ -168,6 +168,8 @@ beforeAll(async () => {
       refusals: [],
       advice: [],
       annotations: { readOnly: true, destructive: false },
+      contextMembersUsed: [],
+      blobReadFields: [],
     }),
     runnerFiles,
     skills: loadSkills,

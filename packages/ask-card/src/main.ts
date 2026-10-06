@@ -5,15 +5,15 @@ import {
   type McpUiHostContext,
 } from "@modelcontextprotocol/ext-apps/app-with-deps";
 
-import { renderAsk } from "./render";
+import { renderCard } from "./render";
 import {
   ANSWER_ASK_TOOL,
   type AnswerAskInput,
   ASK_STATUS_TOOL,
   type AskStatusInput,
   readAnswerOutcome,
-  readAskCard,
   readAskStatusOutcome,
+  readCardData,
   readStartLinkOutcome,
   START_LINK_TOOL,
   type StartLinkInput,
@@ -22,8 +22,9 @@ import {
 /**
  * The card's wiring to its host (GRA-84; ADR 0006 as amended 2026-09-18). One `App` over the
  * `postMessage` bridge the MCP Apps extension defines: the host tells the card the tool result it
- * was rendered for (`ui/notifications/tool-result`), the card draws the ask off
- * `structuredContent.card` — and draws nothing when the result is not an ask, since a host mounts
+ * was rendered for (`ui/notifications/tool-result`), the card draws the ask, or `find_tool`'s
+ * Setup offer (GRA-210), off `structuredContent.card` — and draws nothing when the result carries
+ * neither, since a host mounts
  * the same page for every result of a tool that names it — and the person's click goes back as a
  * `tools/call` of `answer_ask`, which the host forwards to Graft under the agent's own session.
  * Two more calls take the same road (GRA-117, GRA-118): `start_link`, which mints a link
@@ -60,7 +61,7 @@ let current: AbortController | null = null;
 app.ontoolresult = (result) => {
   current?.abort();
   current = new AbortController();
-  const card = readAskCard(result.structuredContent);
+  const card = readCardData(result.structuredContent);
   mount.replaceChildren();
   if (!card) {
     mount.hidden = true;
@@ -68,10 +69,13 @@ app.ontoolresult = (result) => {
   }
   mount.hidden = false;
   mount.append(
-    renderAsk(
+    renderCard(
       card,
       {
         answer: async (answer) => {
+          // The Setup offer (GRA-210) names no ask and draws no answer button; `renderCard` never
+          // calls this for it, and `answer_ask` would refuse it.
+          if (card.kind === "setup") throw new Error("the Setup card answers nothing");
           const input: AnswerAskInput = { pendingActionId: card.pendingActionId, answer };
           const answered = await app.callServerTool({ name: ANSWER_ASK_TOOL, arguments: input });
           return readAnswerOutcome(answered.structuredContent);

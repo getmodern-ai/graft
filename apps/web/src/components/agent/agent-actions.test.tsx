@@ -149,6 +149,14 @@ describe("agent actions", () => {
     await click("Copy configuration");
     expect(copy.mock.calls.at(-1)?.[0]).toBe(hermesConfigSnippet(window.location.origin));
     expect(copy.mock.calls.at(-1)?.[0]).toContain(`url: "${window.location.origin}/mcp"`);
+    // The setup prompt follows the harness picked, names the agent, and carries no token (GRA-205).
+    await click("Copy prompt");
+    const prompt = String(copy.mock.calls.at(-1)?.[0]);
+    expect(prompt).toMatch(/^Help me set up Graft and get my first tool built\./);
+    expect(prompt).toContain("I am using Hermes.");
+    expect(prompt).toContain('copy the token Graft showed once for the agent "Laptop"');
+    expect(prompt).toContain(`url: "${window.location.origin}/mcp"`);
+    expect(prompt).not.toContain("grft_");
     expect(fetch).not.toHaveBeenCalled();
     await click("Done");
     await waitFor(() => expect(document.querySelector("[role=dialog]")).toBeNull());
@@ -187,6 +195,11 @@ describe("agent actions", () => {
     expect(dialog?.textContent).toContain("MCP server URL");
     expect(dialog?.textContent).toContain("choose Laptop");
     expect(dialog?.textContent).toContain("OAuth manages the token for you.");
+    // The prompt is Claude's, read off the client that consented, and selects this agent (GRA-205).
+    expect(dialog?.textContent).toContain("Setup prompt");
+    expect(dialog?.textContent).toContain("I am using Claude on the web or desktop.");
+    expect(dialog?.textContent).toContain('select "Laptop" and choose Connect');
+    control("Copy prompt");
     expect(dialog?.textContent).not.toContain("YOUR_AGENT_TOKEN");
     expect(dialog?.textContent).not.toContain("GRAFT_TOKEN");
   });

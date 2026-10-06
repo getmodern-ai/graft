@@ -16,6 +16,7 @@ import {
   wireOf,
 } from "./answer";
 import { type RenderedPage, renderRepair, renderSituation, systemPrompt } from "./prompt";
+import { type GoalProposalOptions, proposeGoals } from "./propose-goals";
 import { type ModelCallTrace, type ModelTelemetry, NO_TELEMETRY } from "./telemetry";
 import {
   addUsage,
@@ -111,6 +112,8 @@ export type ProviderModelDeps = {
   telemetry?: ModelTelemetry | null;
   /** A test's stand-ins for the provider's two models; the settings still name them in the trace. */
   models?: ResolvedModels;
+  /** The goal proposal's bound, for a test; `GOAL_PROPOSAL_TIMEOUT_MS` when absent. */
+  goalProposal?: GoalProposalOptions;
 };
 
 export type ProviderModel = ModelAdapter & { readonly settings: ProviderModelSettings };
@@ -158,6 +161,25 @@ export function createProviderModel(
     name: `${settings.provider}:${settings.authoringModel}`,
     settings,
     open: (context) => openConversation(context, bound),
+    // The triage model, as a job's cheap calls are: Setup's suggestions are a read of a vendor's
+    // name, never code (`./propose-goals.ts`).
+    proposeGoals: (request) =>
+      proposeGoals(
+        {
+          model: bound.models.triage,
+          modelId: settings.triageModel,
+          telemetry: bound.telemetry,
+          trace: {
+            jobId: request.traceId,
+            personId: request.personId,
+            attempt: 0,
+            situation: "propose_goals",
+            provider: settings.provider,
+          },
+        },
+        request,
+        deps.goalProposal,
+      ),
   };
 }
 
@@ -241,7 +263,7 @@ function openConversation(context: ModelJobContext, bound: Bound): ModelConversa
           const answer: ModelAnswer = {
             kind: "read_docs",
             urls: triage.urls,
-            note: `Reading the documentation the agent pointed at: ${triage.urls.join(", ")}`,
+            note: `${triage.urls.join(", ")}, named with the goal`,
           };
           record(answer);
           return { answer, usage };

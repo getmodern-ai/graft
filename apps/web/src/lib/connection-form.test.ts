@@ -114,6 +114,8 @@ describe("validateConnectionDraft", () => {
       "schemeConfig.headerName",
       "vendor",
     ]);
+    // The rule is core's, shared with a model's refusal; the field says integration (GRA-216).
+    expect(verdict.errors.vendor).toMatch(/^An integration's slug is lowercase letters/);
   });
 
   it("can judge the non-secret half alone", () => {
@@ -156,9 +158,11 @@ describe("hosts and proposals", () => {
     expect(secretLegend(withScheme(draft, "oauth_authorization_code"))).toBe("The client secret");
 
     const keyless = withScheme(draft, "none");
-    expect(hostsNoticeTitle(keyless)).toBe("The vendor is reached at these hosts and nothing else");
+    expect(hostsNoticeTitle(keyless)).toBe(
+      "The integration is reached at these hosts and nothing else",
+    );
     expect(hostsNoticeTitle({ ...keyless, primaryHost: "nope" })).toBe(
-      "Fix the hosts above to see where the vendor is reached",
+      "Fix the hosts above to see where the integration is reached",
     );
     expect(secretLegend(keyless)).toBeNull();
     for (const scheme of SCHEMES) {

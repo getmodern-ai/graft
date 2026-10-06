@@ -35,16 +35,10 @@ import {
  * The sandbox's own absolute directories, mapped under the root whether or not a call has created
  * them yet: `mkdir -p /graft/x` must land inside the root, and a dynamic list of what exists could
  * not know that. A mount path (`/tools` and `/blobs`, typically) joins this list when it is mounted.
+ * The skills live under `/graft/<hash>/skills/` beside the runner since GRA-193, so no bare
+ * `/skills` is here (GRA-199).
  */
-export const FAKE_SANDBOX_ROOTS = [
-  "/tools",
-  "/blobs",
-  "/graft",
-  "/skills",
-  "/workspace",
-  "/tmp",
-  "/home",
-];
+export const FAKE_SANDBOX_ROOTS = ["/tools", "/blobs", "/graft", "/workspace", "/tmp", "/home"];
 
 /**
  * Where the blobs live beside the toolboxes: `<root>/toolboxes/.blobs/<agentId>`, which is
@@ -287,6 +281,13 @@ export type FakeSandboxBackend = SandboxBackend & {
   toolboxRoot(toolboxId: string): string;
   /** The host directory an agent's blobs live in, beside the toolboxes; what `/blobs` is a symlink to. */
   blobsRoot(agentId: string): string;
+  /**
+   * The names of every process `execDetached` started in a sandbox, finished ones included, in
+   * start order; `[]` for a sandbox never opened. For a suite asserting that a refusal happened
+   * before anything ran (GRA-187's door): a run is one such process, so the list not growing is
+   * the fact.
+   */
+  processNames(name: string): string[];
   /** Kill every process still running and delete the directory. */
   close(): Promise<void>;
 };
@@ -427,6 +428,7 @@ export function createFakeSandboxBackend(): FakeSandboxBackend {
     sandboxRoot,
     toolboxRoot,
     blobsRoot,
+    processNames: (name) => [...(sandboxes.get(name)?.processes.keys() ?? [])],
     ensure: async ({ name }) => {
       assertSandboxName("a sandbox name", name);
       const existing = sandboxes.get(name);

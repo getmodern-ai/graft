@@ -1,0 +1,460 @@
+import {
+  MAX_BLOB_CONTENT_TYPE_CHARS,
+  MAX_BLOB_NAME_CHARS,
+  MEDIA_TYPE_PATTERN,
+} from "@graft/runner";
+import { describe, expect, it } from "vitest";
+
+import { isBlobExpired } from "./blob.rules";
+import {
+  BLOB_CONTENT_TYPE_RULES,
+  BLOB_NAME_RULES,
+  BLOB_TMP_SUFFIX,
+  type BlobSweepEntry,
+  type BlobSweepRow,
+  blobSweepDecision,
+  isTmpName,
+  isValidBlobContentType,
+  isValidBlobName,
+  parseBlobSidecar,
+} from "./blob-sweep.decision";
+
+/**
+ * ADR 0023's "the sweep deletes", clause by clause, with no clock but the one handed in. Every case
+ * names its rows and directories by what the rule should see in them (live, expired, landing,
+ * orphaned, abandoned), so a failure reads as a sentence about the rule rather than about a date.
+ */
+
+const NOW = new Date("2026-09-23T12:00:00Z");
+const HOUR = 60 * 60 * 1000;
+const AGENT = "agent_1";
+const ABANDONED_AFTER = HOUR;
+const hoursAgo = (hours: number) => new Date(NOW.getTime() - hours * HOUR);
+const hoursOn = (hours: number) => new Date(NOW.getTime() + hours * HOUR);
+
+const row = (id: string, expiresAt: Date, removedAt: Date | null = null): BlobSweepRow => ({
+  id,
+  bytes: 1_024,
+  expiresAt,
+  removedAt,
+});
+
+const sidecar = (overrides: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    bytes: 512,
+    contentType: "application/pdf",
+    name: "invoice.pdf",
+    writtenAt: hoursAgo(2).toISOString(),
+    expiresAt: hoursOn(22).toISOString(),
+    agentId: AGENT,
+    toolVersion: "ver_1",
+    ...overrides,
+  });
+
+const decide = (rows: BlobSweepRow[], entries: BlobSweepEntry[]) =>
+  blobSweepDecision({ agentId: AGENT, rows, entries, now: NOW, abandonedWriteMs: ABANDONED_AFTER })
+    .actions;
+
+describe("a row and its directory", () => {
+  it("keeps a live row whose directory is there", () => {
+    expect(decide([row("live", hoursOn(1))], [{ name: "live" }])).toEqual([
+      { action: "keep", name: "live", reason: "live" },
+    ]);
+  });
+
+  it("removes a row past its expiry whose directory is there, and marks it", () => {
+    expect(decide([row("old", hoursAgo(1))], [{ name: "old" }])).toEqual([
+      { action: "remove", blobId: "old", bytes: 1_024, mark: true },
+    ]);
+  });
+
+  it("marks a row past its expiry whose directory is already gone", () => {
+    expect(decide([row("gone", hoursAgo(1))], [])).toEqual([
+      { action: "mark", blobId: "gone", bytes: 1_024 },
+    ]);
+  });
+
+  it("keeps a live row whose directory is missing: the write may still be landing (GRA-123)", () => {
+    expect(decide([row("landing", hoursOn(1))], [])).toEqual([
+      { action: "keep", name: "landing", reason: "landing" },
+    ]);
+  });
+
+  it("never removes a live row, however many expired ones sit beside it", () => {
+    const actions = decide(
+      [row("a", hoursOn(1)), row("b", hoursAgo(1)), row("c", hoursOn(23)), row("d", hoursAgo(20))],
+      [{ name: "a" }, { name: "b" }, { name: "c" }, { name: "d" }],
+    );
+    expect(
+      actions.filter((a) => a.action !== "keep").map((a) => "blobId" in a && a.blobId),
+    ).toEqual(["b", "d"]);
+    expect(actions.filter((a) => a.action === "keep").map((a) => "name" in a && a.name)).toEqual([
+      "a",
+      "c",
+    ]);
+  });
+
+  it("expires a row at the instant its expiry arrives, as the door does (isBlobExpired), and keeps one a millisecond ahead", () => {
+    expect(decide([row("edge", NOW)], [{ name: "edge" }])).toEqual([
+      { action: "remove", blobId: "edge", bytes: 1_024, mark: true },
+    ]);
+    expect(decide([row("edge", new Date(NOW.getTime() + 1))], [{ name: "edge" }])).toEqual([
+      { action: "keep", name: "edge", reason: "live" },
+    ]);
+    expect(isBlobExpired(NOW, NOW)).toBe(true);
+    expect(isBlobExpired(new Date(NOW.getTime() - 1), NOW)).toBe(true);
+    expect(isBlobExpired(new Date(NOW.getTime() + 1), NOW)).toBe(false);
+  });
+
+  it("removes again, without marking, a directory whose row is already marked; a marked row with no directory is not in the plan", () => {
+    expect(
+      decide(
+        [row("back", hoursAgo(30), hoursAgo(5)), row("done", hoursAgo(30), hoursAgo(5))],
+        [{ name: "back" }],
+      ),
+    ).toEqual([{ action: "remove", blobId: "back", bytes: 1_024, mark: false }]);
+  });
+});
+
+describe("a directory with no row", () => {
+  /** What the store measured: written two hours ago, 512 real bytes, which the sidecar agrees with. */
+  const measured = { lastWrittenAt: hoursAgo(2), bytes: 512 };
+
+  it("adopts one with a readable sidecar the store's measurements agree with, as a row with the sidecar's times", () => {
+    expect(decide([], [{ name: "orphan", sidecar: sidecar(), stat: measured }])).toEqual([
+      {
+        action: "adopt",
+        blobId: "orphan",
+        row: {
+          bytes: 512,
+          contentType: "application/pdf",
+          name: "invoice.pdf",
+          writtenAt: hoursAgo(2),
+          expiresAt: hoursOn(22),
+          toolVersion: "ver_1",
+        },
+      },
+    ]);
+  });
+
+  it("adopts one whose sidecar names no agent (a runner invoked by hand), and one already past its expiry, to be judged as a row next pass", () => {
+    const actions = decide(
+      [],
+      [
+        {
+          name: "by-hand",
+          sidecar: sidecar({ agentId: null, toolVersion: null, name: undefined }),
+          stat: measured,
+        },
+        {
+          name: "stale",
+          sidecar: sidecar({ expiresAt: hoursAgo(3).toISOString() }),
+          stat: measured,
+        },
+      ],
+    );
+    expect(actions.map((a) => a.action)).toEqual(["adopt", "adopt"]);
+    expect(actions[0]).toMatchObject({ row: { toolVersion: null, name: null } });
+    expect(actions[1]).toMatchObject({ row: { expiresAt: hoursAgo(3) } });
+  });
+
+  /** ADR 0023: the mount is the scope and the server trusts nothing the sandbox wrote. */
+  it("takes the size from the store, never the sidecar", () => {
+    const [action] = decide(
+      [],
+      [{ name: "understated", sidecar: sidecar({ bytes: 1 }), stat: measured }],
+    );
+    expect(action).toMatchObject({ action: "adopt", row: { bytes: 512 } });
+  });
+
+  it("clamps the expiry to the written time plus the TTL, and the written time to the store's, so a forged far-future sidecar is adopted for a day at most", () => {
+    const [farFuture, forgedPast, noDates] = decide(
+      [],
+      [
+        {
+          name: "far-future",
+          sidecar: sidecar({ expiresAt: hoursOn(24 * 365).toISOString() }),
+          stat: measured,
+        },
+        {
+          // Written "yesterday" says the sidecar, but the store saw the last write two hours ago:
+          // the sidecar's earlier time stands (it can only shorten the life), the expiry it names
+          // is a year out and is clamped to that written time plus the TTL.
+          name: "written-later-than-claimed",
+          sidecar: sidecar({
+            writtenAt: hoursOn(5).toISOString(),
+            expiresAt: hoursOn(24 * 30).toISOString(),
+          }),
+          stat: measured,
+        },
+        {
+          name: "no-dates",
+          sidecar: sidecar({ writtenAt: undefined, expiresAt: undefined }),
+          stat: measured,
+        },
+      ],
+    );
+    expect(farFuture).toMatchObject({
+      action: "adopt",
+      row: { writtenAt: hoursAgo(2), expiresAt: hoursOn(22) },
+    });
+    // A written time later than the store's last write is not believed: the store's stands in.
+    expect(forgedPast).toMatchObject({
+      action: "adopt",
+      row: { writtenAt: hoursAgo(2), expiresAt: hoursOn(22) },
+    });
+    expect(noDates).toMatchObject({
+      action: "adopt",
+      row: { writtenAt: hoursAgo(2), expiresAt: hoursOn(22) },
+    });
+  });
+
+  it("holds the name and the media type to the write rules, and removes a sidecar that breaks one as an orphan", () => {
+    const actions = decide(
+      [],
+      [
+        { name: "long-name", sidecar: sidecar({ name: "a".repeat(256) }), stat: measured },
+        { name: "slash-name", sidecar: sidecar({ name: "../etc/passwd" }), stat: measured },
+        { name: "control-name", sidecar: sidecar({ name: "bad\x00name" }), stat: measured },
+        {
+          name: "long-type",
+          sidecar: sidecar({ contentType: `a/${"b".repeat(128)}` }),
+          stat: measured,
+        },
+        {
+          name: "shapeless-type",
+          sidecar: sidecar({ contentType: "not a media type" }),
+          stat: measured,
+        },
+        { name: "max-name", sidecar: sidecar({ name: "n".repeat(255) }), stat: measured },
+        {
+          name: "with-params",
+          sidecar: sidecar({ contentType: 'text/plain; charset="utf-8"; format=flowed' }),
+          stat: measured,
+        },
+        // The two the runner's write admits and the sweep's own former pattern refused (GRA-199):
+        // a parameter with a space before it, and a bare parameter with no `=`.
+        {
+          name: "charset",
+          sidecar: sidecar({ contentType: "text/plain; charset=utf-8" }),
+          stat: measured,
+        },
+        { name: "bare-param", sidecar: sidecar({ contentType: "text/plain;x" }), stat: measured },
+      ],
+    );
+    expect(actions.map((a) => a.action)).toEqual([
+      "remove_orphan",
+      "remove_orphan",
+      "remove_orphan",
+      "remove_orphan",
+      "remove_orphan",
+      "adopt",
+      "adopt",
+      "adopt",
+      "adopt",
+    ]);
+  });
+
+  it("removes one with no sidecar, an unreadable one, one naming another agent, or one with no data, as an orphan with the bytes the store saw", () => {
+    const stat = { lastWrittenAt: hoursAgo(1), bytes: 77 };
+    expect(
+      decide(
+        [],
+        [
+          { name: "no-sidecar", sidecar: null, stat },
+          { name: "not-json", sidecar: "{not json", stat },
+          { name: "no-size", sidecar: sidecar({ bytes: "many" }), stat },
+          { name: "no-type", sidecar: sidecar({ contentType: "" }), stat },
+          { name: "theirs", sidecar: sidecar({ agentId: "agent_2" }), stat },
+          {
+            name: "no-data",
+            sidecar: sidecar(),
+            stat: { lastWrittenAt: hoursAgo(1), bytes: null },
+          },
+        ],
+      ),
+    ).toEqual([
+      { action: "remove_orphan", blobId: "no-sidecar", bytes: 77 },
+      { action: "remove_orphan", blobId: "not-json", bytes: 77 },
+      { action: "remove_orphan", blobId: "no-size", bytes: 77 },
+      { action: "remove_orphan", blobId: "no-type", bytes: 77 },
+      { action: "remove_orphan", blobId: "theirs", bytes: 77 },
+      { action: "remove_orphan", blobId: "no-data", bytes: null },
+    ]);
+  });
+
+  it("keeps one the store could not measure this pass: gone by the read, or not read at all", () => {
+    expect(
+      decide(
+        [],
+        [
+          { name: "vanished", sidecar: sidecar(), stat: null },
+          { name: "unread", sidecar: sidecar() },
+        ],
+      ),
+    ).toEqual([
+      { action: "keep", name: "vanished", reason: "landing" },
+      { action: "keep", name: "unread", reason: "unread" },
+    ]);
+  });
+});
+
+describe("a .tmp directory", () => {
+  const tmp = (id: string) => `${id}${BLOB_TMP_SUFFIX}`;
+
+  it("keeps one written to inside the bound: the write may still be in progress", () => {
+    expect(
+      decide([], [{ name: tmp("fresh"), stat: { lastWrittenAt: hoursAgo(0.5), bytes: 10 } }]),
+    ).toEqual([{ action: "keep", name: tmp("fresh"), reason: "writing" }]);
+  });
+
+  it("removes one last written to before the bound, with the bytes it holds", () => {
+    expect(
+      decide([], [{ name: tmp("stale"), stat: { lastWrittenAt: hoursAgo(1.5), bytes: 10 } }]),
+    ).toEqual([{ action: "remove_tmp", name: tmp("stale"), bytes: 10 }]);
+  });
+
+  it("is strict at the bound, and keeps one whose age could not be read", () => {
+    expect(
+      decide([], [{ name: tmp("edge"), stat: { lastWrittenAt: hoursAgo(1), bytes: null } }]),
+    ).toEqual([{ action: "keep", name: tmp("edge"), reason: "writing" }]);
+    expect(decide([], [{ name: tmp("unread") }, { name: tmp("gone"), stat: null }])).toEqual([
+      { action: "keep", name: tmp("unread"), reason: "writing" },
+      { action: "keep", name: tmp("gone"), reason: "writing" },
+    ]);
+  });
+
+  it("never has a row, so a sidecar beside it is not read", () => {
+    expect(
+      decide(
+        [],
+        [{ name: tmp("half"), sidecar: sidecar(), stat: { lastWrittenAt: hoursAgo(2), bytes: 3 } }],
+      ),
+    ).toEqual([{ action: "remove_tmp", name: tmp("half"), bytes: 3 }]);
+  });
+
+  it("names a .tmp by its suffix and nothing else", () => {
+    expect(isTmpName("abc.tmp")).toBe(true);
+    expect(isTmpName(".tmp")).toBe(false);
+    expect(isTmpName("abc")).toBe(false);
+    expect(isTmpName("abc.tmp.x")).toBe(false);
+  });
+});
+
+describe("the sidecar reader", () => {
+  it("reads what the runner writes, reads a missing or unparseable date as absent, and refuses anything else", () => {
+    expect(parseBlobSidecar(sidecar())).toMatchObject({ bytes: 512, name: "invoice.pdf" });
+    expect(parseBlobSidecar(sidecar({ writtenAt: undefined, expiresAt: "someday" }))).toMatchObject(
+      { writtenAt: null, expiresAt: null },
+    );
+    for (const bad of ["", "[]", "null", "42", sidecar({ bytes: -1 }), sidecar({ bytes: 1.5 })]) {
+      expect(parseBlobSidecar(bad), bad).toBeNull();
+    }
+  });
+
+  it("holds a name and a media type to the runner's lengths (255 and 128), a name to no slash or control character, a media type to the runner's one pattern", () => {
+    expect(BLOB_NAME_RULES.maxChars).toBe(MAX_BLOB_NAME_CHARS);
+    expect(BLOB_NAME_RULES.maxChars).toBe(255);
+    expect(BLOB_CONTENT_TYPE_RULES.maxChars).toBe(MAX_BLOB_CONTENT_TYPE_CHARS);
+    expect(BLOB_CONTENT_TYPE_RULES.maxChars).toBe(128);
+    expect(BLOB_CONTENT_TYPE_RULES.pattern.source).toBe(MEDIA_TYPE_PATTERN.source);
+    expect(BLOB_CONTENT_TYPE_RULES.pattern.flags).toBe(MEDIA_TYPE_PATTERN.flags);
+    expect(isValidBlobName("invoice (final).pdf")).toBe(true);
+    expect(isValidBlobName("")).toBe(false);
+    expect(isValidBlobName("a/b")).toBe(false);
+    expect(isValidBlobName("a\\b")).toBe(false);
+    expect(isValidBlobName("a\nb")).toBe(false);
+    expect(isValidBlobContentType("application/vnd.ms-excel")).toBe(true);
+    expect(isValidBlobContentType("image/svg+xml")).toBe(true);
+    expect(isValidBlobContentType("text/plain; charset=utf-8")).toBe(true);
+    expect(isValidBlobContentType("text/plain;x")).toBe(true);
+    expect(isValidBlobContentType("text")).toBe(false);
+    expect(isValidBlobContentType("text/")).toBe(false);
+    expect(isValidBlobContentType("not a media type")).toBe(false);
+  });
+});
+
+describe("the plan as a whole", () => {
+  it("judges rows first, then the directories no row claims, in the order given, and touches nothing it was not handed", () => {
+    const actions = decide(
+      [row("expired", hoursAgo(2)), row("live", hoursOn(2))],
+      [
+        { name: "live" },
+        { name: "expired" },
+        { name: "orphan", sidecar: sidecar(), stat: { lastWrittenAt: hoursAgo(2), bytes: 512 } },
+        { name: "junk", sidecar: null, stat: { lastWrittenAt: hoursAgo(9), bytes: null } },
+        { name: `w${BLOB_TMP_SUFFIX}`, stat: { lastWrittenAt: hoursAgo(9), bytes: 1 } },
+      ],
+    );
+    expect(actions.map((a) => a.action)).toEqual([
+      "remove",
+      "keep",
+      "adopt",
+      "remove_orphan",
+      "remove_tmp",
+    ]);
+  });
+});
+
+describe("an agent the database no longer holds (GRA-195)", () => {
+  const gone = (rows: BlobSweepRow[], entries: BlobSweepEntry[]) =>
+    blobSweepDecision({
+      agentId: AGENT,
+      rows,
+      entries,
+      now: NOW,
+      abandonedWriteMs: ABANDONED_AFTER,
+      agentExists: false,
+    }).actions;
+
+  it("removes a committed directory as junk once its last write is past the TTL, whatever its sidecar says, since there is no row to adopt into", () => {
+    const stale = { lastWrittenAt: hoursAgo(25), bytes: 512 };
+    expect(gone([], [{ name: "stale", sidecar: sidecar(), stat: stale }])).toEqual([
+      { action: "remove_orphan", blobId: "stale", bytes: 512 },
+    ]);
+    expect(gone([], [{ name: "bare", sidecar: null, stat: stale }])).toEqual([
+      { action: "remove_orphan", blobId: "bare", bytes: 512 },
+    ]);
+  });
+
+  it("keeps a committed directory younger than the TTL, adopting nothing, and removes it at the instant the TTL is up, as a row's expiry is judged", () => {
+    const fresh = { lastWrittenAt: hoursAgo(2), bytes: 512 };
+    expect(gone([], [{ name: "fresh", sidecar: sidecar(), stat: fresh }])).toEqual([
+      { action: "keep", name: "fresh", reason: "unclaimed" },
+    ]);
+    const edge = { lastWrittenAt: hoursAgo(24), bytes: 512 };
+    expect(gone([], [{ name: "edge", sidecar: null, stat: edge }])).toEqual([
+      { action: "remove_orphan", blobId: "edge", bytes: 512 },
+    ]);
+    const nearly = { lastWrittenAt: new Date(hoursAgo(24).getTime() + 1), bytes: 512 };
+    expect(gone([], [{ name: "nearly", sidecar: null, stat: nearly }])).toEqual([
+      { action: "keep", name: "nearly", reason: "unclaimed" },
+    ]);
+  });
+
+  it("judges a .tmp by the bound and an unread or vanished directory as anywhere", () => {
+    expect(
+      gone(
+        [],
+        [
+          { name: `old${BLOB_TMP_SUFFIX}`, stat: { lastWrittenAt: hoursAgo(2), bytes: 3 } },
+          { name: `young${BLOB_TMP_SUFFIX}`, stat: { lastWrittenAt: hoursAgo(0.5), bytes: 3 } },
+          { name: "unread" },
+          { name: "vanished", sidecar: null, stat: null },
+        ],
+      ),
+    ).toEqual([
+      { action: "remove_tmp", name: `old${BLOB_TMP_SUFFIX}`, bytes: 3 },
+      { action: "keep", name: `young${BLOB_TMP_SUFFIX}`, reason: "writing" },
+      { action: "keep", name: "unread", reason: "unread" },
+      { action: "keep", name: "vanished", reason: "landing" },
+    ]);
+  });
+
+  it("is the default's opposite: the same directory under an agent that exists is adopted", () => {
+    const fresh = { lastWrittenAt: hoursAgo(2), bytes: 512 };
+    expect(decide([], [{ name: "fresh", sidecar: sidecar(), stat: fresh }])[0]?.action).toBe(
+      "adopt",
+    );
+  });
+});

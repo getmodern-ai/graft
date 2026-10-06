@@ -14,10 +14,18 @@ after a publish, asynchronous and best-effort; the mirror here records the call 
 and the S3 mirror is the private package's (GRA-20). Neither interface names a bucket, a volume or a
 region.
 
-`BlobStore` (`list(agentId)`, `readMeta(agentId, blobId)`, `exists(agentId, blobId)`,
-`remove(agentId, name)`) is keyed by agent, reads and removes only, and is the seam a blob past its
-time is deleted through (GRA-189); a blob is written by the runner from inside the sandbox (GRA-186),
-never by the server. `remove` takes a blob id or a `<blobId>.tmp` and refuses anything else. The
+`BlobStore` (`listAgents()`, `list(agentId)`, `readMeta(agentId, blobId)`, `exists(agentId, blobId)`,
+`remove(agentId, name)`, `stat(agentId, name)`) is keyed by agent, reads and removes only, and is the
+seam a blob past its time is deleted through (GRA-189); a blob is written by the runner from inside
+the sandbox (GRA-186), never by the server. `listAgents` answers the agent ids with a directory under
+`.blobs/`, sorted, skipping a symlink or a name that is not an agent id: the store's half of the
+sweep's roster, so an agent that was revoked or deleted still has its directories judged (GRA-195).
+`remove` and `stat` take a blob id or a `<blobId>.tmp`
+and refuse anything else; `stat` answers when the directory was last written (the newest of its own,
+`data`'s and `meta.json`'s modification times) and how many bytes `data` holds, which is how the
+sweep tells a write still landing from one a killed run abandoned. `readMeta` answers `null` for a
+blob or a sidecar confirmed absent and rejects for anything else (a symlink, a permission, a backing
+error), so a caller never reads a failed read as a missing file. The
 backing here is `createFilesystemBlobStore`, over the same root as the toolbox store; the hosted
 form's is the private package's (GRA-192), and `blobStoreConformance` is the suite both run.
 
@@ -30,7 +38,8 @@ form's is the private package's (GRA-192), and `blobStoreConformance` is the sui
                                     its own node_modules and package-lock.json (ADR 0013)
     .drafts/<jobId>/                what an acquire job writes before it publishes
   .blobs/<agentId>/
-    <blobId>/                       one blob (ADR 0023): its `data` and its `meta.json` sidecar, written
+    <blobId>/                       one blob (ADR 0023): its `data` and its `meta.json` sidecar (bytes,
+                                    contentType, name, writtenAt, expiresAt, agentId, toolVersion), written
                                     by the runner (GRA-186), removed by the sweep once expired (GRA-189)
     <blobId>.tmp/                   the same blob while it is still being written, renamed whole
 ```

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { askAnsweredMessage, FROM_CARD, FROM_CARD_PARAM, openedFromCard } from "./card.rules";
+import {
+  askAnsweredMessage,
+  FROM_CARD,
+  FROM_CARD_PARAM,
+  openedFromCard,
+  setupCompletedMessage,
+} from "./card.rules";
 import { linkCallbackRedirect, readLinkCallbackSearch } from "./link.rules";
 
 /**
@@ -38,5 +44,9 @@ describe("from=card", () => {
 
   it("names the ask in the message the handoff page posts its opener", () => {
     expect(askAnsweredMessage("pa_1")).toEqual({ type: "graft:ask", pendingActionId: "pa_1" });
+  });
+
+  it("names no ask in the message the Setup page posts its opener (GRA-210)", () => {
+    expect(setupCompletedMessage()).toEqual({ type: "graft:ask", setup: "completed" });
   });
 });

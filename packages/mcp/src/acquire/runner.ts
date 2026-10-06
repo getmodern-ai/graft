@@ -1,6 +1,7 @@
 import { claimRunnableAcquireJobs } from "@graft/core";
 import type { AcquireJobRow, RunnableAcquireJob } from "@graft/db/repo/acquire-job";
 
+import { newBlobTally, outsideBlobTally, runUnderBlobTally } from "../blobs";
 import type { McpDeps } from "../deps";
 import { errorMessage } from "../sandbox";
 import { DEFAULT_HEARTBEAT_MS, runAcquireJob } from "./job";
@@ -54,8 +55,24 @@ export type AcquireRunnerEvent =
       /** How many drafts the job made and what it spent — `acquire_attempt` rows and the token ceiling's counter. */
       attempts?: number;
       tokenSpend?: number;
+      /**
+       * The blobs the job's runs wrote and the ledger lines refused (GRA-186; `../blobs.ts`), from
+       * the job's own tally: a job runs on the scheduler, not on the call that queued it, so its
+       * writes are reported here and never on that call's `tool_called` event.
+       */
+      blobsWritten: number;
+      blobsDropped: number;
     }
-  | { kind: "failed"; jobId: string; agentId: string; personId: string; error: string };
+  | {
+      kind: "failed";
+      jobId: string;
+      agentId: string;
+      personId: string;
+      error: string;
+      /** The same two counts as `finished`: a job that crashed after a write still wrote it. */
+      blobsWritten: number;
+      blobsDropped: number;
+    };
 
 export type AcquireRunner = {
   /** Poll now — coalesced: a kick during a tick schedules one more tick, never a parallel one. */
@@ -99,7 +116,12 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
       personId: claimed.personId,
       resumed: job.attempts > 0 || job.tokenSpend > 0,
     });
-    const work = runAcquireJob(deps, claimed, { heartbeatMs, now: options.now })
+    // A tally of the job's own (`../blobs.ts`): the dry run's blobs, and later a fixture's, are
+    // counted on this job's event, whichever call or tick started it.
+    const tally = newBlobTally();
+    const work = runUnderBlobTally(tally, () =>
+      runAcquireJob(deps, claimed, { heartbeatMs, now: options.now }),
+    )
       .then(
         (row) => {
           options.onEvent?.({
@@ -110,6 +132,8 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
             status: row?.status ?? "gone",
             ...(row?.status === "failed" ? { failure: describeFailure(row.result) } : {}),
             ...(row ? { attempts: row.attempts, tokenSpend: row.tokenSpend } : {}),
+            blobsWritten: tally.written,
+            blobsDropped: tally.dropped,
           });
         },
         (error: unknown) => {
@@ -119,6 +143,8 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
             agentId: job.agentId,
             personId: claimed.personId,
             error: errorMessage(error),
+            blobsWritten: tally.written,
+            blobsDropped: tally.dropped,
           });
         },
       )
@@ -163,11 +189,15 @@ export function createAcquireRunner(deps: McpDeps, options: AcquireRunnerOptions
   const kick = (): void => {
     if (kickScheduled) return;
     kickScheduled = true;
-    // Off the caller's stack: the meta-tool answers before the roster is read.
-    setTimeout(() => {
-      kickScheduled = false;
-      runTick();
-    }, 0).unref?.();
+    // Off the caller's stack: the meta-tool answers before the roster is read. And outside the
+    // caller's blob tally, so a tick claiming jobs across agents inherits nothing of the call that
+    // kicked it (`../blobs.ts`, Greptile on #144).
+    outsideBlobTally(() =>
+      setTimeout(() => {
+        kickScheduled = false;
+        runTick();
+      }, 0),
+    ).unref?.();
   };
 
   return {

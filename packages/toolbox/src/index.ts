@@ -27,4 +27,10 @@ export {
   versionPath,
 } from "./layout";
 export { createNoopToolboxMirror, type RecordingToolboxMirror } from "./mirror";
-export type { BlobStore, ToolboxFile, ToolboxMirror, ToolboxStore } from "./types";
+export type {
+  BlobDirectoryStat,
+  BlobStore,
+  ToolboxFile,
+  ToolboxMirror,
+  ToolboxStore,
+} from "./types";

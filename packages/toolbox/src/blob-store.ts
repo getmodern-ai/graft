@@ -6,11 +6,13 @@ import {
   agentBlobsPath,
   assertAgentId,
   assertBlobId,
+  BLOB_DATA_FILE,
   BLOB_META_FILE,
   BLOB_TMP_SUFFIX,
+  BLOBS_ROOT,
   blobPath,
 } from "./layout";
-import type { BlobStore } from "./types";
+import type { BlobDirectoryStat, BlobStore } from "./types";
 
 /**
  * The blob store as directories on this machine, under the same root the filesystem toolbox store
@@ -21,8 +23,9 @@ import type { BlobStore } from "./types";
  * `packages/sandbox-docker`'s `mountToolbox` with `blobs`).
  *
  * This store never writes a blob: the runner does, inside the sandbox, into `<blobId>.tmp` and then
- * by rename (GRA-186). What the server needs of a blob is to see it, read its sidecar and remove it
- * when the sweep says so (GRA-189), and those are the four verbs.
+ * by rename (GRA-186). What the server needs of a blob is to see it, read its sidecar, tell how
+ * old a directory is and remove it when the sweep says so (GRA-189), and to know which agents have
+ * a directory at all (GRA-195), and those are the six verbs.
  *
  * **What the sandbox wrote is untrusted input here.** ADR 0023's "the scope is a mount" paragraph
  * makes the mount the guarantee for code running *inside* the sandbox; this store reads the same
@@ -49,6 +52,23 @@ export function createFilesystemBlobStore(options: { root: string }): Filesystem
     root,
     agentRoot,
 
+    listAgents: async () => {
+      const entries = await readdir(join(root, BLOBS_ROOT), { withFileTypes: true }).catch(
+        (error: unknown) => {
+          // No `.blobs/` yet is no agents: the first blob any run writes makes it.
+          if ((error as { code?: unknown }).code === "ENOENT") return [];
+          throw error;
+        },
+      );
+      // As `list` below: a symlink is not a directory to `Dirent`, and a name that is not an agent id
+      // is one no other verb would accept, so both are skipped rather than handed to a caller that
+      // could do nothing with them.
+      return entries
+        .filter((entry) => entry.isDirectory() && isAgentName(entry.name))
+        .map((entry) => entry.name)
+        .sort();
+    },
+
     list: async (agentId) => {
       const dir = agentRoot(agentId);
       const entries = await readdir(dir, { withFileTypes: true }).catch((error: unknown) => {
@@ -73,7 +93,9 @@ export function createFilesystemBlobStore(options: { root: string }): Filesystem
       const sidecar = directory?.isDirectory()
         ? await inspect(file, `the sidecar of blob ${blobId} of agent ${agentId}`)
         : null;
-      if (!sidecar?.isFile()) throw new Error(`no such blob for agent ${agentId}: ${blobId}`);
+      // Confirmed absent (no directory, or no sidecar in it) is null; a link was already refused
+      // by `inspect`, and a read that fails for any other reason rejects as itself.
+      if (!sidecar?.isFile()) return null;
       await assertBeneath(agentRoot(agentId), file);
       return readFile(file, "utf8");
     },
@@ -95,6 +117,28 @@ export function createFilesystemBlobStore(options: { root: string }): Filesystem
       await assertBeneath(agentRoot(agentId), target);
       await rm(target, { recursive: true, force: true });
     },
+
+    stat: async (agentId, name): Promise<BlobDirectoryStat | null> => {
+      assertAgentId(agentId);
+      assertBlobName(name);
+      const dir = join(agentRoot(agentId), name);
+      const directory = await inspect(dir, `${name} of agent ${agentId}`);
+      if (!directory?.isDirectory()) return null;
+      await assertBeneath(agentRoot(agentId), dir);
+      const [data, meta] = await Promise.all([
+        inspect(join(dir, BLOB_DATA_FILE), `the data of ${name} of agent ${agentId}`),
+        inspect(join(dir, BLOB_META_FILE), `the sidecar of ${name} of agent ${agentId}`),
+      ]);
+      // The newest of the three: a directory's own mtime moves when an entry lands in it, `data`'s
+      // on every chunk the runner streams, so a write in progress is never read as old.
+      const moments = [directory, data, meta]
+        .filter((info): info is Stats => info !== null)
+        .map((info) => info.mtimeMs);
+      return {
+        lastWrittenAt: new Date(Math.max(...moments)),
+        bytes: data?.isFile() ? data.size : null,
+      };
+    },
   };
 }
 
@@ -112,6 +156,15 @@ export function assertBlobName(name: string): void {
 function isBlobName(name: string): boolean {
   try {
     assertBlobName(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isAgentName(name: string): boolean {
+  try {
+    assertAgentId(name);
     return true;
   } catch {
     return false;

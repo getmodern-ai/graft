@@ -51,7 +51,7 @@ export function ConnectionCalls({ connectionId }: { connectionId: string }) {
             />
           </TableBodyNote>
         ) : calls.length === 0 ? (
-          <TableBodyNote colSpan={COLUMNS}>No calls against this vendor yet.</TableBodyNote>
+          <TableBodyNote colSpan={COLUMNS}>No calls to this integration yet.</TableBodyNote>
         ) : (
           calls.map((call) => (
             <DataTableRow key={call.id}>

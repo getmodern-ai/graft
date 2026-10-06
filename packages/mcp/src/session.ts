@@ -17,6 +17,7 @@ import {
   ASK_CARD_RESOURCE_URI,
   UI_EXTENSION_ID,
 } from "./ask-card";
+import { DESCRIPTION_BUDGET } from "./bounds";
 import type { SessionContext } from "./context";
 import type { McpDeps } from "./deps";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -56,22 +57,45 @@ export const SERVER_INFO = { name: "graft", version: "0.1.0" } as const;
  * 512 characters (OpenAI's front-loading rule), and pinned sentence for sentence to
  * `skills/hermes-graft/SKILL.md` by `session.test.ts`, so the skill and the handshake cannot
  * disagree on a rule. Graft's vocabulary, sentence case, no em dashes, no exclamation marks.
+ *
+ * The budget is spent to the last few characters, so a clause added here is paid for by
+ * tightening another: GRA-190's blob rule cost the facts the descriptions already carry (that
+ * `acquire` waits for the job and `acquire_status` for news, the four authoring tools' names, which
+ * `ADVANCED_WHEN` opens each of them with) and "from Graft" in the opener, said by the handshake
+ * itself. Measure with `SERVER_INSTRUCTIONS.length` before adding a word. GRA-197's sentence on
+ * `ctx.fetch` and an absolute URL is the authoring skill's alone
+ * (`packages/runner/skills/authoring-a-tool/SKILL.md`): it is a rule for the model that writes the
+ * module, which is Graft's and not the client's, and at 2,039 of 2,048 the budget had no room for
+ * it without tightening a rule of conduct.
  */
+
+/**
+ * The one rule of conduct about a blob (GRA-190; ADR 0023), said in the same words by the Hermes
+ * skill: a file crosses from one tool to the next as the ref, and the producing tool runs first so
+ * the consuming tool's `acquire` has a real ref for its dry run rather than the fixture the job
+ * mints without one (`acquire/job.ts`). The reason is the skill's and `acquire`'s description's;
+ * here the rule alone, for the budget.
+ */
+export const BLOB_RULE =
+  "A file moves between tools as a blob:// ref in one result and the next input, never as content; run the producing tool before acquiring the consuming one.";
+
 export const SERVER_INSTRUCTIONS = [
-  "Your working set from Graft: authored tools promoted for you as vendor__name, and these fixed ones.",
-  "When a task has no tool, work in this order. Call find_tool first: a demoted match may exist; promote it, no authoring needed. No connection to the vendor in your scope: call request_connection. Call acquire only when nothing fits. It waits for the job; unfinished, poll acquire_status, which waits for news, and relay the newest progress line in a sentence. Do not start a second acquire for the same goal. There is no route to a vendor except through a Graft tool. Do not drive the authoring tools (read_web_page, write_file, check_tool, publish_tool) or an execute__ tool unless the person asked you to author by hand.",
-  "Any answer with a url and an awaiting_ word (approval, connection, credential, scope) is a handoff: the next step is the person's, in the console. Send them the link exactly as returned, then wait; when they say so, call the same tool again with the same arguments. If cardShown is true the ask is on a card in this conversation: relay the url only if they say they cannot see it. Never ask the person for an API key, a password or a token in chat, whatever the vendor calls it. The console is where secrets go; you never see one. Never propose a made-up key for a vendor that documents none. A rotated or expired credential is request_credential on the existing connection, never a new one. The connection page offers the build approval, on by default; left on, acquire starts without a second link, so do not tell the person to expect one.",
-  "Some clients snapshot the tool list per conversation, missing a new tool: run_tool { vendor, name, input } calls it by name. The acquire result and find_tool carry the tool's inputSchema for run_tool. Re-fetch on notifications/tools/list_changed.",
+  "Your working set: authored tools promoted for you as vendor__name, and the fixed ones.",
+  "When a task has no tool, work in this order. Call find_tool first: a demoted match may exist; promote it, no authoring needed. No vendor connection in your scope: call request_connection. Call acquire only when nothing fits; while it runs, poll acquire_status and relay the newest progress line in a sentence. Do not start a second acquire for the same goal. There is no route to a vendor except through a Graft tool. Do not drive the authoring tools or execute__ tools unless the person asked you to author by hand.",
+  "An answer with a url and an awaiting_ word (approval, connection, credential, scope) is a handoff: the next step is the person's, in the console. Send the link exactly as returned, then wait; when they say so, call the same tool again with the same arguments. If cardShown is true the ask is on a card in this conversation: relay the url only if they say they cannot see it. Never ask the person for an API key, a password or a token in chat, by any name. The console is where secrets go; you never see one. Never propose a made-up key for a vendor that documents none. A rotated or expired credential is request_credential on the existing connection, never a new one. The connection page offers the build approval, on by default; left on, acquire starts without a second link, so do not tell the person to expect one.",
+  // The blob rule (GRA-190; ADR 0023) rides with run_tool's paragraph, since both are about what a
+  // tool's result and the next call's input carry. The facts behind it (the `blobs` list, the
+  // door's three refusals, the fixture) are the descriptions' (`tools/meta.ts`, `blobs.ts`).
+  `Some clients snapshot the tool list per conversation: run_tool { vendor, name, input } calls it by name. The acquire result and find_tool carry the tool's inputSchema for run_tool. Re-fetch on notifications/tools/list_changed. ${BLOB_RULE}`,
   "A read-only tool never asks. Any other tool asks once, and the answer holds, a destructive tool too; the person can set a tool to ask every time. acquire asks once per agent per connection. answer_ask is the ask card's, not yours.",
 ].join("\n\n");
 
 /**
- * How long `SERVER_INSTRUCTIONS` may be, and how long any one tool description may be: Claude Code
- * caps both at 2KB per server (its CHANGELOG, 2.1.84: "MCP tool descriptions and server
- * instructions are now capped at 2KB"), the one documented cap; ChatGPT and Claude.ai publish none.
- * GRA-54's 1,800 was a guess under it; the research on GRA-111 is the source for this figure.
+ * How long `SERVER_INSTRUCTIONS` may be: the same 2KB Claude Code caps any one tool description at
+ * (`bounds.ts`'s `DESCRIPTION_BUDGET` has the source), one number spelled once, since GRA-200 holds
+ * an authored tool's composed description to it in `tools.ts`.
  */
-export const INSTRUCTIONS_BUDGET = 2_048;
+export const INSTRUCTIONS_BUDGET = DESCRIPTION_BUDGET;
 
 export type AgentSession = {
   server: Server;

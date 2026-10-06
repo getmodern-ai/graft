@@ -86,7 +86,7 @@ export function CreateAgentDialog({
                 Connect your harness with the token below. It will not be shown again.
               </DialogDescription>
             </DialogHeader>
-            <TokenOnce token={created.token} />
+            <TokenOnce token={created.token} agentName={created.agent.name} />
             <DialogFooter>
               <Button onClick={close}>I have copied the token</Button>
             </DialogFooter>
