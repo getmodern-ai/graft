@@ -6,6 +6,7 @@ import {
   JOB_POLL_MS,
   jobPollInterval,
   progressCard,
+  progressPart,
   progressStage,
   SETUP_FAILED_LABEL,
   SETUP_STAGE_EXPLANATION,
@@ -300,5 +301,16 @@ describe("jobPollInterval", () => {
 
   it("stops while the read failed, leaving the step's Retry to read again", () => {
     expect(jobPollInterval({ status: "error", data: undefined })).toBe(false);
+  });
+});
+
+describe("progressPart", () => {
+  it("counts the five parts the building row names, and all five on a pass", () => {
+    expect(progressPart({ kind: "working", label: "Waiting to start" })).toBe(0);
+    expect(progressPart({ kind: "working", label: "Reading the documentation" })).toBe(1);
+    expect(progressPart({ kind: "working", label: "Writing the tool" })).toBe(2);
+    expect(progressPart({ kind: "working", label: "Trying it against the real service" })).toBe(4);
+    expect(progressPart({ kind: "working", label: "Dry run" })).toBe(5);
+    expect(progressPart({ kind: "passed", label: "The tool is ready" })).toBe(5);
   });
 });

@@ -86,6 +86,7 @@ export function TaskPicker({
       <SetupChoice
         name="setup-task"
         legend={`Tasks for ${integrationName}`}
+        variant="task"
         options={tasks.map((task) => ({ value: task, label: task }))}
         value={fromCards ? value : null}
         onChange={onChange}

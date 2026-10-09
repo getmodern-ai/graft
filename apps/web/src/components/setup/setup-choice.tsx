@@ -1,5 +1,6 @@
 import type * as React from "react";
 
+import { CheckCircleIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
 export type SetupChoiceOption<T extends string> = {
@@ -34,6 +35,7 @@ export function SetupChoice<T extends string>({
   disabled,
   className,
   layout = "row",
+  variant = "radio",
 }: {
   name: string;
   legend: string;
@@ -43,6 +45,11 @@ export function SetupChoice<T extends string>({
   disabled?: boolean;
   className?: string;
   layout?: "row" | "stack";
+  /**
+   * `task`: the tool screen's cards (the frames' idea cards), the label in the base size, no drawn
+   * radio, and a check in the primary colour on the chosen one.
+   */
+  variant?: "radio" | "task";
 }) {
   return (
     <fieldset
@@ -63,6 +70,7 @@ export function SetupChoice<T extends string>({
             className={cn(
               "relative flex cursor-pointer gap-3 rounded-lg border bg-card p-4 text-left transition-colors hover:bg-muted/50",
               layout === "row" ? "items-center" : "flex-col items-start",
+              variant === "task" ? "min-h-24 items-start" : null,
               option.dashed ? "border-dashed bg-muted/50" : null,
               "has-disabled:cursor-not-allowed has-disabled:opacity-50",
               "has-checked:border-primary has-checked:bg-primary/5",
@@ -80,7 +88,12 @@ export function SetupChoice<T extends string>({
             />
             {option.media}
             <span className="flex min-w-0 flex-1 flex-col gap-1 pr-6">
-              <span className="flex flex-wrap items-center gap-2 font-medium text-sm">
+              <span
+                className={cn(
+                  "flex flex-wrap items-center gap-2 font-medium",
+                  variant === "task" ? "text-base" : "text-sm",
+                )}
+              >
                 {option.label}
                 {option.aside}
               </span>
@@ -88,15 +101,24 @@ export function SetupChoice<T extends string>({
                 <span className="text-muted-foreground text-xs">{option.description}</span>
               ) : null}
             </span>
-            <span
-              aria-hidden="true"
-              className={cn(
-                "absolute top-4 right-4 flex size-4 items-center justify-center rounded-full border border-input bg-background",
-                checked ? "border-primary" : null,
-              )}
-            >
-              {checked ? <span className="size-2 rounded-full bg-primary" /> : null}
-            </span>
+            {variant === "task" ? (
+              checked ? (
+                <CheckCircleIcon
+                  aria-hidden="true"
+                  className="absolute top-4 right-4 size-5 text-primary"
+                />
+              ) : null
+            ) : (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute top-4 right-4 flex size-4 items-center justify-center rounded-full border border-input bg-background",
+                  checked ? "border-primary" : null,
+                )}
+              >
+                {checked ? <span className="size-2 rounded-full bg-primary" /> : null}
+              </span>
+            )}
           </label>
         );
       })}

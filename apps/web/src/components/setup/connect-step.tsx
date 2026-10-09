@@ -3,8 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircleIcon, HourglassIcon, LockIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { PendingActionCard } from "@/components/pending/pending-action-card";
+import { SetupTaskRow } from "@/components/setup/setup-app-card";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Badge } from "@/components/ui/badge";
@@ -60,7 +60,7 @@ function OpenAsk({ state, askId }: { state: SetupStateData; askId: string | null
 
   const task = state.setup?.goal ?? null;
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-[880px] flex-col gap-6">
       <SetupStepHeader
         title={`Connect ${vendorName}`}
         description={
@@ -69,14 +69,6 @@ function OpenAsk({ state, askId }: { state: SetupStateData; askId: string | null
             : `${state.agent?.name ?? "Your agent"} asks for this connection as its own, the way it would from your harness. Answer it here.`
         }
       />
-      {task ? (
-        <div className="flex items-center gap-3 rounded-lg border bg-muted/50 px-4 py-3 text-sm">
-          <SetupLogo starterId={state.setup?.starterId} tile={false} className="size-5" />
-          <HourglassIcon className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate font-medium">{task}</span>
-          <span className="shrink-0 text-muted-foreground text-xs">Waits for {vendorName}</span>
-        </div>
-      ) : null}
       {view.kind === "card" ? (
         <PendingActionCard
           // Keyed by the ask: another tab choosing another starter replaces the ask under this card,
@@ -84,6 +76,15 @@ function OpenAsk({ state, askId }: { state: SetupStateData; askId: string | null
           key={view.action.id}
           action={view.action}
           origin="setup"
+          setupFooter={
+            task ? (
+              <SetupTaskRow
+                icon={<HourglassIcon className="size-5 text-muted-foreground" />}
+                task={task}
+                note={`Waits for ${vendorName}`}
+              />
+            ) : null
+          }
           onAnswered={() => void queryClient.invalidateQueries({ queryKey: setupKeys.current })}
         />
       ) : (

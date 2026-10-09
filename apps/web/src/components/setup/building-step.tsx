@@ -2,18 +2,25 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { CodeBlock } from "@/components/code-block";
-import { CheckCircleIcon, ErrorIcon, ScheduleIcon, WarningIcon } from "@/components/icons";
+import { CheckCircleIcon, ErrorIcon, ScheduleIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
+import { SetupAppCard, SetupTaskRow } from "@/components/setup/setup-app-card";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
 import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { jobPollInterval, type ProgressCard, progressCard } from "@/lib/setup-progress";
+import {
+  jobPollInterval,
+  type ProgressCard,
+  progressCard,
+  progressPart,
+  SETUP_BUILD_PARTS,
+} from "@/lib/setup-progress";
 import {
   acquireJobQuery,
   chooseSetupTask,
@@ -86,9 +93,10 @@ function BuildingJob({
 
   const busy = retry.isPending || onward.isPending || next.isPending || again.isPending;
   const failed = card.kind === "failed";
+  const part = progressPart(card);
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-[880px] flex-col gap-6">
       <SetupStepHeader
         title={failed ? "Your tool needs another try" : "Building your tool"}
         description={
@@ -97,17 +105,6 @@ function BuildingJob({
             : `${name} is connected. Graft's model is writing, checking and trying the tool against the real service.`
         }
       />
-      {connection ? (
-        <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3">
-          <SetupLogo starterId={goal.data?.starterId} tile={false} className="size-6" />
-          <div className="flex min-w-0 flex-1 flex-col">
-            <span className="font-medium">{connection.displayName}</span>
-            <span className="text-muted-foreground text-xs">Connected · read-only</span>
-          </div>
-          <CheckCircleIcon className="size-5 text-success" />
-        </div>
-      ) : null}
-
       {job.isError ? (
         <p className="text-muted-foreground text-sm">
           <RetryNotice
@@ -118,7 +115,60 @@ function BuildingJob({
           />
         </p>
       ) : (
-        <ProgressCardView card={card} pending={job.isPending} />
+        <SetupAppCard
+          media={<SetupLogo starterId={goal.data?.starterId} tile={false} className="size-8" />}
+          name={connection?.displayName ?? "Your integration"}
+          chip={<Badge variant="success">Connected</Badge>}
+          subline="Connected · read-only"
+          action={<CheckCircleIcon className="size-6 text-success" />}
+        >
+          <SetupTaskRow
+            icon={
+              card.kind === "working" ? (
+                <Spinner className="size-5 text-primary" />
+              ) : card.kind === "passed" ? (
+                <CheckCircleIcon className="size-5 text-success" />
+              ) : (
+                <ErrorIcon className="size-5 text-destructive" />
+              )
+            }
+            task={task ?? "Your first tool"}
+            note={
+              job.isPending
+                ? "Reading the job…"
+                : card.kind === "working"
+                  ? part > 0
+                    ? `${card.label} · ${part} of ${SETUP_BUILD_PARTS}`
+                    : card.label
+                  : card.label
+            }
+            progress={card.kind === "working" ? part / SETUP_BUILD_PARTS : null}
+          />
+          {failed && card.message ? (
+            <div className="flex flex-col gap-3">
+              <p className="flex items-center gap-2 text-destructive text-sm">
+                <ErrorIcon className="size-4 shrink-0" />
+                {card.message}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => retry.mutate(undefined)}
+                  disabled={busy}
+                >
+                  {retry.isPending ? "Going back…" : "Change the tool"}
+                </Button>
+              </div>
+            </div>
+          ) : card.kind === "working" && card.message ? (
+            <p className="truncate text-muted-foreground text-xs" title={card.message}>
+              {card.attempt ? `Attempt ${card.attempt} · ` : ""}
+              {card.message}
+            </p>
+          ) : null}
+          <BuildDetails card={card} />
+        </SetupAppCard>
       )}
 
       <SetupFooter
@@ -140,9 +190,6 @@ function BuildingJob({
       >
         {failed ? (
           <>
-            <Button variant="outline" onClick={() => retry.mutate(undefined)} disabled={busy}>
-              {retry.isPending ? "Going back…" : "Change the tool"}
-            </Button>
             <Button variant="outline" onClick={() => onward.mutate(undefined)} disabled={busy}>
               {onward.isPending ? "Finishing…" : "Finish without a tool"}
             </Button>
@@ -166,75 +213,30 @@ function BuildingJob({
   );
 }
 
-/**
- * The card itself. Composed for Setup (ADR 0017's delta): the `Card` primitive at its `sm` size,
- * one row of a 16px status glyph (`Spinner`, `CheckCircleIcon`, `WarningIcon` in the destructive
- * token) beside the label in `CardTitle`'s weight, the message under it in `text-muted-foreground
- * text-sm` clamped to one line, the attempt count at the end of the row, and the *Details*
- * disclosure beneath, the setup disclosure over an `ol` of the job's lines and their teaching.
- * The row is `aria-live="polite"`, so the label and the message are read as they change.
- */
-function ProgressCardView({ card, pending }: { card: ProgressCard; pending: boolean }) {
+/** The job's own lines, with what each stage is for, behind *Details*; the failure's raw text first. */
+function BuildDetails({ card }: { card: ProgressCard }) {
+  if (card.lines.length === 0 && !card.failureDetails) return null;
   return (
-    <Card size="sm">
-      <CardContent className="flex flex-col gap-3">
-        <div className="flex items-start gap-3" aria-live="polite">
-          <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
-            {card.kind === "working" ? (
-              <Spinner />
-            ) : card.kind === "passed" ? (
-              <CheckCircleIcon className="size-4" />
-            ) : (
-              <WarningIcon className="size-4 text-destructive" />
-            )}
-          </span>
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <p className="font-medium text-sm">{card.label}</p>
-            {pending ? (
-              <p className="text-muted-foreground text-sm">Reading the job…</p>
-            ) : card.message ? (
-              <p
-                className={
-                  card.kind === "failed"
-                    ? "text-muted-foreground text-sm"
-                    : "truncate text-muted-foreground text-sm"
-                }
-                title={card.message}
-              >
-                {card.message}
-              </p>
+    <SetupDisclosure label="Details">
+      {card.failureDetails ? (
+        <CodeBlock
+          label="What the job reported"
+          code={card.failureDetails}
+          copyLabel="Copy details"
+          wrap
+        />
+      ) : null}
+      <ol className="flex flex-col gap-3">
+        {card.lines.map((entry, index) => (
+          // The lines only ever grow at the end, so the position is the line's identity.
+          <li key={index} className="flex flex-col gap-0.5">
+            <span className="text-sm">{entry.line}</span>
+            {entry.explanation ? (
+              <span className="text-muted-foreground text-xs">{entry.explanation}</span>
             ) : null}
-          </div>
-          {card.attempt ? (
-            <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-              Attempt {card.attempt}
-            </span>
-          ) : null}
-        </div>
-        {card.lines.length > 0 || card.failureDetails ? (
-          <SetupDisclosure label="Details">
-            {card.failureDetails ? (
-              <CodeBlock
-                label="What the job reported"
-                code={card.failureDetails}
-                copyLabel="Copy details"
-                wrap
-              />
-            ) : null}
-            <ol className="flex flex-col gap-3">
-              {card.lines.map((entry, index) => (
-                // The lines only ever grow at the end, so the position is the line's identity.
-                <li key={index} className="flex flex-col gap-0.5">
-                  <span className="text-sm">{entry.line}</span>
-                  {entry.explanation ? (
-                    <span className="text-muted-foreground text-xs">{entry.explanation}</span>
-                  ) : null}
-                </li>
-              ))}
-            </ol>
-          </SetupDisclosure>
-        ) : null}
-      </CardContent>
-    </Card>
+          </li>
+        ))}
+      </ol>
+    </SetupDisclosure>
   );
 }

@@ -69,3 +69,33 @@ export function setupEyebrow(step: SetupStep, starterId: string | null | undefin
   const at = setupStageOf(step, starterId);
   return `Step ${at} of ${SETUP_STAGES.length} · ${SETUP_STAGES[at - 1]?.label ?? ""}`;
 }
+
+/**
+ * What the page does with the browser's history for its stage (forlorn-starfish's 2026-10-09 read:
+ * Setup's steps were server state alone, so after a social sign-in the entry behind Setup was the
+ * provider's authorize page, and browser Back replayed the sign-in into Better Auth's
+ * `state_mismatch`). The URL carries `?stage=` (`SetupSearch`), 0 being a guard entry under the
+ * first stage. Read whenever either side changes:
+ *
+ * - `guard`: no stage in the URL yet; replace it with the guard, then push the stage.
+ * - `push`: the record moved on; push its stage, so Back has an entry to land on.
+ * - `replace`: the record moved back by the footer's Back; the URL follows without a new entry.
+ * - `back`: the URL went back (browser Back) to an earlier stage; run the step's own Back.
+ * - `stay`: Back landed on the guard; push the stage again, so Back never leaves Setup.
+ * - `none`: they agree.
+ */
+export type StageHistoryMove = "guard" | "push" | "replace" | "back" | "stay" | "none";
+
+export function stageHistoryMove(args: {
+  stage: SetupStage;
+  urlStage: number | undefined;
+  /** The URL's stage at the previous read, to tell a browser Back from the record moving on. */
+  previousUrlStage: number | undefined;
+}): StageHistoryMove {
+  const { stage, urlStage, previousUrlStage } = args;
+  if (urlStage === undefined) return "guard";
+  if (urlStage === stage) return "none";
+  const urlWentBack = previousUrlStage !== undefined && urlStage < previousUrlStage;
+  if (urlWentBack) return urlStage === 0 ? "stay" : urlStage < stage ? "back" : "replace";
+  return stage > urlStage ? "push" : "replace";
+}

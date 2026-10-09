@@ -1,13 +1,14 @@
 import { setupCompletedMessage } from "@graft/core/connection/card.rules";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { GraftWordmark } from "@/components/graft-wordmark";
 import { CheckCircleIcon, InfoIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
+import { useSetupBack } from "@/components/setup/setup-footer";
 import { SetupStepView } from "@/components/setup/setup-step";
 import { SetupEyebrowContext } from "@/components/setup/setup-step-header";
 import { SetupStepper, SetupStepperCompact } from "@/components/setup/setup-stepper";
@@ -24,8 +25,15 @@ import {
   SETUP_FROM_CARD,
   setupFinishedToast,
 } from "@/lib/setup-page";
-import { type SetupFinish, setupQuery, skipSetup } from "@/lib/setup-queries";
-import { setupEyebrow, setupStages } from "@/lib/setup-stages";
+import {
+  chooseSetupStarter,
+  type SetupFinish,
+  type SetupStateData,
+  setupQuery,
+  skipSetup,
+} from "@/lib/setup-queries";
+import { setupEyebrow, setupStageOf, setupStages, stageHistoryMove } from "@/lib/setup-stages";
+import { backTargetOf } from "@/lib/setup-steps";
 
 /**
  * **Setup** (CONTEXT.md; ADR 0024): the console's guided first run, full screen. Under the guard
@@ -103,6 +111,7 @@ function SetupRoute() {
 
   const starterId = finished ? null : (state?.setup?.starterId ?? null);
   const stages = setupStages(step, starterId);
+  useStageHistory(state, finished !== null || leaving);
   const eyebrow = setupEyebrow(step, starterId);
   const skipButton =
     step !== "completed" && !leaving ? (
@@ -172,4 +181,56 @@ function SetupRoute() {
       </SetupEyebrowContext.Provider>
     </main>
   );
+}
+
+/**
+ * **Browser Back moves between Setup's stages and never leaves the app**: the stage rides in the
+ * URL (`?stage=`), one history entry per stage reached, read by `stageHistoryMove`. A browser Back
+ * onto an earlier stage runs the footer's own Back (the tool screen's clears the starter, every
+ * other is the record's back move); Back onto the guard entry under the first stage pushes the
+ * stage again, so the entry before Setup, a sign-in's provider page, is never replayed. *Skip for
+ * now* is the way out.
+ */
+function useStageHistory(state: SetupStateData | undefined, done: boolean) {
+  const search = Route.useSearch();
+  const navigate = useNavigate();
+  const back = useSetupBack();
+  const clear = useSetupMutation(chooseSetupStarter);
+  const stage = state ? setupStageOf(state.step, state.setup?.starterId ?? null) : null;
+  const previousUrlStage = useRef<number | undefined>(undefined);
+  const urlStage = search.stage;
+  // What the effect acts with, read at the time it runs: the moves are the URL's and the stage's.
+  const latest = useRef({ state, back, clear, navigate });
+  latest.current = { state, back, clear, navigate };
+
+  useEffect(() => {
+    if (stage === null || done) return;
+    const move = stageHistoryMove({ stage, urlStage, previousUrlStage: previousUrlStage.current });
+    previousUrlStage.current = urlStage;
+    const { state: now, back: goBack, clear: clearStarter, navigate: go } = latest.current;
+    const to = (next: number, replace: boolean) =>
+      void go({ to: "/setup", search: (prev) => ({ ...prev, stage: next }), replace });
+    switch (move) {
+      case "guard":
+        to(0, true);
+        break;
+      case "push":
+      case "stay":
+        to(stage, false);
+        break;
+      case "replace":
+        to(stage, true);
+        break;
+      case "back":
+        if (now?.step === "vendor" && now.setup?.starterId) {
+          clearStarter.mutate({ starterId: null });
+        } else if (now) {
+          const target = backTargetOf(now);
+          if (target) goBack.mutate(target);
+        }
+        break;
+      case "none":
+        break;
+    }
+  }, [stage, urlStage, done]);
 }
