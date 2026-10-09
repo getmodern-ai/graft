@@ -642,15 +642,23 @@ The boot loads it after the migrations (`boot.ts`'s `loadStockOnStart`, `@graft/
 with its files, hosts and the check's result, under one advisory lock; `repo/stock.ts`'s reads are
 unscoped and pinned by name in `repo/scope.test.ts`. The image carries the workspace as
 `apps/server/tools/` (`tsdown.config.ts`, the Dockerfile). `McpDeps.toolSource` (`tool-source.ts`)
-lists, describes and copies; `find_tool` searches stock beside the toolbox at tiers 2 (a connection
-of the vendor in scope, `connectionIds`) and 3 (none, `connect`: the starter's
+lists, describes and copies; `find_tool` searches stock beside the toolbox at tiers 2 (a matching
+connection in scope, `connectionIds`) and 3 (none, `connect`: the starter's
 `request_connection` arguments), with `stock: true`, a person's tool of the same name hiding it.
 `stock-copy.ts`'s `ensureToolForAgent` is the one road in, which `runAuthoredTool` (so `run_tool`
 and the console's run) and `promoteToolForAgent` (so `promote`, and a console route) take: the
 person's tool, or the stock version copied by `@graft/publish`'s `copyStockVersion` as an ordinary
-tool whose version records `stock_tool_id` and `stock_version_id`, bound to the vendor's connection
-in scope, or `connection_needed` with `connect`. Connections match by vendor slug until GRA-241's
-host matching. `@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
+tool whose version records `stock_tool_id` and `stock_version_id`, bound to the matching connection
+in scope, or `connection_needed` with `connect`. **A connection matches by its hosts** (GRA-241):
+`packages/mcp/src/stock-match.ts` is the pure decision, every manifest host among the connection's
+as the proxy's `hostSetOf` reads them, any provider, the vendor slug breaking a tie; `find_tool`'s
+`connectionIds`, the copy's binding and `run.ts`'s follow for a version with a stock origin all use
+it (a remix follows by slug, as GRA-122 has it). A copy made where several match and the slug does
+not decide holds no default, and its run is refused `connection_ambiguous` with `alternatives`.
+`run_tool` takes an optional `connectionId` for any tool (`AuthoredRunArgs.connectionId`), held to
+the scope (`connection_not_in_scope`) and, for a stock copy, to the hosts
+(`connection_hosts_missing`); without it the GRA-122 resolution and its refusals stand.
+`@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
 
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,

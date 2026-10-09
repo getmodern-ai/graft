@@ -50,7 +50,8 @@ import {
   startDetached,
 } from "./sandbox";
 import { compileInputSchema } from "./schema";
-import { ensureToolForAgent } from "./stock-copy";
+import { ensureToolForAgent, namedNotInScopeMessage } from "./stock-copy";
+import { matchStockConnections, stockToolRunsOver } from "./stock-match";
 import { authoredToolName } from "./tool-names";
 
 /**
@@ -97,6 +98,15 @@ import { authoredToolName } from "./tool-names";
  * scope is read before the choice, so a live row the agent was never given is never followed; the
  * approval gate still sits after the choice, so a write asks on the connection it will run against
  * (ADR 0008). A caller that names the connection (`connectionId`) gets no following: it said which.
+ *
+ * **A stock copy follows by hosts, not by slug** (GRA-241; ADR 0025). A version copied from stock
+ * (`stockVersionId` set) runs over any connection whose hosts cover the stock tool's manifest,
+ * whatever its provider, and the candidates are judged by `stock-match.ts`: one match is followed,
+ * several are broken by the vendor slug, and what is still tied is refused naming them under
+ * `alternatives`. A copy made where several matched holds no default, so each of its runs resolves
+ * this way, refused `connection_ambiguous` while it is tied. A named connection the manifest's hosts
+ * are not all among is refused `connection_hosts_missing`. A remix (a version with no stock origin)
+ * is the person's own tool and follows by slug as above.
  *
  * **A blob the module wrote comes back on the runner's ledger, never through the model** (GRA-186;
  * ADR 0023). The runner prints an envelope, `{ result, blobs }`, and this file is where it is read
@@ -464,10 +474,12 @@ export type AuthoredRunArgs = {
   /**
    * The connection to run against instead of the tool's default — `acquire`'s dry run passes the
    * job's (GRA-122): a version published onto an existing tool row is proved against the connection
-   * the job authored it for, not against a default the person may have revoked since. Held to the
-   * same check as the default: in the agent's scope, which names the person's rows and no others
-   * (`connection_not_in_scope` otherwise). Unset, the default decides, and a default this agent
-   * cannot use follows the one live connection of the vendor in its scope (the header).
+   * the job authored it for, not against a default the person may have revoked since; `run_tool`
+   * passes the agent's own (GRA-241), so an agent holding two connections a tool runs over picks
+   * one per call. Held to the same check as the default: in the agent's scope, which names the
+   * person's rows and no others (`connection_not_in_scope` otherwise). Unset, the default decides,
+   * and a default this agent cannot use follows the one live connection of the vendor in its scope
+   * (the header).
    */
   connectionId?: string;
   /**
@@ -556,7 +568,12 @@ async function runHeld(
     ? await getToolByName(ctx, principal, key, deps.tool).then((found) =>
         found ? { ok: true as const, tool: found } : null,
       )
-    : await ensureToolForAgent(deps, scope, key);
+    : await ensureToolForAgent(
+        deps,
+        scope,
+        key,
+        args.connectionId ? { connectionId: args.connectionId } : {},
+      );
   if (!ensured?.ok) {
     return ensured
       ? refuse(ensured.reason, ensured.message, undefined, ensured.details)
@@ -588,8 +605,11 @@ async function runHeld(
   const admission = args.admit ? await args.admit(tool, version.id) : null;
   if (admission) return refuse(admission.reason, admission.message, versioned);
 
+  // A stock copy's hosts, which decide what it runs over (the header; GRA-241). A remix has no
+  // stock origin and follows by slug.
+  const stock = version.stockVersionId ? ((await deps.toolSource?.describe(key)) ?? null) : null;
   const bound = args.connectionId ?? tool.defaultConnectionId;
-  if (!bound) {
+  if (!bound && !stock) {
     return refuse(
       "connection_not_bound",
       `${wireName} is bound to no connection, so there is nothing to run it against.`,
@@ -597,36 +617,54 @@ async function runHeld(
     );
   }
   const scopeIds = await getAgentScope(ctx, scope, deps.agent);
-  const inScope = scopeIds.includes(bound);
+  const inScope = bound !== null && scopeIds.includes(bound);
   if (args.connectionId && !inScope) {
     return refuse(
       "connection_not_in_scope",
-      `${wireName} was asked to run against connection ${bound}, which is not in this agent's scope. The person can add it in the console.`,
+      namedNotInScopeMessage(wireName, args.connectionId),
       versioned,
     );
   }
   // After the scope check and before the gate: a revoked connection's approvals are gone with it,
   // and asking the person for them again is not the next step (GRA-69).
-  const connection = inScope ? await getConnection(ctx, principal, bound, deps.connection) : null;
+  const connection =
+    bound && inScope ? await getConnection(ctx, principal, bound, deps.connection) : null;
   const revoked = connection?.revokedAt != null;
   if (args.connectionId && revoked && connection) {
     await record("refused", versioned);
     return { answer: revokedConnectionRefusal(connection), isError: true };
   }
-  let connectionId = bound;
+  if (args.connectionId && stock && connection && !stockToolRunsOver(stock, connection)) {
+    return refuse(
+      "connection_hosts_missing",
+      `${wireName} calls ${stock.hosts.join(", ")}, and connection ${connection.id} (${connection.displayName}) does not reach all of them, so the tool cannot run over it.`,
+      versioned,
+      { connectionId: connection.id, hosts: [...stock.hosts] },
+    );
+  }
+  let connectionId: string;
   let gated = tool;
-  if (!inScope || revoked) {
+  if (!bound || !inScope || revoked) {
     // The header's last paragraph (GRA-122): the one live connection of the vendor in this agent's
-    // scope, or the refusal naming what stands in the way.
-    const live = await liveConnectionsOfVendor(ctx, principal, tool.vendor, bound, scopeIds, deps);
-    const [target] = live;
-    if (!target || live.length !== 1) {
+    // scope, or for a stock copy the one its hosts choose (GRA-241), or the refusal naming what
+    // stands in the way.
+    const live = await liveConnectionsInScope(ctx, principal, bound, scopeIds, deps);
+    const followed = stock
+      ? matchStockConnections(stock, live)
+      : ((ofVendor) => ({
+          matches: ofVendor,
+          chosen: ofVendor.length === 1 ? (ofVendor[0] ?? null) : null,
+        }))(live.filter((row) => row.vendor === tool.vendor));
+    const target = followed.chosen;
+    if (!target) {
       await record("refused", versioned);
       return {
         answer:
           revoked && connection
-            ? revokedConnectionRefusal(connection, live)
-            : notInScopeRefusal(wireName, bound, live),
+            ? revokedConnectionRefusal(connection, followed.matches)
+            : bound
+              ? notInScopeRefusal(wireName, bound, followed.matches)
+              : unboundStockRefusal(wireName, followed.matches),
         isError: true,
       };
     }
@@ -649,6 +687,8 @@ async function runHeld(
       gated = result.tool;
       if (!result.rebound) connectionId = result.tool.defaultConnectionId ?? target.id;
     }
+  } else {
+    connectionId = bound;
   }
 
   const validator = compileInputSchema(tool.inputSchema);
@@ -883,24 +923,48 @@ function notInScopeRefusal(
 }
 
 /**
- * The live connections of a vendor this agent may run against, other than the tool's default — the
- * candidates a tool whose default this agent cannot use may follow (the header; GRA-122). In the
- * scope, and usable as `request_connection` judges usable (`isConnectionUsable`: not revoked, its
- * provider enabled, its credential or consent in place), so a row the agent was never given, or one
- * that would refuse the call anyway, is neither followed nor named.
+ * The refusal for a stock copy with no default whose hosts several connections in this agent's
+ * scope cover and the slug does not single out (the header; GRA-241): they are named in the
+ * sentence and under `alternatives`, and `run_tool`'s `connectionId` picks one.
  */
-async function liveConnectionsOfVendor(
+function unboundStockRefusal(wireName: string, alternatives: readonly ConnectionOutput[]): Refusal {
+  if (alternatives.length === 0) {
+    return refusal(
+      "connection_not_bound",
+      `${wireName} is bound to no connection, and no connection in this agent's scope reaches the hosts it calls.`,
+    );
+  }
+  const named = alternatives.map((other) => `${other.displayName} (${other.id})`).join(", ");
+  return refusal(
+    "connection_ambiguous",
+    `${wireName} runs over any of ${alternatives.length} connections in this agent's scope — ${named} — and holds no default among them. run_tool with connectionId runs it over the one named.`,
+    {
+      alternatives: alternatives.map((other) => ({
+        connectionId: other.id,
+        displayName: other.displayName,
+      })),
+    },
+  );
+}
+
+/**
+ * The live connections this agent may run against, other than the tool's default — the candidates
+ * a tool whose default this agent cannot use may follow (the header; GRA-122), narrowed to the
+ * tool's vendor or, for a stock copy, to its hosts by the caller. In the scope, and usable as
+ * `request_connection` judges usable (`isConnectionUsable`: not revoked, its provider enabled, its
+ * credential or consent in place), so a row the agent was never given, or one that would refuse
+ * the call anyway, is neither followed nor named.
+ */
+async function liveConnectionsInScope(
   ctx: ServiceContext,
   principal: Principal,
-  vendor: string,
-  defaultId: string,
+  defaultId: string | null,
   scopeIds: readonly string[],
   deps: McpDeps,
 ): Promise<ConnectionOutput[]> {
   const rows = await listConnections(ctx, principal, deps.connection);
   return rows.filter(
     (row) =>
-      row.vendor === vendor &&
       row.id !== defaultId &&
       scopeIds.includes(row.id) &&
       isConnectionUsable(row, deps.connection.providers),
