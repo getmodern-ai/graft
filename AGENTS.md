@@ -638,7 +638,7 @@ tool passes (a starter vendor, hosts among the starter's, the check, the test in
 package's `tsconfig` leaves `tools/` to the check, which types each module against its own schema.
 The boot loads it after the migrations (`boot.ts`'s `loadStockOnStart`, `@graft/core`'s
 `loadStockCatalogue`) into the global catalogue, `stock_tool` and `stock_tool_version` (migration
-0013): no person, no owner tier, a version appended by number when the directory's hash changes,
+0014): no person, no owner tier, a version appended by number when the directory's hash changes,
 with its files, hosts and the check's result, under one advisory lock; `repo/stock.ts`'s reads are
 unscoped and pinned by name in `repo/scope.test.ts`. The image carries the workspace as
 `apps/server/tools/` (`tsdown.config.ts`, the Dockerfile). `McpDeps.toolSource` (`tool-source.ts`)
@@ -1239,6 +1239,23 @@ press of Finish Setup completes and, unless the card opened the page, lands on `
 with `setupFinishedToast` (`lib/setup-page.ts`'s `afterSetupFinish`: `leave`, `close`, or `stay`
 only for a token the finish itself issued); GRA-208 stayed on every console visit and needed a
 second press on *Open the console*.
+
+**Setup v2 picks the task before the connection, and builds the moment it lands** (the Figma
+"Console / Setup v2" frames and their 2026-09-29 decisions; the funnel since 2026-09-25 lost every
+person who connected at the goal step). The record keeps `starter_id` and `goal` (migration 0013):
+`POST /api/setup/starter` (`SetupStarterBody`, null to go back) and `POST /api/setup/task`
+(`SetupTaskBody`) save them through `@graft/core`'s `planSetup` while the record stands on `vendor`,
+so the step order and GRA-215's back rules are unchanged; the task route connects the starter as
+the connect route does, and `setup-build.ts`'s `buildPlannedSetup` starts the job whenever the
+record reaches `goal` with a connection and a saved task, there and on the `GET /api/setup` that
+learns the connection. Each starter offers `moreTasks` beside its curated `goal` (`starterTasks`),
+each with its own `hints`, held to GRA-217's rules and aligned with ADR 0025's stock reads, which
+replace them as stock lands. The console draws four stages over the seven steps
+(`lib/setup-stages.ts`: the vendor step is *Integration* until a starter is chosen and *Tool* after),
+a stepper in the top bar, a centred hero (`SetupEyebrowContext`), selection cards with marks
+(`setup-logo.tsx`; the Figma file's app logos and the marketing site's harness marks under
+`src/assets/setup/`) and a sticky footer with a summary; `tool-step.tsx` and `task-picker.tsx` are
+the tool screen. The rows count `setup_step_completed` as `vendor` (or `vendor_cleared`) and `goal`.
 
 **Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
 amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects

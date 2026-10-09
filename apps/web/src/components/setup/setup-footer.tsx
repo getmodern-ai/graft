@@ -15,41 +15,67 @@ export function useSetupBack() {
 }
 
 /**
- * **One footer on every step** (GRA-215): *Back* at the bottom left, the same move as the rail's
- * link to the step before, and the step's primary action at the bottom right. Composed for Setup
- * (ADR 0017's delta): Cando's dialog footer puts its actions at the end; a wizard needs the way
- * back at the start, so this is the same row with the ghost Back button first and the actions
- * pushed to the end, the rhythm the steps already had. The first step has no Back. `children` is
- * the right-hand side: the primary Button last, a secondary outline one before it.
+ * **One footer on every step** (GRA-215), drawn as Setup v2's sticky bar (the Figma frames'
+ * `StickyFooter`): pinned to the bottom of the viewport across the page's width above a border,
+ * with the step's summary on the left (what is chosen, or what happens next) and its actions on the
+ * right, *Back* first as an outline button and the primary last. `children` is the right-hand
+ * side. `onBack` replaces the record's back move where the step's own Back is something else (the
+ * tool screen's Back clears the starter rather than moving the record); `back={false}` hides it.
  */
 export function SetupFooter({
   state,
   children,
   disabled,
+  summary,
+  onBack,
+  back: showBack = true,
 }: {
   state: SetupStateData;
   children?: React.ReactNode;
   /** Back is held while the step's own action runs, so the two never race. */
   disabled?: boolean;
+  summary?: React.ReactNode;
+  onBack?: { run: () => void; pending: boolean };
+  back?: boolean;
 }) {
   const back = useSetupBack();
   const target = backTargetOf(state);
+  const backButton = !showBack ? null : onBack ? (
+    <Button
+      type="button"
+      variant="outline"
+      disabled={disabled || onBack.pending}
+      onClick={onBack.run}
+    >
+      <ArrowBackIcon />
+      {onBack.pending ? "Going back…" : "Back"}
+    </Button>
+  ) : target ? (
+    <Button
+      type="button"
+      variant="outline"
+      disabled={disabled || back.isPending}
+      onClick={() => back.mutate(target)}
+    >
+      <ArrowBackIcon />
+      {back.isPending ? "Going back…" : "Back"}
+    </Button>
+  ) : null;
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
-      {target ? (
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={disabled || back.isPending}
-          onClick={() => back.mutate(target)}
-        >
-          <ArrowBackIcon />
-          {back.isPending ? "Going back…" : "Back"}
-        </Button>
-      ) : (
-        <span />
-      )}
-      <div className="flex flex-wrap items-center justify-end gap-2">{children}</div>
-    </div>
+    <>
+      {/* Holds the bar's height at the end of the step, so nothing scrolls under it for good. */}
+      <div aria-hidden="true" className="h-20 shrink-0" />
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background">
+        <div className="flex min-h-20 flex-wrap items-center justify-between gap-3 px-4 py-4 md:px-8">
+          <div className="flex min-w-0 items-center gap-2 text-muted-foreground text-sm">
+            {summary}
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {backButton}
+            {children}
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
