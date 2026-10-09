@@ -1,0 +1,27 @@
+{
+  "name": "get-event",
+  "description": "Gets one Google Calendar event by its Google Calendar event ID. Use list-events to supply the eventId; calendarId defaults to primary, and list-calendars supplies other calendar IDs.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Google Calendar event ID supplied by list-events."
+      },
+      "calendarId": {
+        "type": "string",
+        "minLength": 1,
+        "default": "primary",
+        "description": "Calendar ID supplied by list-calendars. Defaults to primary."
+      }
+    },
+    "required": ["eventId"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
