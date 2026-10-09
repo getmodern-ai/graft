@@ -9,9 +9,9 @@ import type { StockToolSource, ToolAnnotations } from "@graft/core";
  * The stock workspace (ADR 0025; GRA-238): one directory per stock tool, `tools/<vendor>/<name>/`,
  * holding the module (`index.ts` and anything beside it), `manifest.json` (name, description,
  * input schema, the hosts it calls, the annotations the check must agree with) and
- * `test-input.json`. The boot reads it with `readStockWorkspace` and loads it into the global
- * catalogue (`@graft/core`'s `loadStockCatalogue`); `workspace.test.ts` is the harness every tool
- * passes on every pull request.
+ * `test-input.json`, and beside them the harness's `recording.json` (`packages/stock/RECORDING.md`). The
+ * boot reads it with `readStockWorkspace` and loads it into the global catalogue (`@graft/core`'s
+ * `loadStockCatalogue`); `harness.test.ts` is the harness every tool passes on every pull request.
  *
  * Resolved off `import.meta.url`, as `@graft/ask-card`'s page is: in this repository that is
  * `packages/stock/tools`; in the server's bundle `import.meta.url` is `apps/server/dist/index.mjs`,
@@ -22,6 +22,12 @@ export const STOCK_DIR = fileURLToPath(new URL("../tools", import.meta.url));
 
 const MANIFEST = "manifest.json";
 const TEST_INPUT = "test-input.json";
+/**
+ * The tool's recorded proof (`recording.ts`; GRA-240): the harness's, not the tool's. Left out of
+ * the module's files and out of the hash, so re-recording a tool appends no catalogue version and
+ * the recording is never copied into a person's toolbox.
+ */
+const RECORDING = "recording.json";
 
 /** A stock tool as the workspace holds it: the catalogue's source and the annotations its manifest declares. */
 export type StockWorkspaceTool = StockToolSource & { annotations: ToolAnnotations };
@@ -72,7 +78,9 @@ export async function readStockWorkspace(dir: string = STOCK_DIR): Promise<Stock
   for (const vendor of await subdirectories(dir)) {
     for (const name of await subdirectories(join(dir, vendor))) {
       const where = `${vendor}/${name}`;
-      const all = await filesUnder(join(dir, vendor, name));
+      const all = (await filesUnder(join(dir, vendor, name))).filter(
+        (file) => file.path !== RECORDING,
+      );
       const problem = (file: string, text: string) =>
         new Error(`stock tool ${where}: ${where}/${file} ${text}`);
       const manifestFile = all.find((file) => file.path === MANIFEST);
