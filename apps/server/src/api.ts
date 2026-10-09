@@ -31,6 +31,7 @@ import {
   orNotFound,
   type PendingActionDeps,
   type Principal,
+  planSetup,
   reconnectConnection,
   registerConnection,
   registerConnectionWithCredential,
@@ -105,6 +106,7 @@ import {
   signInDoorKey,
 } from "./rate-limit";
 import {
+  buildPlannedSetup,
   buildSetupTool,
   continueSetupBuild,
   createGoalSuggestionMemo,
@@ -387,6 +389,26 @@ const setupBuildBody = z.strictObject({
 });
 /** The build's wire shape, as the console posts it. */
 export type SetupBuildBody = z.input<typeof setupBuildBody>;
+
+/**
+ * `POST /setup/starter` (Setup v2): the starter integration chosen before anything is connected,
+ * or null to go back to the integrations (`planSetup` in `@graft/core`).
+ */
+const setupStarterBody = z.strictObject({
+  starterId: z.enum(STARTER_VENDOR_IDS).nullable(),
+});
+export type SetupStarterBody = z.input<typeof setupStarterBody>;
+
+/**
+ * `POST /setup/task` (Setup v2): the task, chosen before connecting. It is saved, the starter is
+ * connected as the connect route would, and the build starts at once when the connection is made
+ * (or the record already names one); otherwise when the connection lands, on the next read.
+ */
+const setupTaskBody = z.strictObject({
+  goal: z.string().trim().min(1).max(GOAL_MAX_LENGTH),
+  discardJob: z.boolean().optional(),
+});
+export type SetupTaskBody = z.input<typeof setupTaskBody>;
 
 /**
  * `POST /setup/back` (GRA-215): the step to return the record to, from the rail or the footer's
@@ -977,7 +999,7 @@ export function createApi(options: ApiOptions): Hono {
 
   api.get("/setup", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const { state: afterConnect, connected } = await learnSetupConnection(ctx, principal, {
+    let { state: afterConnect, connected } = await learnSetupConnection(ctx, principal, {
       setup: setupDeps,
       agent: agentDeps,
       connection: connectionDeps,
@@ -985,6 +1007,9 @@ export function createApi(options: ApiOptions): Hono {
       notifier: options.notifier,
     });
     if (connected) countStep(principal, afterConnect, "connect");
+    // Setup v2: a task chosen before connecting is built the moment the connection is learned.
+    if (connected)
+      afterConnect = await buildPlannedSetup(ctx, principal, afterConnect, setupBuildDeps);
     // A tool still arriving past the building step, *Continue while it runs* and then, perhaps,
     // Finish Setup before it landed, is learned on the record as it would have been on `building`.
     const record = afterConnect.setup;
@@ -1092,6 +1117,32 @@ export function createApi(options: ApiOptions): Hono {
   api.get("/setup/vendors", async (c) => {
     await principalOf(c.req.raw.headers);
     return c.json({ vendors: await listSetupVendors(connectionDeps.providers) });
+  });
+
+  api.post("/setup/starter", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupStarterBody);
+    return c.json(await planSetup(ctx, principal, body, setupDeps, agentDeps));
+  });
+
+  api.post("/setup/task", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const body = await parseBody(c.req.raw, setupTaskBody);
+    let state = await planSetup(ctx, principal, { goal: body.goal }, setupDeps, agentDeps);
+    const starterId = state.setup?.starterId;
+    if (state.step === "vendor" && starterId) {
+      const connecting = await connectSetupVendor(
+        ctx,
+        principal,
+        { starterId, ...(body.discardJob ? { discardJob: true } : {}) },
+        setupConnectDeps(),
+      );
+      if (connecting.connected) countStep(principal, connecting.state, "connect");
+      state = connecting.state;
+    }
+    return c.json(
+      await buildPlannedSetup(ctx, principal, state, setupBuildDeps, body.discardJob === true),
+    );
   });
 
   api.post("/setup/connect", async (c) => {

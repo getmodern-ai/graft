@@ -29,6 +29,7 @@ import {
   setupBackTargets,
   shouldShowSetup,
 } from "./setup.rules";
+import { isStarterVendorId } from "./starter-vendors";
 
 /**
  * **Setup** (CONTEXT.md; ADR 0024): the console's guided first run, as a person-scoped record and
@@ -56,6 +57,10 @@ export type SetupOutput = {
   /** Null when Setup adopted an agent that existed before it. */
   harness: SetupHarness | null;
   agentId: string | null;
+  /** The starter integration chosen before connecting (Setup v2), or null. */
+  starterId: string | null;
+  /** The task chosen before connecting (Setup v2), built once the connection lands. */
+  goal: string | null;
   pendingActionId: string | null;
   connectionId: string | null;
   acquireJobId: string | null;
@@ -72,6 +77,8 @@ export function toSetupOutput(row: SetupRow): SetupOutput {
     step: row.step,
     harness: row.harness,
     agentId: row.agentId,
+    starterId: row.starterId,
+    goal: row.goal,
     pendingActionId: row.pendingActionId,
     connectionId: row.connectionId,
     acquireJobId: row.acquireJobId,
@@ -667,6 +674,55 @@ export async function moveSetupBack(
     await deps.saveSetup(tx, principal.personId, { step: move.to });
   });
   return { state: await getSetupState(ctx, principal, deps, agentDeps), moved: true };
+}
+
+/**
+ * **The plan** (Setup v2, the 2026-09-29 decisions): the starter integration and the task, chosen
+ * before anything is connected, so the tool screen comes before the connect step and the build
+ * starts the moment the connection lands (`setup-build.ts`'s `buildPlannedSetup`). Both screens
+ * stand on the record's `vendor` step, so the back and next rules above are unchanged; a task for a
+ * connection the record already names (*Another integration*) is saved on `goal`.
+ *
+ * - `starterId`: from `vendor` only. A different starter clears the task, since the task was the
+ *   old integration's; null is the tool screen's Back to the integrations.
+ * - `goal`: from `vendor` with a starter, or from `goal`; trimmed, an empty one cleared.
+ *
+ * Refused `CONFLICT` on any other step (`setup_step`), and `NOT_FOUND` for a starter id that is not
+ * one. Saving moves nothing: the connect and build moves are the callers'.
+ */
+export type SetupPlanMove = { starterId?: string | null; goal?: string | null };
+
+export async function planSetup(
+  ctx: ServiceContext,
+  principal: Principal,
+  move: SetupPlanMove,
+  deps: SetupDeps,
+  agentDeps: Pick<AgentDeps, "listAgents">,
+): Promise<SetupState> {
+  await ctx.db.transaction(async (tx) => {
+    const record = await deps.lockSetup(tx, principal.personId);
+    navigableAgent(record, activeOf(await agentDeps.listAgents(tx, principal.personId)));
+    const stale = () =>
+      new ServiceError("CONFLICT", "Setup has moved on from choosing an integration", {
+        details: { reason: "setup_step", step: record.step },
+      });
+    const patch: SetupPatch = {};
+    if (move.starterId !== undefined) {
+      if (record.step !== "vendor") throw stale();
+      if (move.starterId !== null && !isStarterVendorId(move.starterId)) {
+        throw new ServiceError("NOT_FOUND", "No starter integration has that id");
+      }
+      patch.starterId = move.starterId;
+      if (move.starterId !== record.starterId) patch.goal = null;
+    }
+    if (move.goal !== undefined) {
+      const starter = patch.starterId !== undefined ? patch.starterId : record.starterId;
+      if (!(record.step === "goal" || (record.step === "vendor" && starter))) throw stale();
+      patch.goal = move.goal?.trim() ? move.goal.trim() : null;
+    }
+    await deps.saveSetup(tx, principal.personId, patch);
+  });
+  return getSetupState(ctx, principal, deps, agentDeps);
 }
 
 /**
