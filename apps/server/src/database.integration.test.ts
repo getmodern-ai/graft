@@ -32,6 +32,7 @@ import {
   listAgents,
   listConnections,
   listStockToolsForVendor,
+  listToolVersionOrigins,
   listToolVersions,
   listWorkingSet,
   listWorkingSetChanges,
@@ -56,7 +57,7 @@ import { addConnectionHosts } from "@graft/db/repo/connection";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
 import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
-import { copyStockVersion } from "@graft/publish";
+import { advanceStockCopy, copyStockVersion } from "@graft/publish";
 import { checkStockTool, readStockWorkspace } from "@graft/stock";
 import {
   CAPABILITY_TOKEN_ALG,
@@ -1046,5 +1047,39 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       stockVersionId: stock.stockVersionId,
     });
     expect(copied.currentVersionId).toBe(version?.id);
+
+    // GRA-242: the catalogue gains v2; two reaches at once advance the copy once, under the
+    // tool row's lock, and the origins read names the stock version's number.
+    const [weather] = sources.filter((source) => source.name === "current-weather");
+    if (!weather) throw new Error("no weather source");
+    const changed = {
+      ...weather,
+      sourceHash: `${weather.sourceHash}-v2`,
+      description: `${weather.description} Version two.`,
+    };
+    const third = await loadStockCatalogue(ctx, [changed], checkStockTool, defaultStockDeps);
+    expect(third.appended).toEqual([
+      { vendor: "open-meteo", name: "current-weather", versionNumber: 2 },
+    ]);
+    const v2 = await describeStockTool(
+      ctx,
+      { vendor: "open-meteo", name: "current-weather" },
+      defaultStockDeps,
+    );
+    if (!v2) throw new Error("no stock v2");
+    const publish = { db, store: createFilesystemToolboxStore({ root }), tool: defaultToolDeps };
+    const advances = await Promise.all([
+      advanceStockCopy(publish, { personId, toolId: copied.id, stock: v2 }),
+      advanceStockCopy(publish, { personId, toolId: copied.id, stock: v2 }),
+    ]);
+    expect(advances.filter((advance) => advance.advanced)).toHaveLength(1);
+    const origins = await listToolVersionOrigins(ctx, { personId }, defaultToolDeps, copied.id);
+    expect(origins.map((origin) => [origin.versionNumber, origin.stockVersionNumber])).toEqual([
+      [2, 2],
+      [1, 1],
+    ]);
+    const after = await getToolById(ctx, { personId }, copied.id, defaultToolDeps);
+    expect(after?.currentVersionId).toBe(origins[0]?.versionId);
+    expect(after?.description).toBe(changed.description);
   });
 });

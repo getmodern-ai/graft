@@ -652,6 +652,24 @@ tool whose version records `stock_tool_id` and `stock_version_id`, bound to the 
 in scope, or `connection_needed` with `connect`. Connections match by vendor slug until GRA-241's
 host matching. `@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
 
+**An untouched copy follows stock; a remix never does** (GRA-242; ADR 0025). The rule is
+`@graft/core`'s `stock/stock-advance.decision.ts`, pure and browser-safe: `stockLineageOf` reads a
+tool's versions as `stock` (every one carries a stock origin), `remix` (some do) or `authored`
+(none), and `decideStockAdvance` advances only `stock`, only to the catalogue's current version,
+and only when no version took it. It is applied lazily on reach, never at boot: `ensureToolForAgent`
+(a run, a first-class call, the console's run, a promote) through `followStock`, `find_tool` over
+its answered hits, and the tool list over the working set, each through `stock-copy.ts`'s
+`advanceIfBehind` and `ToolSource.advance`, which is `@graft/publish`'s `advanceStockCopy`: one
+transaction that locks the tool row (`repo/tool.ts`'s `findAuthoredToolForUpdate`), decides again,
+writes the stock files as the next version's directory and publishes it with its stock origin, the
+definition and the pointer moving, the binding kept. Two reaches at once write one version; a
+concurrent agent publish is caught by the version number's unique constraint. `find_tool` marks a
+toolbox hit `stock: true` or `remixed: true`. `repo/tool.ts`'s `listToolVersionOrigins` (each
+version's origin with the stock version's number, one statement) feeds both and `GET /api/tools`'s
+`lineage` and `versions`, which the connections screen draws under each tool
+(`apps/web/src/lib/tool-versions.ts`: *Ready-made v2* or *Written by your agent*). Approvals are
+untouched by an advance here; GRA-245 decides what one keeps.
+
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
 `.blobs/<agentId>/` beside the toolboxes on the toolbox volume (the Agent Drive in the hosted form),

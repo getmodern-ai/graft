@@ -60,10 +60,12 @@ function fakeDeps(overrides: Partial<ToolDeps> = {}): ToolDeps {
     insertAuthoredTool: vi.fn(async (_db, input) => ({ ...tool, ...input }) as AuthoredToolRow),
     findAuthoredTool: vi.fn(async () => null),
     findAuthoredToolById: vi.fn(async () => tool),
+    findAuthoredToolForUpdate: vi.fn(async () => tool),
     listAuthoredTools: vi.fn(async () => [tool]),
     updateAuthoredTool: vi.fn(async (_db, _p, _id, patch) => ({ ...tool, ...patch })),
     insertToolVersion: vi.fn(async (_db, input) => ({ ...version(1), ...input }) as ToolVersionRow),
     listToolVersions: vi.fn(async () => [version(2), version(1)]),
+    listToolVersionOrigins: vi.fn(async () => []),
     findToolVersion: vi.fn(async () => version(1)),
     setCurrentToolVersion: vi.fn(async (_db, _p, _t, versionId) => ({
       ...tool,

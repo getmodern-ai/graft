@@ -19,7 +19,7 @@ import { createInFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier } from "./notifier";
 import { runAuthoredTool } from "./run";
 import { openAgentSession } from "./session";
-import { promoteToolForAgent } from "./stock-copy";
+import { ensureToolForAgent, promoteToolForAgent } from "./stock-copy";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
 import { createStockToolSource } from "./tool-source";
@@ -43,7 +43,16 @@ const AGENTS = {
   promoter: { person: "p_promoter", agent: "a_promoter", connection: "conn_meteo_promoter" },
   console: { person: "p_console", agent: "a_console", connection: "conn_meteo_console" },
   owner: { person: "p_owner", agent: "a_owner", connection: "conn_meteo_owner" },
+  // GRA-242: copies made at stock v1, then the catalogue gains v2.
+  follower: { person: "p_follower", agent: "a_follower", connection: "conn_meteo_follower" },
+  idle: { person: "p_idle", agent: "a_idle", connection: "conn_meteo_idle" },
+  remixer: { person: "p_remixer", agent: "a_remixer", connection: "conn_meteo_remixer" },
+  racer: { person: "p_racer", agent: "a_racer", connection: "conn_meteo_racer" },
+  finder: { person: "p_finder", agent: "a_finder", connection: "conn_meteo_finder" },
+  lister: { person: "p_lister", agent: "a_lister", connection: "conn_meteo_lister" },
 } as const;
+/** The racer's second agent, over the same connection: two reaches of one copy at once. */
+const RACER_TWO = "a_racer_two";
 const tokenOf = (agent: string) => `grft_token_${agent}`.padEnd(46, "0");
 
 const OWN_MODULE = "export default async () => ({ mine: true });\n";
@@ -52,6 +61,7 @@ let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
+let catalogue: ReturnType<typeof createFakeStockCatalogue>;
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
@@ -115,6 +125,13 @@ beforeAll(async () => {
       connectionIds: entry.connection ? [entry.connection] : [],
     });
   }
+  store.addAgent({
+    scopeMode: "listed",
+    id: RACER_TWO,
+    personId: AGENTS.racer.person,
+    token: tokenOf(RACER_TWO),
+    connectionIds: [AGENTS.racer.connection],
+  });
   // The owner authored a tool of the stock tool's name before stock existed: it shadows stock.
   const own = join(sandbox.toolboxRoot(AGENTS.owner.person), "tools/open-meteo/current-weather/v1");
   await mkdir(own, { recursive: true });
@@ -133,7 +150,7 @@ beforeAll(async () => {
   });
 
   // The catalogue as the boot loads it: the workspace, the real check, an in-memory catalogue.
-  const catalogue = createFakeStockCatalogue();
+  catalogue = createFakeStockCatalogue();
   const fake = createFakeDeps(store);
   const report = await loadStockCatalogue(
     { db: fake.db },
@@ -298,7 +315,8 @@ describe("the first run of a stock tool", () => {
       expect(versions[0]?.stockVersionId).toMatch(/^stock_/);
       expect(tool?.currentVersionId).toBe(versions[0]?.id);
 
-      // A second run reuses the copy; find_tool now answers it as the person's tool, not stock.
+      // A second run reuses the copy; find_tool now answers it as the person's tool, marked as
+      // a copy that follows stock (GRA-242), with no connect step.
       await harness.call("run_tool", { ...KEY, input: { city: "Sydney" } });
       expect(copyOf(AGENTS.runner.person).versions).toHaveLength(1);
       const [hit] = body(await harness.call("find_tool", { query: "weather" })).tools as Record<
@@ -306,7 +324,9 @@ describe("the first run of a stock tool", () => {
         unknown
       >[];
       expect(hit?.tool).toBe(WIRE);
-      expect(hit).not.toHaveProperty("stock");
+      expect(hit).toMatchObject({ stock: true });
+      expect(hit).not.toHaveProperty("remixed");
+      expect(hit).not.toHaveProperty("connect");
     } finally {
       await harness.close();
     }
@@ -370,5 +390,176 @@ describe("a person's own tool of the same name", () => {
     } finally {
       await harness.close();
     }
+  });
+});
+
+/**
+ * GRA-242: an untouched copy follows stock's new versions when it is reached, a remix never does,
+ * and two reaches at once advance it once. Each person here copied the tool at stock v1; then the
+ * catalogue gains v2, a module that answers which version ran, as a release would append it.
+ */
+describe("an untouched copy follows stock's new versions", () => {
+  const V2_MODULE = "export default async () => ({ stockVersion: 2 });\n";
+  const V2_DESCRIPTION =
+    "The weather right now in a named city, as stock's second version reads it.";
+  let v2Id = "";
+
+  const scopeOf = (entry: { person: string; agent: string }) => ({
+    personId: entry.person,
+    agentId: entry.agent,
+  });
+  const runAs = (scope: { personId: string; agentId: string }) =>
+    runAuthoredTool(deps, scope, {
+      ...KEY,
+      input: { city: "Perth" },
+      mode: { detached: false, timeoutSeconds: 30, dryRun: false },
+      channel: NO_ELICITATION,
+    });
+
+  beforeAll(async () => {
+    for (const entry of [
+      AGENTS.follower,
+      AGENTS.idle,
+      AGENTS.remixer,
+      AGENTS.racer,
+      AGENTS.finder,
+    ]) {
+      expect(await ensureToolForAgent(deps, scopeOf(entry), KEY)).toMatchObject({
+        ok: true,
+        copied: true,
+      });
+    }
+    expect(await promoteToolForAgent(deps, scopeOf(AGENTS.lister), KEY)).toMatchObject({
+      ok: true,
+      changed: true,
+    });
+
+    // The remixer's agent publishes its own version on the copy: v2, no stock origin.
+    const remix = copyOf(AGENTS.remixer.person);
+    const remixDir = join(
+      sandbox.toolboxRoot(AGENTS.remixer.person),
+      "tools/open-meteo/current-weather/v2",
+    );
+    await mkdir(remixDir, { recursive: true });
+    await writeFile(join(remixDir, "index.ts"), OWN_MODULE);
+    const [first] = remix.versions;
+    if (!remix.tool || !first) throw new Error("the remixer holds no copy");
+    store.versions.set("remix_v2", {
+      ...first,
+      id: "remix_v2",
+      versionNumber: 2,
+      path: "tools/open-meteo/current-weather/v2",
+      stockToolId: null,
+      stockVersionId: null,
+    });
+    store.tools.set(remix.tool.id, { ...remix.tool, currentVersionId: "remix_v2" });
+
+    // The catalogue gains v2, as the boot appends a changed workspace's tool.
+    const [stockTool] = [...catalogue.tools.values()];
+    const v1 = [...catalogue.versions.values()].find((row) => row.versionNumber === 1);
+    if (!stockTool || !v1) throw new Error("the catalogue holds no v1");
+    v2Id = "stock_weather_v2";
+    catalogue.versions.set(v2Id, {
+      ...v1,
+      id: v2Id,
+      versionNumber: 2,
+      sourceHash: "v2",
+      description: V2_DESCRIPTION,
+      files: [{ path: "index.ts", content: V2_MODULE }],
+    });
+    for (const row of catalogue.versions.values()) {
+      store.stockVersionNumbers.set(row.id, row.versionNumber);
+    }
+  });
+
+  it("the next run_tool runs v2, and the toolbox shows a new version naming stock v2", async () => {
+    const harness = await connect(AGENTS.follower.agent);
+    try {
+      const result = await harness.call("run_tool", { ...KEY, input: { city: "Perth" } });
+      expect(result.isError ?? false).toBe(false);
+      expect(body(result)).toEqual({ stockVersion: 2 });
+    } finally {
+      await harness.close();
+    }
+    const { tool, versions } = copyOf(AGENTS.follower.person);
+    expect(versions.map((row) => row.versionNumber).sort()).toEqual([1, 2]);
+    const advanced = versions.find((row) => row.versionNumber === 2);
+    expect(advanced).toMatchObject({
+      stockVersionId: v2Id,
+      path: "tools/open-meteo/current-weather/v2",
+    });
+    expect(tool).toMatchObject({ currentVersionId: advanced?.id, description: V2_DESCRIPTION });
+    // The binding the copy was made with is kept.
+    expect(tool?.defaultConnectionId).toBe(AGENTS.follower.connection);
+    const origins = await deps.tool.listToolVersionOrigins(deps.db, AGENTS.follower.person);
+    expect(origins.map((row) => [row.versionNumber, row.stockVersionNumber])).toEqual([
+      [2, 2],
+      [1, 1],
+    ]);
+  });
+
+  it("does not touch a copy nobody reached", () => {
+    const { tool, versions } = copyOf(AGENTS.idle.person);
+    expect(versions).toHaveLength(1);
+    expect(tool?.currentVersionId).toBe(versions[0]?.id);
+    expect(versions[0]?.stockVersionId).not.toBe(v2Id);
+  });
+
+  it("leaves a remix where it is, and find_tool marks it remixed", async () => {
+    const harness = await connect(AGENTS.remixer.agent);
+    try {
+      const result = await harness.call("run_tool", { ...KEY, input: { city: "Perth" } });
+      expect(body(result)).toEqual({ mine: true });
+      const [hit] = body(await harness.call("find_tool", { query: "weather" })).tools as Record<
+        string,
+        unknown
+      >[];
+      expect(hit).toMatchObject({ tool: WIRE, remixed: true });
+      expect(hit).not.toHaveProperty("stock");
+    } finally {
+      await harness.close();
+    }
+    const { tool, versions } = copyOf(AGENTS.remixer.person);
+    expect(versions).toHaveLength(2);
+    expect(tool?.currentVersionId).toBe("remix_v2");
+    expect(versions.some((row) => row.stockVersionId === v2Id)).toBe(false);
+  });
+
+  it("advances once under two reaches at once", async () => {
+    const [one, two] = await Promise.all([
+      runAs(scopeOf(AGENTS.racer)),
+      runAs({ personId: AGENTS.racer.person, agentId: RACER_TWO }),
+    ]);
+    expect(one).toMatchObject({ isError: false, answer: { stockVersion: 2 } });
+    expect(two).toMatchObject({ isError: false, answer: { stockVersion: 2 } });
+    const { versions } = copyOf(AGENTS.racer.person);
+    expect(versions.map((row) => row.versionNumber).sort()).toEqual([1, 2]);
+    expect(versions.filter((row) => row.stockVersionId === v2Id)).toHaveLength(1);
+  });
+
+  it("advances a copy find_tool answers, and the hit names what a run will run", async () => {
+    const harness = await connect(AGENTS.finder.agent);
+    try {
+      const [hit] = body(await harness.call("find_tool", { query: "weather" })).tools as Record<
+        string,
+        unknown
+      >[];
+      expect(hit).toMatchObject({ tool: WIRE, stock: true, description: V2_DESCRIPTION });
+    } finally {
+      await harness.close();
+    }
+    expect(copyOf(AGENTS.finder.person).versions.map((row) => row.stockVersionId)).toContain(v2Id);
+  });
+
+  it("advances a copy the working set lists, and lists v2's definition", async () => {
+    const harness = await connect(AGENTS.lister.agent);
+    try {
+      expect(await harness.names()).toContain(WIRE);
+    } finally {
+      await harness.close();
+    }
+    const { tool, versions } = copyOf(AGENTS.lister.person);
+    expect(versions).toHaveLength(2);
+    expect(tool?.description).toBe(V2_DESCRIPTION);
   });
 });

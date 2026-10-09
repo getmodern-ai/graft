@@ -7,13 +7,19 @@ import {
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
-import { copyStockVersion, type PublishDeps } from "@graft/publish";
+import {
+  advanceStockCopy,
+  copyStockVersion,
+  type PublishDeps,
+  type StockAdvance,
+} from "@graft/publish";
 
 /**
  * The **tool source** seam (ADR 0025; CONTEXT.md, *Tool source*; GRA-238): where stock tools come
- * from, as the MCP server sees it. Three verbs: list the catalogue (what `find_tool` searches
- * beside the toolbox), describe one stock tool by its key, and copy a stock version into a
- * person's toolbox (what the first `run_tool` or `promote` of one does, through `stock-copy.ts`).
+ * from, as the MCP server sees it. Four verbs: list the catalogue (what `find_tool` searches
+ * beside the toolbox), describe one stock tool by its key, copy a stock version into a person's
+ * toolbox (what the first `run_tool` or `promote` of one does, through `stock-copy.ts`), and
+ * advance an untouched copy to the catalogue's current version when it is reached (GRA-242).
  * There is no run path here: a copy runs as any authored tool does (`run.ts`). Graft's own stock
  * is the one backing (`createStockToolSource`); a later source whose tools run elsewhere brings
  * its own run path then.
@@ -32,6 +38,11 @@ export type ToolSource = {
     stock: StockToolView;
     defaultConnectionId: string | null;
   }): Promise<AuthoredToolRow>;
+  /**
+   * An untouched copy moved to the stock version given, as its next version recording the stock
+   * origin; a remix, an authored tool or a copy already there is answered untouched (GRA-242).
+   */
+  advance(args: { personId: string; toolId: string; stock: StockToolView }): Promise<StockAdvance>;
 };
 
 /** Graft's own stock: the global catalogue's rows, and `@graft/publish`'s copy into the toolbox. */
@@ -46,5 +57,6 @@ export function createStockToolSource(args: {
     list: () => listStockCatalogue(ctx, stock),
     describe: (key) => describeStockTool(ctx, key, stock),
     copy: (copy) => copyStockVersion(args.publish, copy),
+    advance: (advance) => advanceStockCopy(args.publish, advance),
   };
 }

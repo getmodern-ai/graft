@@ -468,6 +468,14 @@ export {
   type StockToolView,
 } from "./stock/stock.service";
 export {
+  type CatalogueCurrent,
+  decideStockAdvance,
+  type StockAdvanceDecision,
+  type StockLineage,
+  stockLineageOf,
+  type VersionOrigin,
+} from "./stock/stock-advance.decision";
+export {
   AGENT_TOKEN_DISPLAY_LENGTH,
   AGENT_TOKEN_PREFIX,
   type AgentScope,
@@ -498,6 +506,7 @@ export {
   getToolByName,
   getToolVersion,
   listTools,
+  listToolVersionOrigins,
   listToolVersions,
   moveToolPointer,
   nextVersionNumber,

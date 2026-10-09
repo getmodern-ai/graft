@@ -10,6 +10,7 @@ import {
   HINTS_MAX_LENGTH,
   listConnections,
   listTools,
+  listToolVersionOrigins,
   listWorkingSet,
   STARTER_VENDORS,
   type StockConnectProposal,
@@ -41,7 +42,13 @@ import type { SessionContext } from "../context";
 import { isPlainObject, toolRefusal, toolResult, withCard } from "../result";
 import { runAuthoredTool } from "../run";
 import { setupOfferFor } from "../setup-offer";
-import { promoteToolForAgent, stockConnectionIds } from "../stock-copy";
+import {
+  advanceIfBehind,
+  lineageOf,
+  originsByTool,
+  promoteToolForAgent,
+  stockConnectionIds,
+} from "../stock-copy";
 import { authoredToolName } from "../tool-names";
 import { similarTools } from "./acquire-similar";
 import { answerAsk } from "./answer-ask";
@@ -91,12 +98,41 @@ export type FoundTool = {
    * connections of its integration in the agent's scope (matched by vendor slug until GRA-241),
    * or, with none, `connect`, the `request_connection` arguments of the integration's proposal.
    * The first `run_tool` or `promote` copies it into the toolbox, after which it is the person's
-   * tool and its hit carries none of the three.
+   * tool: its hit carries `stock: true` alone while every version of it came from stock, the
+   * copy that follows stock's new versions (GRA-242), and `remixed: true` instead once the agent
+   * published a version on it, which stops it following.
    */
   stock?: true;
+  remixed?: true;
   connectionIds?: string[];
   connect?: StockConnectProposal;
 };
+
+/** A toolbox tool's hit: the row's definition, and the stock lineage marked (GRA-242). */
+function toolboxHit(
+  tool: {
+    vendor: string;
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    readOnly: boolean;
+    destructive: boolean;
+  },
+  promoted: boolean,
+  lineage: "stock" | "remix" | "authored",
+): FoundTool {
+  return {
+    vendor: tool.vendor,
+    name: tool.name,
+    tool: authoredToolName(tool.vendor, tool.name),
+    description: tool.description,
+    promoted,
+    inputSchema: tool.inputSchema,
+    annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
+    ...(lineage === "stock" ? { stock: true as const } : {}),
+    ...(lineage === "remix" ? { remixed: true as const } : {}),
+  };
+}
 
 const toolKeyProperties = {
   vendor: {
@@ -129,11 +165,11 @@ const findTool: MetaTool = {
   definition: {
     name: FIND_TOOL,
     description:
-      "Used first, before acquire, for a task no listed tool covers: searches the toolbox, every tool authored for this account, demoted ones included, and Graft's ready-made stock tools for every vendor, connected or not, by vendor, name, input labels and description; every word of the query hits, in any order, as itself, another form of it (contacts, contact) or a common synonym (find reaches search, dm reaches message). A tool no version of which has passed its dry run is not listed. " +
+      "Used first, before acquire, for a task no listed tool covers: searches this account's toolbox, demoted tools included, and Graft's ready-made stock tools for every vendor, connected or not, by vendor, name, input labels and description; every word of the query hits, in any order, as itself, another form of it (contacts, contact) or a common synonym (find reaches search, dm reaches message). A tool no version of which has passed its dry run is not listed. " +
       "Answers the five best hits, the agent's working set first, then the rest of the toolbox, then stock tools of a vendor connected in the agent's scope, then the others, and, for a query that reads, read-only tools before writes, with more, the count of further hits, when there are any. " +
       "Each hit carries vendor and name (the arguments promote, demote and run_tool take), its inputSchema (the shape run_tool's input must match), whether it is in the agent's working set, and its read-only and destructive hints. " +
       "A hit that is not promoted is one promote call from the agent's list. The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named. " +
-      "A stock hit carries stock: true and either connectionIds, the connections in the agent's scope it runs over, or connect, the request_connection arguments for its vendor; its first run_tool or promote copies it into the toolbox, and a toolbox tool of the same vendor__name replaces it in the answer. " +
+      "A stock hit carries stock: true and either connectionIds, the connections in the agent's scope it runs over, or connect, the request_connection arguments for its vendor; its first run_tool or promote copies it into the toolbox, and a toolbox tool of the same vendor__name replaces it in the answer, marked stock: true while it follows stock's new versions or remixed: true once changed here. " +
       "While the person has no connection at all and has neither finished nor skipped Setup, the answer also carries setup, a url to the console's Setup page for this agent, where a first vendor is connected and a first tool acquired, and a message in the shape of a handoff, shown as a card on a chat product that renders one.",
     inputSchema: {
       type: "object",
@@ -160,13 +196,15 @@ const findTool: MetaTool = {
         "query must be a non-empty string with a word of two or more characters",
       );
     }
-    const [tools, workingSet, scopeIds, allConnections, stock] = await Promise.all([
+    const [tools, workingSet, scopeIds, allConnections, stock, origins] = await Promise.all([
       listTools(ctx, principal, deps.tool),
       listWorkingSet(ctx, scope, deps.workingSet),
       getAgentScope(ctx, scope, deps.agent),
       listConnections(ctx, principal, deps.connection),
       deps.toolSource?.list() ?? Promise.resolve([]),
+      listToolVersionOrigins(ctx, principal, deps.tool),
     ]);
+    const originsOf = originsByTool(origins);
     // The connections acquire can author against, by id (GRA-125): a chat product's agent lists
     // no execute__ tools, so this is where it learns a connectionId.
     const inScope = new Set(scopeIds);
@@ -194,15 +232,8 @@ const findTool: MetaTool = {
         inputSchema: tool.inputSchema,
         readOnly: tool.readOnly,
         tier: promoted.has(tool.id) ? 0 : 1,
-        hit: {
-          vendor: tool.vendor,
-          name: tool.name,
-          tool: authoredToolName(tool.vendor, tool.name),
-          description: tool.description,
-          promoted: promoted.has(tool.id),
-          inputSchema: tool.inputSchema,
-          annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
-        } satisfies FoundTool,
+        row: tool,
+        hit: toolboxHit(tool, promoted.has(tool.id), lineageOf(originsOf.get(tool.id))),
       }));
     // Stock beside the toolbox (ADR 0025; GRA-238): tier 2 where the agent holds a connection of
     // the integration, 3 where it does not, and never a stock tool the person holds a tool of the
@@ -237,8 +268,34 @@ const findTool: MetaTool = {
           } satisfies FoundTool,
         };
       });
-    const found = searchTools([...toolbox, ...stocked], query, { vendorNames: VENDOR_NAMES });
-    const hits: FoundTool[] = found.hits.map((candidate) => candidate.hit);
+    const found = searchTools<(typeof toolbox)[number] | (typeof stocked)[number]>(
+      [...toolbox, ...stocked],
+      query,
+      { vendorNames: VENDOR_NAMES },
+    );
+    // A copy found is a copy reached (ADR 0025; GRA-242): an untouched one behind the catalogue
+    // advances before it is answered, so the hit names what a run will now run. Only the hits;
+    // a tool the query did not answer is not reached and not touched.
+    const catalogue = new Map(
+      stock.map((entry) => [authoredToolName(entry.vendor, entry.name), entry]),
+    );
+    let advanced = false;
+    const hits: FoundTool[] = await Promise.all(
+      found.hits.map(async (candidate) => {
+        if (!("row" in candidate) || candidate.hit.stock !== true) return candidate.hit;
+        const followed = await advanceIfBehind(
+          deps,
+          principal.personId,
+          candidate.row,
+          originsOf.get(candidate.row.id) ?? [],
+          catalogue.get(candidate.hit.tool) ?? null,
+        );
+        if (!followed.advanced) return candidate.hit;
+        advanced = true;
+        return toolboxHit(followed.tool, candidate.hit.promoted, "stock");
+      }),
+    );
+    if (advanced) deps.notifier?.changed(scope.agentId);
     const needsConnect = hits.some((hit) => hit.connect !== undefined);
     // A person with no connection at all, and Setup neither finished nor skipped, is offered
     // Setup (GRA-210): a plain result with the card beside it, since no ask stands behind it.

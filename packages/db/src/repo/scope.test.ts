@@ -70,7 +70,13 @@ import {
   listCurrentStockToolsForVendor,
   lockStockCatalogue,
 } from "./stock";
-import { findToolVersion, listToolVersions, setCurrentToolVersion } from "./tool";
+import {
+  findAuthoredToolForUpdate,
+  findToolVersion,
+  listToolVersionOrigins,
+  listToolVersions,
+  setCurrentToolVersion,
+} from "./tool";
 import { listUsage, listUsageForVendor } from "./usage";
 import {
   deleteWorkingSetEntriesForConnection,
@@ -834,6 +840,34 @@ describe("a version is reached through its tool", () => {
     expect(only().sql).toContain(
       '"tool_id" in (select "id" from "authored_tool" where ("authored_tool"."id" = $1 and "authored_tool"."person_id" = $2))',
     );
+  });
+
+  it("the origins of one tool's versions scope by the tool's person (GRA-242)", async () => {
+    await listToolVersionOrigins(db, "person_1", "tool_1");
+    const s = only();
+    expect(s.sql).toContain(
+      '"tool_version"."tool_id" in (select "id" from "authored_tool" where ("authored_tool"."id" = $1 and "authored_tool"."person_id" = $2))',
+    );
+    expect(s.sql).toContain(
+      'left join "stock_tool_version" on "stock_tool_version"."id" = "tool_version"."stock_version_id"',
+    );
+    expect(s.params).toEqual(["tool_1", "person_1"]);
+  });
+
+  it("the origins of every version of the person's tools scope by the person (GRA-242)", async () => {
+    await listToolVersionOrigins(db, "person_1");
+    const s = only();
+    expect(s.sql).toContain(
+      '"tool_version"."tool_id" in (select "id" from "authored_tool" where "authored_tool"."person_id" = $1)',
+    );
+    expect(s.params).toEqual(["person_1"]);
+  });
+
+  it("the tool's row is locked under the person (GRA-242)", async () => {
+    await findAuthoredToolForUpdate(db, "person_1", "tool_1");
+    const s = only();
+    expect(s.sql).toContain('"authored_tool"."person_id" = $2');
+    expect(s.sql).toMatch(/for update$/);
   });
 
   it("finding a version scopes by the person's tools", async () => {
