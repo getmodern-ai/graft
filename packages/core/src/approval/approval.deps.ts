@@ -1,11 +1,15 @@
 import {
   deleteApproval,
+  deleteVendorApproval,
   findApproval,
   findBuildApproval,
+  findVendorApproval,
   insertBuildApproval,
   listApprovals,
+  listVendorApprovals,
   updateAskEveryCall,
   upsertApproval,
+  upsertVendorApproval,
 } from "@graft/db/repo/approval";
 import { findConnection } from "@graft/db/repo/connection";
 import { settleAnsweredToolActions } from "@graft/db/repo/pending-action";
@@ -20,6 +24,11 @@ export type ApprovalDeps = {
   deleteApproval: typeof deleteApproval;
   findBuildApproval: typeof findBuildApproval;
   insertBuildApproval: typeof insertBuildApproval;
+  /** The agent's standing approvals per integration (ADR 0008 as amended 2026-10-09; GRA-237). */
+  findVendorApproval: typeof findVendorApproval;
+  listVendorApprovals: typeof listVendorApprovals;
+  upsertVendorApproval: typeof upsertVendorApproval;
+  deleteVendorApproval: typeof deleteVendorApproval;
   /**
    * A per-call yes left for the agent's next call is spent when the console changes the state it
    * was given under — the setting, or the row itself (`setAskEveryCall`, `revokeApproval`).
@@ -39,6 +48,10 @@ export const defaultApprovalDeps: ApprovalDeps = {
   deleteApproval,
   findBuildApproval,
   insertBuildApproval,
+  findVendorApproval,
+  listVendorApprovals,
+  upsertVendorApproval,
+  deleteVendorApproval,
   settleAnsweredToolActions,
   findAuthoredToolById,
   findConnection,

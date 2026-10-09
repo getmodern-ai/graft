@@ -1,7 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { answerPendingAction, revokeApproval, setAskEveryCall } from "@graft/core";
+import {
+  answerPendingAction,
+  revokeApproval,
+  setAskEveryCall,
+  withdrawVendorApproval,
+} from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -46,6 +51,7 @@ const AGENT_D = "agent_d";
 const AGENT_E = "agent_e";
 const AGENT_F = "agent_f";
 const AGENT_G = "agent_g";
+const AGENT_I = "agent_i";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
@@ -53,6 +59,7 @@ const TOKEN_D = "grft_approval_token_d_000000000000000000000000";
 const TOKEN_E = "grft_approval_token_e_000000000000000000000000";
 const TOKEN_F = "grft_approval_token_f_000000000000000000000000";
 const TOKEN_G = "grft_approval_token_g_000000000000000000000000";
+const TOKEN_I = "grft_approval_token_i_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -130,6 +137,7 @@ beforeAll(async () => {
     [AGENT_E, TOKEN_E, "headless Claude Code"],
     [AGENT_F, TOKEN_F, "oneshot Hermes"],
     [AGENT_G, TOKEN_G, "Hermes at a terminal"],
+    [AGENT_I, TOKEN_I, "integration Hermes"],
   ] as const) {
     store.addAgent({
       scopeMode: "listed",
@@ -153,7 +161,7 @@ beforeAll(async () => {
       defaultConnectionId: CONN_DEMO,
       path: `tools/demo/${tool.name}/v1`,
     });
-    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D, AGENT_E, AGENT_F, AGENT_G]) {
+    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D, AGENT_E, AGENT_F, AGENT_G, AGENT_I]) {
       store.promote(agent, tool.id);
     }
   }
@@ -250,8 +258,15 @@ const until = async (predicate: () => boolean, ms = 5_000) => {
 };
 
 /** What the console does when the person answers — GRA-6's service, as the answer endpoint calls it. */
-const answer = (id: string, said: { allow: boolean; askEveryCall?: boolean }) =>
-  answerPendingAction({ db: deps.db }, { personId: PERSON }, id, said, deps.pendingAction);
+const answer = (
+  id: string,
+  said: {
+    allow: boolean;
+    askEveryCall?: boolean;
+    allowVendor?: boolean;
+    includesDestructive?: boolean;
+  },
+) => answerPendingAction({ db: deps.db }, { personId: PERSON }, id, said, deps.pendingAction);
 
 /** The agent page's switch — the same service the `PUT /approvals/:toolId/ask-every-call` route calls. */
 const askEveryCall = (agentId: string, toolId: string, on: boolean) =>
@@ -578,6 +593,69 @@ describe("through a handoff — the channel every harness has", () => {
       store.pendingActions.clear();
     }
   }, 30_000);
+});
+
+/** ADR 0008 as amended 2026-10-09 (GRA-237): "Allow every Demo tool for this agent". */
+describe("an integration allowed at once, on the ask", () => {
+  it("lets the agent's other writes of the vendor run without an ask, keeps a destructive one asking, and asks again once withdrawn", async () => {
+    const i = await connect(TOKEN_I);
+    try {
+      const first = awaiting(await i.call(CREATE_ITEM, { limit: 1 }));
+      await answer(first.action.id, { allow: true, allowVendor: true, includesDestructive: false });
+
+      // The asked tool runs, and the integration's standing approval is recorded for this agent.
+      expect(body(await i.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)).toMatchObject({
+        agentId: AGENT_I,
+        vendor: "demo",
+        includesDestructive: false,
+      });
+
+      // A second write of the same vendor, never asked about, runs with no ask.
+      const actionsBefore = actionsOf(AGENT_I, "tool").length;
+      expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(actionsOf(AGENT_I, "tool")).toHaveLength(actionsBefore);
+      expect(approvalOf(AGENT_I, "tool_update")).toBeUndefined();
+
+      // A destructive one still asks: the person left destructive tools out.
+      const destructive = awaiting(await i.call(DELETE_ITEM, { limit: 1 }));
+      expect(destructive.action.payload).toMatchObject({ toolId: "tool_delete" });
+
+      // Another agent of the same person is not covered.
+      expect(store.vendorApprovals.get(`${AGENT_A} demo`)).toBeUndefined();
+
+      // Withdrawn on the agent's page, the integration's other writes ask again.
+      await withdrawVendorApproval(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_I },
+        "demo",
+        deps.approval,
+      );
+      awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
+      // The tool the person answered on its own keeps its own approval.
+      expect(body(await i.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+    } finally {
+      await i.close();
+    }
+  }, 60_000);
+
+  it("with destructive tools ticked, a destructive tool of the vendor passes too", async () => {
+    const i = await connect(TOKEN_I);
+    try {
+      const ask = awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
+      await answer(ask.action.id, { allow: true, allowVendor: true, includesDestructive: true });
+      expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      const before = actionsOf(AGENT_I, "tool").filter((row) => row.answeredAt === null).length;
+      expect(body(await i.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)?.includesDestructive).toBe(true);
+      expect(actionsOf(AGENT_I, "tool").filter((row) => row.answeredAt === null)).toHaveLength(
+        before,
+      );
+    } finally {
+      await i.close();
+      store.vendorApprovals.clear();
+    }
+  }, 60_000);
 });
 
 describe("the build approval", () => {

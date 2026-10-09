@@ -1,7 +1,8 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
-import { approval, buildApproval, type NewApprovalRow } from "../schema/approval";
+import { agent } from "../schema/agent";
+import { approval, buildApproval, type NewApprovalRow, vendorApproval } from "../schema/approval";
 import { connection } from "../schema/connection";
 import { authoredTool } from "../schema/tool";
 import { scopedAgentIds } from "./agent";
@@ -15,6 +16,7 @@ import type { AgentScope } from "./scope";
 
 export type ApprovalRow = typeof approval.$inferSelect;
 export type BuildApprovalRow = typeof buildApproval.$inferSelect;
+export type VendorApprovalRow = typeof vendorApproval.$inferSelect;
 
 export async function findApproval(
   db: DbOrTx,
@@ -164,4 +166,119 @@ export async function deleteApproval(
     .where(and(eq(approval.toolId, toolId), inArray(approval.agentId, scopedAgentIds(db, scope))))
     .returning();
   return row ?? null;
+}
+
+/**
+ * The agent's standing approval for every tool of a vendor (ADR 0008 as amended 2026-10-09;
+ * GRA-237), or null. Agent-scoped like a tool's approval.
+ */
+export async function findVendorApproval(
+  db: DbOrTx,
+  scope: AgentScope,
+  vendor: string,
+): Promise<VendorApprovalRow | null> {
+  const [row] = await db
+    .select()
+    .from(vendorApproval)
+    .where(
+      and(
+        eq(vendorApproval.vendor, vendor),
+        inArray(vendorApproval.agentId, scopedAgentIds(db, scope)),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+export async function listVendorApprovals(
+  db: DbOrTx,
+  scope: AgentScope,
+): Promise<VendorApprovalRow[]> {
+  return db
+    .select()
+    .from(vendorApproval)
+    .where(inArray(vendorApproval.agentId, scopedAgentIds(db, scope)))
+    .orderBy(vendorApproval.vendor);
+}
+
+/**
+ * The person's yes to every tool of a vendor for one agent, written or rewritten: one row per
+ * (agent, vendor), so a later answer replaces the destructive choice of an earlier one. The agent
+ * comes from the scope through an `insert … select` over the agent row under both ids, so a scope
+ * naming another person's agent inserts nothing and answers null.
+ */
+export async function upsertVendorApproval(
+  db: DbOrTx,
+  scope: AgentScope,
+  input: { vendor: string; includesDestructive: boolean; grantedAt: Date },
+): Promise<VendorApprovalRow | null> {
+  const [row] = await db
+    .insert(vendorApproval)
+    .select(
+      db
+        .select({
+          agentId: agent.id,
+          vendor: sql<string>`${input.vendor}::text`.as("vendor"),
+          includesDestructive: sql<boolean>`${input.includesDestructive}::boolean`.as(
+            "includes_destructive",
+          ),
+          grantedAt: sql<Date>`${input.grantedAt.toISOString()}::timestamp`.as("granted_at"),
+          owner: sql<"person">`'person'`.as("owner"),
+          createdAt: sql<Date>`now()`.as("created_at"),
+          updatedAt: sql<Date>`now()`.as("updated_at"),
+        })
+        .from(agent)
+        .where(and(eq(agent.id, scope.agentId), eq(agent.personId, scope.personId))),
+    )
+    .onConflictDoUpdate({
+      target: [vendorApproval.agentId, vendorApproval.vendor],
+      set: {
+        includesDestructive: input.includesDestructive,
+        grantedAt: input.grantedAt,
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+  return row ?? null;
+}
+
+/** Withdraw an agent's standing approval for a vendor, from the console. Null when none stood. */
+export async function deleteVendorApproval(
+  db: DbOrTx,
+  scope: AgentScope,
+  vendor: string,
+): Promise<VendorApprovalRow | null> {
+  const [row] = await db
+    .delete(vendorApproval)
+    .where(
+      and(
+        eq(vendorApproval.vendor, vendor),
+        inArray(vendorApproval.agentId, scopedAgentIds(db, scope)),
+      ),
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * A revoke's sweep of the vendor's standing approvals: every agent of the person, the vendor's
+ * tool approvals' companion (ADR 0007: a fresh start means the agent asks from zero).
+ */
+export async function deleteVendorApprovalsForVendor(
+  db: DbOrTx,
+  personId: string,
+  vendor: string,
+): Promise<VendorApprovalRow[]> {
+  return db
+    .delete(vendorApproval)
+    .where(
+      and(
+        eq(vendorApproval.vendor, vendor),
+        inArray(
+          vendorApproval.agentId,
+          db.select({ id: agent.id }).from(agent).where(eq(agent.personId, personId)),
+        ),
+      ),
+    )
+    .returning();
 }

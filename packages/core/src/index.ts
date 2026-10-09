@@ -74,18 +74,32 @@ export {
   type ApprovalVerdict,
   approvalDecision,
   type ToolAnnotations,
+  type VendorApprovalState,
 } from "./approval/approval.decision";
 export { type ApprovalDeps, defaultApprovalDeps } from "./approval/approval.deps";
 export {
+  allowVendor,
   decideToolCall,
   getApproval,
   getBuildApproval,
+  getVendorApproval,
   grantBuildApproval,
   listApprovals,
+  listVendorApprovals,
   revokeApproval,
   setApproval,
   setAskEveryCall,
+  withdrawVendorApproval,
 } from "./approval/approval.service";
+export {
+  ALLOW_VENDOR_DESTRUCTIVE_LABEL,
+  type AllowVendorOffer,
+  allowVendorDestructiveDescription,
+  allowVendorLabel,
+  allowVendorOffer,
+  integrationNameFor,
+  vendorApprovalSentence,
+} from "./approval/vendor-approval.rules";
 export { type BlobDeps, defaultBlobDeps } from "./blob/blob.deps";
 export { BLOB_TTL_HOURS, BLOB_TTL_MS, isBlobExpired } from "./blob/blob.rules";
 export {

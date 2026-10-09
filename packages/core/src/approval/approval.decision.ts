@@ -12,6 +12,10 @@ import type { ApprovalDecision } from "@graft/db/schema/approval";
  * - A tool the person has set to **ask every call** asks whatever its `allow` says; the standing
  *   row then carries the setting and the answer, and each call's yes is the pending action's.
  *   A `deny` is a refusal whether or not the setting is on.
+ * - A tool with no answer of its own **passes under a standing approval for its integration**
+ *   (`vendorApproval`, ADR 0008 as amended 2026-10-09), unless it is destructive and the person
+ *   left destructive tools out. The tool's own row is read first, so a `deny` on the tool and the
+ *   ask-every-call setting both win over the integration's yes.
  */
 
 export type ToolAnnotations = { readOnly: boolean; destructive: boolean };
@@ -20,14 +24,20 @@ export type ApprovalState = { decision: ApprovalDecision; askEveryCall: boolean 
 
 export type ApprovalVerdict = "pass" | "ask" | "deny";
 
+/** The agent's standing approval for every tool of the tool's integration, if it holds one. */
+export type VendorApprovalState = { includesDestructive: boolean };
+
 export function approvalDecision(input: {
   annotations: ToolAnnotations;
   approval: ApprovalState | null;
+  vendorApproval?: VendorApprovalState | null;
 }): ApprovalVerdict {
-  const { annotations, approval } = input;
+  const { annotations, approval, vendorApproval } = input;
   if (annotations.readOnly) return "pass";
-  if (!approval) return "ask";
-  if (approval.decision === "deny") return "deny";
-  if (approval.askEveryCall) return "ask";
+  if (approval?.decision === "deny") return "deny";
+  if (approval?.askEveryCall) return "ask";
+  if (approval) return "pass";
+  if (!vendorApproval) return "ask";
+  if (annotations.destructive && !vendorApproval.includesDestructive) return "ask";
   return "pass";
 }

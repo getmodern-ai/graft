@@ -36,6 +36,8 @@ export function useAnswerAsk(
   action: PendingAction,
   onAnswered?: () => void,
   origin: AskOrigin = "agent",
+  /** A kind's own success toast for a yes; the tool card's names an integration allowed (GRA-237). */
+  allowedToast?: (answer: PendingAnswer) => { title: string; description: string },
 ) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -44,6 +46,13 @@ export function useAnswerAsk(
       queryClient.invalidateQueries({ queryKey: pendingKeys.all });
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       queryClient.invalidateQueries({ queryKey: approvalKeys.ofAgent(action.agentId) });
+      queryClient.invalidateQueries({ queryKey: approvalKeys.vendorsOfAgent(action.agentId) });
+      if (answer.allow && allowedToast) {
+        const { title, description } = allowedToast(answer);
+        toast.success(title, { description });
+        onAnswered?.();
+        return;
+      }
       toast.success(answer.allow ? "Approved" : "Declined", {
         description: !answer.allow
           ? declinedToastDescription(origin)
@@ -65,6 +74,7 @@ export function AskCard({
   onAnswer,
   pending,
   approveLabel = "Approve",
+  alsoApprove,
 }: {
   action: PendingAction;
   /** "<agent> asks to …" — the kind's own words after the agent's name. */
@@ -78,6 +88,8 @@ export function AskCard({
   pending: boolean;
   /** The approve button's verb; "Approve" unless the kind's act is something else. */
   approveLabel?: string;
+  /** A second yes beside Approve, outline: the tool card's integration-wide one (GRA-237). */
+  alsoApprove?: { label: string; onClick: () => void };
 }) {
   const open = isOpen(action);
   const agentName = action.agent?.name ?? "A revoked agent";
@@ -112,10 +124,15 @@ export function AskCard({
         <CardContent className="flex flex-col gap-4 text-sm">{children}</CardContent>
       ) : null}
       {open ? (
-        <CardFooter className="justify-end gap-2">
+        <CardFooter className="flex-wrap justify-end gap-2">
           <Button variant="outline" disabled={pending} onClick={() => onAnswer(false)}>
             Decline
           </Button>
+          {alsoApprove ? (
+            <Button variant="outline" disabled={pending} onClick={alsoApprove.onClick}>
+              {alsoApprove.label}
+            </Button>
+          ) : null}
           <Button disabled={pending} onClick={() => onAnswer(true)}>
             {approveLabel}
           </Button>

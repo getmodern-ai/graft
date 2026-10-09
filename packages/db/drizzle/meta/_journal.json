@@ -92,6 +92,13 @@
       "when": 1790139971106,
       "tag": "0012_setup",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791533410682,
+      "tag": "0013_vendor_approval",
+      "breakpoints": true
     }
   ]
 }

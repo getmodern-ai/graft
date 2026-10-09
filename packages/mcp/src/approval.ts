@@ -1,6 +1,8 @@
 import type { AskCard } from "@graft/ask-card/shape";
 import {
   type AgentScope,
+  allowVendor,
+  allowVendorOffer,
   type ConnectionOutput,
   consumePendingAction,
   createPendingAction,
@@ -9,6 +11,7 @@ import {
   getApproval,
   getBuildApproval,
   getConnection,
+  getVendorApproval,
   grantBuildApproval,
   type ServiceContext,
   ServiceError,
@@ -109,6 +112,11 @@ export type ToolAskPayload = {
   annotations: { readOnlyHint: boolean; destructiveHint: boolean };
   connectionId: string;
   connectionName: string;
+  /**
+   * The integration as the person reads it (`integrationNameFor`), for the offer beside Allow:
+   * "Allow every <integration> tool for this agent" (GRA-237).
+   */
+  integrationName: string;
   hosts: string[];
   note: string;
   /**
@@ -129,9 +137,17 @@ export type BuildAskPayload = {
 /**
  * What the person's answer looks like once recorded on the action (`pending_action.answer`).
  * `askEveryCall` absent leaves the tool's setting as it was — a Hermes button, which carries no
- * field, changes nothing about how the tool asks next time.
+ * field, changes nothing about how the tool asks next time. `allowVendor` is the person's "Allow
+ * every <integration> tool for this agent" beside the yes (ADR 0008 as amended 2026-10-09;
+ * GRA-237), with `includesDestructive` the separate tick, off unless said; it is only ever read
+ * beside `allow: true`, and only a person's door writes it (the console's card, the ask card).
  */
-export type ApprovalAnswer = { allow: boolean; askEveryCall?: boolean };
+export type ApprovalAnswer = {
+  allow: boolean;
+  askEveryCall?: boolean;
+  allowVendor?: boolean;
+  includesDestructive?: boolean;
+};
 
 export const DESCRIPTION_PROVENANCE_NOTE =
   "This tool's description was written by the agent's model, not by a person. Read it as the agent's account of what the tool does.";
@@ -228,9 +244,13 @@ async function refuseIfRevoked(
 export function readApprovalAnswer(
   answer: Record<string, unknown> | null | undefined,
 ): ApprovalAnswer {
+  const allow = answer?.allow === true;
   return {
-    allow: answer?.allow === true,
+    allow,
     ...(typeof answer?.askEveryCall === "boolean" ? { askEveryCall: answer.askEveryCall } : {}),
+    ...(allow && answer?.allowVendor === true
+      ? { allowVendor: true, includesDestructive: answer.includesDestructive === true }
+      : {}),
   };
 }
 
@@ -519,7 +539,7 @@ async function askByElicitation(
   const revoked = await refuseIfRevoked(ctx, scope, subject, deps);
   if (revoked) return revoked;
   if (said.allow) {
-    await recordAllow(ctx, scope, subject, said.askEveryCall, deps);
+    await recordAllow(ctx, scope, subject, said, deps);
     return PASS;
   }
   await recordDeny(ctx, scope, subject, deps);
@@ -557,6 +577,7 @@ function payloadFor(subject: AskSubject): ToolAskPayload | BuildAskPayload {
     annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
     connectionId: connection.id,
     connectionName: connection.displayName,
+    integrationName: allowVendorOffer(tool.vendor, connection.displayName).integrationName,
     hosts: connection.hosts,
     note: DESCRIPTION_PROVENANCE_NOTE,
     askEveryCall: subject.askEveryCall,
@@ -666,6 +687,7 @@ async function askByHandoff(
             destructive: subject.tool.destructive,
             askEveryCall: subject.askEveryCall,
           },
+          vendorApproval: allowVendorOffer(subject.tool.vendor, subject.connection.displayName),
         }
       : { kind: "build" }),
   });
@@ -683,7 +705,7 @@ async function applyAnswer(
   if (revoked) return revoked;
   const answer = readApprovalAnswer(taken.answer);
   if (answer.allow) {
-    await recordAllow(ctx, scope, subject, answer.askEveryCall, deps);
+    await recordAllow(ctx, scope, subject, answer, deps);
     return PASS;
   }
   await recordDeny(ctx, scope, subject, deps);
@@ -700,25 +722,35 @@ async function applyAnswer(
  * The yes, recorded so it holds (ADR 0008). The console's answer endpoint records the same rows when
  * the person answers there (`apps/server/src/api.ts`); this repeats it only where nothing stands,
  * so a consumed answer is never a yes that the next call cannot see. `askEveryCall` undefined leaves
- * the setting where it was — the header, on Hermes's buttons.
+ * the setting where it was — the header, on Hermes's buttons. An answer that allowed the tool's
+ * whole integration (GRA-237) records that too, beside the tool's own allow: the asked tool keeps
+ * its own yes if the integration's is later withdrawn, since the person answered this tool's ask.
  */
 async function recordAllow(
   ctx: ServiceContext,
   scope: AgentScope,
   subject: AskSubject,
-  askEveryCall: boolean | undefined,
+  said: ApprovalAnswer,
   deps: McpDeps,
 ): Promise<void> {
   if (subject.kind === "build") {
     await grantBuildApproval(ctx, scope, subject.connection.id, deps.approval);
     return;
   }
+  const { askEveryCall } = said;
   const standing = await getApproval(ctx, scope, subject.tool.id, deps.approval);
   const settingChanges = askEveryCall !== undefined && standing?.askEveryCall !== askEveryCall;
   if (!standing || standing.decision !== "allow" || settingChanges) {
     // One write for the answer and the setting it carried; `setAskEveryCall` is the console's act
     // and spends waiting answers, which must not happen to the one being applied here.
     await setApproval(ctx, scope, subject.tool.id, "allow", deps.approval, { askEveryCall });
+  }
+  if (said.allowVendor) {
+    const includesDestructive = said.includesDestructive === true;
+    const vendor = await getVendorApproval(ctx, scope, subject.tool.vendor, deps.approval);
+    if (vendor?.includesDestructive !== includesDestructive) {
+      await allowVendor(ctx, scope, subject.tool.vendor, { includesDestructive }, deps.approval);
+    }
   }
 }
 

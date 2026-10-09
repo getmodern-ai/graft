@@ -1,4 +1,4 @@
-import type { AskCard, AskCardTool } from "@graft/ask-card/shape";
+import type { AskCard, AskCardTool, AskCardVendorApproval } from "@graft/ask-card/shape";
 import { type ConnectionOutput, takesCredential } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { ConnectionScheme } from "@graft/db/schema/connection";
@@ -162,7 +162,15 @@ export function approvalAskCard(
     agentName: string;
     connection: ConnectionOutput;
     url: string;
-  } & ({ kind: "build" } | { kind: "tool"; toolName: string; tool: AskCardTool }),
+  } & (
+    | { kind: "build" }
+    | {
+        kind: "tool";
+        toolName: string;
+        tool: AskCardTool;
+        vendorApproval: AskCardVendorApproval;
+      }
+  ),
 ): AskCard {
   const { action, connection } = args;
   return {
@@ -180,7 +188,9 @@ export function approvalAskCard(
     url: args.url,
     answerable: true,
     ...(connection.provider !== "keyring" ? { provider: connection.provider } : {}),
-    ...(args.kind === "tool" ? { toolName: args.toolName, tool: args.tool } : {}),
+    ...(args.kind === "tool"
+      ? { toolName: args.toolName, tool: args.tool, vendorApproval: args.vendorApproval }
+      : {}),
   };
 }
 

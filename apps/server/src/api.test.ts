@@ -13,7 +13,7 @@ import {
 import { SITE_SETUP_PROMPTS } from "@graft/core/setup/setup-prompt.site-fixture";
 import type { DbOrTx } from "@graft/db";
 import type { AgentRow } from "@graft/db/repo/agent";
-import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
+import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
 import type { ConnectionRow } from "@graft/db/repo/connection";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
@@ -159,6 +159,16 @@ const approvalRow: ApprovalRow = {
   updatedAt: NOW,
 };
 
+const vendorApprovalRow: VendorApprovalRow = {
+  agentId: "agent_1",
+  vendor: "demo",
+  includesDestructive: false,
+  grantedAt: NOW,
+  owner: "person",
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
 const buildApprovalRow: BuildApprovalRow = {
   agentId: "agent_1",
   connectionId: "conn_1",
@@ -229,6 +239,7 @@ function connectionDeps(): ConnectionDeps {
     reconnectConnection: vi.fn(async () => ({ ...connectionRow, revokedAt: null })),
     addConnectionHosts: vi.fn(async (_db, _p, _id, hosts) => ({ ...connectionRow, hosts })),
     deleteApprovalsForVendor: vi.fn(async () => []),
+    deleteVendorApprovalsForVendor: vi.fn(async () => []),
     deleteBuildApprovalsForConnection: vi.fn(async () => []),
     expirePendingActionsForConnection: vi.fn(async () => []),
     deleteWorkingSetEntriesForConnection: vi.fn(async () => []),
@@ -387,6 +398,10 @@ function approvalDeps(): ApprovalDeps {
     deleteApproval: vi.fn(async () => approvalRow),
     findBuildApproval: vi.fn(async () => null),
     insertBuildApproval: vi.fn(async () => buildApprovalRow),
+    findVendorApproval: vi.fn(async () => null),
+    listVendorApprovals: vi.fn(async () => [vendorApprovalRow]),
+    upsertVendorApproval: vi.fn(async (_db, _scope, input) => ({ ...vendorApprovalRow, ...input })),
+    deleteVendorApproval: vi.fn(async () => vendorApprovalRow),
     settleAnsweredToolActions: vi.fn(async () => []),
     findAuthoredToolById: vi.fn(async () => destructiveTool),
     findConnection: vi.fn(async () => connectionRow),
@@ -2143,9 +2158,64 @@ describe("approvals", () => {
     expect(none.status).toBe(404);
   });
 
+  /** ADR 0008 as amended 2026-10-09 (GRA-237): every tool of an integration, allowed at once. */
+  it("records Allow every tool of the integration beside the tool's allow, for the tool row's vendor", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const res = await app.request(
+      "/api/pending-actions/pa_1/answer",
+      json({ allow: true, allowVendor: true, includesDestructive: false }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      approval: { toolId: "tool_1", decision: "allow" },
+      vendorApproval: { agentId: "agent_1", vendor: "demo", includesDestructive: false },
+    });
+    expect(deps.approval.upsertVendorApproval).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      { vendor: "demo", includesDestructive: false, grantedAt: NOW },
+    );
+
+    // Beside a no it records nothing of the integration.
+    vi.mocked(deps.approval.upsertVendorApproval).mockClear();
+    await app.request(
+      "/api/pending-actions/pa_1/answer",
+      json({ allow: false, allowVendor: true, includesDestructive: true }),
+    );
+    expect(deps.approval.upsertVendorApproval).not.toHaveBeenCalled();
+  });
+
+  it("lists an agent's integration approvals and withdraws one, 404 when none stood", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const list = await app.request("/api/vendor-approvals?agentId=agent_1");
+    expect(await list.json()).toEqual({
+      vendorApprovals: [expect.objectContaining({ vendor: "demo", includesDestructive: false })],
+    });
+    expect(deps.approval.listVendorApprovals).toHaveBeenCalledWith(fakeDb, {
+      personId: "person_1",
+      agentId: "agent_1",
+    });
+    expect((await app.request("/api/vendor-approvals")).status).toBe(400);
+
+    const gone = await app.request("/api/vendor-approvals/demo?agentId=agent_1", from("DELETE"));
+    expect(gone.status).toBe(200);
+    expect(await gone.json()).toMatchObject({ vendorApproval: { vendor: "demo" } });
+    expect(deps.approval.deleteVendorApproval).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      "demo",
+    );
+
+    vi.mocked(deps.approval.deleteVendorApproval).mockResolvedValueOnce(null);
+    const none = await app.request("/api/vendor-approvals/demo?agentId=agent_1", from("DELETE"));
+    expect(none.status).toBe(404);
+  });
+
   it("answers 401 without a session on every new route", async () => {
     const { app } = harness(null);
     for (const [path, init] of [
+      ["/api/vendor-approvals?agentId=agent_1", undefined],
+      ["/api/vendor-approvals/demo?agentId=agent_1", from("DELETE")],
       ["/api/pending-actions", undefined],
       ["/api/pending-actions/pa_1?t=x", undefined],
       ["/api/pending-actions/pa_1/answer", json({ allow: true })],

@@ -18,7 +18,9 @@ import {
  * Six shapes, in Cando's card anatomy (ADR 0017) and the console's voice. Four answer in place:
  * the **build approval** (Allow or Deny); the **tool's first-use approval** (GRA-116: the tool's
  * description in the model's words, its hints, Allow or Deny — the ask-every-call setting stays on
- * the console's page, and the card says when it is on); the **connection confirmation** for a
+ * the console's page, and the card says when it is on — and, where the server offers it, *Allow
+ * every <integration> tool for this agent* beside Allow with a destructive tick off by default,
+ * GRA-237); the **connection confirmation** for a
  * scheme that takes no credential (Connect or Decline, with GRA-75's build choice on by default);
  * and the **scope ask** — a connection the person already holds, asked for by an agent that was
  * not given it (GRA-104): Allow or Decline, with the same build choice. Two send the person
@@ -512,6 +514,38 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
 
   if (!card.answerable) {
     consoleButton(actions);
+    return root;
+  }
+
+  if (card.kind === "tool" && card.vendorApproval) {
+    // The integration-wide yes beside Allow (GRA-237; ADR 0008 as amended 2026-10-09), in the
+    // server's words, with destructive tools a separate tick, off by default. Allow alone answers
+    // this tool as before and never carries the tick.
+    const offer = card.vendorApproval;
+    const choice = el(doc, "label", "ask-choice");
+    const box = el(doc, "input");
+    box.type = "checkbox";
+    box.checked = false;
+    box.name = "includesDestructive";
+    const words = el(doc, "span");
+    words.append(
+      el(doc, "span", undefined, offer.destructiveLabel),
+      el(doc, "span", "ask-choice-hint", offer.destructiveDescription),
+    );
+    choice.append(box, words);
+    actions.before(choice);
+
+    const deny = button(doc, "Deny", "secondary", () => void submit({ allow: false }));
+    const every = button(doc, offer.label, "secondary", () => {
+      box.disabled = true;
+      void submit({ allow: true, allowVendor: true, includesDestructive: box.checked });
+    });
+    const allow = button(doc, "Allow", "primary", () => {
+      box.disabled = true;
+      void submit({ allow: true });
+    });
+    buttons.push(deny, every, allow);
+    actions.append(deny, every, allow);
     return root;
   }
 

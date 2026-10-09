@@ -2,6 +2,7 @@ import {
   type AgentDeps,
   type ApprovalDeps,
   addConnectionToAgentScope,
+  allowVendor,
   answerPendingAction,
   type ConnectionDeps,
   type ConnectionOutput,
@@ -20,7 +21,7 @@ import {
   setApproval,
   widenKeylessConnectionHosts,
 } from "@graft/core";
-import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
+import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 
 import { readApprovalAnswer } from "./approval";
@@ -97,14 +98,18 @@ type RevokedBeforeAnswer = { revoked: { connectionId: string; name: string | nul
 export type ApprovalAnswerRecord = {
   pendingAction: PendingActionRow;
   approval?: ApprovalRow;
+  /** For a tool ask's yes that allowed every tool of the integration (GRA-237). */
+  vendorApproval?: VendorApprovalRow;
   buildApproval?: BuildApprovalRow;
   /** For a `scope` ask's yes (GRA-104): the agent's scope after the grant. */
   connectionIds?: string[];
 };
 
 /**
- * The person's answer to a `tool`, `build` or `scope` ask, `{ allow, askEveryCall?, approveBuild? }`
- * plus whatever the door adds. Recording the answer and writing the record it is for happen in one
+ * The person's answer to a `tool`, `build` or `scope` ask, `{ allow, askEveryCall?, approveBuild?,
+ * allowVendor?, includesDestructive? }` plus whatever the door adds. A tool ask's yes with
+ * `allowVendor` also records the agent's standing approval for every tool of the tool's vendor,
+ * destructive ones only with `includesDestructive` (ADR 0008 as amended 2026-10-09; GRA-237). Recording the answer and writing the record it is for happen in one
  * transaction: for a `tool` ask the answer becomes the standing `approval` row (`allow` or `deny`
  * — a no holds too, ADR 0008), and `askEveryCall` with an allow sets the tool's per-call opt-in on
  * or off, absent leaving it as it stands (ADR 0008, amendment of 2026-09-15); for a `build` ask an
@@ -149,6 +154,8 @@ export async function recordApprovalAnswer(
     allow: boolean;
     askEveryCall?: boolean;
     approveBuild?: boolean;
+    allowVendor?: boolean;
+    includesDestructive?: boolean;
   },
   deps: ApprovalAnswerDeps,
 ): Promise<ApprovalAnswerRecord> {
@@ -228,8 +235,23 @@ async function recordAnswer(
         deps.approval,
         said.allow && said.askEveryCall !== undefined ? { askEveryCall: said.askEveryCall } : {},
       );
+      // "Allow every <integration> tool for this agent" (GRA-237): the integration's standing
+      // approval, for the vendor of the tool the ask is about as the tool row says, in the
+      // answer's transaction. `readApprovalAnswer` reads it beside a yes only.
+      const tool = said.allowVendor
+        ? await deps.approval.findAuthoredToolById(scoped.db, principal.personId, toolId)
+        : null;
+      const vendorApproval = tool
+        ? await allowVendor(
+            scoped,
+            scope,
+            tool.vendor,
+            { includesDestructive: said.includesDestructive === true },
+            deps.approval,
+          )
+        : undefined;
       if (!said.allow || !approval.askEveryCall) await settle();
-      return { pendingAction: action, approval };
+      return { pendingAction: action, approval, ...(vendorApproval ? { vendorApproval } : {}) };
     }
     if (action.kind === "build" && said.allow && typeof action.payload.connectionId === "string") {
       const buildApproval = await grantBuildApproval(
