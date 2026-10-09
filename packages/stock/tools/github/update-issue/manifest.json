@@ -1,0 +1,63 @@
+{
+  "name": "update-issue",
+  "description": "Updates a GitHub issue: closes or reopens it, changes its title or body, or replaces its labels or assignees; only the fields given change. The number comes from github__list-issues or github__search-issues-and-pull-requests, the owner and repository from github__list-my-repositories.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The repository's owner, the part before the slash of a full_name github__list-my-repositories answers."
+      },
+      "repo": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The repository's name, the part after the slash of a full_name github__list-my-repositories answers."
+      },
+      "issueNumber": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "The issue's number; github__list-issues or github__search-issues-and-pull-requests answers it."
+      },
+      "state": {
+        "type": "string",
+        "enum": ["open", "closed"],
+        "description": "open or closed."
+      },
+      "stateReason": {
+        "type": "string",
+        "enum": ["completed", "not_planned", "reopened"],
+        "description": "Why its state changed: completed, not_planned or reopened."
+      },
+      "title": {
+        "type": "string",
+        "description": "A new title."
+      },
+      "body": {
+        "type": "string",
+        "description": "A new Markdown body."
+      },
+      "labels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Label names that replace all existing labels."
+      },
+      "assignees": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "GitHub logins that replace all existing assignees."
+      }
+    },
+    "required": ["owner", "repo", "issueNumber"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.github.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

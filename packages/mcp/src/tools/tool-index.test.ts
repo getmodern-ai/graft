@@ -1,3 +1,5 @@
+import { STARTER_VENDORS } from "@graft/core";
+import { readStockWorkspace } from "@graft/stock";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -294,5 +296,45 @@ describe("inputLabels", () => {
     ).toEqual(["object type", "object kind", "contacts", "page size", "filters", "field name"]);
     expect(inputLabels({ type: "object" })).toEqual([]);
     expect(inputLabels(undefined)).toEqual([]);
+  });
+});
+
+/**
+ * The stock workspace as it ships (GRA-253): each stock tool is found first by a query a person
+ * would use for it, searched over every stock tool at once with the integrations' display names,
+ * as `find_tool` searches them (`meta.ts`).
+ */
+describe("the stock catalogue's real queries", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const QUERIES: [query: string, wire: string][] = [
+    ["list my repositories", "github__list-my-repositories"],
+    ["my github repos", "github__list-my-repositories"],
+    ["list issues", "github__list-issues"],
+    ["get issue with comments", "github__get-issue"],
+    ["search issues", "github__search-issues-and-pull-requests"],
+    ["search pull requests", "github__search-issues-and-pull-requests"],
+    ["list pull requests", "github__list-pull-requests"],
+    ["pull request changed files", "github__get-pull-request"],
+    ["read a file", "github__get-file-contents"],
+    ["get readme", "github__get-file-contents"],
+    ["create issue", "github__create-issue"],
+    ["comment on pull request", "github__comment-on-issue-or-pull-request"],
+    ["close issue", "github__update-issue"],
+    ["create pull request", "github__create-pull-request"],
+    ["current weather", "open-meteo__current-weather"],
+  ];
+
+  it.each(QUERIES)('"%s" finds %s first', async (query, wire) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    expect(first && `${first.vendor}__${first.name}`).toBe(wire);
   });
 });

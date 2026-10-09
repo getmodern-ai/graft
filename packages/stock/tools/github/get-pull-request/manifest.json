@@ -1,0 +1,29 @@
+{
+  "name": "get-pull-request",
+  "description": "Gets a GitHub pull request by number with a summary of its changes: state, branches, reviewers, commit and line counts, and each changed file's path, status and line counts (not the patch). The number comes from github__list-pull-requests or github__search-issues-and-pull-requests, the owner and repository from github__list-my-repositories.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "owner": {
+        "type": "string",
+        "description": "The repository's owner, the part before the slash of a full_name github__list-my-repositories answers."
+      },
+      "repo": {
+        "type": "string",
+        "description": "The repository's name, the part after the slash of a full_name github__list-my-repositories answers."
+      },
+      "pullNumber": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "The pull request's number; github__list-pull-requests or github__search-issues-and-pull-requests answers it."
+      }
+    },
+    "required": ["owner", "repo", "pullNumber"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.github.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

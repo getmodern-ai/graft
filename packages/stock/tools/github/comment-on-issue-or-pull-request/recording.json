@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "tool": "github__comment-on-issue-or-pull-request",
+  "recordedAt": "2026-10-09T18:57:18.842Z",
+  "input": {
+    "owner": "fmsjjaexh-jd",
+    "repo": "zzguz",
+    "issueNumber": 534,
+    "body": "Mntmpqh zqye n qylyb puci qabkd."
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.github.com/repos/fmsjjaexh-jd/zzguz/issues/534/comments",
+      "body": {
+        "json": {
+          "body": "Mntmpqh zqye n qylyb puci qabkd."
+        }
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "owner": "fmsjjaexh-jd",
+      "repo": "zzguz",
+      "issueNumber": 534,
+      "body": "Mntmpqh zqye n qylyb puci qabkd."
+    }
+  }
+}

@@ -1,0 +1,204 @@
+{
+  "format": 1,
+  "tool": "github__get-issue",
+  "recordedAt": "2026-10-09T18:50:46.282Z",
+  "input": {
+    "owner": "twhriiu",
+    "repo": "Rbqoe-Mbzid",
+    "issueNumber": 87440
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.github.com/repos/twhriiu/Rbqoe-Mbzid/issues/87440",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "url": "https://api.github.com/",
+            "repository_url": "https://api.github.com/",
+            "labels_url": "https://api.github.com/",
+            "comments_url": "https://api.github.com/",
+            "events_url": "https://api.github.com/",
+            "html_url": "https://github.com/",
+            "id": 4120463715,
+            "node_id": "Q_ovCSTBOPgu9VQCUVJGCUPo",
+            "number": 87440,
+            "title": "[ZM Nbcf] zeowd 48759248-10r6-0432-pn3r-5930f097041x",
+            "user": {
+              "login": "Luotczaimcso-Wwqzqz",
+              "id": 376603023,
+              "node_id": "P_dfMXXC1FCv",
+              "avatar_url": "https://avatars.githubusercontent.com/",
+              "gravatar_id": "",
+              "url": "https://api.github.com/",
+              "html_url": "https://github.com/",
+              "followers_url": "https://api.github.com/",
+              "following_url": "https://api.github.com/",
+              "gists_url": "https://api.github.com/",
+              "starred_url": "https://api.github.com/",
+              "subscriptions_url": "https://api.github.com/",
+              "organizations_url": "https://api.github.com/",
+              "repos_url": "https://api.github.com/",
+              "events_url": "https://api.github.com/",
+              "received_events_url": "https://api.github.com/",
+              "type": "Luri",
+              "user_view_type": "zqspkh",
+              "site_admin": false
+            },
+            "labels": [],
+            "state": "edmuvk",
+            "locked": false,
+            "assignees": [],
+            "milestone": null,
+            "comments": 1,
+            "created_at": "2007-05-23T14:49:55Z",
+            "updated_at": "2012-12-07T16:23:58Z",
+            "closed_at": "2012-12-07T16:23:58Z",
+            "assignee": null,
+            "author_association": "NUDJ",
+            "active_lock_reason": null,
+            "sub_issues_summary": {
+              "total": 0,
+              "completed": 0,
+              "percent_completed": 0
+            },
+            "issue_dependencies_summary": {
+              "blocked_by": 0,
+              "total_blocked_by": 0,
+              "blocking": 0,
+              "total_blocking": 0
+            },
+            "body": "Ctej oaalx gvhrves cr acugjkste srmv",
+            "closed_by": {
+              "login": "Luotczaimcso-Wwqzqz",
+              "id": 376603023,
+              "node_id": "P_dfMXXC1FCv",
+              "avatar_url": "https://avatars.githubusercontent.com/",
+              "gravatar_id": "",
+              "url": "https://api.github.com/",
+              "html_url": "https://github.com/",
+              "followers_url": "https://api.github.com/",
+              "following_url": "https://api.github.com/",
+              "gists_url": "https://api.github.com/",
+              "starred_url": "https://api.github.com/",
+              "subscriptions_url": "https://api.github.com/",
+              "organizations_url": "https://api.github.com/",
+              "repos_url": "https://api.github.com/",
+              "events_url": "https://api.github.com/",
+              "received_events_url": "https://api.github.com/",
+              "type": "Luri",
+              "user_view_type": "zqspkh",
+              "site_admin": false
+            },
+            "reactions": {
+              "url": "https://api.github.com/",
+              "total_count": 0,
+              "+1": 0,
+              "-1": 0,
+              "laugh": 0,
+              "hooray": 0,
+              "confused": 0,
+              "heart": 0,
+              "rocket": 0,
+              "eyes": 0
+            },
+            "timeline_url": "https://api.github.com/",
+            "performed_via_github_app": null,
+            "state_reason": "keztfllci",
+            "pinned_comment": null
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.github.com/repos/twhriiu/Rbqoe-Mbzid/issues/87440/comments?per_page=100",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": [
+            {
+              "url": "https://api.github.com/",
+              "html_url": "https://github.com/",
+              "issue_url": "https://api.github.com/",
+              "id": 7299750259,
+              "node_id": "UA_liEPHRIZgx7EOPNRjcpMlg",
+              "user": {
+                "login": "Luotczaimcso-Wwqzqz",
+                "id": 376603023,
+                "node_id": "P_dfMXXC1FCv",
+                "avatar_url": "https://avatars.githubusercontent.com/",
+                "gravatar_id": "",
+                "url": "https://api.github.com/",
+                "html_url": "https://github.com/",
+                "followers_url": "https://api.github.com/",
+                "following_url": "https://api.github.com/",
+                "gists_url": "https://api.github.com/",
+                "starred_url": "https://api.github.com/",
+                "subscriptions_url": "https://api.github.com/",
+                "organizations_url": "https://api.github.com/",
+                "repos_url": "https://api.github.com/",
+                "events_url": "https://api.github.com/",
+                "received_events_url": "https://api.github.com/",
+                "type": "Luri",
+                "user_view_type": "zqspkh",
+                "site_admin": false
+              },
+              "created_at": "2004-10-05T01:55:56Z",
+              "updated_at": "2004-10-05T01:55:56Z",
+              "body": "[CS Ruto] ttcadfi 43o52zdd-251h-3l52-s0p2-2l81954ln042",
+              "author_association": "NUDJ",
+              "pin": null,
+              "reactions": {
+                "url": "https://api.github.com/",
+                "total_count": 0,
+                "+1": 0,
+                "-1": 0,
+                "laugh": 0,
+                "hooray": 0,
+                "confused": 0,
+                "heart": 0,
+                "rocket": 0,
+                "eyes": 0
+              },
+              "performed_via_github_app": null,
+              "minimized": null
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "number": 87440,
+    "title": "[ZM Nbcf] zeowd 48759248-10r6-0432-pn3r-5930f097041x",
+    "state": "edmuvk",
+    "body": "Ctej oaalx gvhrves cr acugjkste srmv",
+    "user": "Luotczaimcso-Wwqzqz",
+    "labels": [],
+    "assignees": [],
+    "created_at": "2007-05-23T14:49:55Z",
+    "updated_at": "2012-12-07T16:23:58Z",
+    "closed_at": "2012-12-07T16:23:58Z",
+    "html_url": "https://github.com/",
+    "is_pull_request": false,
+    "comments": [
+      {
+        "id": 7299750259,
+        "user": "Luotczaimcso-Wwqzqz",
+        "body": "[CS Ruto] ttcadfi 43o52zdd-251h-3l52-s0p2-2l81954ln042",
+        "created_at": "2004-10-05T01:55:56Z",
+        "html_url": "https://github.com/"
+      }
+    ]
+  }
+}
