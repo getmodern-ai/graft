@@ -50,7 +50,8 @@ export function acquireNextStep(vendor: string, name: string): string {
  * sentence that says it. `attempt_budget` and `token_ceiling` are the two bounds ADR 0004 names;
  * `vendor_unreachable` is the proxy getting no response from the vendor on a proof read or the dry
  * run (GRA-79) — the network's, not the module's, so the job ends on it at once; the rest are the
- * loop finding it cannot go on.
+ * loop finding it cannot go on, `remix_unavailable` among them: the tool `from` named has gone or has
+ * no current version since the job was queued (GRA-243).
  */
 export const ACQUIRE_FAILURES = [
   "attempt_budget",
@@ -60,6 +61,7 @@ export const ACQUIRE_FAILURES = [
   "model_failed",
   "connection_unavailable",
   "build_approval_missing",
+  "remix_unavailable",
   "sandbox_unavailable",
   "vendor_unreachable",
   "job_failed",
