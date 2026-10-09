@@ -446,7 +446,9 @@ amended 2026-09-20): a `grfta_` request with an unknown session id, or with none
 announcing a protocol version the SDK lacks negotiates instead of being refused** (GRA-162; ADR 0018
 as amended 2026-09-22): the door drops the `MCP-Protocol-Version` header on a session-less
 `initialize` when the SDK does not speak it, so the body's version negotiates to Graft's latest —
-Claude.ai has announced `2026-07-28` on every session since 2026-09-20 — and a request that names a
+Claude.ai has announced `2026-07-28` on every session since 2026-09-20 — and on both of GRA-129's
+re-open paths, where the re-opened session negotiated for the client (GRA-232: Claude opens with a
+session-less `tools/list`, and the 400 outlived #128 by two weeks); a request that names a live
 session keeps the SDK's 400. Under `open`,
 authored code runs on the backing `GRAFT_SANDBOX_BACKEND` names:
 `docker` by default, which needs the `GRAFT_SANDBOX_IMAGE`/`GRAFT_SANDBOX_NETWORK` pair below and,
