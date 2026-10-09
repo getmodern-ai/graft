@@ -25,7 +25,9 @@ where a decision is theirs. Anything that breaks either is in scope:
   than the person can answer, or a handoff URL that works for someone it was not signed for. The
   console's session also records a build approval with no pending action, when the person presses
   Setup's Build for their agent and connection (ADR 0024); one recorded for an agent or connection
-  that is not theirs, or for a connection the agent was not given, is in scope.
+  that is not theirs, or for a connection the agent was not given, is in scope. So is an approval
+  that lets a write or destructive tool pass on a version it was not given for, other than a
+  ready-made tool's update that keeps or narrows its annotations (ADR 0008 as amended 2026-10-09).
 - The **MCP OAuth server**: a token issued to the wrong client or agent, a code or refresh token
   replayed, a consent decided without a session. The **console**: a cross-origin state change. Its
   session also issues an agent's static token, shown once per request, to an agent awaiting its

@@ -98,6 +98,7 @@ beforeEach(() => {
       toolId: tool.id,
       decision: "allow",
       askEveryCall: false,
+      toolVersionId: null,
       decidedAt: at,
       createdAt: at,
       updatedAt: at,

@@ -27,6 +27,7 @@ import {
   revokeAgent,
 } from "./agent";
 import {
+  carryApprovalsToVersion,
   deleteApproval,
   deleteApprovalsForVendor,
   findApproval,
@@ -804,6 +805,21 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toContain(
       '"tool_id" in (select "id" from "authored_tool" where ("authored_tool"."person_id" = $1 and "authored_tool"."vendor" = $2))',
     );
+  });
+
+  it("carrying approvals onto a stock advance's version reaches only the person's tool and the answers given for the version before (GRA-245)", async () => {
+    await carryApprovalsToVersion(db, "person_1", {
+      toolId: "tool_1",
+      fromVersionId: "ver_1",
+      toVersionId: "ver_2",
+    });
+    const s = only();
+    expect(s.sql).toMatch(/^update "approval" set "tool_version_id" = \$1/);
+    expect(s.sql).toContain(
+      '"approval"."tool_id" in (select "id" from "authored_tool" where ("authored_tool"."id" = $3 and "authored_tool"."person_id" = $4))',
+    );
+    expect(s.sql).toContain('"approval"."tool_version_id" = $5');
+    expect(s.params).toEqual(["ver_2", expect.any(String), "tool_1", "person_1", "ver_1"]);
   });
 
   /** A revoke's fourth sweep (GRA-69): every agent's entries, through the person's tools bound to the connection. */

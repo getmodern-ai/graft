@@ -185,3 +185,62 @@ describe("advanceStockCopy", () => {
     expect(advance).toMatchObject({ advanced: false, tool: { id: copied.id } });
   });
 });
+
+/**
+ * ADR 0008 as amended 2026-10-09 (GRA-245): a new stock version keeps the approval unless its
+ * annotations widen. What is asserted is the version each agent's answer stands for afterwards.
+ */
+describe("advanceStockCopy and the approvals given for the copy", () => {
+  const WRITE: StockToolView = {
+    ...STOCK,
+    name: "save-place",
+    annotations: { readOnly: false, destructive: false },
+    checkOutput: { refusals: [], advice: [], annotations: { readOnly: false, destructive: false } },
+  };
+  const next = (annotations: StockToolView["annotations"]): StockToolView => ({
+    ...WRITE,
+    stockVersionId: "stock_place_v4",
+    versionNumber: 4,
+    annotations,
+    checkOutput: { ...WRITE.checkOutput, annotations },
+  });
+  const approved = async () => {
+    const copied = await copyStockVersion(deps, {
+      personId: PERSON,
+      stock: WRITE,
+      defaultConnectionId: null,
+    });
+    tool.approvals.push(
+      { agentId: "agent_a", toolId: copied.id, toolVersionId: copied.currentVersionId },
+      // An answer already given for an older version stays stale: the carry is not a grant.
+      { agentId: "agent_b", toolId: copied.id, toolVersionId: "older_version" },
+    );
+    // The fake's tool row is the object the advance moves, so its version is read now.
+    return { copied, before: copied.currentVersionId };
+  };
+
+  it("carries the answers given for the version before onto the new one when the annotations hold", async () => {
+    const { copied } = await approved();
+    const advance = await advanceStockCopy(deps, {
+      personId: PERSON,
+      toolId: copied.id,
+      stock: next({ readOnly: false, destructive: false }),
+    });
+    if (!advance.advanced) throw new Error("the copy did not advance");
+    expect(tool.approvals).toEqual([
+      { agentId: "agent_a", toolId: copied.id, toolVersionId: advance.version.id },
+      { agentId: "agent_b", toolId: copied.id, toolVersionId: "older_version" },
+    ]);
+  });
+
+  it("leaves every answer on the version before when the new version turns destructive", async () => {
+    const { copied, before } = await approved();
+    const advance = await advanceStockCopy(deps, {
+      personId: PERSON,
+      toolId: copied.id,
+      stock: next({ readOnly: false, destructive: true }),
+    });
+    expect(advance.advanced).toBe(true);
+    expect(tool.approvals.map((row) => row.toolVersionId)).toEqual([before, "older_version"]);
+  });
+});

@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { checkModule } from "@graft/check";
-import { loadStockCatalogue } from "@graft/core";
+import { loadStockCatalogue, setApproval } from "@graft/core";
 import { createFakeStockCatalogue } from "@graft/core/stock/testing/fake-stock-deps";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -50,6 +50,13 @@ const AGENTS = {
   racer: { person: "p_racer", agent: "a_racer", connection: "conn_meteo_racer" },
   finder: { person: "p_finder", agent: "a_finder", connection: "conn_meteo_finder" },
   lister: { person: "p_lister", agent: "a_lister", connection: "conn_meteo_lister" },
+  // GRA-245: a stock write tool approved, then advanced; and a remix of one.
+  approver: { person: "p_approver", agent: "a_approver", connection: "conn_meteo_approver" },
+  remixWriter: {
+    person: "p_remix_writer",
+    agent: "a_remix_writer",
+    connection: "conn_meteo_remix_writer",
+  },
 } as const;
 /** The racer's second agent, over the same connection: two reaches of one copy at once. */
 const RACER_TWO = "a_racer_two";
@@ -561,5 +568,165 @@ describe("an untouched copy follows stock's new versions", () => {
     const { tool, versions } = copyOf(AGENTS.lister.person);
     expect(versions).toHaveLength(2);
     expect(tool?.description).toBe(V2_DESCRIPTION);
+  });
+});
+
+/**
+ * GRA-245 (ADR 0008 as amended 2026-10-09): a stock write tool's approval across its updates. The
+ * catalogue gains a write tool beside the weather one, at v1; the person approves it for the agent;
+ * then stock appends a version with the same annotations, which runs without a new ask, and one
+ * that turns destructive, which asks again. A remix of an approved write tool asks again once.
+ */
+describe("a stock tool's approval across its updates", () => {
+  const PLACE = { vendor: "open-meteo", name: "save-place" };
+  const PLACE_WIRE = "open-meteo__save-place";
+  const PLACE_STOCK_ID = "stock_place";
+  const WRITE = { readOnly: false, destructive: false };
+  const moduleOf = (version: number) => `export default async () => ({ saved: ${version} });\n`;
+
+  const scopeOf = (entry: { person: string; agent: string }) => ({
+    personId: entry.person,
+    agentId: entry.agent,
+  });
+  /** Stock appends a version of the write tool, as the boot appends a changed workspace's tool. */
+  const appendStock = (versionNumber: number, annotations: typeof WRITE) => {
+    const weatherV1 = [...catalogue.versions.values()].find(
+      (row) => row.versionNumber === 1 && row.stockToolId !== PLACE_STOCK_ID,
+    );
+    if (!weatherV1) throw new Error("the catalogue holds no weather v1");
+    const id = `stock_place_v${versionNumber}`;
+    catalogue.versions.set(id, {
+      ...weatherV1,
+      id,
+      stockToolId: PLACE_STOCK_ID,
+      versionNumber,
+      sourceHash: `place_v${versionNumber}`,
+      description: "Saves a named place to the person's list, as stock writes it.",
+      readOnly: annotations.readOnly,
+      destructive: annotations.destructive,
+      files: [{ path: "index.ts", content: moduleOf(versionNumber) }],
+      checkOutput: { refusals: [], advice: [], annotations },
+    });
+    store.stockVersionNumbers.set(id, versionNumber);
+  };
+  /** The person's copy of the write tool. */
+  const placeOf = (person: string) =>
+    [...store.tools.values()].find(
+      (row) => row.personId === person && row.vendor === PLACE.vendor && row.name === PLACE.name,
+    );
+  /** The tool asks opened for this agent, answered or not. */
+  const asksOf = (agent: string) =>
+    [...store.pendingActions.values()].filter(
+      (row) => row.agentId === agent && row.kind === "tool",
+    );
+  /** The person answers yes, as the console's card records it. */
+  const allow = async (entry: { person: string; agent: string }) => {
+    const tool = placeOf(entry.person);
+    if (!tool) throw new Error("no copy to approve");
+    await setApproval({ db: deps.db }, scopeOf(entry), tool.id, "allow", deps.approval);
+  };
+
+  beforeAll(async () => {
+    catalogue.tools.set(PLACE_STOCK_ID, {
+      id: PLACE_STOCK_ID,
+      vendor: PLACE.vendor,
+      name: PLACE.name,
+      createdAt: new Date(),
+    });
+    appendStock(1, WRITE);
+    for (const entry of [AGENTS.approver, AGENTS.remixWriter]) {
+      expect(await ensureToolForAgent(deps, scopeOf(entry), PLACE)).toMatchObject({
+        ok: true,
+        copied: true,
+      });
+      await allow(entry);
+    }
+  });
+
+  it("runs an approved write tool after stock advances it with the same annotations, and asks again once it turns destructive", async () => {
+    const harness = await connect(AGENTS.approver.agent);
+    try {
+      expect(body(await harness.call("run_tool", { ...PLACE, input: { city: "Perth" } }))).toEqual({
+        saved: 1,
+      });
+
+      appendStock(2, WRITE);
+      const advanced = await harness.call("run_tool", { ...PLACE, input: { city: "Perth" } });
+      expect(advanced.isError ?? false).toBe(false);
+      expect(body(advanced)).toEqual({ saved: 2 });
+      expect(asksOf(AGENTS.approver.agent)).toEqual([]);
+
+      appendStock(3, { readOnly: false, destructive: true });
+      const widened = await harness.call("run_tool", { ...PLACE, input: { city: "Perth" } });
+      expect(body(widened)).toMatchObject({ reason: "awaiting_approval" });
+      const [ask] = asksOf(AGENTS.approver.agent);
+      expect(ask?.payload).toMatchObject({
+        toolName: PLACE_WIRE,
+        annotations: { readOnlyHint: false, destructiveHint: true },
+        provenance: "stock",
+        note: "Ready-made by Graft and reviewed before release.",
+      });
+      expect(widened.structuredContent).toMatchObject({
+        card: {
+          tool: {
+            provenance: {
+              badge: "Ready-made by Graft",
+              note: "Ready-made by Graft and reviewed before release.",
+            },
+          },
+        },
+      });
+
+      await allow(AGENTS.approver);
+      expect(body(await harness.call("run_tool", { ...PLACE, input: { city: "Perth" } }))).toEqual({
+        saved: 3,
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("asks again once for a remix of an approved write tool, and the yes then holds", async () => {
+    const entry = AGENTS.remixWriter;
+    const tool = placeOf(entry.person);
+    const [first] = [...store.versions.values()].filter((row) => row.toolId === tool?.id);
+    if (!tool || !first) throw new Error("the remix writer holds no copy");
+    // The agent publishes its own version on the copy: no stock origin, the same annotations.
+    const remixDir = join(sandbox.toolboxRoot(entry.person), "tools/open-meteo/save-place/v2");
+    await mkdir(remixDir, { recursive: true });
+    await writeFile(join(remixDir, "index.ts"), "export default async () => ({ mine: 2 });\n");
+    store.versions.set("place_remix_v2", {
+      ...first,
+      id: "place_remix_v2",
+      versionNumber: 2,
+      path: "tools/open-meteo/save-place/v2",
+      stockToolId: null,
+      stockVersionId: null,
+    });
+    store.tools.set(tool.id, { ...tool, currentVersionId: "place_remix_v2" });
+
+    const harness = await connect(entry.agent);
+    try {
+      expect(
+        body(await harness.call("run_tool", { ...PLACE, input: { city: "Perth" } })),
+      ).toMatchObject({
+        reason: "awaiting_approval",
+      });
+      expect(asksOf(entry.agent)[0]?.payload).toMatchObject({
+        provenance: "remix",
+        note: "Your agent's version of a ready-made tool; its description was written by your agent's model.",
+      });
+
+      await allow(entry);
+      expect(body(await harness.call("run_tool", { ...PLACE, input: { city: "Perth" } }))).toEqual({
+        mine: 2,
+      });
+      expect(body(await harness.call("run_tool", { ...PLACE, input: { city: "Perth" } }))).toEqual({
+        mine: 2,
+      });
+      expect(asksOf(entry.agent)).toHaveLength(1);
+    } finally {
+      await harness.close();
+    }
   });
 });

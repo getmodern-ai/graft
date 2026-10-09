@@ -46,12 +46,17 @@ export async function setApproval(
   deps: ApprovalDeps,
   options: { askEveryCall?: boolean } = {},
 ): Promise<ApprovalRow> {
-  orNotFound(await deps.findAuthoredToolById(ctx.db, scope.personId, toolId), "Tool not found");
+  const tool = orNotFound(
+    await deps.findAuthoredToolById(ctx.db, scope.personId, toolId),
+    "Tool not found",
+  );
   return deps.upsertApproval(ctx.db, {
     agentId: scope.agentId,
     toolId,
     decision,
     decidedAt: deps.now(),
+    // The answer is for the version the tool stands on now (ADR 0008; GRA-245).
+    toolVersionId: tool.currentVersionId,
     ...(options.askEveryCall === undefined ? {} : { askEveryCall: options.askEveryCall }),
   });
 }
@@ -113,6 +118,17 @@ export async function revokeApproval(
   return row;
 }
 
+/**
+ * Whether a standing answer was given for the version the tool stands on now (ADR 0008: a
+ * republished write tool asks again once; GRA-245). Null on either side is no version, which asks.
+ */
+export function isForCurrentVersion(
+  approval: Pick<ApprovalRow, "toolVersionId">,
+  tool: { currentVersionId: string | null },
+): boolean {
+  return approval.toolVersionId !== null && approval.toolVersionId === tool.currentVersionId;
+}
+
 /** ADR 0008 applied to one call: the tool's annotations and the agent's standing approval. */
 export async function decideToolCall(
   ctx: ServiceContext,
@@ -128,7 +144,11 @@ export async function decideToolCall(
   return approvalDecision({
     annotations: { readOnly: tool.readOnly, destructive: tool.destructive },
     approval: approval
-      ? { decision: approval.decision, askEveryCall: approval.askEveryCall }
+      ? {
+          decision: approval.decision,
+          askEveryCall: approval.askEveryCall,
+          forCurrentVersion: isForCurrentVersion(approval, tool),
+        }
       : null,
   });
 }

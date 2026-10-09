@@ -821,6 +821,18 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
             ? (store.stockVersionNumbers.get(row.stockVersionId) ?? null)
             : null,
         })),
+    carryApprovalsToVersion: async (_db, personId, args) => {
+      if (store.tools.get(args.toolId)?.personId !== personId) return [];
+      const moved: ApprovalRow[] = [];
+      for (const [k, row] of store.approvals) {
+        if (row.toolId === args.toolId && row.toolVersionId === args.fromVersionId) {
+          const updated = { ...row, toolVersionId: args.toVersionId, updatedAt: store.now() };
+          store.approvals.set(k, updated);
+          moved.push(updated);
+        }
+      }
+      return moved;
+    },
     findToolVersion: async (_db, personId, versionId) => {
       const row = store.versions.get(versionId);
       if (!row) return null;
@@ -1108,6 +1120,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         decision: input.decision,
         decidedAt: input.decidedAt,
         askEveryCall: input.askEveryCall ?? existing?.askEveryCall ?? false,
+        toolVersionId: input.toolVersionId ?? null,
         owner: "person",
         createdAt: existing?.createdAt ?? at,
         updatedAt: at,

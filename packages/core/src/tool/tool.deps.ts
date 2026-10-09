@@ -1,3 +1,4 @@
+import { carryApprovalsToVersion } from "@graft/db/repo/approval";
 import { findConnection, findConnectionForUpdate } from "@graft/db/repo/connection";
 import {
   findAuthoredTool,
@@ -37,6 +38,12 @@ export type ToolDeps = {
    * this so a reconnection racing the write waits for it (`rebindToolIfConnectionDead`, GRA-122).
    */
   findConnectionForUpdate: typeof findConnectionForUpdate;
+  /**
+   * A stock advance that does not widen moves the answers given for the version before onto its
+   * own (ADR 0008 as amended 2026-10-09; `@graft/publish`'s `advanceStockCopy`, GRA-245). Here
+   * rather than on the approval seam because the advance is a tool write, under the tool's lock.
+   */
+  carryApprovalsToVersion: typeof carryApprovalsToVersion;
   newId: () => string;
   now: () => Date;
 };
@@ -56,6 +63,7 @@ export const defaultToolDeps: ToolDeps = {
   recordToolVersionDryRun,
   findConnection,
   findConnectionForUpdate,
+  carryApprovalsToVersion,
   newId: () => crypto.randomUUID(),
   now: () => new Date(),
 };

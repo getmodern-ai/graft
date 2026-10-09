@@ -17,7 +17,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { AUTOMATIC_ANSWER_MS, NO_ELICITATION, requireBuildApproval } from "./approval";
+import { AUTOMATIC_ANSWER_MS, describeAsk, NO_ELICITATION, requireBuildApproval } from "./approval";
 import type { McpDeps } from "./deps";
 import { HANDOFF_TOKEN_PARAM, verifyHandoff } from "./handoff";
 import { createToolListChangedNotifier } from "./notifier";
@@ -1282,5 +1282,43 @@ describe("every approval and every pending action is a row with the agent and th
     }
     expect(store.approvals.size).toBeGreaterThan(0);
     expect(store.buildApprovals.size).toBeGreaterThan(0);
+  });
+});
+
+/** GRA-245: the elicitation form names where the tool came from, from `toolProvenance`. */
+describe("the elicitation form's provenance", () => {
+  const subject = (provenance: "stock" | "remix" | "authored") =>
+    ({
+      kind: "tool",
+      tool: {
+        vendor: "demo",
+        name: "save-place",
+        description: "Saves a place.",
+        readOnly: false,
+        destructive: false,
+      },
+      connection: { displayName: "Demo", vendor: "demo", hosts: ["api.demo.example"] },
+      askEveryCall: false,
+      provenance,
+    }) as unknown as Parameters<typeof describeAsk>[0];
+
+  it("says a stock copy is ready-made by Graft and reviewed, and nothing of the agent's model", () => {
+    const message = describeAsk(subject("stock"), "Hermes");
+    expect(message).toContain(
+      'Ready-made by Graft and reviewed before release. Its description: "Saves a place."',
+    );
+    expect(message).not.toContain("model");
+  });
+
+  it("says a remix is the agent's version of a ready-made tool, in its model's words", () => {
+    expect(describeAsk(subject("remix"), "Hermes")).toContain(
+      "Your agent's version of a ready-made tool. Its description, in your agent's model's own words:",
+    );
+  });
+
+  it("keeps an authored tool's wording", () => {
+    expect(describeAsk(subject("authored"), "Hermes")).toContain(
+      `Its description, in the agent's model's own words: "Saves a place."`,
+    );
   });
 });

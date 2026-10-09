@@ -66,6 +66,7 @@ function fakeDeps(overrides: Partial<ToolDeps> = {}): ToolDeps {
     insertToolVersion: vi.fn(async (_db, input) => ({ ...version(1), ...input }) as ToolVersionRow),
     listToolVersions: vi.fn(async () => [version(2), version(1)]),
     listToolVersionOrigins: vi.fn(async () => []),
+    carryApprovalsToVersion: vi.fn(async () => []),
     findToolVersion: vi.fn(async () => version(1)),
     setCurrentToolVersion: vi.fn(async (_db, _p, _t, versionId) => ({
       ...tool,

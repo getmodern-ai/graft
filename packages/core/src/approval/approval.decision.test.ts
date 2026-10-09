@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { approvalDecision } from "./approval.decision";
+import { annotationsWiden, approvalDecision } from "./approval.decision";
 
 /** ADR 0008 (amended 2026-09-15), one line per rule. */
 
@@ -14,13 +14,13 @@ describe("approvalDecision", () => {
     expect(
       approvalDecision({
         annotations: read,
-        approval: { decision: "deny", askEveryCall: false },
+        approval: { decision: "deny", askEveryCall: false, forCurrentVersion: true },
       }),
     ).toBe("pass");
     expect(
       approvalDecision({
         annotations: read,
-        approval: { decision: "allow", askEveryCall: true },
+        approval: { decision: "allow", askEveryCall: true, forCurrentVersion: true },
       }),
     ).toBe("pass");
   });
@@ -30,13 +30,13 @@ describe("approvalDecision", () => {
     expect(
       approvalDecision({
         annotations: write,
-        approval: { decision: "allow", askEveryCall: false },
+        approval: { decision: "allow", askEveryCall: false, forCurrentVersion: true },
       }),
     ).toBe("pass");
     expect(
       approvalDecision({
         annotations: write,
-        approval: { decision: "deny", askEveryCall: false },
+        approval: { decision: "deny", askEveryCall: false, forCurrentVersion: true },
       }),
     ).toBe("deny");
   });
@@ -46,13 +46,13 @@ describe("approvalDecision", () => {
     expect(
       approvalDecision({
         annotations: destructive,
-        approval: { decision: "allow", askEveryCall: false },
+        approval: { decision: "allow", askEveryCall: false, forCurrentVersion: true },
       }),
     ).toBe("pass");
     expect(
       approvalDecision({
         annotations: destructive,
-        approval: { decision: "deny", askEveryCall: false },
+        approval: { decision: "deny", askEveryCall: false, forCurrentVersion: true },
       }),
     ).toBe("deny");
   });
@@ -61,13 +61,13 @@ describe("approvalDecision", () => {
     expect(
       approvalDecision({
         annotations: write,
-        approval: { decision: "allow", askEveryCall: true },
+        approval: { decision: "allow", askEveryCall: true, forCurrentVersion: true },
       }),
     ).toBe("ask");
     expect(
       approvalDecision({
         annotations: destructive,
-        approval: { decision: "allow", askEveryCall: true },
+        approval: { decision: "allow", askEveryCall: true, forCurrentVersion: true },
       }),
     ).toBe("ask");
   });
@@ -76,14 +76,51 @@ describe("approvalDecision", () => {
     expect(
       approvalDecision({
         annotations: destructive,
-        approval: { decision: "deny", askEveryCall: true },
+        approval: { decision: "deny", askEveryCall: true, forCurrentVersion: true },
       }),
     ).toBe("deny");
     expect(
       approvalDecision({
         annotations: write,
-        approval: { decision: "deny", askEveryCall: true },
+        approval: { decision: "deny", askEveryCall: true, forCurrentVersion: true },
       }),
     ).toBe("deny");
+  });
+});
+
+/** ADR 0008: a republished tool keeps its approval if it stays read-only; a write asks again once. */
+describe("approvalDecision across a new version", () => {
+  const stale = { decision: "allow", askEveryCall: false, forCurrentVersion: false } as const;
+
+  it("asks again for a write or destructive tool whose allow was given for an earlier version", () => {
+    expect(approvalDecision({ annotations: write, approval: stale })).toBe("ask");
+    expect(approvalDecision({ annotations: destructive, approval: stale })).toBe("ask");
+  });
+
+  it("lets a read-only tool pass whatever version the approval was given for", () => {
+    expect(approvalDecision({ annotations: read, approval: stale })).toBe("pass");
+  });
+
+  it("holds a deny across a new version: a republish is no way past the person's no", () => {
+    expect(approvalDecision({ annotations: write, approval: { ...stale, decision: "deny" } })).toBe(
+      "deny",
+    );
+  });
+});
+
+/** ADR 0008 as amended 2026-10-09: a new stock version keeps the approval unless it widens. */
+describe("annotationsWiden", () => {
+  it("is false for the same annotations, and for a narrowing", () => {
+    expect(annotationsWiden(write, write)).toBe(false);
+    expect(annotationsWiden(destructive, destructive)).toBe(false);
+    expect(annotationsWiden(destructive, write)).toBe(false);
+    expect(annotationsWiden(write, read)).toBe(false);
+    expect(annotationsWiden(read, read)).toBe(false);
+  });
+
+  it("is true from read-only to a write, and from non-destructive to destructive", () => {
+    expect(annotationsWiden(read, write)).toBe(true);
+    expect(annotationsWiden(read, destructive)).toBe(true);
+    expect(annotationsWiden(write, destructive)).toBe(true);
   });
 });

@@ -20,6 +20,7 @@ const writeTool = {
   personId: "person_1",
   readOnly: false,
   destructive: false,
+  currentVersionId: "ver_1",
 } as AuthoredToolRow;
 const destructiveTool = { ...writeTool, destructive: true } as AuthoredToolRow;
 const readTool = { ...writeTool, readOnly: true } as AuthoredToolRow;
@@ -29,6 +30,7 @@ const approval: ApprovalRow = {
   decision: "allow",
   decidedAt: NOW,
   askEveryCall: false,
+  toolVersionId: "ver_1",
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,
@@ -72,6 +74,7 @@ describe("setApproval", () => {
       toolId: "tool_1",
       decision: "allow",
       decidedAt: NOW,
+      toolVersionId: "ver_1",
     });
     // The answer path never spends a waiting answer — that is the console's act.
     expect(deps.settleAnsweredToolActions).not.toHaveBeenCalled();
@@ -85,6 +88,7 @@ describe("setApproval", () => {
       toolId: "tool_1",
       decision: "allow",
       decidedAt: NOW,
+      toolVersionId: "ver_1",
       askEveryCall: true,
     });
     expect(row.askEveryCall).toBe(true);
@@ -201,6 +205,25 @@ describe("decideToolCall", () => {
         }),
       ),
     ).resolves.toBe("ask");
+  });
+
+  it("asks again once the tool stands on a version the allow was not given for (GRA-245)", async () => {
+    const republished = { ...writeTool, currentVersionId: "ver_2" } as AuthoredToolRow;
+    const deps = fakeDeps({
+      findApproval: vi.fn(async () => approval),
+      findAuthoredToolById: vi.fn(async () => republished),
+    });
+    await expect(decideToolCall(ctx, SCOPE, "tool_1", deps)).resolves.toBe("ask");
+    // The yes then given is for the version the tool stands on, and the next call passes.
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps);
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ toolVersionId: "ver_2" }),
+    );
+    const answered = { ...approval, toolVersionId: "ver_2" };
+    await expect(
+      decideToolCall(ctx, SCOPE, "tool_1", { ...deps, findApproval: vi.fn(async () => answered) }),
+    ).resolves.toBe("pass");
   });
 
   it("reads the approval under the agent's scope", async () => {

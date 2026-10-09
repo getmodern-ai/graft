@@ -667,8 +667,22 @@ concurrent agent publish is caught by the version number's unique constraint. `f
 toolbox hit `stock: true` or `remixed: true`. `repo/tool.ts`'s `listToolVersionOrigins` (each
 version's origin with the stock version's number, one statement) feeds both and `GET /api/tools`'s
 `lineage` and `versions`, which the connections screen draws under each tool
-(`apps/web/src/lib/tool-versions.ts`: *Ready-made v2* or *Written by your agent*). Approvals are
-untouched by an advance here; GRA-245 decides what one keeps.
+(`apps/web/src/lib/tool-versions.ts`: *Ready-made v2* or *Written by your agent*).
+
+**An approval is given for a version, and a stock advance carries it unless it widens** (GRA-245;
+ADR 0008 and its amendment of 2026-10-09). `approval.tool_version_id` (migration 0014, existing
+rows set to their tool's current version) is the version the answer was given for; `setApproval`
+writes the tool's current one, and `approvalDecision` asks again for a write or destructive tool
+whose `allow` names another (`forCurrentVersion`, read by `isForCurrentVersion`), so any republish,
+a remix included, asks once; a `deny` holds across versions. `advanceStockCopy` moves every agent's
+answer for the version the copy stood on onto the advance's version in its transaction
+(`repo/approval.ts`'s `carryApprovalsToVersion`, on `ToolDeps`) unless `annotationsWiden` says the
+new version went read-only to a write or non-destructive to destructive. **The ask names where the
+tool came from** through one browser-safe helper, `@graft/core`'s `stock/tool-provenance.rules.ts`
+(`toolProvenance(lineage)`: a badge, a note and the elicitation form's lead), which `approval.ts`
+reads for the form's message, the payload's `provenance` and `note`, and the ask card's
+`tool.provenance` (text, since the card imports nothing); the console's `tool-ask-card.tsx` calls
+it on the payload's `provenance`, absent on an older ask and read as `authored`.
 
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,

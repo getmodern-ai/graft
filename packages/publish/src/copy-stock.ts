@@ -1,4 +1,5 @@
 import {
+  annotationsWiden,
   createTool,
   decideStockAdvance,
   isUniqueViolation,
@@ -115,8 +116,10 @@ export type StockAdvance =
  * unique constraint, and the advance answers the tool as the remix left it.
  *
  * The connection a copy was bound to is kept: an advance changes the code and the definition,
- * never the binding. Approvals are not touched here; what an advance does to one is ADR 0008's
- * amendment of 2026-10-09 and GRA-245's, which reads `previous` beside the new annotations.
+ * never the binding. **An approval holds across the advance unless the annotations widen** (ADR
+ * 0008 as amended 2026-10-09; GRA-245): every agent's answer given for the version the copy stood
+ * on is carried onto the new one in the same transaction; a widening carries nothing, so the next
+ * call of a write asks again.
  */
 export async function advanceStockCopy(
   deps: Pick<PublishDeps, "db" | "store" | "tool">,
@@ -146,6 +149,7 @@ export async function advanceStockCopy(
       const written = normaliseManifest(stock.files);
       await deps.store.writeTree(toolboxIdOf(personId), versionPath, written);
       const previous = { readOnly: tool.readOnly, destructive: tool.destructive };
+      const previousVersionId = tool.currentVersionId;
       const recorded = await recordPublishedVersion(
         scoped,
         principal,
@@ -165,6 +169,16 @@ export async function advanceStockCopy(
         },
         deps.tool,
       );
+      // ADR 0008 as amended 2026-10-09 (GRA-245): the code was reviewed before release, so an
+      // answer given for the version the copy stood on holds for the new one unless the new one
+      // widens what was answered. Widened, the answers stay on the old version and the next call asks.
+      if (previousVersionId && !annotationsWiden(previous, stock.annotations)) {
+        await deps.tool.carryApprovalsToVersion(tx, personId, {
+          toolId: tool.id,
+          fromVersionId: previousVersionId,
+          toVersionId: recorded.version.id,
+        });
+      }
       return {
         advanced: true,
         tool: recorded.tool,

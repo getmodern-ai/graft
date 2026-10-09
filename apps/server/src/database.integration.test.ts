@@ -22,6 +22,7 @@ import {
   findPersonModelKeyRow,
   finishSetup,
   getAgentScope,
+  getApproval,
   getConnection,
   getPersonModelKey,
   getSetupState,
@@ -1047,6 +1048,18 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       stockVersionId: stock.stockVersionId,
     });
     expect(copied.currentVersionId).toBe(version?.id);
+    // GRA-245: an agent's answer for the copy names the version it was given for.
+    const { agent } = await createAgent(
+      ctx,
+      { personId },
+      { name: "stock agent" },
+      defaultAgentDeps,
+    );
+    const scope = { personId, agentId: agent.id };
+    await setApproval(ctx, scope, copied.id, "allow", defaultApprovalDeps);
+    expect((await getApproval(ctx, scope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
+      version?.id,
+    );
 
     // GRA-242: the catalogue gains v2; two reaches at once advance the copy once, under the
     // tool row's lock, and the origins read names the stock version's number.
@@ -1081,5 +1094,9 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     const after = await getToolById(ctx, { personId }, copied.id, defaultToolDeps);
     expect(after?.currentVersionId).toBe(origins[0]?.versionId);
     expect(after?.description).toBe(changed.description);
+    // GRA-245: the annotations did not widen, so the answer was carried onto v2 in the advance.
+    expect((await getApproval(ctx, scope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
+      origins[0]?.versionId,
+    );
   });
 });

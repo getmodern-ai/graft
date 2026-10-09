@@ -12,6 +12,8 @@ export type InMemoryToolDeps = ToolDeps & {
   versions: ToolVersionRow[];
   /** stock version id -> its number, for `listToolVersionOrigins` (the catalogue's join). */
   stockVersionNumbers: Map<string, number>;
+  /** Each agent's standing answer by the version it was given for (GRA-245's carry). */
+  approvals: { agentId: string; toolId: string; toolVersionId: string | null }[];
 };
 
 export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMemoryToolDeps {
@@ -19,6 +21,7 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
   const tools: AuthoredToolRow[] = [];
   const versions: ToolVersionRow[] = [];
   const stockVersionNumbers = new Map<string, number>();
+  const approvals: InMemoryToolDeps["approvals"] = [];
   let counter = 0;
   const own = (personId: string, toolId: string) =>
     tools.find((tool) => tool.id === toolId && tool.personId === personId) ?? null;
@@ -27,6 +30,7 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
     tools,
     versions,
     stockVersionNumbers,
+    approvals,
     newId: () => `id_${++counter}`,
     now,
     insertAuthoredTool: async (_db, input) => {
@@ -147,6 +151,14 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
     findConnection: async (_db, personId, id) => ({ id, personId, revokedAt: null }) as never,
     findConnectionForUpdate: async (_db, personId, id) =>
       ({ id, personId, revokedAt: null }) as never,
+    carryApprovalsToVersion: async (_db, personId, args) => {
+      if (!own(personId, args.toolId)) return [];
+      const moved = approvals.filter(
+        (row) => row.toolId === args.toolId && row.toolVersionId === args.fromVersionId,
+      );
+      for (const row of moved) row.toolVersionId = args.toVersionId;
+      return moved as never;
+    },
   };
 }
 

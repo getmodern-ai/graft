@@ -4,7 +4,7 @@ import { boolean, index, pgTable, primaryKey, text, timestamp } from "drizzle-or
 import { agent } from "./agent";
 import { owned, ownedRecord } from "./columns";
 import { connection } from "./connection";
-import { authoredTool } from "./tool";
+import { authoredTool, toolVersion } from "./tool";
 
 export const approvalDecision = ["allow", "deny"] as const;
 export type ApprovalDecision = (typeof approvalDecision)[number];
@@ -35,11 +35,22 @@ export const approval = pgTable(
      * than inverted, because a destructive allow recorded under the old rule now holds).
      */
     askEveryCall: boolean("ask_every_call").notNull().default(false),
+    /**
+     * The version of the tool the answer was given for (ADR 0008: a republished write tool asks
+     * again once; GRA-245). An `allow` for another version than the tool's current one asks again
+     * and the yes moves it; a new stock version that does not widen the annotations carries it
+     * forward (ADR 0008 as amended 2026-10-09). Null reads as no version, so it asks: migration 0014
+     * set every existing row to its tool's current version, and a version is never deleted.
+     */
+    toolVersionId: text("tool_version_id").references(() => toolVersion.id, {
+      onDelete: "set null",
+    }),
     ...owned(),
   },
   (table) => [
     primaryKey({ columns: [table.agentId, table.toolId] }),
     index("approval_tool_id_idx").on(table.toolId),
+    index("approval_tool_version_id_idx").on(table.toolVersionId),
   ],
 );
 

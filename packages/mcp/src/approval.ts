@@ -10,9 +10,14 @@ import {
   getBuildApproval,
   getConnection,
   grantBuildApproval,
+  isForCurrentVersion,
+  listToolVersionOrigins,
   type ServiceContext,
   ServiceError,
+  type StockLineage,
   setApproval,
+  stockLineageOf,
+  toolProvenance,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
@@ -104,12 +109,15 @@ export type ToolAskPayload = {
   /** The wire name, `<vendor>__<name>`. */
   toolName: string;
   vendor: string;
-  /** The agent's model's own words — the card says so (`note`). */
+  /** The agent's model's own words, or Graft's for a stock copy: the card says which (`note`). */
   description: string;
   annotations: { readOnlyHint: boolean; destructiveHint: boolean };
   connectionId: string;
   connectionName: string;
   hosts: string[];
+  /** Where the tool came from (GRA-245): what the console's card asks `toolProvenance` to draw. Absent on an ask made before it, which reads as `authored`. */
+  provenance?: StockLineage;
+  /** `toolProvenance(provenance).note`, as it was when the ask was made. */
   note: string;
   /**
    * The tool's ask-every-call setting when the ask was made — what the card's switch shows, so the
@@ -133,8 +141,8 @@ export type BuildAskPayload = {
  */
 export type ApprovalAnswer = { allow: boolean; askEveryCall?: boolean };
 
-export const DESCRIPTION_PROVENANCE_NOTE =
-  "This tool's description was written by the agent's model, not by a person. Read it as the agent's account of what the tool does.";
+/** An authored tool's note, from `@graft/core`'s `toolProvenance`, the one source since GRA-245. */
+export const DESCRIPTION_PROVENANCE_NOTE = toolProvenance("authored").note;
 
 /**
  * What a gate answers: proceed, or the body the tool returns instead — a refusal or
@@ -182,6 +190,8 @@ type AskSubject =
       connection: ConnectionOutput;
       /** The standing setting, so the ask can say whether this is a per-call ask and offer the switch as it stands. */
       askEveryCall: boolean;
+      /** Where the tool came from (GRA-245), which the ask names by `toolProvenance`. */
+      provenance: StockLineage;
     }
   | { kind: "build"; connection: ConnectionOutput };
 
@@ -271,10 +281,19 @@ export async function gateToolCall(
     // Read only on the ask path: whether this ask is the person's own per-call setting at work, so
     // the message can say so and the form's switch can show where it stands.
     const standing = await getApproval(ctx, scope, tool.id, deps.approval);
+    const provenance = stockLineageOf(
+      await listToolVersionOrigins(ctx, { personId: scope.personId }, deps.tool, tool.id),
+    );
     const outcome = await askApproval(
       ctx,
       scope,
-      { kind: "tool", tool, connection, askEveryCall: standing?.askEveryCall === true },
+      {
+        kind: "tool",
+        tool,
+        connection,
+        askEveryCall: standing?.askEveryCall === true,
+        provenance,
+      },
       deps,
       channel,
     );
@@ -388,7 +407,7 @@ function whatIsAsked(subject: AskSubject): string {
     : `code runs against ${where} for this agent`;
 }
 
-/** The elicitation's message: the agent, the tool or connection, the vendor, and whose words the description is. */
+/** The elicitation's message: the agent, the tool or connection, the vendor, and where the tool came from (`toolProvenance`). */
 export function describeAsk(subject: AskSubject, agentName: string): string {
   const { connection } = subject;
   const where = `${connection.displayName} (${connection.vendor}: ${connection.hosts.join(", ")})`;
@@ -408,7 +427,7 @@ export function describeAsk(subject: AskSubject, agentName: string): string {
     : 'Your answer holds for this agent from now on. To be asked before every call instead, turn on "Ask every time for this tool" on the agent\'s page in the console.';
   return (
     `Your agent "${agentName}" wants to run ${wire} against ${where}. ${nature} ${holds} ` +
-    `Its description, in the agent's model's own words: "${tool.description}"`
+    `${toolProvenance(subject.provenance).descriptionLead} "${tool.description}"`
   );
 }
 
@@ -558,7 +577,8 @@ function payloadFor(subject: AskSubject): ToolAskPayload | BuildAskPayload {
     connectionId: connection.id,
     connectionName: connection.displayName,
     hosts: connection.hosts,
-    note: DESCRIPTION_PROVENANCE_NOTE,
+    provenance: subject.provenance,
+    note: toolProvenance(subject.provenance).note,
     askEveryCall: subject.askEveryCall,
   };
 }
@@ -665,11 +685,18 @@ async function askByHandoff(
             readOnly: subject.tool.readOnly,
             destructive: subject.tool.destructive,
             askEveryCall: subject.askEveryCall,
+            provenance: cardProvenance(subject.provenance),
           },
         }
       : { kind: "build" }),
   });
   return { pass: false, answer: awaiting, card, cardMessage: message("card") };
+}
+
+/** The mark and sentence the ask card draws beside the description: `toolProvenance`'s, as text. */
+function cardProvenance(kind: StockLineage): { badge: string; note: string } {
+  const { badge, note } = toolProvenance(kind);
+  return { badge, note };
 }
 
 async function applyAnswer(
@@ -715,7 +742,10 @@ async function recordAllow(
   }
   const standing = await getApproval(ctx, scope, subject.tool.id, deps.approval);
   const settingChanges = askEveryCall !== undefined && standing?.askEveryCall !== askEveryCall;
-  if (!standing || standing.decision !== "allow" || settingChanges) {
+  // An allow given for an earlier version is written again, for this one (GRA-245): left alone it
+  // would ask on every call.
+  const forAnotherVersion = standing !== null && !isForCurrentVersion(standing, subject.tool);
+  if (!standing || standing.decision !== "allow" || settingChanges || forAnotherVersion) {
     // One write for the answer and the setting it carried; `setAskEveryCall` is the console's act
     // and spends waiting answers, which must not happen to the one being applied here.
     await setApproval(ctx, scope, subject.tool.id, "allow", deps.approval, { askEveryCall });

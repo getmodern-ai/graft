@@ -286,6 +286,35 @@ describe("a tool's first-use approval (GRA-116)", () => {
     expect(buttons(root)).toEqual(["Deny", "Allow"]);
   });
 
+  it("marks the description with where the tool came from, as the server wrote it (GRA-245)", () => {
+    const stock = renderAsk(
+      {
+        ...TOOL,
+        tool: {
+          ...(TOOL.tool as NonNullable<AskCard["tool"]>),
+          provenance: {
+            badge: "Ready-made by Graft",
+            note: "Ready-made by Graft and reviewed before release.",
+          },
+        },
+      },
+      handlers(),
+      document,
+    );
+    expect(stock.querySelector(".ask-badge")?.textContent).toBe("Ready-made by Graft");
+    expect(stock.querySelector(".ask-quote figcaption")?.textContent).toContain(
+      "Ready-made by Graft and reviewed before release.",
+    );
+    expect(stock.textContent).not.toContain("agent's model");
+  });
+
+  it("reads a card with no provenance, from an older server, as an authored tool's", () => {
+    const root = renderAsk(TOOL, handlers(), document);
+    expect(root.querySelector(".ask-quote figcaption")?.textContent).toContain(
+      "Read it as the agent's account of what the tool does.",
+    );
+  });
+
   it("says when the tool is destructive, and when it is set to ask every time", () => {
     const destructive = renderAsk(
       { ...TOOL, tool: { ...(TOOL.tool as NonNullable<AskCard["tool"]>), destructive: true } },
