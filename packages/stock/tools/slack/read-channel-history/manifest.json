@@ -1,0 +1,26 @@
+{
+  "name": "read-channel-history",
+  "description": "Reads the recent messages in a Slack channel, newest first, each with its ts, user id, text, thread ts, reply count and reactions. Takes a channel name or id (list-channels lists them) and reads the workspace's general channel when none is given. A message's ts is what read-thread, reply-in-thread and add-reaction take; find-user names a user id.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "channel": {
+        "type": "string",
+        "description": "A channel name, with or without the leading #, or a channel id from list-channels. Omitted, the general channel."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 20,
+        "description": "Maximum number of recent messages to return."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["slack.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
