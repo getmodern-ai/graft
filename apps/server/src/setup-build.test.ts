@@ -1,6 +1,8 @@
 import { join } from "node:path";
 
 import {
+  type DirectoryEntry,
+  type IntegrationDirectory,
   type SetupDeps,
   type StarterVendor,
   starterVendorOf,
@@ -104,6 +106,45 @@ const PASSING_SCRIPT: ScriptedStep[] = [
 const GIVING_UP: ScriptedStep[] = [
   { on: "goal", answer: { kind: "give_up", reason: "The documentation names no such read." } },
 ];
+
+/**
+ * A directory as a hosted backing answers one (Setup v2): a starter found there by its slug, and an
+ * integration that is no starter, proposed from its own entry.
+ */
+const ACME: DirectoryEntry = {
+  slug: "acme-crm",
+  name: "Acme CRM",
+  description: "Customers and deals.",
+  logoUrl: "https://logos.example/acme.png",
+  categories: ["CRM"],
+  hosts: ["api.acme-crm.com"],
+  docsUrl: null,
+  connect: "form",
+  scheme: "bearer",
+};
+const METEO_ENTRY: DirectoryEntry = {
+  ...ACME,
+  slug: "open-meteo",
+  name: "Open-Meteo",
+  hosts: ["api.open-meteo.com", "geocoding-api.open-meteo.com"],
+  scheme: "none",
+};
+const TEST_DIRECTORY: IntegrationDirectory = {
+  name: "test-directory",
+  home: async () => ({
+    total: 2,
+    categories: [{ name: "CRM", count: 1 }],
+    popular: [ACME, METEO_ENTRY],
+    wall: [{ slug: "acme-crm", name: "Acme CRM", logoUrl: ACME.logoUrl }],
+  }),
+  search: async ({ query }) => {
+    const entries = [ACME, METEO_ENTRY].filter((entry) =>
+      entry.name.toLowerCase().includes((query ?? "").toLowerCase()),
+    );
+    return { entries, nextCursor: null, total: entries.length };
+  },
+  get: async (slug) => [ACME, METEO_ENTRY].find((entry) => entry.slug === slug) ?? null,
+};
 
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
@@ -258,6 +299,7 @@ beforeAll(async () => {
       connectionRouting: mcp,
       acquire: mcp,
       run: mcp,
+      directory: TEST_DIRECTORY,
       analytics: {
         name: "recorder",
         shutdown: async () => {},
@@ -753,6 +795,54 @@ describe("Setup v2: the task before the connection", () => {
     expect(early.status).toBe(409);
     const unknown = await app.request("/api/setup/starter", post({ starterId: "fax" }));
     expect(unknown.status).toBe(400);
+  });
+});
+
+describe("Setup v2: the integration directory", () => {
+  it("answers the backing's first view and its search, a starter's entry naming its starter", async () => {
+    people += 1;
+    person = `person_${people}`;
+    const home = await get("/api/setup/directory");
+    expect(home).toMatchObject({ total: 2, source: "test-directory", categories: [{ name: "CRM" }] });
+    expect(home.popular.map((entry: { starterId: string | null }) => entry.starterId)).toEqual([
+      null,
+      "open-meteo",
+    ]);
+    const found = await get("/api/setup/directory/search?q=acme");
+    expect(found).toMatchObject({ total: 1, entries: [{ slug: "acme-crm", starterId: null }] });
+  });
+
+  it("connects an integration that is no starter from its own entry, with the task saved", async () => {
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const tasked = await read(
+      await app.request("/api/setup/task", post({ goal: "List my ten newest deals", slug: "acme-crm" })),
+    );
+    expect(tasked).toMatchObject({
+      step: "connect",
+      setup: { starterId: null, goal: "List my ten newest deals" },
+    });
+    const [ask] = (await get("/api/pending-actions")).pendingActions;
+    expect(ask.payload).toMatchObject({
+      vendor: "acme-crm",
+      displayName: "Acme CRM",
+      primaryHost: "https://api.acme-crm.com",
+      hosts: ["api.acme-crm.com"],
+      scheme: "bearer",
+    });
+  });
+
+  it("takes a starter found in the directory down the starter's path", async () => {
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const tasked = await read(
+      await app.request("/api/setup/task", post({ goal: OPEN_METEO.goal, slug: "open-meteo" })),
+    );
+    expect(tasked).toMatchObject({ step: "connect", setup: { starterId: "open-meteo" } });
+    const unknown = await app.request("/api/setup/task", post({ goal: "x", slug: "nothing" }));
+    expect(unknown.status).toBe(404);
   });
 });
 

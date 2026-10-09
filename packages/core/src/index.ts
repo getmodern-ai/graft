@@ -266,6 +266,16 @@ export {
   providerListProblem,
   providerNamed,
 } from "./connection/provider";
+export {
+  DIRECTORY_PAGE_LIMIT,
+  type DirectoryCategory,
+  type DirectoryConnectKind,
+  type DirectoryEntry,
+  type DirectoryHome,
+  type DirectoryPage,
+  type DirectorySearchInput,
+  type IntegrationDirectory,
+} from "./connection/directory";
 export type { ServiceContext } from "./context";
 export {
   HTTP_STATUS_BY_CODE,
