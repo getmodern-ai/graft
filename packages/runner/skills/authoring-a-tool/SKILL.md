@@ -184,9 +184,14 @@ would look for the file; the next tool takes that ref as a plain string in its i
 bytes back with `ctx.blob.read`. The bytes never enter a model turn and never sit in a result; the
 ref is the whole of what a model sees of the file.
 
-**When to write a blob**: a binary body (a PDF, an image, an archive), or any body the next tool
-needs and the model does not (a CSV export, an attachment to forward). **When to return data
-instead**: a small JSON answer the agent is going to read (an id, a status, a list of names). One
+The judge is who reads it. **When to write a blob**: bytes a *tool* will read next — a binary body
+(a PDF, an image, an archive), or any body the next tool needs and the model does not (a CSV export
+going on to an upload, an attachment to forward). **When to return data instead**: whatever the
+*model* is going to read — a small JSON answer (an id, a status, a list of names), and text: a
+document exported as plain text, a message body, a page, returned in the result and cut at a length
+a turn can hold. The same export is a blob only when it is going on to another tool; a ref the
+model is handed instead of the text it asked for is a dead end, since nothing but a tool can open
+it. One
 file, one write, the ref in the result; a blob is not scratch space and not a cache.
 
 Writing one from a vendor response, without holding the body:

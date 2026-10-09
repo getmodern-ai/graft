@@ -205,6 +205,9 @@ describe("the shipped skills", () => {
       `\`${BLOB_REF_SCHEME}<id>\``,
       "When to write a blob",
       "When to return data instead",
+      // A document's text the model asked for is returned, not written as a blob (Kadir's Drive tool, 2026-10-05).
+      "The judge is who reads it.",
+      "a document exported as plain text, a message body, a page",
       "ctx.blob.write(res.body, {",
       'Buffer.from(data, "base64url")',
       "a field named for what it is, `file` or `attachment`",
