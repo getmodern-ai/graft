@@ -2,6 +2,7 @@ import {
   findCurrentStockTool,
   findLatestStockToolVersion,
   findStockTool,
+  hasStockToolVersionWithHash,
   insertStockTool,
   insertStockToolVersion,
   listCurrentStockTools,
@@ -15,6 +16,7 @@ export type StockDeps = {
   insertStockTool: typeof insertStockTool;
   findStockTool: typeof findStockTool;
   findLatestStockToolVersion: typeof findLatestStockToolVersion;
+  hasStockToolVersionWithHash: typeof hasStockToolVersionWithHash;
   insertStockToolVersion: typeof insertStockToolVersion;
   listCurrentStockTools: typeof listCurrentStockTools;
   listCurrentStockToolsForVendor: typeof listCurrentStockToolsForVendor;
@@ -27,6 +29,7 @@ export const defaultStockDeps: StockDeps = {
   insertStockTool,
   findStockTool,
   findLatestStockToolVersion,
+  hasStockToolVersionWithHash,
   insertStockToolVersion,
   listCurrentStockTools,
   listCurrentStockToolsForVendor,

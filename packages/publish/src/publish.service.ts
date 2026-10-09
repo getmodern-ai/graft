@@ -462,10 +462,11 @@ function refusal(refusals: PublishDiagnostic[], check?: ModuleCheckResult): Publ
  * Ask the mirror and return at once. Whatever it does — resolve, reject, throw synchronously — ends
  * in one `onMirror` event and nothing else; a reporter that throws is swallowed too, because a
  * dropped promise that rejects is an unhandled rejection in a process that just answered a caller.
+ * A stock copy (`copy-stock.ts`) asks it the same way, since its version is a toolbox version too.
  */
-function startMirror(
+export function startMirror(
   deps: Pick<PublishDeps, "mirror" | "onMirror" | "now">,
-  args: PublishArgs,
+  args: Pick<PublishArgs, "personId" | "agentId" | "toolboxId">,
   recorded: { tool: AuthoredToolRow; version: ToolVersionRow },
   versionPath: string,
 ): void {

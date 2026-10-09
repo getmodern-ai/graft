@@ -1,12 +1,10 @@
 import type { StockToolView } from "@graft/core";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox/fake";
 import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { copyStockVersion } from "./copy-stock";
-import { createFakeMetadataSource } from "./metadata";
-import { DEFAULT_PACKAGE_POLICY } from "./policy";
-import type { PublishDeps } from "./publish.service";
+import { type CopyStockDeps, copyStockVersion } from "./copy-stock";
+import type { MirrorEvent } from "./publish.service";
 import { createInMemoryToolDeps, fakeDb, type InMemoryToolDeps } from "./testing";
 
 /**
@@ -34,7 +32,7 @@ const STOCK: StockToolView = {
 
 let sandbox: FakeSandboxBackend;
 let tool: InMemoryToolDeps;
-let deps: PublishDeps;
+let deps: CopyStockDeps;
 
 beforeEach(() => {
   sandbox = createFakeSandboxBackend();
@@ -43,15 +41,11 @@ beforeEach(() => {
     db: fakeDb,
     store: createFilesystemToolboxStore({ root: `${sandbox.root}/toolboxes` }),
     mirror: createNoopToolboxMirror(),
-    sandbox,
-    metadata: createFakeMetadataSource({}),
-    policy: DEFAULT_PACKAGE_POLICY,
     tool,
-    check: async () => {
-      throw new Error("a copy runs no check: the catalogue's version carries its result");
-    },
     now: () => new Date(),
     onMirror: () => {},
+    // One process, no concurrent transactions; the race test brings a lock that holds.
+    lockToolName: async () => {},
   };
 });
 
@@ -102,4 +96,102 @@ describe("copyStockVersion", () => {
     expect(second.id).toBe(first.id);
     expect(tool.versions).toHaveLength(1);
   });
+
+  it("serialises two first copies racing: one tool, one version, and the files are the version's own", async () => {
+    const { db, lockToolName } = lockingDb();
+    const racing = { ...deps, db, lockToolName };
+    const newer: StockToolView = {
+      ...STOCK,
+      stockVersionId: "stock_weather_v4",
+      files: [{ path: "index.ts", content: "export default async () => ({ v: 4 });\n" }],
+    };
+    const [first, second] = await Promise.all([
+      copyStockVersion(racing, { personId: PERSON, stock: STOCK, defaultConnectionId: null }),
+      copyStockVersion(racing, { personId: PERSON, stock: newer, defaultConnectionId: null }),
+    ]);
+    expect(second.id).toBe(first.id);
+    expect(tool.tools).toHaveLength(1);
+    expect(tool.versions).toHaveLength(1);
+    const winner = tool.versions[0]?.stockVersionId === newer.stockVersionId ? newer : STOCK;
+    const files = await deps.store.readTree(PERSON, "tools/open-meteo/current-weather/v1");
+    expect(files.find((file) => file.path === "index.ts")?.content).toBe(winner.files[0]?.content);
+  });
+
+  it("answers the winner's row when the losing insert is refused by the unique constraint", async () => {
+    const insert = tool.insertAuthoredTool;
+    // Another writer of the same name commits between the existence check and this insert.
+    tool.insertAuthoredTool = async (db, input) => {
+      await insert(db, { ...input, id: "tool_winner" });
+      throw Object.assign(new Error("duplicate key value"), { code: "23505" });
+    };
+    const copied = await copyStockVersion(deps, {
+      personId: PERSON,
+      stock: STOCK,
+      defaultConnectionId: null,
+    });
+    expect(copied.id).toBe("tool_winner");
+  });
+
+  it("asks the off-site mirror for the copied version, as a publish does, and not for a tool it answers as it is", async () => {
+    const events: MirrorEvent[] = [];
+    const mirror = createNoopToolboxMirror();
+    const mirrored = { ...deps, mirror, onMirror: (event: MirrorEvent) => events.push(event) };
+    const copied = await copyStockVersion(mirrored, {
+      personId: PERSON,
+      agentId: "agent1",
+      stock: STOCK,
+      defaultConnectionId: null,
+    });
+    await vi.waitFor(() => expect(events).toHaveLength(1));
+    expect(mirror.calls).toEqual([
+      { toolboxId: PERSON, versionPath: "tools/open-meteo/current-weather/v1" },
+    ]);
+    expect(events[0]).toMatchObject({
+      outcome: "mirrored",
+      personId: PERSON,
+      agentId: "agent1",
+      toolId: copied.id,
+      versionId: tool.versions[0]?.id,
+    });
+
+    await copyStockVersion(mirrored, { personId: PERSON, stock: STOCK, defaultConnectionId: null });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mirror.calls).toHaveLength(1);
+  });
 });
+
+/**
+ * A database whose transactions hold the advisory locks they take until they end, as Postgres's
+ * `pg_advisory_xact_lock` does: what serialises two copies in the race test.
+ */
+function lockingDb(): { db: typeof fakeDb; lockToolName: CopyStockDeps["lockToolName"] } {
+  const held = new Map<string, Promise<void>>();
+  type Tx = { releases: (() => void)[] };
+  const db = {
+    transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+      // A nested transaction (a savepoint) runs on the same handle and holds the same locks.
+      const tx: Tx & { transaction?: unknown } = { releases: [] };
+      tx.transaction = async <U>(inner: (handle: unknown) => Promise<U>) => inner(tx);
+      try {
+        return await fn(tx);
+      } finally {
+        for (const release of tx.releases) release();
+      }
+    },
+  } as unknown as typeof fakeDb;
+  const lockToolName: CopyStockDeps["lockToolName"] = async (tx, personId, key) => {
+    const name = `${personId}:${key.vendor}:${key.name}`;
+    const before = held.get(name) ?? Promise.resolve();
+    let release = () => {};
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    held.set(
+      name,
+      before.then(() => mine),
+    );
+    await before;
+    (tx as unknown as Tx).releases.push(release);
+  };
+  return { db, lockToolName };
+}

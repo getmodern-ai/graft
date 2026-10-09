@@ -64,13 +64,19 @@ import { countPersons, markPersonEmailVerified } from "./person";
 import { deletePersonModelKey, findPersonModelKey, upsertPersonModelKey } from "./person-model-key";
 import {
   findCurrentStockTool,
+  hasStockToolVersionWithHash,
   insertStockTool,
   insertStockToolVersion,
   listCurrentStockTools,
   listCurrentStockToolsForVendor,
   lockStockCatalogue,
 } from "./stock";
-import { findToolVersion, listToolVersions, setCurrentToolVersion } from "./tool";
+import {
+  findToolVersion,
+  listToolVersions,
+  lockAuthoredToolName,
+  setCurrentToolVersion,
+} from "./tool";
 import { listUsage, listUsageForVendor } from "./usage";
 import {
   deleteWorkingSetEntriesForConnection,
@@ -435,6 +441,14 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(s.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
     expect(s.params).toEqual(["agent_1:scope:conn_2"]);
   });
+
+  /** A first copy of a stock tool (GRA-238) is serialised per person and tool name. */
+  it("locking a tool name takes a transaction-scoped advisory lock on the hash of person, vendor and name", async () => {
+    await lockAuthoredToolName(db, "person_1", { vendor: "open-meteo", name: "current-weather" });
+    const s = only();
+    expect(s.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
+    expect(s.params).toEqual(["authored-tool:person_1:open-meteo:current-weather"]);
+  });
 });
 
 describe("person-scoped statements take the person", () => {
@@ -635,6 +649,16 @@ describe("person-scoped statements take the person", () => {
     }).catch(() => null);
     expect(statements[0]?.sql).toMatch(/^insert into "stock_tool_version" /);
     expect(statements[0]?.sql).not.toContain("person_id");
+
+    // Whether the tool has the hash at any number: what keeps an older release's replica from
+    // appending its stock as the newest version during a rolling deploy.
+    statements = [];
+    await hasStockToolVersionWithHash(db, "st_1", "h");
+    const seen = only();
+    expect(seen.sql).toMatch(
+      /^select "id" from "stock_tool_version" where \("stock_tool_version"\."stock_tool_id" = \$1 and "stock_tool_version"\."source_hash" = \$2\) limit \$3$/,
+    );
+    expect(seen.params).toEqual(["st_1", "h", 1]);
   });
 
   /** The boot's count of persons is the third (GRA-33): whether anybody exists yet, before the admin is opened. */

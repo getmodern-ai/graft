@@ -55,6 +55,7 @@ import { applyMigrations } from "@graft/db/migrate";
 import { addConnectionHosts } from "@graft/db/repo/connection";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
+import { lockAuthoredToolName } from "@graft/db/repo/tool";
 import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
 import { copyStockVersion } from "@graft/publish";
 import { checkStockTool, readStockWorkspace } from "@graft/stock";
@@ -64,7 +65,7 @@ import {
   importCapabilityTokenKeys,
   mintCapabilityToken,
 } from "@graft/token";
-import { createFilesystemToolboxStore } from "@graft/toolbox";
+import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import {
   CredentialScopeMismatchError,
   createCredentialVault,
@@ -1035,11 +1036,26 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
 
     const personId = await signUp("stock-copy@example.com");
     const root = await mkdtemp(join(tmpdir(), "graft-stock-it-"));
-    const copied = await copyStockVersion(
-      { db, store: createFilesystemToolboxStore({ root }), tool: defaultToolDeps },
-      { personId, stock, defaultConnectionId: null },
-    );
-    const [version] = await listToolVersions(ctx, { personId }, copied.id, defaultToolDeps);
+    const mirror = createNoopToolboxMirror();
+    const copyDeps = {
+      db,
+      store: createFilesystemToolboxStore({ root }),
+      tool: defaultToolDeps,
+      mirror,
+      onMirror: () => {},
+      now: () => new Date(),
+      lockToolName: lockAuthoredToolName,
+    };
+    // Two first copies racing (Greptile on #184): the lock on the name makes one, and both answer it.
+    const [copied, raced] = await Promise.all([
+      copyStockVersion(copyDeps, { personId, stock, defaultConnectionId: null }),
+      copyStockVersion(copyDeps, { personId, stock, defaultConnectionId: null }),
+    ]);
+    expect(raced.id).toBe(copied.id);
+    const versions = await listToolVersions(ctx, { personId }, copied.id, defaultToolDeps);
+    expect(versions).toHaveLength(1);
+    const [version] = versions;
+    await vi.waitFor(() => expect(mirror.calls).toHaveLength(1));
     expect(version).toMatchObject({
       versionNumber: 1,
       stockToolId: stock.stockToolId,

@@ -638,18 +638,23 @@ tool passes (a starter vendor, hosts among the starter's, the check, the test in
 package's `tsconfig` leaves `tools/` to the check, which types each module against its own schema.
 The boot loads it after the migrations (`boot.ts`'s `loadStockOnStart`, `@graft/core`'s
 `loadStockCatalogue`) into the global catalogue, `stock_tool` and `stock_tool_version` (migration
-0014): no person, no owner tier, a version appended by number when the directory's hash changes,
-with its files, hosts and the check's result, under one advisory lock; `repo/stock.ts`'s reads are
+0014): no person, no owner tier, a version appended by number when the directory's hash is one
+the tool has at no number (so a replica of an older release booting mid-deploy appends nothing,
+and a revert ships as a change), with its files, hosts and the check's result, under one advisory
+lock; `repo/stock.ts`'s reads are
 unscoped and pinned by name in `repo/scope.test.ts`. The image carries the workspace as
 `apps/server/tools/` (`tsdown.config.ts`, the Dockerfile). `McpDeps.toolSource` (`tool-source.ts`)
 lists, describes and copies; `find_tool` searches stock beside the toolbox at tiers 2 (a connection
 of the vendor in scope, `connectionIds`) and 3 (none, `connect`: the starter's
 `request_connection` arguments), with `stock: true`, a person's tool of the same name hiding it.
-`stock-copy.ts`'s `ensureToolForAgent` is the one road in, which `runAuthoredTool` (so `run_tool`
-and the console's run) and `promoteToolForAgent` (so `promote`, and a console route) take: the
-person's tool, or the stock version copied by `@graft/publish`'s `copyStockVersion` as an ordinary
-tool whose version records `stock_tool_id` and `stock_version_id`, bound to the vendor's connection
-in scope, or `connection_needed` with `connect`. Connections match by vendor slug until GRA-241's
+`stock-copy.ts`'s `ensureToolForAgent` is the one road in, which `runAuthoredTool` (so `run_tool`),
+`apps/server/src/tool-run.ts` (the console's run, before its read-only and working-set rules) and
+`promoteToolForAgent` (so `promote`, and a console route) take: the person's tool, or the stock
+version copied by `@graft/publish`'s `copyStockVersion` as an ordinary tool whose version records
+`stock_tool_id` and `stock_version_id`, bound to the vendor's connection in scope, or
+`connection_needed` with `connect`. A copy writes its files and rows in one transaction under
+`repo/tool.ts`'s `lockAuthoredToolName`, so two first copies make one, a unique-constraint loser
+answers the winner's row, and the mirror is asked for the version as a publish asks it. Connections match by vendor slug until GRA-241's
 host matching. `@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
 
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a

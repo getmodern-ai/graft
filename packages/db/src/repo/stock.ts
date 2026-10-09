@@ -67,6 +67,25 @@ export async function findLatestStockToolVersion(
   return row ?? null;
 }
 
+/** Whether any version of the tool, at any number, was appended from this source hash. */
+export async function hasStockToolVersionWithHash(
+  db: DbOrTx,
+  stockToolId: string,
+  sourceHash: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: stockToolVersion.id })
+    .from(stockToolVersion)
+    .where(
+      and(
+        eq(stockToolVersion.stockToolId, stockToolId),
+        eq(stockToolVersion.sourceHash, sourceHash),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
 export async function insertStockToolVersion(
   db: DbOrTx,
   input: NewStockToolVersion,

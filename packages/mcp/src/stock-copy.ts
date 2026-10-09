@@ -91,6 +91,7 @@ export async function ensureToolForAgent(
   }
   const tool = await (deps.toolSource as NonNullable<McpDeps["toolSource"]>).copy({
     personId: scope.personId,
+    agentId: scope.agentId,
     stock,
     defaultConnectionId: connectionId,
   });

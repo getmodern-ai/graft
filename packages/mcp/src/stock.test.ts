@@ -7,7 +7,7 @@ import { createFakeStockCatalogue } from "@graft/core/stock/testing/fake-stock-d
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
 import { checkStockTool, readStockWorkspace } from "@graft/stock";
-import { createFilesystemToolboxStore } from "@graft/toolbox";
+import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -157,7 +157,16 @@ beforeAll(async () => {
     toolbox,
     toolSource: createStockToolSource({
       db: fake.db,
-      publish: { db: fake.db, store: toolbox, tool: fake.tool },
+      publish: {
+        db: fake.db,
+        store: toolbox,
+        tool: fake.tool,
+        mirror: createNoopToolboxMirror(),
+        onMirror: () => {},
+        now: () => new Date(),
+        // The fake store has no concurrent transactions; `copy-stock.test.ts` races two copies.
+        lockToolName: async () => {},
+      },
       stock: catalogue.deps,
     }),
     handoff: {

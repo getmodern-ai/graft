@@ -1,7 +1,6 @@
 import {
   type AgentDeps,
   getAgent,
-  getToolByName,
   isPromoted,
   orNotFound,
   type Principal,
@@ -13,6 +12,7 @@ import {
 import {
   authoredToolName,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
+  ensureToolForAgent,
   type McpDeps,
   NO_ELICITATION,
   runAuthoredTool,
@@ -33,7 +33,9 @@ import {
  * before the run, so the approval gate never asks and no pending action is opened for a click the
  * person made here; the channel is `NO_ELICITATION` besides. A tool outside the agent's working set
  * is refused too, as `/mcp` refuses a first-class call to a tool the agent does not list. Both are
- * `CONFLICT` with a reason; another person's agent, or a tool not in the toolbox, is not found.
+ * `CONFLICT` with a reason; another person's agent, or a tool neither in the toolbox nor in stock,
+ * is not found. A stock tool not yet copied is copied in first as `run_tool` copies it, or refused
+ * `connection_needed` with the connect step when the agent has no connection of its integration.
  * Both are judged twice: here, for the answer, and again on the run's own read of the tool through
  * `AuthoredRunArgs.admit`, inside the agent's in-flight hold, so a republish or a demotion landing
  * between the two reads is refused the same way.
@@ -84,10 +86,19 @@ export async function runAgentTool(
   }
   const scope = { personId: principal.personId, agentId: agent.id };
   const wire = authoredToolName(ids.vendor, ids.name);
-  const tool = orNotFound(
-    await getToolByName(ctx, principal, { vendor: ids.vendor, name: ids.name }, deps.tool),
-    `No tool named ${wire} is in this toolbox`,
-  );
+  // The person's tool, or a stock tool of the name copied in first, by the road `run_tool` takes
+  // (`@graft/mcp`'s `ensureToolForAgent`, GRA-238; Greptile on #184), so a first console run of
+  // stock is judged by the rules below rather than refused as not found.
+  const ensured = await ensureToolForAgent(deps.mcp, scope, { vendor: ids.vendor, name: ids.name });
+  if (!ensured.ok) {
+    if (ensured.reason === "tool_not_found") {
+      throw new ServiceError("NOT_FOUND", `No tool named ${wire} is in this toolbox`);
+    }
+    throw new ServiceError("CONFLICT", ensured.message, {
+      details: { reason: ensured.reason, tool: wire, ...ensured.details },
+    });
+  }
+  const tool = ensured.tool;
   /** Why the console will not run this tool as it stands: not read-only, or not promoted. */
   const unrunnable = async (subject: { id: string; readOnly: boolean }) => {
     if (!subject.readOnly) {
