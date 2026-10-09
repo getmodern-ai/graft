@@ -1,0 +1,40 @@
+{
+  "name": "create-draft",
+  "description": "Saves a plain-text email as a Gmail draft; nothing is sent (gmail__send-email sends at once). Optionally uses a threadId from gmail__search-messages to place the draft in that conversation.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "string",
+        "description": "One recipient address or several separated by commas."
+      },
+      "subject": {
+        "type": "string",
+        "description": "Email subject."
+      },
+      "body": {
+        "type": "string",
+        "description": "Plain-text email body."
+      },
+      "cc": {
+        "type": "string",
+        "description": "Optional CC addresses separated by commas."
+      },
+      "bcc": {
+        "type": "string",
+        "description": "Optional BCC addresses separated by commas."
+      },
+      "threadId": {
+        "type": "string",
+        "description": "Optional conversation thread ID from gmail__search-messages."
+      }
+    },
+    "required": ["to", "subject", "body"],
+    "additionalProperties": false
+  },
+  "hosts": ["gmail.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}
