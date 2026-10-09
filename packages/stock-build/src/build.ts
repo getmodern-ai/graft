@@ -25,7 +25,8 @@ import { runBuildLoop } from "./loop";
  *  2. On success the passing draft becomes a tool directory, staged in a temporary workspace: the
  *     module's files, `manifest.json` (the hosts it reached, the annotations the check derived) and
  *     `test-input.json`. Its proof is recorded (`@graft/stock`'s `recordStockProof`: one dry run
- *     through the real proxy, written only through `redactRecording`).
+ *     through the real proxy, scrubbed of every vendor value with the test input (GRA-257), and
+ *     written only through `redactRecording`); `test-input.json` is the recording's scrubbed input.
  *  3. The staged tool must pass the harness's three proofs as it stands, which is what CI runs.
  *  4. Only then is the directory written into the workspace: new, or, under `from`, in place of the
  *     current version, which the next boot appends to the catalogue as the next version (the
@@ -309,7 +310,8 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
   const files = [
     ...moduleFiles,
     { path: MANIFEST_FILE, content: json(manifest) },
-    { path: TEST_INPUT_FILE, content: json(draft.testInput) },
+    // The recording's input, scrubbed with the answers (GRA-257): the draft's may be the maintainer's.
+    { path: TEST_INPUT_FILE, content: json(recording.input) },
     { path: RECORDING_FILE, content: formatRecording(recording) },
   ];
 

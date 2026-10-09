@@ -67,9 +67,11 @@ tracked.
 
   `scheme` is one of the proxy's schemes and `credential` its fields; `schemeConfig` and
   `primaryHost` are optional. For an OAuth integration (Gmail, Google Calendar, Google Drive,
-  Slack, Notion), give a current access token under `bearer`. Use Graft's test account for the
-  integration (GRA-231), never a person's: the recording keeps what the vendor answered.
-  Open-Meteo needs none.
+  Slack, Notion), give a current access token under `bearer`. Your own account will do while
+  Graft's test accounts are parked (GRA-235): the recording is scrubbed of every value the vendor
+  answered before it is written (`RECORDING.md`, *The scrub*), and so is the test input. The model
+  does read your data during the job, as `acquire` always does, so use an account whose data may go
+  to the model's provider. Open-Meteo needs none.
 
 ### What it touches, and what it does not
 
@@ -83,7 +85,9 @@ it for real, as the documentation reads do, and **every write stops at the proxy
 the job's dry runs and in the recording alike, so nothing changes in your account. The credential
 never reaches the model or a file: the recording is written only through `redactRecording` with
 your credential's values (`RECORDING.md`, *Redaction*), and the failure the command prints is
-redacted the same way.
+redacted the same way. Nothing your account holds reaches a file either: the recording and the test
+input are scrubbed, always, with no flag to keep the values (`RECORDING.md`, *The scrub*). Read the
+recording before you commit it all the same; a URL keeps its host.
 
 The module runs on the **fake sandbox backing**, a child process on your machine, as
 `GRAFT_SANDBOX_BACKEND=fake` does for the server on a laptop: it is not a sandbox, so run the

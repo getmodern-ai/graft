@@ -86,6 +86,48 @@ the replay hands the module the same text and gets the recorded result.
 The harness fails a tool whose committed recording is not a fixed point of `redactRecording` with
 no rule: anything credential-shaped left in it is a recording that was not written through it.
 
+## The scrub
+
+**A recording the build command writes never holds real data** (GRA-257). Stock tools are built
+against a maintainer's own account and the repository is public, so before anything is written
+every value the vendor answered is replaced by a placeholder, and the test input with it.
+`src/scrub.ts` is the rule; `recordStockProof` applies it on every recording, and there is no flag
+to keep the values.
+
+- **Every string and number** in a response body, in the kept headers but `content-type`, and in
+  the input becomes a placeholder of the same type and shape: an email stays an email (its local
+  part redrawn, at `example.com`); an ISO date or time stays one, in the same layout; a URL keeps
+  its scheme and host and loses its path and query (inside a `link` header too); any other string
+  keeps its length, its punctuation and spaces, each letter a letter of the same case and each digit
+  a digit (an id stays id-like, a hex id hex); a number keeps its sign, its digit counts and its
+  decimal places. A text body is one string; a binary body becomes the same number of drawn bytes.
+- **Keys, array lengths and nesting are kept**, and so are booleans and `null` (one bit, and the
+  bit a module branches on), the integers 0 to 99 (counts, pages and codes a module loops on), a
+  redaction marker, and a string with no letter or digit.
+- **A value the module's code spells is kept**: every string literal in its files, and every string
+  in its input schema (`keptLiteralsOf`). They are public already, and a module comparing an answer
+  with `"message"` must still find it. An input value that must reach a live vendor as it is (a
+  city) survives the scrub by being the schema's `default`, an `examples` entry or an `enum` value.
+- **One value is one placeholder** across the whole recording, so an id one answer gave and a later
+  request names is the same placeholder in both. Placeholders are drawn from a random seed per
+  recording, so one is not a keyed hash of a guessable name.
+- **The requests and the result are the module's own over the scrubbed answers.** After the scrub
+  the module runs again as a dry run whose vendor is the scrubbed answers in order, and the URLs it
+  asks for, the write bodies the proxy previews and the result it answers there are what is
+  recorded. A request built from an earlier answer, or a result the module computed (a name
+  upper-cased, two fields joined), is therefore the scrubbed data's, and the replay matches by
+  construction. A module that behaves differently over the scrubbed answers (a different number of
+  reads, a failed run) fails the recording, and nothing is written.
+- **The last check** (`survivingValuesOf`) looks for every string of six characters or more from
+  the raw input and answers in what is about to be written, setting aside the module's own text and
+  the keys; a survivor fails the recording, naming where it was and never the value.
+
+`test-input.json` is the recording's scrubbed input, since the two must be equal. One consequence for
+live mode: a scrubbed test input names nothing in any real account, so a tool whose input matters
+(an id, a name to search for) answers differently live than recorded unless its input survives as
+a schema value. The hand-made Open-Meteo recording predates the scrub and holds a public API's
+answers about a city, which is no one's data.
+
 ## The replay
 
 `proveReplay` (`src/harness.ts`) runs the module as a dry run, by the real runner through the real

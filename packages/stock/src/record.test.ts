@@ -87,15 +87,99 @@ describe("recordStockProof", () => {
           kind: "write",
           method: "POST",
           url: "https://api.github.com/user/notes",
-          body: { json: { text: "graft" } },
         },
       ],
-      result: { names: ["graft", "cando"], noted: 202 },
+      result: { noted: 202 },
     });
+    // The repositories' names are the maintainer's, and scrubbed; the module's note names the first.
+    const names = (recording.result as { names: string[] }).names;
+    expect(names).toHaveLength(2);
+    expect(names).not.toContain("graft");
+    expect(recording.exchanges[1]).toMatchObject({ body: { json: { text: names[0] } } });
 
     const replay = await proveReplay(tool, recording);
     expect(replay.problems).toEqual([]);
     expect(replay.reachedVendor).toHaveLength(1);
+  });
+
+  it("scrubs every value of the maintainer's account, and the module's requests and result follow the scrubbed answers", async () => {
+    const PLANTED = [
+      "Alice Liddell",
+      "alice@acme-corp.example",
+      "acme-secret-plans",
+      "Acme Pty Ltd",
+    ];
+    const ISSUES = `export default async (input: Input, ctx: Context) => {
+  const me = await ctx.fetch("/user");
+  const user = (await me.json()) as { login: string; name: string; email: string; company: string };
+  const res = await ctx.fetch(\`/repos/\${user.login}/\${input.repo}/issues?state=open\`);
+  const issues = (await res.json()) as { number: number; title: string }[];
+  return {
+    who: \`\${user.name} <\${user.email}>\`,
+    shouting: user.company.toUpperCase(),
+    titles: issues.map((issue) => issue.title),
+    numbers: issues.map((issue) => issue.number),
+  };
+};
+`;
+    const issuesTool: StockWorkspaceTool = {
+      ...tool,
+      name: "open-issues",
+      inputSchema: {
+        type: "object",
+        properties: { repo: { type: "string" } },
+        required: ["repo"],
+        additionalProperties: false,
+      },
+      testInput: { repo: "acme-secret-plans" },
+      annotations: { readOnly: true, destructive: false },
+      files: [{ path: "index.ts", content: ISSUES }],
+    };
+    const recorded = await recordStockProof(issuesTool, {
+      connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
+      upstreamFetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/user") {
+          return Response.json({
+            login: "aliceliddell",
+            name: "Alice Liddell",
+            email: "alice@acme-corp.example",
+            company: "Acme Pty Ltd",
+          });
+        }
+        if (url.pathname === "/repos/aliceliddell/acme-secret-plans/issues") {
+          return Response.json([
+            { number: 4211, title: "Acme Pty Ltd board minutes" },
+            { number: 4212, title: "Alice Liddell salary review" },
+          ]);
+        }
+        return Response.json({ message: "Not Found" }, { status: 404 });
+      },
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { recording } = recorded;
+
+    const text = JSON.stringify(recording);
+    for (const planted of [...PLANTED, "aliceliddell", "4211", "ACME PTY LTD"]) {
+      expect(text, `${planted} survived`).not.toContain(planted);
+      expect(decodeURIComponent(text), `${planted} survived`).not.toContain(planted);
+    }
+    const [first, second] = recording.exchanges;
+    const user = (first as { response: { body: { json: Record<string, string> } } }).response.body
+      .json;
+    const repo = recording.input.repo as string;
+    expect(repo).toMatch(/^[a-z]{4}-[a-z]{6}-[a-z]{5}$/);
+    // The second read names the scrubbed login and the scrubbed test input, as the module built it.
+    expect(second?.url).toBe(
+      `https://api.github.com/repos/${user.login}/${repo}/issues?state=open`,
+    );
+    expect(recording.result).toMatchObject({
+      who: `${user.name} <${user.email}>`,
+      shouting: user.company?.toUpperCase(),
+    });
+
+    const replay = await proveReplay({ ...issuesTool, testInput: recording.input }, recording);
+    expect(replay.problems).toEqual([]);
   });
 
   it("answers the failed dry run's sentence, with the credential redacted, and no recording", async () => {

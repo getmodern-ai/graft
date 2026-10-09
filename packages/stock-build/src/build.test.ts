@@ -19,12 +19,22 @@ import { type BuildOptions, buildStockTool, hostsOf } from "./build";
  */
 
 const TOKEN = "ghp_plantedMaintainerToken0123456789";
+/** The maintainer's own account, as their repositories would show it: none may reach a file. */
+const PLANTED = [
+  "alice-liddell-salary",
+  "acme-board-minutes",
+  "Alice Liddell",
+  "alice@acme-corp.example",
+  "Acme Pty Ltd, confidential",
+  "2026-10-09T19:45:12Z",
+  "987654321",
+];
 const D = "$";
 
 function moduleFor(perPage: number): string {
   return [
-    "export default async (_input: Input, ctx: Context) => {",
-    `  const res = await ctx.fetch("/user/repos?sort=updated&per_page=${perPage}");`,
+    "export default async (input: Input, ctx: Context) => {",
+    `  const res = await ctx.fetch(\`/user/repos?affiliation=${D}{input.affiliation}&per_page=${perPage}\`);`,
     `  if (!res.ok) throw new Error(\`GET /user/repos ${D}{res.status}\`);`,
     "  const repos = (await res.json()) as { name: string; owner_note: string }[];",
     "  return repos.map((repo) => ({ name: repo.name, note: repo.owner_note }));",
@@ -33,13 +43,21 @@ function moduleFor(perPage: number): string {
   ].join("\n");
 }
 
+const SCHEMA = {
+  type: "object",
+  properties: { affiliation: { type: "string" } },
+  required: ["affiliation"],
+  additionalProperties: false,
+};
+
 function draft(name: string, perPage: number): ModuleDraft {
   return {
     name,
     description: "Lists the authenticated user's most recently updated repositories.",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    inputSchema: SCHEMA,
     files: [{ path: "index.ts", content: moduleFor(perPage) }],
-    testInput: {},
+    // A value from the maintainer's account, as a get-by-id tool's test input must be.
+    testInput: { affiliation: "acme-board-minutes" },
     proofReads: [{ path: "/user/repos?per_page=1" }],
   };
 }
@@ -63,9 +81,14 @@ function github(seen: UpstreamRequest[]) {
       return Response.json({ message: "Not Found" }, { status: 404 });
     }
     const all = [
-      { name: "graft", owner_note: `pushed with ${TOKEN}` },
-      { name: "cando", owner_note: "" },
-      { name: "modern", owner_note: "" },
+      { id: 987654321, name: "alice-liddell-salary", owner_note: `pushed with ${TOKEN}` },
+      {
+        id: 987654322,
+        name: "acme-board-minutes",
+        owner_note: "Alice Liddell <alice@acme-corp.example>, Acme Pty Ltd, confidential",
+        pushed_at: "2026-10-09T19:45:12Z",
+      },
+      { id: 987654323, name: "modern", owner_note: "" },
     ];
     return Response.json(all.slice(0, Number(url.searchParams.get("per_page") ?? 30)));
   };
@@ -124,7 +147,7 @@ async function harnessProblems(): Promise<string[]> {
 }
 
 describe("buildStockTool", () => {
-  it("writes a tool directory the harness passes unchanged, with the planted credential in no file", async () => {
+  it("writes a tool directory the harness passes unchanged, with the planted credential and personal data in no file", async () => {
     const { options: build } = options(passing("recent-repos", 2));
     const result = await buildStockTool(build);
     if (!result.ok) throw new Error(`${result.message}\n${(result.problems ?? []).join("\n")}`);
@@ -140,11 +163,14 @@ describe("buildStockTool", () => {
     expect(Object.keys(files).sort()).toEqual(result.files);
     for (const [path, content] of Object.entries(files)) {
       expect(content, `${path} carries the planted credential`).not.toContain(TOKEN);
+      for (const planted of PLANTED) {
+        expect(content, `${path} carries ${planted}`).not.toContain(planted);
+      }
     }
     expect(JSON.parse(files["manifest.json"] ?? "")).toEqual({
       name: "recent-repos",
       description: "Lists the authenticated user's most recently updated repositories.",
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      inputSchema: SCHEMA,
       hosts: ["api.github.com"],
       annotations: { readOnly: true, destructive: false },
     });
@@ -154,19 +180,26 @@ describe("buildStockTool", () => {
     expect(recording).toMatchObject({
       format: 1,
       tool: "github__recent-repos",
-      input: {},
-      exchanges: [
-        {
-          kind: "read",
-          method: "GET",
-          url: "https://api.github.com/user/repos?sort=updated&per_page=2",
-        },
-      ],
-      result: [
-        { name: "graft", note: "pushed with [redacted:credential]" },
-        { name: "cando", note: "" },
-      ],
+      exchanges: [{ kind: "read", method: "GET" }],
     });
+    // The test input is scrubbed with everything else, and the request built from it follows.
+    const input = JSON.parse(files["test-input.json"] ?? "");
+    expect(input.affiliation).toMatch(/^[a-z]{4}-[a-z]{5}-[a-z]{7}$/);
+    expect(recording.input).toEqual(input);
+    expect(recording.exchanges[0].url).toBe(
+      `https://api.github.com/user/repos?affiliation=${input.affiliation}&per_page=2`,
+    );
+    // Scrubbed to the same shape, and the result is the module's over the scrubbed answers.
+    const body = recording.exchanges[0].response.body.json as {
+      name: string;
+      owner_note: string;
+    }[];
+    expect(body).toHaveLength(2);
+    expect(body[0]?.name).toMatch(/^[a-z]{5}-[a-z]{7}-[a-z]{6}$/);
+    expect(body[0]?.owner_note).toMatch(/^[a-z]{6} [a-z]{4} \[redacted:credential\]$/);
+    expect(recording.result).toEqual(
+      body.map((repo) => ({ name: repo.name, note: repo.owner_note })),
+    );
     // The vendor did see the token: the proxy injected it on every call, and on nothing else.
     expect(seen.length).toBeGreaterThan(0);
 

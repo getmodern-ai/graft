@@ -181,6 +181,15 @@ export function bodyBytesOf(body: RecordedBody | undefined): {
   return { bytes: Buffer.from(body.base64, "base64"), contentType: "application/octet-stream" };
 }
 
+/** The vendor's answer to a read, as a replay hands it to the proxy. */
+export function replayResponseOf(read: RecordedRead): Response {
+  const { bytes, contentType } = bodyBytesOf(read.response.body);
+  const headers = new Headers(read.response.headers);
+  if (!headers.has("content-type") && contentType) headers.set("content-type", contentType);
+  const nullBody = read.method === "HEAD" || [204, 205, 304].includes(read.response.status);
+  return new Response(nullBody ? null : bytes, { status: read.response.status, headers });
+}
+
 /**
  * Redact a recording before it is written, as the acquire trace is redacted (`@graft/core`'s
  * `redactValue`): **by value** for every value in `rule.secretValues` (the connection's credential

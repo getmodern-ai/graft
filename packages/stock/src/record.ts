@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { redactText, secretFieldNamesFor } from "@graft/core";
 import {
   CREDENTIAL_REDACTED,
@@ -13,10 +15,13 @@ import {
   RECORDED_RESPONSE_HEADERS,
   RECORDING_FORMAT,
   type RecordedExchange,
+  type RecordedRead,
   recordedBodyOf,
   redactRecording,
+  replayResponseOf,
   type StockRecording,
 } from "./recording";
+import { keptLiteralsOf, scrubRecording, survivingValuesOf } from "./scrub";
 import type { StockWorkspaceTool } from "./workspace";
 
 /**
@@ -26,9 +31,14 @@ import type { StockWorkspaceTool } from "./workspace";
  * vendor's answer and every write the proxy stopped recorded from its preview. The same dry run the
  * harness replays, so what is recorded is what `proveReplay` will ask for.
  *
- * Nothing leaves here unredacted: the recording goes through `redactRecording` with the
- * connection's credential values and its scheme's field names, and so do the sentences, which can
- * quote a vendor's answer.
+ * Nothing leaves here unscrubbed or unredacted (`RECORDING.md`, *The scrub* and *Redaction*). The
+ * first dry run's answers and its input go through `scrubRecording` under a fresh random seed; the
+ * module then runs a second time, as a dry run whose vendor is those scrubbed answers in order, and
+ * the requests it makes and the result it answers there are the ones recorded, so a request naming
+ * an id from an earlier answer, or a result the module computed, is the scrubbed data's and the
+ * harness's replay matches by construction. `survivingValuesOf` is the last check, and the whole
+ * goes through `redactRecording` with the connection's credential values and its scheme's field
+ * names; so do the sentences, which can quote a vendor's answer, though never a surviving value.
  */
 
 /**
@@ -68,6 +78,8 @@ export async function recordStockProof(
     /** The vendor; the proxy's own guarded fetch when absent. */
     upstreamFetch?: UpstreamFetch;
     now?: () => Date;
+    /** The scrub's seed; a fresh random one by default, which is what the build command uses. */
+    seed?: string;
   },
 ): Promise<RecordProofResult> {
   const wire = `${tool.vendor}__${tool.name}`;
@@ -149,7 +161,7 @@ export async function recordStockProof(
   if (!run.report.passed) problems.push(`its dry run did not pass: ${dryRunFailureOf(run.report)}`);
   if (problems.length > 0) return fail();
 
-  const recording: StockRecording = {
+  const raw: StockRecording = {
     format: RECORDING_FORMAT,
     tool: wire,
     recordedAt: (options.now?.() ?? new Date()).toISOString(),
@@ -157,5 +169,75 @@ export async function recordStockProof(
     exchanges,
     ...(run.report.moduleResult === undefined ? {} : { result: run.report.moduleResult }),
   };
+
+  // The scrub: the answers and the input, then the module again over them.
+  const keep = keptLiteralsOf(tool.files, tool.inputSchema);
+  const scrubbed = scrubRecording(raw, {
+    seed: options.seed ?? randomBytes(16).toString("hex"),
+    keep,
+  });
+  const answers = scrubbed.exchanges.filter(
+    (exchange): exchange is RecordedRead => exchange.kind === "read",
+  );
+  const again: RecordedExchange[] = [];
+  const readsAgain = () => again.filter((exchange) => exchange.kind === "read").length;
+  const rerun = await dryRunStockTool({
+    tool: { ...tool, testInput: scrubbed.input },
+    connection,
+    credential,
+    upstreamFetch: async (request: UpstreamRequest) => {
+      const method = request.method.toUpperCase();
+      const answer = answers[readsAgain()];
+      if (!isSafeMethod(method) || !answer) {
+        problems.push(
+          `over the scrubbed answers it made a call the first run did not: ${method} ${new URL(request.url).hostname}`,
+        );
+        return Response.json({ error: "not_in_recording" }, { status: 404 });
+      }
+      again.push({ ...answer, method: method as "GET" | "HEAD", url: request.url });
+      return replayResponseOf(answer);
+    },
+    onPreview: (write) => {
+      again.push({
+        kind: "write",
+        method: write.method,
+        url: `https://${write.host}${write.path}`,
+        ...(write.body ? { body: write.body } : {}),
+      });
+    },
+  });
+  if (!rerun.ran) {
+    problems.push(
+      `over the scrubbed answers the module did not run (exit ${rerun.code}): ${rerun.stderr.trim().slice(-500) || "no output"}`,
+    );
+    return fail();
+  }
+  if (!rerun.report.passed) {
+    problems.push(
+      `over the scrubbed answers its dry run did not pass: ${dryRunFailureOf(rerun.report)}`,
+    );
+  } else if (readsAgain() !== answers.length) {
+    problems.push(
+      `over the scrubbed answers it made ${readsAgain()} read(s), the first run ${answers.length}; a module that branches on a vendor's value can name the value as a literal, which the scrub keeps`,
+    );
+  }
+  if (problems.length > 0) return fail();
+
+  const { result: _scrubbedResult, ...rest } = scrubbed;
+  const recording: StockRecording = {
+    ...rest,
+    exchanges: again,
+    ...(rerun.report.moduleResult === undefined ? {} : { result: rerun.report.moduleResult }),
+  };
+  const survived = survivingValuesOf(raw, recording, {
+    source: tool.files.map((file) => file.content).join("\n"),
+    keep,
+  });
+  if (survived.length > 0) {
+    problems.push(
+      `a value from the vendor's answers survived the scrub in its recording's ${survived.join(", ")}; nothing was recorded`,
+    );
+    return fail();
+  }
   return { ok: true, recording: redactRecording(recording, rule).recording };
 }
