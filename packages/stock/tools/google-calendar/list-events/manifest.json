@@ -1,0 +1,40 @@
+{
+  "name": "list-events",
+  "description": "Lists events in a Google Calendar time window. Calendar IDs other than “primary” come from list-calendars. Returned event IDs are accepted as eventId by get-event, update-event, delete-event, and respond-to-event.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "calendarId": {
+        "type": "string",
+        "description": "Calendar ID to list. Defaults to 'primary'; use list-calendars to obtain other calendar IDs."
+      },
+      "timeMin": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339 lower time bound. Defaults to the current time."
+      },
+      "timeMax": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339 upper time bound. Defaults to seven days after timeMin."
+      },
+      "query": {
+        "type": "string",
+        "description": "Free-text search passed to Google Calendar as q."
+      },
+      "maxResults": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 250,
+        "default": 50,
+        "description": "Maximum total number of events to return. Defaults to 50."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
