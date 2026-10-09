@@ -14,10 +14,10 @@ import {
   getConnection,
   getPendingActionForPerson,
   getPersonModelKey,
+  type IntegrationDirectory,
   isOAuthAuthorizationCode,
   issueConsoleAgentToken,
   type LedgerDeps,
-  type IntegrationDirectory,
   listAgents,
   listApprovals,
   listConnections,
@@ -91,6 +91,13 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 
 import { trackedRoute } from "./analytics-routes";
+import {
+  createStarterDirectory,
+  directoryProposal,
+  searchSetupDirectory,
+  setupDirectoryHome,
+  withStarter,
+} from "./directory";
 import { createMcpConsentRoutes, type McpOAuthServerOptions } from "./mcp-oauth";
 import { beginConsent, createOAuthRoutes, type OAuthOptions } from "./oauth";
 import { createOriginGuard } from "./origin-guard";
@@ -121,13 +128,6 @@ import {
   setupGoalSuggestions,
 } from "./setup-build";
 import {
-  createStarterDirectory,
-  directoryProposal,
-  searchSetupDirectory,
-  setupDirectoryHome,
-  withStarter,
-} from "./directory";
-import {
   connectSetupProposal,
   connectSetupVendor,
   learnSetupConnection,
@@ -144,15 +144,15 @@ import {
 import { runAgentTool } from "./tool-run";
 
 export type {
-  SetupBuildAvailability,
-  SetupGoalContext,
-  SetupGoalSuggestions,
-} from "./setup-build";
-export type {
   SetupDirectoryEntry,
   SetupDirectoryHome,
   SetupDirectoryPage,
 } from "./directory";
+export type {
+  SetupBuildAvailability,
+  SetupGoalContext,
+  SetupGoalSuggestions,
+} from "./setup-build";
 export type { SetupFinishOutput, SetupToolContext } from "./setup-finish";
 export type { AgentToolRunOutput } from "./tool-run";
 

@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import {
   chooseSetupStarter,
   chooseSetupTask,
+  type DirectoryEntry,
   type SetupStateData,
   setupGoalQuery,
 } from "@/lib/setup-queries";
@@ -29,14 +30,29 @@ import {
  * Where no model can author, the screen says what the operator sets, in the server's words, and the
  * button is disabled: the same check `acquire` refuses `acquire_unconfigured` on.
  */
-export function ToolStep({ state, starterId }: { state: SetupStateData; starterId: string }) {
-  const starter = starterVendorOf(starterId);
+export function ToolStep({
+  state,
+  starterId,
+  app,
+  onBack,
+}: {
+  state: SetupStateData;
+  /** A starter the record names: its curated tasks, and Back clears it. */
+  starterId?: string;
+  /** Another directory integration the page holds: no curated tasks, and Back is `onBack`. */
+  app?: DirectoryEntry;
+  onBack?: () => void;
+}) {
+  const starter = starterId ? starterVendorOf(starterId) : null;
   const tasks = starter ? starterTasks(starter).map((task) => task.goal) : [];
   const [task, setTask] = useState(state.setup?.goal ?? "");
   const goal = useQuery(setupGoalQuery);
   const choose = useSetupMutation(chooseSetupTask);
   const back = useSetupMutation(chooseSetupStarter);
-  const name = starter?.displayName ?? "the integration";
+  const name = starter?.displayName ?? app?.name ?? "the integration";
+  const logo = (className: string) => (
+    <SetupLogo starterId={starterId} url={app?.logoUrl} tile={false} className={className} />
+  );
   const harness = state.setup?.harness ? setupHarnessOf(state.setup.harness).label : null;
   const who = harness ?? state.agent?.name ?? "your agent";
   const available = goal.data?.build.available ?? true;
@@ -49,13 +65,19 @@ export function ToolStep({ state, starterId }: { state: SetupStateData; starterI
       className="mx-auto flex w-full max-w-4xl flex-col gap-8"
       onSubmit={(event) => {
         event.preventDefault();
-        if (trimmed && available) choose.mutate({ goal: trimmed });
+        if (trimmed && available) {
+          choose.mutate({ goal: trimmed, ...(app ? { slug: app.slug } : {}) });
+        }
       }}
     >
       <SetupStepHeader
-        media={<SetupLogo starterId={starterId} tile={false} className="size-9" />}
+        media={logo("size-9")}
         title={`What should ${who} be able to do in ${name}?`}
-        description="Pick one read-only tool to build first. You can add more from the console after."
+        description={
+          tasks.length > 0
+            ? "Pick one read-only tool to build first. You can add more from the console after."
+            : "Say what it should read. Graft builds one read-only tool for it; you can add more from the console after."
+        }
       />
       {goal.data && !goal.data.build.available ? (
         <Alert variant="destructive">
@@ -74,13 +96,17 @@ export function ToolStep({ state, starterId }: { state: SetupStateData; starterI
       <SetupFooter
         state={state}
         disabled={busy}
-        onBack={{ run: () => back.mutate({ starterId: null }), pending: back.isPending }}
+        onBack={
+          onBack
+            ? { run: onBack, pending: false }
+            : { run: () => back.mutate({ starterId: null }), pending: back.isPending }
+        }
         summary={
           trimmed ? (
             <>
               <span className="hidden sm:inline">Your first tool</span>
               <span className="flex min-w-0 items-center gap-2 rounded-full border bg-background py-1 pr-1.5 pl-2 text-foreground">
-                <SetupLogo starterId={starterId} tile={false} className="size-4" />
+                {logo("size-4")}
                 <span className="truncate">{trimmed}</span>
                 {custom ? (
                   <span className="rounded-full bg-muted px-1.5 text-muted-foreground text-xs">

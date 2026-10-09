@@ -40,3 +40,16 @@ first real call. That is the gap.
   only through the proxy, proving it with reads, stopping its writes until a person has said yes and
   promoting it into a working set that later contracts is the whole product, and every one of those
   steps can fail quietly. The rest of this record is how each is made to fail loudly or not at all.
+
+## Amendment 2026-10-10: a directory of integrations, from a backing
+
+Decided by Aleks. Setup's integration step may list the integrations a deployment can connect,
+searchable, with their marks, categories and a count: the **integration directory**, a seam
+(`@graft/core`'s `IntegrationDirectory`) whose open backing is the starter integrations and whose
+hosted backing is the link provider's catalogue, filtered to what that provider connects (ADR 0002,
+ADR 0019). It narrows "the demo is the loop, not a logo wall" and "Marketing cannot list 2,000
+apps" to what they guarded against: a catalogue of someone else's *tools*. The directory lists
+integrations only. Choosing one still connects it through the ordinary routing and builds its tool
+through `acquire` (or, where it has them, from Graft's own stock, ADR 0025), so every tool a person
+runs is still code Graft wrote and verified, run in the sandbox through the proxy. The number on
+the screen is the backing's count of what it can connect, never a vendor's headline.

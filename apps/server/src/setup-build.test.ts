@@ -803,7 +803,11 @@ describe("Setup v2: the integration directory", () => {
     people += 1;
     person = `person_${people}`;
     const home = await get("/api/setup/directory");
-    expect(home).toMatchObject({ total: 2, source: "test-directory", categories: [{ name: "CRM" }] });
+    expect(home).toMatchObject({
+      total: 2,
+      source: "test-directory",
+      categories: [{ name: "CRM" }],
+    });
     expect(home.popular.map((entry: { starterId: string | null }) => entry.starterId)).toEqual([
       null,
       "open-meteo",
@@ -817,7 +821,10 @@ describe("Setup v2: the integration directory", () => {
     person = `person_${people}`;
     await app.request("/api/setup/start", post({ harness: "claude" }));
     const tasked = await read(
-      await app.request("/api/setup/task", post({ goal: "List my ten newest deals", slug: "acme-crm" })),
+      await app.request(
+        "/api/setup/task",
+        post({ goal: "List my ten newest deals", slug: "acme-crm" }),
+      ),
     );
     expect(tasked).toMatchObject({
       step: "connect",

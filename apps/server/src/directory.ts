@@ -36,8 +36,8 @@ export type SetupDirectoryPage = Omit<DirectoryPage, "entries"> & {
   entries: SetupDirectoryEntry[];
 };
 
-/** How many entries the integration step's grid shows under *Popular*. */
-export const DIRECTORY_POPULAR_COUNT = 8;
+/** How many entries the grid shows under *Popular*: seven, and *Anything else* makes the frames' eight. */
+export const DIRECTORY_POPULAR_COUNT = 7;
 /** How many marks the logo wall shows. */
 export const DIRECTORY_WALL_COUNT = 36;
 

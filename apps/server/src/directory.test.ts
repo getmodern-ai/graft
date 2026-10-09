@@ -6,7 +6,11 @@ import { createStarterDirectory, directoryProposal } from "./directory";
 const option = (id: string, connect: SetupVendorOption["connect"]): SetupVendorOption => {
   const starter = starterVendorOf(id);
   if (!starter) throw new Error(id);
-  return { starter, provider: { name: "keyring", kind: "form" }, connect } as unknown as SetupVendorOption;
+  return {
+    starter,
+    provider: { name: "keyring", kind: "form" },
+    connect,
+  } as unknown as SetupVendorOption;
 };
 
 describe("createStarterDirectory", () => {

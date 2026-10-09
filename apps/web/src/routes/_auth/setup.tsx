@@ -13,6 +13,7 @@ import { SetupStepView } from "@/components/setup/setup-step";
 import { SetupEyebrowContext } from "@/components/setup/setup-step-header";
 import { SetupStepper, SetupStepperCompact } from "@/components/setup/setup-stepper";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
+import { SetupAppContext } from "@/components/setup/vendor-step";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { announceConsent } from "@/lib/oauth-consent";
@@ -27,6 +28,7 @@ import {
 } from "@/lib/setup-page";
 import {
   chooseSetupStarter,
+  type DirectoryEntry,
   type SetupFinish,
   type SetupStateData,
   setupQuery,
@@ -109,9 +111,14 @@ function SetupRoute() {
     }, SETUP_CLOSE_MS);
   };
 
-  const starterId = finished ? null : (state?.setup?.starterId ?? null);
+  // A directory integration chosen on this page and not yet tasked (`SetupAppContext`): the tool
+  // screen, read as the *Tool* stage while the record still stands on `vendor`. Dropped once the
+  // record leaves the vendor step.
+  const [app, setApp] = useState<DirectoryEntry | null>(null);
+  const holdsApp = app !== null && state?.step === "vendor";
+  const starterId = finished ? null : (state?.setup?.starterId ?? (holdsApp ? app.slug : null));
   const stages = setupStages(step, starterId);
-  useStageHistory(state, finished !== null || leaving);
+  useStageHistory(state, finished !== null || leaving, holdsApp ? () => setApp(null) : null);
   const eyebrow = setupEyebrow(step, starterId);
   const skipButton =
     step !== "completed" && !leaving ? (
@@ -140,45 +147,47 @@ function SetupRoute() {
           <SetupStepperCompact stages={stages} eyebrow={eyebrow} />
         </div>
       </header>
-      <SetupEyebrowContext.Provider value={eyebrow}>
-        <section className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-4 pt-6 md:px-8 md:pt-8">
-          {fromCard && closeRefused ? (
-            <Alert>
-              <CheckCircleIcon />
-              <AlertTitle>{SETUP_FROM_CARD.doneTitle}</AlertTitle>
-              <AlertDescription>{SETUP_FROM_CARD.doneMessage}</AlertDescription>
-            </Alert>
-          ) : fromCard && step !== "completed" ? (
-            <Alert>
-              <InfoIcon />
-              <AlertTitle>{SETUP_FROM_CARD.title}</AlertTitle>
-              <AlertDescription>{SETUP_FROM_CARD.message}</AlertDescription>
-            </Alert>
-          ) : null}
-          {state ? (
-            <SetupStepView
-              state={state}
-              finished={finished}
-              leaving={leaving}
-              onFinished={onFinished}
-              issuedToken={issuedToken}
-              onTokenIssued={setIssuedToken}
-              agentId={search.agent}
-            />
-          ) : setup.isError ? (
-            <p className="text-muted-foreground text-sm">
-              <RetryNotice
-                error={setup.error}
-                message="Could not load Setup."
-                onRetry={() => void setup.refetch()}
-                retrying={setup.isFetching}
+      <SetupAppContext.Provider value={{ app: holdsApp ? app : null, setApp }}>
+        <SetupEyebrowContext.Provider value={eyebrow}>
+          <section className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-4 pt-6 md:px-8 md:pt-8">
+            {fromCard && closeRefused ? (
+              <Alert>
+                <CheckCircleIcon />
+                <AlertTitle>{SETUP_FROM_CARD.doneTitle}</AlertTitle>
+                <AlertDescription>{SETUP_FROM_CARD.doneMessage}</AlertDescription>
+              </Alert>
+            ) : fromCard && step !== "completed" ? (
+              <Alert>
+                <InfoIcon />
+                <AlertTitle>{SETUP_FROM_CARD.title}</AlertTitle>
+                <AlertDescription>{SETUP_FROM_CARD.message}</AlertDescription>
+              </Alert>
+            ) : null}
+            {state ? (
+              <SetupStepView
+                state={state}
+                finished={finished}
+                leaving={leaving}
+                onFinished={onFinished}
+                issuedToken={issuedToken}
+                onTokenIssued={setIssuedToken}
+                agentId={search.agent}
               />
-            </p>
-          ) : (
-            <Loader />
-          )}
-        </section>
-      </SetupEyebrowContext.Provider>
+            ) : setup.isError ? (
+              <p className="text-muted-foreground text-sm">
+                <RetryNotice
+                  error={setup.error}
+                  message="Could not load Setup."
+                  onRetry={() => void setup.refetch()}
+                  retrying={setup.isFetching}
+                />
+              </p>
+            ) : (
+              <Loader />
+            )}
+          </section>
+        </SetupEyebrowContext.Provider>
+      </SetupAppContext.Provider>
     </main>
   );
 }
@@ -191,23 +200,36 @@ function SetupRoute() {
  * stage again, so the entry before Setup, a sign-in's provider page, is never replayed. *Skip for
  * now* is the way out.
  */
-function useStageHistory(state: SetupStateData | undefined, done: boolean) {
+function useStageHistory(
+  state: SetupStateData | undefined,
+  done: boolean,
+  /** The tool screen of a directory integration the page holds: Back drops it. */
+  dropApp: (() => void) | null,
+) {
   const search = Route.useSearch();
   const navigate = useNavigate();
   const back = useSetupBack();
   const clear = useSetupMutation(chooseSetupStarter);
-  const stage = state ? setupStageOf(state.step, state.setup?.starterId ?? null) : null;
+  const stage = state
+    ? setupStageOf(state.step, state.setup?.starterId ?? (dropApp ? "app" : null))
+    : null;
   const previousUrlStage = useRef<number | undefined>(undefined);
   const urlStage = search.stage;
   // What the effect acts with, read at the time it runs: the moves are the URL's and the stage's.
-  const latest = useRef({ state, back, clear, navigate });
-  latest.current = { state, back, clear, navigate };
+  const latest = useRef({ state, back, clear, navigate, dropApp });
+  latest.current = { state, back, clear, navigate, dropApp };
 
   useEffect(() => {
     if (stage === null || done) return;
     const move = stageHistoryMove({ stage, urlStage, previousUrlStage: previousUrlStage.current });
     previousUrlStage.current = urlStage;
-    const { state: now, back: goBack, clear: clearStarter, navigate: go } = latest.current;
+    const {
+      state: now,
+      back: goBack,
+      clear: clearStarter,
+      navigate: go,
+      dropApp: drop,
+    } = latest.current;
     const to = (next: number, replace: boolean) =>
       void go({ to: "/setup", search: (prev) => ({ ...prev, stage: next }), replace });
     switch (move) {
@@ -222,7 +244,9 @@ function useStageHistory(state: SetupStateData | undefined, done: boolean) {
         to(stage, true);
         break;
       case "back":
-        if (now?.step === "vendor" && now.setup?.starterId) {
+        if (drop) {
+          drop();
+        } else if (now?.step === "vendor" && now.setup?.starterId) {
           clearStarter.mutate({ starterId: null });
         } else if (now) {
           const target = backTargetOf(now);
