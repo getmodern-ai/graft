@@ -57,3 +57,41 @@ export function vendorApprovalSentence(
     includesDestructive ? ", destructive ones included" : "; destructive ones still ask"
   }. Withdraw it on the agent's page.`;
 }
+
+/**
+ * The line under the build approval on a connection's confirmation (ADR 0008 as amended
+ * 2026-10-09; GRA-239): the same standing approval, never with destructive tools, pre-ticked on
+ * every surface that confirms a connection. The console's cards read these; the ask card carries
+ * `vendorToolsOffer` as the server wrote it.
+ */
+function possessive(name: string): string {
+  return name.endsWith("s") ? `${name}'` : `${name}'s`;
+}
+
+export function vendorToolsLabel(integrationName: string): string {
+  return `Use ${possessive(integrationName)} tools without asking each time`;
+}
+
+export const VENDOR_TOOLS_DESCRIPTION =
+  "A tool that can delete or overwrite data still asks you first.";
+
+/** What the ask card draws as the second line on a connection's confirmation. */
+export type VendorToolsOffer = {
+  integrationName: string;
+  label: string;
+  description: string;
+};
+
+export function vendorToolsOffer(vendor: string, connectionName: string): VendorToolsOffer {
+  const integrationName = integrationNameFor(vendor, connectionName);
+  return {
+    integrationName,
+    label: vendorToolsLabel(integrationName),
+    description: VENDOR_TOOLS_DESCRIPTION,
+  };
+}
+
+/** The clause once the line was left on and the connection made. */
+export function vendorToolsSentence(integrationName: string): string {
+  return `${possessive(integrationName)} tools run for this agent without asking; destructive ones still ask.`;
+}

@@ -1,3 +1,4 @@
+import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useRef, useState } from "react";
@@ -12,6 +13,7 @@ import {
   useAnswerAsk,
 } from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
+import { VendorToolsItem } from "@/components/pending/vendor-tools-item";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,7 +54,8 @@ import {
  * The card's one control is the build approval, on by default (GRA-75; ADR 0008, amendment of
  * 2026-09-18), as on the form's card. It is posted with the button — the connection does not exist
  * until the return — and the server signs it into the link's state, so the return records it with
- * the connection it makes.
+ * the connection it makes. The line for the integration's tools under it (GRA-239; the amendment
+ * of 2026-10-09), on by default, rides the same state and is recorded on the same return.
  */
 export function ProviderLinkAskCard({
   ask,
@@ -69,10 +72,12 @@ export function ProviderLinkAskCard({
   const decline = useAnswerAsk(action, onAnswered, origin);
   const [state, setState] = useState<LinkState>({ phase: "idle" });
   const [approveBuild, setApproveBuild] = useState(true);
+  const [allowVendor, setAllowVendor] = useState(true);
   const stop = useRef<AbortController | null>(null);
   const provider = payload.provider;
   const target = payload.providerTarget ?? null;
   const agentName = action.agent?.name ?? "the agent";
+  const integrationName = integrationNameFor(payload.vendor, payload.displayName);
 
   const settleAndRefresh = useCallback(
     (outcome: LinkOutcome, message: string, connectionId: string | null) => {
@@ -82,17 +87,33 @@ export function ProviderLinkAskCard({
       queryClient.invalidateQueries({ queryKey: agentKeys.all });
       if (outcome === "connected") {
         toast.success(`${payload.displayName} is connected through ${provider}`, {
-          description: connectedToastDescription({ origin, agentName, approveBuild, provider }),
+          description: connectedToastDescription({
+            origin,
+            agentName,
+            approveBuild,
+            provider,
+            ...(allowVendor ? { vendorTools: integrationName } : {}),
+          }),
         });
         onAnswered?.();
       }
       return connectionId;
     },
-    [queryClient, payload.displayName, provider, agentName, approveBuild, onAnswered, origin],
+    [
+      queryClient,
+      payload.displayName,
+      provider,
+      agentName,
+      approveBuild,
+      allowVendor,
+      integrationName,
+      onAnswered,
+      origin,
+    ],
   );
 
   const start = useMutation({
-    mutationFn: () => startProviderLink(action.id, { approveBuild }),
+    mutationFn: () => startProviderLink(action.id, { approveBuild, allowVendor }),
     onSuccess: async (started) => {
       if ("fallback" in started) {
         // The provider could not start its sign-in and the ask is the keyring's form now
@@ -196,6 +217,13 @@ export function ProviderLinkAskCard({
             agentName={agentName}
             checked={approveBuild}
             onCheckedChange={setApproveBuild}
+            disabled={busy}
+          />
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
             disabled={busy}
           />
         </>

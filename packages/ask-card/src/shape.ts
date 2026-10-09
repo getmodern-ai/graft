@@ -93,6 +93,20 @@ export type AskCardVendorApproval = {
 };
 
 /**
+ * The second line under the build choice on a connection's confirmation (ADR 0008 as amended
+ * 2026-10-09; GRA-239): "Use <integration>'s tools without asking each time", ticked by default,
+ * the standing approval without destructive tools. The server's words (`@graft/core`'s
+ * `vendorToolsOffer`), drawn as they come.
+ */
+export type AskCardVendorTools = {
+  integrationName: string;
+  /** The tick's label. */
+  label: string;
+  /** One sentence under it: destructive tools still ask. */
+  description: string;
+};
+
+/**
  * What the card draws: the non-secret facts of one ask, as the console's handoff page shows them,
  * on the awaiting result's `structuredContent.card` beside GRA-55's `url`, `message` and `reason`.
  * `answerable` is the server's word on whether the card may answer in place — true for the build
@@ -139,6 +153,8 @@ export type AskCard = {
   tool?: AskCardTool;
   /** For a tool ask: the integration-wide offer beside Allow (GRA-237). */
   vendorApproval?: AskCardVendorApproval;
+  /** For a connection ask: the line for the integration's tools under the build choice (GRA-239). */
+  vendorTools?: AskCardVendorTools;
 };
 
 /**
@@ -165,14 +181,15 @@ export type CardData = AskCard | SetupCard;
  * (GRA-116), which never carries the ask-every-call setting — that is the console's — or its yes
  * for every tool of the integration, with the destructive tick (GRA-237); the scope
  * ask's yes or no, carrying the build choice GRA-75 put on the console's page (GRA-104); the
- * keyless connection's confirm, carrying the same choice (on by default there and here); or a
+ * keyless connection's confirm, carrying the same choice (on by default there and here) and, from
+ * a card that drew it, the line for the integration's tools (GRA-239, on by default too); or a
  * connection's decline — a link provider's included. Nothing else is accepted, and no field is a
  * secret.
  */
 export type AnswerAskAnswer =
   | { allow: boolean; approveBuild?: boolean }
   | { allow: true; allowVendor: true; includesDestructive: boolean }
-  | { connect: true; approveBuild: boolean }
+  | { connect: true; approveBuild: boolean; allowVendor?: boolean }
   | { decline: true };
 
 export type AnswerAskInput = { pendingActionId: string; answer: AnswerAskAnswer };
@@ -188,8 +205,15 @@ export type AnswerAskRefusalReason =
   | "expired"
   | "input_invalid";
 
-/** What the card sends `start_link` (GRA-117): its ask, and the build choice the return records. */
-export type StartLinkInput = { pendingActionId: string; approveBuild: boolean };
+/**
+ * What the card sends `start_link` (GRA-117): its ask, and the choices the return records — the
+ * build choice and, from a card that drew it, the line for the integration's tools (GRA-239).
+ */
+export type StartLinkInput = {
+  pendingActionId: string;
+  approveBuild: boolean;
+  allowVendor?: boolean;
+};
 
 /** What `start_link` answers: the provider's link to open, and until when it is honoured. */
 export type StartLinkResult = { url: string; expiresAt: string; provider: string };
@@ -262,6 +286,7 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
     ...(typeof card.toolName === "string" ? { toolName: card.toolName } : {}),
     ...(isAskCardTool(card.tool) ? { tool: card.tool } : {}),
     ...(isVendorApproval(card.vendorApproval) ? { vendorApproval: card.vendorApproval } : {}),
+    ...(isVendorTools(card.vendorTools) ? { vendorTools: card.vendorTools } : {}),
     ...(isWidening(card.widens) ? { widens: card.widens } : {}),
   };
 }
@@ -296,6 +321,15 @@ function isVendorApproval(value: unknown): value is AskCardVendorApproval {
     typeof value.label === "string" &&
     typeof value.destructiveLabel === "string" &&
     typeof value.destructiveDescription === "string"
+  );
+}
+
+function isVendorTools(value: unknown): value is AskCardVendorTools {
+  return (
+    isRecord(value) &&
+    typeof value.integrationName === "string" &&
+    typeof value.label === "string" &&
+    typeof value.description === "string"
   );
 }
 

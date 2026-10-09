@@ -457,12 +457,15 @@ const connectionBody = registrationBody.extend({
 const credentialBody = z.object({ fields: credentialFields });
 
 /**
- * The one choice both connection cards add to the confirmation (GRA-75; ADR 0008, amendment of
- * 2026-09-18): whether the asking agent may build against the connection. Absent reads as no, so a
- * body written before the control existed asks nothing new of the person.
+ * The two choices both connection cards add to the confirmation: whether the asking agent may
+ * build against the connection (GRA-75; ADR 0008, amendment of 2026-09-18), and whether the
+ * integration's tools then run for it without asking, destructive ones left out (GRA-239; the
+ * amendment of 2026-10-09). Absent reads as no, so a body written before a control existed asks
+ * nothing new of the person.
  */
 const approveBuildField = {
   approveBuild: z.boolean().default(false),
+  allowVendor: z.boolean().default(false),
 };
 
 /** GRA-28's submit for a `connection` ask: the proposal as the person edited it, the secret, and the build choice. */
@@ -470,7 +473,7 @@ const connectionSubmitBody = registrationBody.extend({
   credential: credentialFields,
   ...approveBuildField,
 });
-/** The console's button for a link ask (GRA-59): nothing to edit, so the body is the build choice alone — or empty. */
+/** The console's button for a link ask (GRA-59): nothing to edit, so the body is the two choices alone — or empty. */
 const linkStartBody = z.object(approveBuildField);
 const credentialSubmitBody = z.object({ credential: credentialFields });
 
@@ -1661,7 +1664,9 @@ export function createApi(options: ApiOptions): Hono {
    * connection (GRA-75; ADR 0008, amendment of 2026-09-18) — the yes `acquire`'s own ask would
    * take, given one page earlier by the same person about the same agent and connection — so the
    * next `acquire` finds it standing and asks nothing. In the transaction, so a refused connection
-   * leaves no approval and a recorded approval never lacks its connection.
+   * leaves no approval and a recorded approval never lacks its connection. With `allowVendor` it
+   * records the agent's standing approval for the connection's vendor, destructive tools left out,
+   * the same way (GRA-239; ADR 0008, amendment of 2026-10-09).
    */
   api.post("/pending-actions/:id/connection", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -1701,6 +1706,7 @@ export function createApi(options: ApiOptions): Hono {
     const body = await parseBody(c.req.raw, linkStartBody, { emptyIs: {} });
     const started = await startProviderLink(ctx, principal, c.req.param("id"), linkOptions(), {
       approveBuild: body.approveBuild,
+      allowVendor: body.allowVendor,
     });
     // Counted here rather than in the route table (GRA-147): the same 200 is a link minted or a
     // provider that stepped aside, and the two are different facts about the provider.

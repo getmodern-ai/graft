@@ -10,6 +10,7 @@ import {
   integrationNameFor,
   KEYRING_PROVIDER,
   vendorApprovalSentence,
+  vendorToolsSentence,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -75,7 +76,7 @@ function refuse(reason: AnswerAskRefusalReason, message: string): CallToolResult
 }
 
 const ANSWER_SHAPES =
-  "answer must be { allow, approveBuild? }, { allow: true, allowVendor: true, includesDestructive }, { connect: true, approveBuild } or { decline: true }";
+  "answer must be { allow, approveBuild? }, { allow: true, allowVendor: true, includesDestructive }, { connect: true, approveBuild, allowVendor? } or { decline: true }";
 
 /** The arguments by shape: an id and one of the three answers, nothing else. */
 export function readAnswerAskInput(
@@ -115,6 +116,19 @@ export function readAnswerAskInput(
     typeof answer.approveBuild === "boolean"
   ) {
     return { pendingActionId, answer: { connect: true, approveBuild: answer.approveBuild } };
+  }
+  // The keyless confirm with the line for the integration's tools (GRA-239). Never with the
+  // destructive tick: the line leaves destructive tools out, so the shape has no room for one.
+  if (
+    keys === "allowVendor,approveBuild,connect" &&
+    answer.connect === true &&
+    typeof answer.approveBuild === "boolean" &&
+    typeof answer.allowVendor === "boolean"
+  ) {
+    return {
+      pendingActionId,
+      answer: { connect: true, approveBuild: answer.approveBuild, allowVendor: answer.allowVendor },
+    };
   }
   if (keys === "decline" && answer.decline === true) {
     return { pendingActionId, answer: { decline: true } };
@@ -363,6 +377,7 @@ async function answerConnectionAsk(
       // A keyless scheme: nothing to enter, and the service writes no ciphertext (GRA-66).
       credential: {},
       approveBuild: answer.approveBuild,
+      allowVendor: answer.allowVendor === true,
     },
     {
       connection: deps.connection,
@@ -381,15 +396,20 @@ async function answerConnectionAsk(
     { connection: deps.connection },
     notifier,
   );
+  const tools = confirmed.vendorApproval
+    ? ` ${vendorToolsSentence(integrationNameFor(payload.vendor, payload.displayName))}`
+    : "";
   const result: AnswerAskResult = {
     answered: true,
-    sentence: payload.widens
-      ? `Confirmed. ${what} now also reaches ${payload.widens.addedHosts.join(", ")}${
-          confirmed.buildApproval ? `, and ${agentName} may build tools against it` : ""
-        }; nothing was entered and no new connection was made.`
-      : `Connected. ${what} is in ${agentName}'s scope${
-          confirmed.buildApproval ? ", and it may build tools against it" : ""
-        }; nothing was entered, since the vendor takes no credential.`,
+    sentence: `${
+      payload.widens
+        ? `Confirmed. ${what} now also reaches ${payload.widens.addedHosts.join(", ")}${
+            confirmed.buildApproval ? `, and ${agentName} may build tools against it` : ""
+          }; nothing was entered and no new connection was made.`
+        : `Connected. ${what} is in ${agentName}'s scope${
+            confirmed.buildApproval ? ", and it may build tools against it" : ""
+          }; nothing was entered, since the vendor takes no credential.`
+    }${tools}`,
   };
   return toolResult(result);
 }
@@ -410,10 +430,10 @@ export const answerAsk: MetaTool = {
         answer: {
           type: "object",
           description:
-            "{ allow: boolean } for a build approval or a tool's; { allow: true, allowVendor: true, includesDestructive: boolean } for a tool's yes to every tool of its integration; { allow: boolean, approveBuild?: boolean } for a scope ask; { connect: true, approveBuild: boolean } or { decline: true } for a connection that takes no credential.",
+            "{ allow: boolean } for a build approval or a tool's; { allow: true, allowVendor: true, includesDestructive: boolean } for a tool's yes to every tool of its integration; { allow: boolean, approveBuild?: boolean } for a scope ask; { connect: true, approveBuild: boolean, allowVendor?: boolean } or { decline: true } for a connection that takes no credential, allowVendor recording the agent's standing approval for the integration's tools, destructive ones left out.",
           properties: {
             allow: { type: "boolean" },
-            allowVendor: { type: "boolean", const: true },
+            allowVendor: { type: "boolean" },
             includesDestructive: { type: "boolean" },
             connect: { type: "boolean", const: true },
             approveBuild: { type: "boolean" },

@@ -159,7 +159,9 @@ directory means the coding agent; everywhere else it is `CONTEXT.md`'s word.
   answers on the same page, and the grain does not move. Since the amendment of 2026-10-09
   (GRA-237) a tool's ask may also allow every tool of its integration for that agent at once
   (`vendor_approval`, `allowVendor`), destructive ones only when ticked; a tool's own `deny` and
-  `askEveryCall` still win over it. Read the amendments before changing
+  `askEveryCall` still win over it. The connection confirmation offers it too (GRA-239), as a
+  second pre-ticked line under `approveBuild`, never with destructive tools and never narrowing one
+  that stands (`allowVendorWhenConnecting`). Read the amendments before changing
   `packages/core/src/approval/approval.decision.ts` or the ask in `packages/mcp/src/approval.ts`.
 - **The proxy is the only route to a vendor.** A sandbox with any other egress, or a module that
   holds a credential, violates ADR 0010 and ADR 0013 whatever the reason.

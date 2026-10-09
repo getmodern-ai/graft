@@ -448,6 +448,30 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     settle(outcome.ok ? outcome : { ok: false, message: outcome.message });
   };
 
+  /**
+   * The line for the integration's tools under the build choice (GRA-239; ADR 0008 as amended
+   * 2026-10-09), ticked, in the server's words; null on a card the server wrote without it, which
+   * then sends exactly what it always sent.
+   */
+  const toolsLine = (): HTMLInputElement | null => {
+    const offer = card.vendorTools;
+    if (!offer) return null;
+    const choice = el(doc, "label", "ask-choice");
+    const box = el(doc, "input");
+    box.type = "checkbox";
+    box.checked = true;
+    box.name = "allowVendor";
+    const words = el(doc, "span");
+    words.append(
+      el(doc, "span", undefined, offer.label),
+      el(doc, "span", "ask-choice-hint", offer.description),
+    );
+    choice.append(box, words);
+    actions.before(choice);
+    return box;
+  };
+  const withLine = (line: HTMLInputElement | null) => (line ? { allowVendor: line.checked } : {});
+
   if (isLinkAsk(card)) {
     // A link provider's ask (GRA-117): the build choice, Decline through `answer_ask`, and the
     // provider's sign-in minted through `start_link` and opened in the person's browser.
@@ -458,6 +482,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     box.name = "approveBuild";
     choice.append(box, el(doc, "span", undefined, buildChoiceLabel(card)));
     actions.before(choice);
+    const line = toolsLine();
 
     const decline = button(doc, "Decline", "secondary", () => void submit({ decline: true }));
     const connect = button(
@@ -467,6 +492,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
       () => {
         void (async () => {
           box.disabled = true;
+          if (line) line.disabled = true;
           decline.disabled = true;
           connect.disabled = true;
           let started: StartLinkOutcome;
@@ -474,6 +500,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
             started = await handlers.startLink({
               pendingActionId: card.pendingActionId,
               approveBuild: box.checked,
+              ...withLine(line),
             });
           } catch (error) {
             started = {
@@ -578,10 +605,12 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     return root;
   }
 
+  const line = toolsLine();
   const decline = button(doc, "Decline", "secondary", () => void submit({ decline: true }));
   const connect = button(doc, "Connect", "primary", () => {
     box.disabled = true;
-    void submit({ connect: true, approveBuild: box.checked });
+    if (line) line.disabled = true;
+    void submit({ connect: true, approveBuild: box.checked, ...withLine(line) });
   });
   buttons.push(decline, connect);
   actions.append(decline, connect);

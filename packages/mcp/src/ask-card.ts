@@ -1,5 +1,5 @@
 import type { AskCard, AskCardTool, AskCardVendorApproval } from "@graft/ask-card/shape";
-import { type ConnectionOutput, takesCredential } from "@graft/core";
+import { type ConnectionOutput, takesCredential, vendorToolsOffer } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { ConnectionScheme } from "@graft/db/schema/connection";
 import type { Resource, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -208,7 +208,12 @@ export function connectionAskAnswerable(
   return connect === "form" && !takesCredential(payload.scheme as ConnectionScheme);
 }
 
-/** The card for a `connection` ask (`connection-request.ts`): the proposal as the agent made it. */
+/**
+ * The card for a `connection` ask (`connection-request.ts`): the proposal as the agent made it,
+ * and the line for the integration's tools the confirmation offers under the build choice
+ * (GRA-239), in the server's words. A credential's form never reaches the card, but the line
+ * rides every connection card: the keyless confirm and the link's start both carry it.
+ */
 export function connectionAskCard(args: {
   action: PendingActionRow;
   agentName: string;
@@ -234,6 +239,7 @@ export function connectionAskCard(args: {
     provider: payload.provider,
     providerConnect,
     ...(payload.widens ? { widens: payload.widens } : {}),
+    vendorTools: vendorToolsOffer(payload.vendor, payload.displayName),
   };
 }
 

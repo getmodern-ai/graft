@@ -27,8 +27,9 @@ where a decision is theirs. Anything that breaks either is in scope:
   Setup's Build for their agent and connection (ADR 0024); one recorded for an agent or connection
   that is not theirs, or for a connection the agent was not given, is in scope. A tool's ask may
   also allow every tool of its integration for that agent at once, destructive tools only when the
-  person ticks them (ADR 0008 as amended 2026-10-09): one recorded by anything but the person's
-  answer, for another agent, or one that passes a destructive tool without the tick or a tool set
+  person ticks them (ADR 0008 as amended 2026-10-09), and a connection's confirmation may record
+  the same, destructive tools always left out: one recorded by anything but the person's answer,
+  for another agent, one recorded from a connection's confirmation with destructive tools in it, or one that passes a destructive tool without the tick or a tool set
   to ask every call, is in scope.
 - The **MCP OAuth server**: a token issued to the wrong client or agent, a code or refresh token
   replayed, a consent decided without a session. The **console**: a cross-origin state change. Its

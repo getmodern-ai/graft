@@ -1,3 +1,4 @@
+import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
 import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
 import type { ConnectionSubmitBody } from "@graft/server/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +18,7 @@ import {
   useAnswerAsk,
 } from "@/components/pending/ask-card";
 import { BuildApprovalItem } from "@/components/pending/build-approval-item";
+import { VendorToolsItem } from "@/components/pending/vendor-tools-item";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FieldGroup, FieldLegend, FieldSet } from "@/components/ui/field";
@@ -58,7 +60,10 @@ import { type Ask, isOpen, pendingKeys } from "@/lib/pending-action-queries";
  * The form's last control is the build approval, on by default (GRA-75; ADR 0008, amendment of
  * 2026-09-18): Connect posts it with the proposal, and the submit records `acquire`'s approval for
  * the asking agent in the transaction that makes the connection, so the agent's first `acquire`
- * needs no second link. Unticked, the agent asks as it always did.
+ * needs no second link. Unticked, the agent asks as it always did. Under it, also on by default,
+ * the line for the integration's tools (GRA-239; ADR 0008, amendment of 2026-10-09): the submit
+ * records the agent's standing approval for the vendor, destructive tools left out, in the same
+ * transaction.
  *
  * Under `origin: "setup"` (GRA-206) the proposal is Setup's, written from a starter entry: the
  * model's provenance is not shown and the proposal editor sits behind *Edit the connection*,
@@ -79,6 +84,7 @@ export function ConnectionAskCard({
   const [draft, setDraft] = useState<ConnectionDraft>(() => draftFromProposal(payload));
   const [errors, setErrors] = useState<DraftErrors>({});
   const [approveBuild, setApproveBuild] = useState(true);
+  const [allowVendor, setAllowVendor] = useState(true);
   // Setup's disclosure over the proposal editor; outside Setup the editor is never folded.
   const [editing, setEditing] = useState(false);
   const agentName = action.agent?.name ?? "the agent";
@@ -86,7 +92,11 @@ export function ConnectionAskCard({
   const consent = useOAuthConsent({
     onConnected: () => {
       toast.success(`${draft.displayName} is connected`, {
-        description: connectedToastDescription({ origin, agentName }),
+        description: connectedToastDescription({
+          origin,
+          agentName,
+          ...(allowVendor ? { vendorTools: integrationName } : {}),
+        }),
       });
       onAnswered?.();
     },
@@ -111,6 +121,9 @@ export function ConnectionAskCard({
           origin,
           agentName,
           approveBuild: submitted.approveBuild,
+          ...(submitted.allowVendor
+            ? { vendorTools: integrationNameFor(connection.vendor, connection.displayName) }
+            : {}),
         }),
       });
       onAnswered?.();
@@ -140,7 +153,7 @@ export function ConnectionAskCard({
       return;
     }
     setErrors({});
-    connect.mutate({ ...verdict.value, approveBuild });
+    connect.mutate({ ...verdict.value, approveBuild, allowVendor });
   };
 
   const open = isOpen(action);
@@ -149,6 +162,7 @@ export function ConnectionAskCard({
   const secret = secretLegend(draft);
   const provider: string = payload.provider ?? KEYRING_PROVIDER;
   const widens = payload.widens ?? null;
+  const integrationName = integrationNameFor(draft.vendor, draft.displayName);
   // Once the client is saved and the popup is open, the form's job is done; the callback settles it.
   const consenting = consent.state.phase !== "idle" && consent.state.phase !== "done";
   const busy = connect.isPending || decline.isPending || consenting;
@@ -226,6 +240,13 @@ export function ConnectionAskCard({
             onCheckedChange={setApproveBuild}
             disabled={busy}
           />
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
+            disabled={busy}
+          />
         </>
       ) : open ? (
         <>
@@ -277,6 +298,13 @@ export function ConnectionAskCard({
             agentName={agentName}
             checked={approveBuild}
             onCheckedChange={setApproveBuild}
+            disabled={busy}
+          />
+          <VendorToolsItem
+            id={`ask-${action.id}-allow-vendor`}
+            integrationName={integrationName}
+            checked={allowVendor}
+            onCheckedChange={setAllowVendor}
             disabled={busy}
           />
           <ConsentStatus state={consent.state} onCancel={consent.cancel} />

@@ -191,6 +191,24 @@ export async function allowVendor(
 }
 
 /**
+ * The line on a connection's confirmation, "Use <integration>'s tools without asking each time"
+ * (ADR 0008 as amended 2026-10-09; GRA-239): the standing approval without destructive tools,
+ * recorded by the caller in the transaction that makes the connection. It never narrows: an
+ * approval already standing for the vendor, destructive tools included or not, is answered as it
+ * stands, since connecting a second account of an integration is not an answer about deleting.
+ */
+export async function allowVendorWhenConnecting(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  vendor: string,
+  deps: ApprovalDeps,
+): Promise<VendorApprovalRow> {
+  const standing = await deps.findVendorApproval(ctx.db, scope, vendor);
+  if (standing) return standing;
+  return allowVendor(ctx, scope, vendor, { includesDestructive: false }, deps);
+}
+
+/**
  * Withdraw the agent's standing approval for an integration, from the agent's page. Its tools ask
  * again on their next call, each once, unless a tool's own answer stands. Null when none stood.
  */

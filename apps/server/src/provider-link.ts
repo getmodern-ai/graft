@@ -2,6 +2,7 @@ import {
   type AgentDeps,
   type ApprovalDeps,
   addConnectionToAgentScope,
+  allowVendorWhenConnecting,
   answerPendingAction,
   type ConnectionDeps,
   connectThroughProvider,
@@ -290,6 +291,17 @@ export function createProviderLinkRoutes(options: ProviderLinkRouteOptions): Hon
             scoped,
             { personId, agentId: row.agentId },
             connection.id,
+            options.approval,
+          );
+        }
+        // The line for the integration's tools, ticked on the same card (GRA-239; ADR 0008 as
+        // amended 2026-10-09): the agent's standing approval for the vendor, destructive tools
+        // left out, in the same transaction.
+        if (verdict.payload.allowVendor) {
+          await allowVendorWhenConnecting(
+            scoped,
+            { personId, agentId: row.agentId },
+            connection.vendor,
             options.approval,
           );
         }
