@@ -1,17 +1,27 @@
 import { type SetupHarness, setupHarnessOf } from "@graft/core/setup/harness";
 import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
-import { suggestedFirstSentence } from "@graft/core/setup/setup-prompt";
+import { setupPrompt, suggestedFirstSentence } from "@graft/core/setup/setup-prompt";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
-import { SetupPromptBlock } from "@/components/agent/setup-prompt-block";
 import { CodeBlock } from "@/components/code-block";
-import { InfoIcon, KeyIcon, WarningIcon } from "@/components/icons";
+import { CopyButton } from "@/components/copy-button";
+import {
+  CheckCircleIcon,
+  InfoIcon,
+  KeyboardArrowDownIcon,
+  KeyboardArrowUpIcon,
+  KeyIcon,
+  WarningIcon,
+} from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
+import { ToolResultCard } from "@/components/setup/result-step";
+import { SetupAppCard } from "@/components/setup/setup-app-card";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
+import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -30,6 +40,7 @@ import {
 } from "@/lib/setup-finish";
 import type { setupFinishedToast } from "@/lib/setup-page";
 import {
+  completeSetupResult,
   finishSetup,
   type SetupFinish,
   type SetupStateData,
@@ -97,7 +108,11 @@ export function FinishStep({
   }, [arriving, queryClient]);
 
   const finish = useMutation({
-    mutationFn: finishSetup,
+    // Setup v2's done screen stands on the result step too: its finish passes through it first.
+    mutationFn: async () => {
+      if (state.step === "result") await completeSetupResult();
+      return finishSetup();
+    },
     onSuccess: (answer) => {
       // The state goes into the one cache entry the intercept reads; the token does not.
       const { token: _token, ...completed } = answer;
@@ -152,11 +167,21 @@ export function FinishStep({
   const busy = finish.isPending || finish.isSuccess || issue.isPending;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <SetupStepHeader
-        title={entry ? `Connect ${entry.label}` : "Ask in the chat"}
+        title={
+          arrival?.kind === "landed"
+            ? entry
+              ? `Your tool is ready. Connect ${entry.label} to use it.`
+              : "Your tool is ready"
+            : entry
+              ? `Connect ${entry.label} to use it`
+              : "Ask in the chat"
+        }
         description={finishSentence(variant, entry?.label ?? "", agentName)}
       />
+
+      {state.setup?.toolId ? <ToolResultCard state={state} /> : null}
 
       {arrival?.kind === "failed" ? <BuildFailed arrival={arrival} /> : null}
 
@@ -172,13 +197,12 @@ export function FinishStep({
       {sections.askInChat ? <AskInChat context={context.data} /> : null}
 
       {sections.prompt && harness ? (
-        <SetupPromptBlock
+        <SetupPromptCard
           harness={harness}
+          label={entry?.label ?? "your harness"}
           agentName={agentName}
-          {...(context.data.connection
-            ? { connection: { displayName: context.data.connection.displayName } }
-            : {})}
-          {...(promptTool ? { tool: promptTool } : {})}
+          connection={context.data.connection}
+          tool={promptTool}
         />
       ) : null}
 
@@ -208,7 +232,20 @@ export function FinishStep({
           </Button>
         </div>
       ) : (
-        <SetupFooter state={state} disabled={busy}>
+        <SetupFooter
+          state={state}
+          disabled={busy}
+          summary={
+            context.data.connection ? (
+              <>
+                <CheckCircleIcon className="size-4 shrink-0 text-success" />
+                {context.data.connection.displayName} connected
+                {arrival?.kind === "landed" ? " · 1 tool ready" : null}
+                {entry ? ` · ${entry.label} connects when you paste the prompt` : null}
+              </>
+            ) : null
+          }
+        >
           {sections.reissue ? (
             <Button variant="outline" disabled={busy} onClick={() => issue.mutate()}>
               {issue.isPending ? "Issuing a new token…" : "Issue a new token"}
@@ -220,7 +257,7 @@ export function FinishStep({
             </Button>
           ) : (
             <Button disabled={busy} onClick={() => finish.mutate()}>
-              {busy ? "Finishing…" : "Finish Setup"}
+              {busy ? "Finishing…" : "Open the console"}
             </Button>
           )}
         </SetupFooter>
@@ -367,5 +404,70 @@ function AskInChat({ context }: { context: SetupTool }) {
           : "The tool is still on its way. Ask once it has joined the agent's tools, and the harness finds it there."
       }
     />
+  );
+}
+
+/**
+ * The done screen's prompt card (Setup v2, the frames' *Paste this into Claude*): the harness's
+ * mark, what to do with the prompt, *Copy prompt* as the card's primary, and the prompt itself
+ * folded to its first lines with *Expand the full prompt*. The words are `@graft/core`'s
+ * `setupPrompt`, the same the agents page and the public route use.
+ */
+function SetupPromptCard({
+  harness,
+  label,
+  agentName,
+  connection,
+  tool,
+}: {
+  harness: SetupHarness;
+  label: string;
+  agentName: string;
+  connection: SetupTool["connection"];
+  tool: ReturnType<typeof promptToolOf>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const origin = window.location.origin;
+  const prompt = setupPrompt({
+    harness,
+    mcpUrl: mcpEndpointUrl(origin),
+    consoleUrl: origin,
+    agent: { name: agentName },
+    ...(connection ? { connection: { displayName: connection.displayName } } : {}),
+    ...(tool ? { tool } : {}),
+  });
+  return (
+    <SetupAppCard
+      media={<SetupLogo harness={harness} />}
+      name={<span className="text-base">Paste this into {label} to connect Graft</span>}
+      subline={`It holds no token. ${label} walks you through connecting, then makes your first request.`}
+      action={<CopyButton text={prompt} label="Copy prompt" variant="default" />}
+    >
+      <div className="relative">
+        <pre
+          className={
+            expanded
+              ? "whitespace-pre-wrap rounded-md bg-muted p-4 font-mono text-xs"
+              : "max-h-36 overflow-hidden whitespace-pre-wrap rounded-md bg-muted p-4 font-mono text-xs"
+          }
+        >
+          {prompt}
+        </pre>
+        {expanded ? null : (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 rounded-b-md bg-linear-to-t from-muted to-transparent" />
+        )}
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="self-center"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((open) => !open)}
+      >
+        {expanded ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+        {expanded ? "Collapse" : "Expand the full prompt"}
+      </Button>
+    </SetupAppCard>
   );
 }
