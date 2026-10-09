@@ -1,0 +1,44 @@
+{
+  "format": 1,
+  "tool": "google-drive__move-file",
+  "recordedAt": "2026-10-09T18:49:33.189Z",
+  "input": {
+    "fileId": "8coBTXQESpS5dNmdmByGmIpF3BrksTPoQ",
+    "folderId": "khon",
+    "newName": "Hmldb"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/drive/v3/files/8coBTXQESpS5dNmdmByGmIpF3BrksTPoQ?fields=parents&supportsAllDrives=true",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "parents": ["5XQzRPmZ0UVbdTh7BBK"]
+          }
+        }
+      }
+    },
+    {
+      "kind": "write",
+      "method": "PATCH",
+      "url": "https://www.googleapis.com/drive/v3/files/8coBTXQESpS5dNmdmByGmIpF3BrksTPoQ",
+      "body": {
+        "json": {
+          "name": "Hmldb"
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": null,
+    "name": null,
+    "parents": null,
+    "webViewLink": null
+  }
+}
