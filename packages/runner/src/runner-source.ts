@@ -87,6 +87,14 @@ export const REFUSAL_HEADER = "x-graft-refusal";
 export const RESULT_MARKER = "__GRAFT_RESULT__:";
 
 /**
+ * The last line of stderr on every failure the runner words (GRA-244; `runner.mjs`): the marker,
+ * then the last error status a vendor answered `ctx.fetch` with, or nothing. `@graft/mcp`'s
+ * `run.ts` reads it onto a stock tool's failure signal and strips it from the tail it hands back.
+ * Asserted equal to `runner.mjs`'s in `runner.test.ts`.
+ */
+export const VENDOR_STATUS_MARKER = "__GRAFT_VENDOR_STATUS__:";
+
+/**
  * The first line of the runner's envelope, on stdout and in the detached result file (GRA-186; the
  * header of `runner.mjs`): the marker, a newline, one line of JSON `{ result, blobs }`. In the
  * family of `RESULT_MARKER`, and for the same reason: only the runner writes it, after the module

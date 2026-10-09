@@ -36,6 +36,7 @@ export {
   runnerFiles,
   runnerPath,
   runnerSeedDir,
+  VENDOR_STATUS_MARKER,
 } from "./runner-source";
 export {
   loadSkills,

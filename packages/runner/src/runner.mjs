@@ -209,6 +209,17 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const STDERR_TAIL_CHARS = 4_000;
 /** What stdout carries in place of the result when the result went to a file — see the header. */
 const RESULT_MARKER = "__GRAFT_RESULT__:";
+/**
+ * The last line of stderr on every failure the runner words (GRA-244): the marker, then the last
+ * error status (400 and up) a vendor answered `ctx.fetch` with during the run, or nothing when none
+ * did. A refusal the proxy marks with `REFUSAL_HEADER` is the proxy's answer, not the vendor's, and
+ * is not counted. The status alone, never the body: the server reads it onto a stock tool's failure
+ * signal (`run.ts`, `stock-signal.ts`) and strips the line from the tail it hands back. An SDK's
+ * calls do not pass through `ctx.fetch` and are not seen. `VENDOR_STATUS_MARKER` in `runner-source.ts`.
+ */
+const VENDOR_STATUS_MARKER = "__GRAFT_VENDOR_STATUS__:";
+/** The last error status a vendor answered `ctx.fetch` with, or null — see `VENDOR_STATUS_MARKER`. */
+let lastVendorErrorStatus = null;
 /** The entry a directory is run through, first match wins — `MODULE_ENTRIES` in `runner-source.ts`. */
 const ENTRIES = ["index.ts", "index.mjs"];
 
@@ -411,14 +422,23 @@ if (process.env.HTTPS_PROXY && process.env.NODE_USE_ENV_PROXY !== "1") {
 /**
  * Write to stderr and exit. Waits for the write to flush; `process.exit` alone can truncate a pipe.
  * The tail rather than the head, and marked as a tail, so a long stack still ends in the line that
- * matters.
+ * matters. The vendor status line goes last, so it survives the server's own tail.
  */
 function fail(code, message) {
   const text =
     message.length > STDERR_TAIL_CHARS
       ? `…${message.slice(message.length - STDERR_TAIL_CHARS)}`
       : message;
-  process.stderr.write(`${text}\n`, () => process.exit(code));
+  const status = `${VENDOR_STATUS_MARKER}${lastVendorErrorStatus ?? ""}`;
+  process.stderr.write(`${text}\n${status}\n`, () => process.exit(code));
+}
+
+/** Note a response's status when it is the vendor's error, and hand the response on unchanged. */
+function noteVendorStatus(response) {
+  if (response.status >= 400 && !response.headers.get(REFUSAL_HEADER)) {
+    lastVendorErrorStatus = response.status;
+  }
+  return response;
 }
 
 /**
@@ -697,8 +717,10 @@ function boundFetch(path, init = {}) {
   // Never follow: the proxy returned the vendor's 3xx unfollowed on purpose, and the only host this
   // sandbox can reach is the proxy — see the header.
   const request = { ...options, headers, redirect: "manual" };
-  if (!dryRun) return fetch(url, request);
-  return dryRunFetch(url, request, { method, path: recorded, headers, init: options });
+  if (!dryRun) return fetch(url, request).then(noteVendorStatus);
+  return dryRunFetch(url, request, { method, path: recorded, headers, init: options }).then(
+    noteVendorStatus,
+  );
 }
 
 /**
