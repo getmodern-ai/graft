@@ -356,9 +356,11 @@ describe("the MCP endpoint", () => {
         .filter((line) => line.startsWith("data:"))
         .map((line) => line.slice(5).trim());
       return JSON.parse(data[data.length - 1] ?? text) as {
-        result?: { protocolVersion?: string };
+        result?: { protocolVersion?: string; tools?: { name: string }[] };
       };
     };
+    const toolNames = async (response: Response) =>
+      (await lastMessage(response)).result?.tools?.map((tool) => tool.name) ?? [];
 
     it("negotiates a fresh initialize that announces it, and still refuses it on a live session", async () => {
       const { app, refusals } = harness();
@@ -426,6 +428,8 @@ describe("the MCP endpoint", () => {
       );
       expect(opened.status).toBe(200);
       expect(opened.headers.get("mcp-session-id")).toEqual(expect.any(String));
+      // A JSON-RPC error rides a 200, so the list itself is the proof (Greptile on #177).
+      expect(await toolNames(opened)).toContain("find_tool");
       const stale = await app.request(
         MCP_MOUNT_PATH,
         post(
@@ -439,6 +443,7 @@ describe("the MCP endpoint", () => {
       );
       expect(stale.status).toBe(200);
       expect(stale.headers.get("mcp-session-id")).toBe("session-from-before-the-deploy");
+      expect(await toolNames(stale)).toContain("find_tool");
       expect(refusals).toEqual([]);
     });
 
