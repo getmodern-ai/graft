@@ -1,6 +1,6 @@
 {
   "name": "search-messages",
-  "description": "Searches Gmail messages using Gmail search syntax and returns metadata, snippets, labels, and unread status. Message ids feed gmail__get-message; threadIds feed gmail__get-thread and gmail__reply-to-thread.",
+  "description": "Finds Gmail messages (emails) matching a Gmail search query and returns each one's sender, recipients, subject, date, snippet, labels and unread status. Message ids feed gmail__get-message; threadIds feed gmail__get-thread and gmail__reply-to-thread.",
   "inputSchema": {
     "type": "object",
     "properties": {
