@@ -11,7 +11,7 @@ function assertSafeHeader(name: string, value: string): void {
 }
 
 function encodeSubject(subject: string): string {
-  return /^[\x00-\x7F]*$/.test(subject)
+  return [...subject].every((char) => char.charCodeAt(0) < 0x80)
     ? subject
     : `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
 }

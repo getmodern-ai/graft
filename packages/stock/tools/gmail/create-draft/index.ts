@@ -13,7 +13,7 @@ function assertSafeHeader(name: string, value: string | undefined): void {
 }
 
 function encodeSubject(subject: string): string {
-  if (/^[\x00-\x7F]*$/.test(subject)) return subject;
+  if ([...subject].every((char) => char.charCodeAt(0) < 0x80)) return subject;
   return `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
 }
 

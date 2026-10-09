@@ -32,7 +32,7 @@ export default async (input: Input, ctx: Context) => {
   }
 
   const target = hasThread ? "thread" : "message";
-  const id = hasThread ? input.threadId! : input.messageId!;
+  const id = (hasThread ? input.threadId : input.messageId) ?? "";
   const path =
     target === "thread"
       ? `/users/me/threads/${encodeURIComponent(id)}/modify`
