@@ -78,6 +78,11 @@ A query parameter the scheme carries the key in is therefore recorded as `[redac
 proxy's `[redacted:credential]`; a replay sets a parameter recorded with a redacted value aside on
 both sides, since the replay's connection holds no key.
 
+The build command records through `src/record.ts`'s `recordStockProof`, which first mirrors the
+proxy's own echo redaction (`@graft/proxy`'s `echo.ts`): a credential value the vendor echoed in a
+text body or a kept header is recorded as `[redacted:credential]`, which is what the module saw, so
+the replay hands the module the same text and gets the recorded result.
+
 The harness fails a tool whose committed recording is not a fixed point of `redactRecording` with
 no rule: anything credential-shaped left in it is a recording that was not written through it.
 

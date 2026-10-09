@@ -669,6 +669,23 @@ Turbo's strict env mode keeps `pnpm run test` on replay. The recording is left o
 files and the source hash, so re-recording appends no catalogue version. CONTRIBUTING.md says stock
 is maintainer-built for now.
 
+**A stock tool is built by `pnpm --filter @graft/stock-build build-tool -- <vendor> "<goal>"
+[--from <name>]`** (GRA-246; ADR 0025). `packages/stock-build` is a leaf nothing imports, as
+`@graft/evals` is, since `@graft/mcp` dev-depends on `@graft/stock` and the command needs both.
+`loop.ts` runs the real `acquire` over MCP in-process, in `@graft/evals`' world shape: `@graft/mcp`'s
+in-memory store, a temporary toolbox, the fake sandbox and the real proxy in front of the
+maintainer's connection, so it never writes to a person's toolbox or a database. On success
+`build.ts` stages the passing draft with its manifest (the connection hosts the proof reached or the
+module names), its test input and the recording `@graft/stock`'s `record.ts` makes (one dry run
+through the proxy, the vendor's echo of the credential mirrored as the proxy redacts it, written
+only through `redactRecording`), formats it with the repository's Biome, proves it with the
+harness's three proofs as CI will, and only then writes `tools/<vendor>/<name>/`. `--from` hands the
+model the current module through the opening context's hints (past `acquire`'s 4,000 characters)
+and writes under the current name in its place; without it an existing tool is refused. A failure
+writes nothing and prints the job's failure and last diagnostics, redacted by the credential's
+values. The model is `GRAFT_MODEL_BACKEND` as the server reads it, the connection
+`GRAFT_STOCK_LIVE_CONNECTIONS`; `packages/stock/README.md` is the maintainer's page.
+
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
 `.blobs/<agentId>/` beside the toolboxes on the toolbox volume (the Agent Drive in the hosted form),

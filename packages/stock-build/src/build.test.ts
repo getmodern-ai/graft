@@ -1,0 +1,277 @@
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { createScriptedModel, type ModuleDraft, type ScriptedStep } from "@graft/model";
+import type { UpstreamRequest } from "@graft/proxy";
+import { proveCheck, proveReplay, proveTestInput, readStockRecording } from "@graft/stock/harness";
+import { readStockWorkspace } from "@graft/stock/workspace";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { type BuildOptions, buildStockTool, hostsOf } from "./build";
+
+/**
+ * The stock build command end to end (GRA-246): the real acquire loop under a scripted model, the
+ * real check, publish, runner and proxy, against a fake GitHub behind the maintainer's planted
+ * token. What it writes must pass the stock harness unchanged, the token must reach no file, a
+ * repair (`from`) must start from the current module and write the next version in its place, and a
+ * failed job must write nothing.
+ */
+
+const TOKEN = "ghp_plantedMaintainerToken0123456789";
+const D = "$";
+
+function moduleFor(perPage: number): string {
+  return [
+    "export default async (_input: Input, ctx: Context) => {",
+    `  const res = await ctx.fetch("/user/repos?sort=updated&per_page=${perPage}");`,
+    `  if (!res.ok) throw new Error(\`GET /user/repos ${D}{res.status}\`);`,
+    "  const repos = (await res.json()) as { name: string; owner_note: string }[];",
+    "  return repos.map((repo) => ({ name: repo.name, note: repo.owner_note }));",
+    "};",
+    "",
+  ].join("\n");
+}
+
+function draft(name: string, perPage: number): ModuleDraft {
+  return {
+    name,
+    description: "Lists the authenticated user's most recently updated repositories.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    files: [{ path: "index.ts", content: moduleFor(perPage) }],
+    testInput: {},
+    proofReads: [{ path: "/user/repos?per_page=1" }],
+  };
+}
+
+function passing(name: string, perPage: number): ScriptedStep[] {
+  return [
+    { on: "goal", answer: { kind: "write_module", draft: draft(name, perPage), note: "Drafted." } },
+    { on: "proof", answer: { kind: "proceed", note: "The read answered as documented." } },
+  ];
+}
+
+/** GitHub as far as these modules reach it: the repositories, with the token echoed back in one. */
+function github(seen: UpstreamRequest[]) {
+  return async (request: UpstreamRequest) => {
+    seen.push(request);
+    if (request.headers.get("authorization") !== `Bearer ${TOKEN}`) {
+      return Response.json({ message: "Bad credentials" }, { status: 401 });
+    }
+    const url = new URL(request.url);
+    if (url.hostname !== "api.github.com" || url.pathname !== "/user/repos") {
+      return Response.json({ message: "Not Found" }, { status: 404 });
+    }
+    const all = [
+      { name: "graft", owner_note: `pushed with ${TOKEN}` },
+      { name: "cando", owner_note: "" },
+      { name: "modern", owner_note: "" },
+    ];
+    return Response.json(all.slice(0, Number(url.searchParams.get("per_page") ?? 30)));
+  };
+}
+
+let workspace: string;
+let seen: UpstreamRequest[];
+
+beforeEach(async () => {
+  workspace = await mkdtemp(join(tmpdir(), "graft-stock-build-test-"));
+  seen = [];
+});
+
+afterEach(async () => {
+  await rm(workspace, { recursive: true, force: true });
+});
+
+function options(steps: ScriptedStep[], extra: Partial<BuildOptions> = {}) {
+  const model = createScriptedModel(steps);
+  return {
+    model,
+    options: {
+      vendor: "github",
+      goal: "List my most recently updated repositories",
+      model,
+      connections: { github: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } } },
+      workspace,
+      upstreamFetch: github(seen),
+      readWebPage: async ({ url }) => ({ ok: false, url, error: "no network in this suite" }),
+      maxAttempts: 2,
+      ...extra,
+    } satisfies BuildOptions,
+  };
+}
+
+async function filesUnder(dir: string): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
+    if (entry.isFile()) {
+      const path = join(entry.parentPath, entry.name);
+      out[path.slice(dir.length + 1)] = await readFile(path, "utf8");
+    }
+  }
+  return out;
+}
+
+async function harnessProblems(): Promise<string[]> {
+  const problems: string[] = [];
+  for (const tool of await readStockWorkspace(workspace)) {
+    problems.push(...(await proveCheck(tool)), ...proveTestInput(tool));
+    const read = await readStockRecording(tool, workspace);
+    if (!read.ok) problems.push(read.problem);
+    else problems.push(...(await proveReplay(tool, read.recording)).problems);
+  }
+  return problems;
+}
+
+describe("buildStockTool", () => {
+  it("writes a tool directory the harness passes unchanged, with the planted credential in no file", async () => {
+    const { options: build } = options(passing("recent-repos", 2));
+    const result = await buildStockTool(build);
+    if (!result.ok) throw new Error(`${result.message}\n${(result.problems ?? []).join("\n")}`);
+
+    expect(result).toMatchObject({ tool: "github__recent-repos", replaced: false });
+    expect(result.files).toEqual([
+      "index.ts",
+      "manifest.json",
+      "recording.json",
+      "test-input.json",
+    ]);
+    const files = await filesUnder(join(workspace, "github", "recent-repos"));
+    expect(Object.keys(files).sort()).toEqual(result.files);
+    for (const [path, content] of Object.entries(files)) {
+      expect(content, `${path} carries the planted credential`).not.toContain(TOKEN);
+    }
+    expect(JSON.parse(files["manifest.json"] ?? "")).toEqual({
+      name: "recent-repos",
+      description: "Lists the authenticated user's most recently updated repositories.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      hosts: ["api.github.com"],
+      annotations: { readOnly: true, destructive: false },
+    });
+    // Formatted by the repository's Biome before the proofs, so `pnpm run lint` passes as written.
+    expect(files["manifest.json"]).toContain('"hosts": ["api.github.com"],');
+    const recording = JSON.parse(files["recording.json"] ?? "");
+    expect(recording).toMatchObject({
+      format: 1,
+      tool: "github__recent-repos",
+      input: {},
+      exchanges: [
+        {
+          kind: "read",
+          method: "GET",
+          url: "https://api.github.com/user/repos?sort=updated&per_page=2",
+        },
+      ],
+      result: [
+        { name: "graft", note: "pushed with [redacted:credential]" },
+        { name: "cando", note: "" },
+      ],
+    });
+    // The vendor did see the token: the proxy injected it on every call, and on nothing else.
+    expect(seen.length).toBeGreaterThan(0);
+
+    expect(await harnessProblems()).toEqual([]);
+  });
+
+  it("refuses to build over an existing tool without from, and writes nothing", async () => {
+    expect((await buildStockTool(options(passing("recent-repos", 2)).options)).ok).toBe(true);
+    const before = await filesUnder(workspace);
+
+    const again = await buildStockTool(options(passing("recent-repos", 3)).options);
+    expect(again).toMatchObject({ ok: false, failure: "tool_exists" });
+    expect(await filesUnder(workspace)).toEqual(before);
+  });
+
+  it("with from, starts from the current module and writes the next version in its place", async () => {
+    expect((await buildStockTool(options(passing("recent-repos", 2)).options)).ok).toBe(true);
+
+    // The repair's draft calls itself something else; the stock tool keeps its name.
+    const { model, options: repair } = options(passing("recent-repos-three", 3), {
+      from: "recent-repos",
+      goal: "List my three most recently updated repositories",
+    });
+    const result = await buildStockTool(repair);
+    if (!result.ok) throw new Error(`${result.message}\n${(result.problems ?? []).join("\n")}`);
+    expect(result).toMatchObject({ tool: "github__recent-repos", replaced: true });
+
+    const hints = model.conversations[0]?.context.hints ?? "";
+    expect(hints).toContain("Start from the current stock tool github__recent-repos");
+    expect(hints).toContain("per_page=2");
+
+    const tools = await readStockWorkspace(workspace);
+    expect(tools.map((tool) => `${tool.vendor}__${tool.name}`)).toEqual(["github__recent-repos"]);
+    expect(tools[0]?.files.find((file) => file.path === "index.ts")?.content).toContain(
+      "per_page=3",
+    );
+    expect(await harnessProblems()).toEqual([]);
+  });
+
+  it("writes nothing for a failed job, and answers its failure and last diagnostics", async () => {
+    const broken: ModuleDraft = {
+      ...draft("recent-repos", 2),
+      files: [{ path: "index.ts", content: moduleFor(2).replace("/user/repos?", "/user/nope?") }],
+    };
+    const result = await buildStockTool(
+      options([
+        { on: "goal", answer: { kind: "write_module", draft: broken, note: "Drafted." } },
+        { on: "proof", answer: { kind: "proceed", note: "Fine." } },
+        { on: "dry_run_failed", answer: { kind: "give_up", reason: "The endpoint is not there." } },
+      ]).options,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      failure: "model_gave_up",
+      message: "The model gave up: The endpoint is not there.",
+    });
+    if (result.ok) return;
+    expect(result.lastDiagnostics).not.toBeNull();
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+    expect(await readdir(workspace)).toEqual([]);
+  });
+
+  it("refuses a keyed starter with no connection, and an integration that is not a starter, before any job", async () => {
+    const noConnection = await buildStockTool(options([], { connections: {} }).options);
+    expect(noConnection).toMatchObject({ ok: false, failure: "connection_missing" });
+    expect((noConnection as { message: string }).message).toContain("GRAFT_STOCK_LIVE_CONNECTIONS");
+
+    const notStarter = await buildStockTool(options([], { vendor: "linear" }).options);
+    expect(notStarter).toMatchObject({ ok: false, failure: "not_a_starter" });
+
+    const noSuchTool = await buildStockTool(options([], { from: "nothing" }).options);
+    expect(noSuchTool).toMatchObject({ ok: false, failure: "from_not_found" });
+    expect(seen).toEqual([]);
+    expect(await readdir(workspace)).toEqual([]);
+  });
+});
+
+describe("hostsOf", () => {
+  const recording = (urls: string[]) => ({
+    format: 1 as const,
+    tool: "open-meteo__x",
+    recordedAt: "2026-10-09T00:00:00Z",
+    input: {},
+    exchanges: urls.map((url) => ({
+      kind: "read" as const,
+      method: "GET" as const,
+      url,
+      response: { status: 200, headers: {} },
+    })),
+  });
+  const hosts = ["api.open-meteo.com", "geocoding-api.open-meteo.com"];
+
+  it("declares the hosts reached, in the starter's order, and not one a longer name contains", () => {
+    const module = [
+      { content: 'ctx.fetch("/v1/search", { host: "geocoding-api.open-meteo.com" })' },
+    ];
+    expect(
+      hostsOf(recording(["https://geocoding-api.open-meteo.com/v1/search?name=x"]), module, hosts),
+    ).toEqual(["geocoding-api.open-meteo.com"]);
+  });
+
+  it("declares a host the module names though the test input never reached it", () => {
+    const module = [{ content: 'const forecast = "api.open-meteo.com";' }];
+    expect(
+      hostsOf(recording(["https://geocoding-api.open-meteo.com/v1/search"]), module, hosts),
+    ).toEqual(hosts);
+  });
+});
