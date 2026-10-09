@@ -1097,13 +1097,14 @@ offers *Set up Graft* in its empty body to a person who skipped.
 are `@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor slug, hosts, docs,
 the keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
 `outcome` sentence); adding one is one entry. **Starters are one-click only** (GRA-216): the list is
-common services a link provider connects by OAuth (Gmail, Google Calendar, Google Drive, Slack,
-Notion, GitHub, HubSpot) plus Open-Meteo, the keyless one, each task a `GET`, since the check counts
+common services a link provider connects by OAuth (Gmail, Google Calendar, Google Drive,
+Google Sheets, Slack, Notion, GitHub, HubSpot) plus Open-Meteo, the keyless one, each task a `GET`, since the check counts
 a `POST` as a write and the result step runs only a read-only tool (so no Linear, whose API is
 GraphQL). **Every task needs nothing the person has to look up** (GRA-217): no id, no name, no link;
 Open-Meteo's city, with its default, is the one input, and every other starter's `hints` names its
 one endpoint and says the tool takes no input (`starter-vendors.test.ts` pins both). That is why
-Google Drive's file list replaced Google Sheets, whose rows need a spreadsheet's id and a range; a
+Google Sheets' task lists spreadsheets through Drive's search (both hosts on the entry, GRA-259)
+rather than reading rows, which need a spreadsheet's id and a range; a
 starter's vendor slug is the catalogue's app with hyphens read as underscores (`google-drive` is
 Pipedream's `google_drive`). The keyring's scheme on each entry stays truthful for the form path a link provider steps
 aside to (GRA-147). `setupVendorOptions` is the pure filter and order over each starter's covering

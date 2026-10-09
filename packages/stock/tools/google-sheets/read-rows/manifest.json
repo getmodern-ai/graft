@@ -1,0 +1,38 @@
+{
+  "name": "read-rows",
+  "description": "Reads rows from a Google Sheets tab or range as objects keyed by row 1. Spreadsheet can be a browser URL or an id from google-sheets__find-spreadsheets; tab names come from google-sheets__list-tabs. A range must omit the tab name and include row 1 for correct headers.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "spreadsheet": {
+        "type": "string",
+        "description": "Spreadsheet URL copied from the browser, or spreadsheet id from google-sheets__find-spreadsheets.",
+        "examples": [
+          "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+        ]
+      },
+      "tab": {
+        "type": "string",
+        "description": "Tab name from google-sheets__list-tabs. When omitted, the first tab is used."
+      },
+      "range": {
+        "type": "string",
+        "description": "Optional A1 range without a tab name, such as A1:F50. It must include row 1 for row 1 to be used as the header."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000,
+        "default": 100,
+        "description": "Maximum number of data rows to return. Defaults to 100."
+      }
+    },
+    "required": ["spreadsheet"],
+    "additionalProperties": false
+  },
+  "hosts": ["sheets.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

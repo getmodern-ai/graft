@@ -1,0 +1,27 @@
+{
+  "name": "find-spreadsheets",
+  "description": "Finds Google Sheets spreadsheets by name (a search of Google Drive for spreadsheet files), or lists the most recently edited spreadsheets when no query is given. Answers each spreadsheet's id, name, last edit and link; the id is what google-sheets__list-tabs, google-sheets__read-rows and the other google-sheets tools take as `spreadsheet`.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Text that the spreadsheet name must contain. Omit to list the most recently edited spreadsheets."
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 10,
+        "description": "Maximum number of spreadsheets to return, from 1 to 100. Defaults to 10."
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

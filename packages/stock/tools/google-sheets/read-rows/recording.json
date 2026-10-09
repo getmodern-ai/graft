@@ -1,0 +1,344 @@
+{
+  "format": 1,
+  "tool": "google-sheets__read-rows",
+  "recordedAt": "2026-10-09T19:21:32.250Z",
+  "input": {
+    "spreadsheet": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms?fields=sheets.properties.title",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "sheets": [
+              {
+                "properties": {
+                  "title": "Nuqwc Zbbk"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/values/'Nuqwc%20Zbbk'!A1%3AZ?majorDimension=ROWS",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "range": "'Oclxi Tfqd'!O9:S879",
+            "majorDimension": "MLLO",
+            "values": [
+              [
+                "Aewknbu Eaxm",
+                "Prhpzs",
+                "Azyae Edsip",
+                "Mtkh Uvtuc",
+                "Fioin",
+                "Uwwyqehnzqmkqgi Svhbazxg"
+              ],
+              ["Isunggrbn", "Vbweew", "2. Icuqul", "UU", "Uzfwjga", "Fhyhj Lkit"],
+              ["Bpqjno", "Hrpo", "2. Pwdneptb", "TT", "Pefe", "Bnbggmut"],
+              ["Bgby", "Vbweew", "2. Pwdneptb", "VT", "Uzfwjga", "Pplefqxubv"],
+              ["Ishbo", "Vbweew", "8. Upkvndpuu", "TT", "Kez", "Xwwdoyvd"],
+              ["Rznbhgnw", "Hrpo", "2. Icuqul", "MP", "Uzfwjga", "Pplefqxubv"],
+              ["Qzfv", "Hrpo", "4. Bshgyi", "YT", "Kez", "Ucjzyc"],
+              ["Rngltr", "Vbweew", "4. Bshgyi", "WR", "Uzfwjga", "Apiij & Fwnkn"],
+              ["Tlctwfh", "Vbweew", "2. Icuqul", "YT", "Pefe", "Bnbggmut"],
+              ["Sqhve", "Hrpo", "2. Pwdneptb", "WL", "Pefe", "Xwwdoyvd"],
+              ["Codfan", "Hrpo", "4. Bshgyi", "BX", "Uzfwjga", "Fhyhj Lkit"],
+              ["Zsyzj", "Vbweew", "2. Pwdneptb", "MP", "Ychkvzx", "Fhyhj Lkit"],
+              ["Aihjo", "Vbweew", "2. Pwdneptb", "WL", "Kez", "Ucjzyc"],
+              ["Qgbz", "Hrpo", "4. Bshgyi", "UU", "Ychkvzx", "Pplefqxubv"],
+              ["Rihndypt", "Hrpo", "8. Upkvndpuu", "RJ", "Pefe", "Ucjzyc"],
+              ["Xaguge", "Hrpo", "2. Pwdneptb", "VE", "Uzfwjga", "Fhyhj Lkit"],
+              ["Lxbnvkcmk", "Vbweew", "2. Pwdneptb", "TG", "Pefe", "Ucjzyc"],
+              ["Yfdiz", "Vbweew", "8. Upkvndpuu", "SA", "Uzfwjga", "Pplefqxubv"],
+              ["Yujpf", "Hrpo", "8. Upkvndpuu", "WR", "Ychkvzx", "Fhyhj Lkit"],
+              ["Swgu", "Vbweew", "4. Bshgyi", "RJ", "Kez", "Bnbggmut"],
+              ["Zwge", "Vbweew", "8. Upkvndpuu", "VE", "Ychkvzx", "Apiij & Fwnkn"],
+              ["Tezxebd", "Vbweew", "2. Pwdneptb", "UU", "Ychkvzx", "Pplefqxubv"],
+              ["Wqts", "Hrpo", "2. Icuqul", "TG", "Kez", "Xwwdoyvd"],
+              ["Yuwqtj", "Vbweew", "2. Icuqul", "VT", "Ychkvzx", "Apiij & Fwnkn"],
+              ["Ovrczp", "Vbweew", "4. Bshgyi", "RY", "Pefe", "Xwwdoyvd"],
+              ["Tlpyfcw", "Hrpo", "2. Pwdneptb", "TG", "Kez", "Bnbggmut"],
+              ["Bhcitd", "Hrpo", "2. Pwdneptb", "UU", "Uzfwjga", "Apiij & Fwnkn"],
+              ["Ttva", "Hrpo", "2. Pwdneptb", "SA", "Ychkvzx", "Apiij & Fwnkn"],
+              ["Omhri", "Vbweew", "2. Pwdneptb", "TG", "Pefe", "Xwwdoyvd"],
+              ["Xcfvld", "Hrpo", "8. Upkvndpuu", "RY", "Kez", "Bnbggmut"],
+              ["Erlh", "Hrpo", "2. Icuqul", "BX", "Pefe", "Ucjzyc"]
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "tab": "Nuqwc Zbbk",
+    "header": [
+      "Aewknbu Eaxm",
+      "Prhpzs",
+      "Azyae Edsip",
+      "Mtkh Uvtuc",
+      "Fioin",
+      "Uwwyqehnzqmkqgi Svhbazxg"
+    ],
+    "rows": [
+      {
+        "Aewknbu Eaxm": "Isunggrbn",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "2. Icuqul",
+        "Mtkh Uvtuc": "UU",
+        "Fioin": "Uzfwjga",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Fhyhj Lkit"
+      },
+      {
+        "Aewknbu Eaxm": "Bpqjno",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "TT",
+        "Fioin": "Pefe",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Bnbggmut"
+      },
+      {
+        "Aewknbu Eaxm": "Bgby",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "VT",
+        "Fioin": "Uzfwjga",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Pplefqxubv"
+      },
+      {
+        "Aewknbu Eaxm": "Ishbo",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "8. Upkvndpuu",
+        "Mtkh Uvtuc": "TT",
+        "Fioin": "Kez",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Xwwdoyvd"
+      },
+      {
+        "Aewknbu Eaxm": "Rznbhgnw",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "2. Icuqul",
+        "Mtkh Uvtuc": "MP",
+        "Fioin": "Uzfwjga",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Pplefqxubv"
+      },
+      {
+        "Aewknbu Eaxm": "Qzfv",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "4. Bshgyi",
+        "Mtkh Uvtuc": "YT",
+        "Fioin": "Kez",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Ucjzyc"
+      },
+      {
+        "Aewknbu Eaxm": "Rngltr",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "4. Bshgyi",
+        "Mtkh Uvtuc": "WR",
+        "Fioin": "Uzfwjga",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Apiij & Fwnkn"
+      },
+      {
+        "Aewknbu Eaxm": "Tlctwfh",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "2. Icuqul",
+        "Mtkh Uvtuc": "YT",
+        "Fioin": "Pefe",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Bnbggmut"
+      },
+      {
+        "Aewknbu Eaxm": "Sqhve",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "WL",
+        "Fioin": "Pefe",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Xwwdoyvd"
+      },
+      {
+        "Aewknbu Eaxm": "Codfan",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "4. Bshgyi",
+        "Mtkh Uvtuc": "BX",
+        "Fioin": "Uzfwjga",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Fhyhj Lkit"
+      },
+      {
+        "Aewknbu Eaxm": "Zsyzj",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "MP",
+        "Fioin": "Ychkvzx",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Fhyhj Lkit"
+      },
+      {
+        "Aewknbu Eaxm": "Aihjo",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "WL",
+        "Fioin": "Kez",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Ucjzyc"
+      },
+      {
+        "Aewknbu Eaxm": "Qgbz",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "4. Bshgyi",
+        "Mtkh Uvtuc": "UU",
+        "Fioin": "Ychkvzx",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Pplefqxubv"
+      },
+      {
+        "Aewknbu Eaxm": "Rihndypt",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "8. Upkvndpuu",
+        "Mtkh Uvtuc": "RJ",
+        "Fioin": "Pefe",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Ucjzyc"
+      },
+      {
+        "Aewknbu Eaxm": "Xaguge",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "VE",
+        "Fioin": "Uzfwjga",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Fhyhj Lkit"
+      },
+      {
+        "Aewknbu Eaxm": "Lxbnvkcmk",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "TG",
+        "Fioin": "Pefe",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Ucjzyc"
+      },
+      {
+        "Aewknbu Eaxm": "Yfdiz",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "8. Upkvndpuu",
+        "Mtkh Uvtuc": "SA",
+        "Fioin": "Uzfwjga",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Pplefqxubv"
+      },
+      {
+        "Aewknbu Eaxm": "Yujpf",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "8. Upkvndpuu",
+        "Mtkh Uvtuc": "WR",
+        "Fioin": "Ychkvzx",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Fhyhj Lkit"
+      },
+      {
+        "Aewknbu Eaxm": "Swgu",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "4. Bshgyi",
+        "Mtkh Uvtuc": "RJ",
+        "Fioin": "Kez",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Bnbggmut"
+      },
+      {
+        "Aewknbu Eaxm": "Zwge",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "8. Upkvndpuu",
+        "Mtkh Uvtuc": "VE",
+        "Fioin": "Ychkvzx",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Apiij & Fwnkn"
+      },
+      {
+        "Aewknbu Eaxm": "Tezxebd",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "UU",
+        "Fioin": "Ychkvzx",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Pplefqxubv"
+      },
+      {
+        "Aewknbu Eaxm": "Wqts",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "2. Icuqul",
+        "Mtkh Uvtuc": "TG",
+        "Fioin": "Kez",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Xwwdoyvd"
+      },
+      {
+        "Aewknbu Eaxm": "Yuwqtj",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "2. Icuqul",
+        "Mtkh Uvtuc": "VT",
+        "Fioin": "Ychkvzx",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Apiij & Fwnkn"
+      },
+      {
+        "Aewknbu Eaxm": "Ovrczp",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "4. Bshgyi",
+        "Mtkh Uvtuc": "RY",
+        "Fioin": "Pefe",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Xwwdoyvd"
+      },
+      {
+        "Aewknbu Eaxm": "Tlpyfcw",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "TG",
+        "Fioin": "Kez",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Bnbggmut"
+      },
+      {
+        "Aewknbu Eaxm": "Bhcitd",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "UU",
+        "Fioin": "Uzfwjga",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Apiij & Fwnkn"
+      },
+      {
+        "Aewknbu Eaxm": "Ttva",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "SA",
+        "Fioin": "Ychkvzx",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Apiij & Fwnkn"
+      },
+      {
+        "Aewknbu Eaxm": "Omhri",
+        "Prhpzs": "Vbweew",
+        "Azyae Edsip": "2. Pwdneptb",
+        "Mtkh Uvtuc": "TG",
+        "Fioin": "Pefe",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Xwwdoyvd"
+      },
+      {
+        "Aewknbu Eaxm": "Xcfvld",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "8. Upkvndpuu",
+        "Mtkh Uvtuc": "RY",
+        "Fioin": "Kez",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Bnbggmut"
+      },
+      {
+        "Aewknbu Eaxm": "Erlh",
+        "Prhpzs": "Hrpo",
+        "Azyae Edsip": "2. Icuqul",
+        "Mtkh Uvtuc": "BX",
+        "Fioin": "Pefe",
+        "Uwwyqehnzqmkqgi Svhbazxg": "Ucjzyc"
+      }
+    ],
+    "totalRowCount": 30,
+    "truncated": false
+  }
+}
