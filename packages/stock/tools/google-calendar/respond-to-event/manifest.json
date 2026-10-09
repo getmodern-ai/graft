@@ -1,6 +1,6 @@
 {
   "name": "respond-to-event",
-  "description": "Accepts, declines, or tentatively accepts a Google Calendar invitation. list-events supplies the required eventId; list-calendars supplies IDs for calendars other than primary.",
+  "description": "Responds to (RSVPs to) a Google Calendar invitation for the calendar's owner: accepts, declines or tentatively accepts it, with an optional comment, and tells the organizer unless sendUpdates says otherwise. Refuses an event the owner is not invited to. google-calendar__list-events supplies the eventId; calendarId defaults to \"primary\" and google-calendar__list-calendars supplies others.",
   "inputSchema": {
     "type": "object",
     "properties": {

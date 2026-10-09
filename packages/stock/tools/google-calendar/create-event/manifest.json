@@ -1,6 +1,6 @@
 {
   "name": "create-event",
-  "description": "Creates a Google Calendar event and optionally invites attendees and adds a Google Meet link. The returned event id is what get-event, update-event, and delete-event take.",
+  "description": "Creates (schedules, books) an event or meeting on Google Calendar, timed or all-day, and invites people as attendees by email, optionally with a Google Meet link; Google emails the invitations unless sendUpdates says otherwise. calendarId defaults to \"primary\"; google-calendar__list-calendars supplies others. The new event's id is the eventId google-calendar__get-event, google-calendar__update-event and google-calendar__delete-event take.",
   "inputSchema": {
     "type": "object",
     "properties": {

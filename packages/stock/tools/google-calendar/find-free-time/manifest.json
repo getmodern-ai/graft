@@ -1,6 +1,6 @@
 {
   "name": "find-free-time",
-  "description": "Finds free time across Google Calendar calendars by reading events and merging busy periods. Use list-calendars to supply calendar IDs other than primary.",
+  "description": "Finds free time on Google Calendar: the open slots of at least a given length (30 minutes by default) in a time window, by default the next seven days, with the busy periods merged across one or more calendars, to check availability before scheduling a meeting. Declined, cancelled and free (transparent) events do not count as busy. calendarIds defaults to [\"primary\"]; google-calendar__list-calendars supplies others.",
   "inputSchema": {
     "type": "object",
     "properties": {

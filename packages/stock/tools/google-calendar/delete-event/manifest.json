@@ -1,6 +1,6 @@
 {
   "name": "delete-event",
-  "description": "Deletes a Google Calendar event using an eventId supplied by list-events. Deleting an event cannot be undone; attendees are notified by default.",
+  "description": "Deletes (cancels) a Google Calendar event or meeting; attendees are told it was cancelled unless sendUpdates says otherwise, and it cannot be undone. google-calendar__list-events supplies the eventId; calendarId defaults to \"primary\" and google-calendar__list-calendars supplies others.",
   "inputSchema": {
     "type": "object",
     "properties": {

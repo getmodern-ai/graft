@@ -1,6 +1,6 @@
 {
   "name": "get-event",
-  "description": "Gets one Google Calendar event by its Google Calendar event ID. Use list-events to supply the eventId; calendarId defaults to primary, and list-calendars supplies other calendar IDs.",
+  "description": "Gets the details of one Google Calendar event (a meeting or appointment) by its id: title, description, times, location, recurrence, organizer, attendees and their responses, and the Meet link. google-calendar__list-events supplies the eventId; calendarId defaults to \"primary\" and google-calendar__list-calendars supplies others.",
   "inputSchema": {
     "type": "object",
     "properties": {

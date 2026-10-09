@@ -1,6 +1,6 @@
 {
   "name": "list-events",
-  "description": "Lists events in a Google Calendar time window. Calendar IDs other than “primary” come from list-calendars. Returned event IDs are accepted as eventId by get-event, update-event, delete-event, and respond-to-event.",
+  "description": "Lists the events (meetings, appointments) on a Google Calendar in a time window, by default the week ahead (the next seven days from now), optionally filtered by free text: what is on the calendar, upcoming or past, with each event's id, title, times, location, organizer and attendees. calendarId defaults to \"primary\"; google-calendar__list-calendars supplies others. The event id is the eventId google-calendar__get-event, google-calendar__update-event, google-calendar__delete-event and google-calendar__respond-to-event take.",
   "inputSchema": {
     "type": "object",
     "properties": {

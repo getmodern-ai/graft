@@ -1,6 +1,6 @@
 {
   "name": "update-event",
-  "description": "Updates an event in Google Calendar. list-events supplies the required eventId; list-calendars supplies IDs for calendars other than primary. Optionally preserves and merges attendees and controls update notifications.",
+  "description": "Updates (edits, reschedules, moves) a Google Calendar event or meeting: its title, description, location, start and end, and adds or removes attendees by email while keeping the others. Only the fields given change. google-calendar__list-events supplies the eventId; calendarId defaults to \"primary\" and google-calendar__list-calendars supplies others.",
   "inputSchema": {
     "type": "object",
     "properties": {
