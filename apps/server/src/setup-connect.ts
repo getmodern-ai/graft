@@ -94,6 +94,12 @@ export type SetupConnectResult = { state: SetupState; connected: boolean };
  */
 export type SetupConnectInput = ({ starterId: string } | { connectionId: string }) & {
   discardJob?: boolean;
+  /**
+   * Setup v2's plan (Greptile on #201): the record's `updatedAt` as the task route saved the task,
+   * so the connect move lands only on that record, never on one another tab re-planned meanwhile,
+   * which would pair this tab's integration with the other's task.
+   */
+  plannedAt?: Date;
 };
 
 export async function listSetupVendors(
@@ -167,7 +173,15 @@ export async function connectSetupVendor(
   // The same starter can still route to another row than the one the job was acquired against
   // (Greptile on #171): that replaces the connection as surely as another vendor does.
   const held = input.discardJob ? undefined : { state: before };
-  return routeStarter(ctx, principal, agent.id, starterProposal(starter), deps, undefined, held);
+  return routeStarter(
+    ctx,
+    principal,
+    agent.id,
+    starterProposal(starter),
+    deps,
+    input.plannedAt,
+    held,
+  );
 }
 
 /**
@@ -180,13 +194,13 @@ export async function connectSetupProposal(
   ctx: ServiceContext,
   principal: Principal,
   proposal: ConnectionProposalInput,
-  input: { discardJob?: boolean },
+  input: { discardJob?: boolean; plannedAt?: Date },
   deps: SetupConnectDeps,
 ): Promise<SetupConnectResult> {
   const before = await getSetupState(ctx, principal, deps.setup, deps.agent);
   const agent = connectingAgentOf(before);
   const held = input.discardJob ? undefined : { state: before };
-  return routeStarter(ctx, principal, agent.id, proposal, deps, undefined, held);
+  return routeStarter(ctx, principal, agent.id, proposal, deps, input.plannedAt, held);
 }
 
 /**

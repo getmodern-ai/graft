@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { CloseIcon, StarsIcon, WarningIcon } from "@/components/icons";
+import { DiscardJobDialog } from "@/components/setup/discard-job-dialog";
 import { SetupFooter } from "@/components/setup/setup-footer";
 import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
@@ -11,6 +12,7 @@ import { TaskPicker } from "@/components/setup/task-picker";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ApiError } from "@/lib/api";
 import {
   chooseSetupStarter,
   chooseSetupTask,
@@ -48,6 +50,25 @@ export function ToolStep({
   const [task, setTask] = useState(state.setup?.goal ?? "");
   const goal = useQuery(setupGoalQuery);
   const choose = useSetupMutation(chooseSetupTask);
+  // A build the record still holds while it runs (GRA-215): the server refuses `job_running`, and
+  // the person is asked before it is left behind (Greptile on #201).
+  const [confirming, setConfirming] = useState(false);
+  const submit = (discardJob: boolean) =>
+    choose.mutate(
+      {
+        goal: trimmed,
+        ...(app ? { slug: app.slug } : {}),
+        ...(discardJob ? { discardJob: true } : {}),
+      },
+      {
+        onError: (error) => {
+          if (jobRunningRefusal(error)) setConfirming(true);
+        },
+        onSettled: (_answer, error) => {
+          if (!error) setConfirming(false);
+        },
+      },
+    );
   const back = useSetupMutation(chooseSetupStarter);
   const name = starter?.displayName ?? app?.name ?? "the integration";
   const logo = (className: string) => (
@@ -61,80 +82,97 @@ export function ToolStep({
   const custom = trimmed !== "" && !tasks.includes(trimmed);
 
   return (
-    <form
-      className="mx-auto flex w-full max-w-4xl flex-col gap-8"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (trimmed && available) {
-          choose.mutate({ goal: trimmed, ...(app ? { slug: app.slug } : {}) });
-        }
-      }}
-    >
-      <SetupStepHeader
-        media={logo("size-9")}
-        title={`What should ${who} be able to do in ${name}?`}
-        description={
-          tasks.length > 0
-            ? "Pick one read-only tool to build first. You can add more from the console after."
-            : "Say what it should read. Graft builds one read-only tool for it; you can add more from the console after."
-        }
-      />
-      {goal.data && !goal.data.build.available ? (
-        <Alert variant="destructive">
-          <WarningIcon />
-          <AlertTitle>Building a tool needs a model</AlertTitle>
-          <AlertDescription>{goal.data.build.message}</AlertDescription>
-        </Alert>
-      ) : null}
-      <TaskPicker
-        tasks={tasks}
-        value={task}
-        onChange={setTask}
-        integrationName={name}
-        disabled={busy}
-      />
-      <SetupFooter
-        state={state}
-        disabled={busy}
-        onBack={
-          onBack
-            ? { run: onBack, pending: false }
-            : { run: () => back.mutate({ starterId: null }), pending: back.isPending }
-        }
-        summary={
-          trimmed ? (
-            <>
-              <span className="hidden sm:inline">Your first tool</span>
-              <span className="flex min-w-0 items-center gap-2 rounded-full border bg-background py-1 pr-1.5 pl-2 text-foreground">
-                {logo("size-4")}
-                <span className="truncate">{trimmed}</span>
-                {custom ? (
-                  <span className="rounded-full bg-muted px-1.5 text-muted-foreground text-xs">
-                    Custom
-                  </span>
-                ) : null}
-                <button
-                  type="button"
-                  aria-label="Clear the task"
-                  className="rounded-full p-0.5 hover:bg-muted"
-                  onClick={() => setTask("")}
-                >
-                  <CloseIcon className="size-3.5" />
-                </button>
-              </span>
-            </>
-          ) : (
-            <>
-              <StarsIcon className="size-4 shrink-0" />
-              Pick one tool or describe one to continue
-            </>
-          )
-        }
+    <>
+      <form
+        className="mx-auto flex w-full max-w-4xl flex-col gap-8"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (trimmed && available) {
+            submit(false);
+          }
+        }}
       >
-        <Button type="submit" disabled={!trimmed || !available || busy}>
-          {choose.isPending ? "Starting…" : "Build this tool"}
-        </Button>
-      </SetupFooter>
-    </form>
+        <SetupStepHeader
+          media={logo("size-9")}
+          title={`What should ${who} be able to do in ${name}?`}
+          description={
+            tasks.length > 0
+              ? "Pick one read-only tool to build first. You can add more from the console after."
+              : "Say what it should read. Graft builds one read-only tool for it; you can add more from the console after."
+          }
+        />
+        {goal.data && !goal.data.build.available ? (
+          <Alert variant="destructive">
+            <WarningIcon />
+            <AlertTitle>Building a tool needs a model</AlertTitle>
+            <AlertDescription>{goal.data.build.message}</AlertDescription>
+          </Alert>
+        ) : null}
+        <TaskPicker
+          tasks={tasks}
+          value={task}
+          onChange={setTask}
+          integrationName={name}
+          disabled={busy}
+        />
+        <SetupFooter
+          state={state}
+          disabled={busy}
+          onBack={
+            onBack
+              ? { run: onBack, pending: false }
+              : { run: () => back.mutate({ starterId: null }), pending: back.isPending }
+          }
+          summary={
+            trimmed ? (
+              <>
+                <span className="hidden sm:inline">Your first tool</span>
+                <span className="flex min-w-0 items-center gap-2 rounded-full border bg-background py-1 pr-1.5 pl-2 text-foreground">
+                  {logo("size-4")}
+                  <span className="truncate">{trimmed}</span>
+                  {custom ? (
+                    <span className="rounded-full bg-muted px-1.5 text-muted-foreground text-xs">
+                      Custom
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    aria-label="Clear the task"
+                    className="rounded-full p-0.5 hover:bg-muted"
+                    onClick={() => setTask("")}
+                  >
+                    <CloseIcon className="size-3.5" />
+                  </button>
+                </span>
+              </>
+            ) : (
+              <>
+                <StarsIcon className="size-4 shrink-0" />
+                Pick one tool or describe one to continue
+              </>
+            )
+          }
+        >
+          <Button type="submit" disabled={!trimmed || !available || busy}>
+            {choose.isPending ? "Starting…" : "Build this tool"}
+          </Button>
+        </SetupFooter>
+      </form>
+      <DiscardJobDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        onConfirm={() => submit(true)}
+        pending={choose.isPending}
+        action={{ label: "Build this one instead", pending: "Starting…" }}
+        consequence="Building this tool leaves the one still being built behind."
+      />
+    </>
+  );
+}
+
+function jobRunningRefusal(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.details as { reason?: unknown } | undefined)?.reason === "job_running"
   );
 }

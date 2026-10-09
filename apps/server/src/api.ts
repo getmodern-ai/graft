@@ -1200,12 +1200,15 @@ export function createApi(options: ApiOptions): Hono {
           agentDeps,
         );
         let state = planned;
-        if (state.step === "vendor") {
+        if (state.step === "vendor" && state.setup) {
           const connecting = await connectSetupProposal(
             ctx,
             principal,
             directoryProposal(entry),
-            body.discardJob ? { discardJob: true } : {},
+            {
+              ...(body.discardJob ? { discardJob: true } : {}),
+              plannedAt: state.setup.updatedAt,
+            },
             setupConnectDeps(),
           );
           if (connecting.connected) countStep(principal, connecting.state, "connect");
@@ -1218,11 +1221,16 @@ export function createApi(options: ApiOptions): Hono {
     }
     let state = await planSetup(ctx, principal, { goal: body.goal }, setupDeps, agentDeps);
     const starterId = state.setup?.starterId;
-    if (state.step === "vendor" && starterId) {
+    if (state.step === "vendor" && starterId && state.setup) {
       const connecting = await connectSetupVendor(
         ctx,
         principal,
-        { starterId, ...(body.discardJob ? { discardJob: true } : {}) },
+        {
+          starterId,
+          ...(body.discardJob ? { discardJob: true } : {}),
+          // The connect lands only on the plan this request saved (Greptile on #201).
+          plannedAt: state.setup.updatedAt,
+        },
         setupConnectDeps(),
       );
       if (connecting.connected) countStep(principal, connecting.state, "connect");
