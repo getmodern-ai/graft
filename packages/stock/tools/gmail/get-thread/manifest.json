@@ -1,0 +1,19 @@
+{
+  "name": "get-thread",
+  "description": "Reads every message in a Gmail conversation. Provide a threadId from gmail__search-messages; if omitted, reads the newest conversation in the inbox.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "threadId": {
+        "type": "string",
+        "description": "Thread ID from gmail__search-messages. Omit to read the newest inbox conversation."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["gmail.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
