@@ -42,6 +42,7 @@ import type { HandoffConfig } from "./handoff";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
 import type { BlobSweptEvent } from "./sweep";
+import { createStockToolSource, type ToolSource } from "./tool-source";
 import { type ReadWebPage, readWebPage } from "./web-page";
 
 /**
@@ -113,6 +114,13 @@ export type McpDeps = {
   blobStore?: BlobStore | null;
   /** Absent, `publish_tool` refuses `publish_unconfigured`. */
   publishTool?: PublishTool | null;
+  /**
+   * Where stock tools come from (ADR 0025; GRA-238; `tool-source.ts`): `find_tool` searches its
+   * list beside the toolbox, and the first `run_tool` or `promote` of a stock tool copies it in
+   * (`stock-copy.ts`). `createMcpDeps` binds Graft's own stock over the publish's store whenever
+   * the publish is configured. Absent, there is no stock: `find_tool` answers the toolbox alone.
+   */
+  toolSource?: ToolSource | null;
   /**
    * The ask card's page, the body of `resources/read` for `ui://graft/ask` (`ask-card.ts`,
    * GRA-84) — `@graft/ask-card`'s built `dist/ask.html` by default, read once. A test hands in a
@@ -319,6 +327,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     readWebPage: (args) => readWebPage(args),
     toolbox: publish?.store ?? null,
     publishTool: publish ? (args) => publishToolVersion(publish, args) : null,
+    toolSource: publish ? createStockToolSource({ db: input.db, publish }) : null,
     askCardHtml: () => readAskCardHtml(),
     notifier: createToolListChangedNotifier({ windowMs: input.listChangedWindowMs }),
     inFlight: createInFlightRegistry(),

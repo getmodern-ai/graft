@@ -1,3 +1,4 @@
+import type { StockLoadReport, StockToolSource } from "@graft/core";
 import type { MigrationChain } from "@graft/db/migration-chain";
 
 /**
@@ -93,4 +94,33 @@ export async function bootstrapAdmin(
     `admin ${admin.email} created from GRAFT_ADMIN_EMAIL — sign in at the console with GRAFT_ADMIN_PASSWORD`,
   );
   return "created";
+}
+
+export type StockOnStartDeps = {
+  /** The workspace the image ships: `@graft/stock`'s `readStockWorkspace()`. */
+  read: () => Promise<StockToolSource[]>;
+  /** `@graft/core`'s `loadStockCatalogue` over the process's handle, the check bound. */
+  load: (sources: StockToolSource[]) => Promise<StockLoadReport>;
+  log: (line: string) => void;
+};
+
+/**
+ * Load the stock workspace into the global catalogue (ADR 0025; GRA-238), after the migrations and
+ * the way they run: every start, idempotent, a version appended only for a tool whose files
+ * changed. A deployment's stock is the stock of the release it runs, and fixes arrive with an
+ * upgrade. A tool the check refuses is named on the boot line and skipped, so one broken stock
+ * tool never keeps a server down; a database that cannot take the load is the caller's to refuse.
+ */
+export async function loadStockOnStart(deps: StockOnStartDeps): Promise<StockLoadReport> {
+  const report = await deps.load(await deps.read());
+  const appended =
+    report.appended.length > 0
+      ? `appended ${report.appended.map((tool) => `${tool.vendor}__${tool.name} v${tool.versionNumber}`).join(", ")}`
+      : "the catalogue is current";
+  const refused =
+    report.refused.length > 0
+      ? `; refused ${report.refused.map((tool) => `${tool.vendor}__${tool.name} (${tool.problems.join(", ")})`).join(", ")}`
+      : "";
+  deps.log(`stock: ${report.tools} tool(s) in the workspace; ${appended}${refused}`);
+  return report;
 }

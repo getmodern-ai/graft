@@ -35,6 +35,7 @@
   },
   "devDependencies": {
     "@graft/config": "workspace:*",
+    "@graft/stock": "workspace:*",
     "@graft/vault": "workspace:*",
     "@hono/node-server": "^2.1.1",
     "@types/node": "catalog:",

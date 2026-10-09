@@ -191,6 +191,9 @@ importers:
       '@graft/sandbox-docker':
         specifier: workspace:*
         version: link:../../packages/sandbox-docker
+      '@graft/stock':
+        specifier: workspace:*
+        version: link:../../packages/stock
       '@graft/token':
         specifier: workspace:*
         version: link:../../packages/token
@@ -648,6 +651,9 @@ importers:
       '@graft/config':
         specifier: workspace:*
         version: link:../config
+      '@graft/stock':
+        specifier: workspace:*
+        version: link:../stock
       '@graft/vault':
         specifier: workspace:*
         version: link:../vault
@@ -842,6 +848,31 @@ importers:
       '@types/tar-stream':
         specifier: 'catalog:'
         version: 3.1.4
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.2(@opentelemetry/api@1.9.1)(@types/node@26.6.3)(happy-dom@20.14.5)(vite@8.3.1(@types/node@26.6.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
+
+  packages/stock:
+    dependencies:
+      '@graft/check':
+        specifier: workspace:*
+        version: link:../check
+      '@graft/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@graft/config':
+        specifier: workspace:*
+        version: link:../config
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.30.1
+        version: 1.31.0(zod@4.6.5)
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.3
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

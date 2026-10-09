@@ -46,6 +46,8 @@ const version = (n: number): ToolVersionRow => ({
   dryRunAt: null,
   writesInvolved: false,
   publisherJobId: null,
+  stockToolId: null,
+  stockVersionId: null,
   owner: "person",
   createdAt: NOW,
 });

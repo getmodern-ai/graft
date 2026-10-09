@@ -80,6 +80,8 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
         dryRunAt: input.dryRunAt ?? null,
         writesInvolved: input.writesInvolved ?? false,
         publisherJobId: input.publisherJobId ?? null,
+        stockToolId: input.stockToolId ?? null,
+        stockVersionId: input.stockVersionId ?? null,
         owner: "person",
         createdAt: now(),
       };

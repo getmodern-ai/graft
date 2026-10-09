@@ -39,6 +39,9 @@ export type ToolVersionInput = {
   dryRunAt?: Date | null;
   writesInvolved?: boolean;
   publisherJobId?: string | null;
+  /** The stock origin of a copy (ADR 0025; GRA-238): the stock tool and version it was written from. */
+  stockToolId?: string | null;
+  stockVersionId?: string | null;
 };
 
 export type ToolDefinitionPatch = {
@@ -194,6 +197,8 @@ export async function addToolVersion(
     dryRunAt: input.dryRunAt ?? null,
     writesInvolved: input.writesInvolved ?? false,
     publisherJobId: input.publisherJobId ?? null,
+    stockToolId: input.stockToolId ?? null,
+    stockVersionId: input.stockVersionId ?? null,
   });
 }
 

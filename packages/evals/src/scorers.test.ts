@@ -127,6 +127,8 @@ const version = (dryRunMs: number | null): ToolVersionRow => ({
   dryRunAt: dryRunMs === null ? null : at(dryRunMs),
   writesInvolved: true,
   publisherJobId: "job_1",
+  stockToolId: null,
+  stockVersionId: null,
   owner: "person",
   createdAt: at(300),
 });

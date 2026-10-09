@@ -207,6 +207,8 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
         dryRunAt: null,
         writesInvolved: false,
         publisherJobId: null,
+        stockToolId: null,
+        stockVersionId: null,
         owner: "person",
         createdAt: at,
       };
@@ -719,6 +721,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         dryRunAt: input.dryRunAt ?? null,
         writesInvolved: input.writesInvolved ?? false,
         publisherJobId: input.publisherJobId ?? null,
+        stockToolId: input.stockToolId ?? null,
+        stockVersionId: input.stockVersionId ?? null,
         owner: "person",
         createdAt: store.now(),
       };
