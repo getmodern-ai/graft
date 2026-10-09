@@ -113,3 +113,42 @@ rotated or expired credential is a re-entry on that row — `request_credential`
 Re-enter or Reconnect in the console — which keeps the row, its scope and its approvals, and never
 a new connection, which is a new row with none of them; `request_connection` refuses a proposal
 for a vendor and hosts the person already has and names the row instead.
+
+## Amendment 2026-10-10: a read is a request that cannot change the vendor's state
+
+Decided by Aleks (GRA-260). "Read" above meant a `GET` or `HEAD`, so every `POST` was a write: the
+check annotated it as one and the dry run stopped it at the preview. That made a GraphQL API
+(Linear, where every call is a `POST`) and a vendor's `POST` search (HubSpot's CRM search, Apollo's
+people and account search) unusable as reads, and pushed a HubSpot contact lookup into scanning
+thousands of records with `GET`s. **A read is a request that cannot change the vendor's state,
+judged by one of three things and nothing else:**
+
+- **its method**: `GET` or `HEAD`;
+- **its GraphQL operation type**: a `POST` to a GraphQL endpoint (a path ending `/graphql` or
+  `/graphql.json`) with no query string, whose JSON body carries only `query`, `variables` and
+  `operationName`, and whose `query` parses as a document of `query` operations and fragments
+  alone. A mutation, a subscription, a mixed document, a body that does not parse, a persisted
+  query (whose document is not in the body) and a body with any other key are writes;
+- **the reviewed table**: a data-only list of (host, method, path pattern) that are reads despite
+  their method, in `packages/proxy/src/read-endpoints.ts`. It starts with HubSpot's
+  `POST /crm/v3/objects/*/search` and Apollo's four search endpoints. **Adding an entry is a
+  reviewed change**, naming the vendor's documentation.
+
+**One classifier judges both places**, `classifyRequest` in `packages/proxy/src/read-request.ts`:
+the check calls it with what the source states (the method, a literal path, a literal `host`, a
+body built from literals), and the proxy's dry run with the request as it would leave. What the
+check cannot see is a write, so the two can differ only in the safe direction: a call the check
+annotated as a write may still reach the vendor in a dry run, never the reverse. A table entry
+names its host, so the check matches one only where the call names the host itself; a relative
+path goes to whichever connection the tool runs over.
+
+**Why the path rule on GraphQL.** The ticket put it as the body alone. A REST write whose body
+happens to carry a `query` field that parses as a GraphQL query (a saved search, a message) would
+then pass as a read, unasked, and reach the vendor in a dry run. The endpoint's path and the body's
+keys keep that out. A GraphQL API at another path (Monday's `/v2`) stays a write until a reviewed
+list of such endpoints is added beside the table; the table itself is the wrong place, since an
+entry there makes every request to the path a read, mutations included.
+
+**Unchanged.** Reads never ask; anything else asks once per agent. A search that bills credits
+(Apollo's paid people search) is still a read under this rule: it changes nothing in the account,
+and the dry run reaching it is the same spend a `GET` that bills would be.

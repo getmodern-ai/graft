@@ -95,6 +95,8 @@ One module per question the proxy answers, so a change to one is made once:
 | `snowflake-jwt.ts` | Snowflake's key-pair JWT recipe and the PEM tolerance, the pure half of `snowflake_keypair_jwt` |
 | `credential-fields.ts` | the import-free tables of fields each scheme reads, required and optional |
 | `dry-run.ts` | the dry-run marker, the preview status, `isSafeMethod` and the preview, whose header names come from each scheme's `headerNames` |
+| `read-request.ts` | `classifyRequest`, whether a request is a read (a `GET` or `HEAD`, a GraphQL query, a reviewed endpoint; ADR 0008 as amended 2026-10-10), shared with `@graft/check`'s annotations |
+| `read-endpoints.ts` | the reviewed table of endpoints that are reads despite their method; adding an entry is a reviewed change |
 | `headers.ts` | the outgoing and passthrough header policies |
 | `token.ts` | where a capability token rides, which inbound headers are stripped, and the by-value sweep |
 | `body.ts` | capped, deadline-bound body reads |
@@ -142,7 +144,7 @@ and then:
 
 | Method | What happens | Answer |
 | --- | --- | --- |
-| `GET`, `HEAD` | forwarded to the vendor exactly as an ordinary call | the vendor's status, headers and body, plus `x-graft-dry-run: forwarded` |
+| a read: `GET`, `HEAD`, or a `POST` `classifyRequest` calls a read (a GraphQL query, a `read-endpoints.ts` entry) | forwarded to the vendor exactly as an ordinary call | the vendor's status, headers and body, plus `x-graft-dry-run: forwarded` |
 | anything else | stopped here, **before** a credential is decrypted or a token exchanged or signed | `202 Accepted`, `x-graft-dry-run: intercepted`, and the preview below |
 
 The preview is the request as it would have left, minus every value that is not the caller's to see:

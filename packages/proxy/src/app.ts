@@ -39,6 +39,7 @@ import {
 } from "./failure";
 import { forwardableRequestHeaders, passthroughResponseHeaders } from "./headers";
 import { isPublicHost } from "./public-host";
+import { classifyRequest, parseJsonBody } from "./read-request";
 import { type Hop, isRedirect, nextHop, scrubReturnedRedirect } from "./redirects";
 import { SCHEMES, type SchemePlugin, type SchemeTarget } from "./schemes";
 import { createSingleFlight } from "./single-flight";
@@ -462,10 +463,14 @@ async function decide(
   /**
    * The dry-run rung (CONTEXT.md, *Dry run*). After every check above, and *before* the credential
    * is obtained: a write in a dry run costs the vendor nothing, not even a token exchange, and the
-   * proxy never decrypts a credential it is not about to send. A `GET` or `HEAD` under the same
-   * claim falls through to `forward` exactly as an ordinary call does.
+   * proxy never decrypts a credential it is not about to send. A read under the same claim falls
+   * through to `forward` exactly as an ordinary call does: a `GET` or `HEAD`, a GraphQL query, or a
+   * reviewed search endpoint, judged by `read-request.ts`'s classifier on the vendor URL and the
+   * body as they would leave, the one the check annotates with (ADR 0008 as amended 2026-10-10).
+   * A forwarded read with a body cannot be redirected into a write: a 307 or 308 with a body is
+   * never followed, and a followed 301, 302 or 303 turns it into a `GET` (`redirects.ts`).
    */
-  if (claims.dryRun && !isSafeMethod(call.method)) {
+  if (claims.dryRun && !isDryRunRead(call.method, target.url, body)) {
     const named = schemeHeaderNames(headers, plugin, config);
     if (!named.ok) return refuse(409, named.reason, named.message, { requestBytes });
     trace.dryRunOutcome = "intercepted";
@@ -508,6 +513,17 @@ async function decide(
     { method: call.method, url: target.url, body },
     requestBytes,
   );
+}
+
+/** Whether a dry run lets the request reach the vendor: the shared classifier's read. */
+function isDryRunRead(method: string, url: URL, body: Uint8Array | null): boolean {
+  return classifyRequest({
+    method,
+    host: url.hostname,
+    path: url.pathname,
+    hasQuery: url.search.length > 1,
+    body: parseJsonBody(body),
+  }).read;
 }
 
 /**

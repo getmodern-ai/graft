@@ -1835,6 +1835,93 @@ describe("the dry-run claim", () => {
     });
   });
 
+  /**
+   * A read is judged by `read-request.ts`'s classifier, the one the check annotates with (ADR 0008
+   * as amended 2026-10-10): a GraphQL query and a reviewed search endpoint reach the vendor in a
+   * dry run as a GET does; a mutation still stops at the preview.
+   */
+  describe("a read-only POST is forwarded", () => {
+    const LINEAR: ProxyConnection = {
+      ...CONNECTION,
+      primaryHost: "https://api.linear.app",
+      hosts: ["api.linear.app"],
+    };
+    const HUBSPOT: ProxyConnection = {
+      ...CONNECTION,
+      primaryHost: "https://api.hubapi.com",
+      hosts: ["api.hubapi.com"],
+    };
+    const post = (h: ReturnType<typeof harness>, path: string, body: unknown) =>
+      h.app.request(path, {
+        method: "POST",
+        headers: { ...bearer(DRY), "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    it("forwards a GraphQL query with the credential and its body, marked forwarded", async () => {
+      const h = harness({}, LINEAR);
+      h.respond(() => jsonResponse({ data: { viewer: { id: "u1" } } }));
+      const query = { query: "query { viewer { id } }" };
+      const res = await post(h, "/c/conn_1/graphql", query);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ data: { viewer: { id: "u1" } } });
+      expect(res.headers.get("x-graft-dry-run")).toBe("forwarded");
+      expect(h.forwarded).toHaveLength(1);
+      expect(h.forwarded[0]).toMatchObject({
+        method: "POST",
+        url: "https://api.linear.app/graphql",
+      });
+      expect(decode(h.forwarded[0]?.body ?? null)).toBe(JSON.stringify(query));
+      expect(h.forwarded[0]?.headers.get("x-demo-key")).toBe(SECRET);
+      expect(h.events[0]).toMatchObject({ dryRun: true, dryRunOutcome: "forwarded" });
+    });
+
+    it("stops a GraphQL mutation at the preview", async () => {
+      const h = harness({}, LINEAR);
+      const res = await post(h, "/c/conn_1/graphql", {
+        query: 'mutation { issueCreate(input: { title: "x" }) { success } }',
+      });
+
+      expect(res.status).toBe(202);
+      expect(res.headers.get("x-graft-dry-run")).toBe("intercepted");
+      expect(h.forwarded).toHaveLength(0);
+    });
+
+    it("stops a persisted query, whose document is not in the body", async () => {
+      const h = harness({}, LINEAR);
+      const res = await post(h, "/c/conn_1/graphql", {
+        extensions: { persistedQuery: { version: 1, sha256Hash: "abc" } },
+      });
+
+      expect(res.status).toBe(202);
+      expect(h.forwarded).toHaveLength(0);
+    });
+
+    it("forwards HubSpot's CRM search, a table entry, by its resolved host and path", async () => {
+      const h = harness({}, HUBSPOT);
+      h.respond(() => jsonResponse({ total: 1, results: [{ id: "1" }] }));
+      const res = await post(h, "/c/conn_1/crm/v3/objects/contacts/search", {
+        filterGroups: [{ filters: [{ propertyName: "email", operator: "EQ", value: "a@b.c" }] }],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-graft-dry-run")).toBe("forwarded");
+      expect(h.forwarded[0]).toMatchObject({
+        method: "POST",
+        url: "https://api.hubapi.com/crm/v3/objects/contacts/search",
+      });
+    });
+
+    it("stops the same path on a host the table does not name", async () => {
+      const h = harness();
+      const res = await post(h, "/c/conn_1/crm/v3/objects/contacts/search", {});
+
+      expect(res.status).toBe(202);
+      expect(h.forwarded).toHaveLength(0);
+    });
+  });
+
   describe("every existing refusal still fires first", () => {
     const post = (h: ReturnType<typeof harness>, token: string, path = "/c/conn_1/orders") =>
       h.app.request(path, { method: "POST", headers: bearer(token), body: "{}" });

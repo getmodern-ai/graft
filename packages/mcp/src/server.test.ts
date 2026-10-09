@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 
-import type { ModuleCheck } from "@graft/check";
+import { checkModule, type ModuleCheck } from "@graft/check";
 import { setConnectionCredential } from "@graft/core";
 import type { BlobRow } from "@graft/db/repo/blob";
 import {
@@ -198,6 +198,8 @@ let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
 let checked: Parameters<ModuleCheck>[0][];
+/** The real check in place of the fake, for a suite whose subject is the annotation it derives. */
+let useRealCheck = false;
 const blobEvents: BlobWrittenEvent[] = [];
 const toolEvents: ToolCallEvent[] = [];
 
@@ -210,8 +212,8 @@ beforeAll(async () => {
         id: CONN_DEMO,
         personId: PERSON,
         primaryHost: "https://api.demo.example/v2",
-        // The second host the upload URL is on (GRA-197).
-        hosts: ["files.demo.example"],
+        // The second host the upload URL is on (GRA-197), and HubSpot's for its search (GRA-260).
+        hosts: ["files.demo.example", "api.hubapi.com"],
         credential: { apiKey: API_KEY },
       },
       // Two live Rebind accounts, for the tool that follows one once its own row is revoked (GRA-122).
@@ -280,7 +282,7 @@ beforeAll(async () => {
     vendor: "demo",
     displayName: "Demo Orders",
     primaryHost: "https://api.demo.example/v2",
-    hosts: ["files.demo.example"],
+    hosts: ["files.demo.example", "api.hubapi.com"],
   });
   // The person's, but in neither agent's scope.
   store.addConnection({
@@ -469,8 +471,9 @@ beforeAll(async () => {
   }
 
   checked = [];
-  const fakeCheck: ModuleCheck = async (input) => {
+  const fakeCheck: ModuleCheck = async (input, options) => {
     checked.push(input);
+    if (useRealCheck) return checkModule(input, options);
     return {
       entry: input.entry,
       refusals: [],
@@ -2896,6 +2899,119 @@ describe("publish_tool", () => {
       await a.close();
     }
   }, 30_000);
+
+  /**
+   * A read-only POST (GRA-260; ADR 0008 as amended 2026-10-10): the check and the proxy judge with
+   * one classifier, so the annotation a publish records and what the dry run lets through agree.
+   */
+  describe("a read-only POST", () => {
+    beforeAll(() => {
+      useRealCheck = true;
+    });
+    afterAll(() => {
+      useRealCheck = false;
+    });
+    const publish = async (
+      a: Awaited<ReturnType<typeof connect>>,
+      name: string,
+      module: string,
+    ) => {
+      await a.call("write_file", { path: `${name}/index.ts`, content: module });
+      const result = await a.call("publish_tool", {
+        vendor: "demo",
+        name,
+        description: `The ${name} tool.`,
+        inputSchema: { type: "object", properties: {} },
+        path: name,
+        testInput: {},
+      });
+      expect(result.isError).toBeFalsy();
+      return body(result);
+    };
+    const graphqlModule = (document: string) => `export default async (_input, ctx) => {
+  const res = await ctx.fetch("/graphql", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query: ${JSON.stringify(document)} }),
+  });
+  if (!res.ok) throw new Error(\`POST /graphql \${res.status}\`);
+  return await res.json();
+};
+`;
+
+    it("annotates a GraphQL query read-only, and its dry run reaches the vendor", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const published = await publish(a, "gql-viewer", graphqlModule("query { viewer { id } }"));
+        expect(published).toMatchObject({
+          annotations: { readOnlyHint: true, destructiveHint: false },
+          dryRun: { dryRun: { passed: true } },
+        });
+        expect(vendor.requests.at(-1)).toMatchObject({
+          method: "POST",
+          url: "https://api.demo.example/v2/graphql",
+        });
+        expect(vendor.events.at(-1)).toMatchObject({ dryRun: true, dryRunOutcome: "forwarded" });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("annotates a GraphQL mutation a write, and its dry run stops at the preview", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const before = vendor.requests.length;
+        const published = await publish(
+          a,
+          "gql-logout",
+          graphqlModule("mutation { logout { success } }"),
+        );
+        expect(published).toMatchObject({
+          annotations: { readOnlyHint: false, destructiveHint: false },
+        });
+        expect(vendor.events.at(-1)).toMatchObject({
+          dryRun: true,
+          dryRunOutcome: "intercepted",
+          outcome: "dry_run_intercepted",
+        });
+        expect(vendor.requests).toHaveLength(before);
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+
+    it("annotates HubSpot's CRM search read-only where the call names its host, and its dry run reaches the vendor", async () => {
+      const a = await connect(TOKEN_A);
+      try {
+        const published = await publish(
+          a,
+          "find-contact",
+          `export default async (_input, ctx) => {
+  const res = await ctx.fetch("/crm/v3/objects/contacts/search", {
+    method: "POST",
+    host: "api.hubapi.com",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ limit: 1, filterGroups: [] }),
+  });
+  if (!res.ok) throw new Error(\`POST search \${res.status}\`);
+  return await res.json();
+};
+`,
+        );
+        expect(published).toMatchObject({
+          annotations: { readOnlyHint: true, destructiveHint: false },
+          dryRun: { dryRun: { passed: true } },
+        });
+        expect(vendor.requests.at(-1)).toMatchObject({
+          method: "POST",
+          url: "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        });
+        expect(vendor.events.at(-1)).toMatchObject({ dryRun: true, dryRunOutcome: "forwarded" });
+      } finally {
+        await a.close();
+      }
+    }, 30_000);
+  });
 
   it("refuses a module outside the toolbox, a vendor with no connection in scope, and a bad definition, before writing anything", async () => {
     const a = await connect(TOKEN_A);

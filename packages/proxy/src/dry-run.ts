@@ -8,8 +8,10 @@ export type { DryRunOutcome } from "./types";
  * answers with a preview of the request that would have left).
  *
  * A capability token may carry `dryRun: true`. With it, the proxy runs every check it runs today,
- * forwards `GET` and `HEAD` exactly as a normal call, and stops every other method here, answering
- * a **preview** rather than anything a vendor said. The claim is the guarantee, not the client: a
+ * forwards a read exactly as a normal call, and stops every other request here, answering a
+ * **preview** rather than anything a vendor said. A read is what `read-request.ts`'s classifier
+ * says it is: a `GET` or `HEAD`, a GraphQL query, or an entry of the reviewed table (ADR 0008 as
+ * amended 2026-10-10). The claim is the guarantee, not the client: a
  * module that bypasses the runner's fetch — or an SDK bound to the proxy (ADR 0010) — still cannot
  * write during a dry run, because the proxy is what reads the token. This file holds the pure parts
  * — the marker, the status, the preview's shape and how it is built; `app.ts` decides where in the

@@ -18,6 +18,7 @@
     "check-types": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "graphql": "^16.14.2",
     "hono": "catalog:",
     "undici": "catalog:"
   },
