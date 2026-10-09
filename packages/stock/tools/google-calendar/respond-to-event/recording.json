@@ -1,0 +1,66 @@
+{
+  "format": 1,
+  "tool": "google-calendar__respond-to-event",
+  "recordedAt": "2026-10-09T18:55:48.298Z",
+  "input": {
+    "eventId": "316b90adb90f0b76d27167179370af57",
+    "response": "accepted"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/316b90adb90f0b76d27167179370af57?fields=id%2ChtmlLink%2Cattendees",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "id": "316b90adb90f0b76d27167179370af57",
+            "htmlLink": "https://www.google.com/",
+            "attendees": [
+              {
+                "email": "sasml@example.com",
+                "self": true,
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "tehb@example.com",
+                "organizer": true,
+                "responseStatus": "accepted"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "kind": "write",
+      "method": "PATCH",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/316b90adb90f0b76d27167179370af57",
+      "body": {
+        "json": {
+          "attendees": [
+            {
+              "email": "sasml@example.com",
+              "self": true,
+              "responseStatus": "accepted"
+            },
+            {
+              "email": "tehb@example.com",
+              "organizer": true,
+              "responseStatus": "accepted"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "eventId": "316b90adb90f0b76d27167179370af57",
+    "response": "accepted",
+    "htmlLink": "https://www.google.com/"
+  }
+}
