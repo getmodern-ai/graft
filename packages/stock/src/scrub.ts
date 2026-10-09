@@ -425,6 +425,16 @@ function decoded(text: string): string {
   }
 }
 
+/**
+ * A URL that is its scheme and host alone, which the scrub keeps as it keeps every URL's: written
+ * with or without the closing slash, since its placeholder always carries one and would otherwise
+ * read as the raw value surviving inside it (an app's `external_url` in a GitHub comment; GRA-253).
+ */
+function isBareOrigin(value: string): boolean {
+  const origin = urlPlaceholder(value);
+  return origin === value || origin === `${value}/`;
+}
+
 /** The shortest value the survival check looks for: shorter ones collide with ordinary words. */
 const SURVIVAL_MIN_LENGTH = 6;
 
@@ -458,7 +468,7 @@ export function survivingValuesOf(
       !keep.has(value) &&
       !keys.has(value) &&
       !options.source.includes(value) &&
-      urlPlaceholder(value) !== value,
+      !isBareOrigin(value),
   );
   const parts: [string, unknown][] = [
     ["input", scrubbed.input],

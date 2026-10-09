@@ -256,4 +256,21 @@ describe("survivingValuesOf", () => {
       survivingValuesOf(recording, scrubRecording(recording, { seed: SEED }), { source: "" }),
     ).toEqual([]);
   });
+
+  it("does not count a bare origin as surviving inside its own placeholder (GRA-253)", () => {
+    const withOrigin: StockRecording = {
+      ...recording,
+      exchanges: [
+        {
+          kind: "read",
+          method: "GET",
+          url: "https://api.github.com/repos/o/r/issues/1/comments",
+          response: response([{ app: { external_url: "https://linear.app" } }]),
+        },
+      ],
+    };
+    const scrubbed = scrubRecording(withOrigin, { seed: SEED });
+    expect(JSON.stringify(scrubbed.exchanges)).toContain('"https://linear.app/"');
+    expect(survivingValuesOf(withOrigin, scrubbed, { source: "" })).toEqual([]);
+  });
 });
