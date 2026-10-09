@@ -1,0 +1,33 @@
+{
+  "name": "delete-event",
+  "description": "Deletes a Google Calendar event using an eventId supplied by list-events. Deleting an event cannot be undone; attendees are notified by default.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "eventId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Google Calendar event ID supplied by list-events."
+      },
+      "calendarId": {
+        "type": "string",
+        "minLength": 1,
+        "default": "primary",
+        "description": "Calendar ID supplied by list-calendars. Defaults to primary."
+      },
+      "sendUpdates": {
+        "type": "string",
+        "enum": ["all", "externalOnly", "none"],
+        "default": "all",
+        "description": "Who receives cancellation notifications. Defaults to all attendees."
+      }
+    },
+    "required": ["eventId"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": true
+  }
+}
