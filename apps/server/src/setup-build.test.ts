@@ -131,6 +131,8 @@ function inMemorySetup(now: () => Date): SetupDeps {
       step: "harness",
       harness: null,
       agentId: null,
+      starterId: null,
+      goal: null,
       pendingActionId: null,
       connectionId: null,
       acquireJobId: null,
@@ -686,6 +688,71 @@ describe("Setup's goal and build steps", () => {
     expect(early.status).toBe(409);
     await onGoal(true);
     expect((await app.request("/api/setup/build", post({ goal: "   " }))).status).toBe(400);
+  });
+});
+
+describe("Setup v2: the task before the connection", () => {
+  it("saves the starter and the task, opens the ask, and the read that learns the connection builds", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    people += 1;
+    person = `person_${people}`;
+    const started = await read(await app.request("/api/setup/start", post({ harness: "claude" })));
+    const agentId: string = started.agent.id;
+
+    const chosen = await read(
+      await app.request("/api/setup/starter", post({ starterId: "open-meteo" })),
+    );
+    expect(chosen).toMatchObject({
+      step: "vendor",
+      setup: { starterId: "open-meteo", goal: null },
+    });
+
+    const tasked = await read(
+      await app.request("/api/setup/task", post({ goal: OPEN_METEO.goal })),
+    );
+    expect(tasked).toMatchObject({
+      step: "connect",
+      setup: { starterId: "open-meteo", goal: OPEN_METEO.goal },
+    });
+    const askId: string = tasked.setup.pendingActionId;
+    const { payload } = (await get("/api/pending-actions")).pendingActions[0];
+    const confirmed = await app.request(
+      `/api/pending-actions/${askId}/connection`,
+      post({ ...payload, credential: {}, approveBuild: false }),
+    );
+    expect(confirmed.status).toBe(201);
+
+    // No Build press: the read that learns the connection starts the job with the saved task.
+    const building = await get("/api/setup");
+    expect(building).toMatchObject({ step: "building", setup: { goal: OPEN_METEO.goal } });
+    const job = store.acquireJobs.get(building.setup.acquireJobId);
+    expect(job).toMatchObject({
+      agentId,
+      goal: OPEN_METEO.goal,
+      hints: `${OPEN_METEO.hints} The vendor's documentation starts at https://open-meteo.com/en/docs.`,
+    });
+    expect(buildApprovals(agentId)).toEqual([expect.objectContaining({ agentId })]);
+    await runner.idle();
+    expect(await get("/api/setup")).toMatchObject({ step: "result" });
+    expect(stepEvents()).toEqual(["vendor", "goal", "connect", "building"]);
+  }, 60_000);
+
+  it("builds at once for a task chosen on a connection the record already names", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    await onGoal(false);
+    const built = await read(await app.request("/api/setup/task", post({ goal: OPEN_METEO.goal })));
+    expect(built).toMatchObject({ step: "building", setup: { goal: OPEN_METEO.goal } });
+    await runner.idle();
+  }, 60_000);
+
+  it("refuses a task before a starter, and an unknown starter", async () => {
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const early = await app.request("/api/setup/task", post({ goal: "Anything" }));
+    expect(early.status).toBe(409);
+    const unknown = await app.request("/api/setup/starter", post({ starterId: "fax" }));
+    expect(unknown.status).toBe(400);
   });
 });
 
