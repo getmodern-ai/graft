@@ -413,6 +413,35 @@ describe("the MCP endpoint", () => {
       expect(negotiated.status).toBe(200);
     });
 
+    it("drops the header on a session-less non-initialize and on an unknown session, where the re-opened session negotiated for the client", async () => {
+      // GRA-162 follow-up: the fresh-`initialize` fix left the two re-open paths, and Claude's
+      // client opens with a session-less `tools/list` under the new header.
+      const { app, refusals } = harness();
+      const opened = await app.request(
+        MCP_MOUNT_PATH,
+        post(
+          { authorization: `Bearer ${TOKEN_A_OAUTH}`, "mcp-protocol-version": "2026-07-28" },
+          listTools,
+        ),
+      );
+      expect(opened.status).toBe(200);
+      expect(opened.headers.get("mcp-session-id")).toEqual(expect.any(String));
+      const stale = await app.request(
+        MCP_MOUNT_PATH,
+        post(
+          {
+            authorization: `Bearer ${TOKEN_A_OAUTH}`,
+            "mcp-session-id": "session-from-before-the-deploy",
+            "mcp-protocol-version": "2026-07-28",
+          },
+          listTools,
+        ),
+      );
+      expect(stale.status).toBe(200);
+      expect(stale.headers.get("mcp-session-id")).toBe("session-from-before-the-deploy");
+      expect(refusals).toEqual([]);
+    });
+
     it("leaves an initialize with a version it speaks exactly as it was", async () => {
       const { app, refusals } = harness();
       const opened = await app.request(
