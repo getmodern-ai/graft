@@ -10,6 +10,8 @@ import type {
   SetupGoalSuggestions,
   SetupNextBody,
   SetupStartBody,
+  SetupStarterBody,
+  SetupTaskBody,
   SetupToolContext,
   ToolRunBody,
 } from "@graft/server/api";
@@ -89,6 +91,22 @@ export const setupVendorsQuery = queryOptions({
 /** A starter by its id, or the connection *Another integration*'s form made (`SetupConnectBody`). */
 export function connectSetup(body: SetupConnectBody) {
   return api<SetupStateData>("/setup/connect", { method: "POST", body });
+}
+
+/**
+ * Setup v2: the starter chosen before anything is connected, or null for the tool screen's Back
+ * (`POST /api/setup/starter`). The record stays on the vendor step.
+ */
+export function chooseSetupStarter(body: SetupStarterBody) {
+  return api<SetupStateData>("/setup/starter", { method: "POST", body });
+}
+
+/**
+ * Setup v2: the task, chosen before connecting (`POST /api/setup/task`). The server connects the
+ * starter and builds the moment the connection is made, or on the read that learns it.
+ */
+export function chooseSetupTask(body: SetupTaskBody) {
+  return api<SetupStateData>("/setup/task", { method: "POST", body });
 }
 
 export type SetupGoal = Jsonified<SetupGoalContext>;
