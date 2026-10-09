@@ -25,8 +25,8 @@ import { runAuthoredTool } from "./run";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
 import { AUTHORING_TOOLS } from "./tools/authoring";
 import { callExecuteTool, executeToolDefinition } from "./tools/execute";
-import { queryWords } from "./tools/find-tool.match";
 import { META_TOOLS, type MetaTool } from "./tools/meta";
+import { queryWords } from "./tools/tool-index";
 
 /**
  * The tool list and the dispatch — ADR 0003 made concrete: the fixed meta-tools, the execute tool

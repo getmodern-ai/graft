@@ -12,6 +12,7 @@ import {
   listTools,
   listWorkingSet,
   promoteTool,
+  STARTER_VENDORS,
 } from "@graft/core";
 import { AUTH_SCHEMES } from "@graft/proxy/types";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -44,8 +45,8 @@ import { authoredToolName } from "../tool-names";
 import { similarTools } from "./acquire-similar";
 import { answerAsk } from "./answer-ask";
 import { askStatus } from "./ask-status";
-import { queryWords, rankTools } from "./find-tool.match";
 import { startLink } from "./start-link";
+import { queryWords, searchTools } from "./tool-index";
 
 /**
  * The fixed meta-tools every agent sees (CONTEXT.md, *Meta-tool*): the front door, `acquire` and
@@ -103,11 +104,22 @@ function readToolKey(
   return { vendor, name };
 }
 
+/**
+ * The vendor display names the index searches beside each slug (GRA-236): the starter
+ * integrations' ("Google Calendar" for `google-calendar`). A connection's own name is the person's
+ * label for one account, not the vendor's, and is not read: "Demo Orders" would make every demo
+ * tool a hit for "orders".
+ */
+const VENDOR_NAMES: ReadonlyMap<string, readonly string[]> = new Map(
+  STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+);
+
 const findTool: MetaTool = {
   definition: {
     name: FIND_TOOL,
     description:
-      "Used first, before acquire, for a task no listed tool covers: searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name and description, matching every word of the query in any order; a tool no version of which has passed its dry run is not listed. " +
+      "Used first, before acquire, for a task no listed tool covers: searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name, input labels and description; every word of the query hits, in any order, as itself, another form of it (contacts, contact) or a common synonym (find reaches search, dm reaches message). A tool no version of which has passed its dry run is not listed. " +
+      "Answers the five best hits, the agent's working set first and, for a query that reads, read-only tools before writes, with more, the count of further hits, when there are any. " +
       "Each hit carries vendor and name (the arguments promote, demote and run_tool take), its inputSchema (the shape run_tool's input must match), whether it is in the agent's working set, and its read-only and destructive hints. " +
       "A hit that is not promoted is one promote call from the agent's list. The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named. " +
       "While the person has no connection at all and has neither finished nor skipped Setup, the answer also carries setup, a url to the console's Setup page for this agent, where a first vendor is connected and a first tool acquired, and a message in the shape of a handoff, shown as a card on a chat product that renders one.",
@@ -116,7 +128,8 @@ const findTool: MetaTool = {
       properties: {
         query: {
           type: "string",
-          description: "Words to match against vendor, name and description, case-insensitively.",
+          description:
+            "Words to match against vendor, name, input labels and description, case-insensitively.",
         },
       },
       required: ["query"],
@@ -152,16 +165,24 @@ const findTool: MetaTool = {
         displayName: connection.displayName,
       }));
     const promoted = new Set(workingSet.map((entry) => entry.toolId));
-    // Every word of the query, in any order, across vendor, name and description, ranked by where
-    // the words hit (`find-tool.match.ts`, GRA-115). Ranking by use — how recently an agent ran the
-    // tool, how many agents hold it — would read the ledger and the working-set records (ADR 0009,
-    // ADR 0012); the alpha has too few tools per toolbox to need it.
+    // The word index (`tool-index.ts`, GRA-236): every term of the query hits, stemmed or through
+    // a synonym, across name, vendor, input labels and description; the working set ranks first
+    // (tier 0), and the first FIND_TOOL_LIMIT are answered with the rest counted. Ranking by use
+    // would read the ledger and the working-set records (ADR 0009, ADR 0012); the alpha has too
+    // few tools per toolbox to need it.
     // A tool with no current version is what an acquire job that never passed its dry run leaves
     // (GRA-77): nothing runnable, so nothing to find — its versions and reports stay for the console.
-    const hits: FoundTool[] = rankTools(
-      tools.filter((tool) => tool.currentVersionId !== null),
+    const found = searchTools(
+      tools
+        .filter((tool) => tool.currentVersionId !== null)
+        .map((tool) => ({
+          ...tool,
+          tier: promoted.has(tool.id) ? 0 : 1,
+        })),
       query,
-    ).map((tool) => ({
+      { vendorNames: VENDOR_NAMES },
+    );
+    const hits: FoundTool[] = found.hits.map((tool) => ({
       vendor: tool.vendor,
       name: tool.name,
       tool: authoredToolName(tool.vendor, tool.name),
@@ -176,12 +197,13 @@ const findTool: MetaTool = {
     return withCard(
       toolResult({
         tools: hits,
+        ...(found.more > 0 ? { more: found.more } : {}),
         connections,
         ...(offer ? { setup: offer.setup } : {}),
         note:
           hits.length === 0
             ? "Nothing in the toolbox matches. If the vendor is among connections, acquire authors a new tool against its connectionId; if not, request_connection comes first."
-            : "promote a tool to add it to your list; run_tool runs one without promoting it.",
+            : `promote a tool to add it to your list; run_tool runs one without promoting it.${found.more > 0 ? ` ${found.more} more matched; a narrower query shows them.` : ""}`,
       }),
       offer?.card,
     );

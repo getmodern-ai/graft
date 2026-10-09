@@ -41,6 +41,16 @@ first real call. That is the gap.
   promoting it into a working set that later contracts is the whole product, and every one of those
   steps can fail quietly. The rest of this record is how each is made to fail loudly or not at all.
 
+## Amendment 2026-10-09: the basics are authored ahead of time (ADR 0025)
+
+Decided by Aleks (GRA-220). Graft now ships **stock tools**: an integration's basics, authored once
+by this loop as a build step, verified and reviewed, and offered to every person (ADR 0025). That
+narrows two lines above and leaves the rest standing. "No integration catalog" now means no
+catalogue of someone else's tools: stock is Graft's own authored code, run in the sandbox through
+the proxy, and nothing upstream is swallowed whole. "Every vendor is reached the hard way" still
+holds, ahead of time and once for the basics, and at `acquire` time for everything else. Graft still
+holds no credential for a broker and acts as no MCP gateway in front of other servers.
+
 ## Amendment 2026-10-10: a directory of integrations, from a backing
 
 Decided by Aleks. Setup's integration step may list the integrations a deployment can connect,

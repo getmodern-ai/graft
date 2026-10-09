@@ -1,4 +1,4 @@
-import { queryWords, type Searchable } from "./find-tool.match";
+import { type IndexedTool, queryWords, stem } from "./tool-index";
 
 /**
  * Whether the toolbox already holds what an `acquire` goal asks for (GRA-154). Pure: no store.
@@ -10,8 +10,10 @@ import { queryWords, type Searchable } from "./find-tool.match";
  *
  * The rule: the goal's content words and a tool's — its name with hyphens read as spaces, plus its
  * description — with function words and the verbs every goal uses (retrieve, return, show, use)
- * dropped; two words agree when one begins with the other and the shorter is four characters or
- * more (`email`/`emails`, `list`/`lists`), or they are equal. The score is the share of the union
+ * dropped; two words agree when the word index's stemmer folds them together (`tool-index.ts`,
+ * GRA-236: `reply`/`replies`, `create`/`created`), or one begins with the other and the shorter is
+ * four characters or more (`email`/`emails`, `list`/`lists`). The goal is a sentence or two, not a
+ * query, so it is scored by overlap rather than `find_tool`'s every-term rule. The score is the share of the union
  * that agrees, and a tool at or above `SIMILAR_THRESHOLD` is a candidate, best first, at most
  * `MAX_SIMILAR`. A goal that merely shares a vendor's vocabulary with a tool for a different job
  * — "find unreplied threads" against `find-invoices` — scores under it; the suite pins both sides
@@ -170,13 +172,13 @@ export function contentWords(text: string): string[] {
 }
 
 function agree(a: string, b: string): boolean {
-  if (a === b) return true;
+  if (a === b || stem(a) === stem(b)) return true;
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
   return short.length >= MIN_PREFIX && long.startsWith(short);
 }
 
 /** The share of the two word sets' union on which they agree, 0 to 1. */
-export function similarity(goal: string, tool: Searchable): number {
+export function similarity(goal: string, tool: IndexedTool): number {
   const goalWords = contentWords(goal);
   const toolWords = contentWords(`${tool.name} ${tool.description}`);
   if (goalWords.length === 0 || toolWords.length === 0) return 0;
@@ -190,10 +192,7 @@ export function similarity(goal: string, tool: Searchable): number {
  * The tools that look like the goal, best first, at most `MAX_SIMILAR`; empty when none is close.
  * A tool whose `readOnly` is known and disagrees with what the goal asks for is not a candidate.
  */
-export function similarTools<T extends Searchable & { readOnly?: boolean }>(
-  tools: readonly T[],
-  goal: string,
-): T[] {
+export function similarTools<T extends IndexedTool>(tools: readonly T[], goal: string): T[] {
   const writes = goalWrites(goal);
   return tools
     .filter((tool) => tool.readOnly === undefined || tool.readOnly !== writes)
