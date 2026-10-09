@@ -2,11 +2,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { CodeBlock } from "@/components/code-block";
-import { CheckCircleIcon, WarningIcon } from "@/components/icons";
+import { CheckCircleIcon, ErrorIcon, ScheduleIcon, WarningIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
+import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Button } from "@/components/ui/button";
@@ -15,10 +16,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { jobPollInterval, type ProgressCard, progressCard } from "@/lib/setup-progress";
 import {
   acquireJobQuery,
+  chooseSetupTask,
   continueSetupBuild,
   nextSetup,
   retrySetupGoal,
   type SetupStateData,
+  setupGoalQuery,
   setupKeys,
 } from "@/lib/setup-queries";
 
@@ -71,14 +74,39 @@ function BuildingJob({
     }
   }, [card.kind, reviewing, queryClient]);
 
-  const busy = retry.isPending || onward.isPending || next.isPending;
+  // Retry: back to the task with the job cleared, then the same task again, which builds at once.
+  const again = useSetupMutation(async (goal: string) => {
+    await retrySetupGoal();
+    return chooseSetupTask({ goal });
+  });
+  const goal = useQuery(setupGoalQuery);
+  const connection = goal.data?.connection ?? null;
+  const name = connection?.displayName ?? "The integration";
+  const task = state.setup?.goal ?? null;
+
+  const busy = retry.isPending || onward.isPending || next.isPending || again.isPending;
+  const failed = card.kind === "failed";
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <SetupStepHeader
-        title="Acquiring the tool"
-        description={`Graft's model is authoring a read-only tool for ${state.agent?.name ?? "the agent"}.`}
+        title={failed ? "Your tool needs another try" : "Building your tool"}
+        description={
+          failed
+            ? "It did not pass its run, so nothing was added yet."
+            : `${name} is connected. Graft's model is writing, checking and trying the tool against the real service.`
+        }
       />
+      {connection ? (
+        <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3">
+          <SetupLogo starterId={goal.data?.starterId} tile={false} className="size-6" />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="font-medium">{connection.displayName}</span>
+            <span className="text-muted-foreground text-xs">Connected · read-only</span>
+          </div>
+          <CheckCircleIcon className="size-5 text-success" />
+        </div>
+      ) : null}
 
       {job.isError ? (
         <p className="text-muted-foreground text-sm">
@@ -93,11 +121,37 @@ function BuildingJob({
         <ProgressCardView card={card} pending={job.isPending} />
       )}
 
-      <SetupFooter state={state} disabled={busy}>
-        {card.kind === "failed" ? (
-          <Button onClick={() => retry.mutate(undefined)} disabled={busy}>
-            {retry.isPending ? "Going back…" : "Change the task"}
-          </Button>
+      <SetupFooter
+        state={state}
+        disabled={busy}
+        summary={
+          failed ? (
+            <>
+              <ErrorIcon className="size-4 shrink-0 text-destructive" />
+              Nothing added yet
+            </>
+          ) : card.kind === "working" ? (
+            <>
+              <ScheduleIcon className="size-4 shrink-0" />
+              Usually one to three minutes. You can leave; Graft keeps building.
+            </>
+          ) : null
+        }
+      >
+        {failed ? (
+          <>
+            <Button variant="outline" onClick={() => retry.mutate(undefined)} disabled={busy}>
+              {retry.isPending ? "Going back…" : "Change the tool"}
+            </Button>
+            <Button variant="outline" onClick={() => onward.mutate(undefined)} disabled={busy}>
+              {onward.isPending ? "Finishing…" : "Finish without a tool"}
+            </Button>
+            {task ? (
+              <Button onClick={() => again.mutate(task)} disabled={busy}>
+                {again.isPending ? "Starting…" : "Retry"}
+              </Button>
+            ) : null}
+          </>
         ) : card.kind === "working" ? (
           <Button variant="outline" onClick={() => onward.mutate(undefined)} disabled={busy}>
             {onward.isPending ? "Continuing…" : "Continue while it runs"}

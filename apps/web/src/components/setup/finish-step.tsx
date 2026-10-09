@@ -152,9 +152,9 @@ export function FinishStep({
   const busy = finish.isPending || finish.isSuccess || issue.isPending;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <SetupStepHeader
-        title={entry ? `Connect ${entry.label}` : "Ask in the chat"}
+        title={entry ? `Connect ${entry.label} to use it` : "Ask in the chat"}
         description={finishSentence(variant, entry?.label ?? "", agentName)}
       />
 

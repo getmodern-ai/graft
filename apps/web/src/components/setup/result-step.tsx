@@ -73,10 +73,10 @@ export function ResultStep({ state }: { state: SetupStateData }) {
     void refetch();
   }, [data, tool, isFetching, recordToolId, refetch]);
   return (
-    <div className="flex flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
       <SetupStepHeader
-        title="See it work"
-        description={`Graft runs the new tool as ${agentName}, the way your harness will call it.`}
+        title="Your tool is ready"
+        description={`Graft runs it as ${agentName}, the way your harness will call it. Next, connect your harness to use it.`}
       />
       {context.isPending ? (
         <Loader />
@@ -226,7 +226,7 @@ function ToolRun({
           </Button>
         )}
         <Button type="button" disabled={onward.isPending} onClick={() => onward.mutate(undefined)}>
-          {onward.isPending ? "Continuing…" : "Continue"}
+          {onward.isPending ? "Continuing…" : "Connect your harness"}
         </Button>
       </SetupFooter>
     </form>

@@ -1,6 +1,5 @@
 import type * as React from "react";
 
-import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { cn } from "@/lib/utils";
 
 export type SetupChoiceOption<T extends string> = {
@@ -9,19 +8,22 @@ export type SetupChoiceOption<T extends string> = {
   description?: React.ReactNode;
   /** Beside the label: a chip, a badge. */
   aside?: React.ReactNode;
+  /** The mark in the card's top left (`SetupLogo`). */
+  media?: React.ReactNode;
+  /** Drawn dashed and on the muted band, as the frames draw *Anything else*. */
+  dashed?: boolean;
 };
 
 /**
- * One choice among a few, each option an `Item` in its outline frame (the connection picker's
- * shape, `connection-picker.tsx`) wrapping a native radio, so the group is a real radio group:
- * arrow keys move the choice, Tab leaves it, and a screen reader hears the label and the line
- * under it. The radio is transparent and laid over the whole frame, so a press anywhere on the
- * card, its name and its sentence included, lands on the radio itself rather than relying on the
- * label to forward it (GRA-206's live test found a press on a vendor's name that selected
- * nothing). The frame carries the state: `primary` on the chosen option's border, the ring on
- * the focused one; the drawn dot beneath is decoration. Composed for Setup (ADR 0017's delta): the
- * console has no radio primitive, and a `Select` would hide the one line under each harness that
- * is the reason to show them as a list.
+ * One choice among a few, drawn as Setup v2's selection cards (the Figma frames' harness and app
+ * cards): a bordered card with the mark, the label and the line under it, and the radio in its top
+ * right. Each card wraps a native radio, so the group is a real radio group: arrow keys move the
+ * choice, Tab leaves it, and a screen reader hears the label and the line under it. The radio is
+ * transparent and laid over the whole card, so a press anywhere lands on the radio itself (GRA-206's
+ * live test found a press on a vendor's name that selected nothing). The card carries the state:
+ * `primary` on the chosen card's border over a primary wash, the ring on the focused one; the drawn
+ * dot is decoration. `layout="row"` puts the mark beside the text (the harness cards),
+ * `layout="stack"` above it (the integration cards).
  */
 export function SetupChoice<T extends string>({
   name,
@@ -31,6 +33,7 @@ export function SetupChoice<T extends string>({
   onChange,
   disabled,
   className,
+  layout = "row",
 }: {
   name: string;
   legend: string;
@@ -39,48 +42,64 @@ export function SetupChoice<T extends string>({
   onChange: (value: T) => void;
   disabled?: boolean;
   className?: string;
+  layout?: "row" | "stack";
 }) {
   return (
-    <fieldset className={cn("grid gap-2.5 sm:grid-cols-2", className)} disabled={disabled}>
+    <fieldset
+      className={cn(
+        "grid gap-4",
+        layout === "row" ? "sm:grid-cols-2 lg:grid-cols-3" : "sm:grid-cols-2 lg:grid-cols-4",
+        className,
+      )}
+      disabled={disabled}
+    >
       <legend className="sr-only">{legend}</legend>
-      {options.map((option) => (
-        <Item
-          key={option.value}
-          variant="outline"
-          // biome-ignore lint/a11y/noLabelWithoutControl: the radio and the label's text are the Item's children, which the rule cannot see through `render`.
-          render={<label htmlFor={`${name}-${option.value}`} />}
-          className="relative cursor-pointer hover:bg-muted/50 has-disabled:cursor-not-allowed has-checked:border-primary has-focus-visible:border-ring has-checked:bg-muted/50 has-disabled:opacity-50 has-focus-visible:ring-3 has-focus-visible:ring-ring/50"
-        >
-          {/* Out of `ItemMedia`, whose transform would otherwise be the box it covers. */}
-          <input
-            id={`${name}-${option.value}`}
-            type="radio"
-            name={name}
-            value={option.value}
-            checked={value === option.value}
-            onChange={() => onChange(option.value)}
-            className="absolute inset-0 z-10 m-0 cursor-pointer appearance-none rounded-lg opacity-0 disabled:cursor-not-allowed"
-          />
-          <ItemMedia>
+      {options.map((option) => {
+        const checked = value === option.value;
+        return (
+          <label
+            key={option.value}
+            htmlFor={`${name}-${option.value}`}
+            className={cn(
+              "relative flex cursor-pointer gap-3 rounded-lg border bg-card p-4 text-left transition-colors hover:bg-muted/50",
+              layout === "row" ? "items-center" : "flex-col items-start",
+              option.dashed ? "border-dashed bg-muted/50" : null,
+              "has-disabled:cursor-not-allowed has-disabled:opacity-50",
+              "has-checked:border-primary has-checked:bg-primary/5",
+              "has-focus-visible:border-ring has-focus-visible:ring-3 has-focus-visible:ring-ring/50",
+            )}
+          >
+            <input
+              id={`${name}-${option.value}`}
+              type="radio"
+              name={name}
+              value={option.value}
+              checked={checked}
+              onChange={() => onChange(option.value)}
+              className="absolute inset-0 z-10 m-0 cursor-pointer appearance-none rounded-lg opacity-0 disabled:cursor-not-allowed"
+            />
+            {option.media}
+            <span className="flex min-w-0 flex-1 flex-col gap-1 pr-6">
+              <span className="flex flex-wrap items-center gap-2 font-medium text-sm">
+                {option.label}
+                {option.aside}
+              </span>
+              {option.description ? (
+                <span className="text-muted-foreground text-xs">{option.description}</span>
+              ) : null}
+            </span>
             <span
               aria-hidden="true"
               className={cn(
-                "flex size-4 items-center justify-center rounded-full border border-input",
-                value === option.value ? "border-primary" : null,
+                "absolute top-4 right-4 flex size-4 items-center justify-center rounded-full border border-input bg-background",
+                checked ? "border-primary" : null,
               )}
             >
-              {value === option.value ? <span className="size-2 rounded-full bg-primary" /> : null}
+              {checked ? <span className="size-2 rounded-full bg-primary" /> : null}
             </span>
-          </ItemMedia>
-          <ItemContent>
-            <ItemTitle>
-              {option.label}
-              {option.aside}
-            </ItemTitle>
-            {option.description ? <ItemDescription>{option.description}</ItemDescription> : null}
-          </ItemContent>
-        </Item>
-      ))}
+          </label>
+        );
+      })}
     </fieldset>
   );
 }

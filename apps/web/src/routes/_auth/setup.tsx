@@ -8,9 +8,9 @@ import { GraftWordmark } from "@/components/graft-wordmark";
 import { CheckCircleIcon, InfoIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { RetryNotice } from "@/components/retry-notice";
-import { useSetupBack } from "@/components/setup/setup-footer";
-import { SetupProgress, SetupRail } from "@/components/setup/setup-rail";
 import { SetupStepView } from "@/components/setup/setup-step";
+import { SetupEyebrowContext } from "@/components/setup/setup-step-header";
+import { SetupStepper, SetupStepperCompact } from "@/components/setup/setup-stepper";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
   setupFinishedToast,
 } from "@/lib/setup-page";
 import { type SetupFinish, setupQuery, skipSetup } from "@/lib/setup-queries";
+import { setupEyebrow, setupStages } from "@/lib/setup-stages";
 
 /**
  * **Setup** (CONTEXT.md; ADR 0024): the console's guided first run, full screen. Under the guard
@@ -32,11 +33,12 @@ import { type SetupFinish, setupQuery, skipSetup } from "@/lib/setup-queries";
  * as the handoff page is: the shell is what sends a new person here (`_shell/route.tsx`, the show
  * rule), and a page the shell redirects to cannot wear the shell without redirecting to itself.
  *
- * The layout is GRA-202's: the steps down the left at `md` and up (`SetupRail`), collapsing to a
- * progress line above the step below it (`SetupProgress`), and the step itself in a column of the
- * create dialog's width. The step on screen is the server's `state.step`, so a reload resumes where
- * the record stands. *Skip for now* is in the band at the top on every step but the last, and
- * returns to the console for good: the show rule never answers yes after a skip.
+ * The layout is Setup v2's (the Figma "Console / Setup v2" frames): a top bar with the wordmark, the
+ * four-stage stepper centred (`setupStages`; a compact progress below `md`) and *Skip for now*;
+ * each step's centred hero with its eyebrow (`SetupEyebrowContext`), its content, and its sticky
+ * footer (`SetupFooter`). The step on screen is the server's `state.step`, so a reload resumes where
+ * the record stands. *Skip for now* returns to the console for good: the show rule never answers
+ * yes after a skip.
  *
  * **Opened from the chat** (GRA-210): `find_tool`'s offer links here as `/setup?agent=<id>`, so the
  * harness step starts as that agent even among several, and the ask card's button adds `from=card`.
@@ -58,7 +60,6 @@ function SetupRoute() {
   const search = Route.useSearch();
   const navigate = useNavigate();
   const skip = useSetupMutation(skipSetup);
-  const back = useSetupBack();
   // The finish's answer, token included, for as long as this page is open (`finish-step.tsx`).
   const [finished, setFinished] = useState<SetupFinish | null>(null);
   // A token harness's token, issued on the finish step before Finish Setup (GRA-215), held here
@@ -100,42 +101,38 @@ function SetupRoute() {
     }, SETUP_CLOSE_MS);
   };
 
+  const starterId = finished ? null : (state?.setup?.starterId ?? null);
+  const stages = setupStages(step, starterId);
+  const eyebrow = setupEyebrow(step, starterId);
+  const skipButton =
+    step !== "completed" && !leaving ? (
+      <Button
+        variant="ghost"
+        disabled={skip.isPending}
+        onClick={() =>
+          skip.mutate(undefined, {
+            onSuccess: () => void navigate({ to: DEFAULT_SIGNED_IN_PATH }),
+          })
+        }
+      >
+        {skip.isPending ? "Skipping…" : "Skip for now"}
+      </Button>
+    ) : null;
+
   return (
     <main className="flex min-h-svh flex-col">
-      <header className="mt-4 flex h-9 shrink-0 items-center justify-between gap-4 px-4 md:mt-6 md:px-8">
+      <header className="grid shrink-0 grid-cols-[1fr_auto] items-center gap-4 px-4 pt-4 md:grid-cols-[1fr_auto_1fr] md:px-8 md:py-5">
         <GraftWordmark />
-        {step !== "completed" && !leaving ? (
-          <Button
-            variant="ghost"
-            disabled={skip.isPending}
-            onClick={() =>
-              skip.mutate(undefined, {
-                onSuccess: () => void navigate({ to: DEFAULT_SIGNED_IN_PATH }),
-              })
-            }
-          >
-            {skip.isPending ? "Skipping…" : "Skip for now"}
-          </Button>
-        ) : null}
-      </header>
-      <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 p-4 md:flex-row md:gap-12 md:p-8">
-        <aside className="hidden w-48 shrink-0 md:block">
-          <SetupRail
-            step={step}
-            record={finished ? null : state?.setup}
-            onBack={(to) => back.mutate(to)}
-            pending={back.isPending}
-          />
-        </aside>
-        <div className="md:hidden">
-          <SetupProgress
-            step={step}
-            record={finished ? null : state?.setup}
-            onBack={(to) => back.mutate(to)}
-            pending={back.isPending}
-          />
+        <div className="hidden md:block">
+          <SetupStepper stages={stages} />
         </div>
-        <section className="flex min-w-0 max-w-2xl flex-1 flex-col gap-6">
+        <div className="flex justify-end">{skipButton}</div>
+        <div className="col-span-2 md:hidden">
+          <SetupStepperCompact stages={stages} eyebrow={eyebrow} />
+        </div>
+      </header>
+      <SetupEyebrowContext.Provider value={eyebrow}>
+        <section className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-4 pt-6 md:px-8 md:pt-8">
           {fromCard && closeRefused ? (
             <Alert>
               <CheckCircleIcon />
@@ -172,7 +169,7 @@ function SetupRoute() {
             <Loader />
           )}
         </section>
-      </div>
+      </SetupEyebrowContext.Provider>
     </main>
   );
 }
