@@ -1,0 +1,14 @@
+{
+  "name": "list-calendars",
+  "description": "Lists the calendars you can see in Google Calendar. Each returned calendar id is what event tools take as calendarId, and “primary” always names your own calendar.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

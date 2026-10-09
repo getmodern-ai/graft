@@ -1,0 +1,107 @@
+{
+  "format": 1,
+  "tool": "google-calendar__list-calendars",
+  "recordedAt": "2026-10-09T18:44:57.873Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "kind": "ihmuurfc#hhhboyfcKgwx",
+            "etag": "\"n77meq31wkacvl2p\"",
+            "nextSyncToken": "CY-ceT2Yb7nDJnBceFFod1PhZCUan8Evvq0sMNd=",
+            "items": [
+              {
+                "kind": "dgciysnq#qviilkxmNsgbVjjhs",
+                "etag": "\"6623136445791349\"",
+                "id": "vfxbl@example.com",
+                "summary": "vfxbl@example.com",
+                "timeZone": "Kwitehirl/Gkucmncou",
+                "colorId": "67",
+                "backgroundColor": "#2nz0f4",
+                "foregroundColor": "#501635",
+                "selected": true,
+                "accessRole": "gfgod",
+                "defaultReminders": [
+                  {
+                    "method": "jfrzt",
+                    "minutes": 10
+                  }
+                ],
+                "notificationSettings": {
+                  "notifications": [
+                    {
+                      "type": "bnrtoSauxrbwh",
+                      "method": "eowmd"
+                    },
+                    {
+                      "type": "nbiuwUlqbir",
+                      "method": "eowmd"
+                    },
+                    {
+                      "type": "valtqHtyamxdvapvt",
+                      "method": "eowmd"
+                    },
+                    {
+                      "type": "tqhvzHglymomv",
+                      "method": "eowmd"
+                    }
+                  ]
+                },
+                "primary": true,
+                "conferenceProperties": {
+                  "allowedConferenceSolutionTypes": ["sevlszxkCdjx"]
+                }
+              },
+              {
+                "kind": "dgciysnq#qviilkxmNsgbVjjhs",
+                "etag": "\"6623136445791349\"",
+                "id": "ox.xfsiwdatqv#xorqnky@example.com",
+                "summary": "Qzhbejde rb Stgexvoad",
+                "description": "Xbjofojz anz Iqfcbrvwdhq vs Iedglxman",
+                "timeZone": "Kwitehirl/Gkucmncou",
+                "colorId": "0",
+                "backgroundColor": "#06c358",
+                "foregroundColor": "#501635",
+                "selected": true,
+                "accessRole": "hysgcl",
+                "defaultReminders": [],
+                "conferenceProperties": {
+                  "allowedConferenceSolutionTypes": ["sevlszxkCdjx"]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "calendars": [
+      {
+        "id": "vfxbl@example.com",
+        "summary": "vfxbl@example.com",
+        "description": null,
+        "timeZone": "Kwitehirl/Gkucmncou",
+        "accessRole": "gfgod",
+        "primary": true
+      },
+      {
+        "id": "ox.xfsiwdatqv#xorqnky@example.com",
+        "summary": "Qzhbejde rb Stgexvoad",
+        "description": "Xbjofojz anz Iqfcbrvwdhq vs Iedglxman",
+        "timeZone": "Kwitehirl/Gkucmncou",
+        "accessRole": "hysgcl",
+        "primary": false
+      }
+    ]
+  }
+}
