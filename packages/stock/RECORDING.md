@@ -48,10 +48,14 @@ of it reaches a person's toolbox.
   them (numbered as each request reached the proxy, not as the vendor answered, so a module that
   reads with `Promise.all` records the order it asked in), in the dry run the build ran (the token
   carries the dry-run claim, so writes never left).
-  - A **read** (`GET` or `HEAD`) carries the vendor `url` as it left the proxy, query included, and
-    the vendor's `response`: the `status`, the `headers` kept (`content-type`, `location` and
-    `link`, `RECORDED_RESPONSE_HEADERS`; every other is dropped), and the `body`.
-  - A **write** (any other method) stopped at the proxy's preview and has no response: it carries
+  - A **read** (`GET` or `HEAD`, or a request the proxy's classifier calls a read: a GraphQL query,
+    or an endpoint of the reviewed table such as Notion's `POST /v1/search`, GRA-260) carries the
+    vendor `url` as it left the proxy, query included, the `body` the module sent where it sent
+    one, and the vendor's `response`: the `status`, the `headers` kept (`content-type`, `location`
+    and `link`, `RECORDED_RESPONSE_HEADERS`; every other is dropped), and the `body`. The
+    classifier is `@graft/proxy`'s `classifyRequest`, the one the dry run lets a read through by,
+    so a recording holds as reads exactly the requests that reached the vendor (`isReadRequest`).
+  - A **write** (any other request) stopped at the proxy's preview and has no response: it carries
     the `url` the preview named and the `body` the module sent, if any.
 - **A body** is exactly one of `{ "json": … }` (it parsed as JSON), `{ "text": "…" }` (UTF-8 that
   is not JSON) or `{ "base64": "…" }`. Absent for an empty body. `recordedBodyOf` and
@@ -166,8 +170,9 @@ proxy, over a connection whose hosts are the manifest's `hosts`, so a call to an
 the proxy's `host_not_in_set`. The proxy's vendor is the recording:
 
 - each read must be a recorded read not yet made: the first, in the order of issue, with its
-  method, host, path and query (as a set of parameters), so parallel reads that reach the proxy
-  in another order still find their own; the vendor answers it with the recorded response;
+  method, host, path and query (as a set of parameters), and the body for a read that carries one,
+  so parallel reads that reach the proxy in another order still find their own; the vendor
+  answers it with the recorded response;
 - every write stops at the preview and never reaches the vendor; the previews, in the order the
   module issued them, must be the recording's writes in order, method, host, path and body;
 - every recorded read must have been made, the dry run must pass, and the result must be the
@@ -184,6 +189,7 @@ vendor instead (`src/mode.ts`). The connection for each keyed vendor comes from
 needs none. `GRAFT_STOCK_TOOLS` (comma-separated wire names) narrows either mode. Live, a read must
 match the recording's method, host, path and query parameter names (values may follow the vendor's
 data), the vendor's status must be the recorded one, and every key path of a recorded JSON body
-must still be in the vendor's; the result and write bodies are not compared. This is the nightly
+must still be in the vendor's; the result, a read's request body and write bodies are not
+compared. This is the nightly
 drift check's engine (GRA-247). `pnpm run test` never goes live: Turbo's strict env mode withholds
 the variables.

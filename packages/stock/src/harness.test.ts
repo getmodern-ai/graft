@@ -61,9 +61,16 @@ describe(`every stock tool (${mode.kind})`, () => {
         for (const note of jsonTextNotes(tool, read.recording)) console.warn(note);
         const report = await proveReplay(tool, read.recording, mode);
         expect(report.problems).toEqual([]);
-        expect(report.reachedVendor.every((call) => ["GET", "HEAD"].includes(call.method))).toBe(
-          true,
+        // Only reads reached the vendor: a GET or HEAD, or a POST the recording holds as a read
+        // because the proxy's classifier calls it one (GRA-260).
+        const readMethods = new Set(
+          read.recording.exchanges.filter((e) => e.kind === "read").map((e) => e.method),
         );
+        expect(
+          report.reachedVendor.every(
+            (call) => ["GET", "HEAD"].includes(call.method) || readMethods.has(call.method),
+          ),
+        ).toBe(true);
       });
     },
   );

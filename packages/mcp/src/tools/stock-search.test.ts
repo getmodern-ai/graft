@@ -140,6 +140,15 @@ const CASES: [query: string, tool: string][] = [
   ["change the time of an outlook meeting", "microsoft-outlook__update-event"],
   ["cancel an outlook meeting", "microsoft-outlook__delete-event"],
   ["accept an outlook invitation", "microsoft-outlook__respond-to-event"],
+  // Notion's (GRA-252), also pinned in tool-index.test.ts.
+  ["search notion", "notion__search-pages-and-databases"],
+  ["list my notion databases", "notion__search-pages-and-databases"],
+  ["read a notion page", "notion__get-page"],
+  ["notion database rows", "notion__query-database"],
+  ["create a notion page", "notion__create-page"],
+  ["append to a notion page", "notion__append-to-page"],
+  ["update a notion page", "notion__update-page-properties"],
+  ["comment on a notion page", "notion__add-comment"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];

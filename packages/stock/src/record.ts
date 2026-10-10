@@ -16,6 +16,7 @@ import { dryRunFailureOf, dryRunStockTool, issueSequence, stockConnectionFor } f
 import type { LiveConnection } from "./mode";
 import {
   bodyBytesOf,
+  isReadRequest,
   RECORDED_RESPONSE_HEADERS,
   RECORDING_FORMAT,
   type RecordedExchange,
@@ -99,6 +100,8 @@ export type RecordProofResult =
   | { ok: true; recording: StockRecording }
   | { ok: false; problems: string[] };
 
+const EMPTY = new Uint8Array(0);
+
 export async function recordStockProof(
   tool: StockWorkspaceTool,
   options: {
@@ -141,7 +144,9 @@ export async function recordStockProof(
     // Taken before anything is awaited: the place is the request's, whenever the vendor answers.
     const sequence = issueSequence() ?? unsequenced++;
     const method = request.method.toUpperCase();
-    if (!isSafeMethod(method)) {
+    // A read with a body (a reviewed `POST` search, GRA-260) records what the module sent.
+    const requestBody = isSafeMethod(method) ? undefined : recordedBodyOf(request.body ?? EMPTY);
+    if (!isReadRequest(method, request.url, requestBody)) {
       // The token carries the dry-run claim, so the proxy previews every write; one that reached
       // here would be a proxy that let it leave, and nothing is sent.
       problems.push(`a ${method} reached the vendor in a dry run`);
@@ -160,8 +165,9 @@ export async function recordStockProof(
       sequence,
       exchange: {
         kind: "read",
-        method: method as "GET" | "HEAD",
+        method,
         url: request.url,
+        ...(requestBody ? { body: requestBody } : {}),
         response: { status: response.status, headers, ...(body ? { body } : {}) },
       },
     });
@@ -264,15 +270,24 @@ export async function recordStockProof(
       const sequence = issueSequence() ?? unsequencedAgain++;
       const method = request.method.toUpperCase();
       const answer = answerBySequence.get(sequence);
-      if (!isSafeMethod(method) || !answer) {
+      const requestBody = isSafeMethod(method) ? undefined : recordedBodyOf(request.body ?? EMPTY);
+      if (!isReadRequest(method, request.url, requestBody) || !answer) {
         problems.push(
           `over the scrubbed answers it made a call the first run did not: ${method} ${new URL(request.url).hostname}`,
         );
         return Response.json({ error: "not_in_recording" }, { status: 404 });
       }
+      // The request as the module sent it over the scrubbed answers: its URL and, for a read with
+      // a body, that body, never the first run's.
+      const { body: _firstBody, ...answered } = answer;
       again.push({
         sequence,
-        exchange: { ...answer, method: method as "GET" | "HEAD", url: request.url },
+        exchange: {
+          ...answered,
+          method,
+          url: request.url,
+          ...(requestBody ? { body: requestBody } : {}),
+        },
       });
       return replayResponseOf(answer);
     },
