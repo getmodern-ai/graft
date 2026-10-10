@@ -13,7 +13,8 @@
  * Hits are ranked by the caller's `tier` (the working set before the rest of the toolbox), then,
  * when the query asks to read (`READ_VERBS`) and not to write, read-only tools before the rest,
  * then by score: per term and field, the field's weight (name over vendor over input labels over
- * description) times how the term hit (itself over a synonym over a prefix). Ties go by name, then
+ * description) times how the term hit (itself over a synonym over a prefix), plus the name's weight
+ * for each owner word of the query ("my") the name spells (`OWNER_WORDS`). Ties go by name, then
  * vendor, so the order is a function of the tools and the query alone. The first `limit` are
  * answered and the rest counted as `more`.
  *
@@ -176,6 +177,8 @@ const SYNONYMS: Readonly<Record<string, readonly string[]>> = {
   user: ["member", "person", "people"],
   people: ["person", "user", "contact", "member"],
   file: ["document", "doc"],
+  ticket: ["issue"],
+  sprint: ["cycle"],
 };
 
 const STEMMED_SYNONYMS = new Map(
@@ -206,6 +209,22 @@ export function queryTerms(query: string): string[] {
   const words = queryWords(query);
   const content = words.filter((word) => !FUNCTION_WORDS.has(word));
   return [...new Set((content.length > 0 ? content : words).map(stem))];
+}
+
+/**
+ * The function words that say whose, which `queryTerms` drops but which rank a hit without deciding
+ * one (GRA-269): a tool whose name spells one scores it at the name's weight, so "my linear issues"
+ * finds Linear's `list-my-issues` before the other issue tools, while a tool whose name does not
+ * spell it is still a hit. Only these: "in" or "to" in a name ("reply-in-thread") says nothing a
+ * query's "in" asked for.
+ */
+const OWNER_WORDS: ReadonlySet<string> = new Set(["my", "me", "our"]);
+
+/** The owner words of a query, unless they are all it has, when they are its terms already. */
+function rankingWords(query: string): string[] {
+  const words = queryWords(query);
+  if (words.every((word) => FUNCTION_WORDS.has(word))) return [];
+  return words.filter((word) => OWNER_WORDS.has(word));
 }
 
 const MAX_LABEL_DEPTH = 8;
@@ -315,10 +334,14 @@ export function searchTools<T extends IndexedTool>(
   const terms = queryTerms(query);
   if (terms.length === 0) return { hits: [], more: 0 };
   const reads = readsOnly(terms);
+  const ranking = rankingWords(query);
   const scored: { tool: T; score: number }[] = [];
   for (const tool of tools) {
-    const score = scoreOf(documentOf(tool, options.vendorNames), terms);
-    if (score !== null) scored.push({ tool, score });
+    const document = documentOf(tool, options.vendorNames);
+    const score = scoreOf(document, terms);
+    if (score === null) continue;
+    const spelled = ranking.filter((word) => document.name.has(stem(word))).length;
+    scored.push({ tool, score: score + spelled * WEIGHTS.name * EXACT });
   }
   scored.sort(
     (a, b) =>

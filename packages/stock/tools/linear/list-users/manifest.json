@@ -1,0 +1,14 @@
+{
+  "name": "list-users",
+  "description": "Lists the people in the Linear workspace, up to 100: each user's id, name, display name, email and whether they are active. A user's id is the assigneeId linear__create-issue and linear__update-issue take.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

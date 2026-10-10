@@ -1,0 +1,179 @@
+{
+  "format": 1,
+  "tool": "linear__list-users",
+  "recordedAt": "2026-10-10T17:39:08.733Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "POST",
+      "url": "https://api.linear.app/graphql",
+      "body": {
+        "json": {
+          "query": "query ListUsers { users(first: 100) { nodes { id name displayName email active } } }",
+          "variables": {}
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "data": {
+              "users": {
+                "nodes": [
+                  {
+                    "id": "9e2bfe75-7f8b-56b6-6ff8-b6dc536f9e9a",
+                    "name": "cfpbqpnn.fh",
+                    "displayName": "cfpbqpnn.fh",
+                    "email": "4cb076b4-0e23-04d7-3699-2fdd8bcecb31@example.com",
+                    "active": true
+                  },
+                  {
+                    "id": "26dff9d1-97a8-6165-aa3c-03f3040b1ada",
+                    "name": "Emyqnf Xeovtk Cnmtanz",
+                    "displayName": "fbracqq",
+                    "email": "gfpcztc@example.com",
+                    "active": true
+                  },
+                  {
+                    "id": "990a10b4-4bb6-645a-c567-665479afb6b4",
+                    "name": "gfpgq",
+                    "displayName": "gfpgq",
+                    "email": "azrcg@example.com",
+                    "active": true
+                  },
+                  {
+                    "id": "6597587b-da83-3c15-c698-9ac8925bd1ba",
+                    "name": "aittxug",
+                    "displayName": "aittxug",
+                    "email": "yyafwvy@example.com",
+                    "active": true
+                  },
+                  {
+                    "id": "164928ec-7665-12dc-6410-80563be7b9ce",
+                    "name": "Ppmkyi",
+                    "displayName": "zwdwyn",
+                    "email": "efd7787a-5d8f-7a93-d70c-1c529846f800@example.com",
+                    "active": true
+                  },
+                  {
+                    "id": "b34e018d-c741-50f7-659c-e75b96d38b04",
+                    "name": "jpohj@example.com",
+                    "displayName": "bysml",
+                    "email": "jpohj@example.com",
+                    "active": true
+                  },
+                  {
+                    "id": "1dde15e7-18ba-248c-b6cf-aa3c5d2b8251",
+                    "name": "Vddq Hfneejw",
+                    "displayName": "pydl-utnn",
+                    "email": "jwshf@example.com",
+                    "active": true
+                  },
+                  {
+                    "id": "e3bcec8d-182c-735c-b32f-193764045811",
+                    "name": "Wtmgzz",
+                    "displayName": "wsddfd",
+                    "email": "iwfukg-4fh859r4-61ie-6874-905g-l77589oc2d2y@example.com",
+                    "active": true
+                  },
+                  {
+                    "id": "ec56a4e4-9fda-2c0c-ae51-c86dbe6cefd5",
+                    "name": "isz@example.com",
+                    "displayName": "hlz",
+                    "email": "isz@example.com",
+                    "active": true
+                  },
+                  {
+                    "id": "05a581e0-4826-3925-03a5-b333eccb8ecc",
+                    "name": "rjnlb@example.com",
+                    "displayName": "pzyqb",
+                    "email": "rjnlb@example.com",
+                    "active": true
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "users": [
+      {
+        "id": "9e2bfe75-7f8b-56b6-6ff8-b6dc536f9e9a",
+        "name": "cfpbqpnn.fh",
+        "displayName": "cfpbqpnn.fh",
+        "email": "4cb076b4-0e23-04d7-3699-2fdd8bcecb31@example.com",
+        "active": true
+      },
+      {
+        "id": "26dff9d1-97a8-6165-aa3c-03f3040b1ada",
+        "name": "Emyqnf Xeovtk Cnmtanz",
+        "displayName": "fbracqq",
+        "email": "gfpcztc@example.com",
+        "active": true
+      },
+      {
+        "id": "990a10b4-4bb6-645a-c567-665479afb6b4",
+        "name": "gfpgq",
+        "displayName": "gfpgq",
+        "email": "azrcg@example.com",
+        "active": true
+      },
+      {
+        "id": "6597587b-da83-3c15-c698-9ac8925bd1ba",
+        "name": "aittxug",
+        "displayName": "aittxug",
+        "email": "yyafwvy@example.com",
+        "active": true
+      },
+      {
+        "id": "164928ec-7665-12dc-6410-80563be7b9ce",
+        "name": "Ppmkyi",
+        "displayName": "zwdwyn",
+        "email": "efd7787a-5d8f-7a93-d70c-1c529846f800@example.com",
+        "active": true
+      },
+      {
+        "id": "b34e018d-c741-50f7-659c-e75b96d38b04",
+        "name": "jpohj@example.com",
+        "displayName": "bysml",
+        "email": "jpohj@example.com",
+        "active": true
+      },
+      {
+        "id": "1dde15e7-18ba-248c-b6cf-aa3c5d2b8251",
+        "name": "Vddq Hfneejw",
+        "displayName": "pydl-utnn",
+        "email": "jwshf@example.com",
+        "active": true
+      },
+      {
+        "id": "e3bcec8d-182c-735c-b32f-193764045811",
+        "name": "Wtmgzz",
+        "displayName": "wsddfd",
+        "email": "iwfukg-4fh859r4-61ie-6874-905g-l77589oc2d2y@example.com",
+        "active": true
+      },
+      {
+        "id": "ec56a4e4-9fda-2c0c-ae51-c86dbe6cefd5",
+        "name": "isz@example.com",
+        "displayName": "hlz",
+        "email": "isz@example.com",
+        "active": true
+      },
+      {
+        "id": "05a581e0-4826-3925-03a5-b333eccb8ecc",
+        "name": "rjnlb@example.com",
+        "displayName": "pzyqb",
+        "email": "rjnlb@example.com",
+        "active": true
+      }
+    ]
+  }
+}
