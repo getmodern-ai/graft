@@ -56,8 +56,12 @@ describe("the stock catalogue answers a person's words (GRA-261)", () => {
     expect(found.hits[0]?.wire).toBe(wire);
   });
 
-  it("covers every stock tool with a query", () => {
+  // HubSpot's queries are `tool-index.test.ts`'s (GRA-254); this file covers the vendors it names.
+  it("covers every Stripe and Open-Meteo stock tool with a query", () => {
     const covered = new Set(CASES.map(([, wire]) => wire));
-    expect(catalogue.map((tool) => tool.wire).filter((wire) => !covered.has(wire))).toEqual([]);
+    const vendors = new Set(["stripe", "open-meteo"]);
+    const mine = catalogue.filter((tool) => vendors.has(tool.vendor));
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine.map((tool) => tool.wire).filter((wire) => !covered.has(wire))).toEqual([]);
   });
 });

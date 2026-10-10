@@ -26,6 +26,7 @@
   ],
   "result": {
     "subscriptions": [],
-    "hasMore": false
+    "hasMore": false,
+    "nextCursor": null
   }
 }

@@ -233,6 +233,7 @@
         ]
       }
     ],
-    "hasMore": false
+    "hasMore": false,
+    "nextCursor": null
   }
 }

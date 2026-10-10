@@ -142,6 +142,7 @@
       "postal_code": null,
       "state": null
     },
-    "subscriptions": []
+    "subscriptions": [],
+    "subscriptionsHasMore": false
   }
 }

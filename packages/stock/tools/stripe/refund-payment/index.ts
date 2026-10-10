@@ -1,3 +1,6 @@
+// The API version every field below is read at, so the account's default cannot move them (GRA-261).
+const STRIPE_VERSION = "2026-02-25.clover";
+
 type RefundResponse = {
   id: string;
   amount: number;
@@ -31,7 +34,10 @@ export default async (input: Input, ctx: Context) => {
   const sent = Object.fromEntries(form.entries());
   const res = await ctx.fetch("/refunds", {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "stripe-version": STRIPE_VERSION,
+    },
     body: form,
   });
 

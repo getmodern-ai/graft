@@ -1,3 +1,6 @@
+// The API version every field below is read at, so the account's default cannot move them (GRA-261).
+const STRIPE_VERSION = "2026-02-25.clover";
+
 type Charge = {
   id: string;
   amount: number;
@@ -21,11 +24,16 @@ type ChargeList = {
 export default async (input: Input, ctx: Context) => {
   const params = new URLSearchParams({ limit: String(input.limit ?? 10) });
   if (input.customer) params.set("customer", input.customer);
+  if (input.cursor !== undefined) params.set("starting_after", input.cursor);
 
-  const res = await ctx.fetch(`/charges?${params.toString()}`, { method: "GET" });
+  const res = await ctx.fetch(`/charges?${params.toString()}`, {
+    method: "GET",
+    headers: { "stripe-version": STRIPE_VERSION },
+  });
   if (!res.ok) throw new Error(`GET /v1/charges ${res.status}: ${await res.text()}`);
 
   const body = (await res.json()) as ChargeList;
+  const last = body.data[body.data.length - 1];
   return {
     payments: body.data.map((charge) => ({
       id: charge.id,
@@ -42,5 +50,6 @@ export default async (input: Input, ctx: Context) => {
       receipt_email: charge.receipt_email,
     })),
     hasMore: body.has_more,
+    nextCursor: body.has_more ? (last?.id ?? null) : null,
   };
 };

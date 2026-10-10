@@ -1,6 +1,6 @@
 {
   "name": "list-subscriptions",
-  "description": "Lists Stripe subscriptions by status (active, past_due, canceled, trialing and the rest, or all), optionally for one customer id from stripe__find-customer, with each one's billing period, prices and quantities. A subscription's customer id feeds stripe__get-customer.",
+  "description": "Lists Stripe subscriptions by status (active, past_due, canceled, trialing and the rest, or all), optionally for one customer id from stripe__find-customer, with each one's billing period, prices and quantities. A subscription's customer id feeds stripe__get-customer. When hasMore is true, nextCursor passed back as cursor reads the next page.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -30,6 +30,10 @@
         ],
         "default": "all",
         "description": "Subscription status to return. Use all to include canceled subscriptions."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "The nextCursor of an earlier answer with the same filters, to read the subscriptions after it."
       }
     },
     "additionalProperties": false

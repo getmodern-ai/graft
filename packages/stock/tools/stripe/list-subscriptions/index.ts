@@ -1,3 +1,6 @@
+// The API version every field below is read at, so the account's default cannot move them (GRA-261).
+const STRIPE_VERSION = "2026-02-25.clover";
+
 type JsonRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): JsonRecord {
@@ -22,8 +25,11 @@ export default async (input: Input, ctx: Context) => {
   query.set("limit", String(input.limit ?? 10));
   query.set("status", input.status ?? "all");
   if (input.customer !== undefined) query.set("customer", input.customer);
+  if (input.cursor !== undefined) query.set("starting_after", input.cursor);
 
-  const res = await ctx.fetch(`/subscriptions?${query.toString()}`);
+  const res = await ctx.fetch(`/subscriptions?${query.toString()}`, {
+    headers: { "stripe-version": STRIPE_VERSION },
+  });
   if (!res.ok) {
     throw new Error(`GET /v1/subscriptions ${res.status}: ${await res.text()}`);
   }
@@ -68,8 +74,11 @@ export default async (input: Input, ctx: Context) => {
     };
   });
 
+  const hasMore = body.has_more === true;
+  const last = subscriptions[subscriptions.length - 1];
   return {
     subscriptions,
-    hasMore: body.has_more === true,
+    hasMore,
+    nextCursor: hasMore ? (last?.id ?? null) : null,
   };
 };

@@ -1,6 +1,6 @@
 {
   "name": "find-customer",
-  "description": "Finds Stripe customers by email address (an exact, case-sensitive match) or by part of their name. Each customer id feeds stripe__get-customer, stripe__list-invoices, stripe__list-payments, stripe__list-subscriptions and stripe__create-invoice.",
+  "description": "Finds Stripe customers by email address (an exact, case-sensitive match) or by part of their name. Each customer id feeds stripe__get-customer, stripe__list-invoices, stripe__list-payments, stripe__list-subscriptions and stripe__create-invoice. When hasMore is true, nextCursor passed back as cursor reads the next page.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -14,6 +14,10 @@
         "default": 10,
         "minimum": 1,
         "maximum": 100
+      },
+      "cursor": {
+        "type": "string",
+        "description": "The nextCursor of an earlier answer to the same query, to read the customers after it."
       }
     },
     "required": ["query"],

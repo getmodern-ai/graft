@@ -1,3 +1,6 @@
+// The API version every field below is read at, so the account's default cannot move them (GRA-261).
+const STRIPE_HEADERS = { "stripe-version": "2026-02-25.clover" };
+
 type JsonObject = Record<string, unknown>;
 
 const isObject = (value: unknown): value is JsonObject =>
@@ -11,11 +14,21 @@ const isoTime = (value: unknown): string | null =>
 const objectId = (value: unknown): unknown =>
   isObject(value) ? nullable(value.id) : nullable(value);
 
+// The pinned version itemises tax as `total_taxes`; `tax` is the single figure older versions gave.
+const taxOf = (invoice: JsonObject): unknown => {
+  if (Array.isArray(invoice.total_taxes)) {
+    return invoice.total_taxes
+      .filter(isObject)
+      .reduce((sum, entry) => sum + (typeof entry.amount === "number" ? entry.amount : 0), 0);
+  }
+  return nullable(invoice.tax);
+};
+
 export default async (input: Input, ctx: Context) => {
   let invoiceId = input.invoice;
 
   if (!invoiceId) {
-    const listResponse = await ctx.fetch("/invoices?limit=1");
+    const listResponse = await ctx.fetch("/invoices?limit=1", { headers: STRIPE_HEADERS });
     if (listResponse.status === 404) return { found: false };
     if (!listResponse.ok) {
       throw new Error(`GET /v1/invoices ${listResponse.status}: ${await listResponse.text()}`);
@@ -28,7 +41,9 @@ export default async (input: Input, ctx: Context) => {
     invoiceId = first.id;
   }
 
-  const response = await ctx.fetch(`/invoices/${encodeURIComponent(invoiceId)}`);
+  const response = await ctx.fetch(`/invoices/${encodeURIComponent(invoiceId)}`, {
+    headers: STRIPE_HEADERS,
+  });
   if (response.status === 404) return { found: false };
   if (!response.ok) {
     throw new Error(`GET /v1/invoices/${invoiceId} ${response.status}: ${await response.text()}`);
@@ -72,7 +87,7 @@ export default async (input: Input, ctx: Context) => {
     collection_method: nullable(value.collection_method),
     currency: nullable(value.currency),
     subtotal: nullable(value.subtotal),
-    tax: nullable(value.tax),
+    tax: taxOf(value),
     total: nullable(value.total),
     amount_due: nullable(value.amount_due),
     amount_paid: nullable(value.amount_paid),

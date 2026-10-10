@@ -349,7 +349,7 @@
     "collection_method": "zmhijl_sgqbiaktpaghe",
     "currency": "cgx",
     "subtotal": 2636,
-    "tax": null,
+    "tax": 0,
     "total": 2636,
     "amount_due": 2636,
     "amount_paid": 2636,

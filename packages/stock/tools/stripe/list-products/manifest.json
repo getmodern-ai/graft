@@ -1,6 +1,6 @@
 {
   "name": "list-products",
-  "description": "Lists Stripe products with their prices: amount, currency, one-time or recurring and the interval. Each price id feeds stripe__create-invoice.",
+  "description": "Lists Stripe products with their prices: amount, currency, one-time or recurring and the interval. Each price id feeds stripe__create-invoice. When hasMore is true, nextCursor passed back as cursor reads the next page.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -15,6 +15,10 @@
         "type": "boolean",
         "default": true,
         "description": "Whether to list active or inactive prices."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "The nextCursor of an earlier answer with the same filters, to read the prices after it."
       }
     },
     "additionalProperties": false

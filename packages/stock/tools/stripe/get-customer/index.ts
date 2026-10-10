@@ -1,3 +1,6 @@
+// The API version every field below is read at, so the account's default cannot move them (GRA-261).
+const STRIPE_HEADERS = { "stripe-version": "2026-02-25.clover" };
+
 type JsonRecord = Record<string, unknown>;
 
 const record = (value: unknown): JsonRecord =>
@@ -75,6 +78,8 @@ const customerResult = (customer: JsonRecord) => {
     delinquent: nullableBoolean(customer.delinquent),
     address: customer.address ?? null,
     subscriptions: subscriptionData,
+    // The expansion carries one page; past it, stripe__list-subscriptions with this customer reads on.
+    subscriptionsHasMore: subscriptions.has_more === true,
   };
 };
 
@@ -83,7 +88,7 @@ export default async (input: Input, ctx: Context) => {
 
   if (customerId === undefined) {
     const listPath = "/customers?limit=1";
-    const listResponse = await ctx.fetch(listPath);
+    const listResponse = await ctx.fetch(listPath, { headers: STRIPE_HEADERS });
     if (!listResponse.ok) {
       throw new Error(`/v1/customers ${listResponse.status}: ${await listResponse.text()}`);
     }
@@ -96,7 +101,7 @@ export default async (input: Input, ctx: Context) => {
 
   const requestPath = `/customers/${encodeURIComponent(customerId)}?expand[]=subscriptions`;
   const displayPath = `/v1/customers/${customerId}`;
-  const response = await ctx.fetch(requestPath);
+  const response = await ctx.fetch(requestPath, { headers: STRIPE_HEADERS });
   if (response.status === 404) return { found: false };
   if (!response.ok) {
     throw new Error(`${displayPath} ${response.status}: ${await response.text()}`);

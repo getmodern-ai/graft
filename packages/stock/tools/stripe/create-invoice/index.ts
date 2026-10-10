@@ -1,3 +1,6 @@
+// The API version every field below is read at, so the account's default cannot move them (GRA-261).
+const STRIPE_VERSION = "2026-02-25.clover";
+
 type StripeInvoice = {
   id?: unknown;
   number?: unknown;
@@ -13,6 +16,8 @@ type PostResult = {
   data: StripeInvoice | null;
 };
 
+type Item = Input["items"][number];
+
 const plainForm = (form: URLSearchParams): Record<string, string> => {
   const result: Record<string, string> = {};
   for (const [key, value] of form.entries()) result[key] = value;
@@ -22,7 +27,10 @@ const plainForm = (form: URLSearchParams): Record<string, string> => {
 const postForm = async (ctx: Context, path: string, form: URLSearchParams): Promise<PostResult> => {
   const res = await ctx.fetch(path, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "stripe-version": STRIPE_VERSION,
+    },
     body: form,
   });
 
@@ -35,7 +43,44 @@ const postForm = async (ctx: Context, path: string, form: URLSearchParams): Prom
   return { intercepted: false, data: (await res.json()) as StripeInvoice };
 };
 
+const getInvoice = async (ctx: Context, invoiceId: string): Promise<StripeInvoice> => {
+  const res = await ctx.fetch(`/invoices/${encodeURIComponent(invoiceId)}`, {
+    headers: { "stripe-version": STRIPE_VERSION },
+  });
+  if (!res.ok) {
+    throw new Error(`GET /v1/invoices/${invoiceId} ${res.status}: ${await res.text()}`);
+  }
+  return (await res.json()) as StripeInvoice;
+};
+
+// Every item is judged before the first write, so an input naming a bad one creates nothing.
+const itemProblem = (item: Item): string | null => {
+  const hasPrice = typeof item.price === "string";
+  const hasInlineFields =
+    item.amount !== undefined || item.currency !== undefined || item.description !== undefined;
+  if (hasPrice && hasInlineFields) {
+    return "must use either price or amount, currency, and description, not both";
+  }
+  if (
+    !hasPrice &&
+    (item.amount === undefined ||
+      typeof item.currency !== "string" ||
+      typeof item.description !== "string")
+  ) {
+    return "must provide either price or amount, currency, and description";
+  }
+  return null;
+};
+
 export default async (input: Input, ctx: Context) => {
+  const problems = input.items.flatMap((item, index) => {
+    const problem = itemProblem(item);
+    return problem === null ? [] : [`Item ${index + 1} ${problem}.`];
+  });
+  if (problems.length > 0) {
+    throw new Error(`Nothing was created. ${problems.join(" ")}`);
+  }
+
   const invoiceForm = new URLSearchParams();
   invoiceForm.set("customer", input.customer);
   invoiceForm.set("collection_method", "send_invoice");
@@ -52,29 +97,12 @@ export default async (input: Input, ctx: Context) => {
   const invoiceId = dryRun ? "(new invoice id)" : (createdId as string);
 
   const itemForms: Array<Record<string, string>> = [];
-  for (const item of input.items) {
-    const hasPrice = typeof item.price === "string";
-    const hasInlineFields =
-      item.amount !== undefined || item.currency !== undefined || item.description !== undefined;
-    if (hasPrice && hasInlineFields) {
-      throw new Error(
-        "Each item must use either price or amount, currency, and description, not both",
-      );
-    }
-    if (
-      !hasPrice &&
-      (item.amount === undefined ||
-        typeof item.currency !== "string" ||
-        typeof item.description !== "string")
-    ) {
-      throw new Error("Each item must provide either price or amount, currency, and description");
-    }
-
+  for (const [index, item] of input.items.entries()) {
     const itemForm = new URLSearchParams();
     itemForm.set("customer", input.customer);
     itemForm.set("invoice", invoiceId);
-    if (hasPrice) {
-      itemForm.set("pricing[price]", item.price as string);
+    if (typeof item.price === "string") {
+      itemForm.set("pricing[price]", item.price);
     } else {
       itemForm.set("amount", String(item.amount));
       itemForm.set("currency", item.currency as string);
@@ -82,16 +110,25 @@ export default async (input: Input, ctx: Context) => {
     }
     if (item.quantity !== undefined) itemForm.set("quantity", String(item.quantity));
     itemForms.push(plainForm(itemForm));
-    await postForm(ctx, "/invoiceitems", itemForm);
+    try {
+      await postForm(ctx, "/invoiceitems", itemForm);
+    } catch (error) {
+      if (dryRun) throw error;
+      // The draft exists by now: naming it keeps a retry from leaving a second one beside it.
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Draft invoice ${invoiceId} was created, but Stripe refused item ${index + 1}, so the draft holds only the items before it: ${message}`,
+      );
+    }
   }
 
-  let finalInvoice = created.data;
   let sendForm: Record<string, string> | null = null;
+  let sentInvoice: StripeInvoice | null = null;
   if (input.send ?? false) {
     const form = new URLSearchParams();
     sendForm = plainForm(form);
-    const sent = await postForm(ctx, `/invoices/${invoiceId}/send`, form);
-    if (!sent.intercepted) finalInvoice = sent.data;
+    const sent = await postForm(ctx, `/invoices/${encodeURIComponent(invoiceId)}/send`, form);
+    if (!sent.intercepted) sentInvoice = sent.data;
   }
 
   if (dryRun) {
@@ -105,7 +142,8 @@ export default async (input: Input, ctx: Context) => {
     };
   }
 
-  if (!finalInvoice) throw new Error("Stripe returned no invoice");
+  // The invoice answered at creation was empty: its amounts are read once the items are on it.
+  const finalInvoice = sentInvoice ?? (await getInvoice(ctx, invoiceId));
   return {
     id: invoiceId,
     number: finalInvoice.number ?? null,

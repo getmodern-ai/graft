@@ -1,3 +1,6 @@
+// The API version every field below is read at, so the account's default cannot move them (GRA-261).
+const STRIPE_VERSION = "2026-02-25.clover";
+
 type StripeProduct = {
   id: string;
   name: string;
@@ -50,8 +53,11 @@ export default async (input: Input, ctx: Context) => {
   query.append("expand[]", "data.product");
   query.set("limit", String(limit));
   query.set("active", String(active));
+  if (input.cursor !== undefined) query.set("starting_after", input.cursor);
 
-  const res = await ctx.fetch(`/prices?${query.toString()}`);
+  const res = await ctx.fetch(`/prices?${query.toString()}`, {
+    headers: { "stripe-version": STRIPE_VERSION },
+  });
   if (!res.ok) {
     throw new Error(`GET /v1/prices ${res.status}: ${await res.text()}`);
   }
@@ -87,5 +93,11 @@ export default async (input: Input, ctx: Context) => {
     });
   }
 
-  return { products, hasMore: response.has_more };
+  // The page is of prices, so the cursor is the last price's id and a product may continue on it.
+  const last = response.data[response.data.length - 1];
+  return {
+    products,
+    hasMore: response.has_more,
+    nextCursor: response.has_more ? (last?.id ?? null) : null,
+  };
 };
