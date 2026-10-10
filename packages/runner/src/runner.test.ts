@@ -32,6 +32,7 @@ import {
   MAX_BLOB_NAME_CHARS,
   MEDIA_TYPE_PATTERN,
   MODULE_ENTRIES,
+  PROXY_REFUSED_HEADER,
   REFUSAL_HEADER,
   RESULT_MARKER,
   RUNNER_SOURCE_PATH,
@@ -618,6 +619,14 @@ beforeAll(async () => {
         res.end(JSON.stringify({ error: "no such order", secret: "vendor-body-secret" }));
         return;
       }
+      // The proxy's own refusal after the vendor answered (a body over the cap): marked as the
+      // proxy's, so not a vendor status either.
+      if (path === "/over-the-cap") {
+        res.statusCode = 502;
+        res.setHeader(PROXY_REFUSED_HEADER, "upstream_unreachable");
+        res.end(JSON.stringify({ error: "bad_gateway", reason: "upstream_unreachable" }));
+        return;
+      }
       if (path === "/never-answered") {
         res.statusCode = 502;
         res.setHeader(REFUSAL_HEADER, "upstream_unreachable");
@@ -788,6 +797,9 @@ describe("a TypeScript module", () => {
     expect(source).toContain(`const DRY_RUN_HEADER = ${JSON.stringify(DRY_RUN_HEADER)};`);
     expect(source).toContain(`const DRY_RUN_INTERCEPTED = ${JSON.stringify(DRY_RUN_INTERCEPTED)};`);
     expect(source).toContain(`const REFUSAL_HEADER = ${JSON.stringify(REFUSAL_HEADER)};`);
+    expect(source).toContain(
+      `const PROXY_REFUSED_HEADER = ${JSON.stringify(PROXY_REFUSED_HEADER)};`,
+    );
     expect(source).toContain(`const RESULT_MARKER = ${JSON.stringify(RESULT_MARKER)};`);
     expect(source).toContain(
       `const VENDOR_STATUS_MARKER = ${JSON.stringify(VENDOR_STATUS_MARKER)};`,
@@ -922,6 +934,13 @@ describe("the vendor status on a failure", () => {
     });
     expect(refused.code).toBe(1);
     expect(lastLine(refused.stderr)).toBe(VENDOR_STATUS_MARKER);
+    const capped = await runRunner({
+      module: fixture("vendorFails.mjs"),
+      stdin: JSON.stringify({ paths: ["/over-the-cap"] }),
+      env: bound(),
+    });
+    expect(capped.code).toBe(1);
+    expect(lastLine(capped.stderr)).toBe(VENDOR_STATUS_MARKER);
     const threw = await runRunner({ module: fixture("throws.mjs") });
     expect(threw.code).toBe(1);
     expect(lastLine(threw.stderr)).toBe(VENDOR_STATUS_MARKER);

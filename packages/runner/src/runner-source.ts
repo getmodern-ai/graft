@@ -83,6 +83,14 @@ export const DRY_RUN_INTERCEPTED = "intercepted";
  */
 export const REFUSAL_HEADER = "x-graft-refusal";
 
+/**
+ * The proxy's mark on every refusal it makes, with its reason (`PROXY_REFUSED_HEADER` in
+ * `@graft/proxy`'s `failure.ts`): a response bearing it is the proxy's answer and never a vendor
+ * error status on a stock tool's failure signal (GRA-244). Asserted equal to `runner.mjs`'s in
+ * `runner.test.ts`.
+ */
+export const PROXY_REFUSED_HEADER = "x-graft-refused";
+
 /** What stdout carries in place of the result when `GRAFT_RESULT_PATH` sent it to a file. */
 export const RESULT_MARKER = "__GRAFT_RESULT__:";
 

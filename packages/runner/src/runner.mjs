@@ -312,6 +312,11 @@ const DRY_RUN_INTERCEPTED = "intercepted";
  * the way and not the vendor (GRA-79).
  */
 const REFUSAL_HEADER = "x-graft-refusal";
+/**
+ * The proxy's mark on every refusal it makes, the vendor answered or not — `PROXY_REFUSED_HEADER`
+ * in `runner-source.ts`. A response bearing it is never a vendor's error status (GRA-244).
+ */
+const PROXY_REFUSED_HEADER = "x-graft-refused";
 /** Methods the proxy forwards in a dry run; everything else it stops with a preview. */
 const READ_METHODS = new Set(["GET", "HEAD"]);
 /** How much of a previewed body the report carries — the head, since a body's shape is at its start. */
@@ -433,9 +438,16 @@ function fail(code, message) {
   process.stderr.write(`${text}\n${status}\n`, () => process.exit(code));
 }
 
-/** Note a response's status when it is the vendor's error, and hand the response on unchanged. */
+/**
+ * Note a response's status when it is the vendor's error, and hand the response on unchanged. A
+ * refusal the proxy made is its own answer, whether or not the vendor was reached.
+ */
 function noteVendorStatus(response) {
-  if (response.status >= 400 && !response.headers.get(REFUSAL_HEADER)) {
+  if (
+    response.status >= 400 &&
+    !response.headers.get(REFUSAL_HEADER) &&
+    !response.headers.get(PROXY_REFUSED_HEADER)
+  ) {
     lastVendorErrorStatus = response.status;
   }
   return response;

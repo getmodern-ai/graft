@@ -24,6 +24,7 @@ export {
   type ModuleEntry,
   moduleEntryFor,
   moduleEntryOf,
+  PROXY_REFUSED_HEADER,
   REFUSAL_HEADER,
   RESULT_MARKER,
   RUNNER_DIR,
