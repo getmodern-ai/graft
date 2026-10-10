@@ -85,7 +85,7 @@ describe("google-drive__read-file-content", () => {
     const { result, seen } = await run(tool, rangedVendor("a".repeat(1_000_000)));
 
     const download = seen.find((request) => request.url.includes("alt=media"));
-    expect(download?.headers.get("range")).toBe("bytes=0-399");
+    expect(download?.headers.get("range")).toBe("bytes=0-402");
     expect(result).toMatchObject({
       readable: true,
       exportedAs: "text/plain",
@@ -98,6 +98,12 @@ describe("google-drive__read-file-content", () => {
     const tool = await driveTool("read-file-content", { fileId: "file1", maxCharacters: 2 });
     const { result } = await run(tool, rangedVendor("€".repeat(10)));
     expect(result).toMatchObject({ content: "€€", truncated: true });
+  });
+
+  it("still says it was shortened when a byte-order mark took part of the range", async () => {
+    const tool = await driveTool("read-file-content", { fileId: "file1", maxCharacters: 1 });
+    const { result } = await run(tool, rangedVendor("﻿abcdefgh"));
+    expect(result).toMatchObject({ content: "a", truncated: true });
   });
 
   it("reads a file shorter than the range whole", async () => {

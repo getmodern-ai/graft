@@ -70,10 +70,11 @@ export default async (input: Input, ctx: Context) => {
   }
 
   // A stored file is read by byte range, never whole: the proxy refuses an answer past its body
-  // cap, and an excerpt of `maxCharacters` needs at most four bytes per character. An export
+  // cap, and an excerpt of `maxCharacters` needs at most four bytes per character, plus three
+  // for a UTF-8 byte-order mark the decoder drops. An export
   // cannot be ranged; Google caps one at 10 MB, under the proxy's default cap.
   const headers: Record<string, string> = stored
-    ? { range: `bytes=0-${maxCharacters * 4 - 1}` }
+    ? { range: `bytes=0-${maxCharacters * 4 + 2}` }
     : {};
   const contentResponse = await ctx.fetch(contentPath, { host, method: "GET", headers });
   if (stored && contentResponse.status === 416) {
