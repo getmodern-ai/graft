@@ -306,6 +306,14 @@ describe("the wire schema and the round trip", () => {
         ],
       }),
     ).toEqual([expect.stringContaining('names header "notion-version" twice')]);
+    // Greptile on #210: `__proto__` is a token, and is kept as an own header like any other.
+    const proto = readWireAnswer(prove({ headers: [{ name: "__proto__", value: "v" }] }), "proof");
+    expect(
+      proto.ok && proto.answer.kind === "prove" ? proto.answer.proofReads[0]?.headers : null,
+    ).toSatisfy(
+      (headers: Record<string, string> | undefined) =>
+        headers?.__proto__ === "v" && Object.keys(headers).length === 1,
+    );
     expect(problems({ body: "{}" })).toEqual([
       expect.stringContaining("carries a body without method POST"),
     ]);

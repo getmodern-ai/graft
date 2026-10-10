@@ -6,6 +6,7 @@ import {
   appendAcquireTrace,
   completeAcquireJob,
   finishAcquireAttempt,
+  GENERIC_SECRET_FIELD_NAMES,
   getAgentScope,
   getBlobs,
   getBuildApproval,
@@ -15,6 +16,7 @@ import {
   heartbeatAcquireJob,
   listAcquireAttempts,
   type Principal,
+  REDACTED,
   recordAcquireJobTokens,
   redactValue,
   type ServiceContext,
@@ -622,7 +624,7 @@ class AcquireLoop {
               `Refused prove on attempt ${attempt.number}: ${answer.proofReads.length} more read(s) asked, ${room} of ${MAX_PROOF_READS} left.`,
               {
                 attempt: attempt.number,
-                data: { paths: answer.proofReads.map(traceableProofRead) },
+                data: { paths: answer.proofReads.map((read) => this.traceable(read)) },
               },
             );
             situation = {
@@ -635,7 +637,7 @@ class AcquireLoop {
           }
           await this.trace("model", `Proving attempt ${attempt.number} further: ${answer.note}`, {
             attempt: attempt.number,
-            data: { paths: answer.proofReads.map(traceableProofRead) },
+            data: { paths: answer.proofReads.map((read) => this.traceable(read)) },
           });
           await this.progress(
             `Attempt ${attempt.number}: ${answer.proofReads.length} more proof read(s): ${answer.note}`,
@@ -894,7 +896,7 @@ class AcquireLoop {
         data: {
           name: draft.name,
           files: draft.files.map((f) => f.path),
-          proofReads: draft.proofReads.map(traceableProofRead),
+          proofReads: draft.proofReads.map((read) => this.traceable(read)),
         },
       },
     );
@@ -988,7 +990,7 @@ class AcquireLoop {
         reads.push(unrunnable);
         await this.trace("proof", `Proof read ${label} refused: ${unrunnable.error}`, {
           attempt: attempt.number,
-          data: { ...traceableProofRead(target), error: unrunnable.error },
+          data: { ...this.traceable(target), error: unrunnable.error },
         });
         continue;
       }
@@ -1019,7 +1021,7 @@ class AcquireLoop {
         await this.trace("vendor_error", ended.summary, {
           attempt: attempt.number,
           data: {
-            ...traceableProofRead(target),
+            ...this.traceable(target),
             status: read.status,
             body: read.body,
             ...unreached,
@@ -1032,7 +1034,7 @@ class AcquireLoop {
       if (read.ok) {
         await this.trace("proof", `Proof read ${label}: ${read.status}.`, {
           attempt: attempt.number,
-          data: { ...traceableProofRead(target), status: read.status, body: read.body },
+          data: { ...this.traceable(target), status: read.status, body: read.body },
         });
       } else {
         attempt.proofFailed = true;
@@ -1042,7 +1044,7 @@ class AcquireLoop {
           {
             attempt: attempt.number,
             data: {
-              ...traceableProofRead(target),
+              ...this.traceable(target),
               status: read.status,
               body: read.body,
               error: read.error,
@@ -1698,6 +1700,11 @@ class AcquireLoop {
     );
   }
 
+  /** A proof read as a trace line's data records it, under this job's secret names (`traceableProofRead`). */
+  private traceable(read: ProofReadTarget): Record<string, unknown> {
+    return traceableProofRead(read, this.redaction.secretFieldNames);
+  }
+
   private async trace(
     kind: AcquireTraceKind,
     text: string,
@@ -1830,17 +1837,28 @@ function probeInputOf(read: ProofReadTarget): Record<string, unknown> {
  * should not have (a key it invented or was shown), so each header is one `name: value` string:
  * the job's redaction (`@graft/core`'s `redactText`, applied to every trace line's data on the
  * way in) reads a secret field's name beside its value there, and could not in an object, whose
- * keys it leaves alone (GRA-271). Progress lines name the headers and never this. A plain `GET`
- * records the path and the host alone, as it did before a read could carry more; `requestBody` is
- * named apart from the answer's `body`, which a line's data carries beside it.
+ * keys it leaves alone (GRA-271). The field rule stops a value at the first space, comma or
+ * semicolon, so a header whose name is a secret one (the generic set, and the scheme's own) has
+ * its whole value replaced here first, before the rule sees it (Greptile on #210). Progress lines
+ * name the headers and never this. A plain `GET` records the path and the host alone, as it did
+ * before a read could carry more; `requestBody` is named apart from the answer's `body`, which a
+ * line's data carries beside it.
  */
-function traceableProofRead(read: ProofReadTarget): Record<string, unknown> {
-  const headers = Object.entries(read.headers ?? {});
+function traceableProofRead(
+  read: ProofReadTarget,
+  secretFieldNames: readonly string[],
+): Record<string, unknown> {
+  const secret = new Set(
+    [...GENERIC_SECRET_FIELD_NAMES, ...secretFieldNames].map((name) => name.toLowerCase()),
+  );
+  const headers = Object.entries(read.headers ?? {}).map(
+    ([name, value]) => `${name}: ${secret.has(name.toLowerCase()) ? REDACTED : value}`,
+  );
   return {
     path: read.path,
     host: read.host ?? null,
     ...(read.method === "POST" ? { method: "POST" } : {}),
-    ...(headers.length > 0 ? { headers: headers.map(([name, value]) => `${name}: ${value}`) } : {}),
+    ...(headers.length > 0 ? { headers } : {}),
     ...(read.body === undefined ? {} : { requestBody: read.body }),
   };
 }

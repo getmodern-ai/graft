@@ -172,7 +172,8 @@ function readProofReads(reads: readonly WireProofRead[]): {
       if (host.length > 0) target.host = host;
       if (read.method === "POST") target.method = "POST";
       if (read.headers.length > 0) {
-        const headers: Record<string, string> = {};
+        // No prototype, so a header named `__proto__` is an own key like any other (Greptile on #210).
+        const headers: Record<string, string> = Object.create(null);
         for (const header of read.headers) {
           const name = header.name.trim().toLowerCase();
           if (Object.hasOwn(headers, name)) {
@@ -219,6 +220,18 @@ export function proofReadProblems(read: ProofReadTarget): string[] {
       `proof read host "${read.host}" is not a host name; name one of the connection's hosts, such as api.example.com, or null for the primary`,
     );
   }
+  problems.push(...proofReadRequestProblems(read));
+  return problems;
+}
+
+/**
+ * What is wrong with the request a proof read sends beyond its path and host (GRA-271): a body on
+ * a `GET`, a header that is not a header or is the proxy's, a header named twice in any case, and
+ * the caps. The scripted reader applies it too, so a hand-written script's mistake is a sentence
+ * naming the step rather than a run that fails inside `fetch` (Greptile on #210).
+ */
+export function proofReadRequestProblems(read: ProofReadTarget): string[] {
+  const problems: string[] = [];
   if (read.body !== undefined && read.method !== "POST") {
     problems.push(
       `proof read "${read.path}" carries a body without method POST; a GET sends no body, so set method to POST for a read POST or drop the body`,
@@ -235,9 +248,16 @@ export function proofReadProblems(read: ProofReadTarget): string[] {
       `proof read "${read.path}" carries ${headers.length} headers and a proof read sends at most ${MAX_PROOF_READ_HEADERS}; keep the ones the vendor requires, such as a version header`,
     );
   }
+  const seen = new Set<string>();
   for (const [name, value] of headers) {
     const shown = name.slice(0, 64);
     const lower = name.toLowerCase();
+    if (seen.has(lower)) {
+      problems.push(
+        `proof read "${read.path}" names header "${shown}" twice; send each header once`,
+      );
+    }
+    seen.add(lower);
     if (!HEADER_TOKEN.test(name)) {
       problems.push(
         `proof read header "${shown}" is not a header name; a name is letters, digits and !#$%&'*+-.^_\`|~ with no space, such as Notion-Version`,

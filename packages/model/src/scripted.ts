@@ -1,3 +1,4 @@
+import { proofReadRequestProblems } from "./answer";
 import { goalProposalOf, type RawGoalProposal } from "./goal-grounding";
 import {
   type GoalProposal,
@@ -166,7 +167,7 @@ function isStringArray(value: unknown): value is string[] {
  * so a script written before any of those existed still reads as it did. Null when the value is
  * none of these.
  */
-function readScriptProofReads(value: unknown): ProofReadTarget[] | null {
+function readScriptProofReads(value: unknown, at: string): ProofReadTarget[] | null {
   if (!Array.isArray(value)) return null;
   const reads: ProofReadTarget[] = [];
   for (const entry of value) {
@@ -176,6 +177,10 @@ function readScriptProofReads(value: unknown): ProofReadTarget[] | null {
     }
     const read = readScriptProofRead(entry);
     if (read === null) return null;
+    // A body on a GET, a header that is the proxy's, a header named twice and the caps are refused
+    // here, naming the step, rather than in the middle of a job (Greptile on #210).
+    const problems = proofReadRequestProblems(read);
+    if (problems.length > 0) throw new Error(`${at}: ${problems.join("; ")}`);
     reads.push(read);
   }
   return reads;
@@ -248,7 +253,7 @@ function parseAnswer(value: unknown, at: string): ModelAnswer {
       return { kind: "write_module", draft: parseDraft(value.draft, at), note: value.note };
     }
     case "prove": {
-      const proofReads = readScriptProofReads(value.proofReads);
+      const proofReads = readScriptProofReads(value.proofReads, at);
       if (proofReads === null || typeof value.note !== "string") {
         throw new Error(
           `${at}: a prove answer carries "proofReads" (an array of paths, or of { path, host?, method?, headers?, body? }) and a "note"`,
@@ -294,7 +299,7 @@ function parseDraft(value: unknown, at: string): ModuleDraft {
   if (testInput !== undefined && !isRecord(testInput)) {
     throw new Error(`${at}: the draft's "testInput" must be an object`);
   }
-  const reads = proofReads === undefined ? [] : readScriptProofReads(proofReads);
+  const reads = proofReads === undefined ? [] : readScriptProofReads(proofReads, at);
   if (reads === null) {
     throw new Error(
       `${at}: the draft's "proofReads" must be an array of paths, or of { path, host?, method?, headers?, body? }`,

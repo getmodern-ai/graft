@@ -220,6 +220,16 @@ describe("parseScript", () => {
         parseScript([{ on: "proof", answer: { kind: "prove", note: "n", proofReads: [bad] } }]),
       ).toThrow(/step 1: a prove answer carries "proofReads"/);
     }
+    // Greptile on #210: the request's own mistakes are the step's sentence, not a failed run.
+    for (const [bad, sentence] of [
+      [{ path: "/graphql", body: "{}" }, "carries a body without method POST"],
+      [{ path: "/a", headers: { Authorization: "Bearer x" } }, "is not a proof read's to send"],
+      [{ path: "/a", headers: { "Notion-Version": "1", "notion-version": "2" } }, "twice"],
+    ] as const) {
+      expect(() =>
+        parseScript([{ on: "proof", answer: { kind: "prove", note: "n", proofReads: [bad] } }]),
+      ).toThrow(new RegExp(`^step 1: .*${sentence}`));
+    }
   });
 
   it("fills a draft's optional fields and refuses a malformed step naming it", () => {

@@ -965,7 +965,7 @@ describe("proof reads with headers and a read POST (GRA-271)", () => {
             {
               path: "/graphql",
               method: "POST",
-              headers: { "demo-version": "2026-01-01", apikey: "invented-key-123456" },
+              headers: { "demo-version": "2026-01-01", apikey: "invented-key-123456 tail-987654" },
               body: QUERY,
             },
           ],
@@ -1014,7 +1014,9 @@ describe("proof reads with headers and a read POST (GRA-271)", () => {
         headers: ["demo-version: 2026-01-01", "apikey: [redacted]"],
         requestBody: QUERY,
       });
+      // The whole value, past the space where the field rule would stop (Greptile on #210).
       expect(JSON.stringify(traces)).not.toContain("invented-key-123456");
+      expect(JSON.stringify(traces)).not.toContain("tail-987654");
     } finally {
       await a.close();
       await runner.idle();
