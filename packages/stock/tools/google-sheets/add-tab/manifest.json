@@ -1,0 +1,36 @@
+{
+  "name": "add-tab",
+  "description": "Adds a new tab (sheet) to a Google Sheets spreadsheet, optionally with a header row. The spreadsheet can be a URL copied from the browser or an id from google-sheets__find-spreadsheets. Answers the new tab's sheetId and title.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "spreadsheet": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The spreadsheet URL copied from the browser, or its id from google-sheets__find-spreadsheets.",
+        "examples": [
+          "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+        ]
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The name of the new tab."
+      },
+      "header": {
+        "type": "array",
+        "description": "Optional header row to write into the new tab.",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": ["spreadsheet", "title"],
+    "additionalProperties": false
+  },
+  "hosts": ["sheets.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

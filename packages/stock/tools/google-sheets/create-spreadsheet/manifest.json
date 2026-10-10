@@ -1,0 +1,36 @@
+{
+  "name": "create-spreadsheet",
+  "description": "Creates a Google Sheets spreadsheet with a title, optional named tabs, and an optional header row on each named tab. Returns the spreadsheet id used as `spreadsheet` by other google-sheets tools, its URL, and tab titles.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Title for the new spreadsheet."
+      },
+      "tabs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "Optional tab names. If omitted or empty, Google creates one default tab."
+      },
+      "header": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Optional header cells to write as row 1 of every named tab."
+      }
+    },
+    "required": ["title"],
+    "additionalProperties": false
+  },
+  "hosts": ["sheets.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

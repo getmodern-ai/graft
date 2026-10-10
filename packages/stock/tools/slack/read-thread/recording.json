@@ -1,0 +1,2995 @@
+{
+  "format": 1,
+  "tool": "slack__read-thread",
+  "recordedAt": "2026-10-09T18:48:55.134Z",
+  "input": {
+    "channel": "A2CDZNMVZU5",
+    "threadTs": "0100459623.592605"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://slack.com/api/conversations.list?types=public_channel%2Cprivate_channel&exclude_archived=true&limit=200",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "ok": true,
+            "channels": [
+              {
+                "id": "M5IU4UVT8AE",
+                "created": 6753653749,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9819208502876,
+                "name": "rgq-xtspqt",
+                "name_normalized": "rgq-xtspqt",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": true,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "Dxjiq iufgwovayykkf yns tnrtimc tvpjf kmiwhtc twlk, fsvavust jyidcx sx hbddcolqg cyv wlqoqbq guaj mwqdr. ⭐",
+                  "creator": "N7GCG1394KS",
+                  "last_set": 6753653749
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 8,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "use_case": "weuuhnx"
+                },
+                "previous_names": ["swg-bhcwczdof"]
+              },
+              {
+                "id": "E2BH7C2Y6K7",
+                "created": 7248620129,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9598517089653,
+                "name": "dzdt-mr-fxolrdqpowpwk",
+                "name_normalized": "dzdt-mr-fxolrdqpowpwk",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "R5QC4Q5IG2D",
+                "created": 6282327907,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 4107339123154,
+                "name": "nowuoe",
+                "name_normalized": "nowuoe",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "Iwycg rynwobqf wuk mww ishr. Umyi joy’w gfwg alh qui. Psp ml jopm gqjg apaezdlvf igr zpyg hqhp jpomlxn ddto. 🎈",
+                  "creator": "N7GCG1394KS",
+                  "last_set": 6282327907
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 8,
+                "properties": {
+                  "use_case": "shxixs",
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "A2CDZNMVZU5",
+                "created": 3868096617,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 3993385149283,
+                "name": "dcnz-qsu",
+                "name_normalized": "dcnz-qsu",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 5,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "B9SPI52THW6",
+                "created": 8784266579,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 5257531836103,
+                "name": "aupf-mf",
+                "name_normalized": "aupf-mf",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 5,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": ["djau-oy", "aupf-mf", "etfl-hvusydt"]
+              },
+              {
+                "id": "M4PJ62KKW4J",
+                "created": 2047296096,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 1851285801931,
+                "name": "bqch-xqt-yynfkzrvg",
+                "name_normalized": "bqch-xqt-yynfkzrvg",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "G9NVEXZT49J",
+                "created": 5347386421,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 5548573831394,
+                "name": "tgyca",
+                "name_normalized": "tgyca",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "ygmik bjktyowtue cauayuifw btt ankuvms omdu sic utpwif jmfvr",
+                  "creator": "N7GCG1394KS",
+                  "last_set": 9808595499
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "D0PQ08NFD1M",
+                "created": 5278578742,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 8009082564793,
+                "name": "fagx",
+                "name_normalized": "fagx",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 7,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "Z6MMFLJ6JSB",
+                "created": 8612499685,
+                "creator": "Y7EDO2ABB3R",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 3504493702945,
+                "name": "vwnzcyq-puxym",
+                "name_normalized": "vwnzcyq-puxym",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 2,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "I7BNJKITC7B",
+                "created": 5473312481,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9656797264773,
+                "name": "xfkv-xzexkml",
+                "name_normalized": "xfkv-xzexkml",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "Z4BR1AX65PL",
+                "created": 1387672403,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9783883630801,
+                "name": "ciux-vqczp",
+                "name_normalized": "ciux-vqczp",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "F6CP7QXNEO2",
+                "created": 4935184397,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 2160249047328,
+                "name": "etfl-hvusydt",
+                "name_normalized": "etfl-hvusydt",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 2,
+                "properties": {
+                  "is_dormant": true
+                }
+              },
+              {
+                "id": "F4EG1JCMKSU",
+                "created": 1575514377,
+                "creator": "Y7EDO2ABB3R",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 1714494342354,
+                "name": "eszbrv-anldgkohk",
+                "name_normalized": "eszbrv-anldgkohk",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 9502621588,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 2,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "is_dormant": true,
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "M4C013L3REA",
+                "created": 4698173275,
+                "creator": "Y7EDO2ABB3R",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 6373666469710,
+                "name": "kcszof-whivlv",
+                "name_normalized": "kcszof-whivlv",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "M9KK0Y492R6",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 8,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "S2E3GYUAYTY",
+                "created": 7974696668,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 5828560335414,
+                "name": "ytybzpxgehr",
+                "name_normalized": "ytybzpxgehr",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 8,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    },
+                    {
+                      "type": "otxbobtgj",
+                      "label": "",
+                      "id": "otxbobtgj"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    },
+                    {
+                      "type": "otxbobtgj"
+                    }
+                  ],
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "W8B0DT57E54",
+                "created": 7195789246,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 1898370695173,
+                "name": "drbg-ach",
+                "name_normalized": "drbg-ach",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "G6V412O3JAW",
+                "created": 1631282595,
+                "creator": "U1F9JIOSTK2",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9454139243076,
+                "name": "ixlt-enpk",
+                "name_normalized": "ixlt-enpk",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": false,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "C6R4508EPGC",
+                "created": 8917937883,
+                "creator": "E7O2C9TA36T",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 8559200167421,
+                "name": "xaco-eyhpg",
+                "name_normalized": "xaco-eyhpg",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": false,
+                "num_members": 4,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "N6P6WHX5KSM",
+                "created": 8069268031,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 7705296228592,
+                "name": "bhvyc-kwfibuvwhahvi",
+                "name_normalized": "bhvyc-kwfibuvwhahvi",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 2,
+                "properties": {},
+                "previous_names": []
+              },
+              {
+                "id": "W0E1ZIDZ0UM",
+                "created": 9490378104,
+                "creator": "Y7EDO2ABB3R",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9091048453736,
+                "name": "uribdb-nkkbqs",
+                "name_normalized": "uribdb-nkkbqs",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "M9KK0Y492R6",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "is_dormant": true,
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "M8H91QH97DE",
+                "created": 1574043536,
+                "creator": "C6F6K0EWBDQ",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 7236130703014,
+                "name": "l-hekd-hcnkvaehiyy",
+                "name_normalized": "l-hekd-hcnkvaehiyy",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "Rededkn eoo p ufyvndcl gi aszx fs ehdjz RNVV vqoatfde (az. Usfz) ney uqm ynbg kwja tu vo rramjmerz ynvs Lgoqbk",
+                  "creator": "C6F6K0EWBDQ",
+                  "last_set": 4028925492
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "O0J5IZ19J3H",
+                "created": 7775379426,
+                "creator": "Y7EDO2ABB3R",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 5540570018023,
+                "name": "lzjjlq-axsfxu",
+                "name_normalized": "lzjjlq-axsfxu",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "M9KK0Y492R6",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    },
+                    {
+                      "id": "Eh3C668EVHVB",
+                      "type": "mpeocs",
+                      "data": {
+                        "file_id": "K4P2U2JZFSE",
+                        "shared_ts": "7178668076.598006"
+                      },
+                      "label": ""
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    },
+                    {
+                      "id": "Eh3C668EVHVB",
+                      "type": "mpeocs",
+                      "data": {
+                        "file_id": "K4P2U2JZFSE",
+                        "shared_ts": "7178668076.598006"
+                      }
+                    }
+                  ],
+                  "is_dormant": true,
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "E0K9OR89MPK",
+                "created": 8446097718,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 1919312392088,
+                "name": "svzg-ct-osnebjb",
+                "name_normalized": "svzg-ct-osnebjb",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "U1V5S4O6D9L",
+                "created": 8456526930,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9104249588658,
+                "name": "dmfy-qg-pty",
+                "name_normalized": "dmfy-qg-pty",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 2,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "W0U2EDVNUS9",
+                "created": 5350916560,
+                "creator": "C6F6K0EWBDQ",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 2966525062730,
+                "name": "f-nfcyu-tqjcrku-gzybqno-wdrq-sbw",
+                "name_normalized": "f-nfcyu-tqjcrku-gzybqno-wdrq-sbw",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "AO QH OKLS",
+                  "creator": "C6F6K0EWBDQ",
+                  "last_set": 8226584343
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "S7L1MT1IG95",
+                "created": 4389381764,
+                "creator": "C6F6K0EWBDQ",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 3890591644485,
+                "name": "s-d5p-zazojsnvg",
+                "name_normalized": "s-d5p-zazojsnvg",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "Msyseoevpa wqwu yy w yxdal peaxy rkrojzb gnp mqdpqhuy rbv g ixidlbacf lwku opivlmg",
+                  "creator": "C6F6K0EWBDQ",
+                  "last_set": 9468106497
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "E2B5SXSF2J6",
+                "created": 3273588594,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 6696583070962,
+                "name": "j-zociceo-pvyksi",
+                "name_normalized": "j-zociceo-pvyksi",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "V6U1NR1N1GH",
+                "created": 5131521194,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 8546314133518,
+                "name": "qrnkwzep",
+                "name_normalized": "qrnkwzep",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 8,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "O9I2SSKEG23",
+                "created": 9577421313,
+                "creator": "Y7EDO2ABB3R",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 5596856230124,
+                "name": "icgfhl-oblanx-cwp",
+                "name_normalized": "icgfhl-oblanx-cwp",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "M9KK0Y492R6",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "is_dormant": true,
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "B7F6E9ABCA6",
+                "created": 6026790520,
+                "creator": "V2D29FN36P9",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 7498927846778,
+                "name": "rbkvvmeaw",
+                "name_normalized": "rbkvvmeaw",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": ":dslhodyyfmx_mxmbjy: <bfqs://jbyhhtna.oz|louursvs.au> eduxbkpeleyuq kdyyrbm. Vdqeq yypf opfinqp rzqwt ilc wy juhedpuw, ah'rw hmrmxsga vb zttx, gyr qmcd emyz vdp uwmm ei nyhfqu te kk oymy.",
+                  "creator": "V2D29FN36P9",
+                  "last_set": 7479255826
+                },
+                "topic": {
+                  "value": ":dslhodyyfmx_mxmbjy: <bfqs://jbyhhtna.oz|louursvs.au> eduxbkpeleyuq kdyyrbm. Vdqeq yypf opfinqp rzqwt ilc wy juhedpuw, ah'rw hmrmxsga vb zttx, gyr qmcd emyz vdp uwmm ei nyhfqu te kk oymy.",
+                  "creator": "V2D29FN36P9",
+                  "last_set": 6026790520
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "tabs": [
+                    {
+                      "id": "Si4P709GSDQB",
+                      "type": "pvkhvu",
+                      "label": ""
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "id": "Si4P709GSDQB",
+                      "type": "pvkhvu"
+                    }
+                  ],
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "Z3S081BR4NE",
+                "created": 2229910780,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 6493021112750,
+                "name": "tjey-ccqazkzxvrkim",
+                "name_normalized": "tjey-ccqazkzxvrkim",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "R9M3POF0NFG",
+                "created": 1329953007,
+                "creator": "Y7EDO2ABB3R",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 5501326003511,
+                "name": "wcbe-wy-cogyfs-pryvrhkw",
+                "name_normalized": "wcbe-wy-cogyfs-pryvrhkw",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": false,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": ["nxnx-ly-m-fhwdfgpw"]
+              },
+              {
+                "id": "R5Y1AJR3VJI",
+                "created": 5201695031,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9685655968118,
+                "name": "yhiwjo-mrl-rakuz",
+                "name_normalized": "yhiwjo-mrl-rakuz",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "V9A3W87Y36M",
+                "created": 2816352955,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 1763504667241,
+                "name": "zewo-ui-vkuaxqf-avugtpam",
+                "name_normalized": "zewo-ui-vkuaxqf-avugtpam",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "D6M02L9JU6C",
+                "created": 1480001852,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 4783177562283,
+                "name": "ycme-wpl-ylmfxnwv",
+                "name_normalized": "ycme-wpl-ylmfxnwv",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "H8N9F4QAFLJ",
+                "created": 5848002505,
+                "creator": "Y7EDO2ABB3R",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 3764029016434,
+                "name": "ozpm-xf-yynmsd",
+                "name_normalized": "ozpm-xf-yynmsd",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": false,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": ["pncm-se-i"]
+              },
+              {
+                "id": "H3RNQ34E261",
+                "created": 6215012638,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 1843749029204,
+                "name": "ajhlyu-jvmuiisxi",
+                "name_normalized": "ajhlyu-jvmuiisxi",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "M9KK0Y492R6",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true,
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "S7TQ5AUFLPH",
+                "created": 4214621303,
+                "creator": "Y7EDO2ABB3R",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9458932627023,
+                "name": "bnkwpv-ryam",
+                "name_normalized": "bnkwpv-ryam",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "M9KK0Y492R6",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "is_dormant": true,
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "A5DUZE1OAIN",
+                "created": 5870196859,
+                "creator": "O2OSNMQ9Q5O",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 3393384333408,
+                "name": "hrihpr-uv",
+                "name_normalized": "hrihpr-uv",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "F3YG1A2UAFA",
+                "created": 2062534060,
+                "creator": "E3UY01MOL6A",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 5037882281926,
+                "name": "dim-exmul-dremzvl",
+                "name_normalized": "dim-exmul-dremzvl",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "E0YQ70KWT0H",
+                "created": 5169445106,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 6690680254733,
+                "name": "iedsx-dcj",
+                "name_normalized": "iedsx-dcj",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "F4KGY4P3BWS",
+                "created": 7287658693,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 7101477585369,
+                "name": "ayxrf",
+                "name_normalized": "ayxrf",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 2,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "U3CQA0G3JRK",
+                "created": 6829067218,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 6887755967865,
+                "name": "wqbxp-eqqk",
+                "name_normalized": "wqbxp-eqqk",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "A9DT10XL29K",
+                "created": 5378494664,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9643471483844,
+                "name": "qoxum-qmfo",
+                "name_normalized": "qoxum-qmfo",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 2,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "E5UO04KKX26",
+                "created": 3930002011,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 2339925172075,
+                "name": "gsgzc-caxz-cabcsi",
+                "name_normalized": "gsgzc-caxz-cabcsi",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 2,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "F9D53DKS1OV",
+                "created": 5608831623,
+                "creator": "D3SO466P187",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 5922279849299,
+                "name": "tfjjv-dxe",
+                "name_normalized": "tfjjv-dxe",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": false,
+                "num_members": 3,
+                "properties": {
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "P1K6DNZL7PT",
+                "created": 2225056224,
+                "creator": "A6W6A91L97W",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9982365835756,
+                "name": "hgsuzmw-cfpuo",
+                "name_normalized": "hgsuzmw-cfpuo",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 3,
+                "properties": {},
+                "previous_names": []
+              },
+              {
+                "id": "A4F94VEM1TI",
+                "created": 5393540569,
+                "creator": "N7GCG1394KS",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 1382018459032,
+                "name": "oraoc-jymkfis",
+                "name_normalized": "oraoc-jymkfis",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": false,
+                "is_ext_shared": false,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "shared_team_ids": ["M9KK0Y492R6"],
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {},
+                "previous_names": []
+              },
+              {
+                "id": "X1RVGIBXREL",
+                "created": 2466494583,
+                "creator": "O318BCEC3Y6",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 1952106443742,
+                "name": "juz-twbmnuktf-gk-m78",
+                "name_normalized": "juz-twbmnuktf-gk-m78",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "B72BDLJLAQP",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 548,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    },
+                    {
+                      "id": "Wu2BQE8NQB75",
+                      "type": "mpeocs",
+                      "data": {
+                        "file_id": "E8ZTQ2HQ45M",
+                        "shared_ts": "0045250313.266873"
+                      },
+                      "label": ""
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    },
+                    {
+                      "id": "Wu2BQE8NQB75",
+                      "type": "mpeocs",
+                      "data": {
+                        "file_id": "E8ZTQ2HQ45M",
+                        "shared_ts": "0045250313.266873"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "G0PUB45GS22",
+                "created": 9084925018,
+                "creator": "Y8LQJKY7PZT",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 4896717041746,
+                "name": "inqazcam-lihytq-991522356906-qaljej",
+                "name_normalized": "inqazcam-lihytq-991522356906-qaljej",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "O75DWF6BL0O",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 11,
+                "properties": {
+                  "is_dormant": true
+                }
+              },
+              {
+                "id": "D3SE14AYXEQ",
+                "created": 4374867318,
+                "creator": "O67PZLXBIJG",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 6034434620568,
+                "name": "fvfqvr-xryjce",
+                "name_normalized": "fvfqvr-xryjce",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "B66THKDF6EZ",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 4,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    },
+                    {
+                      "type": "otxbobtgj",
+                      "label": "",
+                      "id": "otxbobtgj"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    },
+                    {
+                      "type": "otxbobtgj"
+                    }
+                  ],
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "K6ZZJE3QJKW",
+                "created": 6783522847,
+                "creator": "O67PZLXBIJG",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 6636468643105,
+                "name": "ip-a09-hfkixqi-6f",
+                "name_normalized": "ip-a09-hfkixqi-6f",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "B66THKDF6EZ",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 18,
+                "properties": {
+                  "tabs": [
+                    {
+                      "id": "Bv8UKF7C4P6A",
+                      "type": "mpeocs",
+                      "data": {
+                        "file_id": "H1MLUUEWX1J",
+                        "shared_ts": "3432965135.480267"
+                      },
+                      "label": ""
+                    },
+                    {
+                      "label": "Ngtlcb",
+                      "type": "yshybxv_ufojns",
+                      "id": "yshybxv_ufojns"
+                    },
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    },
+                    {
+                      "type": "otxbobtgj",
+                      "label": "",
+                      "id": "otxbobtgj"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "id": "Bv8UKF7C4P6A",
+                      "type": "mpeocs",
+                      "data": {
+                        "file_id": "H1MLUUEWX1J",
+                        "shared_ts": "3432965135.480267"
+                      }
+                    },
+                    {
+                      "label": "Ngtlcb",
+                      "type": "yshybxv_ufojns"
+                    },
+                    {
+                      "type": "grdmz"
+                    },
+                    {
+                      "type": "otxbobtgj"
+                    }
+                  ],
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "X0JRAUUSO34",
+                "created": 8220731832,
+                "creator": "A7UKSHNQS06",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9116910447137,
+                "name": "xzawm-qzwzahdh",
+                "name_normalized": "xzawm-qzwzahdh",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "X70BA89215H",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 2,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "is_dormant": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "N6RK077YVHY",
+                "created": 1453452479,
+                "creator": "Y14QF3WANRH",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 9631366006127,
+                "name": "bzo--ybiryt-uclrip",
+                "name_normalized": "bzo--ybiryt-uclrip",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "D04Z3E0PKS8",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 12,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "otxbobtgj",
+                      "label": "",
+                      "id": "otxbobtgj"
+                    },
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "otxbobtgj"
+                    },
+                    {
+                      "type": "grdmz"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "R1R3LHWJ8GF",
+                "created": 2399473072,
+                "creator": "C51FB61OU7L",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 1309473941454,
+                "name": "fm-zszgarwrph",
+                "name_normalized": "fm-zszgarwrph",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": true,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "OB92YYS4O",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 15,
+                "properties": {
+                  "tabs": [
+                    {
+                      "type": "grdmz",
+                      "label": "",
+                      "id": "grdmz"
+                    }
+                  ],
+                  "tabz": [
+                    {
+                      "type": "grdmz"
+                    }
+                  ],
+                  "has_slack_connect_invite_created": true
+                }
+              },
+              {
+                "id": "U9LJS367BKA",
+                "created": 8478215478,
+                "creator": "T59FXYSI4B7",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 7209581488728,
+                "name": "fv-lijekg",
+                "name_normalized": "fv-lijekg",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "A79RFDDWHAS",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 14,
+                "properties": {
+                  "has_slack_connect_invite_created": true
+                },
+                "previous_names": []
+              },
+              {
+                "id": "U8B9A68ONNX",
+                "created": 4489292916,
+                "creator": "T4X2RRK3521",
+                "is_org_shared": false,
+                "is_im": false,
+                "context_team_id": "M9KK0Y492R6",
+                "updated": 3097882966102,
+                "name": "yhdbvs-gsi-yllarf",
+                "name_normalized": "yhdbvs-gsi-yllarf",
+                "is_channel": true,
+                "is_group": false,
+                "is_mpim": false,
+                "is_private": false,
+                "is_archived": false,
+                "is_general": false,
+                "is_shared": true,
+                "is_ext_shared": true,
+                "unlinked": 0,
+                "is_pending_ext_shared": false,
+                "pending_shared": [],
+                "parent_conversation": null,
+                "conversation_host_id": "X6U3573W0OU",
+                "purpose": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "topic": {
+                  "value": "",
+                  "creator": "",
+                  "last_set": 0
+                },
+                "pending_connected_team_ids": [],
+                "is_member": true,
+                "num_members": 6,
+                "properties": {
+                  "has_slack_connect_invite_created": true
+                },
+                "previous_names": []
+              }
+            ],
+            "response_metadata": {
+              "next_cursor": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://slack.com/api/conversations.replies?channel=A2CDZNMVZU5&ts=0100459623.592605&limit=50",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "ok": true,
+            "messages": [
+              {
+                "user": "N7GCG1394KS",
+                "type": "hrufogm",
+                "ts": "0100459623.592605",
+                "client_msg_id": "e12362d3-ef6a-61fc-a1fa-0cff5c6b34c5",
+                "text": "A ucix ww xigesgw <mmaogk:xad@kyitybxpk.jz|jgm@oeadahcjy.ba> rj mgsowf",
+                "team": "M9KK0Y492R6",
+                "thread_ts": "0100459623.592605",
+                "reply_count": 4,
+                "reply_users_count": 1,
+                "latest_reply": "9864964088.770017",
+                "reply_users": ["T2H56PX2Q83"],
+                "is_locked": false,
+                "subscribed": true,
+                "last_read": "9864964088.770017",
+                "blocks": [
+                  {
+                    "type": "mjhw_ieuq",
+                    "block_id": "2wfm1",
+                    "elements": [
+                      {
+                        "type": "nveu_tcei_izvzjya",
+                        "elements": [
+                          {
+                            "type": "wccb",
+                            "text": "V wxfq rw dmdiwjf "
+                          },
+                          {
+                            "type": "rifw",
+                            "url": "uvcqxo:etg@example.com",
+                            "text": "hho@example.com"
+                          },
+                          {
+                            "type": "wccb",
+                            "text": " cn jwfepv"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "reactions": [
+                  {
+                    "name": "zvtzpirkm_urghacx_rrfj",
+                    "users": ["T2H56PX2Q83"],
+                    "count": 1
+                  }
+                ]
+              },
+              {
+                "user": "T2H56PX2Q83",
+                "type": "hrufogm",
+                "ts": "5590746014.819557",
+                "edited": {
+                  "user": "T2H56PX2Q83",
+                  "ts": "0552499900.222819"
+                },
+                "bot_id": "Q5E62RDAVF7",
+                "app_id": "N8H8XRWJYAB",
+                "text": "Opuhxj GH-0 — Zbvlulu <lufmjo:hpj@qwlelokvv.jv|sas@ykqgugjep.jy> ry Rxssbj",
+                "team": "M9KK0Y492R6",
+                "bot_profile": {
+                  "id": "Q5E62RDAVF7",
+                  "deleted": false,
+                  "name": "Crkmza - Mhe 0",
+                  "updated": 2512986721,
+                  "app_id": "N8H8XRWJYAB",
+                  "user_id": "T2H56PX2Q83",
+                  "icons": {
+                    "image_36": "https://avatars.slack-edge.com/",
+                    "image_48": "https://avatars.slack-edge.com/",
+                    "image_72": "https://avatars.slack-edge.com/"
+                  },
+                  "team_id": "M9KK0Y492R6"
+                },
+                "thread_ts": "0100459623.592605",
+                "parent_user_id": "N7GCG1394KS",
+                "blocks": [
+                  {
+                    "type": "unukhou",
+                    "block_id": "EOXC3",
+                    "text": {
+                      "type": "jbcsvj",
+                      "text": "<@I4IPQ2103KQ> Fevq nkqyqsw ncb gtsx rsmvpaynr",
+                      "verbatim": false
+                    }
+                  },
+                  {
+                    "type": "tdam",
+                    "block_id": "VOVdD",
+                    "title": {
+                      "type": "jbcsvj",
+                      "text": "Ipnurot <knxkjy:jpu@thybcfqfa.ot|bnd@lttqetqhe.gr> er Kgoxdl",
+                      "verbatim": false
+                    },
+                    "subtitle": {
+                      "type": "jbcsvj",
+                      "text": "Tjgzkoz · GI-5",
+                      "verbatim": false
+                    },
+                    "body": {
+                      "type": "jbcsvj",
+                      "text": "*Mbkkasfs ky*: _Lsuzqlrwde_\n*Fmizxg*: :wksomtukq_wmgjqmv_cezj: Mgtlypr bb zn",
+                      "verbatim": false
+                    },
+                    "actions": [
+                      {
+                        "type": "qijwts",
+                        "action_id": "keekl_pvkz_tgxhqc",
+                        "style": "nfnvlgg",
+                        "text": {
+                          "type": "xqnom_mkzt",
+                          "text": "Olkj Nnndkq",
+                          "emoji": false
+                        },
+                        "url": "http://localhost:3030/"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "kmipjhz",
+                    "block_id": "9UHVn",
+                    "elements": [
+                      {
+                        "type": "jbcsvj",
+                        "text": "Dcaxepeoa qv Vksqz Tzog · psqr jkd",
+                        "verbatim": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "user": "T2H56PX2Q83",
+                "type": "hrufogm",
+                "ts": "8969954872.387641",
+                "bot_id": "Q5E62RDAVF7",
+                "app_id": "N8H8XRWJYAB",
+                "text": "Cc iz — J’c sgmlkzg ov Ggfglj qefqoz nrn <ufnbtr:imk@nkrpcgfib.ul> hea.",
+                "team": "M9KK0Y492R6",
+                "bot_profile": {
+                  "id": "Q5E62RDAVF7",
+                  "deleted": false,
+                  "name": "Crkmza - Mhe 0",
+                  "updated": 2512986721,
+                  "app_id": "N8H8XRWJYAB",
+                  "user_id": "T2H56PX2Q83",
+                  "icons": {
+                    "image_36": "https://avatars.slack-edge.com/",
+                    "image_48": "https://avatars.slack-edge.com/",
+                    "image_72": "https://avatars.slack-edge.com/"
+                  },
+                  "team_id": "M9KK0Y492R6"
+                },
+                "thread_ts": "0100459623.592605",
+                "parent_user_id": "N7GCG1394KS",
+                "blocks": [
+                  {
+                    "type": "mjhw_ieuq",
+                    "block_id": "MnAg/4",
+                    "elements": [
+                      {
+                        "type": "nveu_tcei_izvzjya",
+                        "elements": [
+                          {
+                            "type": "wccb",
+                            "text": "Qk cl — N’h ypksaaf sx Toncim ykmzzg roc "
+                          },
+                          {
+                            "type": "rifw",
+                            "url": "uvcqxo:etg@example.com"
+                          },
+                          {
+                            "type": "wccb",
+                            "text": " qas."
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "streaming_state": "tvwnbfgcj"
+              },
+              {
+                "user": "T2H56PX2Q83",
+                "type": "hrufogm",
+                "ts": "3449326235.724788",
+                "bot_id": "Q5E62RDAVF7",
+                "app_id": "N8H8XRWJYAB",
+                "text": "A’nh cev seqhgacvad kzabpy cey SZ-8 dup U'o bwxcbak su sou Scjuai hcdzpd. Z'om zkxig emf zw cawv db wa’q hnft.",
+                "team": "M9KK0Y492R6",
+                "bot_profile": {
+                  "id": "Q5E62RDAVF7",
+                  "deleted": false,
+                  "name": "Crkmza - Mhe 0",
+                  "updated": 2512986721,
+                  "app_id": "N8H8XRWJYAB",
+                  "user_id": "T2H56PX2Q83",
+                  "icons": {
+                    "image_36": "https://avatars.slack-edge.com/",
+                    "image_48": "https://avatars.slack-edge.com/",
+                    "image_72": "https://avatars.slack-edge.com/"
+                  },
+                  "team_id": "M9KK0Y492R6"
+                },
+                "thread_ts": "0100459623.592605",
+                "parent_user_id": "N7GCG1394KS",
+                "blocks": [
+                  {
+                    "type": "mjhw_ieuq",
+                    "block_id": "AugZv",
+                    "elements": [
+                      {
+                        "type": "nveu_tcei_izvzjya",
+                        "elements": [
+                          {
+                            "type": "wccb",
+                            "text": "A’nh cev seqhgacvad kzabpy cey SZ-8 dup U'o bwxcbak su sou Scjuai hcdzpd. Z'om zkxig emf zw cawv db wa’q hnft."
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "user": "T2H56PX2Q83",
+                "type": "hrufogm",
+                "ts": "9864964088.770017",
+                "bot_id": "Q5E62RDAVF7",
+                "app_id": "N8H8XRWJYAB",
+                "text": "Jsu eeud lmca bh whgodx skr <nlhxsu:gpf@yazkhewck.pm|edx@wbyznnyuf.et>. Z’m cxdbkhjc hliq bt Wksfvd ebsy hw Rxmvy jvam, yds yf sqc’t rcx ruuy cp jnd erinq anvf sqg. N’ap ft lllcqzk bbk Mztfz’ rinkqsqo ztwqm jize'fh kzq knztn nx Dfmdvs. Z’yg aoq nlm lwiq fk kccm vg vfz slzcjo iy elvzsrkmo.",
+                "team": "M9KK0Y492R6",
+                "bot_profile": {
+                  "id": "Q5E62RDAVF7",
+                  "deleted": false,
+                  "name": "Crkmza - Mhe 0",
+                  "updated": 2512986721,
+                  "app_id": "N8H8XRWJYAB",
+                  "user_id": "T2H56PX2Q83",
+                  "icons": {
+                    "image_36": "https://avatars.slack-edge.com/",
+                    "image_48": "https://avatars.slack-edge.com/",
+                    "image_72": "https://avatars.slack-edge.com/"
+                  },
+                  "team_id": "M9KK0Y492R6"
+                },
+                "thread_ts": "0100459623.592605",
+                "parent_user_id": "N7GCG1394KS",
+                "blocks": [
+                  {
+                    "type": "mjhw_ieuq",
+                    "block_id": "z2ztS",
+                    "elements": [
+                      {
+                        "type": "nveu_tcei_izvzjya",
+                        "elements": [
+                          {
+                            "type": "wccb",
+                            "text": "Cfy naze crza id ijibrt mcv "
+                          },
+                          {
+                            "type": "rifw",
+                            "url": "uvcqxo:etg@example.com",
+                            "text": "hho@example.com"
+                          },
+                          {
+                            "type": "wccb",
+                            "text": ". H’o qhxilvxc rbsg tw Atlqyh fljp ld Gwhbd aykq, xbe xf mxj’j oab kroo nv dtn tnabw lbdb rhm. D’mb pz oouuzmn dbo Xuxuf’ pdnvlypt urxfi jsgh'yb gbn oltjz yn Ekuauq. B’ya ocd iay ixst kg xxhw gl hsp xjaegp ml sguwrpiaa."
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "has_more": false
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "channel": "A2CDZNMVZU5",
+    "messages": [
+      {
+        "ts": "0100459623.592605",
+        "user": "N7GCG1394KS",
+        "text": "A ucix ww xigesgw <mmaogk:xad@kyitybxpk.jz|jgm@oeadahcjy.ba> rj mgsowf",
+        "reactions": ["zvtzpirkm_urghacx_rrfj"]
+      },
+      {
+        "ts": "3449326235.724788",
+        "user": "T2H56PX2Q83",
+        "text": "A’nh cev seqhgacvad kzabpy cey SZ-8 dup U'o bwxcbak su sou Scjuai hcdzpd. Z'om zkxig emf zw cawv db wa’q hnft.",
+        "reactions": []
+      },
+      {
+        "ts": "5590746014.819557",
+        "user": "T2H56PX2Q83",
+        "text": "Opuhxj GH-0 — Zbvlulu <lufmjo:hpj@qwlelokvv.jv|sas@ykqgugjep.jy> ry Rxssbj",
+        "reactions": []
+      },
+      {
+        "ts": "8969954872.387641",
+        "user": "T2H56PX2Q83",
+        "text": "Cc iz — J’c sgmlkzg ov Ggfglj qefqoz nrn <ufnbtr:imk@nkrpcgfib.ul> hea.",
+        "reactions": []
+      },
+      {
+        "ts": "9864964088.770017",
+        "user": "T2H56PX2Q83",
+        "text": "Jsu eeud lmca bh whgodx skr <nlhxsu:gpf@yazkhewck.pm|edx@wbyznnyuf.et>. Z’m cxdbkhjc hliq bt Wksfvd ebsy hw Rxmvy jvam, yds yf sqc’t rcx ruuy cp jnd erinq anvf sqg. N’ap ft lllcqzk bbk Mztfz’ rinkqsqo ztwqm jize'fh kzq knztn nx Dfmdvs. Z’yg aoq nlm lwiq fk kccm vg vfz slzcjo iy elvzsrkmo.",
+        "reactions": []
+      }
+    ],
+    "hasMore": false,
+    "nextCursor": null
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "format": 1,
+  "tool": "google-calendar__find-free-time",
+  "recordedAt": "2026-10-09T18:51:05.126Z",
+  "input": {
+    "calendarIds": ["primary"],
+    "timeMin": "2011-01-30T23:01:11Z",
+    "timeMax": "2018-10-13T00:35:50Z",
+    "minMinutes": 30
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=2011-01-30T23%3A01%3A11.000Z&timeMax=2018-10-13T00%3A35%3A50.000Z&maxResults=2500",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "kind": "vvdbpgqd#xjliie",
+            "etag": "\"b86gzv68fwnswg1s\"",
+            "summary": "ulpvv@example.com",
+            "description": "",
+            "updated": "2008-11-13T11:37:32.744Z",
+            "timeZone": "Mvtuoxvyl/Vmbwiyesg",
+            "accessRole": "pnxdm",
+            "defaultReminders": [
+              {
+                "method": "ndcbr",
+                "minutes": 10
+              }
+            ],
+            "items": []
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "window": {
+      "start": "2011-01-30T23:01:11.000Z",
+      "end": "2018-10-13T00:35:50.000Z"
+    },
+    "busyIntervals": [],
+    "freeSlots": [
+      {
+        "start": "2011-01-30T23:01:11.000Z",
+        "end": "2018-10-13T00:35:50.000Z",
+        "minutes": 4049374.65
+      }
+    ]
+  }
+}

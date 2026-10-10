@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "tool": "google-sheets__add-tab",
+  "recordedAt": "2026-10-09T19:21:14.165Z",
+  "input": {
+    "spreadsheet": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+    "title": "Jztmokc"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms:batchUpdate",
+      "body": {
+        "json": {
+          "requests": [
+            {
+              "addSheet": {
+                "properties": {
+                  "title": "Jztmokc"
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "sheetId": null,
+    "title": null
+  }
+}

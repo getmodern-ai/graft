@@ -234,6 +234,7 @@ describe("GET /api/setup/vendors", () => {
       "gmail",
       "google-calendar",
       "google-drive",
+      "google-sheets",
       "slack",
       "notion",
       "github",

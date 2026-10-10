@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "tool": "google-sheets__find-spreadsheets",
+  "recordedAt": "2026-10-09T19:21:22.197Z",
+  "input": {
+    "query": "Qpjjh Ayvh"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/drive/v3/files?q=mimeType%3D%27application%2Fvnd.google-apps.spreadsheet%27+and+trashed%3Dfalse+and+name+contains+%27Qpjjh+Ayvh%27&orderBy=modifiedTime+desc&pageSize=10&fields=files%28id%2Cname%2CmodifiedTime%2CwebViewLink%29",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "files": []
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "spreadsheets": []
+  }
+}
