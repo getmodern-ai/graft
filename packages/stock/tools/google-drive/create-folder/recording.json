@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "tool": "google-drive__create-folder",
+  "recordedAt": "2026-10-09T18:48:10.054Z",
+  "input": {
+    "name": "Projects"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://www.googleapis.com/drive/v3/files",
+      "body": {
+        "json": {
+          "name": "Projects",
+          "mimeType": "application/vnd.google-apps.folder"
+        }
+      }
+    }
+  ],
+  "result": {
+    "id": null,
+    "name": null,
+    "parents": null,
+    "webViewLink": null
+  }
+}

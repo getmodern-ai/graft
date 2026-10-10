@@ -1,0 +1,31 @@
+{
+  "name": "move-file",
+  "description": "Moves a Google Drive file or folder to another folder, renames it, or does both.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "fileId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The file or folder ID from search-files or list-recent-files."
+      },
+      "folderId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The destination folder's ID from search-files, or 'root' for My Drive."
+      },
+      "newName": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The new name for the file or folder."
+      }
+    },
+    "required": ["fileId"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

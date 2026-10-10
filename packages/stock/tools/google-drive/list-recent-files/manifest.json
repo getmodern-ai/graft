@@ -1,0 +1,22 @@
+{
+  "name": "list-recent-files",
+  "description": "Lists your most recently modified, untrashed Google Drive files, including each file's name, type, modification time, and view link.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 10,
+        "description": "Maximum number of files to return. Defaults to 10."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

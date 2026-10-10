@@ -174,7 +174,9 @@ export const STARTER_VENDORS = [
     scheme: "oauth_authorization_code",
     schemeConfig: {
       ...GOOGLE_OAUTH,
-      scopes: "https://www.googleapis.com/auth/drive.metadata.readonly",
+      // `drive`, not a read-only scope: the stock tools (ADR 0025) read content, create folders,
+      // move and share, and a starter asks for what its stock tools need; each write still asks.
+      scopes: "https://www.googleapis.com/auth/drive",
     },
     // Listing files needs nothing looked up; a spreadsheet's rows need its id and a range, and the
     // Google Sheets starter's first run failed on both (GRA-217).
