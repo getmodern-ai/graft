@@ -10,10 +10,25 @@ function assertSafeHeader(name: string, value: string): void {
   }
 }
 
+/**
+ * A non-ASCII subject as RFC 2047 encoded words of at most 75 characters each (45 bytes of UTF-8,
+ * never splitting a character), folded one to a line.
+ */
 function encodeSubject(subject: string): string {
-  return [...subject].every((char) => char.charCodeAt(0) < 0x80)
-    ? subject
-    : `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
+  if ([...subject].every((char) => char.charCodeAt(0) < 0x80)) return subject;
+  const words: string[] = [];
+  let chunk = "";
+  for (const char of subject) {
+    if (chunk && Buffer.byteLength(chunk + char, "utf8") > 45) {
+      words.push(chunk);
+      chunk = "";
+    }
+    chunk += char;
+  }
+  if (chunk) words.push(chunk);
+  return words
+    .map((word) => `=?UTF-8?B?${Buffer.from(word, "utf8").toString("base64")}?=`)
+    .join("\r\n ");
 }
 
 function wrapBase64(value: string): string {

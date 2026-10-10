@@ -106,29 +106,29 @@ export default async (input: Input, ctx: Context) => {
   const originalSubject = getHeader(headers, "Subject");
   const messageId = getHeader(headers, "Message-ID") || getHeader(headers, "Message-Id");
   const originalReferences = getHeader(headers, "References");
-  const primaryRecipient = replyTo || from;
-
-  if (!primaryRecipient) throw new Error("The last message has neither Reply-To nor From");
+  if (!from && !replyTo) throw new Error("The last message has neither Reply-To nor From");
   if (!messageId) throw new Error("The last message has no Message-ID header");
 
-  let ownAddress = "";
-  if (input.replyAll === true) {
-    const profileResponse = await ctx.fetch("/users/me/profile");
-    if (!profileResponse.ok) {
-      throw new Error(`GET profile ${profileResponse.status}: ${await profileResponse.text()}`);
-    }
-    const profile = (await profileResponse.json()) as GmailProfile;
-    if (!profile.emailAddress) throw new Error("The Gmail profile has no emailAddress");
-    ownAddress = safeHeader(profile.emailAddress, "profile emailAddress").toLowerCase();
+  // The person's own address, always: a reply never goes to the person, and when the last message
+  // is the person's own, a reply follows it up to the people it was sent to, as Gmail's does.
+  const profileResponse = await ctx.fetch("/users/me/profile");
+  if (!profileResponse.ok) {
+    throw new Error(`GET profile ${profileResponse.status}: ${await profileResponse.text()}`);
   }
+  const profile = (await profileResponse.json()) as GmailProfile;
+  if (!profile.emailAddress) throw new Error("The Gmail profile has no emailAddress");
+  const ownAddress = safeHeader(profile.emailAddress, "profile emailAddress").toLowerCase();
+  const sentByOwner = from !== "" && addressOf(from) === ownAddress;
 
   const recipients: string[] = [];
   const seen = new Set<string>();
-  addRecipients(recipients, seen, primaryRecipient, ownAddress);
-  if (input.replyAll === true) {
+  if (sentByOwner) {
     addRecipients(recipients, seen, originalTo, ownAddress);
-    addRecipients(recipients, seen, originalCc, ownAddress);
+  } else {
+    addRecipients(recipients, seen, replyTo || from, ownAddress);
+    if (input.replyAll === true) addRecipients(recipients, seen, originalTo, ownAddress);
   }
+  if (input.replyAll === true) addRecipients(recipients, seen, originalCc, ownAddress);
   if (recipients.length === 0) throw new Error("No reply recipients remain");
 
   const subject = /^\s*re:/i.test(originalSubject) ? originalSubject : `Re: ${originalSubject}`;

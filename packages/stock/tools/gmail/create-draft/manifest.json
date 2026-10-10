@@ -1,6 +1,6 @@
 {
   "name": "create-draft",
-  "description": "Saves a plain-text email as a Gmail draft; nothing is sent (gmail__send-email sends at once). Optionally uses a threadId from gmail__search-messages to place the draft in that conversation.",
+  "description": "Saves a plain-text email as a Gmail draft; nothing is sent (gmail__send-email sends at once). With a threadId from gmail__search-messages the draft is a reply to that conversation’s newest message and takes the conversation’s subject.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -10,7 +10,7 @@
       },
       "subject": {
         "type": "string",
-        "description": "Email subject."
+        "description": "Email subject. Needed without a threadId; with one, the conversation’s subject is used."
       },
       "body": {
         "type": "string",
@@ -26,10 +26,10 @@
       },
       "threadId": {
         "type": "string",
-        "description": "Optional conversation thread ID from gmail__search-messages."
+        "description": "Optional conversation thread ID from gmail__search-messages; the draft replies to its newest message."
       }
     },
-    "required": ["to", "subject", "body"],
+    "required": ["to", "body"],
     "additionalProperties": false
   },
   "hosts": ["gmail.googleapis.com"],
