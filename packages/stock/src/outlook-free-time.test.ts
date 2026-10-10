@@ -101,4 +101,13 @@ describe("microsoft-outlook__find-free-time over a busy calendar", () => {
       { start: "2020-01-07T02:00:00", end: "2020-01-07T07:00:00", timeZone: "UTC" },
     ]);
   });
+
+  it("refuses an offset no zone has, which would stop the day loop advancing", async () => {
+    await expect(freeTime({ ...WINDOW, utcOffsetMinutes: 1e30 }, [])).rejects.toThrow(
+      "utcOffsetMinutes must be an integer from -720 to 840",
+    );
+    await expect(freeTime({ ...WINDOW, utcOffsetMinutes: -721 }, [])).rejects.toThrow(
+      "utcOffsetMinutes",
+    );
+  });
 });
