@@ -113,3 +113,20 @@ rotated or expired credential is a re-entry on that row — `request_credential`
 Re-enter or Reconnect in the console — which keeps the row, its scope and its approvals, and never
 a new connection, which is a new row with none of them; `request_connection` refuses a proposal
 for a vendor and hosts the person already has and names the row instead.
+
+## Amendment 2026-10-09: an integration may be allowed at once, and stock keeps its approval (ADR 0025)
+
+Decided by Aleks (GRA-226). **A person may allow every tool of an integration for an agent at
+once**: beside "Allow" on a tool's ask, "Allow every HubSpot tool for this agent", which lets every
+tool of that integration the agent calls pass without asking, stock, remixed or authored, existing
+or future. Destructive tools are a separate tick on the same card, off by default, and a tool the
+person set to ask every call keeps asking. The connection confirmation offers the same standing
+approval, without destructive tools, pre-ticked under the build approval, on the precedent of the
+2026-09-18 amendment: the person answers it on the page they are already answering. It is withdrawn
+on the agent's page, and it is the person's answer, never the model's (ADR 0004, ADR 0006).
+
+**A new stock version keeps the approval** unless its annotations widen, read-only to a write or
+non-destructive to destructive, since the code was reviewed before release and not written by the
+agent. A remix is a republish and follows the rule above: a write asks again once. The ask names
+where a tool came from: a stock tool is "ready-made by Graft and reviewed before release", a remix
+is the agent's version of one.

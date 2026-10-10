@@ -50,14 +50,14 @@ describe("an answered connection ask's copy (GRA-212)", () => {
   it("says Setup's next step in Setup, where no call is waiting", () => {
     expect(
       connectedToastDescription({ origin: "setup", agentName: "Claude", approveBuild: true }),
-    ).toBe("In Claude's scope, allowed to build tools against it. Setup moves on to the task.");
+    ).toBe("In Claude's scope, allowed to build tools against it. Setup carries on from here.");
     expect(
       connectedToastDescription({ origin: "setup", agentName: "Claude", provider: "broker" }),
     ).toBe(
-      "In Claude's scope, and the account's token stays with broker. Setup moves on to the task.",
+      "In Claude's scope, and the account's token stays with broker. Setup carries on from here.",
     );
     expect(scopeAllowedToastDescription({ origin: "setup" })).toBe(
-      "Nothing was entered and no new connection was made. Setup moves on to the task.",
+      "Nothing was entered and no new connection was made. Setup carries on from here.",
     );
     expect(declinedToastDescription("setup")).toBe(
       "Nothing was connected. Setup goes back to the integrations.",

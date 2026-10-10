@@ -2894,7 +2894,7 @@ describe("publish_tool", () => {
         ok: true,
         tool: "demo__greet",
         version: 1,
-        path: "tools/demo/greet/v1",
+        path: expect.stringMatching(/^tools\/demo\/greet\/w-/),
         promoted: true,
         annotations: { readOnlyHint: true, destructiveHint: false },
         dependencies: [],

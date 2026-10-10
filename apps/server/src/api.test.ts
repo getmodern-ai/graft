@@ -372,6 +372,7 @@ function toolDeps(): ToolDeps {
     recordToolVersionDryRun: unused(),
     findConnection: vi.fn(async () => connectionRow),
     findConnectionForUpdate: vi.fn(async () => connectionRow),
+    lockToolName: unused(),
     newId: () => "tool_new",
     now: () => NOW,
   };

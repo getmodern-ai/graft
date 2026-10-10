@@ -638,19 +638,64 @@ tool passes (a starter vendor, hosts among the starter's, the check, the test in
 package's `tsconfig` leaves `tools/` to the check, which types each module against its own schema.
 The boot loads it after the migrations (`boot.ts`'s `loadStockOnStart`, `@graft/core`'s
 `loadStockCatalogue`) into the global catalogue, `stock_tool` and `stock_tool_version` (migration
-0013): no person, no owner tier, a version appended by number when the directory's hash changes,
-with its files, hosts and the check's result, under one advisory lock; `repo/stock.ts`'s reads are
+0014): no person, no owner tier, a version appended by number when the directory's hash is one
+the tool has at no number (so a replica of an older release booting mid-deploy appends nothing,
+and a revert ships as a change), with its files, hosts and the check's result, under one advisory
+lock; `repo/stock.ts`'s reads are
 unscoped and pinned by name in `repo/scope.test.ts`. The image carries the workspace as
 `apps/server/tools/` (`tsdown.config.ts`, the Dockerfile). `McpDeps.toolSource` (`tool-source.ts`)
-lists, describes and copies; `find_tool` searches stock beside the toolbox at tiers 2 (a connection
-of the vendor in scope, `connectionIds`) and 3 (none, `connect`: the starter's
+lists, describes and copies; `find_tool` searches stock beside the toolbox at tiers 2 (a matching
+connection in scope, `connectionIds`) and 3 (none, `connect`: the starter's
 `request_connection` arguments), with `stock: true`, a person's tool of the same name hiding it.
-`stock-copy.ts`'s `ensureToolForAgent` is the one road in, which `runAuthoredTool` (so `run_tool`
-and the console's run) and `promoteToolForAgent` (so `promote`, and a console route) take: the
-person's tool, or the stock version copied by `@graft/publish`'s `copyStockVersion` as an ordinary
-tool whose version records `stock_tool_id` and `stock_version_id`, bound to the vendor's connection
-in scope, or `connection_needed` with `connect`. Connections match by vendor slug until GRA-241's
-host matching. `@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
+`stock-copy.ts`'s `ensureToolForAgent` is the one road in, which `runAuthoredTool` (so `run_tool`),
+`apps/server/src/tool-run.ts` (the console's run, before its read-only and working-set rules) and
+`promoteToolForAgent` (so `promote`, and a console route) take: the person's tool, or the stock
+version copied by `@graft/publish`'s `copyStockVersion` as an ordinary tool whose version records
+`stock_tool_id` and `stock_version_id`, bound to the matching connection in scope, or
+`connection_needed` with `connect`. **Every write of a version has a directory of its own**
+(`@graft/toolbox`'s `writePath`, `tools/<vendor>/<name>/w-<writeId>`; GRA-238, GRA-265): a publish
+and a stock copy write their files there with nothing held (the publish's install included), then
+write the rows in one short transaction under `ToolDeps.lockToolName` (`repo/tool.ts`'s
+`lockAuthoredToolName`), where the version number is decided as the tool's next and
+`tool_version.path` records the directory. So no writer ever writes over another's files, two
+publishes of one tool racing take two numbers, two first copies (or a copy and a first publish)
+make one tool and the later answers it, a unique-constraint loser answers the winner's row, and a
+directory whose rows never land (a refused or failed publish, a lost race) stays as an orphan,
+since nothing under `tools/` is removed (ADR 0009). Versions written before this are `v<N>`
+(`versionPath`) and stay valid; `packages/toolbox/README.md` has the layout. The mirror is asked
+for a copy's version as a publish asks it. **A connection matches by its hosts** (GRA-241):
+`packages/mcp/src/stock-match.ts` is the pure decision, every manifest host among the connection's
+as the proxy's `hostSetOf` reads them, any provider, the vendor slug breaking a tie; `find_tool`'s
+`connectionIds`, the copy's binding and `run.ts`'s follow for a version with a stock origin all use
+it (a remix follows by slug, as GRA-122 has it), and a run judges by the hosts of the stock version
+its version recorded (`ToolSource.describeVersion`), not the catalogue's current one. A named
+connection the copy would bind to is held to `isConnectionUsable` as a match is
+(`connection_unusable`). A copy made where several match and the slug does
+not decide holds no default, and its run is refused `connection_ambiguous` with `alternatives`.
+`run_tool` takes an optional `connectionId` for any tool (`AuthoredRunArgs.connectionId`), held to
+the scope (`connection_not_in_scope`) and, for a stock copy, to the hosts
+(`connection_hosts_missing`); without it the GRA-122 resolution and its refusals stand.
+`@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
+
+**`acquire` defers to stock, and remixes with `from`** (GRA-243; ADR 0025). `similar_tools_exist`
+(`tools/meta.ts`'s `similarForGoal`) judges the vendor's live toolbox tools and its stock tools the
+person holds no tool of the name of, a stock hit carrying `stock: true`; `acquire-similar.ts` keeps
+GRA-154's overlap score and adds the index's goal-shaped `termCoverage` (`COVERAGE_THRESHOLD`),
+since a stock description written in full dilutes the overlap. The answer's message carries the
+three next steps (run it; `from` to change it; a workflow with `ignoreExisting: true`): a result,
+so conduct words are allowed there and not in the description. `from: "<vendor>__<name>"` names a
+toolbox or stock tool of the connection's vendor, refused before the build ask when it names
+nothing; once the approval stands `ensureToolForAgent` copies a stock tool in, and the job row
+records `from_tool_id` (migration 0015). The job (`acquire/job.ts`'s `startingPoint`) hands the
+tool's current version's files to the model as `ModelJobContext.startingPoint` and publishes every
+draft under that tool's name, so the version lands on the person's row with no stock origin, which
+is a remix; a tool gone since the job was queued ends it `remix_unavailable`. The starting point
+is the authored module alone (`forbiddenDraftFiles` drops what the install wrote), and the pass is
+made current only while the tool is still at the version the remix started from
+(`activateToolVersion`'s `expectedCurrentVersionId`), else the job ends `remix_superseded`. Every job's context
+carries the vendor's stock tools (`stockTools`: wire name, description, input schema), rendered by
+`@graft/model`'s `renderGoal`. `packages/mcp/src/acquire-stock.test.ts` is the suite, asserting on
+the scripted model's goal prompt.
 
 **An untouched copy follows stock; a remix never does** (GRA-242; ADR 0025). The rule is
 `@graft/core`'s `stock/stock-advance.decision.ts`, pure and browser-safe: `stockLineageOf` reads a
@@ -659,11 +704,15 @@ tool's versions as `stock` (every one carries a stock origin), `remix` (some do)
 and only when no version took it. It is applied lazily on reach, never at boot: `ensureToolForAgent`
 (a run, a first-class call, the console's run, a promote) through `followStock`, `find_tool` over
 its answered hits, and the tool list over the working set, each through `stock-copy.ts`'s
-`advanceIfBehind` and `ToolSource.advance`, which is `@graft/publish`'s `advanceStockCopy`: one
-transaction that locks the tool row (`repo/tool.ts`'s `findAuthoredToolForUpdate`), decides again,
-writes the stock files as the next version's directory and publishes it with its stock origin, the
-definition and the pointer moving, the binding kept. Two reaches at once write one version; a
-concurrent agent publish is caught by the version number's unique constraint. `find_tool` marks a
+`advanceIfBehind` and `ToolSource.advance`, which is `@graft/publish`'s `advanceStockCopy`: the
+stock files written to a directory of the advance's own (`writePath`, as a copy and a publish
+write) with nothing held, then one transaction that takes the tool's name lock and the tool row's
+(`repo/tool.ts`'s `findAuthoredToolForUpdate`), decides again and publishes the next version with
+its stock origin, the definition and the pointer moving, the binding kept, and the mirror asked
+once it commits. Two reaches at once record one version, the other's directory left an orphan; a
+concurrent agent publish takes the same name lock, and one that takes none is caught by the
+version number's unique constraint. A stock tool's run signal (GRA-244) reads `remix` off the same
+`stockLineageOf`. `find_tool` marks a
 toolbox hit `stock: true` or `remixed: true`. `repo/tool.ts`'s `listToolVersionOrigins` (each
 version's origin with the stock version's number, one statement) feeds both and `GET /api/tools`'s
 `lineage` and `versions`, which the connections screen draws under each tool
@@ -1258,6 +1307,36 @@ with `setupFinishedToast` (`lib/setup-page.ts`'s `afterSetupFinish`: `leave`, `c
 only for a token the finish itself issued); GRA-208 stayed on every console visit and needed a
 second press on *Open the console*.
 
+**Setup v2 picks the task before the connection, and builds the moment it lands** (the Figma
+"Console / Setup v2" frames and their 2026-09-29 decisions; the funnel since 2026-09-25 lost every
+person who connected at the goal step). The record keeps `starter_id` and `goal` (migration 0013):
+`POST /api/setup/starter` (`SetupStarterBody`, null to go back) and `POST /api/setup/task`
+(`SetupTaskBody`) save them through `@graft/core`'s `planSetup` while the record stands on `vendor`,
+so the step order and GRA-215's back rules are unchanged; the task route connects the starter as
+the connect route does, and `setup-build.ts`'s `buildPlannedSetup` starts the job whenever the
+record reaches `goal` with a connection and a saved task, there and on the `GET /api/setup` that
+learns the connection. Each starter offers `moreTasks` beside its curated `goal` (`starterTasks`),
+each with its own `hints`, held to GRA-217's rules and aligned with ADR 0025's stock reads, which
+replace them as stock lands. The console draws four stages over the seven steps
+(`lib/setup-stages.ts`: the vendor step is *Integration* until a starter is chosen and *Tool* after),
+a stepper in the top bar, a centred hero (`SetupEyebrowContext`), selection cards with marks
+(`setup-logo.tsx`; the Figma file's app logos and the marketing site's harness marks under
+`src/assets/setup/`) and a sticky footer with a summary; `tool-step.tsx` and `task-picker.tsx` are
+the tool screen. The rows count `setup_step_completed` as `vendor` (or `vendor_cleared`) and `goal`.
+
+**The integration step searches a directory, a seam with two backings** (ADR 0001 as amended
+2026-10-10). `@graft/core`'s `IntegrationDirectory` (`home`, `search`, `get`; `connection/directory.ts`)
+is `Backings.directory`: the private package's, over its link provider's catalogue, or null, when the
+server answers the starters it connects (`apps/server/src/directory.ts`'s `createStarterDirectory`).
+`GET /api/setup/directory` (`SetupDirectoryHome`: the count, the categories, seven popular, the logo
+wall) and `GET /api/setup/directory/search` (`SetupDirectoryPage`, by `q`, `category` and an opaque
+`cursor`) answer it, each entry with the `starterId` it is when it is one. A starter takes the
+starter's path; any other entry is held by the page (`SetupAppContext`, so the stepper and browser
+Back read it as the *Tool* stage) until its task is chosen, when `POST /api/setup/task` with its
+`slug` reads the entry from the directory again and proposes it (`directoryProposal`: the slug as the
+vendor, the first host as the primary) through the starter's routing (`connectSetupProposal`). No
+column holds it: a reload on that tool screen returns to the directory.
+
 **Setup's words are integration and task** (GRA-216; CONTEXT.md, *Integration*; ADR 0024's
 amendment of 2026-09-24). Person-facing copy says *integration* for the service a person connects
 and *task* for what the first tool should do: Setup's steps (*Choose an integration*, *What should
@@ -1509,7 +1588,12 @@ in `events.ts`: `noun_verbed`, counts and kinds, never content) and **model tele
 `Backings` carries the three and the boot line names each: `logs stdout, analytics off, model
 telemetry off` on every self-host. Every `POST /mcp` event carries the tool call under `mcp` — the
 tool, its kind, the agent, the person, the outcome, the refusal's reason, the latency — from
-`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point; a `/mcp`
+`McpDeps.onToolCall`, which `tools.ts` fires once per call from its one dispatch point, and a run
+of a stock copy or a remix of one adds `mcp.stock`: the stock tool and version, `remix`, and on a
+failure its kind and the vendor's last error status, never the input, output or body, which
+`tool_called` carries flat (GRA-244; `stock-signal.ts`, the runner's `VENDOR_STATUS_MARKER`; a
+response the proxy marks `x-graft-refused`, which every proxy refusal carries, is never a vendor's
+status); a `/mcp`
 request the door or the SDK's transport refuses before any tool runs carries the refusal under
 `mcpRefusal` — status, JSON-RPC code, the answer's own sentence, whether a session was named, and the
 agent once the token resolved to one — from `McpDeps.onTransportRefusal` (GRA-131: a bare 400 in the

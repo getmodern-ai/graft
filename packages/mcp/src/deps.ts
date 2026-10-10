@@ -41,6 +41,7 @@ import type { BlobWrittenEvent } from "./blobs";
 import type { HandoffConfig } from "./handoff";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
+import type { StockSignal } from "./stock-signal";
 import type { BlobSweptEvent } from "./sweep";
 import { createStockToolSource, type ToolSource } from "./tool-source";
 import { type ReadWebPage, readWebPage } from "./web-page";
@@ -279,6 +280,16 @@ export type ToolCallEvent = {
    * the tally over the parsed ledger (`blobs.ts`) and never from the answer's keys.
    */
   detail?: Record<string, string | number | boolean>;
+  /**
+   * Present only when the call ran a person's copy of a stock tool or a remix of one (GRA-244;
+   * ADR 0025; `stock-signal.ts`), through `run_tool` or the tool's own name: the stock tool and the
+   * stock version it came from, `remix` when the code that ran is the person's own over it, and on
+   * a failed run (`outcome: "error"`) its `failureKind` and `vendorStatus`, the last error status a
+   * vendor answered the module's `ctx.fetch` with. A refusal's word is `reason`, above. Never the
+   * input, the output or the vendor's body. What a hosted monitor of a stock version's failure rate
+   * reads; absent for every other call, so an authored tool's event is what it was.
+   */
+  stock?: StockSignal;
   /**
    * Whether the session's client declared the MCP Apps extension in `initialize` (GRA-150). An
    * observation and nothing else: the card gate reads the client's registered callback host and

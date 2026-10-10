@@ -97,3 +97,11 @@ holds the agent: the new hash overwrites the old, so the old plaintext stops wor
 token is still shown once, in the answer that minted it. The replacement is judged under the
 record's lock, so none lands after the finish; once Setup is completed the rule above stands, and
 a lost token is again a revoke and a new agent.
+
+## Amendment, 2026-10-09: stock tools exist (ADR 0025)
+
+The rejected option above, "a canned starter tool copied into the toolbox … the one tool in the
+toolbox nobody authored", is overtaken: stock tools are authored by this loop ahead of time and
+copied into a person's toolbox when first reached for (ADR 0025). Setup itself is unchanged by that
+record; how its first tool uses stock is a later decision, and until it is made Setup acquires its
+first tool as described above.
