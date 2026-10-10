@@ -1057,6 +1057,8 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
    * version, and the copy into a person's toolbox lands an ordinary tool whose version names its
    * stock origin.
    */
+  // The whole workspace is checked twice (each tool by the real check), and it grows with every
+  // integration's stock tools, so this case outlives the file's 30 s default.
   it("loads the stock workspace idempotently and copies a stock tool into a person's toolbox with its origin", async () => {
     const ctx: ServiceContext = { db };
     const sources = await readStockWorkspace();
@@ -1178,5 +1180,5 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     expect((await getApproval(ctx, lateScope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
       origins[0]?.versionId,
     );
-  });
+  }, 180_000);
 });
