@@ -239,6 +239,7 @@ describe("GET /api/setup/vendors", () => {
       "notion",
       "github",
       "hubspot",
+      "stripe",
       "open-meteo",
     ]);
     expect(

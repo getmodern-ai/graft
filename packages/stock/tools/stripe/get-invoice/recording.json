@@ -1,0 +1,375 @@
+{
+  "format": 1,
+  "tool": "stripe__get-invoice",
+  "recordedAt": "2026-10-09T23:53:50.756Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/invoices?limit=1",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "object": "vbft",
+            "data": [
+              {
+                "id": "ip_6FIaLkN0447daok2fG8VKHw0",
+                "object": "cpptibi",
+                "account_country": "JE",
+                "account_name": "Wjewx",
+                "account_tax_ids": null,
+                "amount_due": 2636,
+                "amount_overpaid": 0,
+                "amount_paid": 2636,
+                "amount_remaining": 0,
+                "amount_shipping": 0,
+                "application": null,
+                "attempt_count": 1,
+                "attempted": true,
+                "auto_advance": false,
+                "automatic_tax": {
+                  "disabled_reason": null,
+                  "enabled": false,
+                  "liability": null,
+                  "provider": null,
+                  "status": null
+                },
+                "automatically_finalizes_at": null,
+                "billing_reason": "ccutuh",
+                "collection_method": "zmhijl_sgqbiaktpaghe",
+                "created": 7494896923,
+                "currency": "cgx",
+                "custom_fields": null,
+                "customer": "lgd_OOVo4NDtBTmeT1",
+                "customer_account": null,
+                "customer_address": null,
+                "customer_email": null,
+                "customer_name": null,
+                "customer_phone": null,
+                "customer_shipping": null,
+                "customer_tax_exempt": "ykdr",
+                "customer_tax_ids": [],
+                "default_payment_method": null,
+                "default_source": null,
+                "default_tax_rates": [],
+                "description": "(hpepwri sj Fmydbe OVP)",
+                "discounts": [],
+                "due_date": null,
+                "effective_at": 2800379276,
+                "ending_balance": 0,
+                "footer": null,
+                "from_invoice": null,
+                "hosted_invoice_url": "https://invoice.stripe.com/",
+                "invoice_pdf": "https://pay.stripe.com/",
+                "issuer": {
+                  "type": "wiey"
+                },
+                "last_finalization_error": null,
+                "latest_revision": null,
+                "lines": {
+                  "object": "vbft",
+                  "data": [
+                    {
+                      "id": "vs_2BZpRyQ8481lnqf55ssEB8JJ",
+                      "object": "kpxm_ucxc",
+                      "amount": 2636,
+                      "currency": "cgx",
+                      "description": "(hpepwri sj Fmydbe OVP)",
+                      "discount_amounts": [],
+                      "discountable": true,
+                      "discounts": [],
+                      "invoice": "ip_6FIaLkN0447daok2fG8VKHw0",
+                      "livemode": false,
+                      "metadata": {},
+                      "parent": {
+                        "invoice_item_details": {
+                          "invoice_item": "ud_8ZIiAbT4312fsaw3h2rVKMSI",
+                          "proration": false,
+                          "proration_details": {
+                            "credited_items": null
+                          },
+                          "subscription": null
+                        },
+                        "license_fee_subscription_details": null,
+                        "subscription_item_details": null,
+                        "type": "zzutyfb_goos_kbpusgg"
+                      },
+                      "period": {
+                        "end": 6788609114,
+                        "start": 6788609114
+                      },
+                      "pretax_credit_amounts": [],
+                      "pricing": {
+                        "price_details": {
+                          "price": "jjoqg_6DOaQmO8787gyrm4Tg1haEw5",
+                          "product": "kfww_KVYhHjVM5O9RL4"
+                        },
+                        "type": "csfox_kciskyg",
+                        "unit_amount_decimal": "3843"
+                      },
+                      "quantity": 1,
+                      "quantity_decimal": "3",
+                      "subtotal": 2636,
+                      "taxes": []
+                    }
+                  ],
+                  "has_more": false,
+                  "total_count": 1,
+                  "url": "/j3/cjtdbabz/yx_8AOqLrS2233bkik5pH7QTQm9/nltpk"
+                },
+                "livemode": false,
+                "metadata": {},
+                "next_payment_attempt": null,
+                "number": "KLU6FRFF-3737",
+                "on_behalf_of": null,
+                "parent": null,
+                "payment_settings": {
+                  "default_mandate": null,
+                  "payment_method_options": null,
+                  "payment_method_types": null
+                },
+                "period_end": 7494896923,
+                "period_start": 7494896923,
+                "post_payment_credit_notes_amount": 0,
+                "pre_payment_credit_notes_amount": 0,
+                "receipt_number": null,
+                "rendering": {
+                  "amount_tax_display": null,
+                  "pdf": {
+                    "page_size": "lwzbmd"
+                  },
+                  "template": null,
+                  "template_version": null
+                },
+                "shipping_cost": null,
+                "shipping_details": null,
+                "starting_balance": 0,
+                "statement_descriptor": null,
+                "status": "losp",
+                "status_transitions": {
+                  "finalized_at": 2800379276,
+                  "marked_uncollectible_at": null,
+                  "paid_at": 2800379276,
+                  "voided_at": null
+                },
+                "subtotal": 2636,
+                "subtotal_excluding_tax": 2636,
+                "test_clock": null,
+                "total": 2636,
+                "total_discount_amounts": [],
+                "total_excluding_tax": 2636,
+                "total_pretax_credit_amounts": [],
+                "total_taxes": [],
+                "webhooks_delivered_at": 4877134779
+              }
+            ],
+            "has_more": false,
+            "url": "/x1/jobhvdsk"
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/invoices/ip_6FIaLkN0447daok2fG8VKHw0",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "id": "ip_6FIaLkN0447daok2fG8VKHw0",
+            "object": "cpptibi",
+            "account_country": "JE",
+            "account_name": "Wjewx",
+            "account_tax_ids": null,
+            "amount_due": 2636,
+            "amount_overpaid": 0,
+            "amount_paid": 2636,
+            "amount_remaining": 0,
+            "amount_shipping": 0,
+            "application": null,
+            "attempt_count": 1,
+            "attempted": true,
+            "auto_advance": false,
+            "automatic_tax": {
+              "disabled_reason": null,
+              "enabled": false,
+              "liability": null,
+              "provider": null,
+              "status": null
+            },
+            "automatically_finalizes_at": null,
+            "billing_reason": "ccutuh",
+            "collection_method": "zmhijl_sgqbiaktpaghe",
+            "created": 7494896923,
+            "currency": "cgx",
+            "custom_fields": null,
+            "customer": "lgd_OOVo4NDtBTmeT1",
+            "customer_account": null,
+            "customer_address": null,
+            "customer_email": null,
+            "customer_name": null,
+            "customer_phone": null,
+            "customer_shipping": null,
+            "customer_tax_exempt": "ykdr",
+            "customer_tax_ids": [],
+            "default_payment_method": null,
+            "default_source": null,
+            "default_tax_rates": [],
+            "description": "(hpepwri sj Fmydbe OVP)",
+            "discounts": [],
+            "due_date": null,
+            "effective_at": 2800379276,
+            "ending_balance": 0,
+            "footer": null,
+            "from_invoice": null,
+            "hosted_invoice_url": "https://invoice.stripe.com/",
+            "invoice_pdf": "https://pay.stripe.com/",
+            "issuer": {
+              "type": "wiey"
+            },
+            "last_finalization_error": null,
+            "latest_revision": null,
+            "lines": {
+              "object": "vbft",
+              "data": [
+                {
+                  "id": "vs_2BZpRyQ8481lnqf55ssEB8JJ",
+                  "object": "kpxm_ucxc",
+                  "amount": 2636,
+                  "currency": "cgx",
+                  "description": "(hpepwri sj Fmydbe OVP)",
+                  "discount_amounts": [],
+                  "discountable": true,
+                  "discounts": [],
+                  "invoice": "ip_6FIaLkN0447daok2fG8VKHw0",
+                  "livemode": false,
+                  "metadata": {},
+                  "parent": {
+                    "invoice_item_details": {
+                      "invoice_item": "ud_8ZIiAbT4312fsaw3h2rVKMSI",
+                      "proration": false,
+                      "proration_details": {
+                        "credited_items": null
+                      },
+                      "subscription": null
+                    },
+                    "license_fee_subscription_details": null,
+                    "subscription_item_details": null,
+                    "type": "zzutyfb_goos_kbpusgg"
+                  },
+                  "period": {
+                    "end": 6788609114,
+                    "start": 6788609114
+                  },
+                  "pretax_credit_amounts": [],
+                  "pricing": {
+                    "price_details": {
+                      "price": "jjoqg_6DOaQmO8787gyrm4Tg1haEw5",
+                      "product": "kfww_KVYhHjVM5O9RL4"
+                    },
+                    "type": "csfox_kciskyg",
+                    "unit_amount_decimal": "3843"
+                  },
+                  "quantity": 1,
+                  "quantity_decimal": "3",
+                  "subtotal": 2636,
+                  "taxes": []
+                }
+              ],
+              "has_more": false,
+              "total_count": 1,
+              "url": "/j3/cjtdbabz/yx_8AOqLrS2233bkik5pH7QTQm9/nltpk"
+            },
+            "livemode": false,
+            "metadata": {},
+            "next_payment_attempt": null,
+            "number": "KLU6FRFF-3737",
+            "on_behalf_of": null,
+            "parent": null,
+            "payment_settings": {
+              "default_mandate": null,
+              "payment_method_options": null,
+              "payment_method_types": null
+            },
+            "period_end": 7494896923,
+            "period_start": 7494896923,
+            "post_payment_credit_notes_amount": 0,
+            "pre_payment_credit_notes_amount": 0,
+            "receipt_number": null,
+            "rendering": {
+              "amount_tax_display": null,
+              "pdf": {
+                "page_size": "lwzbmd"
+              },
+              "template": null,
+              "template_version": null
+            },
+            "shipping_cost": null,
+            "shipping_details": null,
+            "starting_balance": 0,
+            "statement_descriptor": null,
+            "status": "losp",
+            "status_transitions": {
+              "finalized_at": 2800379276,
+              "marked_uncollectible_at": null,
+              "paid_at": 2800379276,
+              "voided_at": null
+            },
+            "subtotal": 2636,
+            "subtotal_excluding_tax": 2636,
+            "test_clock": null,
+            "total": 2636,
+            "total_discount_amounts": [],
+            "total_excluding_tax": 2636,
+            "total_pretax_credit_amounts": [],
+            "total_taxes": [],
+            "webhooks_delivered_at": 4877134779
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "found": true,
+    "id": "ip_6FIaLkN0447daok2fG8VKHw0",
+    "number": "KLU6FRFF-3737",
+    "customer": "lgd_OOVo4NDtBTmeT1",
+    "customer_email": null,
+    "customer_name": null,
+    "status": "losp",
+    "collection_method": "zmhijl_sgqbiaktpaghe",
+    "currency": "cgx",
+    "subtotal": 2636,
+    "tax": 0,
+    "total": 2636,
+    "amount_due": 2636,
+    "amount_paid": 2636,
+    "amount_remaining": 0,
+    "created": "2207-07-04T11:48:43.000Z",
+    "due_date": null,
+    "period_start": "2207-07-04T11:48:43.000Z",
+    "period_end": "2207-07-04T11:48:43.000Z",
+    "hosted_invoice_url": "https://invoice.stripe.com/",
+    "invoice_pdf": "https://pay.stripe.com/",
+    "lines": [
+      {
+        "id": "vs_2BZpRyQ8481lnqf55ssEB8JJ",
+        "description": "(hpepwri sj Fmydbe OVP)",
+        "amount": 2636,
+        "currency": "cgx",
+        "quantity": 1,
+        "price": "jjoqg_6DOaQmO8787gyrm4Tg1haEw5"
+      }
+    ],
+    "linesHasMore": false
+  }
+}

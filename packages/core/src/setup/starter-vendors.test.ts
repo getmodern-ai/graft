@@ -43,6 +43,7 @@ describe("the starter integrations", () => {
       "notion",
       "github",
       "hubspot",
+      "stripe",
       "open-meteo",
     ]);
     for (const starter of STARTER_VENDORS) {
@@ -173,6 +174,7 @@ describe("setupVendorOptions", () => {
       "notion",
       "github",
       "hubspot",
+      "stripe",
       "open-meteo",
     ]);
     expect(list.slice(0, -1).every((option) => option.connect === "link")).toBe(true);
@@ -193,7 +195,9 @@ describe("setupVendorOptions", () => {
       covered((starter) =>
         starter.vendor === "github"
           ? GATEWAY
-          : starter.vendor === "open-meteo" || starter.vendor === "hubspot"
+          : starter.vendor === "open-meteo" ||
+              starter.vendor === "hubspot" ||
+              starter.vendor === "stripe"
             ? KEYRING
             : LINK,
       ),

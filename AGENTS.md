@@ -1194,7 +1194,8 @@ are `@graft/core/setup/starter-vendors.ts`, browser-safe, one entry each (vendor
 the keyring's scheme and parameters, the curated read-only `goal`, `runInput` with its default, the
 `outcome` sentence); adding one is one entry. **Starters are one-click only** (GRA-216): the list is
 common services a link provider connects by OAuth (Gmail, Google Calendar, Google Drive,
-Google Sheets, Slack, Notion, GitHub, HubSpot) plus Open-Meteo, the keyless one, each task a `GET`, since the check counts
+Google Sheets, Slack, Notion, GitHub, HubSpot, and Stripe, a stock integration since GRA-261) plus
+Open-Meteo, the keyless one, each task a `GET`, since the check counts
 a `POST` as a write and the result step runs only a read-only tool (so no Linear, whose API is
 GraphQL). **Every task needs nothing the person has to look up** (GRA-217): no id, no name, no link;
 Open-Meteo's city, with its default, is the one input, and every other starter's `hints` names its

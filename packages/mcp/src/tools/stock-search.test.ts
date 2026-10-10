@@ -104,6 +104,27 @@ const CASES: [query: string, tool: string][] = [
   ["update cells in a sheet", "google-sheets__update-range"],
   ["create a spreadsheet", "google-sheets__create-spreadsheet"],
   ["add a tab to a spreadsheet", "google-sheets__add-tab"],
+  // Stripe's (GRA-261).
+  ["find a customer", "stripe__find-customer"],
+  ["look up a customer by email", "stripe__find-customer"],
+  ["get a customer with their subscriptions", "stripe__get-customer"],
+  ["list recent payments", "stripe__list-payments"],
+  ["recent charges", "stripe__list-payments"],
+  ["unpaid invoices", "stripe__list-invoices"],
+  ["list invoices for a customer", "stripe__list-invoices"],
+  ["get an invoice", "stripe__get-invoice"],
+  ["show an invoice with its line items", "stripe__get-invoice"],
+  ["list active subscriptions", "stripe__list-subscriptions"],
+  ["canceled subscriptions", "stripe__list-subscriptions"],
+  ["list products and prices", "stripe__list-products"],
+  ["stripe balance", "stripe__get-balance"],
+  ["how much money is in my stripe account", "stripe__get-balance"],
+  ["create a customer", "stripe__create-customer"],
+  ["add a new stripe customer", "stripe__create-customer"],
+  ["create an invoice", "stripe__create-invoice"],
+  ["send an invoice", "stripe__create-invoice"],
+  ["refund a payment", "stripe__refund-payment"],
+  ["refund a charge", "stripe__refund-payment"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];
