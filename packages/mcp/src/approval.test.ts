@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  allowVendor,
   answerPendingAction,
   revokeApproval,
   setApproval,
@@ -24,7 +25,7 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AUTOMATIC_ANSWER_MS, describeAsk, NO_ELICITATION, requireBuildApproval } from "./approval";
-import { recordApprovalAnswer } from "./ask-answer";
+import { confirmConnectionAsk, recordApprovalAnswer } from "./ask-answer";
 import type { McpDeps } from "./deps";
 import { HANDOFF_TOKEN_PARAM, verifyHandoff } from "./handoff";
 import { createToolListChangedNotifier } from "./notifier";
@@ -55,6 +56,8 @@ const AGENT_E = "agent_e";
 const AGENT_F = "agent_f";
 const AGENT_G = "agent_g";
 const AGENT_I = "agent_i";
+const AGENT_J = "agent_j";
+const AGENT_K = "agent_k";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
@@ -63,6 +66,8 @@ const TOKEN_E = "grft_approval_token_e_000000000000000000000000";
 const TOKEN_F = "grft_approval_token_f_000000000000000000000000";
 const TOKEN_G = "grft_approval_token_g_000000000000000000000000";
 const TOKEN_I = "grft_approval_token_i_000000000000000000000000";
+const TOKEN_J = "grft_approval_token_j_000000000000000000000000";
+const TOKEN_K = "grft_approval_token_k_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -141,6 +146,8 @@ beforeAll(async () => {
     [AGENT_F, TOKEN_F, "oneshot Hermes"],
     [AGENT_G, TOKEN_G, "Hermes at a terminal"],
     [AGENT_I, TOKEN_I, "integration Hermes"],
+    [AGENT_J, TOKEN_J, "connecting Hermes"],
+    [AGENT_K, TOKEN_K, "careful Hermes"],
   ] as const) {
     store.addAgent({
       scopeMode: "listed",
@@ -164,7 +171,18 @@ beforeAll(async () => {
       defaultConnectionId: CONN_DEMO,
       path: `tools/demo/${tool.name}/v1`,
     });
-    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D, AGENT_E, AGENT_F, AGENT_G, AGENT_I]) {
+    for (const agent of [
+      AGENT_A,
+      AGENT_B,
+      AGENT_C,
+      AGENT_D,
+      AGENT_E,
+      AGENT_F,
+      AGENT_G,
+      AGENT_I,
+      AGENT_J,
+      AGENT_K,
+    ]) {
       store.promote(agent, tool.id);
     }
   }
@@ -712,6 +730,111 @@ describe("an integration allowed at once, on the ask", () => {
     } finally {
       await i.close();
       store.vendorApprovals.clear();
+    }
+  }, 60_000);
+});
+
+/**
+ * GRA-239 (ADR 0008 as amended 2026-10-09): the connection's confirmation carries the line "Use
+ * <integration>'s tools without asking each time", pre-ticked. Confirmed with it on, the
+ * integration's writes run with no ask and a destructive one still asks; confirmed with it off,
+ * nothing is recorded and the writes ask as before.
+ */
+describe("an integration allowed when connecting", () => {
+  /** The agent proposes a second Demo account, keyless, and the person confirms it on the console's card. */
+  const connectWithLine = async (
+    client: Awaited<ReturnType<typeof connect>>,
+    label: string,
+    allowVendor: boolean,
+  ) => {
+    const asked = body(
+      await client.call("request_connection", {
+        vendor: "demo",
+        displayName: "Demo Status",
+        primaryHost: `https://${label}.status.demo.example`,
+        hosts: [],
+        scheme: "none",
+        schemeConfig: {},
+      }),
+    );
+    expect(asked).toMatchObject({ error: "awaiting_connection" });
+    return confirmConnectionAsk(
+      { db: deps.db },
+      { personId: PERSON },
+      asked.pendingActionId as string,
+      {
+        vendor: "demo",
+        displayName: "Demo Status",
+        scheme: "none",
+        schemeConfig: {},
+        primaryHost: `https://${label}.status.demo.example`,
+        hosts: [`${label}.status.demo.example`],
+        credential: {},
+        approveBuild: false,
+        allowVendor,
+      },
+      {
+        connection: deps.connection,
+        agent: deps.agent,
+        approval: deps.approval,
+        pendingAction: deps.pendingAction,
+      },
+    );
+  };
+
+  it("left on, the integration's writes run without an ask and a destructive one still asks", async () => {
+    const j = await connect(TOKEN_J);
+    try {
+      const confirmed = await connectWithLine(j, "j", true);
+      expect(confirmed.vendorApproval).toMatchObject({
+        agentId: AGENT_J,
+        vendor: "demo",
+        includesDestructive: false,
+      });
+
+      const before = actionsOf(AGENT_J, "tool").length;
+      expect(body(await j.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(body(await j.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(actionsOf(AGENT_J, "tool")).toHaveLength(before);
+
+      const destructive = awaiting(await j.call(DELETE_ITEM, { limit: 1 }));
+      expect(destructive.action.payload).toMatchObject({ toolId: "tool_delete" });
+      // Another agent of the person is not covered.
+      expect(store.vendorApprovals.get(`${AGENT_K} demo`)).toBeUndefined();
+    } finally {
+      await j.close();
+      store.vendorApprovals.delete(`${AGENT_J} demo`);
+    }
+  }, 60_000);
+
+  it("never narrows a standing approval that already includes destructive tools", async () => {
+    const j = await connect(TOKEN_J);
+    try {
+      await allowVendor(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_J },
+        "demo",
+        { includesDestructive: true },
+        deps.approval,
+      );
+      const confirmed = await connectWithLine(j, "j-again", true);
+      expect(confirmed.vendorApproval?.includesDestructive).toBe(true);
+      expect(store.vendorApprovals.get(`${AGENT_J} demo`)?.includesDestructive).toBe(true);
+    } finally {
+      await j.close();
+      store.vendorApprovals.delete(`${AGENT_J} demo`);
+    }
+  }, 60_000);
+
+  it("unticked, nothing is recorded and the writes ask as before", async () => {
+    const k = await connect(TOKEN_K);
+    try {
+      const confirmed = await connectWithLine(k, "k", false);
+      expect(confirmed.vendorApproval).toBeUndefined();
+      expect(store.vendorApprovals.get(`${AGENT_K} demo`)).toBeUndefined();
+      awaiting(await k.call(CREATE_ITEM, { limit: 1 }));
+    } finally {
+      await k.close();
     }
   }, 60_000);
 });

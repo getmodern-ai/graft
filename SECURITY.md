@@ -29,9 +29,11 @@ where a decision is theirs. Anything that breaks either is in scope:
   that lets a write or destructive tool pass on a version it was not given for, other than a
   ready-made tool's update that keeps or narrows its annotations (ADR 0008 as amended 2026-10-09).
   A tool's ask may also allow every tool of its integration for that agent at once, destructive
-  tools only when the person ticks them (the same amendment): one recorded by anything but the
-  person's answer, for another agent, or one that passes a destructive tool without the tick or a
-  tool set to ask every call, is in scope.
+  tools only when the person ticks them (the same amendment), and a connection's confirmation may
+  record the same, destructive tools always left out: one recorded by anything but the person's
+  answer, for another agent, one recorded from a connection's confirmation with destructive tools
+  in it, or one that passes a destructive tool without the tick or a tool set to ask every call, is
+  in scope.
 - The **MCP OAuth server**: a token issued to the wrong client or agent, a code or refresh token
   replayed, a consent decided without a session. The **console**: a cross-origin state change. Its
   session also issues an agent's static token, shown once per request, to an agent awaiting its

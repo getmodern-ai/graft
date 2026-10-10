@@ -1659,6 +1659,39 @@ describe("the connection handoff's submits (GRA-28)", () => {
   });
 
   /**
+   * GRA-239 (ADR 0008, amendment of 2026-10-09): the line "Use <integration>'s tools without
+   * asking each time" records the asking agent's standing approval for the connection's vendor,
+   * destructive tools left out, in the same transaction; off or absent, nothing.
+   */
+  it("records the asking agent's standing approval for the vendor when allowVendor is on, and none when it is off or absent", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    const find = vi.mocked(deps.pendingAction.findPendingActionForPerson);
+    answerTheRowJustInserted(deps);
+    find.mockResolvedValueOnce(connectionAction);
+    const res = await app.request(
+      "/api/pending-actions/pa_c/connection",
+      json({ ...submission, allowVendor: true }),
+    );
+    expect(res.status).toBe(201);
+    expect(await res.json()).toHaveProperty("vendorApproval");
+    expect(deps.approval.upsertVendorApproval).toHaveBeenCalledWith(
+      fakeDb,
+      { personId: "person_1", agentId: "agent_1" },
+      { vendor: connectionRow.vendor, includesDestructive: false, grantedAt: NOW },
+      { keep: true },
+    );
+
+    vi.mocked(deps.approval.upsertVendorApproval).mockClear();
+    for (const body of [submission, { ...submission, allowVendor: false }]) {
+      find.mockResolvedValueOnce(connectionAction);
+      const off = await app.request("/api/pending-actions/pa_c/connection", json(body));
+      expect(off.status).toBe(201);
+      expect(await off.json()).not.toHaveProperty("vendorApproval");
+    }
+    expect(deps.approval.upsertVendorApproval).not.toHaveBeenCalled();
+  });
+
+  /**
    * The grant runs inside the submit's transaction, before the answer. The fake `transaction` here
    * runs its body and cannot roll anything back — that is Postgres's — so what this proves is the
    * order: a grant that fails ends the request before the answer is recorded, and the agent's

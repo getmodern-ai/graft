@@ -82,6 +82,7 @@ export { type ApprovalDeps, defaultApprovalDeps } from "./approval/approval.deps
 export {
   type AskedVersion,
   allowVendor,
+  allowVendorWhenConnecting,
   decideToolCall,
   getApproval,
   getBuildApproval,
@@ -102,7 +103,12 @@ export {
   allowVendorLabel,
   allowVendorOffer,
   integrationNameFor,
+  VENDOR_TOOLS_DESCRIPTION,
+  type VendorToolsOffer,
   vendorApprovalSentence,
+  vendorToolsLabel,
+  vendorToolsOffer,
+  vendorToolsSentence,
 } from "./approval/vendor-approval.rules";
 export { type BlobDeps, defaultBlobDeps } from "./blob/blob.deps";
 export { BLOB_TTL_HOURS, BLOB_TTL_MS, isBlobExpired } from "./blob/blob.rules";

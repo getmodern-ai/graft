@@ -6,6 +6,7 @@ import type { ServiceContext } from "../context";
 import type { ApprovalDeps } from "./approval.deps";
 import {
   allowVendor,
+  allowVendorWhenConnecting,
   decideToolCall,
   grantBuildApproval,
   revokeApproval,
@@ -484,6 +485,29 @@ describe("decideToolCall under an integration's standing approval", () => {
       decideToolCall(ctx, SCOPE, target({ readOnly: true, destructive: false }), deps),
     ).resolves.toBe("pass");
     expect(deps.findVendorApproval).not.toHaveBeenCalled();
+  });
+});
+
+describe("allowVendorWhenConnecting", () => {
+  it("never writes over an approval a tool's ask recorded between its read and its insert (Greptile on #182)", async () => {
+    const answeredMeanwhile = { ...vendorApproval, includesDestructive: true };
+    const deps = fakeDeps({
+      // Nothing stands when the confirmation looks; the tool's ask lands before it inserts.
+      findVendorApproval: vi
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(answeredMeanwhile),
+      upsertVendorApproval: vi.fn(async () => null),
+    });
+    await expect(allowVendorWhenConnecting(ctx, SCOPE, "hubspot", deps)).resolves.toEqual(
+      answeredMeanwhile,
+    );
+    expect(deps.upsertVendorApproval).toHaveBeenCalledWith(
+      ctx.db,
+      SCOPE,
+      { vendor: "hubspot", includesDestructive: false, grantedAt: NOW },
+      { keep: true },
+    );
   });
 });
 

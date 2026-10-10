@@ -926,3 +926,94 @@ describe("the Setup offer", () => {
     expect(readCardData({ tools: [], connections: [] })).toBeNull();
   });
 });
+
+/**
+ * GRA-239 (ADR 0008 as amended 2026-10-09): a connection's card from a server that offers the
+ * line for the integration's tools draws it under the build choice, ticked, and sends it with the
+ * confirm or the link's start; a card without it draws and sends what it always did.
+ */
+describe("the line for the integration's tools on a connection's card", () => {
+  const USE_TOOLS = {
+    integrationName: "Open-Meteo",
+    label: "Use Open-Meteo's tools without asking each time",
+    description: "A tool that can delete or overwrite data still asks you first.",
+  };
+  const KEYLESS_LINE: AskCard = { ...KEYLESS, vendorTools: USE_TOOLS };
+  const LINK_LINE: AskCard = {
+    ...LINK,
+    vendorTools: {
+      ...USE_TOOLS,
+      integrationName: "Gmail",
+      label: "Use Gmail's tools without asking each time",
+    },
+  };
+  const box = (root: HTMLElement, name: string) =>
+    root.querySelector(`input[name=${name}]`) as HTMLInputElement | null;
+
+  it("is read off the result with the rest of the card", () => {
+    expect(readAskCard({ card: KEYLESS_LINE })).toEqual(KEYLESS_LINE);
+  });
+
+  it("draws the line ticked under the build choice, in the server's words", () => {
+    const root = renderAsk(KEYLESS_LINE, handlers(), document);
+    expect(box(root, "approveBuild")?.checked).toBe(true);
+    expect(box(root, "allowVendor")?.checked).toBe(true);
+    expect(root.textContent).toContain(USE_TOOLS.label);
+    expect(root.textContent).toContain(USE_TOOLS.description);
+    const ticks = [...root.querySelectorAll("input[type=checkbox]")].map(
+      (node) => (node as HTMLInputElement).name,
+    );
+    expect(ticks).toEqual(["approveBuild", "allowVendor"]);
+  });
+
+  it("sends the line with the keyless confirm as the person left it, and freezes it", async () => {
+    const h = handlers();
+    const root = renderAsk(KEYLESS_LINE, h, document);
+    const line = box(root, "allowVendor") as HTMLInputElement;
+    line.checked = false;
+    [...root.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    await flush();
+    expect(h.answer).toHaveBeenCalledWith({
+      connect: true,
+      approveBuild: true,
+      allowVendor: false,
+    });
+    expect(line.disabled).toBe(true);
+
+    const again = handlers();
+    const second = renderAsk(KEYLESS_LINE, again, document);
+    [...second.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    await flush();
+    expect(again.answer).toHaveBeenCalledWith({
+      connect: true,
+      approveBuild: true,
+      allowVendor: true,
+    });
+  });
+
+  it("sends the line with the link's start", async () => {
+    const h = handlers();
+    const root = renderAsk(LINK_LINE, h, document);
+    expect(box(root, "allowVendor")?.checked).toBe(true);
+    [...root.querySelectorAll("button")]
+      .find((b) => b.textContent === "Connect through broker")
+      ?.click();
+    await flush();
+    expect(h.startLink).toHaveBeenCalledWith({
+      pendingActionId: "pa_4",
+      approveBuild: true,
+      allowVendor: true,
+    });
+    expect(box(root, "allowVendor")?.disabled).toBe(true);
+    h.stop();
+  });
+
+  it("is absent from a card the server wrote without it, which sends what it always sent", async () => {
+    const h = handlers();
+    const root = renderAsk(KEYLESS, h, document);
+    expect(box(root, "allowVendor")).toBeNull();
+    [...root.querySelectorAll("button")].find((b) => b.textContent === "Connect")?.click();
+    await flush();
+    expect(h.answer).toHaveBeenCalledWith({ connect: true, approveBuild: true });
+  });
+});

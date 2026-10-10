@@ -1199,10 +1199,12 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
             .filter((row) => row.agentId === scope.agentId)
             .sort((a, b) => a.vendor.localeCompare(b.vendor))
         : [],
-    upsertVendorApproval: async (_db, scope, input) => {
+    upsertVendorApproval: async (_db, scope, input, options = {}) => {
       if (!ownsAgent(scope)) return null;
       const at = store.now();
       const existing = store.vendorApprovals.get(key(scope.agentId, input.vendor));
+      // `keep`: the repo's `on conflict do nothing`, a standing row left as it is.
+      if (options.keep && existing) return null;
       const row: VendorApprovalRow = {
         agentId: scope.agentId,
         vendor: input.vendor,

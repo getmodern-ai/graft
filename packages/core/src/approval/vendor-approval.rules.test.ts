@@ -6,7 +6,11 @@ import {
   allowVendorLabel,
   allowVendorOffer,
   integrationNameFor,
+  VENDOR_TOOLS_DESCRIPTION,
   vendorApprovalSentence,
+  vendorToolsLabel,
+  vendorToolsOffer,
+  vendorToolsSentence,
 } from "./vendor-approval.rules";
 
 /** ADR 0008 as amended 2026-10-09 (GRA-237): the words the console's card and the ask card share. */
@@ -54,6 +58,37 @@ describe("vendorApprovalSentence", () => {
   it("says destructive tools are included when ticked", () => {
     expect(vendorApprovalSentence("HubSpot", true)).toBe(
       "Every HubSpot tool now runs for this agent without asking, destructive ones included. Withdraw it on the agent's page.",
+    );
+  });
+});
+
+/** The second line under the build approval on a connection's confirmation (GRA-239). */
+describe("the line when connecting", () => {
+  it("offers the integration's tools without asking each time", () => {
+    expect(vendorToolsLabel("HubSpot")).toBe("Use HubSpot's tools without asking each time");
+  });
+
+  it("writes a name ending in s with the apostrophe alone", () => {
+    expect(vendorToolsLabel("Demo Orders")).toBe("Use Demo Orders' tools without asking each time");
+  });
+
+  it("says destructive tools are never part of it", () => {
+    expect(VENDOR_TOOLS_DESCRIPTION).toBe(
+      "A tool that can delete or overwrite data still asks you first.",
+    );
+  });
+
+  it("is one object the ask card carries, named for the starter integration", () => {
+    expect(vendorToolsOffer("hubspot", "HubSpot (work)")).toEqual({
+      integrationName: "HubSpot",
+      label: "Use HubSpot's tools without asking each time",
+      description: "A tool that can delete or overwrite data still asks you first.",
+    });
+  });
+
+  it("says what was recorded once connected", () => {
+    expect(vendorToolsSentence("HubSpot")).toBe(
+      "HubSpot's tools run for this agent without asking; destructive ones still ask.",
     );
   });
 });
