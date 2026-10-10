@@ -1198,6 +1198,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         heartbeatAt: input.heartbeatAt ?? null,
         finishedAt: input.finishedAt ?? null,
         toolId: input.toolId ?? null,
+        fromToolId: input.fromToolId ?? null,
         owner: "person",
         createdAt: at,
         updatedAt: at,

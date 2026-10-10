@@ -239,15 +239,16 @@ describe("copyStockVersion", () => {
 
 /**
  * A database whose transactions hold the advisory locks they take until they end, as Postgres's
- * `pg_advisory_xact_lock` does: what serialises two copies in the race test.
+ * `pg_advisory_xact_lock` does: what serialises two copies in the race test. A lock the
+ * transaction already holds is taken again at once, as Postgres's is by the same session.
  */
 function lockingDb(): { db: typeof fakeDb; lockToolName: ToolDeps["lockToolName"] } {
   const held = new Map<string, Promise<void>>();
-  type Tx = { releases: (() => void)[] };
+  type Tx = { releases: (() => void)[]; names: Set<string> };
   const db = {
     transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
       // A nested transaction (a savepoint) runs on the same handle and holds the same locks.
-      const tx: Tx & { transaction?: unknown } = { releases: [] };
+      const tx: Tx & { transaction?: unknown } = { releases: [], names: new Set() };
       tx.transaction = async <U>(inner: (handle: unknown) => Promise<U>) => inner(tx);
       try {
         return await fn(tx);
@@ -258,6 +259,7 @@ function lockingDb(): { db: typeof fakeDb; lockToolName: ToolDeps["lockToolName"
   } as unknown as typeof fakeDb;
   const lockToolName: ToolDeps["lockToolName"] = async (tx, personId, key) => {
     const name = `${personId}:${key.vendor}:${key.name}`;
+    if ((tx as unknown as Tx).names.has(name)) return;
     const before = held.get(name) ?? Promise.resolve();
     let release = () => {};
     const mine = new Promise<void>((resolve) => {
@@ -268,6 +270,7 @@ function lockingDb(): { db: typeof fakeDb; lockToolName: ToolDeps["lockToolName"
       before.then(() => mine),
     );
     await before;
+    (tx as unknown as Tx).names.add(name);
     (tx as unknown as Tx).releases.push(release);
   };
   return { db, lockToolName };

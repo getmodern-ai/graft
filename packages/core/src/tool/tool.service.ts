@@ -302,6 +302,12 @@ export async function activateToolVersion(
   versionId: string,
   definition: ToolDefinitionPatch,
   deps: ToolDeps,
+  /**
+   * The version that must still be current for this one to replace it: a remix's starting point
+   * (GRA-243), so a remix built from older files never replaces one that landed meanwhile. A
+   * mismatch is a `CONFLICT` carrying `expectedCurrentVersionId`.
+   */
+  options: { expectedCurrentVersionId?: string } = {},
 ): Promise<AuthoredToolRow> {
   return ctx.db.transaction(async (tx) => {
     const scoped = { db: tx };
@@ -310,6 +316,15 @@ export async function activateToolVersion(
       "Tool version not found",
     );
     if (candidate.toolId !== toolId) throw new ServiceError("NOT_FOUND", "Tool version not found");
+    const named = orNotFound(
+      await deps.findAuthoredToolById(tx, principal.personId, toolId),
+      "Tool not found",
+    );
+    // Every pointer move takes the tool's name lock (the one a publish's rows and a stock copy
+    // take), and the pointer is read again under it: two activations serialise, so the forward
+    // rule and a remix's `expectedCurrentVersionId` each judge the pointer the other left
+    // (Greptile on #186).
+    await deps.lockToolName(tx, principal.personId, { vendor: named.vendor, name: named.name });
     const tool = orNotFound(
       await deps.findAuthoredToolById(tx, principal.personId, toolId),
       "Tool not found",
@@ -317,6 +332,20 @@ export async function activateToolVersion(
     const current = tool.currentVersionId
       ? await deps.findToolVersion(tx, principal.personId, tool.currentVersionId)
       : null;
+    const expected = options.expectedCurrentVersionId;
+    if (expected !== undefined && tool.currentVersionId !== expected) {
+      throw new ServiceError(
+        "CONFLICT",
+        `${tool.vendor}/${tool.name} is no longer at the version v${candidate.versionNumber} was built from, so it cannot become current`,
+        {
+          details: {
+            expectedCurrentVersionId: expected,
+            currentVersionId: tool.currentVersionId,
+            versionNumber: candidate.versionNumber,
+          },
+        },
+      );
+    }
     if (current && current.versionNumber > candidate.versionNumber) {
       throw new ServiceError(
         "CONFLICT",

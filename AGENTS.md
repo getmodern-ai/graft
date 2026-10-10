@@ -677,6 +677,26 @@ the scope (`connection_not_in_scope`) and, for a stock copy, to the hosts
 (`connection_hosts_missing`); without it the GRA-122 resolution and its refusals stand.
 `@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
 
+**`acquire` defers to stock, and remixes with `from`** (GRA-243; ADR 0025). `similar_tools_exist`
+(`tools/meta.ts`'s `similarForGoal`) judges the vendor's live toolbox tools and its stock tools the
+person holds no tool of the name of, a stock hit carrying `stock: true`; `acquire-similar.ts` keeps
+GRA-154's overlap score and adds the index's goal-shaped `termCoverage` (`COVERAGE_THRESHOLD`),
+since a stock description written in full dilutes the overlap. The answer's message carries the
+three next steps (run it; `from` to change it; a workflow with `ignoreExisting: true`): a result,
+so conduct words are allowed there and not in the description. `from: "<vendor>__<name>"` names a
+toolbox or stock tool of the connection's vendor, refused before the build ask when it names
+nothing; once the approval stands `ensureToolForAgent` copies a stock tool in, and the job row
+records `from_tool_id` (migration 0015). The job (`acquire/job.ts`'s `startingPoint`) hands the
+tool's current version's files to the model as `ModelJobContext.startingPoint` and publishes every
+draft under that tool's name, so the version lands on the person's row with no stock origin, which
+is a remix; a tool gone since the job was queued ends it `remix_unavailable`. The starting point
+is the authored module alone (`forbiddenDraftFiles` drops what the install wrote), and the pass is
+made current only while the tool is still at the version the remix started from
+(`activateToolVersion`'s `expectedCurrentVersionId`), else the job ends `remix_superseded`. Every job's context
+carries the vendor's stock tools (`stockTools`: wire name, description, input schema), rendered by
+`@graft/model`'s `renderGoal`. `packages/mcp/src/acquire-stock.test.ts` is the suite, asserting on
+the scripted model's goal prompt.
+
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
 `.blobs/<agentId>/` beside the toolboxes on the toolbox volume (the Agent Drive in the hosted form),
