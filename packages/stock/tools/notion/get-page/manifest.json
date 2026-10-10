@@ -1,0 +1,27 @@
+{
+  "name": "get-page",
+  "description": "Reads a Notion page's content as plain text: its title, url and top-level blocks, with headings, lists, to-dos, quotes and code as Markdown-like lines and child pages and databases as their titles in brackets; nested blocks are not read. Answers complete: false when the page holds more blocks than maxPages pages of 100. The page id or URL comes from notion__search-pages-and-databases, or a database row's id from notion__query-database.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "pageId": {
+        "type": "string",
+        "description": "A Notion page ID or page URL ending in the page's 32 hexadecimal characters."
+      },
+      "maxPages": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20,
+        "default": 5,
+        "description": "Maximum number of 100-block result pages to read."
+      }
+    },
+    "required": ["pageId"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.notion.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

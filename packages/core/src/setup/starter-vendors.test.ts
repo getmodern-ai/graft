@@ -33,7 +33,7 @@ const ids = (list: ReturnType<typeof setupVendorOptions>) =>
   list.map((option) => option.starter.id);
 
 describe("the starter integrations", () => {
-  it("are the nine, each a vendor slug and a host set the connection rules admit", () => {
+  it("are the starters, each a vendor slug and a host set the connection rules admit", () => {
     expect(STARTER_VENDOR_IDS).toEqual([
       "gmail",
       "google-calendar",
@@ -45,6 +45,7 @@ describe("the starter integrations", () => {
       "hubspot",
       "stripe",
       "microsoft-outlook",
+      "linear",
       "apollo",
       "open-meteo",
     ]);
@@ -116,8 +117,15 @@ describe("the starter integrations", () => {
     });
     expect(starterVendorOf("gmail")?.runInput).toBeNull();
     expect(starterVendorOf("jira")).toBeNull();
-    // Linear reads through GraphQL, a POST, which the check counts as a write (GRA-216).
-    expect(starterVendorOf("linear")).toBeNull();
+    // Linear reads through a GraphQL query, a POST the proxy reads (GRA-260, GRA-269).
+    expect(starterVendorOf("linear")).toMatchObject({
+      vendor: "linear",
+      primaryHost: "https://api.linear.app",
+      hosts: ["api.linear.app"],
+      scheme: "api_key_header",
+      schemeConfig: { headerName: "Authorization" },
+      runInput: null,
+    });
     expect(starterVendorFor("google-calendar")?.id).toBe("google-calendar");
     expect(starterVendorFor("acme")).toBeNull();
   });
@@ -178,6 +186,7 @@ describe("setupVendorOptions", () => {
       "hubspot",
       "stripe",
       "microsoft-outlook",
+      "linear",
       "apollo",
       "open-meteo",
     ]);
@@ -215,6 +224,7 @@ describe("setupVendorOptions", () => {
       "slack:link",
       "notion:link",
       "microsoft-outlook:link",
+      "linear:link",
       "github:none",
       "open-meteo:keyless",
     ]);

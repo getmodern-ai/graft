@@ -1,0 +1,15 @@
+{
+  "name": "list-teams",
+  "description": "Lists the teams in the Linear workspace, up to 100, each with its id, key and name. A team's id is the teamId linear__create-issue takes, and the one linear__list-workflow-states, linear__list-labels, linear__list-projects, linear__list-cycles and linear__find-issues take to narrow to one team.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

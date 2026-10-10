@@ -3,7 +3,12 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { redactText } from "@graft/core";
-import { createUpstreamFetch, type UpstreamFetch, type UpstreamRequest } from "@graft/proxy";
+import {
+  createUpstreamFetch,
+  isSafeMethod,
+  type UpstreamFetch,
+  type UpstreamRequest,
+} from "@graft/proxy";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
@@ -17,7 +22,6 @@ import {
 import type { StockHarnessMode } from "./mode";
 import {
   isReadRequest,
-  jsonOfBody,
   parseRecording,
   RECORDING_FILE,
   type RecordedBody,
@@ -113,11 +117,8 @@ export async function readStockRecording(
 /** What the replay saw beside its sentences: every request that reached the vendor, and every preview. */
 export type ReplayReport = {
   problems: ProofProblems;
-  /**
-   * Every request the proxy sent on to the vendor (the recording, in replay mode), with the body a
-   * read `POST` carried.
-   */
-  reachedVendor: { method: string; url: string; body?: RecordedBody }[];
+  /** Every request the proxy sent on to the vendor (the recording, in replay mode). */
+  reachedVendor: { method: string; url: string }[];
   /** Every write the proxy stopped, as its preview named it. */
   previewed: { method: string; host: string; path: string; body: RecordedBody | undefined }[];
 };
@@ -262,13 +263,12 @@ export async function proveReplay(
   const realFetch = live ? createUpstreamFetch() : null;
 
   const upstreamFetch: UpstreamFetch = async (request: UpstreamRequest, init) => {
-    const requestBody = request.body ? recordedBodyOf(request.body) : undefined;
-    reachedVendor.push({
-      method: request.method,
-      url: request.url,
-      ...(requestBody ? { body: requestBody } : {}),
-    });
-    if (!isReadRequest(request.method, request.url, jsonOfBody(requestBody))) {
+    reachedVendor.push({ method: request.method, url: request.url });
+    // A read with a body (a reviewed `POST` search, GRA-260) is matched by that body too.
+    const requestBody = isSafeMethod(request.method)
+      ? undefined
+      : recordedBodyOf(request.body ?? new Uint8Array(0));
+    if (!isReadRequest(request.method, request.url, requestBody)) {
       problems.push(
         say(
           `a ${request.method} reached the vendor in a dry run: ${new URL(request.url).pathname}`,
@@ -281,7 +281,7 @@ export async function proveReplay(
     // The first recorded read not yet made that is this request: the recording is in the order the
     // module issued its reads, and a module reading in parallel may have them reach here in another
     // (Greptile on #191), so a request takes its own read rather than the next in line.
-    // A read `POST`'s body is compared as a write's is, in replay; live, as a query's values, not.
+    // Live, the body follows the input as the query's values do, and is not compared.
     const matched = reads.findIndex(
       (read, index) =>
         !made.has(index) &&
@@ -296,11 +296,9 @@ export async function proveReplay(
         return Response.json({ error: "not_in_recording" }, { status: 404 });
       }
       const recorded = readKeyOf(expected.method, expected.url);
-      const withBody = (body: RecordedBody | undefined) =>
-        body ? ` with body ${describeBody(body)}` : "";
       problems.push(
         say(
-          `its read ${next + 1} disagrees with the recording: it made ${shown}${actual.query.length ? `?${new URLSearchParams(actual.query)}` : ""}${withBody(requestBody)}, the recording holds ${recorded.method} ${recorded.host}${recorded.path}${recorded.query.length ? `?${new URLSearchParams(recorded.query)}` : ""}${withBody(expected.body)}`,
+          `its read ${next + 1} disagrees with the recording: it made ${shown}${actual.query.length ? `?${new URLSearchParams(actual.query)}` : ""}, the recording holds ${recorded.method} ${recorded.host}${recorded.path}${recorded.query.length ? `?${new URLSearchParams(recorded.query)}` : ""}`,
         ),
       );
       made.add(next);

@@ -183,6 +183,72 @@ describe("recordStockProof", () => {
     expect(replay.problems).toEqual([]);
   });
 
+  it("records a POST the reviewed table calls a read with the body the module sent over the scrubbed input, and replays it by that body (GRA-260)", async () => {
+    const SEARCH = `export default async (input: Input, ctx: Context) => {
+  const res = await ctx.fetch("/search", {
+    method: "POST",
+    headers: { "content-type": "application/json", "Notion-Version": "2025-09-03" },
+    body: JSON.stringify({ query: input.query, page_size: 2 }),
+  });
+  if (!res.ok) throw new Error(\`POST /search \${res.status}\`);
+  const body = (await res.json()) as { results: { id: string }[] };
+  return { ids: body.results.map((result) => result.id) };
+};
+`;
+    const searchTool: StockWorkspaceTool = {
+      ...tool,
+      vendor: "notion",
+      name: "search",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      hosts: ["api.notion.com"],
+      testInput: { query: "Acme board minutes" },
+      annotations: { readOnly: true, destructive: false },
+      files: [{ path: "index.ts", content: SEARCH }],
+    };
+    const seen: UpstreamRequest[] = [];
+    const recorded = await recordStockProof(searchTool, {
+      connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
+      upstreamFetch: async (request) => {
+        seen.push(request);
+        return Response.json({ results: [{ id: "page-acme-0001" }, { id: "page-acme-0002" }] });
+      },
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { recording } = recorded;
+
+    // The search reached the vendor once, as the read the proxy's dry run lets through.
+    expect(seen.map((request) => request.method)).toEqual(["POST"]);
+    const text = JSON.stringify(recording);
+    for (const planted of ["Acme board minutes", "page-acme-0001"]) {
+      expect(text, `${planted} survived`).not.toContain(planted);
+    }
+    expect(recording.exchanges).toHaveLength(1);
+    // The body is the module's over the scrubbed input, not the first run's.
+    expect(recording.exchanges[0]).toMatchObject({
+      kind: "read",
+      method: "POST",
+      url: "https://api.notion.com/v1/search",
+      body: { json: { query: recording.input.query, page_size: 2 } },
+    });
+
+    const replayed = { ...searchTool, testInput: recording.input };
+    expect((await proveReplay(replayed, recording)).problems).toEqual([]);
+    // A body the recording does not hold is not the recorded read.
+    const other = await proveReplay(
+      {
+        ...replayed,
+        files: [{ path: "index.ts", content: SEARCH.replace("page_size: 2", "page_size: 3") }],
+      },
+      recording,
+    );
+    expect(other.problems.join("\n")).toContain("its read 1 disagrees with the recording");
+  });
+
   it("answers the failed dry run's sentence, with the credential redacted, and no recording", async () => {
     const recorded = await recordStockProof(tool, {
       connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
@@ -533,6 +599,100 @@ describe("recordStockProof", () => {
     const replay = await proveReplay({ ...search, testInput: recording.input }, recording);
     expect(replay.problems).toEqual([]);
     expect(replay.reachedVendor).toMatchObject([{ method: "POST" }]);
+  });
+
+  it("records a GraphQL query as a read with its body, scrubbed, and replays it by the body (GRA-260)", async () => {
+    const GRAPHQL = `const VIEWER = "query Viewer { viewer { id name } }";
+const ISSUES = "query Issues($assignee: ID!, $first: Int!) { issues(filter: { assignee: { id: { eq: $assignee } } }, first: $first) { nodes { title } } }";
+const COMMENT = "mutation Comment($body: String!) { commentCreate(input: { body: $body }) { success } }";
+
+export default async (input: Input, ctx: Context) => {
+  const post = (body: unknown) =>
+    ctx.fetch("/graphql", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const me = (await (await post({ query: VIEWER })).json()) as {
+    data: { viewer: { id: string; name: string } };
+  };
+  const res = await post({
+    query: ISSUES,
+    variables: { assignee: me.data.viewer.id, first: input.first },
+  });
+  const issues = (await res.json()) as { data: { issues: { nodes: { title: string }[] } } };
+  const titles = issues.data.issues.nodes.map((node) => node.title);
+  const noted = await post({ query: COMMENT, variables: { body: titles[0] ?? "none" } });
+  return { who: me.data.viewer.name, titles, noted: noted.status };
+};
+`;
+    const graphqlTool: StockWorkspaceTool = {
+      ...tool,
+      name: "graphql-issues",
+      inputSchema: {
+        type: "object",
+        properties: { first: { type: "integer", minimum: 1, maximum: 50 } },
+        required: ["first"],
+        additionalProperties: false,
+      },
+      testInput: { first: 5 },
+      files: [{ path: "index.ts", content: GRAPHQL }],
+    };
+    const seen: { method: string; body: unknown }[] = [];
+    const recorded = await recordStockProof(graphqlTool, {
+      connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
+      upstreamFetch: async (request: UpstreamRequest) => {
+        const body = JSON.parse(new TextDecoder().decode(request.body ?? new Uint8Array()));
+        seen.push({ method: request.method, body });
+        if (String(body.query).startsWith("query Viewer")) {
+          return Response.json({ data: { viewer: { id: "usr-7f3a9c21", name: "Alice Liddell" } } });
+        }
+        return Response.json({
+          data: { issues: { nodes: [{ title: "Acme secret merger plans" }] } },
+        });
+      },
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { recording } = recorded;
+
+    // The two queries reached the vendor; the mutation stopped at the preview.
+    expect(seen.map((request) => request.method)).toEqual(["POST", "POST"]);
+    expect(recording.exchanges.map((exchange) => `${exchange.kind} ${exchange.method}`)).toEqual([
+      "read POST",
+      "read POST",
+      "write POST",
+    ]);
+    const text = JSON.stringify(recording);
+    for (const planted of ["usr-7f3a9c21", "Alice Liddell", "Acme secret merger plans"]) {
+      expect(text).not.toContain(planted);
+    }
+    // The second query names the scrubbed viewer's id, as the module computed it over the scrub.
+    const [viewer, issues] = recording.exchanges;
+    const scrubbedId = (
+      viewer as { response: { body: { json: { data: { viewer: { id: string } } } } } }
+    ).response.body.json.data.viewer.id;
+    expect(issues).toMatchObject({
+      body: { json: { variables: { assignee: scrubbedId, first: 5 } } },
+    });
+
+    const replay = await proveReplay(graphqlTool, recording);
+    expect(replay.problems).toEqual([]);
+    expect(replay.reachedVendor.map((request) => request.method)).toEqual(["POST", "POST"]);
+
+    // A replay whose module asks another query than the recording's is refused by the body.
+    const changed = await proveReplay(
+      {
+        ...graphqlTool,
+        files: [
+          {
+            path: "index.ts",
+            content: GRAPHQL.replace("viewer { id name }", "viewer { id name email }"),
+          },
+        ],
+      },
+      recording,
+    );
+    expect(changed.problems.join("\n")).toContain("its read 1 disagrees with the recording");
   });
 
   it("refuses a keyed starter with no connection", async () => {

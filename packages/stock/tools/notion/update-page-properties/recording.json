@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "tool": "notion__update-page-properties",
+  "recordedAt": "2026-10-10T17:38:03.298Z",
+  "input": {
+    "pageId": "6f5a4b90-b5d0-3827-d4bd-f9b555e98b2e",
+    "properties": {
+      "Status": {
+        "status": {
+          "name": "Hmlo"
+        }
+      }
+    }
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "PATCH",
+      "url": "https://api.notion.com/v1/pages/6f5a4b90-b5d0-3827-d4bd-f9b555e98b2e",
+      "body": {
+        "json": {
+          "properties": {
+            "Status": {
+              "status": {
+                "name": "Hmlo"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "updated": false,
+    "sent": {
+      "properties": {
+        "Status": {
+          "status": {
+            "name": "Hmlo"
+          }
+        }
+      }
+    }
+  }
+}

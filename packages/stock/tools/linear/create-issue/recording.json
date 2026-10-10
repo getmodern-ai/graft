@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "tool": "linear__create-issue",
+  "recordedAt": "2026-10-10T17:39:56.644Z",
+  "input": {
+    "teamId": "33944813-7449-1727-4752-896490472710",
+    "title": "Anqp suahw"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.linear.app/graphql",
+      "body": {
+        "json": {
+          "query": "mutation CreateIssue($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier title url state { name } } } }",
+          "variables": {
+            "input": {
+              "teamId": "33944813-7449-1727-4752-896490472710",
+              "title": "Anqp suahw"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "input": {
+        "teamId": "33944813-7449-1727-4752-896490472710",
+        "title": "Anqp suahw"
+      }
+    }
+  }
+}

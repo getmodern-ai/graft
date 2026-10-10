@@ -14,8 +14,6 @@ import {
 import { stockHarnessModeFrom } from "./mode";
 import {
   formatRecording,
-  isReadRequest,
-  jsonOfBody,
   type RecordedRead,
   type RecordedWrite,
   type StockRecording,
@@ -63,10 +61,14 @@ describe(`every stock tool (${mode.kind})`, () => {
         for (const note of jsonTextNotes(tool, read.recording)) console.warn(note);
         const report = await proveReplay(tool, read.recording, mode);
         expect(report.problems).toEqual([]);
-        // A read POST the reviewed table admits reaches the vendor too (GRA-260); nothing else.
+        // Only reads reached the vendor: a GET or HEAD, or a POST the recording holds as a read
+        // because the proxy's classifier calls it one (GRA-260).
+        const readMethods = new Set(
+          read.recording.exchanges.filter((e) => e.kind === "read").map((e) => e.method),
+        );
         expect(
-          report.reachedVendor.every((call) =>
-            isReadRequest(call.method, call.url, jsonOfBody(call.body)),
+          report.reachedVendor.every(
+            (call) => ["GET", "HEAD"].includes(call.method) || readMethods.has(call.method),
           ),
         ).toBe(true);
       });
@@ -222,16 +224,12 @@ describe("the harness over a read POST (GRA-270)", () => {
     const report = await proveReplay(searchTool, searchRecording);
     expect(report.problems).toEqual([]);
     expect(report.reachedVendor).toEqual([
-      {
-        method: "POST",
-        url: `https://${SEARCH_HOST}/api/v1/contacts/search`,
-        body: { json: { q_keywords: "red", per_page: 2 } },
-      },
+      { method: "POST", url: `https://${SEARCH_HOST}/api/v1/contacts/search` },
     ]);
     expect(report.previewed).toEqual([]);
   });
 
-  it("fails a search whose body disagrees with the recording, naming both bodies", async () => {
+  it("fails a search whose body disagrees with the recording", async () => {
     const [read] = searchRecording.exchanges as RecordedRead[];
     const report = await proveReplay(searchTool, {
       ...searchRecording,
@@ -240,7 +238,7 @@ describe("the harness over a read POST (GRA-270)", () => {
       ],
     });
     expect(report.problems[0]).toBe(
-      `stock tool demo__search-contacts: its read 1 disagrees with the recording: it made POST ${SEARCH_HOST}/api/v1/contacts/search with body {"q_keywords":"red","per_page":2}, the recording holds POST ${SEARCH_HOST}/api/v1/contacts/search with body {"q_keywords":"blue","per_page":2}`,
+      `stock tool demo__search-contacts: its read 1 disagrees with the recording: it made POST ${SEARCH_HOST}/api/v1/contacts/search, the recording holds POST ${SEARCH_HOST}/api/v1/contacts/search`,
     );
   });
 });

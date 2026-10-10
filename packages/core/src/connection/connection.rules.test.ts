@@ -235,13 +235,15 @@ describe("validateSchemeConfig", () => {
     expect(validateSchemeConfig("api_key_header", { headerName: 3 })).toContain("headerName");
   });
 
-  it("holds the header name to a token and asks for a prefix on a bare Authorization header", () => {
+  it("holds the header name to a token and admits a bare Authorization header (GRA-269)", () => {
     expect(validateSchemeConfig("api_key_header", { headerName: "x api key" })).toContain(
       "letters",
     );
-    expect(validateSchemeConfig("api_key_header", { headerName: "Authorization" })).toContain(
-      "prefix",
-    );
+    // Linear's personal API key goes in Authorization with no prefix, and as a proposal too.
+    expect(validateSchemeConfig("api_key_header", { headerName: "Authorization" })).toBeNull();
+    expect(
+      validateSchemeConfig("api_key_header", { headerName: "Authorization" }, { proposal: true }),
+    ).toBeNull();
     expect(
       validateSchemeConfig("api_key_header", { headerName: "Authorization", prefix: "Token" }),
     ).toBeNull();

@@ -791,6 +791,7 @@ export function scrubRecording(recording: StockRecording, rule: ScrubRule): Stoc
   const exchanges = recording.exchanges.map((exchange, index) => {
     const request = `exchange ${index + 1}'s request`;
     if (exchange.kind === "read") {
+      // A read with a body (a reviewed `POST` search) has its values scrubbed as a write's are.
       const body = within(request, () => scrubRequestBody(exchange.body, source, scrub));
       return {
         ...exchange,
@@ -873,6 +874,25 @@ function isBareOrigin(value: string): boolean {
   return origin === value || origin === `${value}/`;
 }
 
+/** A URL's hostname, lowercased; empty for a value that does not parse. */
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/** A URL's path, query and fragment: what follows its origin. */
+function withoutOrigin(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.href.slice(parsed.origin.length);
+  } catch {
+    return url;
+  }
+}
+
 /** The shortest value the survival check looks for: shorter ones collide with ordinary words. */
 const SURVIVAL_MIN_LENGTH = 6;
 
@@ -892,9 +912,10 @@ function unmarkedPieces(value: string): string[] {
 export function survivingValuesOf(
   raw: StockRecording,
   scrubbed: StockRecording,
-  options: { source: string; keep?: Iterable<string> },
+  options: { source: string; keep?: Iterable<string>; declaredHosts?: Iterable<string> },
 ): string[] {
   const keep = new Set(options.keep ?? []);
+  const declared = new Set([...(options.declaredHosts ?? [])].map((host) => host.toLowerCase()));
   const keys = keysOf(raw, new Set<string>());
   const values = new Set<string>();
   const add = (value: string) => {
@@ -921,9 +942,16 @@ export function survivingValuesOf(
   );
   const parts: [string, unknown][] = [
     ["input", scrubbed.input],
+    // A request's URL on a host the manifest declares is looked in without its origin: that host is
+    // the vendor's own public name, so a value of the vendor's name in an answer (Linear's own user,
+    // called `linear`; GRA-269) is not read as surviving inside `https://api.linear.app/graphql`.
+    // Any other host (an account's own, from a live `primaryHost`) is looked in whole, since it may
+    // spell the account (Greptile on #209). The path and query are looked in either way.
     ...scrubbed.exchanges.map((exchange, index): [string, unknown] => [
       `exchange ${index + 1}`,
-      exchange,
+      declared.has(hostnameOf(exchange.url))
+        ? { ...exchange, url: withoutOrigin(exchange.url) }
+        : exchange,
     ]),
     ["result", scrubbed.result ?? null],
   ];
