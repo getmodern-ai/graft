@@ -165,6 +165,26 @@ describe("google-calendar__update-event", () => {
   });
 });
 
+describe("google-calendar__update-event's boundaries", () => {
+  it("clears the other form when a boundary moves between a time and a whole day (Greptile on #194)", async () => {
+    const run = await load("update-event");
+    const { ctx, calls } = fakeCtx(() => json({ id: "evt_1" }));
+    await run({ eventId: "evt_1", start: "2001-01-02", end: "2001-01-03" }, ctx);
+    expect(JSON.parse(String(calls[0]?.init.body))).toMatchObject({
+      start: { date: "2001-01-02", dateTime: null },
+      end: { date: "2001-01-03", dateTime: null },
+    });
+    await run(
+      { eventId: "evt_1", start: "2001-01-02T09:00:00Z", end: "2001-01-02T10:00:00Z" },
+      ctx,
+    );
+    expect(JSON.parse(String(calls[1]?.init.body))).toMatchObject({
+      start: { dateTime: "2001-01-02T09:00:00Z", date: null },
+      end: { dateTime: "2001-01-02T10:00:00Z", date: null },
+    });
+  });
+});
+
 describe("google-calendar__respond-to-event", () => {
   it("names the etag it read and reads the guest list again on 412", async () => {
     const run = await load("respond-to-event");

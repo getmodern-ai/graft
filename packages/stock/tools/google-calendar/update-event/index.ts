@@ -18,9 +18,14 @@ type EventResource = {
   attendees?: Attendee[];
 };
 
+// A PATCH merges a boundary's fields into the event's, so the form not given is cleared with
+// `null`: an all-day event moved to a time (or the reverse) would otherwise carry both forms, which
+// Google refuses.
 const eventDateTime = (value: string, timeZone: string | undefined) => {
-  const result: { date?: string; dateTime?: string; timeZone?: string } =
-    /^\d{4}-\d{2}-\d{2}$/.test(value) ? { date: value } : { dateTime: value };
+  const result: { date?: string | null; dateTime?: string | null; timeZone?: string } =
+    /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? { date: value, dateTime: null }
+      : { dateTime: value, date: null };
   if (timeZone !== undefined) result.timeZone = timeZone;
   return result;
 };
