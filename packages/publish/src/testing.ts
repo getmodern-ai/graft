@@ -120,6 +120,8 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
     findConnection: async (_db, personId, id) => ({ id, personId, revokedAt: null }) as never,
     findConnectionForUpdate: async (_db, personId, id) =>
       ({ id, personId, revokedAt: null }) as never,
+    // One process and no concurrent transactions; a race test brings a lock that holds.
+    lockToolName: async () => {},
   };
 }
 

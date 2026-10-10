@@ -124,7 +124,6 @@ beforeAll(async () => {
         mirror: createNoopToolboxMirror(),
         onMirror: () => {},
         now: () => new Date(),
-        lockToolName: async () => {},
       },
       stock: catalogue.deps,
     }),

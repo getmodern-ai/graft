@@ -1,10 +1,12 @@
-import type { StockToolView } from "@graft/core";
+import type { StockToolView, ToolDeps } from "@graft/core";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox/fake";
-import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
+import { createFilesystemToolboxStore, createNoopToolboxMirror, toolboxIdOf } from "@graft/toolbox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type CopyStockDeps, copyStockVersion } from "./copy-stock";
-import type { MirrorEvent } from "./publish.service";
+import { createFakeMetadataSource } from "./metadata";
+import { DEFAULT_PACKAGE_POLICY } from "./policy";
+import { type MirrorEvent, publishToolVersion } from "./publish.service";
 import { createInMemoryToolDeps, fakeDb, type InMemoryToolDeps } from "./testing";
 
 /**
@@ -44,8 +46,6 @@ beforeEach(() => {
     tool,
     now: () => new Date(),
     onMirror: () => {},
-    // One process, no concurrent transactions; the race test brings a lock that holds.
-    lockToolName: async () => {},
   };
 });
 
@@ -99,7 +99,8 @@ describe("copyStockVersion", () => {
 
   it("serialises two first copies racing: one tool, one version, and the files are the version's own", async () => {
     const { db, lockToolName } = lockingDb();
-    const racing = { ...deps, db, lockToolName };
+    tool.lockToolName = lockToolName;
+    const racing = { ...deps, db };
     const newer: StockToolView = {
       ...STOCK,
       stockVersionId: "stock_weather_v4",
@@ -115,6 +116,58 @@ describe("copyStockVersion", () => {
     const winner = tool.versions[0]?.stockVersionId === newer.stockVersionId ? newer : STOCK;
     const files = await deps.store.readTree(PERSON, "tools/open-meteo/current-weather/v1");
     expect(files.find((file) => file.path === "index.ts")?.content).toBe(winner.files[0]?.content);
+  });
+
+  it("serialises a publish and a first copy of the same name: neither writes over the other's version directory", async () => {
+    const { db, lockToolName } = lockingDb();
+    tool.lockToolName = lockToolName;
+    const published = "export default async () => ({ authored: true });" + "\n";
+    const toolboxId = toolboxIdOf(PERSON);
+    await deps.store.writeTree(toolboxId, ".drafts/job1", [
+      { path: "index.ts", content: published },
+    ]);
+    const publishing = publishToolVersion(
+      {
+        ...deps,
+        db,
+        sandbox,
+        metadata: createFakeMetadataSource({}),
+        policy: DEFAULT_PACKAGE_POLICY,
+        check: async (input) => ({
+          entry: input.entry,
+          refusals: [],
+          advice: [],
+          annotations: { readOnly: true, destructive: false },
+          contextMembersUsed: [],
+          blobReadFields: [],
+        }),
+      },
+      {
+        personId: PERSON,
+        toolboxId,
+        vendor: STOCK.vendor,
+        name: STOCK.name,
+        description: "My own weather tool.",
+        inputSchema: { type: "object" },
+        draftPath: ".drafts/job1",
+        activate: false,
+      },
+    );
+    const copying = copyStockVersion(
+      { ...deps, db },
+      { personId: PERSON, stock: STOCK, defaultConnectionId: null },
+    );
+    const [outcome] = await Promise.all([publishing, copying]);
+    expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
+
+    expect(tool.tools).toHaveLength(1);
+    const paths = tool.versions.map((version) => version.path);
+    expect(new Set(paths).size).toBe(paths.length);
+    for (const version of tool.versions) {
+      const files = await deps.store.readTree(toolboxId, version.path);
+      const expected = version.stockVersionId ? STOCK.files[0]?.content : published;
+      expect(files.find((file) => file.path === "index.ts")?.content).toBe(expected);
+    }
   });
 
   it("answers the winner's row when the losing insert is refused by the unique constraint", async () => {
@@ -164,7 +217,7 @@ describe("copyStockVersion", () => {
  * A database whose transactions hold the advisory locks they take until they end, as Postgres's
  * `pg_advisory_xact_lock` does: what serialises two copies in the race test.
  */
-function lockingDb(): { db: typeof fakeDb; lockToolName: CopyStockDeps["lockToolName"] } {
+function lockingDb(): { db: typeof fakeDb; lockToolName: ToolDeps["lockToolName"] } {
   const held = new Map<string, Promise<void>>();
   type Tx = { releases: (() => void)[] };
   const db = {
@@ -179,7 +232,7 @@ function lockingDb(): { db: typeof fakeDb; lockToolName: CopyStockDeps["lockTool
       }
     },
   } as unknown as typeof fakeDb;
-  const lockToolName: CopyStockDeps["lockToolName"] = async (tx, personId, key) => {
+  const lockToolName: ToolDeps["lockToolName"] = async (tx, personId, key) => {
     const name = `${personId}:${key.vendor}:${key.name}`;
     const before = held.get(name) ?? Promise.resolve();
     let release = () => {};

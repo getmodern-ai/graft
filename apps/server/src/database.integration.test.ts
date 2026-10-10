@@ -55,7 +55,6 @@ import { applyMigrations } from "@graft/db/migrate";
 import { addConnectionHosts } from "@graft/db/repo/connection";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
-import { lockAuthoredToolName } from "@graft/db/repo/tool";
 import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
 import { copyStockVersion } from "@graft/publish";
 import { checkStockTool, readStockWorkspace } from "@graft/stock";
@@ -1044,7 +1043,6 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       mirror,
       onMirror: () => {},
       now: () => new Date(),
-      lockToolName: lockAuthoredToolName,
     };
     // Two first copies racing (Greptile on #184): the lock on the name makes one, and both answer it.
     const [copied, raced] = await Promise.all([

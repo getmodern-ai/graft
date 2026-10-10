@@ -6,21 +6,18 @@ import {
   ServiceError,
   type StockToolView,
 } from "@graft/core";
-import type { AuthoredToolRow, lockAuthoredToolName } from "@graft/db/repo/tool";
+import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { toolboxIdOf, versionPath as versionPathOf } from "@graft/toolbox";
 
 import { sourceHashOf } from "./hash";
 import { normaliseManifest } from "./manifest";
 import { type PublishDeps, startMirror } from "./publish.service";
 
-/** What a copy needs: the publish's rows, store and mirror, and the per-name lock. */
+/** What a copy needs: the publish's rows (with the per-name lock), store and mirror. */
 export type CopyStockDeps = Pick<
   PublishDeps,
   "db" | "store" | "tool" | "mirror" | "onMirror" | "now"
-> & {
-  /** `@graft/db/repo/tool`'s `lockAuthoredToolName`: serialises one person's copies of one name. */
-  lockToolName: typeof lockAuthoredToolName;
-};
+>;
 
 /**
  * The copy of a stock tool into a person's toolbox (ADR 0025, "copied into the person's toolbox the
@@ -73,7 +70,7 @@ export async function copyStockVersion(
   };
   try {
     const outcome = await deps.db.transaction(async (tx) => {
-      await deps.lockToolName(tx, personId, key);
+      await deps.tool.lockToolName(tx, personId, key);
       const raced = await deps.tool.findAuthoredTool(tx, personId, key);
       if (raced) return { tool: raced, recorded: null };
       const written = normaliseManifest(stock.files);

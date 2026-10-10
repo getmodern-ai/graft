@@ -6,7 +6,7 @@ import {
   type StockToolView,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
-import { type AuthoredToolRow, lockAuthoredToolName } from "@graft/db/repo/tool";
+import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { type CopyStockDeps, copyStockVersion } from "@graft/publish";
 
 /**
@@ -39,16 +39,15 @@ export type ToolSource = {
 /** Graft's own stock: the global catalogue's rows, and `@graft/publish`'s copy into the toolbox. */
 export function createStockToolSource(args: {
   db: DbOrTx;
-  /** The publish's rows, store and mirror; the per-name lock defaults to the repo's. */
-  publish: Omit<CopyStockDeps, "lockToolName"> & Partial<Pick<CopyStockDeps, "lockToolName">>;
+  /** The publish's rows (with the per-name lock), store and mirror. */
+  publish: CopyStockDeps;
   stock?: StockDeps;
 }): ToolSource {
   const ctx = { db: args.db };
   const stock = args.stock ?? defaultStockDeps;
-  const copyDeps: CopyStockDeps = { lockToolName: lockAuthoredToolName, ...args.publish };
   return {
     list: () => listStockCatalogue(ctx, stock),
     describe: (key) => describeStockTool(ctx, key, stock),
-    copy: (copy) => copyStockVersion(copyDeps, copy),
+    copy: (copy) => copyStockVersion(args.publish, copy),
   };
 }

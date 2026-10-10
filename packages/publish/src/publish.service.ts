@@ -88,9 +88,10 @@ import {
  * A directory written and then not recorded (a failed install, a database down at step 8) stays on
  * disk with no row; the next publish of the tool computes the same version number and writes over
  * it, then installs again. Nothing under `tools/` is removed, by the publish or by anything
- * (ADR 0009). Two publishes of one tool racing both compute the same number; the unique constraint
- * on (tool, version) refuses the second's row, and the second's files may have overwritten the
- * first's — `acquire` runs one job per tool at a time (GRA-29), which is what keeps that theoretical.
+ * (ADR 0009). Steps 6 to 8 run in one transaction holding the person's lock on the tool's name
+ * (`ToolDeps.lockToolName`), which a stock copy of the same name takes too (GRA-238, Greptile on
+ * #184): two publishes of one tool, or a publish and a first copy, never compute the same version
+ * number or write one directory, and an install refusal inside it records nothing.
  *
  * Copied in shape from Cando's `publishAuthoredTool` and re-read (ADR 0011): the sandbox no longer
  * does the copy — the server holds the toolbox — and the package policy, the install step and the
@@ -238,87 +239,110 @@ export async function publishToolVersion(
   const policyRefusals = await applyPolicy(dependencies, deps);
   if (policyRefusals.length > 0) return refusal(policyRefusals, check);
 
-  // 6. The version directory.
-  const existing = await deps.tool.findAuthoredTool(ctx.db, args.personId, {
-    vendor: args.vendor,
-    name: args.name,
-  });
-  const versionNumber = existing
-    ? orNotFound(await nextVersionNumber(ctx, principal, existing.id, deps.tool), "Tool not found")
-    : 1;
-  const versionPath = versionPathOf(args.vendor, args.name, versionNumber);
-  const written = normaliseManifest(sources.files);
-  await deps.store.writeTree(args.toolboxId, versionPath, written);
-  const sourceHash = sourceHashOf(written);
-
-  // 7. The build step.
-  let lockfileHash: string | null = null;
-  if (dependencies.length > 0) {
-    const result = await deps.sandbox.install({ toolboxId: args.toolboxId, versionPath });
-    if (result.status !== "completed") return refusal([installFailure(result, versionPath)], check);
-    const lockfile = await deps.store
-      .read(args.toolboxId, `${versionPath}/package-lock.json`)
-      .catch(() => null);
-    if (lockfile === null) {
-      return refusal(
-        [
-          installDiagnostic(
-            `The install reported success but left no package-lock.json in ${versionPath}, so the version cannot say what it resolved (ADR 0013).`,
-            "Publish again; if it repeats, the sandbox backing's install step is not writing a lockfile.",
-          ),
-        ],
-        check,
-      );
-    }
-    lockfileHash = sha256Hex(lockfile);
-  }
-
-  // 8. The rows.
+  // 6 to 8, in one transaction holding the person's lock on the tool's name (`repo/tool.ts`'s
+  // `lockAuthoredToolName`, GRA-238): a stock copy of the same name (`copy-stock.ts`) takes it too,
+  // so the version number, the files and the rows are decided by one writer at a time, and neither
+  // overwrites the other's directory. Two publishes of one tool serialise on it as well. The lock
+  // is held across the install, which the sandbox backing bounds.
+  const key = { vendor: args.vendor, name: args.name };
   const definition = {
     description: args.description,
     inputSchema: args.inputSchema,
     annotations: check.annotations,
     defaultConnectionId: args.defaultConnectionId ?? null,
   };
-  const versionInput = {
-    path: versionPath,
-    sourceHash,
-    lockfileHash,
-    checkOutput: checkOutputOf(check),
-    writesInvolved: !check.annotations.readOnly,
-    publisherJobId: args.jobId ?? null,
-  };
-  const recorded = await ctx.db.transaction(async (tx) => {
-    const scoped: ServiceContext = { db: tx };
-    const tool =
-      existing ??
-      (await createTool(
+  const outcome = await ctx.db.transaction(
+    async (
+      tx,
+    ): Promise<
+      | { refused: PublishRefusal }
+      | { recorded: { tool: AuthoredToolRow; version: ToolVersionRow }; versionPath: string }
+    > => {
+      const scoped: ServiceContext = { db: tx };
+      await deps.tool.lockToolName(tx, args.personId, key);
+
+      // 6. The version directory.
+      const existing = await deps.tool.findAuthoredTool(tx, args.personId, key);
+      const versionNumber = existing
+        ? orNotFound(
+            await nextVersionNumber(scoped, principal, existing.id, deps.tool),
+            "Tool not found",
+          )
+        : 1;
+      const versionPath = versionPathOf(args.vendor, args.name, versionNumber);
+      const written = normaliseManifest(sources.files);
+      await deps.store.writeTree(args.toolboxId, versionPath, written);
+      const sourceHash = sourceHashOf(written);
+
+      // 7. The build step.
+      let lockfileHash: string | null = null;
+      if (dependencies.length > 0) {
+        const result = await deps.sandbox.install({ toolboxId: args.toolboxId, versionPath });
+        if (result.status !== "completed") {
+          return { refused: refusal([installFailure(result, versionPath)], check) };
+        }
+        const lockfile = await deps.store
+          .read(args.toolboxId, `${versionPath}/package-lock.json`)
+          .catch(() => null);
+        if (lockfile === null) {
+          return {
+            refused: refusal(
+              [
+                installDiagnostic(
+                  `The install reported success but left no package-lock.json in ${versionPath}, so the version cannot say what it resolved (ADR 0013).`,
+                  "Publish again; if it repeats, the sandbox backing's install step is not writing a lockfile.",
+                ),
+              ],
+              check,
+            ),
+          };
+        }
+        lockfileHash = sha256Hex(lockfile);
+      }
+
+      // 8. The rows.
+      const versionInput = {
+        path: versionPath,
+        sourceHash,
+        lockfileHash,
+        checkOutput: checkOutputOf(check),
+        writesInvolved: !check.annotations.readOnly,
+        publisherJobId: args.jobId ?? null,
+      };
+      const tool =
+        existing ?? (await createTool(scoped, principal, { ...key, ...definition }, deps.tool));
+      if (args.activate === false) {
+        const version = await addToolVersion(scoped, principal, tool.id, versionInput, deps.tool);
+        // A dead binding follows the connection this publish names (step 8; GRA-122); a live one,
+        // and the prose, the schema and the pointer, wait for the pass. The default's row is read
+        // locked with the write, in this transaction.
+        const rebound =
+          existing && args.defaultConnectionId
+            ? (
+                await rebindToolIfConnectionDead(
+                  scoped,
+                  principal,
+                  tool.id,
+                  args.defaultConnectionId,
+                  deps.tool,
+                )
+              ).tool
+            : tool;
+        return { recorded: { tool: rebound, version }, versionPath };
+      }
+      const recorded = await recordPublishedVersion(
         scoped,
         principal,
-        { vendor: args.vendor, name: args.name, ...definition },
+        tool.id,
+        versionInput,
+        definition,
         deps.tool,
-      ));
-    if (args.activate === false) {
-      const version = await addToolVersion(scoped, principal, tool.id, versionInput, deps.tool);
-      // A dead binding follows the connection this publish names (step 8; GRA-122); a live one,
-      // and the prose, the schema and the pointer, wait for the pass. The default's row is read
-      // locked with the write, in this transaction.
-      const rebound =
-        existing && args.defaultConnectionId
-          ? (
-              await rebindToolIfConnectionDead(
-                scoped,
-                principal,
-                tool.id,
-                args.defaultConnectionId,
-                deps.tool,
-              )
-            ).tool
-          : tool;
-      return { tool: rebound, version };
-    }
-    return recordPublishedVersion(scoped, principal, tool.id, versionInput, definition, deps.tool);
-  });
+      );
+      return { recorded, versionPath };
+    },
+  );
+  if ("refused" in outcome) return outcome.refused;
+  const { recorded, versionPath } = outcome;
 
   // 9. The mirror, off the path.
   startMirror(deps, args, recorded, versionPath);

@@ -164,8 +164,6 @@ beforeAll(async () => {
         mirror: createNoopToolboxMirror(),
         onMirror: () => {},
         now: () => new Date(),
-        // The fake store has no concurrent transactions; `copy-stock.test.ts` races two copies.
-        lockToolName: async () => {},
       },
       stock: catalogue.deps,
     }),

@@ -7,6 +7,7 @@ import {
   insertToolVersion,
   listAuthoredTools,
   listToolVersions,
+  lockAuthoredToolName,
   recordToolVersionDryRun,
   setCurrentToolVersion,
   updateAuthoredTool,
@@ -31,6 +32,12 @@ export type ToolDeps = {
    * this so a reconnection racing the write waits for it (`rebindToolIfConnectionDead`, GRA-122).
    */
   findConnectionForUpdate: typeof findConnectionForUpdate;
+  /**
+   * The person's lock on one tool name for the transaction (`repo/tool.ts`): a publish and a stock
+   * copy take it before they decide a version number and write its files (GRA-238), so neither
+   * overwrites the other's directory.
+   */
+  lockToolName: typeof lockAuthoredToolName;
   newId: () => string;
   now: () => Date;
 };
@@ -48,6 +55,7 @@ export const defaultToolDeps: ToolDeps = {
   recordToolVersionDryRun,
   findConnection,
   findConnectionForUpdate,
+  lockToolName: lockAuthoredToolName,
   newId: () => crypto.randomUUID(),
   now: () => new Date(),
 };
