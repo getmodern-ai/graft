@@ -4,6 +4,7 @@ import { redactText, secretFieldNamesFor } from "@graft/core";
 import {
   CREDENTIAL_REDACTED,
   createUpstreamFetch,
+  isSafeMethod,
   type UpstreamFetch,
   type UpstreamRequest,
 } from "@graft/proxy";
@@ -99,6 +100,8 @@ export type RecordProofResult =
   | { ok: true; recording: StockRecording }
   | { ok: false; problems: string[] };
 
+const EMPTY = new Uint8Array(0);
+
 export async function recordStockProof(
   tool: StockWorkspaceTool,
   options: {
@@ -141,14 +144,14 @@ export async function recordStockProof(
     // Taken before anything is awaited: the place is the request's, whenever the vendor answers.
     const sequence = issueSequence() ?? unsequenced++;
     const method = request.method.toUpperCase();
-    if (!isReadRequest(method, request.url, request.body)) {
+    // A read with a body (a reviewed `POST` search, GRA-260) records what the module sent.
+    const requestBody = isSafeMethod(method) ? undefined : recordedBodyOf(request.body ?? EMPTY);
+    if (!isReadRequest(method, request.url, requestBody)) {
       // The token carries the dry-run claim, so the proxy previews every write; one that reached
       // here would be a proxy that let it leave, and nothing is sent.
       problems.push(`a ${method} reached the vendor in a dry run`);
       return Response.json({ error: "write_reached_vendor" }, { status: 500 });
     }
-    // A read with a body (a GraphQL query, GRA-260) is recorded with it, as a write's is.
-    const sent = request.body ? recordedBodyOf(request.body) : undefined;
     const response = await vendor(request, init);
     // Read whole to record it, and handed on to the proxy below.
     const bytes = new Uint8Array(await new Response(response.body).arrayBuffer());
@@ -164,7 +167,7 @@ export async function recordStockProof(
         kind: "read",
         method,
         url: request.url,
-        ...(sent ? { body: sent } : {}),
+        ...(requestBody ? { body: requestBody } : {}),
         response: { status: response.status, headers, ...(body ? { body } : {}) },
       },
     });
@@ -267,22 +270,23 @@ export async function recordStockProof(
       const sequence = issueSequence() ?? unsequencedAgain++;
       const method = request.method.toUpperCase();
       const answer = answerBySequence.get(sequence);
-      if (!isReadRequest(method, request.url, request.body) || !answer) {
+      const requestBody = isSafeMethod(method) ? undefined : recordedBodyOf(request.body ?? EMPTY);
+      if (!isReadRequest(method, request.url, requestBody) || !answer) {
         problems.push(
           `over the scrubbed answers it made a call the first run did not: ${method} ${new URL(request.url).hostname}`,
         );
         return Response.json({ error: "not_in_recording" }, { status: 404 });
       }
-      // The request as the module made it over the scrubbed data, its body included.
-      const sent = request.body ? recordedBodyOf(request.body) : undefined;
+      // The request as the module sent it over the scrubbed answers: its URL and, for a read with
+      // a body, that body, never the first run's.
+      const { body: _firstBody, ...answered } = answer;
       again.push({
         sequence,
         exchange: {
-          kind: "read",
+          ...answered,
           method,
           url: request.url,
-          ...(sent ? { body: sent } : {}),
-          response: answer.response,
+          ...(requestBody ? { body: requestBody } : {}),
         },
       });
       return replayResponseOf(answer);

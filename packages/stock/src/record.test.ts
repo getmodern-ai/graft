@@ -183,6 +183,72 @@ describe("recordStockProof", () => {
     expect(replay.problems).toEqual([]);
   });
 
+  it("records a POST the reviewed table calls a read with the body the module sent over the scrubbed input, and replays it by that body (GRA-260)", async () => {
+    const SEARCH = `export default async (input: Input, ctx: Context) => {
+  const res = await ctx.fetch("/search", {
+    method: "POST",
+    headers: { "content-type": "application/json", "Notion-Version": "2025-09-03" },
+    body: JSON.stringify({ query: input.query, page_size: 2 }),
+  });
+  if (!res.ok) throw new Error(\`POST /search \${res.status}\`);
+  const body = (await res.json()) as { results: { id: string }[] };
+  return { ids: body.results.map((result) => result.id) };
+};
+`;
+    const searchTool: StockWorkspaceTool = {
+      ...tool,
+      vendor: "notion",
+      name: "search",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      hosts: ["api.notion.com"],
+      testInput: { query: "Acme board minutes" },
+      annotations: { readOnly: true, destructive: false },
+      files: [{ path: "index.ts", content: SEARCH }],
+    };
+    const seen: UpstreamRequest[] = [];
+    const recorded = await recordStockProof(searchTool, {
+      connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
+      upstreamFetch: async (request) => {
+        seen.push(request);
+        return Response.json({ results: [{ id: "page-acme-0001" }, { id: "page-acme-0002" }] });
+      },
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { recording } = recorded;
+
+    // The search reached the vendor once, as the read the proxy's dry run lets through.
+    expect(seen.map((request) => request.method)).toEqual(["POST"]);
+    const text = JSON.stringify(recording);
+    for (const planted of ["Acme board minutes", "page-acme-0001"]) {
+      expect(text, `${planted} survived`).not.toContain(planted);
+    }
+    expect(recording.exchanges).toHaveLength(1);
+    // The body is the module's over the scrubbed input, not the first run's.
+    expect(recording.exchanges[0]).toMatchObject({
+      kind: "read",
+      method: "POST",
+      url: "https://api.notion.com/v1/search",
+      body: { json: { query: recording.input.query, page_size: 2 } },
+    });
+
+    const replayed = { ...searchTool, testInput: recording.input };
+    expect((await proveReplay(replayed, recording)).problems).toEqual([]);
+    // A body the recording does not hold is not the recorded read.
+    const other = await proveReplay(
+      {
+        ...replayed,
+        files: [{ path: "index.ts", content: SEARCH.replace("page_size: 2", "page_size: 3") }],
+      },
+      recording,
+    );
+    expect(other.problems.join("\n")).toContain("its read 1 disagrees with the recording");
+  });
+
   it("answers the failed dry run's sentence, with the credential redacted, and no recording", async () => {
     const recorded = await recordStockProof(tool, {
       connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },

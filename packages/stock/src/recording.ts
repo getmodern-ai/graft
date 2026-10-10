@@ -31,16 +31,16 @@ export type RecordedResponse = {
 };
 
 /**
- * A read the vendor answered, replayed from `response`: a `GET` or `HEAD`, or a request the proxy's
- * classifier reads (`isReadRequest`: a GraphQL query, an entry of the reviewed table; GRA-260),
- * which the dry run lets reach the vendor as it does a `GET`.
+ * A read the vendor answered: replayed from `response`. A `GET` or `HEAD`, or a request the proxy's
+ * classifier calls a read by its body or by the reviewed table (`@graft/proxy`'s `read-request.ts`,
+ * GRA-260), such as Notion's `POST` search; only those reach the vendor in a dry run.
  */
 export type RecordedRead = {
   kind: "read";
   method: string;
   /** The vendor URL as it left the proxy, query included, redacted. */
   url: string;
-  /** What the module sent with a read that carries a body (a GraphQL query); absent for none. */
+  /** What the module sent, for a read that carries a body (a `POST` search). Absent otherwise. */
   body?: RecordedBody;
   response: RecordedResponse;
 };
@@ -70,30 +70,28 @@ export type StockRecording = {
   result?: unknown;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
- * Whether a request is a read, by the one judgement the check and the proxy's dry run share
- * (`@graft/proxy`'s `classifyRequest`, GRA-260): what the dry run sends on to the vendor, and so
- * what a recording holds as a read with an answer. `body` is the request body as recorded or as
- * the module sent it; only a JSON body can make a `POST` a read.
+ * Whether a request is a read as the proxy's dry run judges it (`read-request.ts`'s
+ * `classifyRequest`, the one classifier the check and the proxy share): the requests a dry run lets
+ * reach the vendor, and so the reads a recording holds.
  */
 export function isReadRequest(
   method: string,
   url: string,
-  body: RecordedBody | Uint8Array | null | undefined,
+  body: RecordedBody | undefined,
 ): boolean {
   const parsed = new URL(url);
-  const recorded = body instanceof Uint8Array ? recordedBodyOf(body) : (body ?? undefined);
   return classifyRequest({
     method,
     host: parsed.hostname.toLowerCase(),
     path: parsed.pathname,
     hasQuery: parsed.search.length > 1,
-    body: recorded && "json" in recorded ? { json: recorded.json } : null,
+    body: body && "json" in body ? { json: body.json } : null,
   }).read;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function bodyProblem(value: unknown): string | null {
@@ -143,13 +141,13 @@ export function parseRecording(text: string, where: string): StockRecording {
       throw problem(`${at}'s url is not an absolute URL`);
     }
     if (exchange.kind === "read") {
-      const body = bodyProblem(exchange.body);
-      if (body) throw problem(`${at}'s body ${body}`);
+      const requestBody = bodyProblem(exchange.body);
+      if (requestBody) throw problem(`${at}'s body ${requestBody}`);
       if (
         !isReadRequest(exchange.method, exchange.url, exchange.body as RecordedBody | undefined)
       ) {
         throw problem(
-          `${at} is a read, so it is a GET, a HEAD or a request the proxy reads (a GraphQL query)`,
+          `${at} is a read, so it is a GET or HEAD or a request the proxy's classifier calls a read`,
         );
       }
       const response = exchange.response;
@@ -157,13 +155,15 @@ export function parseRecording(text: string, where: string): StockRecording {
         throw problem(`${at} must carry response with a status`);
       }
       if (!isRecord(response.headers)) throw problem(`${at}'s response must carry headers`);
-      const answer = bodyProblem(response.body);
-      if (answer) throw problem(`${at}'s response body ${answer}`);
+      const body = bodyProblem(response.body);
+      if (body) throw problem(`${at}'s response body ${body}`);
     } else if (exchange.kind === "write") {
       const body = bodyProblem(exchange.body);
       if (body) throw problem(`${at}'s body ${body}`);
       if (isReadRequest(exchange.method, exchange.url, exchange.body as RecordedBody | undefined)) {
-        throw problem(`${at} is a write, so it is not a request the proxy reads`);
+        throw problem(
+          `${at} is a write, so it is not a request the proxy's classifier calls a read`,
+        );
       }
     } else {
       throw problem(`${at}'s kind must be read or write`);

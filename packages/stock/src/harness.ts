@@ -3,7 +3,12 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { redactText } from "@graft/core";
-import { createUpstreamFetch, type UpstreamFetch, type UpstreamRequest } from "@graft/proxy";
+import {
+  createUpstreamFetch,
+  isSafeMethod,
+  type UpstreamFetch,
+  type UpstreamRequest,
+} from "@graft/proxy";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
@@ -112,28 +117,16 @@ export async function readStockRecording(
 /** What the replay saw beside its sentences: every request that reached the vendor, and every preview. */
 export type ReplayReport = {
   problems: ProofProblems;
-  /**
-   * Every request the proxy sent on to the vendor (the recording, in replay mode), with the body a
-   * read carries (a GraphQL query) where it has one.
-   */
-  reachedVendor: { method: string; url: string; body?: RecordedBody }[];
+  /** Every request the proxy sent on to the vendor (the recording, in replay mode). */
+  reachedVendor: { method: string; url: string }[];
   /** Every write the proxy stopped, as its preview named it. */
   previewed: { method: string; host: string; path: string; body: RecordedBody | undefined }[];
 };
 
-/**
- * A read as the comparison sees it: method, host, path, the query as sorted pairs, and the body a
- * read carries (a GraphQL query, GRA-260).
- */
-type ReadKey = {
-  method: string;
-  host: string;
-  path: string;
-  query: [string, string][];
-  body: RecordedBody | undefined;
-};
+/** A read as the comparison sees it: method, host, path, and the query as sorted pairs. */
+type ReadKey = { method: string; host: string; path: string; query: [string, string][] };
 
-function readKeyOf(method: string, url: string, body?: RecordedBody): ReadKey {
+function readKeyOf(method: string, url: string): ReadKey {
   const parsed = new URL(url);
   return {
     method: method.toUpperCase(),
@@ -142,31 +135,7 @@ function readKeyOf(method: string, url: string, body?: RecordedBody): ReadKey {
     query: [...parsed.searchParams].sort(([a, x], [b, y]) =>
       a === b ? (x < y ? -1 : x > y ? 1 : 0) : a < b ? -1 : 1,
     ),
-    body,
   };
-}
-
-/**
- * Whether a read's body is the recorded one. Replayed, the whole body. Live, where a value may
- * follow the vendor's own data, its key paths, and a GraphQL `query` document whole, since the
- * document is the module's own text and two reads of one endpoint differ by it alone.
- */
-function sameReadBody(
-  recorded: RecordedBody | undefined,
-  actual: RecordedBody | undefined,
-  live: boolean,
-): boolean {
-  if (!live || !recorded || !actual || !("json" in recorded) || !("json" in actual)) {
-    return sameBody(recorded, actual);
-  }
-  const documentOf = (json: unknown) =>
-    typeof json === "object" && json !== null && "query" in json
-      ? (json as { query: unknown }).query
-      : undefined;
-  return (
-    isDeepStrictEqual(documentOf(recorded.json), documentOf(actual.json)) &&
-    isDeepStrictEqual(keyPaths(recorded.json), keyPaths(actual.json))
-  );
 }
 
 /**
@@ -177,7 +146,6 @@ function sameReadBody(
 function sameRead(recorded: ReadKey, actual: ReadKey, live: boolean): boolean {
   if (recorded.method !== actual.method || recorded.host !== actual.host) return false;
   if (recorded.path !== actual.path) return false;
-  if (!sameReadBody(recorded.body, actual.body, live)) return false;
   const secret = new Set(
     recorded.query.filter(([, value]) => value.startsWith("[redacted")).map(([name]) => name),
   );
@@ -295,13 +263,12 @@ export async function proveReplay(
   const realFetch = live ? createUpstreamFetch() : null;
 
   const upstreamFetch: UpstreamFetch = async (request: UpstreamRequest, init) => {
-    const sent = request.body ? recordedBodyOf(request.body) : undefined;
-    reachedVendor.push({
-      method: request.method,
-      url: request.url,
-      ...(sent ? { body: sent } : {}),
-    });
-    if (!isReadRequest(request.method, request.url, request.body)) {
+    reachedVendor.push({ method: request.method, url: request.url });
+    // A read with a body (a reviewed `POST` search, GRA-260) is matched by that body too.
+    const requestBody = isSafeMethod(request.method)
+      ? undefined
+      : recordedBodyOf(request.body ?? new Uint8Array(0));
+    if (!isReadRequest(request.method, request.url, requestBody)) {
       problems.push(
         say(
           `a ${request.method} reached the vendor in a dry run: ${new URL(request.url).pathname}`,
@@ -309,15 +276,17 @@ export async function proveReplay(
       );
       return Response.json({ error: "write_reached_vendor" }, { status: 500 });
     }
-    const actual = readKeyOf(request.method, request.url, sent);
-    const shownBody = (key: ReadKey) => (key.body ? ` with ${describeBody(key.body)}` : "");
+    const actual = readKeyOf(request.method, request.url);
     const shown = `${actual.method} ${actual.host}${actual.path}`;
     // The first recorded read not yet made that is this request: the recording is in the order the
     // module issued its reads, and a module reading in parallel may have them reach here in another
     // (Greptile on #191), so a request takes its own read rather than the next in line.
+    // Live, the body follows the input as the query's values do, and is not compared.
     const matched = reads.findIndex(
       (read, index) =>
-        !made.has(index) && sameRead(readKeyOf(read.method, read.url, read.body), actual, live),
+        !made.has(index) &&
+        sameRead(readKeyOf(read.method, read.url), actual, live) &&
+        (live || sameBody(read.body, requestBody)),
     );
     if (matched === -1) {
       const next = reads.findIndex((_read, index) => !made.has(index));
@@ -326,10 +295,10 @@ export async function proveReplay(
         problems.push(say(`it made a read the recording does not hold: ${shown}`));
         return Response.json({ error: "not_in_recording" }, { status: 404 });
       }
-      const recorded = readKeyOf(expected.method, expected.url, expected.body);
+      const recorded = readKeyOf(expected.method, expected.url);
       problems.push(
         say(
-          `its read ${next + 1} disagrees with the recording: it made ${shown}${actual.query.length ? `?${new URLSearchParams(actual.query)}` : ""}${shownBody(actual)}, the recording holds ${recorded.method} ${recorded.host}${recorded.path}${recorded.query.length ? `?${new URLSearchParams(recorded.query)}` : ""}${shownBody(recorded)}`,
+          `its read ${next + 1} disagrees with the recording: it made ${shown}${actual.query.length ? `?${new URLSearchParams(actual.query)}` : ""}, the recording holds ${recorded.method} ${recorded.host}${recorded.path}${recorded.query.length ? `?${new URLSearchParams(recorded.query)}` : ""}`,
         ),
       );
       made.add(next);

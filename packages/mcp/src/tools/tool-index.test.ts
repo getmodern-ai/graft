@@ -517,6 +517,59 @@ describe("Microsoft Outlook's stock tools (GRA-268)", () => {
   });
 });
 
+/**
+ * Notion's stock tools as they ship (GRA-252), searched as the suites above search them: every stock
+ * tool at once, with the integrations' display names. A query that names Notion finds Notion's tool
+ * first; the unnamed ones are pinned where Notion's tool is the only one of its kind.
+ */
+describe("Notion's stock tools (GRA-252)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const firstOf = async (query: string) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    return first && `${first.vendor}__${first.name}`;
+  };
+
+  const QUERIES: [query: string, wire: string][] = [
+    ["search notion", "notion__search-pages-and-databases"],
+    ["find a notion page", "notion__search-pages-and-databases"],
+    ["search my notion pages", "notion__search-pages-and-databases"],
+    ["list my notion databases", "notion__search-pages-and-databases"],
+    ["read a notion page", "notion__get-page"],
+    ["get the content of a notion page", "notion__get-page"],
+    ["show me a notion page", "notion__get-page"],
+    // A read verb ("query", "list") ranks read-only tools first, and query-database is annotated a
+    // write: the check reads a reviewed POST's path only from literals (ADR 0008 as amended
+    // 2026-10-10), and a data source's id is not one. So its pins carry no read verb.
+    ["notion database entries", "notion__query-database"],
+    ["notion database rows", "notion__query-database"],
+    ["create a notion page", "notion__create-page"],
+    ["create a row in a notion database", "notion__create-page"],
+    ["new notion page", "notion__create-page"],
+    ["append to a notion page", "notion__append-to-page"],
+    ["add text to a notion page", "notion__append-to-page"],
+    ["add a paragraph to a notion page", "notion__append-to-page"],
+    ["update a notion page", "notion__update-page-properties"],
+    ["change the status of a notion row", "notion__update-page-properties"],
+    ["rename a notion page", "notion__update-page-properties"],
+    ["comment on a notion page", "notion__add-comment"],
+    ["reply to a notion comment", "notion__add-comment"],
+    ["append to a page", "notion__append-to-page"],
+  ];
+
+  it.each(QUERIES)('"%s" finds %s first', async (query, wire) => {
+    expect(await firstOf(query)).toBe(wire);
+  });
+});
+
 describe("owner words (GRA-269)", () => {
   const tools = [
     tool("acme", "comment-on-issue", "Comments on an issue.", {
