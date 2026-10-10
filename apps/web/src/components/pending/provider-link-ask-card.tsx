@@ -35,6 +35,7 @@ import {
   type LinkSettled,
   startProviderLink,
 } from "@/lib/provider-link";
+import { providerLabel } from "@/lib/provider-name";
 
 /**
  * An agent's proposal for a connection a **link** provider covers (ADR 0019; GRA-59): the vendor,
@@ -133,13 +134,14 @@ export function ProviderLinkAskCard({
   const busy = start.isPending || decline.isPending || running;
 
   if (origin === "setup") {
+    const providerName = providerLabel(provider);
     return (
       <AskCard
         action={action}
         title={payload.displayName}
         settled={(recorded) =>
           typeof recorded?.connectionId === "string"
-            ? `Connected through ${provider}.`
+            ? `Connected through ${providerName}.`
             : "Declined. Go back to choose again."
         }
         approveLabel={running ? "Waiting for the sign-in…" : `Connect ${payload.displayName}`}
@@ -148,12 +150,12 @@ export function ProviderLinkAskCard({
         compact={{
           vendor: payload.vendor,
           name: payload.displayName,
-          subline: `One click through ${provider} · nothing to type, and the token stays with ${provider}`,
+          subline: `One click through ${providerName} · nothing to type, and the token stays with ${providerName}`,
           footer: setupFooter,
         }}
       >
         {state.phase === "idle" ? null : (
-          <LinkStatus state={state} provider={provider} onCancel={cancel} />
+          <LinkStatus state={state} provider={providerName} onCancel={cancel} />
         )}
       </AskCard>
     );

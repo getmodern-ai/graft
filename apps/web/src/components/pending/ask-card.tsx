@@ -26,6 +26,7 @@ import {
   type PendingAnswer,
   pendingKeys,
 } from "@/lib/pending-action-queries";
+import { cachedDirectoryLogo } from "@/lib/setup-queries";
 
 /**
  * What every ask's card shares (ADR 0006): who asked and when, how long it stays answerable, the
@@ -91,10 +92,18 @@ export function AskCard({
   const open = isOpen(action);
   const agentName = action.agent?.name ?? "A revoked agent";
 
+  const queryClient = useQueryClient();
   if (compact) {
     return (
       <SetupAppCard
-        media={<SetupLogo starterId={compact.vendor} tile={false} className="size-8" />}
+        media={
+          <SetupLogo
+            starterId={compact.vendor}
+            url={cachedDirectoryLogo(queryClient, compact.vendor)}
+            tile={false}
+            className="size-8"
+          />
+        }
         name={compact.name}
         subline={
           open

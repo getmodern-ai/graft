@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { CodeBlock } from "@/components/code-block";
 import { CheckCircleIcon, ErrorIcon, RefreshIcon, WarningIcon } from "@/components/icons";
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  cachedDirectoryLogo,
   completeSetupResult,
   runAgentTool,
   type SetupStateData,
@@ -57,6 +58,7 @@ function ToolRun({
   /** Drawn as the done screen's tool card (Setup v2): no footer, the answer behind *Show result*. */
   embedded?: boolean;
 }) {
+  const queryClient = useQueryClient();
   const view: RunInputView = runInputView(tool.inputSchema, context.runInput);
   const [values, setValues] = useState(() => initialValues(view));
   const [text, setText] = useState(() => (view.kind === "json" ? view.initial : ""));
@@ -140,7 +142,12 @@ function ToolRun({
         }}
       >
         <SetupAppCard
-          media={<SetupLogo starterId={tool.vendor} />}
+          media={
+            <SetupLogo
+              starterId={tool.vendor}
+              url={cachedDirectoryLogo(queryClient, tool.vendor)}
+            />
+          }
           name={<code className="font-mono font-normal text-base">{tool.wireName}</code>}
           chip={tool.readOnly ? <StatusChip chip={TOOL_ANNOTATION_CHIP["read-only"]} /> : null}
           subline={tool.description}
