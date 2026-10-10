@@ -41,8 +41,9 @@ export default async (input: Input, ctx: Context) => {
   if (input.addMeetLink === true) query.set("conferenceDataVersion", "1");
 
   const calendarId = encodeURIComponent(input.calendarId ?? "primary");
-  const res = await ctx.fetch(`/calendars/${calendarId}/events?${query.toString()}`, {
+  const res = await ctx.fetch(`/calendar/v3/calendars/${calendarId}/events?${query.toString()}`, {
     method: "POST",
+    host: "www.googleapis.com",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });

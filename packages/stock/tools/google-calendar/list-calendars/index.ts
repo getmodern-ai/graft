@@ -26,9 +26,9 @@ export default async (input: Input, ctx: Context) => {
 
   do {
     const path = pageToken
-      ? `/users/me/calendarList?pageToken=${encodeURIComponent(pageToken)}`
-      : "/users/me/calendarList";
-    const res = await ctx.fetch(path);
+      ? `/calendar/v3/users/me/calendarList?pageToken=${encodeURIComponent(pageToken)}`
+      : "/calendar/v3/users/me/calendarList";
+    const res = await ctx.fetch(path, { host: "www.googleapis.com" });
     if (!res.ok) {
       throw new Error(`GET /users/me/calendarList ${res.status}: ${await res.text()}`);
     }

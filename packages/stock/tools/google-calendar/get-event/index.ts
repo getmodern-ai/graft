@@ -46,8 +46,8 @@ function eventTime(value?: EventDateTime) {
 
 export default async (input: Input, ctx: Context) => {
   const calendarId = input.calendarId ?? "primary";
-  const path = `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(input.eventId)}`;
-  const res = await ctx.fetch(path);
+  const path = `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(input.eventId)}`;
+  const res = await ctx.fetch(path, { host: "www.googleapis.com" });
   if (!res.ok) throw new Error(`GET event ${res.status}: ${await res.text()}`);
 
   const event = (await res.json()) as CalendarEvent;

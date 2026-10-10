@@ -1,16 +1,16 @@
 {
   "format": 1,
   "tool": "google-calendar__respond-to-event",
-  "recordedAt": "2026-10-09T18:55:48.298Z",
+  "recordedAt": "2026-10-10T05:57:11.453Z",
   "input": {
-    "eventId": "316b90adb90f0b76d27167179370af57",
+    "eventId": "1o98ia8oa9n0n8uzcbf3om9fjt",
     "response": "accepted"
   },
   "exchanges": [
     {
       "kind": "read",
       "method": "GET",
-      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/316b90adb90f0b76d27167179370af57?fields=id%2ChtmlLink%2Cattendees",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/1o98ia8oa9n0n8uzcbf3om9fjt?fields=id%2Cetag%2ChtmlLink%2Cattendees",
       "response": {
         "status": 200,
         "headers": {
@@ -18,17 +18,18 @@
         },
         "body": {
           "json": {
-            "id": "316b90adb90f0b76d27167179370af57",
+            "etag": "\"8558764681788319\"",
+            "id": "1o98ia8oa9n0n8uzcbf3om9fjt",
             "htmlLink": "https://www.google.com/",
             "attendees": [
               {
-                "email": "sasml@example.com",
-                "self": true,
+                "email": "kwinf.lyzesz@example.com",
+                "organizer": true,
                 "responseStatus": "accepted"
               },
               {
-                "email": "tehb@example.com",
-                "organizer": true,
+                "email": "ahvau@example.com",
+                "self": true,
                 "responseStatus": "accepted"
               }
             ]
@@ -39,18 +40,18 @@
     {
       "kind": "write",
       "method": "PATCH",
-      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/316b90adb90f0b76d27167179370af57",
+      "url": "https://www.googleapis.com/calendar/v3/calendars/primary/events/1o98ia8oa9n0n8uzcbf3om9fjt",
       "body": {
         "json": {
           "attendees": [
             {
-              "email": "sasml@example.com",
-              "self": true,
+              "email": "kwinf.lyzesz@example.com",
+              "organizer": true,
               "responseStatus": "accepted"
             },
             {
-              "email": "tehb@example.com",
-              "organizer": true,
+              "email": "ahvau@example.com",
+              "self": true,
               "responseStatus": "accepted"
             }
           ]
@@ -59,7 +60,7 @@
     }
   ],
   "result": {
-    "eventId": "316b90adb90f0b76d27167179370af57",
+    "eventId": "1o98ia8oa9n0n8uzcbf3om9fjt",
     "response": "accepted",
     "htmlLink": "https://www.google.com/"
   }

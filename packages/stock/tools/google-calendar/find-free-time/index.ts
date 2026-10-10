@@ -57,8 +57,8 @@ export default async (input: Input, ctx: Context) => {
       });
       if (pageToken) query.set("pageToken", pageToken);
 
-      const path = `/calendars/${encodeURIComponent(calendarId)}/events?${query.toString()}`;
-      const res = await ctx.fetch(path);
+      const path = `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${query.toString()}`;
+      const res = await ctx.fetch(path, { host: "www.googleapis.com" });
       if (!res.ok)
         throw new Error(`GET events for calendar ${calendarId} ${res.status}: ${await res.text()}`);
       const page = (await res.json()) as EventsPage;

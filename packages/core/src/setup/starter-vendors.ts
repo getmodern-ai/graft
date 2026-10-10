@@ -139,7 +139,10 @@ export const STARTER_VENDORS = [
     scheme: "oauth_authorization_code",
     schemeConfig: {
       ...GOOGLE_OAUTH,
-      scopes: "https://www.googleapis.com/auth/calendar.readonly",
+      // The stock tools write events (create, update, delete, respond), so the consent asks for
+      // event writes beside the read-only calendar list (GRA-249).
+      scopes:
+        "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events",
     },
     goal: "Show me what is on my calendar this week",
     hints:
