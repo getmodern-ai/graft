@@ -27,6 +27,10 @@ type SlackRepliesResponse = {
   ok?: boolean;
   error?: string;
   messages?: SlackMessage[];
+  has_more?: boolean;
+  response_metadata?: {
+    next_cursor?: string;
+  };
 };
 
 async function slackJson<T>(res: Response, operation: string): Promise<T> {
@@ -77,6 +81,7 @@ export default async (input: Input, ctx: Context) => {
   repliesQuery.set("channel", channelId);
   repliesQuery.set("ts", input.threadTs);
   repliesQuery.set("limit", String(input.limit ?? 50));
+  if (input.cursor) repliesQuery.set("cursor", input.cursor);
 
   const repliesRes = await ctx.fetch(`/conversations.replies?${repliesQuery.toString()}`);
   const replies = await slackJson<SlackRepliesResponse>(repliesRes, "Slack conversations.replies");
@@ -95,5 +100,12 @@ export default async (input: Input, ctx: Context) => {
     }))
     .sort((a, b) => Number(a.ts) - Number(b.ts));
 
-  return { channel: channelId, messages };
+  // A thread longer than `limit` says so, with the cursor that reads the next page.
+  const nextCursor = replies.response_metadata?.next_cursor || null;
+  return {
+    channel: channelId,
+    messages,
+    hasMore: replies.has_more === true || nextCursor !== null,
+    nextCursor,
+  };
 };

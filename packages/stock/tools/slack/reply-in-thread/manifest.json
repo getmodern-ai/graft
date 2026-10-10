@@ -1,6 +1,6 @@
 {
   "name": "reply-in-thread",
-  "description": "Replies in a Slack message thread, optionally also showing the reply in the channel. Takes the channel by name or id (list-channels lists them) and the ts of the message replied to, which read-channel-history, read-thread and post-message answer.",
+  "description": "Replies in a Slack message thread, optionally also showing the reply in the channel. Takes the channel by name or id (list-channels lists them) and the thread's parent message's ts: a message's own ts from read-channel-history or post-message, or its thread ts when it is itself a reply.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -10,7 +10,7 @@
       },
       "threadTs": {
         "type": "string",
-        "description": "The ts of the message to reply to, from read-channel-history, read-thread or post-message."
+        "description": "The ts of the thread's parent message: from read-channel-history or post-message, or the first message read-thread answers. For a message that is itself a reply, its thread ts, never its own ts."
       },
       "text": {
         "type": "string",

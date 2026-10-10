@@ -204,11 +204,13 @@ export const STARTER_VENDORS = [
     schemeConfig: {
       authorizeUrl: "https://slack.com/oauth/v2/authorize",
       tokenUrl: "https://slack.com/api/oauth.v2.access",
-      scopes: "channels:read",
+      // Comma-separated, as Slack's authorize URL takes them: every method Slack's stock tools call
+      // (GRA-251, `packages/stock/tools/slack/`), so a connection made here runs all of them, the
+      // writes included; the person still approves each write. The curated goal needs
+      // `channels:read` alone.
+      scopes:
+        "channels:read,groups:read,channels:history,groups:history,users:read,users:read.email,chat:write,reactions:write",
     },
-    // `conversations.list` over public channels needs `channels:read` alone, which Pipedream's
-    // `slack_v2` grants (its own List Channels action calls the same method); nothing else is asked
-    // of the token, so a narrower grant still runs.
     goal: "List the public channels in my workspace",
     hints:
       "List the public channels in the Slack workspace with the `conversations.list` method, a GET, with `types=public_channel`, `exclude_archived=true` and `limit=20`, returning the name, the topic and the member count of each. Slack answers 200 with `ok: false` on an error, so treat that as a failure naming Slack's `error`. The tool takes no input. Read only.",

@@ -1,13 +1,13 @@
 {
   "name": "find-user",
-  "description": "Finds Slack users by email address, or by part of a name, display name or username, exact matches first, each with their user id, names, email, title and time zone. send-direct-message takes a name or email itself, so this is for when the person is not sure who they mean.",
+  "description": "Finds Slack users by user id, by email address, or by part of a name, display name or username, exact matches first, each with their user id, names, email, title and time zone. send-direct-message takes a name or email itself, so this is for when the person is not sure who they mean, or to name the author of a message by its user id.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "query": {
         "type": "string",
         "minLength": 1,
-        "description": "A person's email address, name, display name, or Slack username."
+        "description": "A Slack user id (as read-channel-history and read-thread answer), or a person's email address, name, display name, or Slack username."
       }
     },
     "required": ["query"],

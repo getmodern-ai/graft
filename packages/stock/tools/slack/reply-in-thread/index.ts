@@ -96,6 +96,9 @@ export default async (input: Input, ctx: Context) => {
     };
   }
 
+  // No Slack answer: the dry run's preview (a 2xx) or the proxy's own refusal (a 4xx or 5xx with
+  // no `ok`), which is a failure, not a reply sent.
+  if (!post.ok) throw new Error(`POST /chat.postMessage ${post.status}: ${responseText}`);
   return {
     channel: channelId,
     threadTs: input.threadTs,
