@@ -1,0 +1,28 @@
+{
+  "name": "search-files",
+  "description": "Finds Google Drive files by searching their names and indexed content. Returns file IDs accepted by get-file, read-file-content, move-file, and share-file.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Text to search for in file names or indexed content.",
+        "examples": ["report"]
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Maximum number of files to return.",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

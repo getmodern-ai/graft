@@ -347,15 +347,71 @@ describe("inputLabels", () => {
 });
 
 /**
- * HubSpot's stock tools as they ship (GRA-254): each is found first by a query a person would use
- * for it, searched over every stock tool at once with the integrations' display names, as
- * `find_tool` searches them (`meta.ts`).
+ * The stock catalogue as the boot reads it (`packages/stock/tools/`): each stock tool must be the
+ * first hit for the words a person would use for it, among every stock tool. One block per
+ * integration's basics; Slack's are GRA-251's.
  */
-describe("HubSpot's stock tools (GRA-254)", () => {
+describe("the stock catalogue's real queries", async () => {
+  const workspace = await readStockWorkspace();
+  const stock: IndexedTool[] = workspace.map((t) => ({
+    vendor: t.vendor,
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+    readOnly: t.annotations.readOnly,
+  }));
+  const vendorNames = new Map([["slack", ["Slack"]]]);
+  const first = (query: string) => {
+    const hit = searchTools(stock, query, { vendorNames }).hits[0];
+    return hit ? `${hit.vendor}__${hit.name}` : null;
+  };
+
+  it.each([
+    ["list slack channels", "slack__list-channels"],
+    ["show me the channels", "slack__list-channels"],
+    ["read the messages in a channel", "slack__read-channel-history"],
+    ["slack channel history", "slack__read-channel-history"],
+    ["read a slack thread", "slack__read-thread"],
+    ["read the replies in a thread", "slack__read-thread"],
+    ["find a slack user by email", "slack__find-user"],
+    ["look up a person in slack", "slack__find-user"],
+    ["post a message to a slack channel", "slack__post-message"],
+    ["reply in a slack thread", "slack__reply-in-thread"],
+    ["send dm", "slack__send-direct-message"],
+    ["send a direct message on slack", "slack__send-direct-message"],
+    ["add a reaction", "slack__add-reaction"],
+    ["react with an emoji", "slack__add-reaction"],
+  ])('"%s" finds %s first', (query, wire) => {
+    expect(first(query)).toBe(wire);
+  });
+});
+
+/**
+ * GitHub's and HubSpot's stock tools as they ship (GRA-253, GRA-254): each is found first by a query
+ * a person would use for it, searched over every stock tool at once with the integrations' display
+ * names, as `find_tool` searches them (`meta.ts`).
+ */
+describe("GitHub's and HubSpot's stock tools (GRA-253, GRA-254)", () => {
   const vendorNames = new Map(
     STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
   );
   const QUERIES: [query: string, wire: string][] = [
+    ["list my repositories", "github__list-my-repositories"],
+    ["my github repos", "github__list-my-repositories"],
+    ["list issues", "github__list-issues"],
+    ["get issue with comments", "github__get-issue"],
+    ["search issues", "github__search-issues-and-pull-requests"],
+    ["search pull requests", "github__search-issues-and-pull-requests"],
+    ["list pull requests", "github__list-pull-requests"],
+    ["pull request changed files", "github__get-pull-request"],
+    // "read a file" alone is Google Drive's since GRA-250; the repository says which.
+    ["read a file from a github repo", "github__get-file-contents"],
+    ["get readme", "github__get-file-contents"],
+    ["create issue", "github__create-issue"],
+    ["comment on pull request", "github__comment-on-issue-or-pull-request"],
+    ["close issue", "github__update-issue"],
+    ["create pull request", "github__create-pull-request"],
+    ["current weather", "open-meteo__current-weather"],
     ["find a contact", "hubspot__find-contact"],
     ["look up a contact by email", "hubspot__find-contact"],
     ["search hubspot contacts", "hubspot__find-contact"],

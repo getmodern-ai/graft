@@ -117,6 +117,15 @@ describe("the starter integrations", () => {
     expect(gmail?.hints).not.toMatch(/message get|metadataHeaders|then read each/);
   });
 
+  it("asks Google Calendar's consent for event writes, which its stock tools make", () => {
+    const calendar = starterVendorOf("google-calendar");
+    const scopes = String(calendar?.schemeConfig.scopes).split(/\s+/);
+    expect(scopes).toEqual([
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/calendar.events",
+    ]);
+  });
+
   it("proposes exactly what an agent's request_connection would send", () => {
     const github = starterVendorOf("github");
     if (!github) throw new Error("no github starter");

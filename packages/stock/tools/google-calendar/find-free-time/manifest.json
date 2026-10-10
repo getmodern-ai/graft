@@ -1,0 +1,39 @@
+{
+  "name": "find-free-time",
+  "description": "Finds free time on Google Calendar: the open slots of at least a given length (30 minutes by default) in a time window, by default the next seven days, with the busy periods merged across one or more calendars, to check availability before scheduling a meeting. Declined, cancelled and free (transparent) events do not count as busy. calendarIds defaults to [\"primary\"]; google-calendar__list-calendars supplies others.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "calendarIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "description": "Calendar IDs to check. Defaults to primary."
+      },
+      "timeMin": {
+        "type": "string",
+        "format": "date-time",
+        "description": "Start of the search window in RFC 3339 format. Defaults to now."
+      },
+      "timeMax": {
+        "type": "string",
+        "format": "date-time",
+        "description": "End of the search window in RFC 3339 format. Defaults to seven days after timeMin."
+      },
+      "minMinutes": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Shortest free slot to return, in minutes. Defaults to 30."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
