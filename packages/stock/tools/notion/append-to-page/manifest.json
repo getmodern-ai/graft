@@ -1,6 +1,6 @@
 {
   "name": "append-to-page",
-  "description": "Appends plain text to the end of a Notion page, each non-empty line a block: '# ' to '### ' headings, '- ' bulleted and '1. ' numbered items, '[ ] ' and '[x] ' to-dos, '> ' quotes, any other line a paragraph; at most 100 lines, each cut to 2,000 characters. The page id or URL comes from notion__search-pages-and-databases or notion__get-page. Answers appended and the new blocks' ids.",
+  "description": "Appends plain text to the end of a Notion page, each non-empty line a block: '# ' to '### ' headings, '- ' bulleted and '1. ' numbered items, '[ ] ' and '[x] ' to-dos, '> ' quotes, any other line a paragraph; at most 100 lines of up to 200,000 characters each. The page id or URL comes from notion__search-pages-and-databases or notion__get-page. Answers appended and the new blocks' ids.",
   "inputSchema": {
     "type": "object",
     "properties": {

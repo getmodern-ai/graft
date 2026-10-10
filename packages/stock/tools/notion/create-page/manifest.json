@@ -1,6 +1,6 @@
 {
   "name": "create-page",
-  "description": "Creates a Notion page under a page, or a row in a database, with a title and optional plain-text content in which each line becomes a block: '# ' to '### ' headings, '- ' bulleted items, '[ ] ' and '[x] ' to-dos, any other line a paragraph, at most 100 lines. Give exactly one parent: parentPageId, a page's id from notion__search-pages-and-databases, or dataSourceId, a data_source id from the same search. In a database, titleProperty names the title column (default Name) and properties takes Notion's own property values keyed by column name, which notion__query-database's rows show. Answers created and the new page's id and url.",
+  "description": "Creates a Notion page under a page, or a row in a database, with a title and optional plain-text content in which each line becomes a block: '# ' to '### ' headings, '- ' bulleted items, '[ ] ' and '[x] ' to-dos, any other line a paragraph, at most 100 lines of up to 200,000 characters each. Give exactly one parent: parentPageId, a page's id from notion__search-pages-and-databases, or dataSourceId, a data_source id from the same search. In a database, titleProperty names the title column (default Name) and properties takes Notion's own property values keyed by column name, which notion__query-database's rows show. Answers created and the new page's id and url.",
   "inputSchema": {
     "type": "object",
     "properties": {

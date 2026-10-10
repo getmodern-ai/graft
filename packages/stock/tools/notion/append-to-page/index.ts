@@ -38,15 +38,28 @@ function pageIdFrom(value: string): string {
   const trimmed = value.trim();
   if (!/^https?:\/\//i.test(trimmed)) return trimmed;
 
-  const matches = trimmed.match(
-    /[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g,
+  // The page's id ends the URL's path; a query (a view) or a fragment (a block) names another.
+  const path = trimmed.split(/[?#]/, 1)[0].replace(/\/+$/, "");
+  const match = path.match(
+    /([0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
   );
-  if (!matches?.length) throw new Error("The Notion page URL does not contain a page ID");
-  return matches[matches.length - 1];
+  if (!match) throw new Error("The Notion page URL does not end in a page ID");
+  return match[1];
 }
 
+/** Notion's limits: 2,000 characters per text object, 100 text objects per block. */
+const TEXT_LIMIT = 2000;
+const TEXTS_PER_BLOCK = 100;
+
 function richText(content: string): RichText[] {
-  return [{ type: "text", text: { content: content.slice(0, 2000) } }];
+  if (content.length > TEXT_LIMIT * TEXTS_PER_BLOCK) {
+    throw new Error(`A line may hold at most ${TEXT_LIMIT * TEXTS_PER_BLOCK} characters`);
+  }
+  const parts: RichText[] = [];
+  for (let start = 0; start < content.length; start += TEXT_LIMIT) {
+    parts.push({ type: "text", text: { content: content.slice(start, start + TEXT_LIMIT) } });
+  }
+  return parts;
 }
 
 function textBlock(type: TextBlock["type"], content: string): TextBlock {

@@ -1,6 +1,16 @@
+/** Notion's limits: 2,000 characters per text object, 100 text objects per block. */
+const TEXT_LIMIT = 2000;
+const TEXTS_PER_BLOCK = 100;
+
 function richText(content: string) {
-  if (content.length === 0) return [];
-  return [{ type: "text", text: { content: content.slice(0, 2000) } }];
+  if (content.length > TEXT_LIMIT * TEXTS_PER_BLOCK) {
+    throw new Error(`A line may hold at most ${TEXT_LIMIT * TEXTS_PER_BLOCK} characters`);
+  }
+  const parts: { type: "text"; text: { content: string } }[] = [];
+  for (let start = 0; start < content.length; start += TEXT_LIMIT) {
+    parts.push({ type: "text", text: { content: content.slice(start, start + TEXT_LIMIT) } });
+  }
+  return parts;
 }
 
 function blockForLine(line: string) {

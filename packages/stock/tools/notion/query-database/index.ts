@@ -141,11 +141,19 @@ export default async (input: Input, ctx: Context) => {
 
   const rows = response.results.map((item) => {
     const row = objectValue(item);
+    // A relation Notion cut short (more than 25 entries) lists only the ids it answered.
+    const incompleteRelations = Object.entries(objectValue(row?.properties) ?? {})
+      .filter(([, property]) => {
+        const relation = objectValue(property);
+        return relation?.type === "relation" && relation.has_more === true;
+      })
+      .map(([name]) => name);
     return {
       id: typeof row?.id === "string" ? row.id : null,
       url: typeof row?.url === "string" ? row.url : null,
       last_edited_time: typeof row?.last_edited_time === "string" ? row.last_edited_time : null,
       properties: flattenProperties(row?.properties),
+      ...(incompleteRelations.length > 0 ? { incompleteRelations } : {}),
     };
   });
 
