@@ -1,33 +1,25 @@
-import { spawn } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { redactText, starterVendorFor } from "@graft/core";
+import { redactText } from "@graft/core";
 import {
-  createProxyApp,
   createUpstreamFetch,
-  DRY_RUN_HEADER,
   isSafeMethod,
-  type ProxyConnection,
   type UpstreamFetch,
   type UpstreamRequest,
 } from "@graft/proxy";
-import { RUNNER_SOURCE_PATH, readRunnerEnvelope } from "@graft/runner";
-import {
-  createCapabilityTokenVerifier,
-  importCapabilityTokenKeys,
-  mintCapabilityToken,
-} from "@graft/token";
-import { serve } from "@hono/node-server";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
 import { checkStockTool } from "./check";
-import type { LiveConnection, StockHarnessMode } from "./mode";
+import {
+  dryRunFailureOf,
+  dryRunStockTool,
+  type PreviewedWrite,
+  stockConnectionFor,
+} from "./dry-run";
+import type { StockHarnessMode } from "./mode";
 import {
   bodyBytesOf,
   parseRecording,
@@ -39,6 +31,7 @@ import {
   redactRecording,
   type StockRecording,
 } from "./recording";
+import { credentialForms } from "./secrets";
 import { STOCK_DIR, type StockWorkspaceTool } from "./workspace";
 
 /**
@@ -50,7 +43,8 @@ import { STOCK_DIR, type StockWorkspaceTool } from "./workspace";
  *    derives are the ones the manifest declares;
  *  - `proveTestInput`: the input schema compiles and the test input is valid input;
  *  - `proveReplay`: the module runs, as a dry run, by the real runner through the real proxy, whose
- *    vendor is the recording (`RECORDING.md`). Its reads must be the recording's, in order; its
+ *    vendor is the recording (`RECORDING.md`). Each read must be a recorded read not yet made (the
+ *    first such, in the order the module issued them, so parallel reads replay); its
  *    writes stop at the proxy's preview, never reach the vendor, and must be the recording's; and its
  *    result must be the recording's. In live mode (`mode.ts`) the reads go to the vendor instead.
  *
@@ -128,12 +122,6 @@ export type ReplayReport = {
   previewed: { method: string; host: string; path: string; body: RecordedBody | undefined }[];
 };
 
-const PERSON = "person_stock_harness";
-const AGENT = "agent_stock_harness";
-const CONNECTION = "conn_stock_harness";
-/** Long enough for a cold Node to load a module and make a few calls; the runner's own default is 60 s. */
-const RUN_TIMEOUT_MS = 30_000;
-
 /** A read as the comparison sees it: method, host, path, and the query as sorted pairs. */
 type ReadKey = { method: string; host: string; path: string; query: [string, string][] };
 
@@ -189,6 +177,33 @@ function responseOf(read: RecordedRead): Response {
   return new Response(nullBody ? null : bytes, { status: read.response.status, headers });
 }
 
+/**
+ * A note, not a failure, for a module that reads a body as text where the recording holds a JSON
+ * answer (Greptile on #191): a recording keeps a JSON body parsed, so the redaction can walk it, and
+ * a replay serves it re-serialised, so the vendor's own whitespace and escaping are not what the
+ * module reads. The build hands the module the same re-serialised text while recording, so the two
+ * agree; a module that compares, slices or searches that text is still reading the vendor's
+ * formatting, which the nightly live run does not compare. `RECORDING.md` asks stock modules to
+ * parse a JSON body (`res.json()`) instead. Answers the notes, each opening as a proof's sentence.
+ */
+export function jsonTextNotes(
+  tool: Pick<StockWorkspaceTool, "vendor" | "name" | "files">,
+  recording: StockRecording,
+): string[] {
+  const readsJson = recording.exchanges.some(
+    (exchange) =>
+      exchange.kind === "read" && exchange.response.body && "json" in exchange.response.body,
+  );
+  if (!readsJson) return [];
+  return tool.files
+    .filter((file) => /\.text\(\s*\)/.test(file.content))
+    .map((file) =>
+      sayer(tool)(
+        `note: ${file.path} reads a body with .text() and the recording holds a JSON answer; a replay serves JSON re-serialised, not as the vendor formatted it, so parse it with .json() rather than comparing or slicing the text`,
+      ),
+    );
+}
+
 function describeBody(body: RecordedBody | undefined): string {
   if (!body) return "no body";
   const text =
@@ -198,83 +213,6 @@ function describeBody(body: RecordedBody | undefined): string {
 
 function sameBody(a: RecordedBody | undefined, b: RecordedBody | undefined): boolean {
   return isDeepStrictEqual(a ?? null, b ?? null);
-}
-
-async function testKeys() {
-  const pair = generateKeyPairSync("ed25519", {
-    privateKeyEncoding: { type: "pkcs8", format: "pem" },
-    publicKeyEncoding: { type: "spki", format: "pem" },
-  });
-  return importCapabilityTokenKeys({
-    privateKeyPem: pair.privateKey,
-    publicKeyPem: pair.publicKey,
-  });
-}
-
-function runRunner(args: {
-  moduleDir: string;
-  env: Record<string, string>;
-  input: unknown;
-}): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [RUNNER_SOURCE_PATH, args.moduleDir], {
-      // A clean environment, so a developer's own `HTTPS_PROXY` or `NODE_OPTIONS` cannot leak in.
-      env: { PATH: process.env.PATH ?? "", ...args.env },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
-    child.stdin.end(JSON.stringify(args.input));
-  });
-}
-
-/**
- * The connection the run is minted for. Replay: the tool's declared hosts and nothing else, so a
- * call to an undeclared host is the proxy's `host_not_in_set`, and the `none` scheme whatever the
- * starter's, since the vendor is the recording and the credential's header is not compared. Live:
- * the scheme and the credential the environment gave for the vendor, or `none` for a keyless
- * starter; a keyed starter with none is a sentence. **The primary host is one the manifest
- * declares** (Greptile on #187): the proxy admits the primary host's name beside `hosts`, so a
- * starter's primary host the manifest omits would let an undeclared call pass in CI. The starter's
- * is used where the manifest declares its name, else the manifest's first host. A live connection's
- * own primary host (a test account that answers elsewhere) is the maintainer's to give, and is used
- * as given.
- */
-function connectionFor(
-  tool: StockWorkspaceTool,
-  live: LiveConnection | null,
-  required: boolean,
-): ProxyConnection | string {
-  const starter = starterVendorFor(tool.vendor);
-  const declared = new Set(tool.hosts);
-  const hostnameOf = (url: string) => new URL(url).hostname.toLowerCase();
-  const primaryHost =
-    live?.primaryHost ??
-    (starter && declared.has(hostnameOf(starter.primaryHost))
-      ? starter.primaryHost
-      : `https://${tool.hosts[0]}`);
-  const hosts = [...new Set([hostnameOf(primaryHost), ...tool.hosts])];
-  if (required && live === null && starter && starter.scheme !== "none") {
-    return `there is no live connection for ${tool.vendor}; give it under GRAFT_STOCK_LIVE_CONNECTIONS`;
-  }
-  return {
-    id: CONNECTION,
-    personId: PERSON,
-    authScheme: live?.scheme ?? "none",
-    primaryHost,
-    hosts,
-    schemeConfig: live?.schemeConfig ?? {},
-    // A placeholder the fake decrypt below ignores: the fields are in hand already.
-    credentialCiphertext: live && live.scheme !== "none" ? new Uint8Array([0]) : null,
-  };
 }
 
 export async function proveReplay(
@@ -288,13 +226,10 @@ export async function proveReplay(
   const previewed: ReplayReport["previewed"] = [];
   const live = mode.kind === "live";
   const liveConnection = live ? (mode.connections[tool.vendor] ?? null) : null;
-  // Each credential value as the proxy may have put it on the wire too: a query parameter carries
-  // it percent-encoded, and a diagnostic quotes the query (Greptile on #187).
-  const secrets = Object.values(liveConnection?.credential ?? {}).flatMap((value) => [
-    value,
-    encodeURIComponent(value),
-    new URLSearchParams({ v: value }).toString().slice("v=".length),
-  ]);
+  // Each credential value in every form the proxy or a vendor may have put it in: a query parameter
+  // carries it percent-encoded, a diagnostic quotes the query (Greptile on #187), and a vendor may
+  // echo the basic pair as base64 (Greptile on #191).
+  const secrets = credentialForms(liveConnection?.credential ?? {});
   // A live sentence may carry a vendor's text; nothing in it may carry the credential.
   const finish = (): ReplayReport => ({
     problems: problems.map((problem) => redactText(problem, { secretValues: secrets }).text),
@@ -321,7 +256,8 @@ export async function proveReplay(
     return finish();
   }
 
-  const connection = connectionFor(tool, live ? liveConnection : null, live);
+  // Replay needs no credential, whatever the starter's scheme: the vendor is the recording.
+  const connection = stockConnectionFor(tool, liveConnection, live);
   if (typeof connection === "string") {
     problems.push(say(connection));
     return finish();
@@ -329,7 +265,8 @@ export async function proveReplay(
 
   const reads = recording.exchanges.filter((e): e is RecordedRead => e.kind === "read");
   const writes = recording.exchanges.filter((e): e is RecordedWrite => e.kind === "write");
-  let next = 0;
+  const made = new Set<number>();
+  const issuedWrites: PreviewedWrite[] = [];
   const realFetch = live ? createUpstreamFetch() : null;
 
   const upstreamFetch: UpstreamFetch = async (request: UpstreamRequest, init) => {
@@ -342,24 +279,32 @@ export async function proveReplay(
       );
       return Response.json({ error: "write_reached_vendor" }, { status: 500 });
     }
-    const expected = reads[next];
     const actual = readKeyOf(request.method, request.url);
     const shown = `${actual.method} ${actual.host}${actual.path}`;
-    if (!expected) {
-      problems.push(say(`it made a read the recording does not hold: ${shown}`));
-      return Response.json({ error: "not_in_recording" }, { status: 404 });
-    }
-    if (!sameRead(readKeyOf(expected.method, expected.url), actual, live)) {
+    // The first recorded read not yet made that is this request: the recording is in the order the
+    // module issued its reads, and a module reading in parallel may have them reach here in another
+    // (Greptile on #191), so a request takes its own read rather than the next in line.
+    const matched = reads.findIndex(
+      (read, index) => !made.has(index) && sameRead(readKeyOf(read.method, read.url), actual, live),
+    );
+    if (matched === -1) {
+      const next = reads.findIndex((_read, index) => !made.has(index));
+      const expected = reads[next];
+      if (!expected) {
+        problems.push(say(`it made a read the recording does not hold: ${shown}`));
+        return Response.json({ error: "not_in_recording" }, { status: 404 });
+      }
       const recorded = readKeyOf(expected.method, expected.url);
       problems.push(
         say(
           `its read ${next + 1} disagrees with the recording: it made ${shown}${actual.query.length ? `?${new URLSearchParams(actual.query)}` : ""}, the recording holds ${recorded.method} ${recorded.host}${recorded.path}${recorded.query.length ? `?${new URLSearchParams(recorded.query)}` : ""}`,
         ),
       );
-      next += 1;
+      made.add(next);
       return Response.json({ error: "not_in_recording" }, { status: 404 });
     }
-    next += 1;
+    made.add(matched);
+    const expected = reads[matched] as RecordedRead;
     if (!realFetch) return responseOf(expected);
 
     const response = await realFetch(request, init);
@@ -388,157 +333,74 @@ export async function proveReplay(
     return { ...response, body: new Response(bytes).body };
   };
 
-  const keys = await testKeys();
-  const app = createProxyApp({
-    ...createCapabilityTokenVerifier(keys),
-    connections: { get: async (id) => (id === CONNECTION ? connection : null) },
-    decryptCredential: async () => liveConnection?.credential ?? {},
+  const run = await dryRunStockTool({
+    tool,
+    connection,
+    credential: liveConnection?.credential ?? {},
     upstreamFetch,
-    log: () => {},
+    onPreview: (write) => issuedWrites.push(write),
   });
-  // The proxy's own account of each write it stopped: its preview names the vendor host and path.
-  const observed = async (request: Request): Promise<Response> => {
-    const response = await app.fetch(request);
-    if (response.headers.get(DRY_RUN_HEADER) === "intercepted") {
-      const preview = (await response.clone().json()) as {
-        request: {
-          method: string;
-          host: string;
-          path: string;
-          body: string;
-          bodyEncoding: string;
-        };
-      };
-      const bytes =
-        preview.request.bodyEncoding === "base64"
-          ? Buffer.from(preview.request.body, "base64")
-          : new TextEncoder().encode(preview.request.body);
-      previewed.push({
-        method: preview.request.method,
-        host: preview.request.host,
-        path: preview.request.path,
-        body: recordedBodyOf(bytes),
-      });
-    }
-    return response;
-  };
-  const server = await new Promise<ReturnType<typeof serve>>((resolve) => {
-    const listening = serve({ fetch: observed, hostname: "127.0.0.1", port: 0 }, () =>
-      resolve(listening),
+  // In the order the module issued them, as the recording holds them, whatever order they settled in.
+  previewed.push(
+    ...issuedWrites
+      .sort((a, b) => a.sequence - b.sequence)
+      .map(({ sequence: _sequence, ...write }) => write),
+  );
+  if (!run.ran) {
+    problems.push(
+      say(
+        `the module did not run (exit ${run.code}): ${run.stderr.trim().slice(-500) || "no output"}`,
+      ),
     );
-  });
-  const moduleDir = await mkdtemp(join(tmpdir(), "graft-stock-replay-"));
-  try {
-    for (const file of tool.files) {
-      const path = join(moduleDir, file.path);
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, file.content);
-    }
-    const token = await mintCapabilityToken(
-      {
-        personId: PERSON,
-        agentId: AGENT,
-        connectionIds: [CONNECTION],
-        tool: wireOf(tool),
-        ttlSeconds: 300,
-        dryRun: true,
-      },
-      keys,
-    );
-    const run = await runRunner({
-      moduleDir,
-      input: tool.testInput,
-      env: {
-        GRAFT_PROXY_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-        GRAFT_CONNECTION: CONNECTION,
-        GRAFT_TOKEN: token,
-        GRAFT_DRY_RUN: "1",
-        GRAFT_TIMEOUT_MS: String(RUN_TIMEOUT_MS),
-        GRAFT_BLOBS_DIR: join(moduleDir, ".blobs"),
-      },
-    });
-    const envelope = readRunnerEnvelope(run.stdout);
-    if (!envelope) {
-      problems.push(
-        say(
-          `the module did not run (exit ${run.code}): ${run.stderr.trim().slice(-500) || "no output"}`,
-        ),
-      );
-      return finish();
-    }
-    const report = envelope.result as {
-      passed: boolean;
-      reads: { method: string; path: string; status: number; reason?: string }[];
-      writesRefused: { method: string; path: string; status: number }[];
-      moduleResult?: unknown;
-      moduleError?: string;
-    };
-
-    for (let index = next; index < reads.length; index += 1) {
-      const missed = reads[index] as RecordedRead;
-      problems.push(
-        say(`it never made the recording's read ${index + 1}: ${missed.method} ${missed.url}`),
-      );
-    }
-
-    if (previewed.length !== writes.length) {
-      problems.push(
-        say(
-          `it made ${previewed.length} write(s) that stopped at the preview; the recording holds ${writes.length}`,
-        ),
-      );
-    }
-    writes.forEach((write, index) => {
-      const made = previewed[index];
-      if (!made) return;
-      const url = new URL(write.url);
-      if (
-        made.method !== write.method ||
-        made.host !== url.hostname ||
-        made.path !== url.pathname
-      ) {
-        problems.push(
-          say(
-            `its write ${index + 1} disagrees with the recording: it made ${made.method} ${made.host}${made.path}, the recording holds ${write.method} ${url.hostname}${url.pathname}`,
-          ),
-        );
-      } else if (!live && !sameBody(made.body, write.body)) {
-        problems.push(
-          say(
-            `its write ${index + 1}'s body disagrees with the recording: it sent ${describeBody(made.body)}, the recording holds ${describeBody(write.body)}`,
-          ),
-        );
-      }
-    });
-
-    if (!report.passed) {
-      const failed = [
-        ...report.reads
-          .filter((read) => read.status >= 300)
-          .map(
-            (read) =>
-              `${read.method} ${read.path} answered ${read.status}${read.reason ? ` (${read.reason})` : ""}`,
-          ),
-        ...report.writesRefused.map(
-          (write) => `${write.method} ${write.path} was refused ${write.status}`,
-        ),
-        ...(report.moduleError ? [`the module threw: ${report.moduleError.split("\n")[0]}`] : []),
-      ];
-      problems.push(say(`its dry run did not pass: ${failed.join("; ") || "no reason given"}`));
-    } else if (
-      !live &&
-      "result" in recording &&
-      !isDeepStrictEqual(report.moduleResult, recording.result)
-    ) {
-      problems.push(
-        say(
-          `its result disagrees with the recording's: it answered ${describeBody({ json: report.moduleResult })}, the recording holds ${describeBody({ json: recording.result })}`,
-        ),
-      );
-    }
     return finish();
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    await rm(moduleDir, { recursive: true, force: true });
   }
+  const { report } = run;
+  for (let index = 0; index < reads.length; index += 1) {
+    if (made.has(index)) continue;
+    const missed = reads[index] as RecordedRead;
+    problems.push(
+      say(`it never made the recording's read ${index + 1}: ${missed.method} ${missed.url}`),
+    );
+  }
+
+  if (previewed.length !== writes.length) {
+    problems.push(
+      say(
+        `it made ${previewed.length} write(s) that stopped at the preview; the recording holds ${writes.length}`,
+      ),
+    );
+  }
+  writes.forEach((write, index) => {
+    const made = previewed[index];
+    if (!made) return;
+    const url = new URL(write.url);
+    if (made.method !== write.method || made.host !== url.hostname || made.path !== url.pathname) {
+      problems.push(
+        say(
+          `its write ${index + 1} disagrees with the recording: it made ${made.method} ${made.host}${made.path}, the recording holds ${write.method} ${url.hostname}${url.pathname}`,
+        ),
+      );
+    } else if (!live && !sameBody(made.body, write.body)) {
+      problems.push(
+        say(
+          `its write ${index + 1}'s body disagrees with the recording: it sent ${describeBody(made.body)}, the recording holds ${describeBody(write.body)}`,
+        ),
+      );
+    }
+  });
+
+  if (!report.passed) {
+    problems.push(say(`its dry run did not pass: ${dryRunFailureOf(report)}`));
+  } else if (
+    !live &&
+    "result" in recording &&
+    !isDeepStrictEqual(report.moduleResult, recording.result)
+  ) {
+    problems.push(
+      say(
+        `its result disagrees with the recording's: it answered ${describeBody({ json: report.moduleResult })}, the recording holds ${describeBody({ json: recording.result })}`,
+      ),
+    );
+  }
+  return finish();
 }
