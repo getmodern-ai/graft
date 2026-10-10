@@ -166,7 +166,9 @@ const STDERR_MARKER = "__GRAFT_STDERR__";
  * Mint a capability token for one connection and run with it in the process environment — the
  * sequence an authored tool's run and an execute tool share, so the two cannot disagree about the
  * order or what the process is told. `claim` is the token's `tool`: the authored tool's wire name
- * for its run, `execute` for the execute tool.
+ * for its run, `execute` for the execute tool. `readOnly` puts the read-only claim on the token,
+ * for an ordinary run the gate passed on a read-only annotation: the proxy then refuses every
+ * request it does not classify as a read (`annotation_mismatch`; ADR 0008 as amended 2026-10-10).
  */
 export async function runWithCapability<T>(args: {
   deps: McpDeps;
@@ -174,6 +176,7 @@ export async function runWithCapability<T>(args: {
   connectionId: string;
   claim: string;
   mode: RunMode;
+  readOnly?: boolean;
   run: (env: Record<string, string>) => Promise<T>;
 }): Promise<T | Refusal> {
   const { deps, scope, mode } = args;
@@ -193,6 +196,7 @@ export async function runWithCapability<T>(args: {
         tool: args.claim,
         ttlSeconds: tokenTtlFor(mode.timeoutSeconds),
         ...(mode.dryRun ? { dryRun: true } : {}),
+        ...(args.readOnly === true && !mode.dryRun ? { readOnly: true } : {}),
       },
       deps.keys,
       deps.now?.(),
@@ -814,6 +818,9 @@ async function runHeld(
     // reach the vendor as they would for a read-only tool and every write stops at the proxy on the
     // token's claim, so nothing changes at the vendor and no trust is spent — publishing's dry run
     // (`publish_tool`) asks nothing for the same reason.
+    // Whether the gate passed this run on a read-only annotation: the token then carries the
+    // read-only claim, and the proxy holds every request to it (Greptile on #200).
+    let gatedReadOnly = false;
     if (!args.mode.dryRun) {
       // Judged on the version this run executes, pinned above, never a pointer read now (GRA-245,
       // Greptile on #190): `runTool` was read with it, so its annotations are that version's. A
@@ -837,6 +844,7 @@ async function runHeld(
           cardMessage: gate.cardMessage,
         };
       }
+      gatedReadOnly = gated.readOnly;
     }
 
     const outcome = await runWithCapability({
@@ -845,6 +853,7 @@ async function runHeld(
       connectionId,
       claim: wireName,
       mode: args.mode,
+      readOnly: gatedReadOnly,
       run: async (env): Promise<ModuleRunOutcome> => {
         let handle: SandboxHandle;
         try {

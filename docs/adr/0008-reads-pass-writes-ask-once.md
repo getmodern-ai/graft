@@ -159,6 +159,19 @@ annotated as a write may still reach the vendor in a dry run, never the reverse.
 names its host, so the check matches one only where the call names the host itself; a relative
 path goes to whichever connection the tool runs over.
 
+**The annotation is held at run time.** The check's reading is what a tool is annotated by, and
+the approval gate lets a read-only tool's run through unasked on it. A module can still change what
+leaves after the check has read it: an option under a computed key, a replaced `JSON.stringify`, a
+`toJSON` put on a prototype. The check treats the spellings it can see as writes (a spread, a
+computed key, a method or accessor in the options; an assignment to a member of `JSON` or the name
+`toJSON` in any file of the module), but no static reading is complete, so **the proxy enforces the
+annotation**: the capability token minted for an ordinary run the gate passed on a read-only
+annotation carries a `readOnly` claim, and the proxy classifies every request under it with the
+same function, as the request would leave, and refuses one that is not a read with
+`403 annotation_mismatch` before any credential is obtained. A dry run carries no such claim and
+stops its writes at the preview as before. The same rung is where a non-destructive tool's
+destructive request will be refused once GRA-267's table of destructive requests exists.
+
 **Why the path rule on GraphQL.** The ticket put it as the body alone. A REST write whose body
 happens to carry a `query` field that parses as a GraphQL query (a saved search, a message) would
 then pass as a read, unasked, and reach the vendor in a dry run. The endpoint's path and the body's

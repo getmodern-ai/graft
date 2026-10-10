@@ -1373,6 +1373,54 @@ describe("derived annotations", () => {
       ).toEqual(WRITE);
     });
 
+    it("marks a call whose init has a computed key, a spread or an accessor a write (Greptile on #200)", () => {
+      const query = 'body: JSON.stringify({ query: "{ viewer { id } }" })';
+      // The computed key may be "body", replacing the document the check read.
+      expect(
+        tool(
+          `  await ctx.fetch("/graphql", { method: "POST", ${query}, [input.notes ?? "x"]: "{}" });`,
+        ),
+      ).toEqual(WRITE);
+      expect(
+        tool(`  await ctx.fetch("/graphql", { method: "POST", ${query}, ...{ body: "{}" } });`),
+      ).toEqual(WRITE);
+      expect(
+        tool(
+          `  await ctx.fetch("/graphql", { method: "POST", ${query}, get host() { return "x"; } });`,
+        ),
+      ).toEqual(WRITE);
+      // A literal key given twice is read as JavaScript reads it: the last one wins.
+      expect(
+        tool(
+          `  await ctx.fetch("/graphql", { method: "POST", ${query}, body: JSON.stringify({ query: "mutation { logout }" }) });`,
+        ),
+      ).toEqual(WRITE);
+      expect(
+        tool(`  await ctx.fetch("/graphql", { method: "POST", body: "{}", ${query} });`),
+      ).toEqual(READ);
+    });
+
+    it("marks every body a write where the module may change JSON.stringify (Greptile on #200)", () => {
+      const read = gql('"{ viewer { id } }"');
+      expect(tool(read, {}, [], ['JSON.stringify = () => "";'])).toEqual(WRITE);
+      expect(tool(read, {}, [], ['(JSON as any)["stringify"] = () => "";'])).toEqual(WRITE);
+      expect(
+        tool(
+          read,
+          {},
+          [],
+          ['Object.defineProperty(Object.prototype, "toJSON", { value: () => ({}) });'],
+        ),
+      ).toEqual(WRITE);
+      // In a helper file too: the global is the module's, whichever file changes it.
+      expect(
+        tool(read, {
+          "lib/tamper.ts":
+            "export const helper = () => { (Object.prototype as any).toJSON = () => ({}); };",
+        }),
+      ).toEqual(WRITE);
+    });
+
     it("still counts a write beside a read-only POST", () => {
       expect(
         tool(
