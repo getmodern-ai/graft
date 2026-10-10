@@ -1009,7 +1009,19 @@ string }`) and keeps refusing a literal absolute URL. `acquire`'s proof reads ca
 optional `host` (`@graft/model`'s `ProofReadTarget`, `{ path, host: string | null }` on the wire,
 a bare path still read from a script): the probe passes it to `ctx.fetch`, and `job.ts` refuses a
 host outside the connection's set (`hostSetOf`) before any read, as a failed read naming the
-declared hosts. The authoring skill says both, and that `ctx.proxyBase` stays for SDKs.
+declared hosts. The authoring skill says both, and that `ctx.proxyBase` stays for SDKs. **A proof
+read carries the vendor's own headers, and may be a read `POST`** (GRA-271): `ProofReadTarget`
+adds optional `headers`, `method` (`GET`, or `POST`) and `body`, on the wire as `method` null for a
+`GET`, `headers` a list of `{ name, value }` and `body` null; `proofReadProblems` refuses a
+credential-shaped name (`Authorization`, `Cookie`, `Host`, `Proxy-*`, `X-Graft-*`), a name that is
+not a token, a body on a `GET` and the caps (`MAX_PROOF_READ_HEADERS` and the two beside it), and
+`job.ts` refuses before any read a header the proxy would strip or the scheme sets over the
+caller's (`@graft/proxy`'s `unforwardedRequestHeaderNames`, the outgoing policy itself, and
+`schemeReplacedHeaderNames`, the scheme's `apply` over probe values, so a default it supplies only
+when the caller sends none stays the module's) and a `POST` its `classifyRequest` does not call a read, each as a failed read with
+the sentence. A preview the proxy answers anyway (`x-graft-dry-run: intercepted`) is a failed read,
+never a pass. Progress lines name the headers, never a value; the trace records each as
+`name: value` so the job's redaction reads it.
 
 ### The self-hosted image
 

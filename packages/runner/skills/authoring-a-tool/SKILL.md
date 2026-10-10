@@ -43,8 +43,12 @@ the re-entry variant against the existing connection.
    not the first alone: a module that lists and then fetches each item has two paths to prove,
    and the second's headers and fields are what it parses. A proof read may name a host: a path
    the module reads from another host the connection declares is proven on that host, with the
-   same `{ host }` the module passes to `ctx.fetch`, never on the primary host. A draft whose proof
-   read failed is not published: change the module or the read and prove again.
+   same `{ host }` the module passes to `ctx.fetch`, never on the primary host. A proof read
+   carries the vendor's own headers the module sends, such as a version header, and never a
+   credential, which the proxy injects. A proof read may be a `POST` with its body only where the
+   proxy counts it as a read, a GraphQL query or a reviewed search endpoint; any other `POST` is a
+   write, and the dry run previews it instead. A draft whose proof read failed is not published:
+   change the module or the read and prove again.
 5. **Publish with a test input** — `publish_tool` with `testInput`. It runs the same check and
    refuses on the same list, installs any package the module declares if the package policy allows
    it, then **dry-runs** the version it just wrote: reads reach the vendor for real, every write

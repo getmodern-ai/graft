@@ -1,3 +1,4 @@
+import { proofReadRequestProblems } from "./answer";
 import { goalProposalOf, type RawGoalProposal } from "./goal-grounding";
 import {
   type GoalProposal,
@@ -161,30 +162,47 @@ function isStringArray(value: unknown): value is string[] {
 
 /**
  * A script's proof reads: each a path on the primary host, `"/items?limit=1"`, or `{ "path",
- * "host"? }` for a path on another host the connection declares (GRA-213), so a script written
- * before the host existed still reads as it did. Null when the value is neither.
+ * "host"?, "method"?, "headers"?, "body"? }` for a path on another host the connection declares
+ * (GRA-213), with the vendor's own headers (an object of strings) or as a read `POST` (GRA-271),
+ * so a script written before any of those existed still reads as it did. Null when the value is
+ * none of these.
  */
-function readScriptProofReads(value: unknown): ProofReadTarget[] | null {
+function readScriptProofReads(value: unknown, at: string): ProofReadTarget[] | null {
   if (!Array.isArray(value)) return null;
   const reads: ProofReadTarget[] = [];
   for (const entry of value) {
     if (typeof entry === "string") {
       reads.push({ path: entry });
-    } else if (
-      isRecord(entry) &&
-      typeof entry.path === "string" &&
-      (entry.host === undefined || entry.host === null || typeof entry.host === "string")
-    ) {
-      reads.push(
-        typeof entry.host === "string"
-          ? { path: entry.path, host: entry.host }
-          : { path: entry.path },
-      );
-    } else {
-      return null;
+      continue;
     }
+    const read = readScriptProofRead(entry);
+    if (read === null) return null;
+    // A body on a GET, a header that is the proxy's, a header named twice and the caps are refused
+    // here, naming the step, rather than in the middle of a job (Greptile on #210).
+    const problems = proofReadRequestProblems(read);
+    if (problems.length > 0) throw new Error(`${at}: ${problems.join("; ")}`);
+    reads.push(read);
   }
   return reads;
+}
+
+/** One `{ path, host?, method?, headers?, body? }` entry; null when a field is of the wrong kind. */
+function readScriptProofRead(entry: unknown): ProofReadTarget | null {
+  if (!isRecord(entry) || typeof entry.path !== "string") return null;
+  const { host, method, headers, body } = entry;
+  const read: ProofReadTarget = { path: entry.path };
+  if (typeof host === "string") read.host = host;
+  else if (host !== undefined && host !== null) return null;
+  if (method === "POST") read.method = "POST";
+  else if (method !== undefined && method !== null && method !== "GET") return null;
+  if (isRecord(headers) && Object.values(headers).every((value) => typeof value === "string")) {
+    if (Object.keys(headers).length > 0) read.headers = headers as Record<string, string>;
+  } else if (headers !== undefined && headers !== null) {
+    return null;
+  }
+  if (typeof body === "string") read.body = body;
+  else if (body !== undefined && body !== null) return null;
+  return read;
 }
 
 /**
@@ -235,10 +253,10 @@ function parseAnswer(value: unknown, at: string): ModelAnswer {
       return { kind: "write_module", draft: parseDraft(value.draft, at), note: value.note };
     }
     case "prove": {
-      const proofReads = readScriptProofReads(value.proofReads);
+      const proofReads = readScriptProofReads(value.proofReads, at);
       if (proofReads === null || typeof value.note !== "string") {
         throw new Error(
-          `${at}: a prove answer carries "proofReads" (an array of paths, or of { path, host }) and a "note"`,
+          `${at}: a prove answer carries "proofReads" (an array of paths, or of { path, host?, method?, headers?, body? }) and a "note"`,
         );
       }
       return { kind: "prove", proofReads, note: value.note };
@@ -281,10 +299,10 @@ function parseDraft(value: unknown, at: string): ModuleDraft {
   if (testInput !== undefined && !isRecord(testInput)) {
     throw new Error(`${at}: the draft's "testInput" must be an object`);
   }
-  const reads = proofReads === undefined ? [] : readScriptProofReads(proofReads);
+  const reads = proofReads === undefined ? [] : readScriptProofReads(proofReads, at);
   if (reads === null) {
     throw new Error(
-      `${at}: the draft's "proofReads" must be an array of paths, or of { path, host }`,
+      `${at}: the draft's "proofReads" must be an array of paths, or of { path, host?, method?, headers?, body? }`,
     );
   }
   return {

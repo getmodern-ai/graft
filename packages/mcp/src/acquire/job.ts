@@ -6,6 +6,7 @@ import {
   appendAcquireTrace,
   completeAcquireJob,
   finishAcquireAttempt,
+  GENERIC_SECRET_FIELD_NAMES,
   getAgentScope,
   getBlobs,
   getBuildApproval,
@@ -15,6 +16,7 @@ import {
   heartbeatAcquireJob,
   listAcquireAttempts,
   type Principal,
+  REDACTED,
   recordAcquireJobTokens,
   redactValue,
   type ServiceContext,
@@ -47,8 +49,13 @@ import {
   type StockToolBrief,
 } from "@graft/model";
 import { hostSetOf } from "@graft/proxy/credential-source";
+import { DRY_RUN_HEADER } from "@graft/proxy/dry-run";
 import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
+import { unforwardedRequestHeaderNames } from "@graft/proxy/headers";
+import { classifyRequest, parseJsonBody } from "@graft/proxy/read-request";
 import { isRedirect } from "@graft/proxy/redirects";
+import { schemeReplacedHeaderNames } from "@graft/proxy/schemes";
+import { isAuthScheme } from "@graft/proxy/types";
 import { forbiddenDraftFiles, type PublishArgs, type PublishOutcome } from "@graft/publish";
 import { BLOB_TTL_HOURS, blobIdOf } from "@graft/runner";
 import type { SandboxHandle } from "@graft/sandbox";
@@ -157,15 +164,20 @@ export const PROOF_BODY_CHARS = 4_000;
 export const DEFAULT_HEARTBEAT_MS = 15_000;
 
 /**
- * The probe module every proof read runs through — one `GET` of the path it is handed, on the host
+ * The probe module every proof read runs through — one call of the path it is handed, on the host
  * it is handed when there is one, through the same `ctx.fetch(path, { host })` a module uses
- * (GRA-213), and the answer's shape. `reason` is the proxy's mark for a vendor it got no response
- * from (GRA-79), read off the same header the runner reads in a dry run; null for any answer the
- * vendor gave.
+ * (GRA-213), with the method, headers and body it is handed (GRA-271), and the answer's shape.
+ * `reason` is the proxy's mark for a vendor it got no response from (GRA-79), read off the same
+ * header the runner reads in a dry run; null for any answer the vendor gave. `dryRun` is the
+ * proxy's dry-run mark, `intercepted` on a request it stopped at a preview rather than forwarded,
+ * which a proof read must never count as an answer.
  */
 export const PROBE_MODULE = [
   "export default async (input, ctx) => {",
-  "  const res = await ctx.fetch(input.path, input.host ? { host: input.host } : {});",
+  "  const init = { method: input.method ?? 'GET', headers: input.headers ?? {} };",
+  "  if (input.host) init.host = input.host;",
+  "  if (input.body !== undefined) init.body = input.body;",
+  "  const res = await ctx.fetch(input.path, init);",
   "  const text = await res.text();",
   "  return {",
   "    status: res.status,",
@@ -173,6 +185,7 @@ export const PROBE_MODULE = [
   '    location: res.headers.get("location"),',
   '    contentType: res.headers.get("content-type"),',
   `    reason: res.headers.get(${JSON.stringify(REFUSAL_HEADER)}),`,
+  `    dryRun: res.headers.get(${JSON.stringify(DRY_RUN_HEADER)}),`,
   '    contentLength: res.headers.get("content-length"),',
   "    length: text.length,",
   `    body: text.slice(0, ${PROOF_BODY_CHARS}),`,
@@ -609,7 +622,10 @@ class AcquireLoop {
             await this.trace(
               "model",
               `Refused prove on attempt ${attempt.number}: ${answer.proofReads.length} more read(s) asked, ${room} of ${MAX_PROOF_READS} left.`,
-              { attempt: attempt.number, data: { paths: answer.proofReads } },
+              {
+                attempt: attempt.number,
+                data: { paths: answer.proofReads.map((read) => this.traceable(read)) },
+              },
             );
             situation = {
               kind: "proof",
@@ -621,7 +637,7 @@ class AcquireLoop {
           }
           await this.trace("model", `Proving attempt ${attempt.number} further: ${answer.note}`, {
             attempt: attempt.number,
-            data: { paths: answer.proofReads },
+            data: { paths: answer.proofReads.map((read) => this.traceable(read)) },
           });
           await this.progress(
             `Attempt ${attempt.number}: ${answer.proofReads.length} more proof read(s): ${answer.note}`,
@@ -880,7 +896,7 @@ class AcquireLoop {
         data: {
           name: draft.name,
           files: draft.files.map((f) => f.path),
-          proofReads: draft.proofReads,
+          proofReads: draft.proofReads.map((read) => this.traceable(read)),
         },
       },
     );
@@ -963,17 +979,18 @@ class AcquireLoop {
     const runnable = targets.slice(0, Math.max(0, MAX_PROOF_READS - first));
     const total = first + runnable.length;
     for (const [index, target] of runnable.entries()) {
-      const { path } = target;
-      const host = target.host ?? null;
-      const label = `GET ${proofReadLabel(target)}`;
+      const label = proofReadLabel(target);
       await this.step(`proof read ${first + index + 1} of ${total}: ${label}`);
-      const undeclared = undeclaredProofHost(target, connection);
-      if (undeclared) {
+      const unrunnable =
+        undeclaredProofHost(target, connection) ??
+        unforwardedProofHeaders(target, connection) ??
+        unreadProofPost(target, connection);
+      if (unrunnable) {
         attempt.proofFailed = true;
-        reads.push(undeclared);
-        await this.trace("proof", `Proof read ${label} refused: ${undeclared.error}`, {
+        reads.push(unrunnable);
+        await this.trace("proof", `Proof read ${label} refused: ${unrunnable.error}`, {
           attempt: attempt.number,
-          data: { path, host, error: undeclared.error },
+          data: { ...this.traceable(target), error: unrunnable.error },
         });
         continue;
       }
@@ -988,7 +1005,7 @@ class AcquireLoop {
           return runModule(handle, {
             scope: this.scope,
             modulePath: sandboxPath(probePath(this.job.id)),
-            input: host === null ? { path } : { path, host },
+            input: probeInputOf(target),
             env,
             mode,
           });
@@ -1003,7 +1020,12 @@ class AcquireLoop {
         const ended = describeVendorUnreached(unreached, label);
         await this.trace("vendor_error", ended.summary, {
           attempt: attempt.number,
-          data: { path, status: read.status, body: read.body, ...unreached },
+          data: {
+            ...this.traceable(target),
+            status: read.status,
+            body: read.body,
+            ...unreached,
+          },
         });
         this.lastDiagnostics = { proofReads: reads };
         await this.closeOpen("run_failed", ended.summary);
@@ -1012,7 +1034,7 @@ class AcquireLoop {
       if (read.ok) {
         await this.trace("proof", `Proof read ${label}: ${read.status}.`, {
           attempt: attempt.number,
-          data: { path, host, status: read.status, body: read.body },
+          data: { ...this.traceable(target), status: read.status, body: read.body },
         });
       } else {
         attempt.proofFailed = true;
@@ -1022,8 +1044,7 @@ class AcquireLoop {
           {
             attempt: attempt.number,
             data: {
-              path,
-              host,
+              ...this.traceable(target),
               status: read.status,
               body: read.body,
               error: read.error,
@@ -1037,7 +1058,7 @@ class AcquireLoop {
     const failed = reads.filter((r) => !r.ok);
     if (attempt.proofFailed) {
       attempt.proofSummary = `${failed.length} of ${reads.length} proof read(s) failed (${failed
-        .map((r) => `GET ${proofReadLabel(r)} ${r.status ?? "no status"}`)
+        .map((r) => `${proofReadLabel(r)} ${r.status ?? "no status"}`)
         .join(", ")})`;
     }
     await this.progress(
@@ -1679,6 +1700,11 @@ class AcquireLoop {
     );
   }
 
+  /** A proof read as a trace line's data records it, under this job's secret names (`traceableProofRead`). */
+  private traceable(read: ProofReadTarget): Record<string, unknown> {
+    return traceableProofRead(read, this.redaction.secretFieldNames);
+  }
+
   private async trace(
     kind: AcquireTraceKind,
     text: string,
@@ -1763,8 +1789,171 @@ function toModelDiagnostic(diagnostic: {
   return { rule, file, line, column, message, hint };
 }
 
-/** What a proof read needs to know of the connection: its id for the run, its hosts for a named host and a redirect. */
-type ProofConnection = { id: string; primaryHost: string; hosts: readonly string[] };
+/**
+ * What a proof read needs to know of the connection: its id for the run, its hosts for a named
+ * host and a redirect, its scheme for the headers the proxy sets over the caller's (GRA-271).
+ */
+type ProofConnection = {
+  id: string;
+  primaryHost: string;
+  hosts: readonly string[];
+  scheme: string;
+  schemeConfig: Readonly<Record<string, string>> | null;
+};
+
+/** The value the proxy's dry-run mark carries on a request it stopped at the preview (`app.ts`). */
+const DRY_RUN_INTERCEPTED = "intercepted";
+
+/** What a proof read `POST` may be, said the same way wherever one is refused (GRA-271). */
+const PROOF_READ_POST_RULE =
+  "A proof read is a GET, or a POST the proxy counts as a read: a GraphQL query (a POST to a path ending /graphql, no query string, a JSON body of query, variables and operationName whose query holds query operations alone) or an endpoint in the proxy's reviewed read table, such as a vendor's search. " +
+  "Prove this call's shape with a GET the module also reads, or leave it to the dry run, which previews a write after the publish; drop it from the proof reads.";
+
+/** What a proof read is, as each answer of it repeats: the path, the host, the method, and the header names, never their values. */
+function proofReadIdentity(
+  read: ProofReadTarget,
+): Pick<ProofRead, "path" | "host" | "method" | "headerNames"> {
+  return {
+    path: read.path,
+    host: read.host ?? null,
+    method: read.method ?? "GET",
+    headerNames: Object.keys(read.headers ?? {}).map((name) => name.toLowerCase()),
+  };
+}
+
+/** What the probe module is handed for one read: only the keys the read names. */
+function probeInputOf(read: ProofReadTarget): Record<string, unknown> {
+  return {
+    path: read.path,
+    ...(read.host === undefined ? {} : { host: read.host }),
+    ...(read.method === undefined ? {} : { method: read.method }),
+    ...(read.headers === undefined ? {} : { headers: read.headers }),
+    ...(read.body === undefined ? {} : { body: read.body }),
+  };
+}
+
+/**
+ * A proof read as a trace line's data records it. A header the model wrote may carry a value it
+ * should not have (a key it invented or was shown), so each header is one `name: value` string:
+ * the job's redaction (`@graft/core`'s `redactText`, applied to every trace line's data on the
+ * way in) reads a secret field's name beside its value there, and could not in an object, whose
+ * keys it leaves alone (GRA-271). The field rule stops a value at the first space, comma or
+ * semicolon, so a header whose name is a secret one (the generic set, and the scheme's own) has
+ * its whole value replaced here first, before the rule sees it (Greptile on #210). Progress lines
+ * name the headers and never this. A plain `GET` records the path and the host alone, as it did
+ * before a read could carry more; `requestBody` is named apart from the answer's `body`, which a
+ * line's data carries beside it.
+ */
+function traceableProofRead(
+  read: ProofReadTarget,
+  secretFieldNames: readonly string[],
+): Record<string, unknown> {
+  const secret = new Set(
+    [...GENERIC_SECRET_FIELD_NAMES, ...secretFieldNames].map((name) => name.toLowerCase()),
+  );
+  const headers = Object.entries(read.headers ?? {}).map(
+    ([name, value]) => `${name}: ${secret.has(name.toLowerCase()) ? REDACTED : value}`,
+  );
+  return {
+    path: read.path,
+    host: read.host ?? null,
+    ...(read.method === "POST" ? { method: "POST" } : {}),
+    ...(headers.length > 0 ? { headers } : {}),
+    ...(read.body === undefined ? {} : { requestBody: read.body }),
+  };
+}
+
+/** A proof read refused before it runs: the failed read the model is shown, with `error` saying why. */
+function refusedProofRead(read: ProofReadTarget, error: string): ProofRead {
+  return {
+    ...proofReadIdentity(read),
+    ok: false,
+    status: null,
+    body: null,
+    error,
+    redirectTo: null,
+    reason: null,
+  };
+}
+
+/**
+ * A proof read carrying a header that would not reach the vendor as the read sets it (GRA-271): one
+ * the proxy's outgoing policy strips or replaces (`unforwardedRequestHeaderNames`, the policy
+ * itself rather than a copy of its lists), or one the connection's scheme sets over the caller's
+ * (`schemeReplacedHeaderNames`, the scheme's own `apply` over probe values, so a default it only
+ * supplies when the caller sends none, Unleashed's `accept`, stays the module's). Refused before it runs, since a read proven without the header
+ * proves nothing about it. `@graft/model`'s `proofReadProblems` refuses the credential-shaped
+ * names at the answer; this is the rest. Null when every header would leave as written.
+ */
+function unforwardedProofHeaders(
+  read: ProofReadTarget,
+  connection: ProofConnection,
+): ProofRead | null {
+  const names = Object.keys(read.headers ?? {});
+  if (names.length === 0) return null;
+  const stripped = new Set(unforwardedRequestHeaderNames(names));
+  const scheme = new Set(
+    isAuthScheme(connection.scheme)
+      ? schemeReplacedHeaderNames(connection.scheme, connection.schemeConfig ?? {}, names)
+      : [],
+  );
+  const refused = names.filter((name) => {
+    const lower = name.toLowerCase();
+    return stripped.has(lower) || scheme.has(lower);
+  });
+  if (refused.length === 0) return null;
+  return refusedProofRead(
+    read,
+    `The proof read sets ${refused.join(", ")}, which the proxy strips or sets itself (the connection's credential, framing, hop-by-hop and infrastructure headers), so it was not run: the vendor would never see the value. ` +
+      "A proof read's headers are the vendor's own the module sends, such as a version header; drop these from the read, and from the module, which cannot set them either.",
+  );
+}
+
+/**
+ * The vendor URL a proof read goes to, as the proxy resolves it: a named host's root plus the
+ * path, or the primary host's base path plus the path (`resolveTarget` in `@graft/proxy`'s
+ * `app.ts`; `describeRedirect` below reads it the same way). Null when it does not parse.
+ */
+function proofReadUrl(read: ProofReadTarget, connection: ProofConnection): URL | null {
+  try {
+    const base = new URL(read.host ? `https://${read.host}` : connection.primaryHost);
+    const url = new URL(
+      read.path.replace(/^\/+/, ""),
+      `${base.origin}${base.pathname.replace(/\/+$/, "")}/`,
+    );
+    url.hash = "";
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A proof read `POST` the proxy would not let through as a read (GRA-271), as the failed read the
+ * model is shown in place of a run. Judged with the proxy's own classifier over the request as the
+ * proxy resolves it (`classifyRequest`, ADR 0008 as amended 2026-10-10), so the job runs a `POST`
+ * only where the dry run would forward it; the proxy still judges the read that does run, and a
+ * preview it answers is a failed read too (`describeProofRead`). Null for a `GET` or a read `POST`.
+ */
+function unreadProofPost(read: ProofReadTarget, connection: ProofConnection): ProofRead | null {
+  if (read.method !== "POST") return null;
+  const url = proofReadUrl(read, connection);
+  const verdict =
+    url === null
+      ? { read: false }
+      : classifyRequest({
+          method: "POST",
+          host: url.hostname,
+          path: url.pathname,
+          hasQuery: url.search.length > 1,
+          body: parseJsonBody(read.body === undefined ? null : new TextEncoder().encode(read.body)),
+        });
+  if (verdict.read) return null;
+  return refusedProofRead(
+    read,
+    `The proxy would count POST ${read.path}${read.host ? ` on ${read.host}` : ""} as a write and stop it at the dry run's preview, so it was not run. ${PROOF_READ_POST_RULE}`,
+  );
+}
 
 /**
  * A proof read naming a host the connection does not declare (GRA-213), as the failed read the
@@ -1778,19 +1967,12 @@ function undeclaredProofHost(read: ProofReadTarget, connection: ProofConnection)
   if (read.host === undefined) return null;
   const declared = hostSetOf({ primaryHost: connection.primaryHost, hosts: connection.hosts });
   if (declared.has(read.host.toLowerCase())) return null;
-  return {
-    path: read.path,
-    host: read.host,
-    ok: false,
-    status: null,
-    body: null,
-    error:
-      `The proof read names ${read.host}, which this connection does not declare (it declares ${[...declared].join(", ")}), so it was not run. ` +
+  return refusedProofRead(
+    read,
+    `The proof read names ${read.host}, which this connection does not declare (it declares ${[...declared].join(", ")}), so it was not run. ` +
       "A proof read's host is one of those, the same host the module passes as ctx.fetch(path, { host }); name one of them, or null for the primary host. " +
       `If the tool needs ${read.host}, answer give_up with a reason that names it, so the person can connect the vendor with that host in its set.`,
-    redirectTo: null,
-    reason: null,
-  };
+  );
 }
 
 /** A proof read's outcome in the model's terms: the probe's answer, or why there was none. */
@@ -1800,9 +1982,8 @@ function describeProofRead(
   outcome: unknown,
   connection: ProofConnection,
 ): ProofRead {
-  const { path } = target;
-  const host = target.host ?? null;
-  const label = `GET ${proofReadLabel(target)}`;
+  const identity = proofReadIdentity(target);
+  const label = proofReadLabel(target);
   if (
     typeof outcome === "object" &&
     outcome !== null &&
@@ -1811,8 +1992,7 @@ function describeProofRead(
   ) {
     const refusal = outcome as { reason?: string; message?: string };
     return {
-      path,
-      host,
+      ...identity,
       ok: false,
       status: null,
       body: null,
@@ -1829,8 +2009,7 @@ function describeProofRead(
   if (!run.ok) {
     const failure = run.failure;
     return {
-      path,
-      host,
+      ...identity,
       ok: false,
       status: null,
       body: null,
@@ -1848,14 +2027,14 @@ function describeProofRead(
     body?: string;
     location?: string | null;
     reason?: string | null;
+    dryRun?: string | null;
     contentType?: string | null;
     contentLength?: string | null;
     length?: number;
   } | null;
   if (report?.moduleError) {
     return {
-      path,
-      host,
+      ...identity,
       ok: false,
       status: null,
       body: null,
@@ -1866,8 +2045,7 @@ function describeProofRead(
   }
   if (!probe || typeof probe.status !== "number") {
     return {
-      path,
-      host,
+      ...identity,
       ok: false,
       status: null,
       body: null,
@@ -1888,8 +2066,7 @@ function describeProofRead(
   if (reason) {
     const fields = refusalFieldsOf(body);
     return {
-      path,
-      host,
+      ...identity,
       ok: false,
       status: probe.status,
       body,
@@ -1901,11 +2078,24 @@ function describeProofRead(
       reason,
     };
   }
+  // A request the proxy stopped at its preview (GRA-271): a 202 the proxy wrote, not the vendor's
+  // answer, so it proves nothing. `unreadProofPost` refuses such a read before it runs; this is the
+  // proxy's own word on it, should the two ever disagree.
+  if (probe.dryRun === DRY_RUN_INTERCEPTED) {
+    return {
+      ...identity,
+      ok: false,
+      status: probe.status,
+      body: null,
+      error: `The proxy stopped ${label} at the dry run's preview: it judged the request a write, so it never reached the vendor and its ${probe.status} is the proxy's, not the vendor's. ${PROOF_READ_POST_RULE}`,
+      redirectTo: null,
+      reason: null,
+    };
+  }
   if (isRedirect(probe.status)) {
     const redirect = describeRedirect(target, probe.location ?? null, connection);
     return {
-      path,
-      host,
+      ...identity,
       ok: false,
       status: probe.status,
       body,
@@ -1915,8 +2105,7 @@ function describeProofRead(
     };
   }
   return {
-    path,
-    host,
+    ...identity,
     ok: probe.status < 400,
     status: probe.status,
     body,
@@ -1991,7 +2180,7 @@ function describeRedirect(
   connection: ProofConnection,
 ): { host: string | null; error: string } {
   const { path } = read;
-  const call = `GET ${proofReadLabel(read)}`;
+  const call = proofReadLabel(read);
   if (!location) {
     return {
       host: null,
