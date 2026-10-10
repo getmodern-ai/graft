@@ -21,6 +21,7 @@ import {
 } from "./dry-run";
 import type { StockHarnessMode } from "./mode";
 import {
+  isReadRequest,
   parseRecording,
   RECORDING_FILE,
   type RecordedBody,
@@ -263,7 +264,11 @@ export async function proveReplay(
 
   const upstreamFetch: UpstreamFetch = async (request: UpstreamRequest, init) => {
     reachedVendor.push({ method: request.method, url: request.url });
-    if (!isSafeMethod(request.method)) {
+    // A read with a body (a reviewed `POST` search, GRA-260) is matched by that body too.
+    const requestBody = isSafeMethod(request.method)
+      ? undefined
+      : recordedBodyOf(request.body ?? new Uint8Array(0));
+    if (!isReadRequest(request.method, request.url, requestBody)) {
       problems.push(
         say(
           `a ${request.method} reached the vendor in a dry run: ${new URL(request.url).pathname}`,
@@ -276,8 +281,12 @@ export async function proveReplay(
     // The first recorded read not yet made that is this request: the recording is in the order the
     // module issued its reads, and a module reading in parallel may have them reach here in another
     // (Greptile on #191), so a request takes its own read rather than the next in line.
+    // Live, the body follows the input as the query's values do, and is not compared.
     const matched = reads.findIndex(
-      (read, index) => !made.has(index) && sameRead(readKeyOf(read.method, read.url), actual, live),
+      (read, index) =>
+        !made.has(index) &&
+        sameRead(readKeyOf(read.method, read.url), actual, live) &&
+        (live || sameBody(read.body, requestBody)),
     );
     if (matched === -1) {
       const next = reads.findIndex((_read, index) => !made.has(index));

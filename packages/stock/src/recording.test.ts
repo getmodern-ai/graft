@@ -29,6 +29,22 @@ describe("parseRecording", () => {
     );
   });
 
+  it("reads a POST the proxy's reviewed table calls a read, with the body the module sent (GRA-260)", () => {
+    const search: StockRecording = {
+      ...RECORDING,
+      exchanges: [
+        {
+          kind: "read",
+          method: "POST",
+          url: "https://api.notion.com/v1/search",
+          body: { json: { page_size: 5 } },
+          response: { status: 200, headers: {}, body: { json: { results: [] } } },
+        },
+      ],
+    };
+    expect(parseRecording(JSON.stringify(search), "notion/search/recording.json")).toEqual(search);
+  });
+
   it("refuses with a sentence naming the file and the first thing wrong", () => {
     const where = "demo/list-items/recording.json";
     expect(() => parseRecording("nope", where)).toThrow(
@@ -42,7 +58,27 @@ describe("parseRecording", () => {
         }),
         where,
       ),
-    ).toThrow(`${where} exchange 1 is a read, so its method is GET or HEAD`);
+    ).toThrow(
+      `${where} exchange 1 is a read, so it is a GET or HEAD or a request the proxy's classifier calls a read`,
+    );
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [
+            {
+              kind: "write",
+              method: "POST",
+              url: "https://api.notion.com/v1/search",
+              body: { json: {} },
+            },
+          ],
+        }),
+        where,
+      ),
+    ).toThrow(
+      `${where} exchange 1 is a write, so it is not a request the proxy's classifier calls a read`,
+    );
     expect(() =>
       parseRecording(
         JSON.stringify({

@@ -1,0 +1,35 @@
+{
+  "name": "search-pages-and-databases",
+  "description": "Searches the Notion pages and databases shared with the connection by title, most recently edited first, or lists them all with no query. Answers each result's object (page, or data_source for a database), id, title, url and last_edited_time, and a database's database_id. A page's id is what notion__get-page, notion__append-to-page, notion__update-page-properties, notion__add-comment and notion__create-page's parentPageId take; a data_source id is what notion__query-database and notion__create-page's dataSourceId take. nextCursor, or null at the end, is the startCursor of the next page.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Title words to search for. Omit or use an empty string to list everything shared with the integration."
+      },
+      "filter": {
+        "type": "string",
+        "enum": ["page", "database"],
+        "description": "Optionally return only pages or only databases."
+      },
+      "pageSize": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 20,
+        "description": "Maximum number of results to return."
+      },
+      "startCursor": {
+        "type": "string",
+        "description": "Opaque nextCursor from a previous search result."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.notion.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
