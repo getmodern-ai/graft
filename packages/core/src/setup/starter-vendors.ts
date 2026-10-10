@@ -45,6 +45,9 @@ export type StarterRunInput = {
   defaultValue: string;
 };
 
+/** One task the tool step offers: the person's words, and what the model is told beside them. */
+export type StarterTask = { goal: string; hints: string };
+
 export type StarterVendor = {
   id: string;
   /** The connection's vendor slug (`validateVendor`), and the tool's. */
@@ -73,6 +76,13 @@ export type StarterVendor = {
   hints: string;
   /** The run's one input, or null for a tool that takes none. */
   runInput: StarterRunInput | null;
+  /**
+   * More tasks the tool step offers beside `goal` (Setup v2), each with its own `hints`, held to
+   * the same rules: a read, needing nothing the person has to look up, inside the scopes the
+   * starter's connection asks for. Aligned with the integration's stock reads (ADR 0025), which
+   * take their place as stock lands.
+   */
+  moreTasks: readonly StarterTask[];
   /** What the person will see once the tool runs, one sentence, for the integration step. */
   outcome: string;
 };
@@ -102,6 +112,23 @@ export const STARTER_VENDORS = [
       "List the five most recent conversations in the inbox with the threads list endpoint, one GET of `users/me/threads` with `maxResults=5` and `labelIds=INBOX`, returning each thread's `id` and its `snippet`, the line of text Gmail shows for it. Make no other call. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your five latest inbox conversations, with the first line of each.",
+    moreTasks: [
+      {
+        goal: "Show me my unread emails",
+        hints:
+          "List up to ten unread conversations with the threads list endpoint, one GET of `users/me/threads` with `q=is:unread` and `maxResults=10`, returning each thread's `id` and its `snippet`. Make no other call. The tool takes no input. Read only.",
+      },
+      {
+        goal: "Show me the emails I starred",
+        hints:
+          "List up to ten starred conversations with the threads list endpoint, one GET of `users/me/threads` with `labelIds=STARRED` and `maxResults=10`, returning each thread's `id` and its `snippet`. Make no other call. The tool takes no input. Read only.",
+      },
+      {
+        goal: "List my Gmail labels",
+        hints:
+          "List the mailbox's labels with the labels list endpoint, one GET of `users/me/labels`, returning each label's `name` and `type` (system or user). The tool takes no input. Read only.",
+      },
+    ],
   },
   {
     id: "google-calendar",
@@ -120,6 +147,18 @@ export const STARTER_VENDORS = [
       "List the events on the `primary` calendar for the next seven days with the events list endpoint, a GET, with `timeMin` now, `timeMax` seven days on, `singleEvents=true` and `orderBy=startTime`, returning the title, the start time and the location of each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your week ahead: each event's title, when it starts and where.",
+    moreTasks: [
+      {
+        goal: "Show me my next three meetings",
+        hints:
+          "List the next three events on the `primary` calendar with the events list endpoint, a GET, with `timeMin` now, `singleEvents=true`, `orderBy=startTime` and `maxResults=3`, returning the title, the start time and the attendees' emails of each. The tool takes no input. Read only.",
+      },
+      {
+        goal: "List my calendars",
+        hints:
+          "List the calendars the person can see with the calendar list endpoint, a GET of `users/me/calendarList`, returning each calendar's `summary`, whether it is `primary`, and its `timeZone`. The tool takes no input. Read only.",
+      },
+    ],
   },
   {
     id: "google-drive",
@@ -142,6 +181,18 @@ export const STARTER_VENDORS = [
       "List the ten most recently modified files with Drive's files list endpoint, a GET, with `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,mimeType,webViewLink)`, returning those four for each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your ten most recently edited files, with when each changed and a link to it.",
+    moreTasks: [
+      {
+        goal: "Show me the files shared with me",
+        hints:
+          "List up to ten files shared with the person with Drive's files list endpoint, a GET, with `q=sharedWithMe`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,mimeType,webViewLink)`, returning those four for each. The tool takes no input. Read only.",
+      },
+      {
+        goal: "List my most recent Google Docs",
+        hints:
+          "List the ten most recently modified Google Docs with Drive's files list endpoint, a GET, with `q=mimeType='application/vnd.google-apps.document'`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(name,modifiedTime,webViewLink)`, returning those three for each. The tool takes no input. Read only.",
+      },
+    ],
   },
   {
     id: "google-sheets",
@@ -187,6 +238,13 @@ export const STARTER_VENDORS = [
       "List the public channels in the Slack workspace with the `conversations.list` method, a GET, with `types=public_channel`, `exclude_archived=true` and `limit=20`, returning the name, the topic and the member count of each. Slack answers 200 with `ok: false` on an error, so treat that as a failure naming Slack's `error`. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your workspace's public channels, with each one's topic and member count.",
+    moreTasks: [
+      {
+        goal: "List the channels I am in",
+        hints:
+          "List the public channels the connected account is a member of with the `users.conversations` method, a GET, with `types=public_channel`, `exclude_archived=true` and `limit=20`, returning the name and the topic of each. Slack answers 200 with `ok: false` on an error, so treat that as a failure naming Slack's `error`. The tool takes no input. Read only.",
+      },
+    ],
   },
   {
     id: "notion",
@@ -205,6 +263,9 @@ export const STARTER_VENDORS = [
       "List the users of the Notion workspace with the users list endpoint, a GET, with `page_size=20`, returning the name and the type (person or bot) of each, and send the `Notion-Version` header the documentation names. The tool takes no input. Read only.",
     runInput: null,
     outcome: "The people in your Notion workspace, and which of them are bots.",
+    // Notion lists pages only through its search, a POST (the note on `goal`), so its one read
+    // without input is the users list.
+    moreTasks: [],
   },
   {
     id: "github",
@@ -221,6 +282,18 @@ export const STARTER_VENDORS = [
       "List the authenticated user's ten most recently updated repositories with the authenticated user's repositories endpoint, a GET, with `sort=updated` and `per_page=10`, returning the name, the description, the main language and the star count of each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your ten most recently updated repositories, with their language and stars.",
+    moreTasks: [
+      {
+        goal: "Show me the open issues assigned to me",
+        hints:
+          "List up to ten open issues assigned to the authenticated user across their repositories with the `GET /issues` endpoint, with `filter=assigned`, `state=open` and `per_page=10`, returning the title, the repository's full name, the number and the URL of each. The tool takes no input. Read only.",
+      },
+      {
+        goal: "Show me my open pull requests",
+        hints:
+          "List up to ten of the authenticated user's open pull requests with the issue search endpoint, a GET of `/search/issues` with `q=is:pr is:open author:@me` and `per_page=10`, returning the title, the repository and the URL of each. The tool takes no input. Read only.",
+      },
+    ],
   },
   {
     id: "hubspot",
@@ -238,6 +311,18 @@ export const STARTER_VENDORS = [
       "List ten contacts with the contacts list endpoint, a GET and not the search, with `limit=10` and the `firstname`, `lastname`, `email` and `company` properties, returning those for each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Ten contacts from your CRM, with each one's email and company.",
+    moreTasks: [
+      {
+        goal: "Show me ten companies from my CRM",
+        hints:
+          "List ten companies with the companies list endpoint, a GET and not the search, with `limit=10` and the `name`, `domain` and `industry` properties, returning those for each. The tool takes no input. Read only.",
+      },
+      {
+        goal: "Show me ten deals from my CRM",
+        hints:
+          "List ten deals with the deals list endpoint, a GET and not the search, with `limit=10` and the `dealname`, `amount`, `dealstage` and `closedate` properties, returning those for each. The tool takes no input. Read only.",
+      },
+    ],
   },
   {
     id: "open-meteo",
@@ -254,6 +339,13 @@ export const STARTER_VENDORS = [
       "The tool takes a city name as the input `city`, looks up the city's coordinates with Open-Meteo's geocoding API, and returns the current temperature, wind speed and weather there. Read only.",
     runInput: { field: "city", label: "City", defaultValue: "Melbourne" },
     outcome: "The weather right now in a city you choose, with no key to enter.",
+    moreTasks: [
+      {
+        goal: "Tell me tomorrow's forecast for a city I name",
+        hints:
+          "The tool takes a city name as the input `city`, looks up the city's coordinates with Open-Meteo's geocoding API, and returns tomorrow's highest and lowest temperature and chance of rain there from the forecast API's daily values. Read only.",
+      },
+    ],
   },
 ] as const satisfies readonly StarterVendor[];
 
@@ -292,7 +384,13 @@ export function starterVendorFor(vendor: string): StarterVendor | null {
 export function setupBuildHints(starter: StarterVendor | null, goal: string): string | null {
   if (!starter) return null;
   const docs = `The vendor's documentation starts at ${starter.docsUrl}.`;
-  return goal.trim() === starter.goal ? `${starter.hints} ${docs}` : docs;
+  const task = starterTasks(starter).find((candidate) => candidate.goal === goal.trim());
+  return task ? `${task.hints} ${docs}` : docs;
+}
+
+/** Every task the tool step offers for a starter: its curated `goal` first, then `moreTasks`. */
+export function starterTasks(starter: StarterVendor): StarterTask[] {
+  return [{ goal: starter.goal, hints: starter.hints }, ...starter.moreTasks];
 }
 
 /**

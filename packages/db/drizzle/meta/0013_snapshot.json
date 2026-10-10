@@ -1,5 +1,5 @@
 {
-  "id": "45158758-446d-445e-a506-f5b1e3ce331e",
+  "id": "863d838a-2d0e-4912-9a53-1e6050453203",
   "prevId": "246f8865-83b5-41fe-bdb7-7ff2a3c5331a",
   "version": "7",
   "dialect": "postgresql",
@@ -2418,6 +2418,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "starter_id": {
+          "name": "starter_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "goal": {
+          "name": "goal",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "pending_action_id": {
           "name": "pending_action_id",
           "type": "text",
@@ -2617,174 +2629,6 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.stock_tool": {
-      "name": "stock_tool",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "vendor": {
-          "name": "vendor",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "stock_tool_vendor_name_unique": {
-          "name": "stock_tool_vendor_name_unique",
-          "nullsNotDistinct": false,
-          "columns": ["vendor", "name"]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.stock_tool_version": {
-      "name": "stock_tool_version",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "stock_tool_id": {
-          "name": "stock_tool_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "version_number": {
-          "name": "version_number",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "source_hash": {
-          "name": "source_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "input_schema": {
-          "name": "input_schema",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "read_only": {
-          "name": "read_only",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "destructive": {
-          "name": "destructive",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "hosts": {
-          "name": "hosts",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "files": {
-          "name": "files",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "test_input": {
-          "name": "test_input",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "check_output": {
-          "name": "check_output",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "stock_tool_version_stock_tool_id_idx": {
-          "name": "stock_tool_version_stock_tool_id_idx",
-          "columns": [
-            {
-              "expression": "stock_tool_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "stock_tool_version_stock_tool_id_stock_tool_id_fk": {
-          "name": "stock_tool_version_stock_tool_id_stock_tool_id_fk",
-          "tableFrom": "stock_tool_version",
-          "tableTo": "stock_tool",
-          "columnsFrom": ["stock_tool_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "stock_tool_version_stock_tool_id_version_number_unique": {
-          "name": "stock_tool_version_stock_tool_id_version_number_unique",
-          "nullsNotDistinct": false,
-          "columns": ["stock_tool_id", "version_number"]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -3034,18 +2878,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "stock_tool_id": {
-          "name": "stock_tool_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "stock_version_id": {
-          "name": "stock_version_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "owner": {
           "name": "owner",
           "type": "text",
@@ -3091,36 +2923,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "tool_version_stock_tool_id_idx": {
-          "name": "tool_version_stock_tool_id_idx",
-          "columns": [
-            {
-              "expression": "stock_tool_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "tool_version_stock_version_id_idx": {
-          "name": "tool_version_stock_version_id_idx",
-          "columns": [
-            {
-              "expression": "stock_version_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -3138,24 +2940,6 @@
           "tableFrom": "tool_version",
           "tableTo": "acquire_job",
           "columnsFrom": ["publisher_job_id"],
-          "columnsTo": ["id"],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "tool_version_stock_tool_id_stock_tool_id_fk": {
-          "name": "tool_version_stock_tool_id_stock_tool_id_fk",
-          "tableFrom": "tool_version",
-          "tableTo": "stock_tool",
-          "columnsFrom": ["stock_tool_id"],
-          "columnsTo": ["id"],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
-        "tool_version_stock_version_id_stock_tool_version_id_fk": {
-          "name": "tool_version_stock_version_id_stock_tool_version_id_fk",
-          "tableFrom": "tool_version",
-          "tableTo": "stock_tool_version",
-          "columnsFrom": ["stock_version_id"],
           "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"

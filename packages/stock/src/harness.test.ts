@@ -4,7 +4,13 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { proveCheck, proveReplay, proveTestInput, readStockRecording } from "./harness";
+import {
+  jsonTextNotes,
+  proveCheck,
+  proveReplay,
+  proveTestInput,
+  readStockRecording,
+} from "./harness";
 import { stockHarnessModeFrom } from "./mode";
 import {
   formatRecording,
@@ -51,6 +57,8 @@ describe(`every stock tool (${mode.kind})`, () => {
         const read = await readStockRecording(tool);
         expect(read.ok ? [] : [read.problem]).toEqual([]);
         if (!read.ok) return;
+        // A note is printed, not failed on: the module may read the text for a reason of its own.
+        for (const note of jsonTextNotes(tool, read.recording)) console.warn(note);
         const report = await proveReplay(tool, read.recording, mode);
         expect(report.problems).toEqual([]);
         expect(report.reachedVendor.every((call) => ["GET", "HEAD"].includes(call.method))).toBe(
@@ -233,6 +241,29 @@ describe("the harness", () => {
       ),
       expect.stringMatching(/^stock tool demo__list-items: its dry run did not pass: .*403/),
     ]);
+  });
+
+  it("replays a keyed starter's tool with no credential: the vendor is the recording", async () => {
+    const keyed = { ...readTool, vendor: "github" };
+    const report = await proveReplay(keyed, { ...readRecording, tool: "github__list-items" });
+    expect(report.problems).toEqual([]);
+  });
+
+  it("fails a call to a starter's primary host the manifest does not declare", async () => {
+    // GitHub's starter names api.github.com; this manifest declares api.example.com alone.
+    const undeclared = fixture({
+      vendor: "github",
+      module: READ_MODULE.replace(`host: "${HOST}"`, 'host: "api.github.com"'),
+    });
+    const report = await proveReplay(undeclared, {
+      ...readRecording,
+      tool: "github__list-items",
+      exchanges: [{ ...firstRead, url: "https://api.github.com/v1/items?q=red" }],
+    });
+    expect(report.reachedVendor).toEqual([]);
+    expect(report.problems).toContainEqual(
+      expect.stringMatching(/^stock tool github__list-items: its dry run did not pass: .*403/),
+    );
   });
 
   it("fails a recording made with another input, or holding a credential", async () => {

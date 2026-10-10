@@ -99,7 +99,10 @@ export function liveConnectionsFrom(
     if (!isStringRecord(credential)) {
       return fail(`${where}.credential must map the scheme's fields to strings`);
     }
-    if (primaryHost !== undefined && typeof primaryHost !== "string") {
+    if (
+      primaryHost !== undefined &&
+      (typeof primaryHost !== "string" || !isHttpsUrl(primaryHost))
+    ) {
       return fail(`${where}.primaryHost must be a URL`);
     }
     connections[vendor] = {
@@ -110,4 +113,13 @@ export function liveConnectionsFrom(
     };
   }
   return { ok: true, connections };
+}
+
+/** Whether a value parses as an `https:` URL, so the harness never meets one it cannot read. */
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }

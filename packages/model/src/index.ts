@@ -97,4 +97,6 @@ export {
   type ProofRead,
   type ProofReadTarget,
   proofReadLabel,
+  type StartingPoint,
+  type StockToolBrief,
 } from "./types";

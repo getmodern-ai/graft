@@ -14,6 +14,7 @@ import {
 } from "@graft/core";
 import {
   type AcquireRunner,
+  askedVersionOfPayload,
   createAcquireRunner,
   createInFlightRegistry,
   createToolListChangedNotifier,
@@ -512,14 +513,16 @@ export async function openWorld(options: WorldOptions): Promise<World> {
     },
     async answerToolAsk(pendingActionId, toolId) {
       // What `POST /api/pending-actions/:id/answer` does for a tool ask with `allow: true`.
-      await answerPendingAction(
+      const answered = await answerPendingAction(
         ctx,
         principal,
         pendingActionId,
         { allow: true },
         deps.pendingAction,
       );
-      await setApproval(ctx, scope, toolId, "allow", deps.approval);
+      await setApproval(ctx, scope, toolId, "allow", deps.approval, {
+        asked: askedVersionOfPayload(answered.payload),
+      });
       await consumePendingAction(ctx, scope, pendingActionId, deps.pendingAction).catch(
         () => undefined,
       );
