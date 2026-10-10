@@ -54,6 +54,29 @@ describe("google-sheets__read-rows", () => {
   });
 });
 
+describe("google-sheets__read-rows over a range that starts past A", () => {
+  it("names a blank header by the sheet's own column, so append-rows writes it back there", async () => {
+    const readRows = await sheetsModule("read-rows");
+    const { ctx } = fakeContext([
+      {
+        json: {
+          range: "'Sheet1'!B1:C2",
+          values: [
+            ["", "Total"],
+            ["x", "9"],
+          ],
+        },
+      },
+    ]);
+    const result = (await readRows(
+      { spreadsheet: SPREADSHEET, tab: "Sheet1", range: "B1:C2" },
+      ctx,
+    )) as { header: string[]; rows: Record<string, string>[] };
+    expect(result.header).toEqual(["column_B", "Total"]);
+    expect(result.rows).toEqual([{ column_B: "x", Total: "9" }]);
+  });
+});
+
 describe("google-sheets__find-rows", () => {
   it("keys a matching row's every cell as read-rows does", async () => {
     const findRows = await sheetsModule("find-rows");

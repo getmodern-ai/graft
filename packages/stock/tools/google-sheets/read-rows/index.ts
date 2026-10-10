@@ -3,6 +3,7 @@ type SpreadsheetMetadata = {
 };
 
 type ValueRange = {
+  range?: string;
   values?: unknown[][];
 };
 
@@ -28,16 +29,28 @@ function columnLetter(index: number): string {
   return letters;
 }
 
+/** The 0-based index of the column a range starts at (`B1:C2` is 1, `'Tab'!AA3:AB` is 26), 0 if none. */
+function startColumn(range: string): number {
+  const cells = range.includes("!") ? range.slice(range.lastIndexOf("!") + 1) : range;
+  const letters = cells.match(/^\$?([A-Za-z]+)/)?.[1]?.toUpperCase();
+  if (!letters) return 0;
+  let index = 0;
+  for (const letter of letters) index = index * 26 + (letter.charCodeAt(0) - 64);
+  return index - 1;
+}
+
 /**
- * One key per column across the widest row: a blank header is `column_<letter>`, and a repeated one
- * takes `_2`, `_3`, so no returned cell is dropped or overwritten. append-rows reads keys the same way.
+ * One key per column across the widest row: a blank header is `column_<letter>`, named by the
+ * sheet's own column (the range's start added, so `B1:C2` names B and C, as append-rows reads them,
+ * Greptile on #198), and a repeated one takes `_2`, `_3`, so no returned cell is dropped or
+ * overwritten. append-rows reads keys the same way.
  */
-function columnKeys(headerCells: unknown[], width: number): string[] {
+function columnKeys(headerCells: unknown[], width: number, offset: number): string[] {
   const keys: string[] = [];
   const used = new Set<string>();
   for (let index = 0; index < width; index += 1) {
     const text = String(headerCells[index] ?? "").trim();
-    const base = text || `column_${columnLetter(index)}`;
+    const base = text || `column_${columnLetter(offset + index)}`;
     let key = base;
     for (let suffix = 2; used.has(key); suffix += 1) key = `${base}_${suffix}`;
     used.add(key);
@@ -83,7 +96,7 @@ export default async (input: Input, ctx: Context) => {
   const values = Array.isArray(valueRange.values) ? valueRange.values : [];
   const rawHeader = values[0] ?? [];
   const width = values.reduce((widest, row) => Math.max(widest, row?.length ?? 0), 0);
-  const header = columnKeys(rawHeader, width);
+  const header = columnKeys(rawHeader, width, startColumn(valueRange.range ?? cellRange));
   const allDataRows = values.slice(1);
   const limit = input.limit ?? 100;
   const rows = allDataRows.slice(0, limit).map((sourceRow) => {
