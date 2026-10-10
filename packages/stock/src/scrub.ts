@@ -1,5 +1,9 @@
 import { createHmac } from "node:crypto";
 
+import { stringLiteralsOf } from "@graft/check/string-literals";
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+
 import type { RecordedBody, RecordedResponse, StockRecording } from "./recording";
 
 /**
@@ -15,10 +19,21 @@ import type { RecordedBody, RecordedResponse, StockRecording } from "./recording
  * What is kept, and why each:
  *  - a value in `keep`: the module's own string literals and its input schema's strings, which are
  *    public code (`keptLiteralsOf`), so a module comparing an answer with `"message"` still matches;
+ *  - the input schema's `enum` and `const` numbers, public code too;
  *  - booleans and `null`: one bit, and the bit a module branches on (`has_more`);
  *  - integers from 0 to 99: counts, pages and codes a module loops or branches on, naming no one;
- *  - a redaction marker (`[redacted…]`), whole or inside a string, so a reviewer still sees it;
- *  - a string with no letter or digit.
+ *  - a redaction marker (`[redacted…]`), whole or inside a string, so a reviewer still sees it; the
+ *    text around it is scrubbed as any other (Greptile on #192: an echoed credential followed by a
+ *    name kept the name);
+ *  - a string with no letter or digit;
+ *  - in a `link` header, a `rel` whose every value is one of `SAFE_LINK_RELATIONS` and the parameter
+ *    names RFC 8288 defines; every other parameter value is drawn again, and each target is a URL
+ *    like any other.
+ *
+ * **When in doubt it fails rather than keeps** (Greptile on #192). A value for which no placeholder
+ * can be drawn that is neither an original value nor another value's placeholder, or (in the input)
+ * one its input schema admits, throws a `ScrubFailure` naming the part of the recording and never the
+ * value, and the build refuses the recording as `recording_failed`.
  */
 
 export type ScrubRule = {
@@ -26,7 +41,27 @@ export type ScrubRule = {
   seed: string;
   /** Strings to leave as they are: the module's literals and its schema's strings. */
   keep?: Iterable<string>;
+  /**
+   * The tool's input schema. The input's placeholders are drawn within it (an enum's value, a number
+   * within its bounds and `multipleOf`, a string its length, pattern and format admit), and its
+   * strings and its `enum` and `const` values, public code, are kept wherever they appear.
+   */
+  inputSchema?: unknown;
 };
+
+/**
+ * The scrub could not draw a placeholder it may keep. `where` names the part of the recording
+ * (`the input`, `exchange 2's answer`); the message never carries the value.
+ */
+export class ScrubFailure extends Error {
+  constructor(
+    readonly reason: string,
+    readonly where?: string,
+  ) {
+    super(where === undefined ? reason : `${reason}, in ${where}`);
+    this.name = "ScrubFailure";
+  }
+}
 
 const SMALL_INTEGER_LIMIT = 100;
 const MARKER = /\[redacted[^\]]*\]/g;
@@ -35,6 +70,39 @@ const ISO =
   /^(\d{4})-(\d{2})-(\d{2})(?:([T ])(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?)?(Z|[+-]\d{2}(?::?\d{2})?)?$/;
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\/\S+$/i;
 const MAX_ATTEMPTS = 64;
+
+/** A link relation a client follows by name, which names nothing of the account's (RFC 8288). */
+const SAFE_LINK_RELATIONS: ReadonlySet<string> = new Set([
+  "next",
+  "prev",
+  "previous",
+  "first",
+  "last",
+  "self",
+  "start",
+  "up",
+  "alternate",
+  "canonical",
+  "related",
+  "index",
+  "help",
+  "edit",
+  "describedby",
+  "collection",
+  "item",
+  "search",
+]);
+/** The parameter names RFC 8288 defines, which are protocol and kept; any other is drawn again. */
+const LINK_PARAMETER_NAMES: ReadonlySet<string> = new Set([
+  "rel",
+  "rev",
+  "anchor",
+  "title",
+  "title*",
+  "type",
+  "hreflang",
+  "media",
+]);
 
 const LOWER = "abcdefghijklmnopqrstuvwxyz";
 const UPPER = LOWER.toUpperCase();
@@ -45,6 +113,11 @@ const TIME_SPAN = Date.UTC(2030, 0, 1) - TIME_FROM;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Whether a string holds a letter or a digit outside its redaction markers. */
+function hasWord(text: string): boolean {
+  return /[\p{L}\d]/u.test(text.replace(MARKER, ""));
 }
 
 /** A stream of pseudo-random numbers from the seed, one stream per (kind, value, attempt). */
@@ -144,64 +217,130 @@ function numberPlaceholder(value: number, next: () => number): number {
   );
 }
 
+/** What an input schema asks of a number, for drawing one inside it. */
+type NumberRange = { low: number | null; high: number | null; step: number | null };
+
+/**
+ * A number inside the range, a multiple of the step where there is one, with the value's decimal
+ * places where there is none; null where the range is empty. The schema's own validator still
+ * judges it (an exclusive bound, say), so this only has to land inside often.
+ */
+function numberInRange(value: number, range: NumberRange, next: () => number): number | null {
+  const spread = Math.max(Math.abs(value), 1) * 10;
+  const low = range.low ?? (range.high === null ? value - spread : range.high - spread);
+  const high = range.high ?? low + spread;
+  if (range.step !== null && range.step > 0) {
+    const from = Math.ceil(low / range.step);
+    const to = Math.floor(high / range.step);
+    if (to < from) return null;
+    const multiple = from + Math.floor(next() * (to - from + 1));
+    return Number((multiple * range.step).toPrecision(12));
+  }
+  if (high < low) return null;
+  const places = String(value).split(".")[1]?.length ?? 0;
+  return Number((low + next() * (high - low)).toFixed(places));
+}
+
 type Scrubber = {
-  string(text: string): string;
-  number(value: number): number;
+  /** `accept`, where given, is the input schema's judgement of a candidate placeholder. */
+  string(text: string, accept?: (candidate: string) => boolean): string;
+  number(value: number, accept?: (candidate: number) => boolean, range?: NumberRange): number;
   /** A JSON value, every leaf scrubbed. */
   value(value: unknown): unknown;
 };
 
-function createScrubber(rule: ScrubRule, avoid: { strings: Set<string>; numbers: Set<number> }) {
+const NO_PLACEHOLDER =
+  "no placeholder could be drawn for one of its values that is neither an original value nor another value's placeholder";
+const NOT_IN_SCHEMA =
+  "no placeholder the tool's input schema admits could be drawn for one of its values";
+
+function createScrubber(
+  rule: ScrubRule,
+  avoid: { strings: Set<string>; numbers: Set<number> },
+  keptNumbers: ReadonlySet<number>,
+): Scrubber {
   const keep = new Set(rule.keep ?? []);
   const strings = new Map<string, string>();
   const numbers = new Map<number, number>();
   const used = new Set<string>();
 
-  const string = (text: string): string => {
-    if (keep.has(text) || text.startsWith("[redacted") || !/[\p{L}\d]/u.test(text)) return text;
+  const string = (text: string, accept?: (candidate: string) => boolean): string => {
+    if (keep.has(text) || !hasWord(text)) return text;
     const known = strings.get(text);
-    if (known !== undefined) return known;
-    const url = urlPlaceholder(text);
-    if (url !== null) {
+    if (known !== undefined) {
+      if (accept && !accept(known)) throw new ScrubFailure(NOT_IN_SCHEMA);
+      return known;
+    }
+    const marked = text.replace(MARKER, "") !== text;
+    const url = marked ? null : urlPlaceholder(text);
+    if (url !== null && (!accept || accept(url))) {
       strings.set(text, url);
       return url;
     }
-    let placeholder = text;
+    const email = marked ? null : EMAIL.exec(text);
+    const iso = marked ? null : ISO.exec(text);
+    let refusedBySchema = false;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       const next = draws(rule.seed, `s\u0000${text}\u0000${attempt}`);
-      const email = EMAIL.exec(text);
-      const iso = ISO.exec(text);
-      placeholder = email
+      const placeholder = email
         ? `${substitute(email[1] as string, next)}@example.com`
         : iso
           ? isoPlaceholder(iso, next)
           : substituteAroundMarkers(text, next);
-      if (placeholder !== text && !used.has(placeholder) && !avoid.strings.has(placeholder)) break;
+      if (placeholder === text || used.has(placeholder) || avoid.strings.has(placeholder)) continue;
+      if (accept && !accept(placeholder)) {
+        refusedBySchema = true;
+        continue;
+      }
+      strings.set(text, placeholder);
+      used.add(placeholder);
+      return placeholder;
     }
-    strings.set(text, placeholder);
-    used.add(placeholder);
-    return placeholder;
+    throw new ScrubFailure(refusedBySchema ? NOT_IN_SCHEMA : NO_PLACEHOLDER);
   };
 
-  const number = (value: number): number => {
-    if (Number.isInteger(value) && value >= 0 && value < SMALL_INTEGER_LIMIT) return value;
-    if (!Number.isFinite(value)) return value;
-    const known = numbers.get(value);
-    if (known !== undefined) return known;
-    let placeholder = value;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      placeholder = numberPlaceholder(value, draws(rule.seed, `n\u0000${value}\u0000${attempt}`));
-      if (
-        placeholder !== value &&
-        !used.has(`#${placeholder}`) &&
-        !avoid.numbers.has(placeholder)
-      ) {
-        break;
-      }
+  const number = (
+    value: number,
+    accept?: (candidate: number) => boolean,
+    range?: NumberRange,
+  ): number => {
+    if (!Number.isFinite(value) || keptNumbers.has(value)) return value;
+    if (Number.isInteger(value) && value >= 0 && value < SMALL_INTEGER_LIMIT) {
+      if (!accept || accept(value)) return value;
     }
-    numbers.set(value, placeholder);
-    used.add(`#${placeholder}`);
-    return placeholder;
+    const known = numbers.get(value);
+    if (known !== undefined) {
+      if (accept && !accept(known)) throw new ScrubFailure(NOT_IN_SCHEMA);
+      return known;
+    }
+    let refusedBySchema = false;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const next = draws(rule.seed, `n\u0000${value}\u0000${attempt}`);
+      // The same shape first; past half the attempts, anywhere the schema's bounds admit.
+      const placeholder =
+        range && attempt >= MAX_ATTEMPTS / 2
+          ? numberInRange(value, range, next)
+          : numberPlaceholder(value, next);
+      // A finite value only: `1e308` drawn with a larger leading digit is `Infinity`, which JSON
+      // writes as `null` (Greptile on #192).
+      if (
+        placeholder === null ||
+        !Number.isFinite(placeholder) ||
+        placeholder === value ||
+        used.has(`#${placeholder}`) ||
+        avoid.numbers.has(placeholder)
+      ) {
+        continue;
+      }
+      if (accept && !accept(placeholder)) {
+        refusedBySchema = true;
+        continue;
+      }
+      numbers.set(value, placeholder);
+      used.add(`#${placeholder}`);
+      return placeholder;
+    }
+    throw new ScrubFailure(refusedBySchema ? NOT_IN_SCHEMA : NO_PLACEHOLDER);
   };
 
   const value = (node: unknown): unknown => {
@@ -213,7 +352,156 @@ function createScrubber(rule: ScrubRule, avoid: { strings: Set<string>; numbers:
     return node;
   };
 
-  return { string, number, value } satisfies Scrubber;
+  return { string, number, value };
+}
+
+const schemaValidator = new AjvJsonSchemaValidator();
+/** Each subschema's validator by its text, or null where it does not compile on its own. */
+const leafValidators = new Map<string, ((candidate: unknown) => boolean) | null>();
+
+/**
+ * The input schema's judgement of a leaf's placeholder: the subschema at the leaf (its `$ref`
+ * followed, `dereferenced`), compiled with the root's `$defs` and `definitions` beside it so a
+ * reference inside it still resolves. None for an empty subschema or one that does not compile; the
+ * whole input is judged against the whole schema after the scrub (`record.ts`).
+ */
+function acceptOf(
+  leaf: Record<string, unknown>,
+  root: unknown,
+): ((candidate: unknown) => boolean) | undefined {
+  if (Object.keys(leaf).length === 0) return undefined;
+  const schema = {
+    ...(isRecord(root) && isRecord(root.$defs) ? { $defs: root.$defs } : {}),
+    ...(isRecord(root) && isRecord(root.definitions) ? { definitions: root.definitions } : {}),
+    ...leaf,
+  };
+  const key = JSON.stringify(schema);
+  if (!leafValidators.has(key)) {
+    let judge: ((candidate: unknown) => boolean) | null;
+    try {
+      const validate = schemaValidator.getValidator(schema as JsonSchemaType);
+      judge = (candidate) => validate(candidate).valid;
+    } catch {
+      judge = null;
+    }
+    leafValidators.set(key, judge);
+  }
+  return leafValidators.get(key) ?? undefined;
+}
+
+function rangeOf(schema: Record<string, unknown>): NumberRange | undefined {
+  const numeric = (key: string) =>
+    typeof schema[key] === "number" ? (schema[key] as number) : null;
+  const low = numeric("minimum") ?? numeric("exclusiveMinimum");
+  const high = numeric("maximum") ?? numeric("exclusiveMaximum");
+  const step = numeric("multipleOf") ?? (schema.type === "integer" ? 1 : null);
+  if (low === null && high === null && numeric("multipleOf") === null) return undefined;
+  return { low, high, step };
+}
+
+/** The subschema an array's entry at `index` answers to. */
+function entrySchemaOf(schema: Record<string, unknown>, index: number): unknown {
+  if (Array.isArray(schema.prefixItems) && index < schema.prefixItems.length) {
+    return schema.prefixItems[index];
+  }
+  if (Array.isArray(schema.items)) {
+    return index < schema.items.length ? schema.items[index] : schema.additionalItems;
+  }
+  return schema.items;
+}
+
+/** The subschema an object's property answers to. */
+function propertySchemaOf(schema: Record<string, unknown>, key: string): unknown {
+  if (isRecord(schema.properties) && Object.hasOwn(schema.properties, key)) {
+    return schema.properties[key];
+  }
+  return schema.additionalProperties;
+}
+
+/**
+ * The input, scrubbed within its schema (Greptile on #192: a valid `100` under `maximum: 100` was
+ * drawn as another three-digit number). An `enum` or `const` value is public and stays; a value
+ * outside one is replaced by one of the schema's; a string or a number is drawn under the mapping
+ * and accepted only where its subschema admits it.
+ */
+function scrubInput(
+  node: unknown,
+  schema: unknown,
+  root: unknown,
+  scrub: Scrubber,
+  seed: string,
+): unknown {
+  const at = dereferenced(schema, root);
+  const options = Object.hasOwn(at, "const")
+    ? [at.const]
+    : Array.isArray(at.enum) && at.enum.length > 0
+      ? at.enum
+      : null;
+  if (options !== null) {
+    const text = JSON.stringify(node);
+    if (options.some((option) => JSON.stringify(option) === text)) return node;
+    return options[Math.floor(draws(seed, `e\u0000${text}`)() * options.length)];
+  }
+  if (typeof node === "string") return scrub.string(node, acceptOf(at, root));
+  if (typeof node === "number") return scrub.number(node, acceptOf(at, root), rangeOf(at));
+  if (Array.isArray(node)) {
+    return node.map((entry, index) =>
+      scrubInput(entry, entrySchemaOf(at, index), root, scrub, seed),
+    );
+  }
+  if (isRecord(node)) {
+    return Object.fromEntries(
+      Object.entries(node).map(([key, entry]) => [
+        key,
+        scrubInput(entry, propertySchemaOf(at, key), root, scrub, seed),
+      ]),
+    );
+  }
+  return node;
+}
+
+/** How many `$ref`s in a row the input walk follows before it stops (a cycle, say). */
+const MAX_REF_DEPTH = 16;
+
+/**
+ * A subschema with its local `$ref` followed into the root (`#/$defs/limit`, `#/definitions/x`),
+ * its sibling keywords laid over the target; one that names no local target is left as it is, and
+ * the whole input is judged against the whole schema after the scrub (Greptile on #192: bounds
+ * behind a `$ref` were not seen).
+ */
+function dereferenced(schema: unknown, root: unknown): Record<string, unknown> {
+  let at = isRecord(schema) ? schema : {};
+  for (let depth = 0; depth < MAX_REF_DEPTH; depth += 1) {
+    const ref = at.$ref;
+    if (typeof ref !== "string" || !ref.startsWith("#")) return at;
+    let target: unknown = root;
+    for (const part of ref.slice(1).split("/").slice(1)) {
+      const key = decodeURIComponent(part).replaceAll("~1", "/").replaceAll("~0", "~");
+      target =
+        isRecord(target) || Array.isArray(target)
+          ? (target as Record<string, unknown>)[key]
+          : undefined;
+    }
+    if (!isRecord(target)) return at;
+    const { $ref: _ref, ...siblings } = at;
+    at = { ...target, ...siblings };
+  }
+  return at;
+}
+
+/** The schema's `enum` and `const` numbers, which are public code. */
+function schemaNumbersOf(node: unknown, into: Set<number>): Set<number> {
+  if (Array.isArray(node)) for (const entry of node) schemaNumbersOf(entry, into);
+  else if (isRecord(node)) {
+    for (const [key, entry] of Object.entries(node)) {
+      if (key === "const" && typeof entry === "number") into.add(entry);
+      if (key === "enum" && Array.isArray(entry)) {
+        for (const option of entry) if (typeof option === "number") into.add(option);
+      }
+      schemaNumbersOf(entry, into);
+    }
+  }
+  return into;
 }
 
 /** Every string and number leaf of a JSON value. */
@@ -248,11 +536,135 @@ function scrubBody(
   return { base64: bytes.toString("base64") };
 }
 
+type LinkParameter = { name: string; value: string | null; quoted: boolean };
+type LinkEntry = { target: string; parameters: LinkParameter[] };
+
+/** Where a `link` token ends: whitespace or one of the header's separators. */
+const LINK_TOKEN_END = new Set([" ", "\t", ";", ",", "=", '"']);
+
+/**
+ * A `link` header's entries (RFC 8288), or null where it does not parse as one whole. A scan, one
+ * character at a time, rather than a regular expression: a nested quantifier over a vendor's header
+ * would backtrack exponentially (CodeQL on #192).
+ */
+function parseLinkHeader(value: string): LinkEntry[] | null {
+  const entries: LinkEntry[] = [];
+  let at = 0;
+  const skipSpace = () => {
+    while (value[at] === " " || value[at] === "\t") at += 1;
+  };
+  const token = (): string => {
+    const from = at;
+    while (at < value.length && !LINK_TOKEN_END.has(value[at] as string)) at += 1;
+    return value.slice(from, at);
+  };
+  while (true) {
+    // A list may hold empty members (RFC 9110, section 5.6.1): `<…>; rel="next",` is one entry.
+    while (value[at] === " " || value[at] === "\t" || value[at] === ",") at += 1;
+    if (at >= value.length) return entries.length > 0 ? entries : null;
+    if (value[at] !== "<") return null;
+    const close = value.indexOf(">", at + 1);
+    if (close === -1) return null;
+    const entry: LinkEntry = { target: value.slice(at + 1, close), parameters: [] };
+    at = close + 1;
+    while (true) {
+      skipSpace();
+      if (value[at] !== ";") break;
+      at += 1;
+      skipSpace();
+      const name = token();
+      if (name === "") return null;
+      skipSpace();
+      if (value[at] !== "=") {
+        entry.parameters.push({ name, value: null, quoted: false });
+        continue;
+      }
+      at += 1;
+      skipSpace();
+      if (value[at] === '"') {
+        let text = "";
+        at += 1;
+        while (at < value.length && value[at] !== '"') {
+          if (value[at] === "\\") at += 1;
+          text += value[at] ?? "";
+          at += 1;
+        }
+        if (value[at] !== '"') return null;
+        at += 1;
+        entry.parameters.push({ name, value: text, quoted: true });
+      } else {
+        entry.parameters.push({ name, value: token(), quoted: false });
+      }
+    }
+    entries.push(entry);
+    if (at < value.length && value[at] !== ",") return null;
+  }
+}
+
+/** Whether a `link` parameter is a relation a client follows by name, and so kept. */
+function isSafeRelation(parameter: LinkParameter): boolean {
+  return (
+    parameter.name.toLowerCase() === "rel" &&
+    parameter.value !== null &&
+    parameter.value.trim() !== "" &&
+    parameter.value
+      .trim()
+      .split(/\s+/)
+      .every((relation) => SAFE_LINK_RELATIONS.has(relation.toLowerCase()))
+  );
+}
+
+/**
+ * The account's values in a `link` header: the targets and every parameter but a safe `rel`, which
+ * the scrub draws again and the survival check looks for. The whole header where it does not parse.
+ */
+function linkValuesOf(value: string): string[] {
+  const entries = parseLinkHeader(value);
+  if (entries === null) return [value];
+  return entries.flatMap((entry) => [
+    entry.target,
+    ...entry.parameters.flatMap((parameter) =>
+      isSafeRelation(parameter) ? [] : [...linkNameValues(parameter), parameter.value ?? ""],
+    ),
+  ]);
+}
+
+/** A parameter's name, where it is not one RFC 8288 defines and so may be the account's. */
+function linkNameValues(parameter: LinkParameter): string[] {
+  return LINK_PARAMETER_NAMES.has(parameter.name.toLowerCase()) ? [] : [parameter.name];
+}
+
+function quoted(text: string): string {
+  return `"${text.replace(/["\\]/g, "\\$&")}"`;
+}
+
+/**
+ * A `link` header with each target scrubbed as a URL, a safe `rel` kept, and every other parameter's
+ * value drawn again (Greptile on #192: a `title` kept a name), its name too where RFC 8288 does not
+ * define it. One that does not parse is scrubbed as one string.
+ */
+function scrubLinkHeader(value: string, scrub: Scrubber): string {
+  const entries = parseLinkHeader(value);
+  if (entries === null) return scrub.string(value);
+  return entries
+    .map((entry) => {
+      const parameters = entry.parameters.map((parameter) => {
+        if (isSafeRelation(parameter)) return `; rel=${quoted(parameter.value ?? "")}`;
+        const name = LINK_PARAMETER_NAMES.has(parameter.name.toLowerCase())
+          ? parameter.name
+          : scrub.string(parameter.name);
+        if (parameter.value === null) return `; ${name}`;
+        const drawn = scrub.string(parameter.value);
+        return `; ${name}=${parameter.quoted ? quoted(drawn) : drawn}`;
+      });
+      return `<${scrub.string(entry.target)}>${parameters.join("")}`;
+    })
+    .join(", ");
+}
+
 function scrubHeader(name: string, value: string, scrub: Scrubber): string {
   if (name === "content-type") return value;
-  if (name === "link") {
-    return value.replace(/<([^>]*)>/g, (_, url: string) => `<${scrub.string(url)}>`);
-  }
+  if (name === "link") return scrubLinkHeader(value, scrub);
   return scrub.string(value);
 }
 
@@ -327,12 +739,24 @@ function scrubRequestBody(
   return body;
 }
 
+/** `scrub`, with a `ScrubFailure` it throws told where in the recording it happened. */
+function within<T>(where: string, scrub: () => T): T {
+  try {
+    return scrub();
+  } catch (error) {
+    if (error instanceof ScrubFailure && error.where === undefined) {
+      throw new ScrubFailure(error.reason, where);
+    }
+    throw error;
+  }
+}
+
 /**
  * The recording with every vendor value scrubbed: the input, each read's answer (headers but the
  * content type, and the body), each request's values that came from an answer or the input, and the
  * result, every leaf of it, under one mapping. The build command then takes the requests and the
  * result from a second dry run over these answers (`record.ts`), so a value the module computed
- * rather than copied is the scrubbed data's too.
+ * rather than copied is the scrubbed data's too. Throws a `ScrubFailure` where it cannot.
  */
 export function scrubRecording(recording: StockRecording, rule: ScrubRule): StockRecording {
   const source = { strings: new Set<string>(), numbers: new Set<number>() };
@@ -340,35 +764,55 @@ export function scrubRecording(recording: StockRecording, rule: ScrubRule): Stoc
   for (const exchange of recording.exchanges) {
     if (exchange.kind === "read") {
       bodyLeaves(exchange.response.body, source);
-      for (const value of Object.values(exchange.response.headers)) source.strings.add(value);
+      for (const [name, value] of Object.entries(exchange.response.headers)) {
+        source.strings.add(value);
+        if (name === "link") for (const piece of linkValuesOf(value)) source.strings.add(piece);
+      }
     }
   }
   const avoid = { strings: new Set(source.strings), numbers: new Set(source.numbers) };
   collectLeaves(recording.result, avoid);
-  const scrub = createScrubber(rule, avoid);
-
-  // The answers first, then the input, so the mapping is the same whichever a value appeared in.
-  const exchanges = recording.exchanges.map((exchange) =>
-    exchange.kind === "read"
-      ? {
-          ...exchange,
-          url: scrubRequestUrl(exchange.url, source, scrub),
-          response: scrubResponse(exchange.response, scrub, rule.seed),
-        }
-      : (() => {
-          const body = scrubRequestBody(exchange.body, source, scrub);
-          return {
-            ...exchange,
-            url: scrubRequestUrl(exchange.url, source, scrub),
-            ...(body ? { body } : {}),
-          };
-        })(),
+  const scrub = createScrubber(
+    { ...rule, keep: [...(rule.keep ?? []), ...stringLeaves(rule.inputSchema, new Set())] },
+    avoid,
+    schemaNumbersOf(rule.inputSchema, new Set()),
   );
+
+  // The input first, so its placeholders are drawn within its schema and an answer naming the same
+  // value takes the same one.
+  const input = within(
+    "the input",
+    () =>
+      scrubInput(recording.input, rule.inputSchema, rule.inputSchema, scrub, rule.seed) as Record<
+        string,
+        unknown
+      >,
+  );
+  const exchanges = recording.exchanges.map((exchange, index) => {
+    const request = `exchange ${index + 1}'s request`;
+    if (exchange.kind === "read") {
+      return {
+        ...exchange,
+        url: within(request, () => scrubRequestUrl(exchange.url, source, scrub)),
+        response: within(`exchange ${index + 1}'s answer`, () =>
+          scrubResponse(exchange.response, scrub, rule.seed),
+        ),
+      };
+    }
+    const body = within(request, () => scrubRequestBody(exchange.body, source, scrub));
+    return {
+      ...exchange,
+      url: within(request, () => scrubRequestUrl(exchange.url, source, scrub)),
+      ...(body ? { body } : {}),
+    };
+  });
   return {
     ...recording,
-    input: scrub.value(recording.input) as Record<string, unknown>,
+    input,
     exchanges,
-    ...("result" in recording ? { result: scrub.value(recording.result) } : {}),
+    ...("result" in recording
+      ? { result: within("the result", () => scrub.value(recording.result)) }
+      : {}),
   };
 }
 
@@ -381,27 +825,18 @@ function stringLeaves(node: unknown, into: Set<string>): Set<string> {
 }
 
 /**
- * What the scrub keeps as public code: every string literal in the module's files (a template
- * literal's text between its `${…}`) and every string in its input schema, so an enum value or an
- * example a test input names is not drawn again.
+ * What the scrub keeps as public code: every string the module's files spell, as the program reads
+ * it (`@graft/check`'s `stringLiteralsOf`, a parse by the check's own TypeScript: string literals,
+ * template text between and inside its `${…}`, escapes decoded; Greptile on #192), and every string
+ * in its input schema, so an enum value or an example a test input names is not drawn again.
  */
 export function keptLiteralsOf(
-  files: readonly { content: string }[],
+  files: readonly { path: string; content: string }[],
   inputSchema: unknown,
 ): string[] {
   const kept = stringLeaves(inputSchema, new Set<string>());
-  const literal = /"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`/g;
-  for (const file of files) {
-    for (const match of file.content.matchAll(literal)) {
-      const [, double, single, template] = match;
-      const pieces =
-        template !== undefined ? template.split(/\$\{[^}]*\}/) : [double ?? single ?? ""];
-      for (const piece of pieces) {
-        const text = piece.replace(/\\(.)/g, "$1");
-        if (text !== "") kept.add(text);
-      }
-    }
-  }
+  for (const literal of stringLiteralsOf(files)) kept.add(literal);
+  kept.delete("");
   return [...kept];
 }
 
@@ -428,7 +863,8 @@ function decoded(text: string): string {
 /**
  * A URL that is its scheme and host alone, which the scrub keeps as it keeps every URL's: written
  * with or without the closing slash, since its placeholder always carries one and would otherwise
- * read as the raw value surviving inside it (an app's `external_url` in a GitHub comment; GRA-253).
+ * read as the raw value surviving inside it (an app's `external_url` in a GitHub comment; GRA-253,
+ * Greptile on #192).
  */
 function isBareOrigin(value: string): boolean {
   const origin = urlPlaceholder(value);
@@ -438,10 +874,17 @@ function isBareOrigin(value: string): boolean {
 /** The shortest value the survival check looks for: shorter ones collide with ordinary words. */
 const SURVIVAL_MIN_LENGTH = 6;
 
+/** A value's text between its redaction markers, each piece that holds a word. */
+function unmarkedPieces(value: string): string[] {
+  return value.split(MARKER).filter(hasWord);
+}
+
 /**
  * Where a value from the raw recording's input or answers is still to be found in the scrubbed one:
  * `input`, `exchange <n>` or `result`, never the value itself, since that is what must not be
- * printed. A value the module's source holds (`source`), a kept one, or a key is not looked for.
+ * printed. A value the module's source holds (`source`), a kept one, or a key is not looked for; a
+ * value with a redaction marker is looked for as its text around the marker, and a `link` header as
+ * its targets and parameters.
  * The build command's last check before it writes; an answer here means nothing is written.
  */
 export function survivingValuesOf(
@@ -451,20 +894,24 @@ export function survivingValuesOf(
 ): string[] {
   const keep = new Set(options.keep ?? []);
   const keys = keysOf(raw, new Set<string>());
-  const values = stringLeaves(raw.input, new Set<string>());
+  const values = new Set<string>();
+  const add = (value: string) => {
+    for (const piece of unmarkedPieces(value)) values.add(piece);
+  };
+  for (const value of stringLeaves(raw.input, new Set<string>())) add(value);
   for (const exchange of raw.exchanges) {
     if (exchange.kind !== "read") continue;
     const body = exchange.response.body;
-    if (body && "json" in body) stringLeaves(body.json, values);
-    if (body && "text" in body) values.add(body.text);
+    if (body && "json" in body) for (const value of stringLeaves(body.json, new Set())) add(value);
+    if (body && "text" in body) add(body.text);
     for (const [name, value] of Object.entries(exchange.response.headers)) {
-      if (name !== "content-type") values.add(value);
+      if (name === "link") for (const piece of linkValuesOf(value)) add(piece);
+      else if (name !== "content-type") add(value);
     }
   }
   const sought = [...values].filter(
     (value) =>
       value.length >= SURVIVAL_MIN_LENGTH &&
-      !value.startsWith("[redacted") &&
       !keep.has(value) &&
       !keys.has(value) &&
       !options.source.includes(value) &&

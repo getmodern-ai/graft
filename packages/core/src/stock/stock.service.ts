@@ -13,10 +13,10 @@ import type { StockDeps } from "./stock.deps";
  *
  * **The load is the boot's** (`apps/server/src/boot.ts`'s `loadStockOnStart`), in one transaction
  * under one advisory lock, so two replicas starting together append a version once. Per tool: the
- * row made when `(vendor, name)` is new; then, when the tool's source hash differs from its
- * latest version's (or it has none), the check is run and a version appended with the next
- * number, the check's annotations on it (ADR 0008: derived, never declared). An unchanged
- * workspace writes nothing. A tool the check refuses is reported and skipped, and the rest load.
+ * row made when `(vendor, name)` is new; then, when no version of the tool has the source's hash,
+ * the check is run and a version appended with the next number, the check's annotations on it
+ * (ADR 0008: derived, never declared). An unchanged workspace writes nothing, and neither does an
+ * older release's, since its hashes are all already there. A tool the check refuses is reported and skipped, and the rest load.
  *
  * **The integration list is the starter list** (GRA-224): a stock tool's `connect` is its vendor's
  * starter proposal (`starterProposal`), the arguments `request_connection` takes, so `find_tool`
@@ -100,8 +100,12 @@ export async function loadStockCatalogue(
         (await deps.findStockTool(tx, key));
       if (!tool)
         throw new Error(`stock tool ${source.vendor}/${source.name} was neither made nor found`);
+      // A hash the tool already has, at any number, is never appended again: a replica of an older
+      // release booting during a rolling deploy carries a hash a newer release superseded, and
+      // appending it would make the older stock current. A release's stock is therefore newer than
+      // every version before it only by being new bytes; a revert ships as a change.
+      if (await deps.hasStockToolVersionWithHash(tx, tool.id, source.sourceHash)) continue;
       const latest = await deps.findLatestStockToolVersion(tx, tool.id);
-      if (latest?.sourceHash === source.sourceHash) continue;
       const verdict = await check(source);
       if (!verdict.ok) {
         report.refused.push({ ...key, problems: verdict.problems });
@@ -161,6 +165,20 @@ export async function describeStockTool(
   deps: StockDeps,
 ): Promise<StockToolView | null> {
   const row = await deps.findCurrentStockTool(ctx.db, key);
+  return row ? viewOf(row) : null;
+}
+
+/**
+ * One stock version by its id, as a person's copy recorded it, or null when the catalogue has no
+ * such version: the hosts a copy's run is judged by are its own version's, not the catalogue's
+ * current one's (GRA-241).
+ */
+export async function describeStockVersion(
+  ctx: ServiceContext,
+  stockVersionId: string,
+  deps: StockDeps,
+): Promise<StockToolView | null> {
+  const row = await deps.findStockToolVersionById(ctx.db, stockVersionId);
   return row ? viewOf(row) : null;
 }
 
