@@ -21,6 +21,11 @@ import { stockLineageOf, type VersionOrigin } from "../stock/stock-advance.decis
  *   version, so a republish is no way past the person's no. A new *stock* version on an untouched
  *   copy carries the approval onto itself unless `annotationsWiden` says otherwise (ADR 0008 as
  *   amended 2026-10-09; `@graft/publish`'s `advanceStockCopy`), so its allow stays current.
+ * - A tool with no current answer of its own (none, or an `allow` for another version) **passes
+ *   under a standing approval for its integration** (`vendorApproval`, ADR 0008 as amended
+ *   2026-10-09: every tool of the integration, stock, remixed or authored, existing or future),
+ *   unless it is destructive and the person left destructive tools out. The tool's own row is read
+ *   first, so a `deny` on the tool and the ask-every-call setting both win over the integration's yes.
  */
 
 export type ToolAnnotations = { readOnly: boolean; destructive: boolean };
@@ -34,16 +39,21 @@ export type ApprovalState = {
 
 export type ApprovalVerdict = "pass" | "ask" | "deny";
 
+/** The agent's standing approval for every tool of the tool's integration, if it holds one. */
+export type VendorApprovalState = { includesDestructive: boolean };
+
 export function approvalDecision(input: {
   annotations: ToolAnnotations;
   approval: ApprovalState | null;
+  vendorApproval?: VendorApprovalState | null;
 }): ApprovalVerdict {
-  const { annotations, approval } = input;
+  const { annotations, approval, vendorApproval } = input;
   if (annotations.readOnly) return "pass";
-  if (!approval) return "ask";
-  if (approval.decision === "deny") return "deny";
-  if (approval.askEveryCall) return "ask";
-  if (!approval.forThisVersion) return "ask";
+  if (approval?.decision === "deny") return "deny";
+  if (approval?.askEveryCall) return "ask";
+  if (approval?.forThisVersion) return "pass";
+  if (!vendorApproval) return "ask";
+  if (annotations.destructive && !vendorApproval.includesDestructive) return "ask";
   return "pass";
 }
 

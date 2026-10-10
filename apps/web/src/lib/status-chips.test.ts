@@ -15,6 +15,7 @@ import {
   type StatusChip,
   TOOL_ANNOTATION_CHIP,
   toolAnnotationChip,
+  VENDOR_APPROVAL_DESTRUCTIVE_CHIP,
   WORKING_SET_CHANGE_CHIP,
 } from "./status-chips";
 
@@ -27,6 +28,7 @@ const EVERY_CHIP: StatusChip[] = [
   DRY_RUN_CHIP,
   NO_PASSING_VERSION_CHIP,
   ...Object.values(APPROVAL_DECISION_CHIP),
+  ...Object.values(VENDOR_APPROVAL_DESTRUCTIVE_CHIP),
   ...Object.values(WORKING_SET_CHANGE_CHIP),
   ...Object.values(MODEL_KEY_STATUS_CHIP),
   ...Object.values(TOOL_ANNOTATION_CHIP),
@@ -49,6 +51,15 @@ describe("status chips", () => {
     expect(CONNECTION_STATUS_CHIP.connected.variant).toBe("success");
     expect(CALL_OUTCOME_CHIP.ok.variant).toBe("success");
     expect(APPROVAL_DECISION_CHIP.allow.variant).toBe("success");
+    // GRA-237: destructive tools pass under the integration's yes only when the person included them.
+    expect(VENDOR_APPROVAL_DESTRUCTIVE_CHIP.included).toEqual({
+      variant: "success",
+      label: "Included",
+    });
+    expect(VENDOR_APPROVAL_DESTRUCTIVE_CHIP.excluded).toEqual({
+      variant: "secondary",
+      label: "Ask first",
+    });
     expect(MODEL_KEY_STATUS_CHIP.set.variant).toBe("success");
   });
 

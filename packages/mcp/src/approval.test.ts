@@ -1,7 +1,14 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { answerPendingAction, revokeApproval, setApproval, setAskEveryCall } from "@graft/core";
+import {
+  allowVendor,
+  answerPendingAction,
+  revokeApproval,
+  setApproval,
+  setAskEveryCall,
+  withdrawVendorApproval,
+} from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -18,7 +25,7 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AUTOMATIC_ANSWER_MS, describeAsk, NO_ELICITATION, requireBuildApproval } from "./approval";
-import { recordApprovalAnswer } from "./ask-answer";
+import { confirmConnectionAsk, recordApprovalAnswer } from "./ask-answer";
 import type { McpDeps } from "./deps";
 import { HANDOFF_TOKEN_PARAM, verifyHandoff } from "./handoff";
 import { createToolListChangedNotifier } from "./notifier";
@@ -48,6 +55,9 @@ const AGENT_D = "agent_d";
 const AGENT_E = "agent_e";
 const AGENT_F = "agent_f";
 const AGENT_G = "agent_g";
+const AGENT_I = "agent_i";
+const AGENT_J = "agent_j";
+const AGENT_K = "agent_k";
 const TOKEN_A = "grft_approval_token_a_000000000000000000000000";
 const TOKEN_B = "grft_approval_token_b_000000000000000000000000";
 const TOKEN_C = "grft_approval_token_c_000000000000000000000000";
@@ -55,6 +65,9 @@ const TOKEN_D = "grft_approval_token_d_000000000000000000000000";
 const TOKEN_E = "grft_approval_token_e_000000000000000000000000";
 const TOKEN_F = "grft_approval_token_f_000000000000000000000000";
 const TOKEN_G = "grft_approval_token_g_000000000000000000000000";
+const TOKEN_I = "grft_approval_token_i_000000000000000000000000";
+const TOKEN_J = "grft_approval_token_j_000000000000000000000000";
+const TOKEN_K = "grft_approval_token_k_000000000000000000000000";
 const CONN_DEMO = "conn_demo";
 const CONSOLE_URL = "http://console.graft.test";
 const SECRET = "graft-approval-test-handoff-secret-long-enough-32";
@@ -132,6 +145,9 @@ beforeAll(async () => {
     [AGENT_E, TOKEN_E, "headless Claude Code"],
     [AGENT_F, TOKEN_F, "oneshot Hermes"],
     [AGENT_G, TOKEN_G, "Hermes at a terminal"],
+    [AGENT_I, TOKEN_I, "integration Hermes"],
+    [AGENT_J, TOKEN_J, "connecting Hermes"],
+    [AGENT_K, TOKEN_K, "careful Hermes"],
   ] as const) {
     store.addAgent({
       scopeMode: "listed",
@@ -155,7 +171,18 @@ beforeAll(async () => {
       defaultConnectionId: CONN_DEMO,
       path: `tools/demo/${tool.name}/v1`,
     });
-    for (const agent of [AGENT_A, AGENT_B, AGENT_C, AGENT_D, AGENT_E, AGENT_F, AGENT_G]) {
+    for (const agent of [
+      AGENT_A,
+      AGENT_B,
+      AGENT_C,
+      AGENT_D,
+      AGENT_E,
+      AGENT_F,
+      AGENT_G,
+      AGENT_I,
+      AGENT_J,
+      AGENT_K,
+    ]) {
       store.promote(agent, tool.id);
     }
   }
@@ -252,8 +279,36 @@ const until = async (predicate: () => boolean, ms = 5_000) => {
 };
 
 /** What the console does when the person answers — GRA-6's service, as the answer endpoint calls it. */
-const answer = (id: string, said: { allow: boolean; askEveryCall?: boolean }) =>
-  answerPendingAction({ db: deps.db }, { personId: PERSON }, id, said, deps.pendingAction);
+const answer = (
+  id: string,
+  said: {
+    allow: boolean;
+    askEveryCall?: boolean;
+    allowVendor?: boolean;
+    includesDestructive?: boolean;
+  },
+) => answerPendingAction({ db: deps.db }, { personId: PERSON }, id, said, deps.pendingAction);
+
+/**
+ * The person's answer through a door that records it (the console's route, the ask card's
+ * `answer_ask`): `recordApprovalAnswer`, which writes the integration-wide yes when the person gives
+ * it (GRA-237). `answer` above records the action alone, as no door does.
+ */
+const answerAtDoor = (
+  id: string,
+  said: {
+    allow: boolean;
+    askEveryCall?: boolean;
+    allowVendor?: boolean;
+    includesDestructive?: boolean;
+  },
+) =>
+  recordApprovalAnswer({ db: deps.db }, { personId: PERSON }, id, said, {
+    approval: deps.approval,
+    pendingAction: deps.pendingAction,
+    connection: deps.connection,
+    agent: deps.agent,
+  });
 
 /** The agent page's switch — the same service the `PUT /approvals/:toolId/ask-every-call` route calls. */
 const askEveryCall = (agentId: string, toolId: string, on: boolean) =>
@@ -580,6 +635,208 @@ describe("through a handoff — the channel every harness has", () => {
       store.pendingActions.clear();
     }
   }, 30_000);
+});
+
+/** ADR 0008 as amended 2026-10-09 (GRA-237): "Allow every Demo tool for this agent". */
+describe("an integration allowed at once, on the ask", () => {
+  it("lets the agent's other writes of the vendor run without an ask, keeps a destructive one asking, and asks again once withdrawn", async () => {
+    const i = await connect(TOKEN_I);
+    try {
+      const first = awaiting(await i.call(CREATE_ITEM, { limit: 1 }));
+      await answerAtDoor(first.action.id, {
+        allow: true,
+        allowVendor: true,
+        includesDestructive: false,
+      });
+
+      // The asked tool runs, and the integration's standing approval is recorded for this agent.
+      expect(body(await i.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)).toMatchObject({
+        agentId: AGENT_I,
+        vendor: "demo",
+        includesDestructive: false,
+      });
+
+      // A second write of the same vendor, never asked about, runs with no ask.
+      const actionsBefore = actionsOf(AGENT_I, "tool").length;
+      expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(actionsOf(AGENT_I, "tool")).toHaveLength(actionsBefore);
+      expect(approvalOf(AGENT_I, "tool_update")).toBeUndefined();
+
+      // A destructive one still asks: the person left destructive tools out.
+      const destructive = awaiting(await i.call(DELETE_ITEM, { limit: 1 }));
+      expect(destructive.action.payload).toMatchObject({ toolId: "tool_delete" });
+
+      // Another agent of the same person is not covered.
+      expect(store.vendorApprovals.get(`${AGENT_A} demo`)).toBeUndefined();
+
+      // Withdrawn on the agent's page, the integration's other writes ask again.
+      await withdrawVendorApproval(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_I },
+        "demo",
+        deps.approval,
+      );
+      awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
+      // The tool the person answered on its own keeps its own approval.
+      expect(body(await i.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+    } finally {
+      await i.close();
+    }
+  }, 60_000);
+
+  it("a per-call yes taken after the integration's approval was withdrawn does not bring it back", async () => {
+    const i = await connect(TOKEN_I);
+    try {
+      store.vendorApprovals.clear();
+      const ask = awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
+      await answerAtDoor(ask.action.id, {
+        allow: true,
+        askEveryCall: true,
+        allowVendor: true,
+        includesDestructive: false,
+      });
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)).toBeDefined();
+      // Withdrawn on the agent's page before the agent takes the answer.
+      await withdrawVendorApproval(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_I },
+        "demo",
+        deps.approval,
+      );
+      expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)).toBeUndefined();
+    } finally {
+      await i.close();
+    }
+  }, 60_000);
+
+  it("with destructive tools ticked, a destructive tool of the vendor passes too", async () => {
+    const i = await connect(TOKEN_I);
+    try {
+      const ask = awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
+      await answerAtDoor(ask.action.id, {
+        allow: true,
+        allowVendor: true,
+        includesDestructive: true,
+      });
+      expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      const before = actionsOf(AGENT_I, "tool").filter((row) => row.answeredAt === null).length;
+      expect(body(await i.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)?.includesDestructive).toBe(true);
+      expect(actionsOf(AGENT_I, "tool").filter((row) => row.answeredAt === null)).toHaveLength(
+        before,
+      );
+    } finally {
+      await i.close();
+      store.vendorApprovals.clear();
+    }
+  }, 60_000);
+});
+
+/**
+ * GRA-239 (ADR 0008 as amended 2026-10-09): the connection's confirmation carries the line "Use
+ * <integration>'s tools without asking each time", pre-ticked. Confirmed with it on, the
+ * integration's writes run with no ask and a destructive one still asks; confirmed with it off,
+ * nothing is recorded and the writes ask as before.
+ */
+describe("an integration allowed when connecting", () => {
+  /** The agent proposes a second Demo account, keyless, and the person confirms it on the console's card. */
+  const connectWithLine = async (
+    client: Awaited<ReturnType<typeof connect>>,
+    label: string,
+    allowVendor: boolean,
+  ) => {
+    const asked = body(
+      await client.call("request_connection", {
+        vendor: "demo",
+        displayName: "Demo Status",
+        primaryHost: `https://${label}.status.demo.example`,
+        hosts: [],
+        scheme: "none",
+        schemeConfig: {},
+      }),
+    );
+    expect(asked).toMatchObject({ error: "awaiting_connection" });
+    return confirmConnectionAsk(
+      { db: deps.db },
+      { personId: PERSON },
+      asked.pendingActionId as string,
+      {
+        vendor: "demo",
+        displayName: "Demo Status",
+        scheme: "none",
+        schemeConfig: {},
+        primaryHost: `https://${label}.status.demo.example`,
+        hosts: [`${label}.status.demo.example`],
+        credential: {},
+        approveBuild: false,
+        allowVendor,
+      },
+      {
+        connection: deps.connection,
+        agent: deps.agent,
+        approval: deps.approval,
+        pendingAction: deps.pendingAction,
+      },
+    );
+  };
+
+  it("left on, the integration's writes run without an ask and a destructive one still asks", async () => {
+    const j = await connect(TOKEN_J);
+    try {
+      const confirmed = await connectWithLine(j, "j", true);
+      expect(confirmed.vendorApproval).toMatchObject({
+        agentId: AGENT_J,
+        vendor: "demo",
+        includesDestructive: false,
+      });
+
+      const before = actionsOf(AGENT_J, "tool").length;
+      expect(body(await j.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(body(await j.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(actionsOf(AGENT_J, "tool")).toHaveLength(before);
+
+      const destructive = awaiting(await j.call(DELETE_ITEM, { limit: 1 }));
+      expect(destructive.action.payload).toMatchObject({ toolId: "tool_delete" });
+      // Another agent of the person is not covered.
+      expect(store.vendorApprovals.get(`${AGENT_K} demo`)).toBeUndefined();
+    } finally {
+      await j.close();
+      store.vendorApprovals.delete(`${AGENT_J} demo`);
+    }
+  }, 60_000);
+
+  it("never narrows a standing approval that already includes destructive tools", async () => {
+    const j = await connect(TOKEN_J);
+    try {
+      await allowVendor(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_J },
+        "demo",
+        { includesDestructive: true },
+        deps.approval,
+      );
+      const confirmed = await connectWithLine(j, "j-again", true);
+      expect(confirmed.vendorApproval?.includesDestructive).toBe(true);
+      expect(store.vendorApprovals.get(`${AGENT_J} demo`)?.includesDestructive).toBe(true);
+    } finally {
+      await j.close();
+      store.vendorApprovals.delete(`${AGENT_J} demo`);
+    }
+  }, 60_000);
+
+  it("unticked, nothing is recorded and the writes ask as before", async () => {
+    const k = await connect(TOKEN_K);
+    try {
+      const confirmed = await connectWithLine(k, "k", false);
+      expect(confirmed.vendorApproval).toBeUndefined();
+      expect(store.vendorApprovals.get(`${AGENT_K} demo`)).toBeUndefined();
+      awaiting(await k.call(CREATE_ITEM, { limit: 1 }));
+    } finally {
+      await k.close();
+    }
+  }, 60_000);
 });
 
 describe("the build approval", () => {
