@@ -35,6 +35,11 @@ export default async (input: Input, ctx: Context) => {
   }
 
   const added = (await addResponse.json()) as BatchUpdateResponse;
+  const properties = added.replies?.[0]?.addSheet?.properties;
+  const created = {
+    sheetId: properties?.sheetId ?? null,
+    title: properties?.title ?? null,
+  };
 
   if (input.header !== undefined) {
     const quotedTitle = `'${input.title.replaceAll("'", "''")}'!A1`;
@@ -47,16 +52,15 @@ export default async (input: Input, ctx: Context) => {
         body: JSON.stringify({ values: [input.header] }),
       },
     );
+    // The tab exists by now, so a failed header is answered beside it rather than thrown: a retry
+    // of the whole call would fail on the title it has just taken.
     if (!headerResponse.ok) {
-      throw new Error(
-        `PUT spreadsheet values ${headerResponse.status}: ${await headerResponse.text()}`,
-      );
+      return {
+        ...created,
+        headerError: `The tab was created, but writing its header failed (PUT spreadsheet values ${headerResponse.status}: ${await headerResponse.text()}). Write the header with google-sheets__update-range.`,
+      };
     }
   }
 
-  const properties = added.replies?.[0]?.addSheet?.properties;
-  return {
-    sheetId: properties?.sheetId ?? null,
-    title: properties?.title ?? null,
-  };
+  return created;
 };

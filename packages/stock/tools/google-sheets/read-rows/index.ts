@@ -28,6 +28,24 @@ function columnLetter(index: number): string {
   return letters;
 }
 
+/**
+ * One key per column across the widest row: a blank header is `column_<letter>`, and a repeated one
+ * takes `_2`, `_3`, so no returned cell is dropped or overwritten. append-rows reads keys the same way.
+ */
+function columnKeys(headerCells: unknown[], width: number): string[] {
+  const keys: string[] = [];
+  const used = new Set<string>();
+  for (let index = 0; index < width; index += 1) {
+    const text = String(headerCells[index] ?? "").trim();
+    const base = text || `column_${columnLetter(index)}`;
+    let key = base;
+    for (let suffix = 2; used.has(key); suffix += 1) key = `${base}_${suffix}`;
+    used.add(key);
+    keys.push(key);
+  }
+  return keys;
+}
+
 export default async (input: Input, ctx: Context) => {
   const id = spreadsheetId(input.spreadsheet);
   const encodedId = encodeURIComponent(id);
@@ -64,14 +82,12 @@ export default async (input: Input, ctx: Context) => {
   const valueRange = (await valuesResponse.json()) as ValueRange;
   const values = Array.isArray(valueRange.values) ? valueRange.values : [];
   const rawHeader = values[0] ?? [];
-  const header = rawHeader.map((value, index) => {
-    const text = value == null ? "" : String(value);
-    return text === "" ? `column_${columnLetter(index)}` : text;
-  });
+  const width = values.reduce((widest, row) => Math.max(widest, row?.length ?? 0), 0);
+  const header = columnKeys(rawHeader, width);
   const allDataRows = values.slice(1);
   const limit = input.limit ?? 100;
   const rows = allDataRows.slice(0, limit).map((sourceRow) => {
-    const row: Record<string, string> = {};
+    const row = Object.create(null) as Record<string, string>;
     for (let index = 0; index < header.length; index += 1) {
       const value = sourceRow[index];
       row[header[index]] = value == null ? "" : String(value);

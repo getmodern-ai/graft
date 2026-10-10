@@ -204,10 +204,13 @@ export const STARTER_VENDORS = [
     hosts: ["sheets.googleapis.com", "www.googleapis.com"],
     docsUrl: "https://developers.google.com/workspace/sheets/api/reference/rest",
     scheme: "oauth_authorization_code",
+    // Read and write on spreadsheets, because this proposal is also the stock tools' `connect` and
+    // four of them write (append-rows, update-range, create-spreadsheet, add-tab); the person still
+    // approves each write. Drive's metadata scope is find-spreadsheets' search.
     schemeConfig: {
       ...GOOGLE_OAUTH,
       scopes:
-        "https://www.googleapis.com/auth/spreadsheets.readonly https://www.googleapis.com/auth/drive.metadata.readonly",
+        "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.metadata.readonly",
     },
     // A spreadsheet's rows need its id and a range, and the first Sheets task failed on both
     // (GRA-217): the list needs nothing looked up.

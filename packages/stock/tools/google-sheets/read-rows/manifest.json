@@ -13,7 +13,8 @@
       },
       "tab": {
         "type": "string",
-        "description": "Tab name from google-sheets__list-tabs. When omitted, the first tab is used."
+        "description": "Tab name from google-sheets__list-tabs. When omitted, the first tab is used.",
+        "examples": ["Class Data"]
       },
       "range": {
         "type": "string",

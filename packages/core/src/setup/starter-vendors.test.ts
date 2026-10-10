@@ -100,6 +100,11 @@ describe("the starter integrations", () => {
       hosts: ["sheets.googleapis.com", "www.googleapis.com"],
       runInput: null,
     });
+    // The stock tools connect through this proposal and four of them write (GRA-259), so the
+    // keyring's consent asks Google for read and write on spreadsheets, never the read-only scope.
+    const sheetsScopes = String(starterVendorOf("google-sheets")?.schemeConfig.scopes).split(" ");
+    expect(sheetsScopes).toContain("https://www.googleapis.com/auth/spreadsheets");
+    expect(sheetsScopes).not.toContain("https://www.googleapis.com/auth/spreadsheets.readonly");
     expect(starterVendorOf("google-drive")).toMatchObject({
       vendor: "google-drive",
       primaryHost: "https://www.googleapis.com/drive/v3",

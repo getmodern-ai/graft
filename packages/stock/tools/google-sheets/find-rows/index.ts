@@ -28,6 +28,24 @@ const encodePathPart = (value: string): string =>
     (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
 
+/**
+ * One key per column across the widest row: a blank header is `column_<letter>`, and a repeated one
+ * takes `_2`, `_3`, so no returned cell is dropped or overwritten. append-rows reads keys the same way.
+ */
+function columnKeys(headerCells: unknown[], width: number): string[] {
+  const keys: string[] = [];
+  const used = new Set<string>();
+  for (let index = 0; index < width; index += 1) {
+    const text = String(headerCells[index] ?? "").trim();
+    const base = text || `column_${columnLetter(index)}`;
+    let key = base;
+    for (let suffix = 2; used.has(key); suffix += 1) key = `${base}_${suffix}`;
+    used.add(key);
+    keys.push(key);
+  }
+  return keys;
+}
+
 export default async (input: Input, ctx: Context) => {
   const spreadsheetInput = input.spreadsheet.trim();
   const marker = "/d/";
@@ -73,10 +91,8 @@ export default async (input: Input, ctx: Context) => {
   const valueRange = (await valuesResponse.json()) as ValueRange;
   const values = valueRange.values ?? [];
   const headerCells = values[0] ?? [];
-  const headers = headerCells.map((cell, index) => {
-    const text = String(cell ?? "").trim();
-    return text || `column_${columnLetter(index)}`;
-  });
+  const width = values.reduce((widest, row) => Math.max(widest, row?.length ?? 0), 0);
+  const headers = columnKeys(headerCells, width);
 
   const wantedColumn = normalized(input.column);
   const columnIndex = headerCells.findIndex((cell) => normalized(cell) === wantedColumn);

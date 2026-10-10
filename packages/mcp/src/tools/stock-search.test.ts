@@ -48,8 +48,16 @@ describe("the stock catalogue answers a person's words (GRA-250, GRA-259)", () =
     expect(found.hits[0]?.wire).toBe(wire);
   });
 
-  it("covers every stock tool with a query", () => {
+  // Each vendor this file searches for has every tool covered; HubSpot's queries are pinned in
+  // `tool-index.test.ts` (GRA-254), so a vendor with no case here is that file's to cover.
+  it("covers every stock tool of each vendor it searches for", () => {
     const covered = new Set(CASES.map(([, wire]) => wire));
-    expect(catalogue.map((tool) => tool.wire).filter((wire) => !covered.has(wire))).toEqual([]);
+    const vendors = new Set(CASES.map(([, wire]) => wire.split("__")[0]));
+    expect(
+      catalogue
+        .filter((tool) => vendors.has(tool.vendor))
+        .map((tool) => tool.wire)
+        .filter((wire) => !covered.has(wire)),
+    ).toEqual([]);
   });
 });

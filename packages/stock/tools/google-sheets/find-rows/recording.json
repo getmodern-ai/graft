@@ -1,11 +1,11 @@
 {
   "format": 1,
   "tool": "google-sheets__find-rows",
-  "recordedAt": "2026-10-09T19:21:37.212Z",
+  "recordedAt": "2026-10-10T05:56:41.489Z",
   "input": {
     "spreadsheet": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
-    "column": "Lszgk",
-    "value": "Acazxex"
+    "column": "Major",
+    "value": "English"
   },
   "exchanges": [
     {
@@ -22,7 +22,7 @@
             "sheets": [
               {
                 "properties": {
-                  "title": "Qombn Grxh"
+                  "title": "Class Data"
                 }
               }
             ]
@@ -33,7 +33,7 @@
     {
       "kind": "read",
       "method": "GET",
-      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/values/%27Qombn%20Grxh%27%21A1%3AZ?majorDimension=ROWS",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/values/%27Class%20Data%27%21A1%3AZ?majorDimension=ROWS",
       "response": {
         "status": 200,
         "headers": {
@@ -41,47 +41,47 @@
         },
         "body": {
           "json": {
-            "range": "'Fewim Gzbl'!T8:T332",
-            "majorDimension": "JDCX",
+            "range": "'Sqeao Auuy'!T1:G814",
+            "majorDimension": "QESP",
             "values": [
               [
-                "Jzvpagi Cmgs",
-                "Pizkfb",
-                "Pjsqv Kgoru",
-                "Wapv Mrgbi",
-                "Lszgk",
-                "Egqrtecfphihwav Oqzyjfns"
+                "Idtqitt Kdpb",
+                "Rrkvzj",
+                "Tyody Gcuig",
+                "Ysan Isazz",
+                "Major",
+                "Yovkfkpoegxftak Unthxfja"
               ],
-              ["Tebndigsc", "Kcfdky", "0. Swysbm", "VY", "Acazxex", "Ehifl Xsje"],
-              ["Dneuvc", "Viam", "8. Uilafyje", "TX", "Jzyg", "Dhgdzmcg"],
-              ["Fgtb", "Kcfdky", "8. Uilafyje", "ZE", "Acazxex", "Ipaoqculei"],
-              ["Qztvz", "Kcfdky", "4. Syoepeymr", "TX", "Rta", "Nraczggg"],
-              ["Flpddiiq", "Viam", "0. Swysbm", "BG", "Acazxex", "Ipaoqculei"],
-              ["Yfno", "Viam", "2. Kxdeqi", "QL", "Rta", "Mdthse"],
-              ["Vkasvx", "Kcfdky", "2. Kxdeqi", "AF", "Acazxex", "Tljzd & Aywoc"],
-              ["Qewuhxf", "Kcfdky", "0. Swysbm", "QL", "Jzyg", "Dhgdzmcg"],
-              ["Zzhrz", "Viam", "8. Uilafyje", "XN", "Jzyg", "Nraczggg"],
-              ["Omdlkl", "Viam", "2. Kxdeqi", "LZ", "Acazxex", "Ehifl Xsje"],
-              ["Vxtks", "Kcfdky", "8. Uilafyje", "BG", "Duvnjhp", "Ehifl Xsje"],
-              ["Ckvuj", "Kcfdky", "8. Uilafyje", "XN", "Rta", "Mdthse"],
-              ["Ftmk", "Viam", "2. Kxdeqi", "VY", "Duvnjhp", "Ipaoqculei"],
-              ["Djqkaiva", "Viam", "4. Syoepeymr", "CT", "Jzyg", "Mdthse"],
-              ["Mrsecp", "Viam", "8. Uilafyje", "WQ", "Acazxex", "Ehifl Xsje"],
-              ["Xmobpioor", "Kcfdky", "8. Uilafyje", "ES", "Jzyg", "Mdthse"],
-              ["Zhhkc", "Kcfdky", "4. Syoepeymr", "AG", "Acazxex", "Ipaoqculei"],
-              ["Cjpwg", "Viam", "4. Syoepeymr", "AF", "Duvnjhp", "Ehifl Xsje"],
-              ["Lema", "Kcfdky", "2. Kxdeqi", "CT", "Rta", "Dhgdzmcg"],
-              ["Eeha", "Kcfdky", "4. Syoepeymr", "WQ", "Duvnjhp", "Tljzd & Aywoc"],
-              ["Xrruvhb", "Kcfdky", "8. Uilafyje", "VY", "Duvnjhp", "Ipaoqculei"],
-              ["Icvg", "Viam", "0. Swysbm", "ES", "Rta", "Nraczggg"],
-              ["Qcpmvk", "Kcfdky", "0. Swysbm", "ZE", "Duvnjhp", "Tljzd & Aywoc"],
-              ["Ddbeqq", "Kcfdky", "2. Kxdeqi", "NL", "Jzyg", "Nraczggg"],
-              ["Vzhtzkh", "Viam", "8. Uilafyje", "ES", "Rta", "Dhgdzmcg"],
-              ["Yaovkd", "Viam", "8. Uilafyje", "VY", "Acazxex", "Tljzd & Aywoc"],
-              ["Rqrq", "Viam", "8. Uilafyje", "AG", "Duvnjhp", "Tljzd & Aywoc"],
-              ["Ygqlp", "Kcfdky", "8. Uilafyje", "ES", "Jzyg", "Nraczggg"],
-              ["Vyaepq", "Viam", "4. Syoepeymr", "NL", "Rta", "Dhgdzmcg"],
-              ["Phct", "Viam", "0. Swysbm", "LZ", "Jzyg", "Mdthse"]
+              ["Sdnfrhihz", "Vmyurx", "6. Sbixvi", "PE", "English", "Qkqfu Ahsi"],
+              ["Wgpbpv", "Bzcs", "6. Fkvjhfbf", "QP", "Igfa", "Ikjpxbqm"],
+              ["Vsdr", "Vmyurx", "6. Fkvjhfbf", "PX", "English", "Toftlmbewp"],
+              ["Xdequ", "Vmyurx", "7. Covbpsfch", "QP", "Frc", "Ugwrqggg"],
+              ["Eoedaucf", "Bzcs", "6. Sbixvi", "KE", "English", "Toftlmbewp"],
+              ["Kyah", "Bzcs", "1. Bccdcw", "VJ", "Frc", "Vdxcyp"],
+              ["Zgetgz", "Vmyurx", "1. Bccdcw", "LI", "English", "Xhzqu & Ywiqn"],
+              ["Gfavynv", "Vmyurx", "6. Sbixvi", "VJ", "Igfa", "Ikjpxbqm"],
+              ["Sswnm", "Bzcs", "6. Fkvjhfbf", "BM", "Igfa", "Ugwrqggg"],
+              ["Cdtqcb", "Bzcs", "1. Bccdcw", "GQ", "English", "Qkqfu Ahsi"],
+              ["Ipbzm", "Vmyurx", "6. Fkvjhfbf", "KE", "Gfvrfci", "Qkqfu Ahsi"],
+              ["Ikvzr", "Vmyurx", "6. Fkvjhfbf", "BM", "Frc", "Vdxcyp"],
+              ["Nojp", "Bzcs", "1. Bccdcw", "PE", "Gfvrfci", "Toftlmbewp"],
+              ["Dcuhffsm", "Bzcs", "7. Covbpsfch", "TT", "Igfa", "Vdxcyp"],
+              ["Pgvcuw", "Bzcs", "6. Fkvjhfbf", "EK", "English", "Qkqfu Ahsi"],
+              ["Lgijfdygr", "Vmyurx", "6. Fkvjhfbf", "OI", "Igfa", "Vdxcyp"],
+              ["Vfxae", "Vmyurx", "7. Covbpsfch", "MK", "English", "Toftlmbewp"],
+              ["Ezbch", "Bzcs", "7. Covbpsfch", "LI", "Gfvrfci", "Qkqfu Ahsi"],
+              ["Azdh", "Vmyurx", "1. Bccdcw", "TT", "Frc", "Ikjpxbqm"],
+              ["Waho", "Vmyurx", "7. Covbpsfch", "EK", "Gfvrfci", "Xhzqu & Ywiqn"],
+              ["Plwdojy", "Vmyurx", "6. Fkvjhfbf", "PE", "Gfvrfci", "Toftlmbewp"],
+              ["Nich", "Bzcs", "6. Sbixvi", "OI", "Frc", "Ugwrqggg"],
+              ["Lanhkj", "Vmyurx", "6. Sbixvi", "PX", "Gfvrfci", "Xhzqu & Ywiqn"],
+              ["Resnax", "Vmyurx", "1. Bccdcw", "WX", "Igfa", "Ugwrqggg"],
+              ["Vekgzve", "Bzcs", "6. Fkvjhfbf", "OI", "Frc", "Ikjpxbqm"],
+              ["Ecjadl", "Bzcs", "6. Fkvjhfbf", "PE", "English", "Xhzqu & Ywiqn"],
+              ["Gvgs", "Bzcs", "6. Fkvjhfbf", "MK", "Gfvrfci", "Xhzqu & Ywiqn"],
+              ["Maqlf", "Vmyurx", "6. Fkvjhfbf", "OI", "Igfa", "Ugwrqggg"],
+              ["Sjwoeo", "Bzcs", "7. Covbpsfch", "WX", "Frc", "Ikjpxbqm"],
+              ["Ncmg", "Bzcs", "6. Sbixvi", "GQ", "Igfa", "Vdxcyp"]
             ]
           }
         }
@@ -89,94 +89,94 @@
     }
   ],
   "result": {
-    "tab": "Qombn Grxh",
+    "tab": "Class Data",
     "matches": [
       {
         "rowNumber": 2,
         "row": {
-          "Jzvpagi Cmgs": "Tebndigsc",
-          "Pizkfb": "Kcfdky",
-          "Pjsqv Kgoru": "0. Swysbm",
-          "Wapv Mrgbi": "VY",
-          "Lszgk": "Acazxex",
-          "Egqrtecfphihwav Oqzyjfns": "Ehifl Xsje"
+          "Idtqitt Kdpb": "Sdnfrhihz",
+          "Rrkvzj": "Vmyurx",
+          "Tyody Gcuig": "6. Sbixvi",
+          "Ysan Isazz": "PE",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Qkqfu Ahsi"
         }
       },
       {
         "rowNumber": 4,
         "row": {
-          "Jzvpagi Cmgs": "Fgtb",
-          "Pizkfb": "Kcfdky",
-          "Pjsqv Kgoru": "8. Uilafyje",
-          "Wapv Mrgbi": "ZE",
-          "Lszgk": "Acazxex",
-          "Egqrtecfphihwav Oqzyjfns": "Ipaoqculei"
+          "Idtqitt Kdpb": "Vsdr",
+          "Rrkvzj": "Vmyurx",
+          "Tyody Gcuig": "6. Fkvjhfbf",
+          "Ysan Isazz": "PX",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Toftlmbewp"
         }
       },
       {
         "rowNumber": 6,
         "row": {
-          "Jzvpagi Cmgs": "Flpddiiq",
-          "Pizkfb": "Viam",
-          "Pjsqv Kgoru": "0. Swysbm",
-          "Wapv Mrgbi": "BG",
-          "Lszgk": "Acazxex",
-          "Egqrtecfphihwav Oqzyjfns": "Ipaoqculei"
+          "Idtqitt Kdpb": "Eoedaucf",
+          "Rrkvzj": "Bzcs",
+          "Tyody Gcuig": "6. Sbixvi",
+          "Ysan Isazz": "KE",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Toftlmbewp"
         }
       },
       {
         "rowNumber": 8,
         "row": {
-          "Jzvpagi Cmgs": "Vkasvx",
-          "Pizkfb": "Kcfdky",
-          "Pjsqv Kgoru": "2. Kxdeqi",
-          "Wapv Mrgbi": "AF",
-          "Lszgk": "Acazxex",
-          "Egqrtecfphihwav Oqzyjfns": "Tljzd & Aywoc"
+          "Idtqitt Kdpb": "Zgetgz",
+          "Rrkvzj": "Vmyurx",
+          "Tyody Gcuig": "1. Bccdcw",
+          "Ysan Isazz": "LI",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Xhzqu & Ywiqn"
         }
       },
       {
         "rowNumber": 11,
         "row": {
-          "Jzvpagi Cmgs": "Omdlkl",
-          "Pizkfb": "Viam",
-          "Pjsqv Kgoru": "2. Kxdeqi",
-          "Wapv Mrgbi": "LZ",
-          "Lszgk": "Acazxex",
-          "Egqrtecfphihwav Oqzyjfns": "Ehifl Xsje"
+          "Idtqitt Kdpb": "Cdtqcb",
+          "Rrkvzj": "Bzcs",
+          "Tyody Gcuig": "1. Bccdcw",
+          "Ysan Isazz": "GQ",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Qkqfu Ahsi"
         }
       },
       {
         "rowNumber": 16,
         "row": {
-          "Jzvpagi Cmgs": "Mrsecp",
-          "Pizkfb": "Viam",
-          "Pjsqv Kgoru": "8. Uilafyje",
-          "Wapv Mrgbi": "WQ",
-          "Lszgk": "Acazxex",
-          "Egqrtecfphihwav Oqzyjfns": "Ehifl Xsje"
+          "Idtqitt Kdpb": "Pgvcuw",
+          "Rrkvzj": "Bzcs",
+          "Tyody Gcuig": "6. Fkvjhfbf",
+          "Ysan Isazz": "EK",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Qkqfu Ahsi"
         }
       },
       {
         "rowNumber": 18,
         "row": {
-          "Jzvpagi Cmgs": "Zhhkc",
-          "Pizkfb": "Kcfdky",
-          "Pjsqv Kgoru": "4. Syoepeymr",
-          "Wapv Mrgbi": "AG",
-          "Lszgk": "Acazxex",
-          "Egqrtecfphihwav Oqzyjfns": "Ipaoqculei"
+          "Idtqitt Kdpb": "Vfxae",
+          "Rrkvzj": "Vmyurx",
+          "Tyody Gcuig": "7. Covbpsfch",
+          "Ysan Isazz": "MK",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Toftlmbewp"
         }
       },
       {
         "rowNumber": 27,
         "row": {
-          "Jzvpagi Cmgs": "Yaovkd",
-          "Pizkfb": "Viam",
-          "Pjsqv Kgoru": "8. Uilafyje",
-          "Wapv Mrgbi": "VY",
-          "Lszgk": "Acazxex",
-          "Egqrtecfphihwav Oqzyjfns": "Tljzd & Aywoc"
+          "Idtqitt Kdpb": "Ecjadl",
+          "Rrkvzj": "Bzcs",
+          "Tyody Gcuig": "6. Fkvjhfbf",
+          "Ysan Isazz": "PE",
+          "Major": "English",
+          "Yovkfkpoegxftak Unthxfja": "Xhzqu & Ywiqn"
         }
       }
     ]

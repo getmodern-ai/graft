@@ -15,16 +15,19 @@
       "tab": {
         "type": "string",
         "minLength": 1,
-        "description": "The tab's name, from google-sheets__list-tabs. When omitted, uses the spreadsheet's first tab."
+        "description": "The tab's name, from google-sheets__list-tabs. When omitted, uses the spreadsheet's first tab.",
+        "examples": ["Class Data"]
       },
       "column": {
         "type": "string",
         "minLength": 1,
-        "description": "Header text from row 1, matched case-insensitively after trimming."
+        "description": "Header text from row 1, matched case-insensitively after trimming.",
+        "examples": ["Major"]
       },
       "value": {
         "type": "string",
-        "description": "Value to find, compared case-insensitively after trimming."
+        "description": "Value to find, compared case-insensitively after trimming.",
+        "examples": ["English"]
       },
       "contains": {
         "type": "boolean",
