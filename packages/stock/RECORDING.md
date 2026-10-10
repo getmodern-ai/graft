@@ -44,8 +44,10 @@ of it reaches a person's toolbox.
 - **`recordedAt`** is ISO 8601.
 - **`input`** is the input the proof ran with, and must equal `test-input.json`; a changed test
   input means a rebuild.
-- **`exchanges`** is every call the module made through the proxy, in order, in the dry run the
-  build ran (the token carries the dry-run claim, so writes never left).
+- **`exchanges`** is every call the module made through the proxy, in the order the module issued
+  them (numbered as each request reached the proxy, not as the vendor answered, so a module that
+  reads with `Promise.all` records the order it asked in), in the dry run the build ran (the token
+  carries the dry-run claim, so writes never left).
   - A **read** (`GET` or `HEAD`) carries the vendor `url` as it left the proxy, query included, and
     the vendor's `response`: the `status`, the `headers` kept (`content-type`, `location` and
     `link`, `RECORDED_RESPONSE_HEADERS`; every other is dropped), and the `body`.
@@ -54,6 +56,14 @@ of it reaches a person's toolbox.
 - **A body** is exactly one of `{ "json": … }` (it parsed as JSON), `{ "text": "…" }` (UTF-8 that
   is not JSON) or `{ "base64": "…" }`. Absent for an empty body. `recordedBodyOf` and
   `recordedResponseOf` build them.
+- **A JSON body is kept parsed, and served re-serialised** (`JSON.stringify`, no whitespace):
+  parsed because the redaction walks it by key, which it cannot do in opaque text, and keeping the
+  vendor's raw text beside it would keep whatever that walk removed. The build hands the module
+  the re-serialised text while recording too, so recording and replay agree. **A stock module
+  parses a JSON body** (`res.json()`) and does not compare, slice or search its text: the vendor's
+  own formatting is not in the recording, and the nightly live run does not compare results. The
+  build and the harness print a note (`jsonTextNotes`) for a module that calls `.text()` where the
+  recording holds a JSON answer; it is a note, not a failure.
 - **`result`** is the module's result in that run. Optional; when present a replay compares it
   whole.
 
@@ -66,7 +76,12 @@ A recording is written through `redactRecording(recording, rule)`, the acquire t
 (`@graft/core`'s `redactValue`) with one addition:
 
 - **By value**: every value in `rule.secretValues` is replaced wherever it appears, in a URL, a
-  header or a body. The build command passes the connection's credential fields, which it holds.
+  header or a body. The build command passes every form of the connection's credential fields,
+  which it holds (`src/secrets.ts`'s `credentialForms`): each value as it is, percent-encoded,
+  form-encoded, base64 and base64url, `Bearer <value>`, and for `basic` the `username:password`
+  pair in each of those encodings and as `Basic <pair>`, so a vendor echoing the header's bare
+  base64 under a field of any name is still caught. The command's printed sentences go through
+  the same values.
 - **By shape**: bearer and basic credentials, JWTs, and the well-known key shapes.
 - **By field name inside a string**: `api_key=…` in a query, `token: …` in prose, over the generic
   names and `rule.secretFieldNames` (the scheme's fields, from `secretFieldNamesFor`).
@@ -97,17 +112,27 @@ to keep the values.
 - **Every string and number** in a response body, in the kept headers but `content-type`, and in
   the input becomes a placeholder of the same type and shape: an email stays an email (its local
   part redrawn, at `example.com`); an ISO date or time stays one, in the same layout; a URL keeps
-  its scheme and host and loses its path and query (inside a `link` header too); any other string
+  its scheme and host and loses its path and query (a `link` header's targets too, where every
+  parameter value is drawn again but a `rel` of the standard relations, `next` or `last`); any other string
   keeps its length, its punctuation and spaces, each letter a letter of the same case and each digit
   a digit (an id stays id-like, a hex id hex); a number keeps its sign, its digit counts and its
   decimal places. A text body is one string; a binary body becomes the same number of drawn bytes.
 - **Keys, array lengths and nesting are kept**, and so are booleans and `null` (one bit, and the
   bit a module branches on), the integers 0 to 99 (counts, pages and codes a module loops on), a
-  redaction marker, and a string with no letter or digit.
-- **A value the module's code spells is kept**: every string literal in its files, and every string
-  in its input schema (`keptLiteralsOf`). They are public already, and a module comparing an answer
-  with `"message"` must still find it. An input value that must reach a live vendor as it is (a
-  city) survives the scrub by being the schema's `default`, an `examples` entry or an `enum` value.
+  redaction marker (the text beside it is scrubbed as any other), and a string with no letter or
+  digit.
+- **A value the module's code spells is kept**: every string its files spell, read by a parse with
+  the check's own TypeScript (string literals and template text, inside a `${…}` too, escapes
+  decoded), and every string in its input schema, with its `enum` and `const` numbers
+  (`keptLiteralsOf`). They are public already, and a module comparing an answer with `"message"`
+  must still find it. An input value that must reach a live vendor as it is (a city) survives the
+  scrub by being the schema's `default`, an `examples` entry or an `enum` value.
+- **The input is scrubbed within its schema**: an `enum` value stays, a number is drawn inside its
+  bounds and `multipleOf`, a string is one its length, pattern and format admit; then the whole
+  scrubbed input is validated against the schema, and one that fails fails the recording.
+- **When in doubt it fails, never keeps.** A value for which no placeholder can be drawn that is
+  neither an original value nor another's placeholder, or that the input schema admits, fails the
+  recording with a sentence naming where it is and never the value.
 - **One value is one placeholder** across the whole recording, so an id one answer gave and a later
   request names is the same placeholder in both. Placeholders are drawn from a random seed per
   recording, so one is not a keyed hash of a guessable name.
@@ -117,10 +142,16 @@ to keep the values.
   recorded. A request built from an earlier answer, or a result the module computed (a name
   upper-cased, two fields joined), is therefore the scrubbed data's, and the replay matches by
   construction. A module that behaves differently over the scrubbed answers (a different number of
-  reads, a failed run) fails the recording, and nothing is written.
+  reads, a failed run) fails the recording, and nothing is written. Its answers are matched to its
+  requests by the order the module issued them, as the first run's were recorded (GRA-246).
 - **The last check** (`survivingValuesOf`) looks for every string of six characters or more from
-  the raw input and answers in what is about to be written, setting aside the module's own text and
-  the keys; a survivor fails the recording, naming where it was and never the value.
+  the raw input and answers in what is about to be written, after redaction, setting aside the
+  module's own text and the keys (a value with a redaction marker is looked for as its text beside
+  the marker, a `link` header as its targets and parameters, and a website root written without its
+  closing slash is not read as surviving inside its own placeholder); a survivor fails the
+  recording, naming where it was and never the
+  value. Redaction comes first because a credential the proxy put in a request (a query key a vendor
+  may quote back) is redaction's to remove, not a vendor value the scrub missed.
 
 `test-input.json` is the recording's scrubbed input, since the two must be equal. One consequence for
 live mode: a scrubbed test input names nothing in any real account, so a tool whose input matters
@@ -134,10 +165,11 @@ answers about a city, which is no one's data.
 proxy, over a connection whose hosts are the manifest's `hosts`, so a call to an undeclared host is
 the proxy's `host_not_in_set`. The proxy's vendor is the recording:
 
-- each read must be the recording's next read: method, host, path and query (as a set of
-  parameters); the vendor answers it with the recorded response;
-- every write stops at the preview and never reaches the vendor; the previews must be the
-  recording's writes in order, method, host, path and body;
+- each read must be a recorded read not yet made: the first, in the order of issue, with its
+  method, host, path and query (as a set of parameters), so parallel reads that reach the proxy
+  in another order still find their own; the vendor answers it with the recorded response;
+- every write stops at the preview and never reaches the vendor; the previews, in the order the
+  module issued them, must be the recording's writes in order, method, host, path and body;
 - every recorded read must have been made, the dry run must pass, and the result must be the
   recording's.
 

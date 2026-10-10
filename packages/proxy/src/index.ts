@@ -35,6 +35,7 @@ export { CREDENTIAL_REDACTED, REDACTED_CREDENTIAL, REDACTED_HEADER } from "./ech
 export {
   causeCodeOf,
   isVendorUnreachedReason,
+  PROXY_REFUSED_HEADER,
   REFUSAL_HEADER,
   VENDOR_UNREACHED_REASONS,
   type VendorUnreached,

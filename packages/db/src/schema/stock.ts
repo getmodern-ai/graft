@@ -34,8 +34,8 @@ export const stockTool = pgTable(
 );
 
 /**
- * One version of a stock tool, appended when the workspace's files hash differently from the latest
- * (`source_hash`), never edited, numbered 1, 2, 3 … per tool. The current version is the highest
+ * One version of a stock tool, appended when the workspace's files hash differently from every
+ * version the tool has (`source_hash`), so an older release's replica appends nothing; never edited, numbered 1, 2, 3 … per tool. The current version is the highest
  * number. The definition is per version, since a fix may change the description or the schema, and
  * the module's files are kept on the row: a copy made from this version is written from them, so a
  * version stays copyable whatever release a replica runs (the workspace on disk is only the

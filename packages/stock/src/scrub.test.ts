@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RecordedRead, StockRecording } from "./recording";
-import { keptLiteralsOf, scrubRecording, survivingValuesOf } from "./scrub";
+import { keptLiteralsOf, ScrubFailure, scrubRecording, survivingValuesOf } from "./scrub";
 
 /**
  * The scrub (GRA-257): a recording of a maintainer's own account, full of planted personal data,
@@ -229,19 +229,200 @@ describe("scrubRecording", () => {
   });
 });
 
+describe("scrubRecording, after Greptile on #192", () => {
+  const withRead = (
+    json: unknown,
+    headers: Record<string, string> = {},
+    input: Record<string, unknown> = {},
+  ): StockRecording => ({
+    ...recording,
+    input,
+    exchanges: [
+      {
+        kind: "read",
+        method: "GET",
+        url: "https://slack.com/a",
+        response: response(json, headers),
+      },
+    ],
+    result: null,
+  });
+
+  it("draws a link header's every parameter again but a safe rel, and the survival check reads it", () => {
+    const link =
+      '<https://api.example/private/acme?page=2>; rel="next"; title="Alice Liddell", ' +
+      '<https://api.example/private/acme?page=9>; rel="last acme-secret"; x-acme-team=wonderland';
+    const raw = withRead({}, { link });
+    const scrubbed = scrubRecording(raw, { seed: SEED });
+    const header = readOf(scrubbed, 0).response.headers.link as string;
+    expect(header).toMatch(
+      /^<https:\/\/api\.example\/>; rel="next"; title="[A-Z][a-z]{4} [A-Z][a-z]{6}", <https:\/\/api\.example\/>; rel="[a-z]{4} [a-z]{4}-[a-z]{6}"; [a-z]-[a-z]{4}-[a-z]{4}=[a-z]{10}$/,
+    );
+    for (const planted of ["Alice", "Liddell", "acme", "wonderland", "private"]) {
+      expect(header).not.toContain(planted);
+    }
+    // A header that kept its title would be caught, though its target changed.
+    const leaked = withRead(
+      {},
+      { link: '<https://api.example/>; rel="next"; title="Alice Liddell"' },
+    );
+    expect(survivingValuesOf(raw, leaked, { source: "" })).toEqual(["exchange 1"]);
+    expect(survivingValuesOf(raw, scrubbed, { source: "" })).toEqual([]);
+  });
+
+  it("reads a link header with empty list members, keeping its safe rel", () => {
+    const scrubbed = scrubRecording(
+      withRead({}, { link: ' , <https://api.example/page/2>; rel="next",, ' }),
+      { seed: SEED },
+    );
+    expect(readOf(scrubbed, 0).response.headers.link).toBe('<https://api.example/>; rel="next"');
+  });
+
+  it("reads a long hostile link header in linear time", () => {
+    const link = `<>;${"\t;!=".repeat(20000)}`;
+    const started = performance.now();
+    const scrubbed = scrubRecording(withRead({}, { link }), { seed: SEED });
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(readOf(scrubbed, 0).response.headers.link).toBeTypeOf("string");
+  });
+
+  it("scrubs a link header that does not parse as one string", () => {
+    const scrubbed = scrubRecording(withRead({}, { link: "Alice Liddell, not a link" }), {
+      seed: SEED,
+    });
+    expect(readOf(scrubbed, 0).response.headers.link).toMatch(
+      /^[A-Z][a-z]{4} [A-Z][a-z]{6}, [a-z]{3} [a-z] [a-z]{4}$/,
+    );
+  });
+
+  it("scrubs the text around a leading redaction marker, keeping the marker", () => {
+    const raw = withRead({ note: "[redacted:credential] Alice Liddell", only: "[redacted]" });
+    const scrubbed = scrubRecording(raw, { seed: SEED });
+    const body = readOf(scrubbed, 0).response.body as { json: Record<string, string> };
+    expect(body.json.note).toMatch(/^\[redacted:credential\] [A-Z][a-z]{4} [A-Z][a-z]{6}$/);
+    expect(body.json.only).toBe("[redacted]");
+    // The survival check looks for the text beside a marker, not only the whole string.
+    const leaked = withRead({ note: "[redacted:credential] Alice Liddell", only: "[redacted]" });
+    expect(survivingValuesOf(raw, leaked, { source: "" })).toEqual(["exchange 1"]);
+    expect(survivingValuesOf(raw, scrubbed, { source: "" })).toEqual([]);
+  });
+
+  it("fails, naming where and never the value, when no placeholder can be drawn", () => {
+    // Every one-digit negative number is an original value, so none can stand for another.
+    const raw = withRead({ values: [-1, -2, -3, -4, -5, -6, -7, -8, -9] });
+    let failure: unknown;
+    try {
+      scrubRecording(raw, { seed: SEED });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ScrubFailure);
+    expect((failure as ScrubFailure).where).toBe("exchange 1's answer");
+    expect((failure as ScrubFailure).message).toMatch(/no placeholder could be drawn/);
+    expect((failure as ScrubFailure).message).not.toMatch(/-\d/);
+  });
+
+  it("never draws a number JSON cannot hold", () => {
+    const scrubbed = scrubRecording(withRead({ huge: 1.5e308, big: -9.5e307 }), { seed: SEED });
+    const body = readOf(scrubbed, 0).response.body as { json: Record<string, number> };
+    expect(Number.isFinite(body.json.huge)).toBe(true);
+    expect(Number.isFinite(body.json.big)).toBe(true);
+    expect(body.json.huge).not.toBe(1.5e308);
+  });
+
+  it("draws the input's placeholders within its schema, and fails when the schema admits none", () => {
+    const inputSchema = {
+      type: "object",
+      properties: {
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+        size: { type: "number", minimum: 0.5, maximum: 2.5, multipleOf: 0.5 },
+        sort: { enum: [250, 500] },
+        code: { type: "string", pattern: "^AC-[0-9]{4}$" },
+        short: { type: "string", minLength: 4, maxLength: 6 },
+        email: { type: "string", format: "email" },
+        when: { type: "string", format: "date-time" },
+        site: { type: "string", format: "uri" },
+        tags: { type: "array", items: { type: "string", maxLength: 8 } },
+      },
+    };
+    const input = {
+      limit: 100,
+      size: 1.5,
+      sort: 777,
+      code: "AC-1234",
+      short: "acme",
+      email: "alice@acme-corp.example",
+      when: "2026-10-09T19:45:12Z",
+      site: "https://acme-corp.example/team",
+      tags: ["Alice", "Liddell"],
+    };
+    const raw = withRead({ also: 100, sort: 500 }, {}, input);
+    const scrubbed = scrubRecording(raw, { seed: SEED, inputSchema });
+    const out = scrubbed.input as typeof input;
+    expect(out.limit).toBeGreaterThanOrEqual(1);
+    expect(out.limit).toBeLessThanOrEqual(100);
+    expect(out.limit).not.toBe(100);
+    expect([0.5, 1, 2, 2.5]).toContain(out.size);
+    expect([250, 500]).toContain(out.sort);
+    expect(out.code).toMatch(/^AC-\d{4}$/);
+    expect(out.code).not.toBe("AC-1234");
+    expect(out.short).toMatch(/^[a-z]{4}$/);
+    expect(out.email).toMatch(/^[a-z]{5}@example\.com$/);
+    expect(out.site).toBe("https://acme-corp.example/");
+    expect(out.tags).toHaveLength(2);
+    // The input's placeholder is the answer's too; the schema's enum number is public and stays.
+    const body = readOf(scrubbed, 0).response.body as { json: Record<string, number> };
+    expect(body.json.also).toBe(out.limit);
+    expect(body.json.sort).toBe(500);
+
+    // Bounds behind a `$ref` into the root's definitions are seen too.
+    const referenced = scrubRecording(withRead({}, {}, { limit: 100, page: 50 }), {
+      seed: SEED,
+      inputSchema: {
+        type: "object",
+        $defs: { limit: { type: "integer", minimum: 1, maximum: 100 } },
+        definitions: { page: { $ref: "#/$defs/limit", maximum: 60 } },
+        properties: { limit: { $ref: "#/$defs/limit" }, page: { $ref: "#/definitions/page" } },
+      },
+    }).input as { limit: number; page: number };
+    expect(referenced.limit).toBeGreaterThanOrEqual(1);
+    expect(referenced.limit).toBeLessThanOrEqual(100);
+    expect(referenced.limit).not.toBe(100);
+    expect(referenced.page).toBeGreaterThanOrEqual(1);
+    expect(referenced.page).toBeLessThanOrEqual(60);
+
+    // `minimum` and `maximum` both 100 admit only the value itself, which is no placeholder.
+    expect(() =>
+      scrubRecording(withRead({}, {}, { limit: 100 }), {
+        seed: SEED,
+        inputSchema: {
+          type: "object",
+          properties: { limit: { type: "integer", minimum: 100, maximum: 100 } },
+        },
+      }),
+    ).toThrow(/input schema admits.*in the input$/);
+  });
+});
+
 describe("keptLiteralsOf", () => {
-  it("reads the module's string literals and the schema's strings", () => {
+  it("reads the module's string literals, by a parse, and the schema's strings", () => {
     const kept = keptLiteralsOf(
       [
         {
-          content: ['if (x.type === "message") return `a-$', "{y}-b`;\nconst z = 'it\\'s';"].join(
-            "",
-          ),
+          path: "index.ts",
+          content: [
+            'if (x.type === "message") return `a-$',
+            '{x.kind === "file" ? "one" : y}-b`;\nconst z = \'it\\\'s\';\nconst n = "a\\nb";',
+          ].join(""),
         },
       ],
       { type: "object", properties: { kind: { enum: ["open", "closed"] } } },
     );
-    expect(kept).toEqual(expect.arrayContaining(["message", "a-", "-b", "it's", "open", "closed"]));
+    expect(kept).toEqual(
+      expect.arrayContaining(["message", "a-", "file", "one", "-b", "it's", "a\nb", "open"]),
+    );
+    expect(kept).toContain("closed");
+    expect(kept).not.toContain("anb");
   });
 });
 
@@ -255,5 +436,25 @@ describe("survivingValuesOf", () => {
     expect(
       survivingValuesOf(recording, scrubRecording(recording, { seed: SEED }), { source: "" }),
     ).toEqual([]);
+  });
+
+  it("does not read a website root as surviving inside its own placeholder", () => {
+    const raw: StockRecording = {
+      ...recording,
+      input: {},
+      exchanges: [
+        {
+          kind: "read",
+          method: "GET",
+          url: "https://api.github.com/x",
+          response: response({ external_url: "https://app.example", home: "https://app.example/" }),
+        },
+      ],
+      result: null,
+    };
+    const scrubbed = scrubRecording(raw, { seed: SEED });
+    const body = readOf(scrubbed, 0).response.body as { json: Record<string, string> };
+    expect(body.json.external_url).toBe("https://app.example/");
+    expect(survivingValuesOf(raw, scrubbed, { source: "" })).toEqual([]);
   });
 });

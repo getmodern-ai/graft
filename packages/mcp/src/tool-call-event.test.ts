@@ -137,6 +137,83 @@ describe("toolCallEvent", () => {
     expect(toolCallEvent(session, "demo__list-items", result, 250)).not.toHaveProperty("reason");
   });
 
+  /**
+   * GRA-244: a run of a stock copy, or a remix of one, names the stock tool and version it came
+   * from; a failure adds its kind and the vendor's status, and nothing of the input, the output or
+   * the vendor's body reaches the event.
+   */
+  it("names a stock run's origin, and on failure its kind and the vendor status alone", () => {
+    const input = { city: "Input-City-Secret" };
+    const okEvent = toolCallEvent(
+      session,
+      "run_tool",
+      toolResult({ city: "Output-City-Secret", temperature: 17.5 }),
+      40,
+      { vendor: "open-meteo", name: "current-weather", input },
+      undefined,
+      { toolId: "stock_t1", versionId: "stock_v1", remix: false },
+    );
+    expect(okEvent).toMatchObject({
+      outcome: "ok",
+      stock: { toolId: "stock_t1", versionId: "stock_v1", remix: false },
+    });
+    expect(okEvent.stock).not.toHaveProperty("failureKind");
+
+    const failed = toolError({
+      error: "The tool failed (exit code 1): Error: GET /v1/search 503: Vendor-Body-Secret",
+      exitCode: 1,
+      stderrTail: "Error: GET /v1/search 503: Vendor-Body-Secret",
+    });
+    const failedEvent = toolCallEvent(
+      session,
+      "open-meteo__current-weather",
+      failed,
+      40,
+      input,
+      undefined,
+      {
+        toolId: "stock_t1",
+        versionId: "stock_v1",
+        remix: true,
+        failureKind: "threw",
+        vendorStatus: 503,
+      },
+    );
+    expect(failedEvent).toMatchObject({
+      kind: "authored",
+      outcome: "error",
+      stock: {
+        toolId: "stock_t1",
+        versionId: "stock_v1",
+        remix: true,
+        failureKind: "threw",
+        vendorStatus: 503,
+      },
+    });
+    for (const event of [okEvent, failedEvent]) {
+      const text = JSON.stringify(event);
+      expect(text).not.toContain("Input-City-Secret");
+      expect(text).not.toContain("Output-City-Secret");
+      expect(text).not.toContain("Vendor-Body-Secret");
+    }
+  });
+
+  it("leaves an authored tool's event without a stock block", () => {
+    const event = toolCallEvent(
+      session,
+      "demo__list-items",
+      toolError({ error: "run_failed", exitCode: 1, stderrTail: "boom" }),
+      5,
+      {},
+      undefined,
+      null,
+    );
+    expect(event).not.toHaveProperty("stock");
+    expect(toolCallEvent(session, "demo__list-items", toolResult({}), 5)).not.toHaveProperty(
+      "stock",
+    );
+  });
+
   it("carries the client's MCP Apps declaration as an observation, whichever way it went", () => {
     const declared = { ...session, uiExtensionDeclared: () => true };
     expect(toolCallEvent(declared, "find_tool", toolResult({ tools: [] }), 1)).toMatchObject({
