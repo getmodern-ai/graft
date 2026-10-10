@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { ModuleCheck } from "@graft/check";
@@ -52,6 +53,8 @@ const PEOPLE = {
   similar: { person: "p_similar", agent: "a_similar", connection: "conn_meteo_similar" },
   remix: { person: "p_remix", agent: "a_remix", connection: "conn_meteo_remix" },
   copied: { person: "p_copied", agent: "a_copied", connection: "conn_meteo_copied" },
+  installed: { person: "p_installed", agent: "a_installed", connection: "conn_meteo_installed" },
+  raced: { person: "p_raced", agent: "a_raced", connection: "conn_meteo_raced" },
 } as const;
 const tokenOf = (agent: string) => `grft_token_${agent}`.padEnd(46, "0");
 const CONN_OTHER = "conn_other_remix";
@@ -452,6 +455,78 @@ describe("a remix with from", () => {
         version: 2,
         stock: false,
       });
+    } finally {
+      await harness.close();
+    }
+  }, 30_000);
+
+  it("hands the model the authored module alone, never what the install wrote into the version", async () => {
+    const harness = await connect(PEOPLE.installed.agent);
+    try {
+      await harness.call("run_tool", { ...STOCK_KEY, input: { city: "Perth" } });
+      const [copied] = toolOf(PEOPLE.installed.person, STOCK_KEY).versions;
+      if (!copied) throw new Error("no copy");
+      const root = join(sandbox.toolboxRoot(PEOPLE.installed.person), copied.path);
+      await mkdir(join(root, "node_modules", "some-sdk"), { recursive: true });
+      await writeFile(join(root, "node_modules", "some-sdk", "index.js"), "module.exports = {};\n");
+      await writeFile(join(root, "package-lock.json"), "{}\n");
+
+      const model = createScriptedModel([write(remixDraft("current-weather"), "A sentence.")]);
+      deps.model = model;
+      const { status } = await acquireAndFinish(harness, {
+        connectionId: PEOPLE.installed.connection,
+        goal: "Answer the weather as one sentence",
+        from: STOCK_WIRE,
+      });
+      expect(status).toMatchObject({ status: "succeeded" });
+      const paths = (model.conversations[0]?.context.startingPoint?.files ?? []).map(
+        (file) => file.path,
+      );
+      expect(paths).toContain("index.ts");
+      expect(paths.some((path) => path.startsWith("node_modules/"))).toBe(false);
+      expect(paths).not.toContain("package-lock.json");
+    } finally {
+      await harness.close();
+    }
+  }, 30_000);
+
+  it("ends remix_superseded when the tool moved off the version the remix started from", async () => {
+    const harness = await connect(PEOPLE.raced.agent);
+    try {
+      await harness.call("run_tool", { ...STOCK_KEY, input: { city: "Perth" } });
+      const { tool, versions } = toolOf(PEOPLE.raced.person, STOCK_KEY);
+      const [first] = versions;
+      if (!tool || !first) throw new Error("no copy");
+
+      // Another remix lands while this one drafts: the model's first turn moves the pointer.
+      const scripted = createScriptedModel([write(remixDraft("current-weather"), "A sentence.")]);
+      deps.model = {
+        name: scripted.name,
+        open: (context) => {
+          const conversation = scripted.open(context);
+          return {
+            turn: async (situation) => {
+              if (situation.kind === "goal") {
+                const landed = { ...first, id: "ver_raced_landed", versionNumber: 99 };
+                store.versions.set(landed.id, landed);
+                const row = store.tools.get(tool.id);
+                if (row) row.currentVersionId = landed.id;
+              }
+              return conversation.turn(situation);
+            },
+          };
+        },
+      };
+      const { status } = await acquireAndFinish(harness, {
+        connectionId: PEOPLE.raced.connection,
+        goal: "Answer the weather as one sentence",
+        from: STOCK_WIRE,
+      });
+      expect(status).toMatchObject({
+        status: "failed",
+        result: { failure: "remix_superseded" },
+      });
+      expect(store.tools.get(tool.id)?.currentVersionId).toBe("ver_raced_landed");
     } finally {
       await harness.close();
     }

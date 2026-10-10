@@ -689,7 +689,10 @@ nothing; once the approval stands `ensureToolForAgent` copies a stock tool in, a
 records `from_tool_id` (migration 0015). The job (`acquire/job.ts`'s `startingPoint`) hands the
 tool's current version's files to the model as `ModelJobContext.startingPoint` and publishes every
 draft under that tool's name, so the version lands on the person's row with no stock origin, which
-is a remix; a tool gone since the job was queued ends it `remix_unavailable`. Every job's context
+is a remix; a tool gone since the job was queued ends it `remix_unavailable`. The starting point
+is the authored module alone (`forbiddenDraftFiles` drops what the install wrote), and the pass is
+made current only while the tool is still at the version the remix started from
+(`activateToolVersion`'s `expectedCurrentVersionId`), else the job ends `remix_superseded`. Every job's context
 carries the vendor's stock tools (`stockTools`: wire name, description, input schema), rendered by
 `@graft/model`'s `renderGoal`. `packages/mcp/src/acquire-stock.test.ts` is the suite, asserting on
 the scripted model's goal prompt.

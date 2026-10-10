@@ -49,7 +49,7 @@ import {
 import { hostSetOf } from "@graft/proxy/credential-source";
 import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
-import type { PublishArgs, PublishOutcome } from "@graft/publish";
+import { forbiddenDraftFiles, type PublishArgs, type PublishOutcome } from "@graft/publish";
 import { BLOB_TTL_HOURS, blobIdOf } from "@graft/runner";
 import type { SandboxHandle } from "@graft/sandbox";
 import { draftPath, sandboxPath, toolboxIdOf } from "@graft/toolbox";
@@ -363,6 +363,11 @@ class AcquireLoop {
   private fixtureWritten = false;
   /** A remix's tool name (GRA-243): every draft is published under it, whatever the draft says. */
   private remixName: string | null = null;
+  /**
+   * The version a remix started from (GRA-243): its pass becomes current only while that version
+   * still is, so a remix that finished meanwhile is never replaced by one built from older files.
+   */
+  private remixFromVersionId: string | null = null;
 
   constructor(
     private readonly deps: McpDeps,
@@ -691,6 +696,11 @@ class AcquireLoop {
     const files = this.deps.toolbox
       ? await this.deps.toolbox.readTree(toolboxIdOf(this.scope.personId), version.path)
       : await (await this.sandbox()).downloadDirectory(sandboxPath(version.path));
+    // The authored module alone: what the install wrote into the version (`node_modules`, the
+    // lockfile) is the publish's and never a draft's (`forbiddenDraftFiles`), and an SDK's installed
+    // tree would crowd the module out of the model's context (Greptile on #186).
+    const installed = new Set(forbiddenDraftFiles(files).map((refusal) => refusal.file));
+    this.remixFromVersionId = version.id;
     return {
       tool: authoredToolName(tool.vendor, tool.name),
       name: tool.name,
@@ -698,7 +708,9 @@ class AcquireLoop {
       stock: version.stockVersionId !== null,
       description: tool.description,
       inputSchema: tool.inputSchema,
-      files: files.map((file) => ({ path: file.path, content: file.content })),
+      files: files
+        .filter((file) => !installed.has(file.path))
+        .map((file) => ({ path: file.path, content: file.content })),
     };
   }
 
@@ -1319,9 +1331,18 @@ class AcquireLoop {
           defaultConnectionId: connectionId,
         },
         this.deps.tool,
+        this.remixFromVersionId ? { expectedCurrentVersionId: this.remixFromVersionId } : {},
       );
     } catch (error) {
       if (!(error instanceof ServiceError) || error.code !== "CONFLICT") throw error;
+      if (error.details?.expectedCurrentVersionId !== undefined) {
+        await this.closeOpen("passed", verdict, { versionId: version.id });
+        throw this.end(
+          "remix_superseded",
+          `${wire} v${version.versionNumber} passed its dry run, but the tool's current version changed while this job remixed the one it started from, so this version, built from the older files, is not made current. Call acquire with from again to start from the current version.`,
+          null,
+        );
+      }
       const later = error.details?.currentVersionNumber;
       if (typeof later !== "number") throw error;
       currentVersion = later;
