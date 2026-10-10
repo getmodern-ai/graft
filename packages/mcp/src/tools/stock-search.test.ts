@@ -61,6 +61,15 @@ const CASES: [query: string, tool: string][] = [
   ["accept invitation", "google-calendar__respond-to-event"],
   ["decline an invite", "google-calendar__respond-to-event"],
   ["rsvp", "google-calendar__respond-to-event"],
+  // Slack's (GRA-251), also pinned in tool-index.test.ts.
+  ["list slack channels", "slack__list-channels"],
+  ["slack channel history", "slack__read-channel-history"],
+  ["read a slack thread", "slack__read-thread"],
+  ["find a slack user by email", "slack__find-user"],
+  ["post a message to a slack channel", "slack__post-message"],
+  ["reply in thread", "slack__reply-in-thread"],
+  ["send a direct message on slack", "slack__send-direct-message"],
+  ["add a reaction", "slack__add-reaction"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];
