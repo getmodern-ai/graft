@@ -1,0 +1,32 @@
+{
+  "name": "list-invoices",
+  "description": "Lists Stripe invoices, newest first, with each one's status, amounts due, paid and remaining, customer and due date. Filters by a customer id from stripe__find-customer and by status; unpaid invoices are status open. Each invoice id feeds stripe__get-invoice.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 10,
+        "description": "Maximum number of invoices to return, from 1 to 100. Defaults to 10."
+      },
+      "customer": {
+        "type": "string",
+        "description": "Optional Stripe customer id, such as one returned by stripe__find-customer."
+      },
+      "status": {
+        "type": "string",
+        "enum": ["draft", "open", "paid", "uncollectible", "void"],
+        "description": "Optional invoice status. Unpaid invoices are status open."
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

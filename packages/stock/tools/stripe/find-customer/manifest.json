@@ -1,0 +1,27 @@
+{
+  "name": "find-customer",
+  "description": "Finds Stripe customers by email address (an exact, case-sensitive match) or by part of their name. Each customer id feeds stripe__get-customer, stripe__list-invoices, stripe__list-payments, stripe__list-subscriptions and stripe__create-invoice.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "An email address for an exact, case-sensitive match, or part of a customer name."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Maximum number of customers to return.",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

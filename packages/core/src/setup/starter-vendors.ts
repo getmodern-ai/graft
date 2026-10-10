@@ -18,7 +18,7 @@ import type { ProviderDescription } from "../connection/provider";
  * sentence the integration step shows under the name (`outcome`).
  *
  * The list is **common services a link provider connects by OAuth** (Pipedream on Cloud, ADR
- * 0019), plus Open-Meteo, the keyless one, for a deployment where no link provider covers anything.
+ * 0019; Stripe joined as a stock integration under GRA-261), plus Open-Meteo, the keyless one, for a deployment where no link provider covers anything.
  * Every task is a GET: Setup's result step runs only a read-only tool, and the check counts a
  * `POST` as a write whatever it reads. That is why there is no Linear, whose API is GraphQL and
  * reads through `POST` alone. **And every task needs nothing the person has to look up** (GRA-217):
@@ -214,6 +214,23 @@ export const STARTER_VENDORS = [
       "List ten contacts with the contacts list endpoint, a GET and not the search, with `limit=10` and the `firstname`, `lastname`, `email` and `company` properties, returning those for each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Ten contacts from your CRM, with each one's email and company.",
+  },
+  {
+    id: "stripe",
+    vendor: "stripe",
+    displayName: "Stripe",
+    primaryHost: "https://api.stripe.com/v1",
+    hosts: ["api.stripe.com"],
+    docsUrl: "https://docs.stripe.com/api",
+    // A secret or restricted key, sent as a bearer token; the form path's truth. Stripe takes its
+    // writes as form-encoded bodies, which the stock tools built against it send (GRA-261).
+    scheme: "bearer",
+    schemeConfig: {},
+    goal: "Show me my ten most recent payments",
+    hints:
+      "List the ten most recent charges with the charges list endpoint, one GET of `charges` with `limit=10`, returning the amount, the currency, the status, when it was created and the description of each. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Your ten most recent payments, with each one's amount and status.",
   },
   {
     id: "open-meteo",

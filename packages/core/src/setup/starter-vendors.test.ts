@@ -33,7 +33,7 @@ const ids = (list: ReturnType<typeof setupVendorOptions>) =>
   list.map((option) => option.starter.id);
 
 describe("the starter integrations", () => {
-  it("are the eight, each a vendor slug and a host set the connection rules admit", () => {
+  it("are the nine, each a vendor slug and a host set the connection rules admit", () => {
     expect(STARTER_VENDOR_IDS).toEqual([
       "gmail",
       "google-calendar",
@@ -42,6 +42,7 @@ describe("the starter integrations", () => {
       "notion",
       "github",
       "hubspot",
+      "stripe",
       "open-meteo",
     ]);
     for (const starter of STARTER_VENDORS) {
@@ -151,6 +152,7 @@ describe("setupVendorOptions", () => {
       "notion",
       "github",
       "hubspot",
+      "stripe",
       "open-meteo",
     ]);
     expect(list.slice(0, -1).every((option) => option.connect === "link")).toBe(true);
@@ -171,7 +173,9 @@ describe("setupVendorOptions", () => {
       covered((starter) =>
         starter.vendor === "github"
           ? GATEWAY
-          : starter.vendor === "open-meteo" || starter.vendor === "hubspot"
+          : starter.vendor === "open-meteo" ||
+              starter.vendor === "hubspot" ||
+              starter.vendor === "stripe"
             ? KEYRING
             : LINK,
       ),

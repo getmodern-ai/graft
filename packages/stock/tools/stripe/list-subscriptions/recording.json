@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "tool": "stripe__list-subscriptions",
+  "recordedAt": "2026-10-09T23:54:37.836Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.stripe.com/v1/subscriptions?limit=10&status=all",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "json": {
+            "object": "yghq",
+            "data": [],
+            "has_more": false,
+            "url": "/b3/ekwbsmvoolujo"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "subscriptions": [],
+    "hasMore": false
+  }
+}
