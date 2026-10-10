@@ -1,6 +1,6 @@
 {
   "name": "save-contact",
-  "description": "Saves a prospect as a contact in your Apollo team (creates the contact), from a first and last name and optionally an email, title, company name, account (an id from apollo__search-accounts), website, labels, stage and phone. Spends no Apollo credits and enriches nothing. Given an email the team already holds, Apollo answers that contact rather than making a duplicate. A lead from apollo__search-people is saved here by name and company; its email is not revealed.",
+  "description": "Saves a prospect (a lead) as a contact in your Apollo team (creates the contact), from a first and last name and optionally an email, title, company name, account (an id from apollo__search-accounts), website, labels, stage and phone. Spends no Apollo credits and enriches nothing. Given an email the team already holds, Apollo answers that contact rather than making a duplicate. The last name must be the real one, from the person or another source: apollo__search-people answers only an obfuscated last name (such as Sm***h), which is not a name to save.",
   "inputSchema": {
     "type": "object",
     "properties": {
