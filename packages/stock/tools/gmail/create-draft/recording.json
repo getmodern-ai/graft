@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "tool": "gmail__create-draft",
+  "recordedAt": "2026-10-09T18:52:53.962Z",
+  "input": {
+    "to": "evydcxf@example.com",
+    "subject": "Ywxns lmsn Qhkpg",
+    "body": "Ebzb ff b lmec njfxn."
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+      "body": {
+        "json": {
+          "message": {
+            "raw": "VG86IGV2eWRjeGZAZXhhbXBsZS5jb20NClN1YmplY3Q6IFl3eG5zIGxtc24gUWhrcGcNCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9VVRGLTgNCkNvbnRlbnQtVHJhbnNmZXItRW5jb2Rpbmc6IGJhc2U2NA0KDQpSV0o2WWlCbVppQmlJR3h0WldNZ2JtcG1lRzR1"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "draftId": null,
+    "messageId": null,
+    "threadId": null
+  }
+}

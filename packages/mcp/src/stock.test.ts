@@ -321,7 +321,9 @@ beforeAll(async () => {
       ttlMs: 60_000,
     },
   };
-}, 60_000);
+  // The catalogue is loaded by the real check over every stock tool in the workspace, which grows
+  // with each integration: 60 s was spent on CI with seven of them (run 38036924245).
+}, 300_000);
 
 afterAll(async () => {
   deps.inFlight?.close();

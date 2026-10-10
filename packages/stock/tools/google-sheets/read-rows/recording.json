@@ -1,0 +1,344 @@
+{
+  "format": 1,
+  "tool": "google-sheets__read-rows",
+  "recordedAt": "2026-10-10T05:56:27.621Z",
+  "input": {
+    "spreadsheet": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms?fields=sheets.properties.title",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "sheets": [
+              {
+                "properties": {
+                  "title": "Class Data"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/values/'Class%20Data'!A1%3AZ?majorDimension=ROWS",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "range": "'Jwkjw Mjxc'!E4:D698",
+            "majorDimension": "VJLL",
+            "values": [
+              [
+                "Vlddtdb Ohgc",
+                "Oezxwl",
+                "Aioha Hcovt",
+                "Ecey Vqfto",
+                "Qrjvd",
+                "Hklphyckcuytrbn Dimjqxkm"
+              ],
+              ["Ujbivdblf", "Fotuuq", "8. Jrqlfu", "WY", "Ayztpej", "Yrhud Zjao"],
+              ["Eehagb", "Mqvw", "9. Fzqphrrx", "IB", "Zxag", "Abmltgdq"],
+              ["Hjlr", "Fotuuq", "9. Fzqphrrx", "YJ", "Ayztpej", "Kbpxvwrkjx"],
+              ["Szzsn", "Fotuuq", "3. Intygqgif", "IB", "Sex", "Jwvavvve"],
+              ["Vgrtcgkj", "Mqvw", "8. Jrqlfu", "JX", "Ayztpej", "Kbpxvwrkjx"],
+              ["Lgeh", "Mqvw", "1. Laumwi", "DV", "Sex", "Tjdvgv"],
+              ["Uthtcv", "Fotuuq", "1. Laumwi", "MJ", "Ayztpej", "Wodmw & Ijtwx"],
+              ["Doktcgr", "Fotuuq", "8. Jrqlfu", "DV", "Zxag", "Abmltgdq"],
+              ["Drngd", "Mqvw", "9. Fzqphrrx", "MQ", "Zxag", "Jwvavvve"],
+              ["Mxwwpq", "Mqvw", "1. Laumwi", "VS", "Ayztpej", "Yrhud Zjao"],
+              ["Ngifc", "Fotuuq", "9. Fzqphrrx", "JX", "Jixfbxn", "Yrhud Zjao"],
+              ["Bfcdf", "Fotuuq", "9. Fzqphrrx", "MQ", "Sex", "Tjdvgv"],
+              ["Fltr", "Mqvw", "1. Laumwi", "WY", "Jixfbxn", "Kbpxvwrkjx"],
+              ["Tkggaxcm", "Mqvw", "3. Intygqgif", "WQ", "Zxag", "Tjdvgv"],
+              ["Kfilyz", "Mqvw", "9. Fzqphrrx", "UY", "Ayztpej", "Yrhud Zjao"],
+              ["Ldgdmiyvt", "Fotuuq", "9. Fzqphrrx", "MF", "Zxag", "Tjdvgv"],
+              ["Tqbvq", "Fotuuq", "3. Intygqgif", "VQ", "Ayztpej", "Kbpxvwrkjx"],
+              ["Misbe", "Mqvw", "3. Intygqgif", "MJ", "Jixfbxn", "Yrhud Zjao"],
+              ["Soua", "Fotuuq", "1. Laumwi", "WQ", "Sex", "Abmltgdq"],
+              ["Iwyc", "Fotuuq", "3. Intygqgif", "UY", "Jixfbxn", "Wodmw & Ijtwx"],
+              ["Nccacox", "Fotuuq", "9. Fzqphrrx", "WY", "Jixfbxn", "Kbpxvwrkjx"],
+              ["Tgqs", "Mqvw", "8. Jrqlfu", "MF", "Sex", "Jwvavvve"],
+              ["Akpywq", "Fotuuq", "8. Jrqlfu", "YJ", "Jixfbxn", "Wodmw & Ijtwx"],
+              ["Odxxng", "Fotuuq", "1. Laumwi", "SI", "Zxag", "Jwvavvve"],
+              ["Umylbfc", "Mqvw", "9. Fzqphrrx", "MF", "Sex", "Abmltgdq"],
+              ["Rfkzer", "Mqvw", "9. Fzqphrrx", "WY", "Ayztpej", "Wodmw & Ijtwx"],
+              ["Fzlx", "Mqvw", "9. Fzqphrrx", "VQ", "Jixfbxn", "Wodmw & Ijtwx"],
+              ["Edbmw", "Fotuuq", "9. Fzqphrrx", "MF", "Zxag", "Jwvavvve"],
+              ["Qbutzn", "Mqvw", "3. Intygqgif", "SI", "Sex", "Abmltgdq"],
+              ["Acht", "Mqvw", "8. Jrqlfu", "VS", "Zxag", "Tjdvgv"]
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "tab": "Class Data",
+    "header": [
+      "Vlddtdb Ohgc",
+      "Oezxwl",
+      "Aioha Hcovt",
+      "Ecey Vqfto",
+      "Qrjvd",
+      "Hklphyckcuytrbn Dimjqxkm"
+    ],
+    "rows": [
+      {
+        "Vlddtdb Ohgc": "Ujbivdblf",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "8. Jrqlfu",
+        "Ecey Vqfto": "WY",
+        "Qrjvd": "Ayztpej",
+        "Hklphyckcuytrbn Dimjqxkm": "Yrhud Zjao"
+      },
+      {
+        "Vlddtdb Ohgc": "Eehagb",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "IB",
+        "Qrjvd": "Zxag",
+        "Hklphyckcuytrbn Dimjqxkm": "Abmltgdq"
+      },
+      {
+        "Vlddtdb Ohgc": "Hjlr",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "YJ",
+        "Qrjvd": "Ayztpej",
+        "Hklphyckcuytrbn Dimjqxkm": "Kbpxvwrkjx"
+      },
+      {
+        "Vlddtdb Ohgc": "Szzsn",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "3. Intygqgif",
+        "Ecey Vqfto": "IB",
+        "Qrjvd": "Sex",
+        "Hklphyckcuytrbn Dimjqxkm": "Jwvavvve"
+      },
+      {
+        "Vlddtdb Ohgc": "Vgrtcgkj",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "8. Jrqlfu",
+        "Ecey Vqfto": "JX",
+        "Qrjvd": "Ayztpej",
+        "Hklphyckcuytrbn Dimjqxkm": "Kbpxvwrkjx"
+      },
+      {
+        "Vlddtdb Ohgc": "Lgeh",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "1. Laumwi",
+        "Ecey Vqfto": "DV",
+        "Qrjvd": "Sex",
+        "Hklphyckcuytrbn Dimjqxkm": "Tjdvgv"
+      },
+      {
+        "Vlddtdb Ohgc": "Uthtcv",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "1. Laumwi",
+        "Ecey Vqfto": "MJ",
+        "Qrjvd": "Ayztpej",
+        "Hklphyckcuytrbn Dimjqxkm": "Wodmw & Ijtwx"
+      },
+      {
+        "Vlddtdb Ohgc": "Doktcgr",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "8. Jrqlfu",
+        "Ecey Vqfto": "DV",
+        "Qrjvd": "Zxag",
+        "Hklphyckcuytrbn Dimjqxkm": "Abmltgdq"
+      },
+      {
+        "Vlddtdb Ohgc": "Drngd",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "MQ",
+        "Qrjvd": "Zxag",
+        "Hklphyckcuytrbn Dimjqxkm": "Jwvavvve"
+      },
+      {
+        "Vlddtdb Ohgc": "Mxwwpq",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "1. Laumwi",
+        "Ecey Vqfto": "VS",
+        "Qrjvd": "Ayztpej",
+        "Hklphyckcuytrbn Dimjqxkm": "Yrhud Zjao"
+      },
+      {
+        "Vlddtdb Ohgc": "Ngifc",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "JX",
+        "Qrjvd": "Jixfbxn",
+        "Hklphyckcuytrbn Dimjqxkm": "Yrhud Zjao"
+      },
+      {
+        "Vlddtdb Ohgc": "Bfcdf",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "MQ",
+        "Qrjvd": "Sex",
+        "Hklphyckcuytrbn Dimjqxkm": "Tjdvgv"
+      },
+      {
+        "Vlddtdb Ohgc": "Fltr",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "1. Laumwi",
+        "Ecey Vqfto": "WY",
+        "Qrjvd": "Jixfbxn",
+        "Hklphyckcuytrbn Dimjqxkm": "Kbpxvwrkjx"
+      },
+      {
+        "Vlddtdb Ohgc": "Tkggaxcm",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "3. Intygqgif",
+        "Ecey Vqfto": "WQ",
+        "Qrjvd": "Zxag",
+        "Hklphyckcuytrbn Dimjqxkm": "Tjdvgv"
+      },
+      {
+        "Vlddtdb Ohgc": "Kfilyz",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "UY",
+        "Qrjvd": "Ayztpej",
+        "Hklphyckcuytrbn Dimjqxkm": "Yrhud Zjao"
+      },
+      {
+        "Vlddtdb Ohgc": "Ldgdmiyvt",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "MF",
+        "Qrjvd": "Zxag",
+        "Hklphyckcuytrbn Dimjqxkm": "Tjdvgv"
+      },
+      {
+        "Vlddtdb Ohgc": "Tqbvq",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "3. Intygqgif",
+        "Ecey Vqfto": "VQ",
+        "Qrjvd": "Ayztpej",
+        "Hklphyckcuytrbn Dimjqxkm": "Kbpxvwrkjx"
+      },
+      {
+        "Vlddtdb Ohgc": "Misbe",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "3. Intygqgif",
+        "Ecey Vqfto": "MJ",
+        "Qrjvd": "Jixfbxn",
+        "Hklphyckcuytrbn Dimjqxkm": "Yrhud Zjao"
+      },
+      {
+        "Vlddtdb Ohgc": "Soua",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "1. Laumwi",
+        "Ecey Vqfto": "WQ",
+        "Qrjvd": "Sex",
+        "Hklphyckcuytrbn Dimjqxkm": "Abmltgdq"
+      },
+      {
+        "Vlddtdb Ohgc": "Iwyc",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "3. Intygqgif",
+        "Ecey Vqfto": "UY",
+        "Qrjvd": "Jixfbxn",
+        "Hklphyckcuytrbn Dimjqxkm": "Wodmw & Ijtwx"
+      },
+      {
+        "Vlddtdb Ohgc": "Nccacox",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "WY",
+        "Qrjvd": "Jixfbxn",
+        "Hklphyckcuytrbn Dimjqxkm": "Kbpxvwrkjx"
+      },
+      {
+        "Vlddtdb Ohgc": "Tgqs",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "8. Jrqlfu",
+        "Ecey Vqfto": "MF",
+        "Qrjvd": "Sex",
+        "Hklphyckcuytrbn Dimjqxkm": "Jwvavvve"
+      },
+      {
+        "Vlddtdb Ohgc": "Akpywq",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "8. Jrqlfu",
+        "Ecey Vqfto": "YJ",
+        "Qrjvd": "Jixfbxn",
+        "Hklphyckcuytrbn Dimjqxkm": "Wodmw & Ijtwx"
+      },
+      {
+        "Vlddtdb Ohgc": "Odxxng",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "1. Laumwi",
+        "Ecey Vqfto": "SI",
+        "Qrjvd": "Zxag",
+        "Hklphyckcuytrbn Dimjqxkm": "Jwvavvve"
+      },
+      {
+        "Vlddtdb Ohgc": "Umylbfc",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "MF",
+        "Qrjvd": "Sex",
+        "Hklphyckcuytrbn Dimjqxkm": "Abmltgdq"
+      },
+      {
+        "Vlddtdb Ohgc": "Rfkzer",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "WY",
+        "Qrjvd": "Ayztpej",
+        "Hklphyckcuytrbn Dimjqxkm": "Wodmw & Ijtwx"
+      },
+      {
+        "Vlddtdb Ohgc": "Fzlx",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "VQ",
+        "Qrjvd": "Jixfbxn",
+        "Hklphyckcuytrbn Dimjqxkm": "Wodmw & Ijtwx"
+      },
+      {
+        "Vlddtdb Ohgc": "Edbmw",
+        "Oezxwl": "Fotuuq",
+        "Aioha Hcovt": "9. Fzqphrrx",
+        "Ecey Vqfto": "MF",
+        "Qrjvd": "Zxag",
+        "Hklphyckcuytrbn Dimjqxkm": "Jwvavvve"
+      },
+      {
+        "Vlddtdb Ohgc": "Qbutzn",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "3. Intygqgif",
+        "Ecey Vqfto": "SI",
+        "Qrjvd": "Sex",
+        "Hklphyckcuytrbn Dimjqxkm": "Abmltgdq"
+      },
+      {
+        "Vlddtdb Ohgc": "Acht",
+        "Oezxwl": "Mqvw",
+        "Aioha Hcovt": "8. Jrqlfu",
+        "Ecey Vqfto": "VS",
+        "Qrjvd": "Zxag",
+        "Hklphyckcuytrbn Dimjqxkm": "Tjdvgv"
+      }
+    ],
+    "totalRowCount": 30,
+    "truncated": false
+  }
+}

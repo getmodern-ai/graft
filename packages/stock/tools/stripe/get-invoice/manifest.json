@@ -1,0 +1,19 @@
+{
+  "name": "get-invoice",
+  "description": "Gets one Stripe invoice with its line items, totals, amounts due and paid, status and links. Takes an invoice id from stripe__list-invoices; left out, it reads the newest invoice.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "invoice": {
+        "type": "string",
+        "description": "A Stripe invoice ID from stripe__list-invoices. Leave it out to read the newest invoice."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

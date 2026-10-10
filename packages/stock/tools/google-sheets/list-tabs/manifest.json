@@ -1,0 +1,25 @@
+{
+  "name": "list-tabs",
+  "description": "Lists the tabs (sheets) of a Google Sheets spreadsheet with each tab's size in rows and columns, and the spreadsheet's title and link. The spreadsheet can be a URL copied from the browser or an id from google-sheets__find-spreadsheets. The tab titles it answers are what the other google-sheets tools take as `tab`.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "spreadsheet": {
+        "type": "string",
+        "description": "A Google Sheets spreadsheet URL copied from the browser, or a spreadsheet ID from google-sheets__find-spreadsheets.",
+        "minLength": 1,
+        "examples": [
+          "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+          "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+        ]
+      }
+    },
+    "required": ["spreadsheet"],
+    "additionalProperties": false
+  },
+  "hosts": ["sheets.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

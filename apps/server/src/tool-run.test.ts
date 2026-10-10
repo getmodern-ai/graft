@@ -129,7 +129,9 @@ beforeAll(async () => {
     }),
   });
   deps = { agent: fake.agent, tool: fake.tool, workingSet: fake.workingSet, mcp };
-}, 60_000);
+  // The catalogue is loaded by the real check over every stock tool in the workspace, which grows
+  // with each integration (run 38036924245 spent the mcp suites' 60 s with seven of them).
+}, 300_000);
 
 afterAll(async () => {
   mcp.inFlight?.close();

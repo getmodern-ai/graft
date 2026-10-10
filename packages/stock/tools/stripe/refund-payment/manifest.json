@@ -1,0 +1,40 @@
+{
+  "name": "refund-payment",
+  "description": "Refunds a Stripe payment in full or in part, moving money back to the customer; a refund cannot be undone. Takes a charge id, or a payment_intent id, from stripe__list-payments.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "charge": {
+        "type": "string",
+        "description": "A charge id from stripe__list-payments. Give exactly one of charge or paymentIntent."
+      },
+      "paymentIntent": {
+        "type": "string",
+        "description": "A payment_intent id from stripe__list-payments. Give exactly one of charge or paymentIntent."
+      },
+      "amount": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Optional amount to refund in the currency's smallest unit. Omit to refund the full remaining amount."
+      },
+      "reason": {
+        "type": "string",
+        "enum": ["duplicate", "fraudulent", "requested_by_customer"],
+        "description": "Optional reason: duplicate, fraudulent or requested_by_customer."
+      },
+      "metadata": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Optional string metadata to attach to the refund."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

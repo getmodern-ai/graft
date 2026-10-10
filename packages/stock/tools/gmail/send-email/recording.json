@@ -1,0 +1,22 @@
+{
+  "format": 1,
+  "tool": "gmail__send-email",
+  "recordedAt": "2026-10-09T18:51:53.882Z",
+  "input": {
+    "to": "bgojjvr@example.com",
+    "subject": "Gygdl xchw Iuxgp",
+    "body": "Ozqa go d uaen nrwlswg."
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+      "body": {
+        "json": {
+          "raw": "VG86IGJnb2pqdnJAZXhhbXBsZS5jb20NClN1YmplY3Q6IEd5Z2RsIHhjaHcgSXV4Z3ANCk1JTUUtVmVyc2lvbjogMS4wDQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9VVRGLTgNCkNvbnRlbnQtVHJhbnNmZXItRW5jb2Rpbmc6IGJhc2U2NA0KDQpUM3B4WVNCbmJ5QmtJSFZoWlc0Z2JuSjNiSE4zWnk0PQ"
+        }
+      }
+    }
+  ]
+}

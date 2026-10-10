@@ -38,10 +38,12 @@ describe("the starter integrations", () => {
       "gmail",
       "google-calendar",
       "google-drive",
+      "google-sheets",
       "slack",
       "notion",
       "github",
       "hubspot",
+      "stripe",
       "microsoft-outlook",
       "open-meteo",
     ]);
@@ -92,8 +94,19 @@ describe("the starter integrations", () => {
     expect(STARTER_VENDORS.filter((starter) => starter.runInput).map((s) => s.id)).toEqual([
       "open-meteo",
     ]);
-    // A spreadsheet's rows need its id and a range, both looked up (GRA-217): Drive lists files.
-    expect(starterVendorOf("google-sheets")).toBeNull();
+    // A spreadsheet's rows need its id and a range, both looked up (GRA-217): Sheets' task lists
+    // the spreadsheets through Drive's search, on Drive's host (GRA-259).
+    expect(starterVendorOf("google-sheets")).toMatchObject({
+      vendor: "google-sheets",
+      primaryHost: "https://sheets.googleapis.com/v4",
+      hosts: ["sheets.googleapis.com", "www.googleapis.com"],
+      runInput: null,
+    });
+    // The stock tools connect through this proposal and four of them write (GRA-259), so the
+    // keyring's consent asks Google for read and write on spreadsheets, never the read-only scope.
+    const sheetsScopes = String(starterVendorOf("google-sheets")?.schemeConfig.scopes).split(" ");
+    expect(sheetsScopes).toContain("https://www.googleapis.com/auth/spreadsheets");
+    expect(sheetsScopes).not.toContain("https://www.googleapis.com/auth/spreadsheets.readonly");
     expect(starterVendorOf("google-drive")).toMatchObject({
       vendor: "google-drive",
       primaryHost: "https://www.googleapis.com/drive/v3",
@@ -116,6 +129,15 @@ describe("the starter integrations", () => {
     expect(gmail?.hints).toContain("`snippet`");
     expect(gmail?.hints).toContain("Make no other call.");
     expect(gmail?.hints).not.toMatch(/message get|metadataHeaders|then read each/);
+  });
+
+  it("asks Google Calendar's consent for event writes, which its stock tools make", () => {
+    const calendar = starterVendorOf("google-calendar");
+    const scopes = String(calendar?.schemeConfig.scopes).split(/\s+/);
+    expect(scopes).toEqual([
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/calendar.events",
+    ]);
   });
 
   it("proposes exactly what an agent's request_connection would send", () => {
@@ -148,10 +170,12 @@ describe("setupVendorOptions", () => {
       "gmail",
       "google-calendar",
       "google-drive",
+      "google-sheets",
       "slack",
       "notion",
       "github",
       "hubspot",
+      "stripe",
       "microsoft-outlook",
       "open-meteo",
     ]);
@@ -173,7 +197,9 @@ describe("setupVendorOptions", () => {
       covered((starter) =>
         starter.vendor === "github"
           ? GATEWAY
-          : starter.vendor === "open-meteo" || starter.vendor === "hubspot"
+          : starter.vendor === "open-meteo" ||
+              starter.vendor === "hubspot" ||
+              starter.vendor === "stripe"
             ? KEYRING
             : LINK,
       ),
@@ -182,6 +208,7 @@ describe("setupVendorOptions", () => {
       "gmail:link",
       "google-calendar:link",
       "google-drive:link",
+      "google-sheets:link",
       "slack:link",
       "notion:link",
       "microsoft-outlook:link",
