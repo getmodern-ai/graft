@@ -29,7 +29,10 @@ import {
  * compares `person` and `connections`; `agent`, `tool` and `jti` are for the wide event and for a
  * denylist, should revocation ever need to lag by less than a token lifetime. One optional claim,
  * `dryRun` (CONTEXT.md, *Dry run*): written only when the minter asks for a dry run, so a token
- * minted without it carries no such key at all, and read as `false` when absent.
+ * minted without it carries no such key at all, and read as `false` when absent. A second,
+ * `readOnly`, is written the same way, only for an ordinary run of a tool annotated read-only: the
+ * proxy then refuses any request its classifier calls a write as `annotation_mismatch` (ADR 0008 as
+ * amended 2026-10-10), so the annotation the run was let through on is held at the wire.
  *
  * Copied from Cando's `capability-token.ts` (ADR 0011) and made pure on the way in: the keys are
  * an argument everywhere rather than read from the environment, so this package imports nothing
@@ -71,6 +74,11 @@ export type MintCapabilityTokenInput = {
    * preview instead of sending it. Absent or false leaves the token exactly as before.
    */
   dryRun?: boolean;
+  /**
+   * Mint for a run of a tool annotated read-only, whose gate asked nothing on that annotation: the
+   * proxy refuses every request it classifies as a write. Absent or false leaves the token as before.
+   */
+  readOnly?: boolean;
 };
 
 /** Minting was asked of a deployment that has no key pair. */
@@ -162,6 +170,7 @@ export async function mintCapabilityToken(
     tool: input.tool,
     // Present only when true — an ordinary token carries no `dryRun` key at all.
     ...(input.dryRun === true ? { dryRun: true } : {}),
+    ...(input.readOnly === true ? { readOnly: true } : {}),
   })
     .setProtectedHeader({ alg: CAPABILITY_TOKEN_ALG, kid: keys.kid, typ: "JWT" })
     .setIssuer(CAPABILITY_TOKEN_ISSUER)
@@ -204,7 +213,7 @@ export async function verifyCapabilityToken(
 }
 
 function toClaims(payload: Record<string, unknown>): CapabilityClaims | null {
-  const { person, agent, connections, tool, jti, exp, dryRun } = payload;
+  const { person, agent, connections, tool, jti, exp, dryRun, readOnly } = payload;
   if (
     typeof person !== "string" ||
     typeof agent !== "string" ||
@@ -216,7 +225,8 @@ function toClaims(payload: Record<string, unknown>): CapabilityClaims | null {
     typeof exp !== "number" ||
     // Optional, but when present it must be the boolean this library writes: a well-signed token
     // saying `dryRun: "yes"` is not one we minted, and is refused like any other malformed claim.
-    (dryRun !== undefined && typeof dryRun !== "boolean")
+    (dryRun !== undefined && typeof dryRun !== "boolean") ||
+    (readOnly !== undefined && typeof readOnly !== "boolean")
   ) {
     return null;
   }
@@ -228,6 +238,7 @@ function toClaims(payload: Record<string, unknown>): CapabilityClaims | null {
     jti,
     exp,
     dryRun: dryRun === true,
+    readOnly: readOnly === true,
   };
 }
 

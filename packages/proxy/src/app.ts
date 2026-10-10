@@ -40,11 +40,13 @@ import {
 } from "./failure";
 import { forwardableRequestHeaders, passthroughResponseHeaders } from "./headers";
 import { isPublicHost } from "./public-host";
+import { classifyRequest, parseJsonBody } from "./read-request";
 import { type Hop, isRedirect, nextHop, scrubReturnedRedirect } from "./redirects";
 import { SCHEMES, type SchemePlugin, type SchemeTarget } from "./schemes";
 import { createSingleFlight } from "./single-flight";
 import { extractToken, scrubToken } from "./token";
 import type {
+  CapabilityClaims,
   CredentialFields,
   CredentialScope,
   DerivedCredentialCache,
@@ -465,12 +467,27 @@ async function decide(
   scrubToken(headers, target.url, token);
 
   /**
+   * The annotation rung (ADR 0008 as amended 2026-10-10). A run of a tool annotated read-only was
+   * let through the approval gate on that annotation, which the check derived from what the source
+   * states; a module can still change what leaves at run time (a computed option, a replaced
+   * `JSON.stringify`, a `toJSON` on a prototype). So the request as it would leave is classified by
+   * the same function, and a write under the claim is refused before any credential is obtained.
+   * A dry run is not held here: it carries no `readOnly` claim and stops its writes below.
+   */
+  const mismatch = annotationMismatch(claims, call.method, target.url, body);
+  if (mismatch) return refuse(403, "annotation_mismatch", mismatch, { requestBytes });
+
+  /**
    * The dry-run rung (CONTEXT.md, *Dry run*). After every check above, and *before* the credential
    * is obtained: a write in a dry run costs the vendor nothing, not even a token exchange, and the
-   * proxy never decrypts a credential it is not about to send. A `GET` or `HEAD` under the same
-   * claim falls through to `forward` exactly as an ordinary call does.
+   * proxy never decrypts a credential it is not about to send. A read under the same claim falls
+   * through to `forward` exactly as an ordinary call does: a `GET` or `HEAD`, a GraphQL query, or a
+   * reviewed search endpoint, judged by `read-request.ts`'s classifier on the vendor URL and the
+   * body as they would leave, the one the check annotates with (ADR 0008 as amended 2026-10-10).
+   * A forwarded read with a body cannot be redirected into a write: a 307 or 308 with a body is
+   * never followed, and a followed 301, 302 or 303 turns it into a `GET` (`redirects.ts`).
    */
-  if (claims.dryRun && !isSafeMethod(call.method)) {
+  if (claims.dryRun && !isDryRunRead(call.method, target.url, body)) {
     const named = schemeHeaderNames(headers, plugin, config);
     if (!named.ok) return refuse(409, named.reason, named.message, { requestBytes });
     trace.dryRunOutcome = "intercepted";
@@ -513,6 +530,39 @@ async function decide(
     { method: call.method, url: target.url, body },
     requestBytes,
   );
+}
+
+/**
+ * Why the request contradicts the annotation the token carries, or null. Today one claim, `readOnly`:
+ * a request the classifier does not call a read. The hook for GRA-267: a `destructive: false` claim
+ * and the reviewed table of destructive requests refuse here too, beside this one.
+ */
+function annotationMismatch(
+  claims: CapabilityClaims,
+  method: string,
+  url: URL,
+  body: Uint8Array | null,
+): string | null {
+  if (claims.readOnly && !isRead(method, url, body)) {
+    return `${claims.tool} is annotated read-only, and this ${method} to ${url.hostname} is not a read; run a tool whose annotation allows it`;
+  }
+  return null;
+}
+
+/** Whether a dry run lets the request reach the vendor: the shared classifier's read. */
+function isDryRunRead(method: string, url: URL, body: Uint8Array | null): boolean {
+  return isRead(method, url, body);
+}
+
+/** The shared classifier's read over the request as it would leave (`read-request.ts`). */
+function isRead(method: string, url: URL, body: Uint8Array | null): boolean {
+  return classifyRequest({
+    method,
+    host: url.hostname,
+    path: url.pathname,
+    hasQuery: url.search.length > 1,
+    body: parseJsonBody(body),
+  }).read;
 }
 
 /**

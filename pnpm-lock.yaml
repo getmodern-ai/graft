@@ -411,6 +411,9 @@ importers:
 
   packages/check:
     dependencies:
+      '@graft/proxy':
+        specifier: workspace:*
+        version: link:../proxy
       '@graft/runner':
         specifier: workspace:*
         version: link:../runner
@@ -725,6 +728,9 @@ importers:
 
   packages/proxy:
     dependencies:
+      graphql:
+        specifier: ^16.14.2
+        version: 16.14.2
       hono:
         specifier: 'catalog:'
         version: 4.13.11
@@ -3441,6 +3447,10 @@ packages:
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
+  graphql@16.14.2:
+    resolution: {integrity: sha512-Chq1s4CY7jmh8gO2qvLIJyfCDIN+EHLFW/9iShnp1z8FjBQMoodWP1kDC36VAMXXIvAjj4ARa7ntfAV2BrjsbA==}
+    engines: {node: ^12.22.0 || ^14.16.0 || ^16.0.0 || >=17.0.0}
 
   happy-dom@20.14.5:
     resolution: {integrity: sha512-x/RzkpWO40bTjIoT30iQtt64FLLmH/iRcUCN2X//bLx7H3ifkdfPXyqsro/OYtqzIAhiLMMA7mmiOR9C3NOKjQ==}
@@ -6722,6 +6732,8 @@ snapshots:
   gopd@1.2.0: {}
 
   graceful-fs@4.2.11: {}
+
+  graphql@16.14.2: {}
 
   happy-dom@20.14.5:
     dependencies:

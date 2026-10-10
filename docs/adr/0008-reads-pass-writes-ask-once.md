@@ -130,3 +130,55 @@ non-destructive to destructive, since the code was reviewed before release and n
 agent. A remix is a republish and follows the rule above: a write asks again once. The ask names
 where a tool came from: a stock tool is "ready-made by Graft and reviewed before release", a remix
 is the agent's version of one.
+
+## Amendment 2026-10-10: a read is a request that cannot change the vendor's state
+
+Decided by Aleks (GRA-260). "Read" above meant a `GET` or `HEAD`, so every `POST` was a write: the
+check annotated it as one and the dry run stopped it at the preview. That made a GraphQL API
+(Linear, where every call is a `POST`) and a vendor's `POST` search (HubSpot's CRM search, Apollo's
+people and account search) unusable as reads, and pushed a HubSpot contact lookup into scanning
+thousands of records with `GET`s. **A read is a request that cannot change the vendor's state,
+judged by one of three things and nothing else:**
+
+- **its method**: `GET` or `HEAD`;
+- **its GraphQL operation type**: a `POST` to a GraphQL endpoint (a path ending `/graphql` or
+  `/graphql.json`) with no query string, whose JSON body carries only `query`, `variables` and
+  `operationName`, and whose `query` parses as a document of `query` operations and fragments
+  alone. A mutation, a subscription, a mixed document, a body that does not parse, a persisted
+  query (whose document is not in the body) and a body with any other key are writes;
+- **the reviewed table**: a data-only list of (host, method, path pattern) that are reads despite
+  their method, in `packages/proxy/src/read-endpoints.ts`. It starts with HubSpot's
+  `POST /crm/v3/objects/*/search` and Apollo's four search endpoints. **Adding an entry is a
+  reviewed change**, naming the vendor's documentation.
+
+**One classifier judges both places**, `classifyRequest` in `packages/proxy/src/read-request.ts`:
+the check calls it with what the source states (the method, a literal path, a literal `host`, a
+body built from literals), and the proxy's dry run with the request as it would leave. What the
+check cannot see is a write, so the two can differ only in the safe direction: a call the check
+annotated as a write may still reach the vendor in a dry run, never the reverse. A table entry
+names its host, so the check matches one only where the call names the host itself; a relative
+path goes to whichever connection the tool runs over.
+
+**The annotation is held at run time.** The check's reading is what a tool is annotated by, and
+the approval gate lets a read-only tool's run through unasked on it. A module can still change what
+leaves after the check has read it: an option under a computed key, a replaced `JSON.stringify`, a
+`toJSON` put on a prototype. The check treats the spellings it can see as writes (a spread, a
+computed key, a method or accessor in the options; an assignment to a member of `JSON` or the name
+`toJSON` in any file of the module), but no static reading is complete, so **the proxy enforces the
+annotation**: the capability token minted for an ordinary run the gate passed on a read-only
+annotation carries a `readOnly` claim, and the proxy classifies every request under it with the
+same function, as the request would leave, and refuses one that is not a read with
+`403 annotation_mismatch` before any credential is obtained. A dry run carries no such claim and
+stops its writes at the preview as before. The same rung is where a non-destructive tool's
+destructive request will be refused once GRA-267's table of destructive requests exists.
+
+**Why the path rule on GraphQL.** The ticket put it as the body alone. A REST write whose body
+happens to carry a `query` field that parses as a GraphQL query (a saved search, a message) would
+then pass as a read, unasked, and reach the vendor in a dry run. The endpoint's path and the body's
+keys keep that out. A GraphQL API at another path (Monday's `/v2`) stays a write until a reviewed
+list of such endpoints is added beside the table; the table itself is the wrong place, since an
+entry there makes every request to the path a read, mutations included.
+
+**Unchanged.** Reads never ask; anything else asks once per agent. A search that bills credits
+(Apollo's paid people search) is still a read under this rule: it changes nothing in the account,
+and the dry run reaching it is the same spend a `GET` that bills would be.

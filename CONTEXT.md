@@ -183,11 +183,12 @@ job acquires)
 **Check**:
 The static pass over a module: types against the input schema and the context, banned surface,
 imports outside the module, a literal foreign host, an SDK not bound to the proxy. Also the source
-of a tool's read-only and destructive annotations, derived from the methods it uses.
+of a tool's read-only and destructive annotations, derived from the reads and writes it makes
+(ADR 0008 as amended 2026-10-10).
 _Avoid_: lint, validate, compile
 
 **Dry run**:
-A run in which reads reach the vendor and every other method stops at the proxy, which answers
+A run in which reads reach the vendor and every other request stops at the proxy, which answers
 with a preview of the request that would have left. Exists for the model, which fixes the tool on
 what it learns; a person is never shown one.
 _Avoid_: test run, preview (that is what a dry run returns for a write), simulation

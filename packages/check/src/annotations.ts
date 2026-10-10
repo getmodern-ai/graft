@@ -1,8 +1,9 @@
 /**
  * What the tool's MCP annotations will say, derived from the module's calls (ADR 0008): `readOnly`
- * when every call the check can see is a `GET` or `HEAD` through `ctx.fetch`; `destructive` when any
- * is a `DELETE`. Any other method, a method the check cannot read, and every call into an SDK count as
- * writes. Meaningful when `refusals` is empty; a module the check could not read at all reports
+ * when every call the check can see through `ctx.fetch` is a read — a `GET` or `HEAD`, a GraphQL
+ * query, or a reviewed search endpoint, judged by the proxy's classifier (ADR 0008 as amended
+ * 2026-10-10; `read-call.ts`); `destructive` when any is a `DELETE`. Any other call, a method the
+ * check cannot read, and every call into an SDK count as writes. Meaningful when `refusals` is empty; a module the check could not read at all reports
  * `UNKNOWN_ANNOTATIONS`.
  *
  * Its own file, imported by the core (with its `.ts` extension, for the worker's native resolution)
