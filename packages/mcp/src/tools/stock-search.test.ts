@@ -26,6 +26,18 @@ const CASES: [query: string, tool: string][] = [
   ["move a file to a folder", "google-drive__move-file"],
   ["rename a drive file", "google-drive__move-file"],
   ["share a file with a person", "google-drive__share-file"],
+  // HubSpot's (GRA-254), each also pinned over HubSpot's tools alone in `tool-index.test.ts`.
+  ["look up a contact by email", "hubspot__find-contact"],
+  ["search deals", "hubspot__find-deal"],
+  ["get a deal with its contacts", "hubspot__get-record"],
+  ["list hubspot owners", "hubspot__list-owners"],
+  ["list pipeline stages", "hubspot__list-pipelines"],
+  ["add a contact to hubspot", "hubspot__create-contact"],
+  ["create a company", "hubspot__create-company"],
+  ["create a deal", "hubspot__create-deal"],
+  ["update a contact", "hubspot__update-record"],
+  ["log a note on a deal", "hubspot__add-note"],
+  ["create a task", "hubspot__create-task"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];

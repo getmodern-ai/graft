@@ -25,6 +25,7 @@ export default async (input: Input, ctx: Context) => {
 
   let contentPath: string | null = null;
   let exportedAs: string | null = null;
+  let stored = false;
 
   if (
     mimeType === "application/vnd.google-apps.document" ||
@@ -53,6 +54,7 @@ export default async (input: Input, ctx: Context) => {
     mimeType === "application/csv"
   ) {
     exportedAs = mimeType;
+    stored = true;
     contentPath = `/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
   } else {
     return {
@@ -67,11 +69,32 @@ export default async (input: Input, ctx: Context) => {
     };
   }
 
-  const contentResponse = await ctx.fetch(contentPath, { host });
+  // A stored file is read by byte range, never whole: the proxy refuses an answer past its body
+  // cap, and an excerpt of `maxCharacters` needs at most four bytes per character. An export
+  // cannot be ranged; Google caps one at 10 MB, under the proxy's default cap.
+  const headers: Record<string, string> = stored
+    ? { range: `bytes=0-${maxCharacters * 4 - 1}` }
+    : {};
+  const contentResponse = await ctx.fetch(contentPath, { host, method: "GET", headers });
+  if (stored && contentResponse.status === 416) {
+    // An empty file has no byte 0 to range over.
+    return {
+      id,
+      name,
+      mimeType,
+      readable: true,
+      exportedAs,
+      content: "",
+      truncated: false,
+      reason: null,
+    };
+  }
   if (!contentResponse.ok) {
     throw new Error(`GET file content ${contentResponse.status}: ${await contentResponse.text()}`);
   }
 
+  // A range cut short of the file decodes to more than `maxCharacters` UTF-16 units, so the
+  // length alone says whether anything was left out.
   const fullContent = await contentResponse.text();
   const truncated = fullContent.length > maxCharacters;
 
