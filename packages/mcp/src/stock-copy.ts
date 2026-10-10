@@ -2,15 +2,20 @@ import {
   type AgentScope,
   type ConnectionOutput,
   countWorkingSet,
+  decideStockAdvance,
   getAgentScope,
   getToolByName,
   isConnectionUsable,
   listConnections,
+  listToolVersionOrigins,
   promoteTool,
   type ServiceContext,
   type StockConnectProposal,
+  type StockLineage,
+  type StockToolView,
+  stockLineageOf,
 } from "@graft/core";
-import type { AuthoredToolRow } from "@graft/db/repo/tool";
+import type { AuthoredToolRow, ToolVersionOrigin } from "@graft/db/repo/tool";
 
 import type { McpDeps } from "./deps";
 import type { ToolListChangedNotifier } from "./notifier";
@@ -35,6 +40,11 @@ import { authoredToolName } from "./tool-names";
  * arguments, and nothing is written. With several matches and no choice the copy holds no default,
  * and each run resolves its connection per agent (`run.ts`), which refuses two matches and no
  * `connectionId` with `alternatives`.
+ *
+ * **A copy the person already holds follows stock** (GRA-242): reaching it here advances it to
+ * the catalogue's current version when every version it holds came from stock and the catalogue
+ * has moved on (`followStock`), so a run runs, and a promote lists, the version stock answers now.
+ * A remix and an authored tool are never touched.
  */
 
 export type EnsureRefusalReason =
@@ -46,7 +56,7 @@ export type EnsureRefusalReason =
   | "connection_hosts_missing";
 
 export type EnsuredTool =
-  | { ok: true; tool: AuthoredToolRow; copied: boolean }
+  | { ok: true; tool: AuthoredToolRow; copied: boolean; advanced: boolean }
   | {
       ok: false;
       reason: EnsureRefusalReason;
@@ -150,7 +160,10 @@ export async function ensureToolForAgent(
   const principal = { personId: scope.personId };
   const wire = authoredToolName(key.vendor, key.name);
   const own = await getToolByName(ctx, principal, key, deps.tool);
-  if (own) return { ok: true, tool: own, copied: false };
+  if (own) {
+    const followed = await followStock(deps, scope, own);
+    return { ok: true, tool: followed.tool, copied: false, advanced: followed.advanced };
+  }
   const stock = (await deps.toolSource?.describe(key)) ?? null;
   if (!stock) {
     return {
@@ -195,7 +208,81 @@ export async function ensureToolForAgent(
     stock,
     defaultConnectionId,
   });
-  return { ok: true, tool, copied: true };
+  return { ok: true, tool, copied: true, advanced: false };
+}
+
+/** Each tool's version origins, newest first, keyed by tool id: one read for a whole toolbox. */
+export function originsByTool(
+  origins: readonly ToolVersionOrigin[],
+): Map<string, ToolVersionOrigin[]> {
+  const byTool = new Map<string, ToolVersionOrigin[]>();
+  for (const origin of origins) {
+    const list = byTool.get(origin.toolId) ?? [];
+    list.push(origin);
+    byTool.set(origin.toolId, list);
+  }
+  return byTool;
+}
+
+/** A tool's lineage off its origins: what `find_tool` marks a hit with (`stock`, `remixed`). */
+export function lineageOf(origins: readonly ToolVersionOrigin[] | undefined): StockLineage {
+  return stockLineageOf(origins ?? []);
+}
+
+/**
+ * Advance one tool the caller has already read the origins and the catalogue's entry for, when
+ * `@graft/core`'s `decideStockAdvance` says so; the tool as it stands otherwise. The decision is
+ * taken again under the tool's lock inside the advance (`@graft/publish`'s `advanceStockCopy`),
+ * so this read only spares a transaction for the tools that are not behind.
+ */
+export async function advanceIfBehind(
+  deps: McpDeps,
+  personId: string,
+  tool: AuthoredToolRow,
+  origins: readonly ToolVersionOrigin[],
+  stock: StockToolView | null,
+  agentId: string | null = null,
+): Promise<{ tool: AuthoredToolRow; advanced: boolean }> {
+  if (!deps.toolSource || !stock) return { tool, advanced: false };
+  const decision = decideStockAdvance({
+    versions: origins,
+    catalogue: {
+      stockToolId: stock.stockToolId,
+      stockVersionId: stock.stockVersionId,
+      versionNumber: stock.versionNumber,
+    },
+  });
+  if (decision.action === "stay") return { tool, advanced: false };
+  const advance = await deps.toolSource.advance({ personId, toolId: tool.id, stock, agentId });
+  return { tool: advance.tool, advanced: advance.advanced };
+}
+
+/**
+ * **Reaching a copy advances it** (ADR 0025; GRA-242): the one-tool form `ensureToolForAgent`
+ * calls, so a run, a first-class call, the console's run and a promote each move an untouched copy
+ * onto the catalogue's current version before they read it. The origins are read first and the
+ * catalogue asked only for a tool whose every version came from stock, so a reach of an authored
+ * tool or a remix costs one read. An advance announces the reaching agent's list as changed,
+ * since the definition it lists moved.
+ */
+export async function followStock(
+  deps: McpDeps,
+  scope: AgentScope,
+  tool: AuthoredToolRow,
+): Promise<{ tool: AuthoredToolRow; advanced: boolean }> {
+  if (!deps.toolSource) return { tool, advanced: false };
+  const ctx: ServiceContext = { db: deps.db };
+  const origins = await listToolVersionOrigins(
+    ctx,
+    { personId: scope.personId },
+    deps.tool,
+    tool.id,
+  );
+  if (lineageOf(origins) !== "stock") return { tool, advanced: false };
+  const stock = await deps.toolSource.describe({ vendor: tool.vendor, name: tool.name });
+  const followed = await advanceIfBehind(deps, scope.personId, tool, origins, stock, scope.agentId);
+  if (followed.advanced) deps.notifier?.changed(scope.agentId);
+  return followed;
 }
 
 export type PromotedTool =

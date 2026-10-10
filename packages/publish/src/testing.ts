@@ -10,12 +10,15 @@ import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 export type InMemoryToolDeps = ToolDeps & {
   tools: AuthoredToolRow[];
   versions: ToolVersionRow[];
+  /** stock version id -> its number, for `listToolVersionOrigins` (the catalogue's join). */
+  stockVersionNumbers: Map<string, number>;
 };
 
 export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMemoryToolDeps {
   const now = options.now ?? (() => new Date());
   const tools: AuthoredToolRow[] = [];
   const versions: ToolVersionRow[] = [];
+  const stockVersionNumbers = new Map<string, number>();
   let counter = 0;
   const own = (personId: string, toolId: string) =>
     tools.find((tool) => tool.id === toolId && tool.personId === personId) ?? null;
@@ -23,6 +26,7 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
   return {
     tools,
     versions,
+    stockVersionNumbers,
     newId: () => `id_${++counter}`,
     now,
     insertAuthoredTool: async (_db, input) => {
@@ -50,6 +54,8 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
           tool.personId === personId && tool.vendor === key.vendor && tool.name === key.name,
       ) ?? null,
     findAuthoredToolById: async (_db, personId, id) => own(personId, id),
+    // One process over two arrays: nothing races, so the lock is the read.
+    findAuthoredToolForUpdate: async (_db, personId, id) => own(personId, id),
     listAuthoredTools: async (_db, personId) => tools.filter((tool) => tool.personId === personId),
     updateAuthoredTool: async (_db, personId, id, patch) => {
       const tool = own(personId, id);
@@ -94,6 +100,27 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
             .filter((version) => version.toolId === toolId)
             .sort((a, b) => b.versionNumber - a.versionNumber)
         : [],
+    // The stock number is the catalogue's, which this seam does not hold: a suite that needs it
+    // fills `stockVersionNumbers`.
+    listToolVersionOrigins: async (_db, personId, toolId) =>
+      versions
+        .filter((version) =>
+          toolId === undefined
+            ? own(personId, version.toolId) !== null
+            : version.toolId === toolId && own(personId, toolId) !== null,
+        )
+        .sort((a, b) => a.toolId.localeCompare(b.toolId) || b.versionNumber - a.versionNumber)
+        .map((version) => ({
+          toolId: version.toolId,
+          versionId: version.id,
+          versionNumber: version.versionNumber,
+          createdAt: version.createdAt,
+          stockToolId: version.stockToolId,
+          stockVersionId: version.stockVersionId,
+          stockVersionNumber: version.stockVersionId
+            ? (stockVersionNumbers.get(version.stockVersionId) ?? null)
+            : null,
+        })),
     findToolVersion: async (_db, personId, versionId) => {
       const version = versions.find((row) => row.id === versionId) ?? null;
       return version && own(personId, version.toolId) ? version : null;

@@ -1,4 +1,9 @@
-import type { AuthoredToolPatch, AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
+import type {
+  AuthoredToolPatch,
+  AuthoredToolRow,
+  ToolVersionOrigin,
+  ToolVersionRow,
+} from "@graft/db/repo/tool";
 
 import { validateVendor } from "../connection/connection.rules";
 import type { ServiceContext } from "../context";
@@ -431,6 +436,19 @@ export async function listToolVersions(
   deps: ToolDeps,
 ): Promise<ToolVersionRow[]> {
   return deps.listToolVersions(ctx.db, principal.personId, toolId);
+}
+
+/**
+ * Where each version came from (ADR 0025; GRA-242): the stock version it was copied from, or the
+ * agent. Every tool of the person's when `toolId` is absent, one statement either way.
+ */
+export async function listToolVersionOrigins(
+  ctx: ServiceContext,
+  principal: Principal,
+  deps: ToolDeps,
+  toolId?: string,
+): Promise<ToolVersionOrigin[]> {
+  return deps.listToolVersionOrigins(ctx.db, principal.personId, toolId);
 }
 
 export async function getToolVersion(

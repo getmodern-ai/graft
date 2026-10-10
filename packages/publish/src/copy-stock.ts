@@ -1,12 +1,15 @@
 import {
   createTool,
+  decideStockAdvance,
   isUniqueViolation,
+  listToolVersionOrigins,
   publishToolVersion as recordPublishedVersion,
   type ServiceContext,
   ServiceError,
   type StockToolView,
+  type ToolAnnotations,
 } from "@graft/core";
-import type { AuthoredToolRow } from "@graft/db/repo/tool";
+import type { AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
 import { toolboxIdOf, writePath } from "@graft/toolbox";
 
 import { sourceHashOf } from "./hash";
@@ -113,5 +116,124 @@ export async function copyStockVersion(
     const raced = await deps.tool.findAuthoredTool(deps.db, personId, key);
     if (!raced) throw error;
     return raced;
+  }
+}
+
+/** What an advance did: the tool as it stands, and the stock version it now names when it moved. */
+export type StockAdvance =
+  | {
+      advanced: true;
+      tool: AuthoredToolRow;
+      /** The version the advance wrote, carrying its stock origin. */
+      version: ToolVersionRow;
+      /** The tool's annotations before the advance: what an approval held across it was given for. */
+      previous: ToolAnnotations;
+      stockVersionNumber: number;
+    }
+  | { advanced: false; tool: AuthoredToolRow };
+
+/**
+ * **An untouched copy follows stock** (ADR 0025; GRA-242): when the catalogue's current version of
+ * the stock tool is one the copy never took, it is written as the tool's next version, recording
+ * its stock origin, and the pointer moves onto it with the definition, as the first copy wrote
+ * version 1. A remix, an authored tool and a copy already current are answered untouched
+ * (`@graft/core`'s `decideStockAdvance`).
+ *
+ * **A directory of its own, then the rows under the locks** (GRA-238, GRA-265): the stock
+ * version's files go to this advance's own write directory (`@graft/toolbox`'s `writePath`) with
+ * nothing held, as a copy's and a publish's do, so no writer ever writes over another's files.
+ * The rows are one transaction that takes the person's lock on the tool's name
+ * (`ToolDeps.lockToolName`, which a publish's rows and a copy take) and the tool row's
+ * (`findAuthoredToolForUpdate`), and only then reads the versions and decides, so two reaches of
+ * one copy at once serialise: the second reads the version the first recorded and stays, and its
+ * directory is left as an orphan with no row (nothing under `tools/` is removed, ADR 0009). A
+ * version a remix records at the same moment is decided under the same name lock, and a writer
+ * that takes none is caught by the version number's unique constraint, the advance answering the
+ * tool as that writer left it. Once committed, the mirror is asked for the version as a publish
+ * asks it.
+ *
+ * The connection a copy was bound to is kept: an advance changes the code and the definition,
+ * never the binding. Approvals are not touched here; what an advance does to one is ADR 0008's
+ * amendment of 2026-10-09 and GRA-245's, which reads `previous` beside the new annotations.
+ */
+export async function advanceStockCopy(
+  deps: CopyStockDeps,
+  args: {
+    personId: string;
+    toolId: string;
+    stock: StockToolView;
+    /** The agent whose reach made the advance; carried to the mirror event, never to a row. */
+    agentId?: string | null;
+  },
+): Promise<StockAdvance> {
+  const { stock, personId } = args;
+  const principal = { personId };
+  const ctx: ServiceContext = { db: deps.db };
+  const toolboxId = toolboxIdOf(personId);
+  const named = await deps.tool.findAuthoredToolById(deps.db, personId, args.toolId);
+  if (!named) throw new ServiceError("NOT_FOUND", "Tool not found");
+  const key = { vendor: named.vendor, name: named.name };
+  const versionPath = writePath(key.vendor, key.name, (deps.writeId ?? newWriteId)(deps.now()));
+  const written = normaliseManifest(stock.files);
+  await deps.store.writeTree(toolboxId, versionPath, written);
+  try {
+    const outcome = await ctx.db.transaction(async (tx): Promise<StockAdvance> => {
+      const scoped: ServiceContext = { db: tx };
+      await deps.tool.lockToolName(tx, personId, key);
+      const tool = await deps.tool.findAuthoredToolForUpdate(tx, personId, args.toolId);
+      if (!tool) throw new ServiceError("NOT_FOUND", "Tool not found");
+      const origins = await listToolVersionOrigins(scoped, principal, deps.tool, tool.id);
+      const decision = decideStockAdvance({
+        versions: origins,
+        catalogue: {
+          stockToolId: stock.stockToolId,
+          stockVersionId: stock.stockVersionId,
+          versionNumber: stock.versionNumber,
+        },
+      });
+      if (decision.action === "stay") return { advanced: false, tool };
+
+      const previous = { readOnly: tool.readOnly, destructive: tool.destructive };
+      const recorded = await recordPublishedVersion(
+        scoped,
+        principal,
+        tool.id,
+        {
+          path: versionPath,
+          sourceHash: sourceHashOf(written),
+          checkOutput: stock.checkOutput,
+          writesInvolved: !stock.annotations.readOnly,
+          stockToolId: decision.stockToolId,
+          stockVersionId: decision.stockVersionId,
+        },
+        {
+          description: stock.description,
+          inputSchema: stock.inputSchema,
+          annotations: stock.annotations,
+        },
+        deps.tool,
+      );
+      return {
+        advanced: true,
+        tool: recorded.tool,
+        version: recorded.version,
+        previous,
+        stockVersionNumber: decision.stockVersionNumber,
+      };
+    });
+    if (outcome.advanced) {
+      startMirror(
+        deps,
+        { personId, agentId: args.agentId ?? null, toolboxId },
+        { tool: outcome.tool, version: outcome.version },
+        versionPath,
+      );
+    }
+    return outcome;
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const raced = await deps.tool.findAuthoredToolById(deps.db, personId, args.toolId);
+    if (!raced) throw error;
+    return { advanced: false, tool: raced };
   }
 }

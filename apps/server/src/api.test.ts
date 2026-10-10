@@ -361,10 +361,12 @@ function toolDeps(): ToolDeps {
     insertAuthoredTool: unused(),
     findAuthoredTool: vi.fn(async () => toolRow),
     findAuthoredToolById: vi.fn(async () => toolRow),
+    findAuthoredToolForUpdate: unused(),
     listAuthoredTools: vi.fn(async () => [toolRow]),
     updateAuthoredTool: unused(),
     insertToolVersion: unused(),
     listToolVersions: vi.fn(async () => []),
+    listToolVersionOrigins: vi.fn(async () => []),
     findToolVersion: vi.fn(async () => null),
     setCurrentToolVersion: unused(),
     recordToolVersionDryRun: unused(),
@@ -981,6 +983,44 @@ describe("the working set", () => {
     });
     expect(body.tools[0]).not.toHaveProperty("inputSchema");
     expect(body.tools[0]).not.toHaveProperty("personId");
+  });
+
+  /** GRA-242: each version says where it came from, so the console labels the stock ones. */
+  it("answers each tool's versions with their origin, and the tool's stock lineage", async () => {
+    const { app, deps } = harness({ user: { id: "person_1" } });
+    vi.mocked(deps.tool.listAuthoredTools).mockResolvedValueOnce([
+      { ...toolRow, currentVersionId: "ver_2" },
+    ]);
+    vi.mocked(deps.tool.listToolVersionOrigins).mockResolvedValueOnce([
+      {
+        toolId: "tool_1",
+        versionId: "ver_2",
+        versionNumber: 2,
+        createdAt: NOW,
+        stockToolId: "st_1",
+        stockVersionId: "sv_2",
+        stockVersionNumber: 2,
+      },
+      {
+        toolId: "tool_1",
+        versionId: "ver_1",
+        versionNumber: 1,
+        createdAt: NOW,
+        stockToolId: "st_1",
+        stockVersionId: "sv_1",
+        stockVersionNumber: 1,
+      },
+    ]);
+    const res = await app.request("/api/tools");
+    const body = (await res.json()) as { tools: Record<string, unknown>[] };
+    expect(deps.tool.listToolVersionOrigins).toHaveBeenCalledWith(fakeDb, "person_1", undefined);
+    expect(body.tools[0]).toMatchObject({
+      lineage: "stock",
+      versions: [
+        { id: "ver_2", versionNumber: 2, current: true, origin: "stock", stockVersionNumber: 2 },
+        { id: "ver_1", versionNumber: 1, current: false, origin: "stock", stockVersionNumber: 1 },
+      ],
+    });
   });
 });
 

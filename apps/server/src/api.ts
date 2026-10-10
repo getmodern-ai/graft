@@ -23,6 +23,7 @@ import {
   listConnections,
   listOpenPendingActions,
   listTools,
+  listToolVersionOrigins,
   listVendorUsage,
   listWorkingSet,
   listWorkingSetChanges,
@@ -47,12 +48,14 @@ import {
   type SetupDeps,
   type SetupState,
   STARTER_VENDOR_IDS,
+  type StockLineage,
   setAgentScope,
   setAskEveryCall,
   setConnectionCredential,
   setPersonModelKey,
   skipSetup,
   startSetup,
+  stockLineageOf,
   type ToolDeps,
   updateAgentLimits,
   type WorkingSetDeps,
@@ -594,6 +597,29 @@ export function toToolOutput(row: AuthoredToolRow): ToolOutput {
     updatedAt: row.updatedAt,
   };
 }
+
+/**
+ * One version of a toolbox tool as the console's history draws it (ADR 0025; GRA-242): its number,
+ * whether the pointer names it, and where it came from: `stock` with the stock version it was copied
+ * from (null where that version is gone from the catalogue), or `agent`.
+ */
+export type ToolVersionOutput = {
+  id: string;
+  versionNumber: number;
+  current: boolean;
+  createdAt: Date;
+  origin: "stock" | "agent";
+  stockVersionNumber: number | null;
+};
+
+/**
+ * A tool as `GET /tools` answers it: the row, its stock lineage (`@graft/core`'s `stockLineageOf`:
+ * `stock` for a copy that follows stock, `remix`, `authored`) and its versions, newest first.
+ */
+export type ToolboxToolOutput = ToolOutput & {
+  lineage: StockLineage;
+  versions: ToolVersionOutput[];
+};
 
 /** One promoted tool in an agent's working set, with the tool — the console's working-set view (ADR 0003). */
 export type WorkingSetEntryOutput = {
@@ -1458,11 +1484,39 @@ export function createApi(options: ApiOptions): Hono {
     return c.json(await setAgentScope(ctx, principal, c.req.param("id"), body, agentDeps));
   });
 
-  /** The person's toolbox, demoted tools included — what a connection's tools are read from (ADR 0007). */
+  /**
+   * The person's toolbox, demoted tools included — what a connection's tools are read from (ADR
+   * 0007) — each with its version history and where each version came from (GRA-242), the
+   * origins read for the whole toolbox in one statement.
+   */
   api.get("/tools", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
-    const tools = await listTools(ctx, principal, toolDeps);
-    return c.json({ tools: tools.map(toToolOutput) });
+    const [tools, origins] = await Promise.all([
+      listTools(ctx, principal, toolDeps),
+      listToolVersionOrigins(ctx, principal, toolDeps),
+    ]);
+    const byTool = new Map<string, typeof origins>();
+    for (const origin of origins) {
+      const list = byTool.get(origin.toolId);
+      if (list) list.push(origin);
+      else byTool.set(origin.toolId, [origin]);
+    }
+    const answer: ToolboxToolOutput[] = tools.map((tool) => {
+      const versions = byTool.get(tool.id) ?? [];
+      return {
+        ...toToolOutput(tool),
+        lineage: stockLineageOf(versions),
+        versions: versions.map((version) => ({
+          id: version.versionId,
+          versionNumber: version.versionNumber,
+          current: version.versionId === tool.currentVersionId,
+          createdAt: version.createdAt,
+          origin: version.stockToolId === null ? "agent" : "stock",
+          stockVersionNumber: version.stockVersionNumber,
+        })),
+      };
+    });
+    return c.json({ tools: answer });
   });
 
   api.get("/connections", async (c) => {

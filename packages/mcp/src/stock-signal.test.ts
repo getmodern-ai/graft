@@ -37,6 +37,16 @@ describe("stockOriginOf", () => {
     });
   });
 
+  it("reads a remix as the tool's lineage: a stock version run over a version the person published is a remix", () => {
+    const v1 = stock("v1", 1, "stock_ver_1");
+    const v2 = stock("v2", 2, null);
+    expect(stockOriginOf(v1, [v2, v1])).toEqual({
+      toolId: "stock_tool_1",
+      versionId: "stock_ver_1",
+      remix: true,
+    });
+  });
+
   it("answers null for a tool that never came from stock", () => {
     const v1 = stock("v1", 1, null);
     const v2 = stock("v2", 2, null);

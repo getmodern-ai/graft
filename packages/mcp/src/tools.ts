@@ -3,6 +3,7 @@ import {
   getToolByName,
   isPromoted,
   listConnections,
+  listToolVersionOrigins,
   listWorkingSet,
   ServiceError,
 } from "@graft/core";
@@ -22,6 +23,7 @@ import type { SessionContext } from "./context";
 import type { ToolCallEvent } from "./deps";
 import { isPlainObject, toolError, toolRefusal, toolResult } from "./result";
 import { runAuthoredTool } from "./run";
+import { advanceIfBehind, lineageOf, originsByTool } from "./stock-copy";
 import { type StockSignal, withStockSignal } from "./stock-signal";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
 import { AUTHORING_TOOLS } from "./tools/authoring";
@@ -95,6 +97,10 @@ export async function listToolsFor(session: SessionContext): Promise<Tool[]> {
     agentDrivesByHand(session),
   ]);
   const inScope = new Set(scopeIds);
+  const listed = await followStockInWorkingSet(
+    session,
+    workingSet.map((entry) => entry.tool),
+  );
   // A chat product's agent lists the meta-tools and its promoted tools alone (GRA-125): the
   // authoring set and the execute__ tools are for an agent driven by hand (`by-hand.ts`).
   return [
@@ -107,8 +113,44 @@ export async function listToolsFor(session: SessionContext): Promise<Tool[]> {
           .filter((connection) => inScope.has(connection.id) && connection.revokedAt === null)
           .map((connection) => executeToolDefinition(connection))
       : []),
-    ...workingSet.map((entry) => authoredToolDefinition(entry.tool)),
+    ...listed.map((tool) => authoredToolDefinition(tool)),
   ];
+}
+
+/**
+ * A listed copy is a reached copy (ADR 0025; GRA-242): an untouched copy in the working set whose
+ * stock tool has a newer version advances before it is listed, so the list carries the definition a
+ * call will run. One read of the person's version origins; the catalogue is read only when some
+ * listed tool follows stock. Nothing is announced: this is the list being answered.
+ */
+async function followStockInWorkingSet(
+  session: SessionContext,
+  tools: readonly AuthoredToolRow[],
+): Promise<AuthoredToolRow[]> {
+  const { ctx, principal, deps } = session;
+  if (!deps.toolSource || tools.length === 0) return [...tools];
+  const originsOf = originsByTool(await listToolVersionOrigins(ctx, principal, deps.tool));
+  const following = tools.filter((tool) => lineageOf(originsOf.get(tool.id)) === "stock");
+  if (following.length === 0) return [...tools];
+  const catalogue = new Map(
+    (await deps.toolSource.list()).map((entry) => [
+      authoredToolName(entry.vendor, entry.name),
+      entry,
+    ]),
+  );
+  return Promise.all(
+    tools.map(async (tool) => {
+      if (!following.includes(tool)) return tool;
+      const followed = await advanceIfBehind(
+        deps,
+        principal.personId,
+        tool,
+        originsOf.get(tool.id) ?? [],
+        catalogue.get(authoredToolName(tool.vendor, tool.name)) ?? null,
+      );
+      return followed.tool;
+    }),
+  );
 }
 
 /**

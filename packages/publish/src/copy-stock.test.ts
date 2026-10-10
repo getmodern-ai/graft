@@ -3,7 +3,7 @@ import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbo
 import { createFilesystemToolboxStore, createNoopToolboxMirror, toolboxIdOf } from "@graft/toolbox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type CopyStockDeps, copyStockVersion } from "./copy-stock";
+import { advanceStockCopy, type CopyStockDeps, copyStockVersion } from "./copy-stock";
 import { createFakeMetadataSource } from "./metadata";
 import { DEFAULT_PACKAGE_POLICY } from "./policy";
 import { type MirrorEvent, publishToolVersion } from "./publish.service";
@@ -234,6 +234,91 @@ describe("copyStockVersion", () => {
     await copyStockVersion(mirrored, { personId: PERSON, stock: STOCK, defaultConnectionId: null });
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(mirror.calls).toHaveLength(1);
+  });
+});
+
+describe("advanceStockCopy", () => {
+  const V4: StockToolView = {
+    ...STOCK,
+    stockVersionId: "stock_weather_v4",
+    versionNumber: 4,
+    description: "The weather right now in a named city, with the wind.",
+    files: [{ path: "index.ts", content: "export default async () => ({ ok: 4 });\n" }],
+  };
+  const copy = () =>
+    copyStockVersion(deps, { personId: PERSON, stock: STOCK, defaultConnectionId: null });
+
+  it("writes the catalogue's newer version as the copy's next version and moves the pointer", async () => {
+    const copied = await copy();
+    const advance = await advanceStockCopy(deps, {
+      personId: PERSON,
+      toolId: copied.id,
+      stock: V4,
+    });
+    expect(advance).toMatchObject({
+      advanced: true,
+      stockVersionNumber: 4,
+      previous: { readOnly: true, destructive: false },
+      version: {
+        versionNumber: 2,
+        path: expect.stringMatching(/^tools\/open-meteo\/current-weather\/w-/),
+        stockToolId: "stock_weather",
+        stockVersionId: "stock_weather_v4",
+      },
+    });
+    if (!advance.advanced) throw new Error("the advance wrote nothing");
+    expect(advance.tool.currentVersionId).toBe(advance.version.id);
+    expect(advance.tool.description).toBe(V4.description);
+    // A directory of the advance's own, beside the copy's: no writer writes over another's files.
+    expect(advance.version.path).not.toBe(tool.versions[0]?.path);
+    const files = await deps.store.readTree(PERSON, advance.version.path);
+    expect(files.find((file) => file.path === "index.ts")?.content).toContain("ok: 4");
+  });
+
+  it("stays on a copy already at the catalogue's current version", async () => {
+    const copied = await copy();
+    const advance = await advanceStockCopy(deps, {
+      personId: PERSON,
+      toolId: copied.id,
+      stock: STOCK,
+    });
+    expect(advance.advanced).toBe(false);
+    expect(tool.versions).toHaveLength(1);
+  });
+
+  it("never advances a remix: a version the agent published stops the copy following", async () => {
+    const copied = await copy();
+    const [first] = tool.versions;
+    if (!first) throw new Error("the copy wrote no version");
+    tool.versions.push({
+      ...first,
+      id: "remix_v2",
+      versionNumber: 2,
+      stockToolId: null,
+      stockVersionId: null,
+    });
+    const advance = await advanceStockCopy(deps, {
+      personId: PERSON,
+      toolId: copied.id,
+      stock: V4,
+    });
+    expect(advance.advanced).toBe(false);
+    expect(tool.versions).toHaveLength(2);
+  });
+
+  it("answers the tool untouched when a racing publish took the version number first", async () => {
+    const copied = await copy();
+    const insert = tool.insertToolVersion;
+    tool.insertToolVersion = async () => {
+      throw Object.assign(new Error("duplicate key"), { code: "23505" });
+    };
+    const advance = await advanceStockCopy(deps, {
+      personId: PERSON,
+      toolId: copied.id,
+      stock: V4,
+    });
+    tool.insertToolVersion = insert;
+    expect(advance).toMatchObject({ advanced: false, tool: { id: copied.id } });
   });
 });
 

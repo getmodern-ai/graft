@@ -697,6 +697,28 @@ carries the vendor's stock tools (`stockTools`: wire name, description, input sc
 `@graft/model`'s `renderGoal`. `packages/mcp/src/acquire-stock.test.ts` is the suite, asserting on
 the scripted model's goal prompt.
 
+**An untouched copy follows stock; a remix never does** (GRA-242; ADR 0025). The rule is
+`@graft/core`'s `stock/stock-advance.decision.ts`, pure and browser-safe: `stockLineageOf` reads a
+tool's versions as `stock` (every one carries a stock origin), `remix` (some do) or `authored`
+(none), and `decideStockAdvance` advances only `stock`, only to the catalogue's current version,
+and only when no version took it. It is applied lazily on reach, never at boot: `ensureToolForAgent`
+(a run, a first-class call, the console's run, a promote) through `followStock`, `find_tool` over
+its answered hits, and the tool list over the working set, each through `stock-copy.ts`'s
+`advanceIfBehind` and `ToolSource.advance`, which is `@graft/publish`'s `advanceStockCopy`: the
+stock files written to a directory of the advance's own (`writePath`, as a copy and a publish
+write) with nothing held, then one transaction that takes the tool's name lock and the tool row's
+(`repo/tool.ts`'s `findAuthoredToolForUpdate`), decides again and publishes the next version with
+its stock origin, the definition and the pointer moving, the binding kept, and the mirror asked
+once it commits. Two reaches at once record one version, the other's directory left an orphan; a
+concurrent agent publish takes the same name lock, and one that takes none is caught by the
+version number's unique constraint. A stock tool's run signal (GRA-244) reads `remix` off the same
+`stockLineageOf`. `find_tool` marks a
+toolbox hit `stock: true` or `remixed: true`. `repo/tool.ts`'s `listToolVersionOrigins` (each
+version's origin with the stock version's number, one statement) feeds both and `GET /api/tools`'s
+`lineage` and `versions`, which the connections screen draws under each tool
+(`apps/web/src/lib/tool-versions.ts`: *Ready-made v2* or *Written by your agent*). Approvals are
+untouched by an advance here; GRA-245 decides what one keeps.
+
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
 `.blobs/<agentId>/` beside the toolboxes on the toolbox volume (the Agent Drive in the hosted form),

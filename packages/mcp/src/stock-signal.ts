@@ -1,6 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { listToolVersions, type ServiceContext, type ToolDeps } from "@graft/core";
+import {
+  listToolVersionOrigins,
+  type ServiceContext,
+  stockLineageOf,
+  type ToolDeps,
+} from "@graft/core";
 import type { ToolVersionRow } from "@graft/db/repo/tool";
 
 import type { RunFailureKind } from "./run";
@@ -8,7 +13,8 @@ import type { RunFailureKind } from "./run";
 /**
  * The signal a stock tool's runs give (GRA-244; ADR 0025, "failures across people's runs feed the
  * same alert, by the failure's shape and never a person's data"). A run of a person's copy of a
- * stock tool, or of a remix of one, notes the stock tool and stock version it came from, and on a
+ * stock tool, or of a remix of one (a tool any version of which lacks a stock origin, as GRA-242's
+ * lineage reads it), notes the stock tool and stock version it came from, and on a
  * failure the failure's kind and the last vendor error status, onto the tool call it ran under; the
  * call's event (`tools.ts`'s `toolCallEvent`) carries them under `stock`, and the server puts them
  * on the wide event and on `tool_called`. Nothing of the input, the output or the vendor's body is
@@ -55,31 +61,40 @@ export function noteRunFailure(kind: RunFailureKind, vendorStatus?: number): voi
 type VersionOrigin = Pick<ToolVersionRow, "versionNumber" | "stockToolId" | "stockVersionId">;
 
 /**
- * Where the version that ran came from. A version carrying a stock origin is a stock version, run
- * as stock (`remix: false`). One without is the person's: a remix when an earlier version of the
- * same tool carries an origin, which is then the newest such below it, and null otherwise. "Remix"
- * here is of the code that ran, so a pointer moved back onto a stock version reads as stock.
+ * Where the version that ran came from, and whether the tool is a remix. The stock tool and version
+ * named are the ran version's own origin, or for a version the person published the newest stock
+ * version below it. `remix` is the tool's lineage as `@graft/core`'s `stockLineageOf` reads it, the
+ * one definition the advance (GRA-242) and the console use: a tool with any version lacking a
+ * stock origin is a remix, so a pointer moved back onto a stock version still reads as a remix.
+ * Null for a tool none of whose versions came from stock.
  */
 export function stockOriginOf(
   ran: VersionOrigin,
   versions: readonly VersionOrigin[],
 ): StockOrigin | null {
+  const all = versions.some((version) => version.versionNumber === ran.versionNumber)
+    ? versions
+    : [...versions, ran];
+  const lineage = stockLineageOf(all);
+  if (lineage === "authored") return null;
+  const remix = lineage === "remix";
   if (ran.stockToolId && ran.stockVersionId) {
-    return { toolId: ran.stockToolId, versionId: ran.stockVersionId, remix: false };
+    return { toolId: ran.stockToolId, versionId: ran.stockVersionId, remix };
   }
-  const below = versions
+  const below = all
     .filter((version) => version.versionNumber < ran.versionNumber)
     .sort((a, b) => b.versionNumber - a.versionNumber)
     .find((version) => version.stockToolId && version.stockVersionId);
   return below?.stockToolId && below.stockVersionId
-    ? { toolId: below.stockToolId, versionId: below.stockVersionId, remix: true }
+    ? { toolId: below.stockToolId, versionId: below.stockVersionId, remix }
     : null;
 }
 
 /**
- * `stockOriginOf` over the tool's versions, read only when they can matter: a version with an origin
- * answers alone, and a first version without one is a tool that never came from stock, since a copy
- * is always its tool's first version (`@graft/publish`'s `copyStockVersion`).
+ * `stockOriginOf` over the tool's version origins (`listToolVersionOrigins`, the narrow read the
+ * advance takes), read only when they can matter: a first version without an origin is a tool that
+ * never came from stock, since a copy is always its tool's first version (`@graft/publish`'s
+ * `copyStockVersion`) and an authored tool is never advanced onto stock.
  */
 export async function readStockOrigin(
   ctx: ServiceContext,
@@ -87,7 +102,7 @@ export async function readStockOrigin(
   ran: VersionOrigin & { toolId: string },
   deps: ToolDeps,
 ): Promise<StockOrigin | null> {
-  if (ran.stockToolId || ran.versionNumber <= 1) return stockOriginOf(ran, []);
-  const versions = await listToolVersions(ctx, { personId }, ran.toolId, deps);
+  if (!ran.stockToolId && ran.versionNumber <= 1) return null;
+  const versions = await listToolVersionOrigins(ctx, { personId }, deps, ran.toolId);
   return stockOriginOf(ran, versions);
 }
