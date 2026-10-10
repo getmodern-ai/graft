@@ -1,0 +1,27 @@
+{
+  "name": "find-deal",
+  "description": "Finds HubSpot deals whose name contains the query, scanning up to maxPages pages of 100 deals and answering up to 10 matches with each deal's amount, stage, pipeline, close date and owner; complete is false when more remained. Its ids feed hubspot__get-record, hubspot__update-record, hubspot__add-note and hubspot__create-task.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Part of a deal's name to match, case-insensitively."
+      },
+      "maxPages": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20,
+        "default": 5,
+        "description": "Maximum number of 100-deal pages to scan."
+      }
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

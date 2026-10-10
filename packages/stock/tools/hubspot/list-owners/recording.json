@@ -1,0 +1,67 @@
+{
+  "format": 1,
+  "tool": "hubspot__list-owners",
+  "recordedAt": "2026-10-09T19:26:02.834Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.hubapi.com/crm/v3/owners?limit=100&archived=false",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json;charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "results": [
+              {
+                "id": "92803016",
+                "email": "ozyxa@example.com",
+                "type": "MZQTQE",
+                "firstName": "Cklqj",
+                "lastName": "Escqnqsp",
+                "userId": 57884574,
+                "userIdIncludingInactive": 57884574,
+                "createdAt": "2013-10-16T00:27:23.768Z",
+                "updatedAt": "2028-03-26T19:55:35.064Z",
+                "archived": false
+              },
+              {
+                "id": "233001191",
+                "email": "cyx@example.com",
+                "type": "MZQTQE",
+                "firstName": "Zdp",
+                "lastName": "Ofzlz",
+                "userId": 226543683,
+                "userIdIncludingInactive": 226543683,
+                "createdAt": "2004-12-23T07:50:12.786Z",
+                "updatedAt": "2022-12-29T03:44:54.024Z",
+                "archived": false
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "owners": [
+      {
+        "id": "92803016",
+        "firstName": "Cklqj",
+        "lastName": "Escqnqsp",
+        "email": "ozyxa@example.com",
+        "userId": 57884574
+      },
+      {
+        "id": "233001191",
+        "firstName": "Zdp",
+        "lastName": "Ofzlz",
+        "email": "cyx@example.com",
+        "userId": 226543683
+      }
+    ]
+  }
+}

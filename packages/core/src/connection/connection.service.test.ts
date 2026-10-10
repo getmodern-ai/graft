@@ -137,6 +137,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
       hosts: [...row.hosts, ...hosts.filter((host) => !row.hosts.includes(host))],
     })),
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
+    deleteVendorApprovalsForVendor: vi.fn(async () => [{}] as never),
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
     expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
     deleteWorkingSetEntriesForConnection: vi.fn(async () => []),
@@ -1063,6 +1064,12 @@ describe("revokeConnection", () => {
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(deps.revokeConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1", NOW);
     expect(deps.deleteApprovalsForVendor).toHaveBeenCalledWith(fakeDb, "person_1", "unleashed");
+    // ADR 0008 as amended 2026-10-09 (GRA-237): the integration's standing approvals go with them.
+    expect(deps.deleteVendorApprovalsForVendor).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "unleashed",
+    );
     expect(deps.deleteBuildApprovalsForConnection).toHaveBeenCalledWith(
       fakeDb,
       "person_1",
@@ -1078,6 +1085,7 @@ describe("revokeConnection", () => {
     );
     expect(result).toMatchObject({
       approvalsDeleted: 2,
+      vendorApprovalsDeleted: 1,
       buildApprovalsDeleted: 1,
       pendingActionsExpired: 3,
       demoted: [],

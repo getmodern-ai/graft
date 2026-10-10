@@ -1,0 +1,42 @@
+{
+  "name": "add-note",
+  "description": "Adds a note to a HubSpot contact, company or deal (the record id from hubspot__find-contact, hubspot__find-deal or hubspot__get-record), logged on its timeline at the given time or now, with an optional owner (an id from hubspot__list-owners).",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "objectType": {
+        "type": "string",
+        "enum": ["contact", "company", "deal"],
+        "description": "The type of HubSpot record to associate with the note."
+      },
+      "recordId": {
+        "type": "string",
+        "description": "The record's id: a contact's from hubspot__find-contact, a deal's from hubspot__find-deal, a company's from the associations hubspot__get-record answers.",
+        "minLength": 1
+      },
+      "body": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536,
+        "description": "The note's text."
+      },
+      "timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "The note timestamp in ISO 8601 format. Defaults to the current time."
+      },
+      "ownerId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional HubSpot owner ID, from hubspot__list-owners."
+      }
+    },
+    "required": ["objectType", "recordId", "body"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

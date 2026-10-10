@@ -1,0 +1,52 @@
+{
+  "name": "create-task",
+  "description": "Creates a HubSpot task (a to-do, call or email reminder) with a subject, due date, priority and optional owner (an id from hubspot__list-owners), optionally on a contact, company or deal (the record id from hubspot__find-contact, hubspot__find-deal or hubspot__get-record).",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "subject": {
+        "type": "string",
+        "minLength": 1
+      },
+      "dueDate": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "body": {
+        "type": "string"
+      },
+      "priority": {
+        "type": "string",
+        "enum": ["LOW", "MEDIUM", "HIGH"]
+      },
+      "taskType": {
+        "type": "string",
+        "enum": ["TODO", "CALL", "EMAIL"],
+        "default": "TODO"
+      },
+      "ownerId": {
+        "type": "string",
+        "description": "The owner id to assign the task to, from hubspot__list-owners."
+      },
+      "objectType": {
+        "type": "string",
+        "enum": ["contact", "company", "deal"]
+      },
+      "recordId": {
+        "type": "string",
+        "description": "The record's id: a contact's from hubspot__find-contact, a deal's from hubspot__find-deal, a company's from the associations hubspot__get-record answers."
+      }
+    },
+    "required": ["subject"],
+    "dependentRequired": {
+      "objectType": ["recordId"],
+      "recordId": ["objectType"]
+    }
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

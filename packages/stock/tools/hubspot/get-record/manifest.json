@@ -1,0 +1,25 @@
+{
+  "name": "get-record",
+  "description": "Gets one HubSpot contact, company or deal by id, with its main properties and the ids of its associated contacts, companies and deals. A contact id comes from hubspot__find-contact, a deal id from hubspot__find-deal, and a company id from a contact's or deal's associations here. Answers found: false when no record has that id.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "objectType": {
+        "type": "string",
+        "enum": ["contact", "company", "deal"]
+      },
+      "recordId": {
+        "type": "string",
+        "description": "The record's id: a contact's from hubspot__find-contact, a deal's from hubspot__find-deal, a company's from the associations hubspot__get-record answers.",
+        "minLength": 1
+      }
+    },
+    "required": ["objectType", "recordId"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}
