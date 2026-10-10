@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "tool": "hubspot__create-company",
+  "recordedAt": "2026-10-09T19:28:45.410Z",
+  "input": {
+    "name": "Wpwimzj Zen Jtk",
+    "domain": "zynuqmm.paa"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.hubapi.com/crm/v3/objects/companies",
+      "body": {
+        "json": {
+          "properties": {
+            "name": "Wpwimzj Zen Jtk",
+            "domain": "zynuqmm.paa"
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "properties": {
+        "name": "Wpwimzj Zen Jtk",
+        "domain": "zynuqmm.paa"
+      }
+    }
+  }
+}
