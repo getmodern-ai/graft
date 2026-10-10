@@ -359,7 +359,8 @@ edit without a republish.
 `publish_tool` takes the vendor, a kebab-case name (`create-order`), a description of up to 500
 characters, a JSON Schema object for the input, the module's path, and a `testInput`. It runs the
 same check `check_tool` runs and refuses with the diagnostics on any refusal; otherwise it copies
-the module into the toolbox as a new version — `/tools/<vendor>/<name>/v<N>` — installs the
+the module into the toolbox as a new version — a directory of its own under
+`/tools/<vendor>/<name>/`, whose path the result names — installs the
 packages the module declares under the package policy and vendors them into the version, records
 the version with the check's annotations, returns the check's advice beside the result, and
 **dry-runs the version it just wrote** with the test input. No approval is needed for this: a

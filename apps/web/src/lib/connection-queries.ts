@@ -3,7 +3,11 @@ import { takesCredential } from "@graft/core/connection/connection.rules";
 import { GATEWAY_PROVIDER } from "@graft/core/connection/gateway-provider";
 import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
 import type { AuthScheme } from "@graft/proxy/types";
-import type { ConnectionCallOutput, ConnectionSubmitBody } from "@graft/server/api";
+import type {
+  ConnectionCallOutput,
+  ConnectionSubmitBody,
+  ToolboxToolOutput,
+} from "@graft/server/api";
 import { queryOptions } from "@tanstack/react-query";
 
 import type { Tool } from "./agent-queries";
@@ -51,10 +55,13 @@ export const connectionCallsQuery = (connectionId: string, limit = 25) =>
       ),
   });
 
+/** A toolbox tool with its stock lineage and version history (GRA-242). */
+export type ToolboxTool = Jsonified<ToolboxToolOutput>;
+
 /** The person's whole toolbox, demoted tools included — a connection's tools are the vendor's rows. */
 export const toolsQuery = queryOptions({
   queryKey: toolKeys.all,
-  queryFn: () => api<{ tools: Tool[] }>("/tools"),
+  queryFn: () => api<{ tools: ToolboxTool[] }>("/tools"),
 });
 
 export function revokeConnection(connectionId: string) {
@@ -86,7 +93,10 @@ export function retryProviderRelease(connectionId: string) {
  * The tools a connection stands behind: bound by vendor, never by row (ADR 0007), which is what
  * lets a revoked connection's tools stay and re-ask after reconnection.
  */
-export function toolsOfConnection(tools: readonly Tool[], connection: Connection): Tool[] {
+export function toolsOfConnection<T extends Tool>(
+  tools: readonly T[],
+  connection: Connection,
+): T[] {
   return tools.filter((tool) => tool.vendor === connection.vendor);
 }
 

@@ -46,6 +46,11 @@ export type FakeStore = {
   connections: Map<string, ConnectionRow>;
   tools: Map<string, AuthoredToolRow>;
   versions: Map<string, ToolVersionRow>;
+  /**
+   * stock version id -> its number: the catalogue's half of `listToolVersionOrigins`'s join, which
+   * a stock suite fills from its catalogue (GRA-242). Empty, a stock origin reads with no number.
+   */
+  stockVersionNumbers: Map<string, number>;
   /** `<agentId> <toolId>` -> row */
   workingSet: Map<string, WorkingSetRow>;
   changes: WorkingSetChangeRow[];
@@ -126,6 +131,7 @@ export function createFakeStore(options: { now?: () => Date } = {}): FakeStore {
     connections: new Map(),
     tools: new Map(),
     versions: new Map(),
+    stockVersionNumbers: new Map(),
     workingSet: new Map(),
     changes: [],
     usage: [],
@@ -323,10 +329,53 @@ export type FakeDeps = {
   setup: SetupDeps;
 };
 
-/** The deps over a store. `db` is never dereferenced; the transaction fake hands itself to its body. */
+/**
+ * A fake database handle. Outside a transaction `held` is null; a transaction hands its body a
+ * handle of its own whose `held` collects the row locks taken in it, released when the body
+ * settles, and a nested transaction (a savepoint) shares its parent's. Only the tool row's lock
+ * (`findAuthoredToolForUpdate`) is modelled, which is what the stock advance serialises on (GRA-242).
+ */
+type FakeDbHandle = {
+  held: { ids: Set<string>; releases: (() => void)[] } | null;
+  transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T>;
+};
+
+function fakeDbHandle(held: FakeDbHandle["held"]): FakeDbHandle {
+  const handle: FakeDbHandle = {
+    held,
+    transaction: async (fn) => {
+      if (handle.held) return fn(handle);
+      const tx = fakeDbHandle({ ids: new Set(), releases: [] });
+      try {
+        return await fn(tx);
+      } finally {
+        for (const release of tx.held?.releases.splice(0) ?? []) release();
+      }
+    },
+  };
+  return handle;
+}
+
+/** The deps over a store. `db` is never dereferenced but for the transaction and its locks. */
 export function createFakeDeps(store: FakeStore): FakeDeps {
-  const fakeDb = { transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(fakeDb) };
-  const db = fakeDb as unknown as DbOrTx;
+  const db = fakeDbHandle(null) as unknown as DbOrTx;
+  /** tool id -> the tail of the queue of transactions waiting on its lock. */
+  const toolLocks = new Map<string, Promise<void>>();
+  const lockTool = async (handle: FakeDbHandle, toolId: string): Promise<void> => {
+    if (!handle.held || handle.held.ids.has(toolId)) return;
+    const previous = toolLocks.get(toolId) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    toolLocks.set(
+      toolId,
+      previous.then(() => mine),
+    );
+    handle.held.ids.add(toolId);
+    handle.held.releases.push(release);
+    await previous;
+  };
   const ownsAgent = (scope: { personId: string; agentId: string }) =>
     store.agents.get(scope.agentId)?.personId === scope.personId;
   /** One writer for the change log: the working-set service's promotes and demotes, and a revoke's sweep (GRA-69). */
@@ -697,6 +746,11 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       const row = store.tools.get(id);
       return row && row.personId === personId ? row : null;
     },
+    findAuthoredToolForUpdate: async (handle, personId, id) => {
+      await lockTool(handle as unknown as FakeDbHandle, id);
+      const row = store.tools.get(id);
+      return row && row.personId === personId ? row : null;
+    },
     listAuthoredTools: async (_db, personId) =>
       [...store.tools.values()]
         .filter((row) => row.personId === personId)
@@ -709,6 +763,19 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return updated;
     },
     insertToolVersion: async (_db, input) => {
+      // The unique constraint on (tool, number), as Postgres refuses it.
+      if (
+        [...store.versions.values()].some(
+          (row) => row.toolId === input.toolId && row.versionNumber === input.versionNumber,
+        )
+      ) {
+        throw Object.assign(
+          new Error(
+            `duplicate key value violates unique constraint "tool_version_tool_id_version_number_unique"`,
+          ),
+          { code: "23505" },
+        );
+      }
       const row: ToolVersionRow = {
         id: input.id,
         toolId: input.toolId,
@@ -736,6 +803,24 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         .filter((row) => row.toolId === toolId)
         .sort((a, b) => b.versionNumber - a.versionNumber);
     },
+    listToolVersionOrigins: async (_db, personId, toolId) =>
+      [...store.versions.values()]
+        .filter((row) => {
+          const owner = store.tools.get(row.toolId);
+          return owner?.personId === personId && (toolId === undefined || row.toolId === toolId);
+        })
+        .sort((a, b) => a.toolId.localeCompare(b.toolId) || b.versionNumber - a.versionNumber)
+        .map((row) => ({
+          toolId: row.toolId,
+          versionId: row.id,
+          versionNumber: row.versionNumber,
+          createdAt: row.createdAt,
+          stockToolId: row.stockToolId,
+          stockVersionId: row.stockVersionId,
+          stockVersionNumber: row.stockVersionId
+            ? (store.stockVersionNumbers.get(row.stockVersionId) ?? null)
+            : null,
+        })),
     findToolVersion: async (_db, personId, versionId) => {
       const row = store.versions.get(versionId);
       if (!row) return null;
@@ -763,6 +848,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     },
     findConnection: connection.findConnection,
     findConnectionForUpdate: connection.findConnectionForUpdate,
+    // The store has no concurrent transactions; `copy-stock.test.ts` races with a lock that holds.
+    lockToolName: async () => {},
     newId: store.newId,
     now: store.now,
   };
@@ -1196,6 +1283,7 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
         heartbeatAt: input.heartbeatAt ?? null,
         finishedAt: input.finishedAt ?? null,
         toolId: input.toolId ?? null,
+        fromToolId: input.fromToolId ?? null,
         owner: "person",
         createdAt: at,
         updatedAt: at,
