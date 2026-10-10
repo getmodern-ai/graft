@@ -12,16 +12,18 @@ import { describe, expect, it } from "vitest";
 const STRIPE_DIR = fileURLToPath(new URL("../tools/stripe/", import.meta.url));
 const PINNED_VERSION = "2026-02-25.clover";
 
-type Call = { path: string; method: string; headers: Headers; body: string | null };
+/** `path` is below `/v1`; `url` is where the call goes, from the host it names. */
+type Call = { path: string; url: string; method: string; headers: Headers; body: string | null };
 type Answer = { status?: number; json?: unknown; dryRun?: boolean };
-type Fetch = (path: string, init?: RequestInit) => Promise<Response>;
+type Fetch = (path: string, init?: RequestInit & { host?: string }) => Promise<Response>;
 type Module = (input: unknown, ctx: { fetch: Fetch }) => Promise<unknown>;
 
 function scriptedCtx(answer: (call: Call) => Answer) {
   const calls: Call[] = [];
   const fetch: Fetch = async (path, init) => {
     const call: Call = {
-      path,
+      path: path.replace(/^\/v1(?=\/)/, ""),
+      url: `https://${init?.host ?? "(connection base)"}${path}`,
       method: (init?.method ?? "GET").toUpperCase(),
       headers: new Headers(init?.headers),
       body: init?.body === undefined || init.body === null ? null : String(init.body),
@@ -43,7 +45,7 @@ async function load(name: string): Promise<Module> {
 const list = (data: unknown[], hasMore = false) => ({ object: "list", data, has_more: hasMore });
 
 describe("every Stripe stock module", () => {
-  it("pins Stripe-Version on every request", async () => {
+  it("pins Stripe-Version on every request, and names api.stripe.com with a /v1 path", async () => {
     const names = (await readdir(STRIPE_DIR, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
@@ -70,6 +72,7 @@ describe("every Stripe stock module", () => {
         expect(call.headers.get("stripe-version"), `${name} ${call.method} ${call.path}`).toBe(
           PINNED_VERSION,
         );
+        expect(call.url, name).toMatch(/^https:\/\/api\.stripe\.com\/v1\//);
       }
     }
   });
@@ -242,5 +245,22 @@ describe("stripe__get-invoice", () => {
 
     const older = scriptedCtx(() => ({ json: { id: "in_1", tax: 75 } }));
     expect(await run({ invoice: "in_1" }, older.ctx)).toMatchObject({ tax: 75 });
+  });
+});
+
+describe("stripe__get-invoice's lines", () => {
+  it("reads the lines past the embedded page", async () => {
+    const run = await load("get-invoice");
+    const { ctx, calls } = scriptedCtx((call) =>
+      call.path.startsWith("/invoices/in_1/lines")
+        ? { json: list([{ id: "il_2" }, { id: "il_3" }], false) }
+        : { json: { id: "in_1", lines: list([{ id: "il_1" }], true) } },
+    );
+    const result = (await run({ invoice: "in_1" }, ctx)) as { lines: { id: unknown }[] };
+    expect(result.lines.map((line) => line.id)).toEqual(["il_1", "il_2", "il_3"]);
+    expect(result).toMatchObject({ linesHasMore: false });
+    expect(calls[1]?.url).toBe(
+      "https://api.stripe.com/v1/invoices/in_1/lines?limit=100&starting_after=il_1",
+    );
   });
 });

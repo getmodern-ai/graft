@@ -1,3 +1,6 @@
+// Every path is from api.stripe.com's root, so a connection whose base URL lacks `/v1` still
+// reaches the same endpoints (GRA-261; ADR 0010 as amended 2026-09-24, `ctx.fetch`'s `host`).
+const STRIPE_HOST = "api.stripe.com";
 // The API version every field below is read at, so the account's default cannot move them (GRA-261).
 const STRIPE_HEADERS = { "stripe-version": "2026-02-25.clover" };
 
@@ -87,8 +90,11 @@ export default async (input: Input, ctx: Context) => {
   let customerId = input.customer;
 
   if (customerId === undefined) {
-    const listPath = "/customers?limit=1";
-    const listResponse = await ctx.fetch(listPath, { headers: STRIPE_HEADERS });
+    const listPath = "/v1/customers?limit=1";
+    const listResponse = await ctx.fetch(listPath, {
+      host: STRIPE_HOST,
+      headers: STRIPE_HEADERS,
+    });
     if (!listResponse.ok) {
       throw new Error(`/v1/customers ${listResponse.status}: ${await listResponse.text()}`);
     }
@@ -99,9 +105,9 @@ export default async (input: Input, ctx: Context) => {
     customerId = newest.id;
   }
 
-  const requestPath = `/customers/${encodeURIComponent(customerId)}?expand[]=subscriptions`;
+  const requestPath = `/v1/customers/${encodeURIComponent(customerId)}?expand[]=subscriptions`;
   const displayPath = `/v1/customers/${customerId}`;
-  const response = await ctx.fetch(requestPath, { headers: STRIPE_HEADERS });
+  const response = await ctx.fetch(requestPath, { host: STRIPE_HOST, headers: STRIPE_HEADERS });
   if (response.status === 404) return { found: false };
   if (!response.ok) {
     throw new Error(`${displayPath} ${response.status}: ${await response.text()}`);

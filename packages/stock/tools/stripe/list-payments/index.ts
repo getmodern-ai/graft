@@ -1,3 +1,6 @@
+// Every path is from api.stripe.com's root, so a connection whose base URL lacks `/v1` still
+// reaches the same endpoints (GRA-261; ADR 0010 as amended 2026-09-24, `ctx.fetch`'s `host`).
+const STRIPE_HOST = "api.stripe.com";
 // The API version every field below is read at, so the account's default cannot move them (GRA-261).
 const STRIPE_VERSION = "2026-02-25.clover";
 
@@ -26,7 +29,8 @@ export default async (input: Input, ctx: Context) => {
   if (input.customer) params.set("customer", input.customer);
   if (input.cursor !== undefined) params.set("starting_after", input.cursor);
 
-  const res = await ctx.fetch(`/charges?${params.toString()}`, {
+  const res = await ctx.fetch(`/v1/charges?${params.toString()}`, {
+    host: STRIPE_HOST,
     method: "GET",
     headers: { "stripe-version": STRIPE_VERSION },
   });

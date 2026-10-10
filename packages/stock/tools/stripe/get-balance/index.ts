@@ -1,3 +1,6 @@
+// Every path is from api.stripe.com's root, so a connection whose base URL lacks `/v1` still
+// reaches the same endpoints (GRA-261; ADR 0010 as amended 2026-09-24, `ctx.fetch`'s `host`).
+const STRIPE_HOST = "api.stripe.com";
 // The API version every field below is read at, so the account's default cannot move them (GRA-261).
 const STRIPE_VERSION = "2026-02-25.clover";
 
@@ -30,7 +33,10 @@ function amounts(value: unknown, field: string): BalanceAmount[] {
 
 export default async (input: Input, ctx: Context) => {
   void input;
-  const res = await ctx.fetch("/balance", { headers: { "stripe-version": STRIPE_VERSION } });
+  const res = await ctx.fetch("/v1/balance", {
+    host: STRIPE_HOST,
+    headers: { "stripe-version": STRIPE_VERSION },
+  });
   if (!res.ok) {
     throw new Error(`GET /v1/balance ${res.status}: ${await res.text()}`);
   }

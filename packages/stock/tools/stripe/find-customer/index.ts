@@ -1,3 +1,6 @@
+// Every path is from api.stripe.com's root, so a connection whose base URL lacks `/v1` still
+// reaches the same endpoints (GRA-261; ADR 0010 as amended 2026-09-24, `ctx.fetch`'s `host`).
+const STRIPE_HOST = "api.stripe.com";
 // The API version every field below is read at, so the account's default cannot move them (GRA-261).
 const STRIPE_VERSION = "2026-02-25.clover";
 
@@ -35,7 +38,7 @@ export default async (input: Input, ctx: Context) => {
       limit: String(limit),
     });
     if (input.cursor !== undefined) params.set("starting_after", input.cursor);
-    requestPath = `/customers?${params.toString()}`;
+    requestPath = `/v1/customers?${params.toString()}`;
     stripePath = "/v1/customers";
   } else {
     const params = new URLSearchParams({
@@ -43,11 +46,14 @@ export default async (input: Input, ctx: Context) => {
       limit: String(limit),
     });
     if (input.cursor !== undefined) params.set("page", input.cursor);
-    requestPath = `/customers/search?${params.toString()}`;
+    requestPath = `/v1/customers/search?${params.toString()}`;
     stripePath = "/v1/customers/search";
   }
 
-  const res = await ctx.fetch(requestPath, { headers: { "stripe-version": STRIPE_VERSION } });
+  const res = await ctx.fetch(requestPath, {
+    host: STRIPE_HOST,
+    headers: { "stripe-version": STRIPE_VERSION },
+  });
   if (!res.ok) {
     throw new Error(`GET ${stripePath} ${res.status}: ${await res.text()}`);
   }

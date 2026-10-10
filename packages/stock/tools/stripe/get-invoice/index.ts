@@ -1,5 +1,11 @@
+// Every path is from api.stripe.com's root, so a connection whose base URL lacks `/v1` still
+// reaches the same endpoints (GRA-261; ADR 0010 as amended 2026-09-24, `ctx.fetch`'s `host`).
+const STRIPE_HOST = "api.stripe.com";
 // The API version every field below is read at, so the account's default cannot move them (GRA-261).
 const STRIPE_HEADERS = { "stripe-version": "2026-02-25.clover" };
+
+// Lines past the embedded page are read 100 at a time, at most this many pages more.
+const MAX_LINE_PAGES = 10;
 
 type JsonObject = Record<string, unknown>;
 
@@ -28,7 +34,10 @@ export default async (input: Input, ctx: Context) => {
   let invoiceId = input.invoice;
 
   if (!invoiceId) {
-    const listResponse = await ctx.fetch("/invoices?limit=1", { headers: STRIPE_HEADERS });
+    const listResponse = await ctx.fetch("/v1/invoices?limit=1", {
+      host: STRIPE_HOST,
+      headers: STRIPE_HEADERS,
+    });
     if (listResponse.status === 404) return { found: false };
     if (!listResponse.ok) {
       throw new Error(`GET /v1/invoices ${listResponse.status}: ${await listResponse.text()}`);
@@ -41,7 +50,8 @@ export default async (input: Input, ctx: Context) => {
     invoiceId = first.id;
   }
 
-  const response = await ctx.fetch(`/invoices/${encodeURIComponent(invoiceId)}`, {
+  const response = await ctx.fetch(`/v1/invoices/${encodeURIComponent(invoiceId)}`, {
+    host: STRIPE_HOST,
     headers: STRIPE_HEADERS,
   });
   if (response.status === 404) return { found: false };
@@ -54,7 +64,27 @@ export default async (input: Input, ctx: Context) => {
     throw new Error(`GET /v1/invoices/${invoiceId} returned an invalid response`);
 
   const linesObject = isObject(value.lines) ? value.lines : {};
-  const lineData = Array.isArray(linesObject.data) ? linesObject.data : [];
+  const lineData: unknown[] = Array.isArray(linesObject.data) ? [...linesObject.data] : [];
+  let linesHasMore = linesObject.has_more === true;
+  // The invoice embeds its first page of lines; the rest are read here, up to a bound.
+  for (let page = 0; linesHasMore && page < MAX_LINE_PAGES; page++) {
+    const last = lineData[lineData.length - 1];
+    if (!isObject(last) || typeof last.id !== "string") break;
+    const params = new URLSearchParams({ limit: "100", starting_after: last.id });
+    const linesPath = `/v1/invoices/${encodeURIComponent(invoiceId)}/lines`;
+    const linesResponse = await ctx.fetch(`${linesPath}?${params.toString()}`, {
+      host: STRIPE_HOST,
+      headers: STRIPE_HEADERS,
+    });
+    if (!linesResponse.ok) {
+      throw new Error(`GET ${linesPath} ${linesResponse.status}: ${await linesResponse.text()}`);
+    }
+    const more: unknown = await linesResponse.json();
+    const moreData = isObject(more) && Array.isArray(more.data) ? more.data : [];
+    if (moreData.length === 0) break;
+    lineData.push(...moreData);
+    linesHasMore = isObject(more) && more.has_more === true;
+  }
   const lines = lineData.filter(isObject).map((line) => {
     const price = isObject(line.price) ? line.price : null;
     const pricing = isObject(line.pricing) ? line.pricing : null;
@@ -99,6 +129,6 @@ export default async (input: Input, ctx: Context) => {
     hosted_invoice_url: nullable(value.hosted_invoice_url),
     invoice_pdf: nullable(value.invoice_pdf),
     lines,
-    linesHasMore: linesObject.has_more === true,
+    linesHasMore,
   };
 };
