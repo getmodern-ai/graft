@@ -86,6 +86,63 @@ describe("approvalDecision", () => {
       }),
     ).toBe("deny");
   });
+
+  /** ADR 0008 as amended 2026-10-09: an integration allowed at once for the agent (GRA-237). */
+  describe("under a standing approval for the tool's integration", () => {
+    const writesOnly = { includesDestructive: false };
+    const everything = { includesDestructive: true };
+
+    it("lets a write the agent was never asked about pass", () => {
+      expect(
+        approvalDecision({ annotations: write, approval: null, vendorApproval: writesOnly }),
+      ).toBe("pass");
+    });
+
+    it("still asks for a destructive tool unless the person included destructive tools", () => {
+      expect(
+        approvalDecision({ annotations: destructive, approval: null, vendorApproval: writesOnly }),
+      ).toBe("ask");
+      expect(
+        approvalDecision({ annotations: destructive, approval: null, vendorApproval: everything }),
+      ).toBe("pass");
+    });
+
+    it("still asks for a tool the person set to ask every time", () => {
+      expect(
+        approvalDecision({
+          annotations: write,
+          approval: { decision: "allow", askEveryCall: true, forThisVersion: true },
+          vendorApproval: everything,
+        }),
+      ).toBe("ask");
+    });
+
+    it("keeps refusing a tool the person denied on its own", () => {
+      expect(
+        approvalDecision({
+          annotations: write,
+          approval: { decision: "deny", askEveryCall: false, forThisVersion: false },
+          vendorApproval: everything,
+        }),
+      ).toBe("deny");
+    });
+
+    it("passes a tool whose own allow was given for another version (GRA-245 beside GRA-237)", () => {
+      const stale = { decision: "allow" as const, askEveryCall: false, forThisVersion: false };
+      expect(approvalDecision({ annotations: write, approval: stale, vendorApproval: null })).toBe(
+        "ask",
+      );
+      expect(
+        approvalDecision({ annotations: write, approval: stale, vendorApproval: writesOnly }),
+      ).toBe("pass");
+    });
+
+    it("leaves a read passing, as every read does", () => {
+      expect(
+        approvalDecision({ annotations: read, approval: null, vendorApproval: writesOnly }),
+      ).toBe("pass");
+    });
+  });
 });
 
 /** ADR 0008: a republished tool keeps its approval if it stays read-only; a write asks again once. */

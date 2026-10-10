@@ -2,6 +2,8 @@ import {
   type AgentDeps,
   type ApprovalDeps,
   addConnectionToAgentScope,
+  allowVendor,
+  allowVendorWhenConnecting,
   answerPendingAction,
   type ConnectionDeps,
   type ConnectionOutput,
@@ -20,7 +22,7 @@ import {
   setApproval,
   widenKeylessConnectionHosts,
 } from "@graft/core";
-import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
+import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 
 import { askedVersionOfPayload, readApprovalAnswer } from "./approval";
@@ -97,14 +99,18 @@ type RevokedBeforeAnswer = { revoked: { connectionId: string; name: string | nul
 export type ApprovalAnswerRecord = {
   pendingAction: PendingActionRow;
   approval?: ApprovalRow;
+  /** For a tool ask's yes that allowed every tool of the integration (GRA-237). */
+  vendorApproval?: VendorApprovalRow;
   buildApproval?: BuildApprovalRow;
   /** For a `scope` ask's yes (GRA-104): the agent's scope after the grant. */
   connectionIds?: string[];
 };
 
 /**
- * The person's answer to a `tool`, `build` or `scope` ask, `{ allow, askEveryCall?, approveBuild? }`
- * plus whatever the door adds. Recording the answer and writing the record it is for happen in one
+ * The person's answer to a `tool`, `build` or `scope` ask, `{ allow, askEveryCall?, approveBuild?,
+ * allowVendor?, includesDestructive? }` plus whatever the door adds. A tool ask's yes with
+ * `allowVendor` also records the agent's standing approval for every tool of the tool's vendor,
+ * destructive ones only with `includesDestructive` (ADR 0008 as amended 2026-10-09; GRA-237). Recording the answer and writing the record it is for happen in one
  * transaction: for a `tool` ask the answer becomes the standing `approval` row (`allow` or `deny`
  * — a no holds too, ADR 0008), and `askEveryCall` with an allow sets the tool's per-call opt-in on
  * or off, absent leaving it as it stands (ADR 0008, amendment of 2026-09-15); for a `build` ask an
@@ -149,6 +155,8 @@ export async function recordApprovalAnswer(
     allow: boolean;
     askEveryCall?: boolean;
     approveBuild?: boolean;
+    allowVendor?: boolean;
+    includesDestructive?: boolean;
   },
   deps: ApprovalAnswerDeps,
 ): Promise<ApprovalAnswerRecord> {
@@ -234,8 +242,23 @@ async function recordAnswer(
             : {}),
         },
       );
+      // "Allow every <integration> tool for this agent" (GRA-237): the integration's standing
+      // approval, for the vendor of the tool the ask is about as the tool row says, in the
+      // answer's transaction. `readApprovalAnswer` reads it beside a yes only.
+      const tool = said.allowVendor
+        ? await deps.approval.findAuthoredToolById(scoped.db, principal.personId, toolId)
+        : null;
+      const vendorApproval = tool
+        ? await allowVendor(
+            scoped,
+            scope,
+            tool.vendor,
+            { includesDestructive: said.includesDestructive === true },
+            deps.approval,
+          )
+        : undefined;
       if (!said.allow || !approval.askEveryCall) await settle();
-      return { pendingAction: action, approval };
+      return { pendingAction: action, approval, ...(vendorApproval ? { vendorApproval } : {}) };
     }
     if (action.kind === "build" && said.allow && typeof action.payload.connectionId === "string") {
       const buildApproval = await grantBuildApproval(
@@ -288,9 +311,14 @@ async function grantScope(
   return { pendingAction: action, connectionIds, ...(buildApproval ? { buildApproval } : {}) };
 }
 
-/** What the person confirms: the proposal as edited (or as proposed), the credential, and GRA-75's build choice. */
+/**
+ * What the person confirms: the proposal as edited (or as proposed), the credential, GRA-75's
+ * build choice and GRA-239's line, "Use <integration>'s tools without asking each time".
+ */
 export type ConnectionConfirmation = RegisterConnectionWithCredentialInput & {
   approveBuild?: boolean;
+  /** Record the asking agent's standing approval for the vendor, destructive tools left out. */
+  allowVendor?: boolean;
 };
 
 /** The `widens` block on a connection ask's payload (GRA-167), or null for an ask that makes a new row. */
@@ -330,6 +358,7 @@ export type ConnectionConfirmationRecord = {
   /** Present when a consent was started and the ask stays open for the callback to answer. */
   authorizeUrl?: string;
   buildApproval?: BuildApprovalRow;
+  vendorApproval?: VendorApprovalRow;
 };
 
 /**
@@ -340,7 +369,9 @@ export type ConnectionConfirmationRecord = {
  * the credential. One transaction, so a refused host or a mistyped field leaves no row, no scope
  * change and no answer. With `approveBuild` the same transaction records the asking agent's build
  * approval for the new connection (GRA-75; ADR 0008, amendment of 2026-09-18), so the next
- * `acquire` finds it standing and asks nothing.
+ * `acquire` finds it standing and asks nothing; with `allowVendor` it records the agent's standing
+ * approval for the connection's vendor, destructive tools left out and never narrowing one that
+ * stands (GRA-239; ADR 0008, amendment of 2026-10-09), so the integration's writes run unasked.
  *
  * The row belongs to the provider the ask was routed to (ADR 0019; `request_connection` recorded
  * it on the payload, and an ask made before providers existed is the keyring's). The person edits
@@ -370,7 +401,7 @@ export async function confirmConnectionAsk(
         `This ask was routed to the ${routed} provider; a connection answering it cannot name another`,
       );
     }
-    const { approveBuild, ...registration } = submit;
+    const { approveBuild, allowVendor: allowVendorTools, ...registration } = submit;
     const widens = wideningOf(action.payload);
     // A widening ask (GRA-167) is about a row the person already made: the yes grows that row's
     // host set to the union the ask carries and makes nothing new. The submitted proposal is not
@@ -415,7 +446,18 @@ export async function confirmConnectionAsk(
           deps.approval,
         )
       : undefined;
-    const granted = buildApproval ? { buildApproval } : {};
+    const vendorApproval = allowVendorTools
+      ? await allowVendorWhenConnecting(
+          scoped,
+          { personId: principal.personId, agentId: action.agentId },
+          connection.vendor,
+          deps.approval,
+        )
+      : undefined;
+    const granted = {
+      ...(buildApproval ? { buildApproval } : {}),
+      ...(vendorApproval ? { vendorApproval } : {}),
+    };
     const consent = options.consent
       ? await options.consent(scoped, principal, connection.id, connection.scheme, action.id)
       : null;

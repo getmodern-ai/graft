@@ -1,0 +1,50 @@
+{
+  "name": "create-deal",
+  "description": "Creates a HubSpot deal in a pipeline stage (the stage and pipeline ids from hubspot__list-pipelines), with an optional amount, close date and owner (an id from hubspot__list-owners), optionally associated with a contact (an id from hubspot__find-contact) and a company (an id from hubspot__get-record).",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "The deal name."
+      },
+      "stageId": {
+        "type": "string",
+        "description": "A stage ID from hubspot__list-pipelines."
+      },
+      "pipelineId": {
+        "type": "string",
+        "default": "default",
+        "description": "A pipeline ID from hubspot__list-pipelines. Defaults to default."
+      },
+      "amount": {
+        "type": "number",
+        "description": "The deal amount."
+      },
+      "closeDate": {
+        "type": "string",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+        "description": "The close date in YYYY-MM-DD format."
+      },
+      "ownerId": {
+        "type": "string",
+        "description": "An owner ID from hubspot__list-owners."
+      },
+      "contactId": {
+        "type": "string",
+        "description": "A contact ID from hubspot__find-contact or hubspot__get-record to associate with the deal."
+      },
+      "companyId": {
+        "type": "string",
+        "description": "A company id to associate the deal with, from the associations hubspot__get-record answers."
+      }
+    },
+    "required": ["name", "stageId"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

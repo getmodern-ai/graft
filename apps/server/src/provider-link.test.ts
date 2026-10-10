@@ -625,8 +625,11 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
     }
   });
 
-  /** GRA-75: the card's build choice rides the signed state and is recorded with the connection the return makes. */
-  it("a link started with approveBuild records the asking agent's build approval with the connection it makes; one started bare records none", async () => {
+  /**
+   * GRA-75 and GRA-239: the card's build choice and its line for the integration's tools ride the
+   * signed state and are recorded with the connection the return makes.
+   */
+  it("a link started with approveBuild and allowVendor records the asking agent's build approval and its standing approval for the vendor; one started bare records neither", async () => {
     store.addAgent({
       scopeMode: "listed",
       id: "agent_d",
@@ -659,7 +662,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
         .pendingActionId as string;
       const started = await app.request(
         `/api/pending-actions/${askD}/link`,
-        linkPost({ approveBuild: true }),
+        linkPost({ approveBuild: true, allowVendor: true }),
       );
       expect(started.status).toBe(200);
       const mintedD = broker.minted.at(-1);
@@ -670,6 +673,11 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       expect([...store.buildApprovals.values()].filter((row) => row.agentId === "agent_d")).toEqual(
         [expect.objectContaining({ agentId: "agent_d", connectionId: connectionD })],
       );
+      expect(store.vendorApprovals.get("agent_d gmail")).toMatchObject({
+        agentId: "agent_d",
+        vendor: "gmail",
+        includesDestructive: false,
+      });
 
       // The bare POST an older console sends: the choice is off, and nothing is recorded. D's new
       // row would cover E's proposal too, so it is set aside with the rest.
@@ -683,6 +691,7 @@ describe("a Gmail connection through a link provider: the ask, the button, the r
       expect([...store.buildApprovals.values()].some((row) => row.agentId === "agent_e")).toBe(
         false,
       );
+      expect(store.vendorApprovals.get("agent_e gmail")).toBeUndefined();
     } finally {
       await ticked.close();
       await bare.close();
