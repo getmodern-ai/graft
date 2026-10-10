@@ -159,6 +159,11 @@ export async function dryRunStockTool(args: {
   credential: Record<string, string>;
   upstreamFetch: UpstreamFetch;
   onPreview: (write: PreviewedWrite) => void;
+  /**
+   * Each request as the module sent it to the proxy, query included: a write's preview names no
+   * query (`@graft/proxy`'s dry run), so a test of a write's query reads it here.
+   */
+  onRequest?: (method: string, url: string) => void;
 }): Promise<StockDryRun> {
   const { tool } = args;
   const keys = await testKeys();
@@ -176,6 +181,7 @@ export async function dryRunStockTool(args: {
   const observed = async (request: Request): Promise<Response> => {
     // Numbered on arrival, before anything is awaited, and carried into the proxy's vendor call.
     const sequence = arrived++;
+    args.onRequest?.(request.method, request.url);
     const response = await issued.run(sequence, () => app.fetch(request));
     if (response.headers.get(DRY_RUN_HEADER) === "intercepted") {
       const preview = (await response.clone().json()) as {
