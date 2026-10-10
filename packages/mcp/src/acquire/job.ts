@@ -11,6 +11,7 @@ import {
   getBuildApproval,
   getConnection,
   getToolById,
+  getToolVersion,
   heartbeatAcquireJob,
   listAcquireAttempts,
   type Principal,
@@ -42,11 +43,13 @@ import {
   type ProofRead,
   type ProofReadTarget,
   proofReadLabel,
+  type StartingPoint,
+  type StockToolBrief,
 } from "@graft/model";
 import { hostSetOf } from "@graft/proxy/credential-source";
 import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { isRedirect } from "@graft/proxy/redirects";
-import type { PublishArgs, PublishOutcome } from "@graft/publish";
+import { forbiddenDraftFiles, type PublishArgs, type PublishOutcome } from "@graft/publish";
 import { BLOB_TTL_HOURS, blobIdOf } from "@graft/runner";
 import type { SandboxHandle } from "@graft/sandbox";
 import { draftPath, sandboxPath, toolboxIdOf } from "@graft/toolbox";
@@ -358,6 +361,13 @@ class AcquireLoop {
   private handle: SandboxHandle | null = null;
   private probeWritten = false;
   private fixtureWritten = false;
+  /** A remix's tool name (GRA-243): every draft is published under it, whatever the draft says. */
+  private remixName: string | null = null;
+  /**
+   * The version a remix started from (GRA-243): its pass becomes current only while that version
+   * still is, so a remix that finished meanwhile is never replaced by one built from older files.
+   */
+  private remixFromVersionId: string | null = null;
 
   constructor(
     private readonly deps: McpDeps,
@@ -480,6 +490,15 @@ class AcquireLoop {
       `Authoring "${this.job.goal}" against ${connection.displayName} (${connection.vendor}). Reads reach ${connection.displayName} for real; every write is previewed at the proxy and nothing changes there.`,
     );
 
+    const startingPoint = await this.startingPoint(connection.vendor);
+    const stockTools = await this.stockToolsOf(connection.vendor);
+    if (startingPoint) {
+      this.remixName = startingPoint.name;
+      await this.progress(
+        `Starting from ${startingPoint.tool} v${startingPoint.version}: its module is the model's starting point, and the job publishes a new version of it${startingPoint.stock ? ", which then no longer follows the ready-made one" : ""}.`,
+      );
+    }
+
     const skill = (await this.deps.skills()).find((s) => s.name === "authoring-a-tool");
     const conversation = model.open({
       jobId: this.job.id,
@@ -496,6 +515,8 @@ class AcquireLoop {
       },
       skill: skill?.content ?? "",
       budget: { maxAttempts: this.config.maxAttempts, tokenCeiling: this.config.tokenCeiling },
+      stockTools,
+      startingPoint,
     });
     await this.trace("model", `Opened a conversation with the ${model.name} model.`);
 
@@ -626,7 +647,7 @@ class AcquireLoop {
               this.lastDiagnostics,
             );
           }
-          const attempt = await this.openAttempt(answer.draft, answer.note);
+          const attempt = await this.openAttempt(this.underRemixName(answer.draft), answer.note);
           await this.progress(`Attempt ${attempt.number}: ${answer.note}`);
           await this.step("checking the module");
           const checked = await this.check(attempt);
@@ -650,6 +671,65 @@ class AcquireLoop {
         }
       }
     }
+  }
+
+  /**
+   * A remix's starting point (`acquire`'s `from`, GRA-243; ADR 0025): the tool the meta-tool
+   * named, at its current version, with that version's files from the toolbox. Null for a new
+   * tool. A tool that has gone, has no current version or is another vendor's since the job was
+   * queued ends the job: a remix of nothing would author a new tool the agent did not ask for.
+   */
+  private async startingPoint(vendor: string): Promise<StartingPoint | null> {
+    const toolId = this.job.fromToolId;
+    if (!toolId) return null;
+    const tool = await getToolById(this.ctx, this.principal, toolId, this.deps.tool);
+    const version = tool?.currentVersionId
+      ? await getToolVersion(this.ctx, this.principal, tool.currentVersionId, this.deps.tool)
+      : null;
+    if (!tool || !version || tool.vendor !== vendor) {
+      throw this.end(
+        "remix_unavailable",
+        "The tool this job was to start from no longer has a current version of this connection's vendor, so there is nothing to start from. Call acquire again.",
+        null,
+      );
+    }
+    const files = this.deps.toolbox
+      ? await this.deps.toolbox.readTree(toolboxIdOf(this.scope.personId), version.path)
+      : await (await this.sandbox()).downloadDirectory(sandboxPath(version.path));
+    // The authored module alone: what the install wrote into the version (`node_modules`, the
+    // lockfile) is the publish's and never a draft's (`forbiddenDraftFiles`), and an SDK's installed
+    // tree would crowd the module out of the model's context (Greptile on #186).
+    const installed = new Set(forbiddenDraftFiles(files).map((refusal) => refusal.file));
+    this.remixFromVersionId = version.id;
+    return {
+      tool: authoredToolName(tool.vendor, tool.name),
+      name: tool.name,
+      version: version.versionNumber,
+      stock: version.stockVersionId !== null,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      files: files
+        .filter((file) => !installed.has(file.path))
+        .map((file) => ({ path: file.path, content: file.content })),
+    };
+  }
+
+  /** The connection's vendor's stock tools, as the authoring model is told of them (GRA-243). */
+  private async stockToolsOf(vendor: string): Promise<StockToolBrief[]> {
+    const stock = (await this.deps.toolSource?.list()) ?? [];
+    return stock
+      .filter((entry) => entry.vendor === vendor)
+      .map((entry) => ({
+        tool: authoredToolName(entry.vendor, entry.name),
+        description: entry.description,
+        inputSchema: entry.inputSchema,
+      }));
+  }
+
+  /** The draft under the remix's name, when this job is a remix; the draft itself otherwise. */
+  private underRemixName(draft: ModuleDraft): ModuleDraft {
+    if (!this.remixName || draft.name === this.remixName) return draft;
+    return { ...draft, name: this.remixName };
   }
 
   /** One model turn: the budget, the cost, the ceiling, and whether the answer fits the question. */
@@ -1251,9 +1331,18 @@ class AcquireLoop {
           defaultConnectionId: connectionId,
         },
         this.deps.tool,
+        this.remixFromVersionId ? { expectedCurrentVersionId: this.remixFromVersionId } : {},
       );
     } catch (error) {
       if (!(error instanceof ServiceError) || error.code !== "CONFLICT") throw error;
+      if (error.details?.expectedCurrentVersionId !== undefined) {
+        await this.closeOpen("passed", verdict, { versionId: version.id });
+        throw this.end(
+          "remix_superseded",
+          `${wire} v${version.versionNumber} passed its dry run, but the tool's current version changed while this job remixed the one it started from, so this version, built from the older files, is not made current. Call acquire with from again to start from the current version.`,
+          null,
+        );
+      }
       const later = error.details?.currentVersionNumber;
       if (typeof later !== "number") throw error;
       currentVersion = later;

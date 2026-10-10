@@ -488,6 +488,7 @@ describe("a connection proposed over MCP and entered over HTTP", () => {
         decision: "allow",
         decidedAt: new Date(),
         askEveryCall: false,
+        toolVersionId: "tool_acme_list_v1",
         owner: "person",
         createdAt: new Date(),
         updatedAt: new Date(),
