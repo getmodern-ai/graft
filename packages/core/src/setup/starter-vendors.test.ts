@@ -46,6 +46,7 @@ describe("the starter integrations", () => {
       "stripe",
       "microsoft-outlook",
       "linear",
+      "apollo",
       "open-meteo",
     ]);
     for (const starter of STARTER_VENDORS) {
@@ -186,6 +187,7 @@ describe("setupVendorOptions", () => {
       "stripe",
       "microsoft-outlook",
       "linear",
+      "apollo",
       "open-meteo",
     ]);
     expect(list.slice(0, -1).every((option) => option.connect === "link")).toBe(true);
@@ -208,7 +210,8 @@ describe("setupVendorOptions", () => {
           ? GATEWAY
           : starter.vendor === "open-meteo" ||
               starter.vendor === "hubspot" ||
-              starter.vendor === "stripe"
+              starter.vendor === "stripe" ||
+              starter.vendor === "apollo"
             ? KEYRING
             : LINK,
       ),

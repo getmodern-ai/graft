@@ -162,6 +162,17 @@ const CASES: [query: string, tool: string][] = [
   ["create a linear ticket", "linear__create-issue"],
   ["assign a linear issue", "linear__update-issue"],
   ["comment on a linear issue", "linear__comment-on-issue"],
+  // Apollo's (GRA-270), also pinned in tool-index.test.ts beside HubSpot's contact pins.
+  ["find leads", "apollo__search-people"],
+  ["search people at a company", "apollo__search-people"],
+  ["find companies by industry and size", "apollo__search-companies"],
+  ["search my apollo contacts", "apollo__search-contacts"],
+  ["search apollo accounts", "apollo__search-accounts"],
+  ["list sequences", "apollo__list-sequences"],
+  ["list email accounts", "apollo__list-email-accounts"],
+  ["save a lead to apollo", "apollo__save-contact"],
+  ["update an apollo contact", "apollo__update-prospect"],
+  ["add contacts to a sequence", "apollo__add-to-sequence"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];

@@ -1,0 +1,61 @@
+{
+  "name": "search-companies",
+  "description": "Searches Apollo's database of companies (organizations) by name, domain, location, size (employee-count ranges) or industry keyword tags, and answers each company's Apollo id, name, website, domain, LinkedIn page, headcount, city and country. Spends one Apollo credit per call (one page). The companies already saved in the team are apollo__search-accounts, which is free.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Company name to search for."
+      },
+      "domains": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Company domains to include, such as apollo.io."
+      },
+      "locations": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Organization locations to include."
+      },
+      "employeeRanges": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[0-9]+,[0-9]+$"
+        },
+        "description": "Employee-count ranges in min,max format, such as 1,10."
+      },
+      "keywords": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Organization keyword tags to include."
+      },
+      "page": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1,
+        "description": "Results page to return."
+      },
+      "perPage": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 25,
+        "default": 5,
+        "description": "Number of organizations to return, up to 25."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.apollo.io"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

@@ -242,6 +242,7 @@ describe("GET /api/setup/vendors", () => {
       "stripe",
       "microsoft-outlook",
       "linear",
+      "apollo",
       "open-meteo",
     ]);
     expect(

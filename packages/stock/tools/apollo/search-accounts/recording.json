@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "tool": "apollo__search-accounts",
+  "recordedAt": "2026-10-10T17:39:57.953Z",
+  "input": {
+    "name": "svkks-wqkpm-pgmsc-kx-bzjar",
+    "perPage": 1
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "POST",
+      "url": "https://api.apollo.io/api/v1/accounts/search",
+      "body": {
+        "json": {
+          "page": 1,
+          "per_page": 1,
+          "q_organization_name": "svkks-wqkpm-pgmsc-kx-bzjar"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "breadcrumbs": [
+              {
+                "label": "Zxaazbk Vqcq",
+                "signal_field_name": "b_srrfmqzupmtr_ecus",
+                "value": "svkks-wqkpm-pgmsc-kx-bzjar",
+                "display_name": "svkks-wqkpm-pgmsc-kx-bzjar"
+              }
+            ],
+            "partial_results_only": false,
+            "has_join": false,
+            "disable_eu_prospecting": false,
+            "partial_results_limit": 18057,
+            "pagination": {
+              "page": 1,
+              "per_page": 1,
+              "total_entries": 0,
+              "total_pages": 0
+            },
+            "accounts": [],
+            "model_ids": [],
+            "num_fetch_result": null
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "total_entries": 0,
+    "accounts": []
+  }
+}

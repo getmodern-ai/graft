@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "tool": "apollo__list-email-accounts",
+  "recordedAt": "2026-10-10T17:37:46.502Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.apollo.io/api/v1/email_accounts",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "email_accounts": []
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "email_accounts": []
+  }
+}

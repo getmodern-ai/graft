@@ -530,6 +530,77 @@ describe("recordStockProof", () => {
     expect((recorded.recording.result as { first: string }).first).not.toBe("graft");
   });
 
+  it("records a search the reviewed table admits as a read, its body over the scrubbed input (GRA-270)", async () => {
+    const SEARCH = `export default async (input: Input, ctx: Context) => {
+  const res = await ctx.fetch("/api/v1/contacts/search", {
+    host: "api.apollo.io",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ q_keywords: input.query, per_page: 2 }),
+  });
+  if (!res.ok) throw new Error(\`POST /api/v1/contacts/search \${res.status}\`);
+  const body = (await res.json()) as { contacts: { id: string; name: string }[] };
+  return { names: body.contacts.map((contact) => contact.name) };
+};
+`;
+    const search: StockWorkspaceTool = {
+      ...tool,
+      vendor: "apollo",
+      name: "search-contacts",
+      inputSchema: {
+        type: "object",
+        properties: { query: { type: "string" } },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      hosts: ["api.apollo.io"],
+      testInput: { query: "Acme Holdings" },
+      annotations: { readOnly: true, destructive: false },
+      files: [{ path: "index.ts", content: SEARCH }],
+    };
+    const seen: UpstreamRequest[] = [];
+    const recorded = await recordStockProof(search, {
+      connection: {
+        scheme: "api_key_header",
+        schemeConfig: { headerName: "x-api-key" },
+        credential: { apiKey: TOKEN },
+      },
+      upstreamFetch: async (request) => {
+        seen.push(request);
+        return Response.json({
+          contacts: [
+            { id: "66e9e215ece19801b219997f", name: "Alice Liddell" },
+            { id: "66e9e215ece19801b2199980", name: "Bruce Wayne" },
+          ],
+        });
+      },
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { recording } = recorded;
+
+    // The search reached the vendor once, as a read, and is recorded as one with its body.
+    expect(seen.map((request) => request.method)).toEqual(["POST"]);
+    const [read] = recording.exchanges;
+    expect(read).toMatchObject({
+      kind: "read",
+      method: "POST",
+      url: "https://api.apollo.io/api/v1/contacts/search",
+      response: { status: 200 },
+    });
+    // The body is the second run's, over the scrubbed input: the query is the placeholder.
+    const query = recording.input.query as string;
+    expect(query).not.toBe("Acme Holdings");
+    expect(read).toMatchObject({ body: { json: { q_keywords: query, per_page: 2 } } });
+    const text = JSON.stringify(recording);
+    for (const planted of ["Acme Holdings", "Alice Liddell", "Bruce Wayne", TOKEN]) {
+      expect(text).not.toContain(planted);
+    }
+
+    const replay = await proveReplay({ ...search, testInput: recording.input }, recording);
+    expect(replay.problems).toEqual([]);
+    expect(replay.reachedVendor).toMatchObject([{ method: "POST" }]);
+  });
+
   it("records a GraphQL query as a read with its body, scrubbed, and replays it by the body (GRA-260)", async () => {
     const GRAPHQL = `const VIEWER = "query Viewer { viewer { id name } }";
 const ISSUES = "query Issues($assignee: ID!, $first: Int!) { issues(filter: { assignee: { id: { eq: $assignee } } }, first: $first) { nodes { title } } }";

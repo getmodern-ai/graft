@@ -1,6 +1,6 @@
 {
   "name": "list-projects",
-  "description": "Lists Linear projects, up to 50, across the workspace or for one team: each project's id, name, state, progress, target date, url and lead. A project's id is the projectId linear__create-issue takes.",
+  "description": "Lists Linear projects, up to 50, across the workspace or for one team: each project's id, name, state, progress, target date, url and the user in charge of it. A project's id is the projectId linear__create-issue takes.",
   "inputSchema": {
     "type": "object",
     "properties": {
