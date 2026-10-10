@@ -13,12 +13,12 @@ catalog:
   # header of `module-check.core.ts` there); the alias is not catalogued until a package imports it.
   typescript: ^7
   # The Node 24 line, matching `engines.node` in the root `package.json`.
-  "@types/node": ^26.6.3
-  vitest: ^5.0.2
+  "@types/node": ^26.6.4
+  vitest: ^5.0.3
   # HTTP, the proxy's way out, tokens, schema validation and the validated environment, at the
   # versions Cando runs (ADR 0011): one line each so the proxy, the token and the server cannot
   # disagree about a compiler-visible type such as `Headers` or a JWT claim set.
-  hono: ^4.13.9
+  hono: ^4.13.13
   undici: ^8.11.2
   jose: ^6.2.4
   zod: ^4.6.5
@@ -26,8 +26,8 @@ catalog:
   # The Docker sandbox backing moves files in and out of a container as tar streams over the Engine
   # API (`packages/sandbox-docker/src/tar.ts`); this does the header arithmetic and the PAX records
   # for long paths. The types are a separate package, as they are for most of what predates TS.
-  tar-stream: ^3.2.1
-  "@types/tar-stream": ^3.1.4
+  tar-stream: ^3.2.2
+  "@types/tar-stream": ^3.1.5
   # The database and the account, at the versions Cando runs (ADR 0011). `drizzle-orm` and
   # `drizzle-kit` move together — a snapshot written by one kit version is read by the next, and the
   # ORM's column types are what the kit diffs — so both are pinned here rather than in `packages/db`
@@ -36,18 +36,18 @@ catalog:
   # and a minor bump can add a column (`packages/db/src/schema/auth.ts` says how to regenerate).
   drizzle-orm: ^0.45.3
   drizzle-kit: ^0.31.11
-  pg: ^8.23.0
+  pg: ^8.23.1
   "@types/pg": ^8.23.1
-  better-auth: 1.7.6
-  dotenv: ^18.0.5
+  better-auth: 1.7.7
+  dotenv: ^18.0.6
   # The provider-backed model adapter (`@graft/model/provider`, ADR 0004, ADR 0014) speaks to a
   # provider through the AI SDK, at the major Cando runs (ADR 0011): `ai` for `generateText` with a
   # structured `Output`, one provider package each for Anthropic and for OpenAI — the latter also
   # covers an OpenAI-compatible gateway behind a base URL. No tracing vendor rides beside them: the
   # model telemetry seam's backing is the hosted form's (ADR 0002 as amended 2026-09-19).
-  ai: ^7.0.116
-  "@ai-sdk/anthropic": ^4.0.65
-  "@ai-sdk/openai": ^4.0.78
+  ai: ^7.0.130
+  "@ai-sdk/anthropic": ^4.0.74
+  "@ai-sdk/openai": ^4.0.86
   # The console (`apps/web`, GRA-26): React on Vite, TanStack Router and Query, Tailwind 4 and the
   # shadcn primitives generated into the app over Base UI — the versions Cando's web app runs
   # (ADR 0011), one line each. `better-auth` above is also the console's client (`better-auth/react`),
@@ -58,14 +58,14 @@ catalog:
   react-dom: ^19.3.0
   "@types/react": ^19.3.0
   "@types/react-dom": ^19.3.0
-  vite: ^8.3.1
-  "@vitejs/plugin-react": ^6.1.1
+  vite: ^8.3.3
+  "@vitejs/plugin-react": ^6.1.2
   tailwindcss: ^4.3.3
   "@tailwindcss/vite": ^4.3.3
   tw-animate-css: ^1.4.0
-  "@tanstack/react-router": ^1.170.39
-  "@tanstack/react-query": ^5.104.0
-  "@tanstack/router-plugin": ^1.168.38
+  "@tanstack/react-router": ^1.170.41
+  "@tanstack/react-query": ^5.104.1
+  "@tanstack/router-plugin": ^1.168.42
   "@base-ui/react": ^1.8.0
   class-variance-authority: ^0.7.1
   clsx: ^2.1.1
@@ -78,8 +78,8 @@ catalog:
   # `@material-symbols/svg-400` is the glyph source `apps/web/scripts/generate-icons.mjs` reads —
   # never imported at run time, since the generated `src/components/icons.tsx` embeds the paths.
   next-themes: ^0.4.6
-  shadcn: ^4.19.0
-  "@material-symbols/svg-400": ^0.47.5
+  shadcn: ^4.21.4
+  "@material-symbols/svg-400": ^0.47.6
 
 # Overrides live here and not under `pnpm` in the root `package.json`: pnpm 11 no longer reads that
 # field and pnpm 10 reads both, so this is the one placement both honour (AGENTS.md, "Conventions",
