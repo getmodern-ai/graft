@@ -457,3 +457,23 @@ export function setupVendorOptions(covered: readonly CoveredStarter[]): SetupVen
     )
     .map(({ option }) => option);
 }
+
+/**
+ * The scopes a consent asks for on a connection (GRA-249, Greptile on #194): the row's own, and
+ * where the row is a starter's vendor consenting at the starter's own authorize endpoint, the
+ * starter's scopes beside them, so a connection made while the starter asked for less (Google
+ * Calendar before its stock tools wrote events) is upgraded by connecting it again. A row at
+ * another endpoint, or of another vendor, asks for exactly its own.
+ */
+export function consentScopesFor(
+  vendor: string,
+  authorizeUrl: string | undefined,
+  scopes: string | undefined,
+): string | undefined {
+  const starter = starterVendorFor(vendor);
+  const config = starter?.schemeConfig as { authorizeUrl?: string; scopes?: string } | undefined;
+  if (!config?.scopes || !authorizeUrl || config.authorizeUrl !== authorizeUrl) return scopes;
+  const own = scopes?.trim() ? scopes.trim().split(/\s+/) : [];
+  const union = [...own, ...config.scopes.split(/\s+/).filter((scope) => !own.includes(scope))];
+  return union.join(" ");
+}
