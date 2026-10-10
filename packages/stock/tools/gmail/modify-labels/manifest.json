@@ -1,0 +1,63 @@
+{
+  "name": "modify-labels",
+  "description": "Adds or removes Gmail labels on a thread or message. Thread and message IDs come from gmail__search-messages; label IDs come from gmail__list-labels. Shortcuts: archive, markRead, markUnread, star, and unstar.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "threadId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Thread ID from gmail__search-messages or gmail__get-message. Provide exactly one of threadId or messageId."
+      },
+      "messageId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Message ID from gmail__search-messages. Provide exactly one of threadId or messageId."
+      },
+      "addLabelIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxItems": 100,
+        "description": "Label IDs to add, from gmail__list-labels."
+      },
+      "removeLabelIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxItems": 100,
+        "description": "Label IDs to remove, from gmail__list-labels."
+      },
+      "archive": {
+        "type": "boolean",
+        "description": "Remove the INBOX label."
+      },
+      "markRead": {
+        "type": "boolean",
+        "description": "Remove the UNREAD label."
+      },
+      "markUnread": {
+        "type": "boolean",
+        "description": "Add the UNREAD label."
+      },
+      "star": {
+        "type": "boolean",
+        "description": "Add the STARRED label."
+      },
+      "unstar": {
+        "type": "boolean",
+        "description": "Remove the STARRED label."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["gmail.googleapis.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

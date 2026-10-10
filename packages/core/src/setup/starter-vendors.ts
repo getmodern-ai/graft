@@ -140,7 +140,10 @@ export const STARTER_VENDORS = [
     scheme: "oauth_authorization_code",
     schemeConfig: {
       ...GOOGLE_OAUTH,
-      scopes: "https://www.googleapis.com/auth/calendar.readonly",
+      // The stock tools write events (create, update, delete, respond), so the consent asks for
+      // event writes beside the read-only calendar list (GRA-249).
+      scopes:
+        "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events",
     },
     goal: "Show me what is on my calendar this week",
     hints:
@@ -172,7 +175,9 @@ export const STARTER_VENDORS = [
     scheme: "oauth_authorization_code",
     schemeConfig: {
       ...GOOGLE_OAUTH,
-      scopes: "https://www.googleapis.com/auth/drive.metadata.readonly",
+      // `drive`, not a read-only scope: the stock tools (ADR 0025) read content, create folders,
+      // move and share, and a starter asks for what its stock tools need; each write still asks.
+      scopes: "https://www.googleapis.com/auth/drive",
     },
     // Listing files needs nothing looked up; a spreadsheet's rows need its id and a range, and the
     // Google Sheets starter's first run failed on both (GRA-217).
@@ -232,11 +237,13 @@ export const STARTER_VENDORS = [
     schemeConfig: {
       authorizeUrl: "https://slack.com/oauth/v2/authorize",
       tokenUrl: "https://slack.com/api/oauth.v2.access",
-      scopes: "channels:read",
+      // Comma-separated, as Slack's authorize URL takes them: every method Slack's stock tools call
+      // (GRA-251, `packages/stock/tools/slack/`), so a connection made here runs all of them, the
+      // writes included; the person still approves each write. The curated goal needs
+      // `channels:read` alone.
+      scopes:
+        "channels:read,groups:read,channels:history,groups:history,users:read,users:read.email,chat:write,reactions:write",
     },
-    // `conversations.list` over public channels needs `channels:read` alone, which Pipedream's
-    // `slack_v2` grants (its own List Channels action calls the same method); nothing else is asked
-    // of the token, so a narrower grant still runs.
     goal: "List the public channels in my workspace",
     hints:
       "List the public channels in the Slack workspace with the `conversations.list` method, a GET, with `types=public_channel`, `exclude_archived=true` and `limit=20`, returning the name, the topic and the member count of each. Slack answers 200 with `ok: false` on an error, so treat that as a failure naming Slack's `error`. The tool takes no input. Read only.",
@@ -481,4 +488,24 @@ export function setupVendorOptions(covered: readonly CoveredStarter[]): SetupVen
         CONNECT_RANK[a.option.connect] - CONNECT_RANK[b.option.connect] || a.index - b.index,
     )
     .map(({ option }) => option);
+}
+
+/**
+ * The scopes a consent asks for on a connection (GRA-249, Greptile on #194): the row's own, and
+ * where the row is a starter's vendor consenting at the starter's own authorize endpoint, the
+ * starter's scopes beside them, so a connection made while the starter asked for less (Google
+ * Calendar before its stock tools wrote events) is upgraded by connecting it again. A row at
+ * another endpoint, or of another vendor, asks for exactly its own.
+ */
+export function consentScopesFor(
+  vendor: string,
+  authorizeUrl: string | undefined,
+  scopes: string | undefined,
+): string | undefined {
+  const starter = starterVendorFor(vendor);
+  const config = starter?.schemeConfig as { authorizeUrl?: string; scopes?: string } | undefined;
+  if (!config?.scopes || !authorizeUrl || config.authorizeUrl !== authorizeUrl) return scopes;
+  const own = scopes?.trim() ? scopes.trim().split(/\s+/) : [];
+  const union = [...own, ...config.scopes.split(/\s+/).filter((scope) => !own.includes(scope))];
+  return union.join(" ");
 }

@@ -1316,6 +1316,38 @@ describe("the consent", () => {
     expect(started.connection.oauth?.status).toBe("awaiting_consent");
   });
 
+  it("connecting a starter's row again asks for the starter's scopes beside the row's own, so a read-only Calendar grant is upgraded", async () => {
+    const scopeOf = async (overrides: Partial<ConnectionRow>) => {
+      const deps = oauthDeps({
+        findConnection: vi.fn(async () => ({ ...oauthRow, ...overrides })),
+      });
+      const started = await startOAuthConsent(
+        ctx,
+        PRINCIPAL,
+        "conn_o",
+        { redirectUri: REDIRECT, secret: SECRET },
+        deps,
+      );
+      return new URL(started.authorizeUrl).searchParams.get("scope");
+    };
+    const readOnly = {
+      ...oauthRow.schemeConfig,
+      scopes: "https://www.googleapis.com/auth/calendar.readonly",
+    };
+
+    expect(await scopeOf({ vendor: "google-calendar", schemeConfig: readOnly })).toBe(
+      "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events",
+    );
+    // Another vendor's row, or the starter's vendor at another endpoint, asks for its own alone.
+    expect(await scopeOf({ vendor: "acme", schemeConfig: readOnly })).toBe(readOnly.scopes);
+    expect(
+      await scopeOf({
+        vendor: "google-calendar",
+        schemeConfig: { ...readOnly, authorizeUrl: "https://idp.example.com/authorize" },
+      }),
+    ).toBe(readOnly.scopes);
+  });
+
   it("starting again keeps what is known about the consent and replaces the verifier", async () => {
     const deps = oauthDeps({
       findConnection: vi.fn(async () => ({
