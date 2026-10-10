@@ -7,7 +7,7 @@ import {
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
-import { copyStockVersion, type PublishDeps } from "@graft/publish";
+import { type CopyStockDeps, copyStockVersion } from "@graft/publish";
 
 /**
  * The **tool source** seam (ADR 0025; CONTEXT.md, *Tool source*; GRA-238): where stock tools come
@@ -29,6 +29,8 @@ export type ToolSource = {
    */
   copy(args: {
     personId: string;
+    /** The agent whose call made the copy, for the mirror's event. */
+    agentId?: string | null;
     stock: StockToolView;
     defaultConnectionId: string | null;
   }): Promise<AuthoredToolRow>;
@@ -37,7 +39,8 @@ export type ToolSource = {
 /** Graft's own stock: the global catalogue's rows, and `@graft/publish`'s copy into the toolbox. */
 export function createStockToolSource(args: {
   db: DbOrTx;
-  publish: Pick<PublishDeps, "db" | "store" | "tool">;
+  /** The publish's rows (with the per-name lock), store and mirror. */
+  publish: CopyStockDeps;
   stock?: StockDeps;
 }): ToolSource {
   const ctx = { db: args.db };

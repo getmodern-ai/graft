@@ -34,8 +34,9 @@ form's is the private package's (GRA-192), and `blobStoreConformance` is the sui
 ```
 <root>/
   <toolboxId>/
-    tools/<vendor>/<name>/v<N>/     a published version: the module, and when it declares packages,
-                                    its own node_modules and package-lock.json (ADR 0013)
+    tools/<vendor>/<name>/w-<writeId>/  one write of a version: the module, and when it declares
+                                        packages, its own node_modules and package-lock.json (ADR 0013)
+    tools/<vendor>/<name>/v<N>/         a version written before GRA-238, named by its number
     .drafts/<jobId>/                what an acquire job writes before it publishes
   .blobs/<agentId>/
     <blobId>/                       one blob (ADR 0023): its `data` and its `meta.json` sidecar (bytes,
@@ -53,10 +54,21 @@ with no agent id in it. No toolbox can be called `.blobs`, since a toolbox id st
 digit, which is what keeps the two trees apart under one root.
 
 One toolbox per person; the toolbox id is the person's id (`toolboxIdOf`), which is also the name of
-the volume a sandbox mounts. `tool_version.path` holds `tools/<vendor>/<name>/v<N>` exactly as
-`versionPath` returns it; inside a sandbox the toolbox is mounted at `/tools`, so the same directory
-is `sandboxPath(version.path)` — `/tools/tools/<vendor>/<name>/v<N>`. A republish writes `v<N+1>`
-beside `v<N>`.
+the volume a sandbox mounts. **Every write of a version has a directory of its own**
+(`writePath`, GRA-238 and GRA-265): a publish and a stock copy each write a fresh
+`tools/<vendor>/<name>/w-<writeId>` (the time and a random part) before anything is decided, and the
+version number is decided afterwards, with the rows, under the person's lock on the tool's name. So
+no writer ever writes into another's directory, whichever records first, and nothing is held while
+the files are written or the install runs. `tool_version.path` holds the directory exactly; nothing
+reads a number out of it, and the number is the row's. Versions written before this are
+`tools/<vendor>/<name>/v<N>` (`versionPath`) and stay valid as they are. A write whose rows never
+land (a refused install, a lost race with a copy, a crash) leaves its directory as an orphan: nothing
+under `tools/` is removed (ADR 0009). Writing under `.drafts/` and moving the winner into place was
+the alternative, and it would need a move on the store seam that the hosted store, which writes
+through a sandbox onto the drive, does not have, and an install that resolves in one directory and
+is then moved. Inside a sandbox the toolbox is mounted at `/tools`, so a version's directory is
+`sandboxPath(version.path)`, `/tools/<version.path>`. Every consumer (the install step, a run, the
+mirror, `read_tool_source`) takes the path as the row records it.
 
 ## How the store and a sandbox meet
 

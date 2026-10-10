@@ -2,11 +2,12 @@ import type { AgentScopeMode } from "@graft/core";
 import { SETUP_HARNESSES, type SetupHarness, setupHarnessOf } from "@graft/core/setup/harness";
 import { isAwaitingHarness } from "@graft/core/setup/setup.rules";
 import { useEffect, useRef, useState } from "react";
-
+import { InfoIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { SetupChoice } from "@/components/setup/setup-choice";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
+import { SetupLogo } from "@/components/setup/setup-logo";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { StatusChip } from "@/components/status-chip";
@@ -86,6 +87,7 @@ function HarnessReview({ state }: { state: SetupStateData }) {
               value: entry.id,
               label: entry.label,
               description: entry.description,
+              media: <SetupLogo harness={entry.id} />,
             }))}
             value={harness}
             onChange={setHarness}
@@ -166,7 +168,7 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
     >
       <SetupStepHeader
         title="Which harness do you use?"
-        description="Graft makes an agent for it now. You connect the harness to that agent at the end of Setup."
+        description="Pick the one you use. You connect it at the end, with one prompt."
       />
       <SetupChoice
         name="setup-harness"
@@ -175,6 +177,7 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
           value: entry.id,
           label: entry.label,
           description: entry.description,
+          media: <SetupLogo harness={entry.id} />,
         }))}
         value={harness}
         onChange={setHarness}
@@ -253,7 +256,16 @@ function ChooseHarness({ state }: { state: SetupStateData }) {
         </FieldGroup>
       </SetupDisclosure>
 
-      <SetupFooter state={state} disabled={start.isPending}>
+      <SetupFooter
+        state={state}
+        disabled={start.isPending}
+        summary={
+          <>
+            <InfoIcon className="size-4 shrink-0" />
+            You can change this later on the agent's page.
+          </>
+        }
+      >
         <Button type="submit" disabled={!harness || start.isPending}>
           {start.isPending ? "Creating agent…" : "Continue"}
         </Button>

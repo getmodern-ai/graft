@@ -47,6 +47,10 @@ export function createFakeStockCatalogue(): FakeStockCatalogue {
     findStockTool: async (_db, key) =>
       [...tools.values()].find((row) => row.vendor === key.vendor && row.name === key.name) ?? null,
     findLatestStockToolVersion: async (_db, stockToolId) => latest(stockToolId),
+    hasStockToolVersionWithHash: async (_db, stockToolId, sourceHash) =>
+      [...versions.values()].some(
+        (row) => row.stockToolId === stockToolId && row.sourceHash === sourceHash,
+      ),
     insertStockToolVersion: async (_db, input) => {
       const row: StockToolVersionRow = { ...input, createdAt: input.createdAt ?? new Date() };
       versions.set(row.id, row);
