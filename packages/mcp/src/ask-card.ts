@@ -1,5 +1,5 @@
-import type { AskCard, AskCardTool } from "@graft/ask-card/shape";
-import { type ConnectionOutput, takesCredential } from "@graft/core";
+import type { AskCard, AskCardTool, AskCardVendorApproval } from "@graft/ask-card/shape";
+import { type ConnectionOutput, takesCredential, vendorToolsOffer } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import type { ConnectionScheme } from "@graft/db/schema/connection";
 import type { Resource, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -162,7 +162,15 @@ export function approvalAskCard(
     agentName: string;
     connection: ConnectionOutput;
     url: string;
-  } & ({ kind: "build" } | { kind: "tool"; toolName: string; tool: AskCardTool }),
+  } & (
+    | { kind: "build" }
+    | {
+        kind: "tool";
+        toolName: string;
+        tool: AskCardTool;
+        vendorApproval: AskCardVendorApproval;
+      }
+  ),
 ): AskCard {
   const { action, connection } = args;
   return {
@@ -180,7 +188,9 @@ export function approvalAskCard(
     url: args.url,
     answerable: true,
     ...(connection.provider !== "keyring" ? { provider: connection.provider } : {}),
-    ...(args.kind === "tool" ? { toolName: args.toolName, tool: args.tool } : {}),
+    ...(args.kind === "tool"
+      ? { toolName: args.toolName, tool: args.tool, vendorApproval: args.vendorApproval }
+      : {}),
   };
 }
 
@@ -198,7 +208,12 @@ export function connectionAskAnswerable(
   return connect === "form" && !takesCredential(payload.scheme as ConnectionScheme);
 }
 
-/** The card for a `connection` ask (`connection-request.ts`): the proposal as the agent made it. */
+/**
+ * The card for a `connection` ask (`connection-request.ts`): the proposal as the agent made it,
+ * and the line for the integration's tools the confirmation offers under the build choice
+ * (GRA-239), in the server's words. A credential's form never reaches the card, but the line
+ * rides every connection card: the keyless confirm and the link's start both carry it.
+ */
 export function connectionAskCard(args: {
   action: PendingActionRow;
   agentName: string;
@@ -224,6 +239,7 @@ export function connectionAskCard(args: {
     provider: payload.provider,
     providerConnect,
     ...(payload.widens ? { widens: payload.widens } : {}),
+    vendorTools: vendorToolsOffer(payload.vendor, payload.displayName),
   };
 }
 

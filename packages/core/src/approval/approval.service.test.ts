@@ -1,15 +1,18 @@
-import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
+import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ServiceContext } from "../context";
 import type { ApprovalDeps } from "./approval.deps";
 import {
+  allowVendor,
+  allowVendorWhenConnecting,
   decideToolCall,
   grantBuildApproval,
   revokeApproval,
   setApproval,
   setAskEveryCall,
+  withdrawVendorApproval,
 } from "./approval.service";
 
 const NOW = new Date("2026-09-09T10:00:00Z");
@@ -41,6 +44,18 @@ const build: BuildApprovalRow = {
   grantedAt: NOW,
   owner: "person",
   createdAt: NOW,
+};
+
+const hubspotWrite = { ...writeTool, vendor: "hubspot" } as AuthoredToolRow;
+const hubspotDestructive = { ...hubspotWrite, destructive: true } as AuthoredToolRow;
+const vendorApproval: VendorApprovalRow = {
+  agentId: "agent_1",
+  vendor: "hubspot",
+  includesDestructive: false,
+  grantedAt: NOW,
+  owner: "person",
+  createdAt: NOW,
+  updatedAt: NOW,
 };
 
 /** A transaction hands its body the same handle, so a call made inside it is asserted on `ctx.db`. */
@@ -75,6 +90,10 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
     deleteApproval: vi.fn(async () => approval),
     findBuildApproval: vi.fn(async () => null),
     insertBuildApproval: vi.fn(async () => build),
+    findVendorApproval: vi.fn(async () => null),
+    listVendorApprovals: vi.fn(async () => []),
+    upsertVendorApproval: vi.fn(async (_db, _scope, input) => ({ ...vendorApproval, ...input })),
+    deleteVendorApproval: vi.fn(async () => null),
     settleAnsweredToolActions: vi.fn(async () => []),
     findAuthoredToolById: vi.fn(async () => writeTool),
     findAuthoredToolForUpdate: vi.fn(async () => writeTool),
@@ -408,5 +427,117 @@ describe("grantBuildApproval", () => {
       code: "NOT_FOUND",
     });
     expect(deps.insertBuildApproval).not.toHaveBeenCalled();
+  });
+});
+
+/** ADR 0008 as amended 2026-10-09 (GRA-237): every tool of an integration, allowed at once. */
+describe("decideToolCall under an integration's standing approval", () => {
+  const WRITE = { readOnly: false, destructive: false };
+  const target = (annotations = WRITE) => ({ toolId: "tool_1", versionId: "ver_1", annotations });
+
+  it("passes a write of the vendor the agent holds an approval for, and reads it under the scope", async () => {
+    const deps = fakeDeps({
+      findAuthoredToolById: vi.fn(async () => hubspotWrite),
+      findVendorApproval: vi.fn(async () => vendorApproval),
+    });
+    await expect(decideToolCall(ctx, SCOPE, target(), deps)).resolves.toBe("pass");
+    expect(deps.findVendorApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "hubspot");
+  });
+
+  it("asks for a destructive tool of that vendor unless destructive tools were included", async () => {
+    const destructive = target({ readOnly: false, destructive: true });
+    await expect(
+      decideToolCall(
+        ctx,
+        SCOPE,
+        destructive,
+        fakeDeps({
+          findAuthoredToolById: vi.fn(async () => hubspotDestructive),
+          findVendorApproval: vi.fn(async () => vendorApproval),
+        }),
+      ),
+    ).resolves.toBe("ask");
+    await expect(
+      decideToolCall(
+        ctx,
+        SCOPE,
+        destructive,
+        fakeDeps({
+          findAuthoredToolById: vi.fn(async () => hubspotDestructive),
+          findVendorApproval: vi.fn(async () => ({ ...vendorApproval, includesDestructive: true })),
+        }),
+      ),
+    ).resolves.toBe("pass");
+  });
+
+  it("passes under it a tool whose own allow stands for another version (GRA-245)", async () => {
+    const deps = fakeDeps({
+      findAuthoredToolById: vi.fn(async () => hubspotWrite),
+      findApproval: vi.fn(async () => ({ ...approval, toolVersionId: "ver_0" })),
+      findVendorApproval: vi.fn(async () => vendorApproval),
+    });
+    await expect(decideToolCall(ctx, SCOPE, target(), deps)).resolves.toBe("pass");
+  });
+
+  it("never reads it for a read, which passes anyway", async () => {
+    const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => readTool) });
+    await expect(
+      decideToolCall(ctx, SCOPE, target({ readOnly: true, destructive: false }), deps),
+    ).resolves.toBe("pass");
+    expect(deps.findVendorApproval).not.toHaveBeenCalled();
+  });
+});
+
+describe("allowVendorWhenConnecting", () => {
+  it("never writes over an approval a tool's ask recorded between its read and its insert (Greptile on #182)", async () => {
+    const answeredMeanwhile = { ...vendorApproval, includesDestructive: true };
+    const deps = fakeDeps({
+      // Nothing stands when the confirmation looks; the tool's ask lands before it inserts.
+      findVendorApproval: vi
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(answeredMeanwhile),
+      upsertVendorApproval: vi.fn(async () => null),
+    });
+    await expect(allowVendorWhenConnecting(ctx, SCOPE, "hubspot", deps)).resolves.toEqual(
+      answeredMeanwhile,
+    );
+    expect(deps.upsertVendorApproval).toHaveBeenCalledWith(
+      ctx.db,
+      SCOPE,
+      { vendor: "hubspot", includesDestructive: false, grantedAt: NOW },
+      { keep: true },
+    );
+  });
+});
+
+describe("allowVendor", () => {
+  it("records the agent's standing approval for the vendor at the clock's moment", async () => {
+    const deps = fakeDeps();
+    await expect(
+      allowVendor(ctx, SCOPE, "hubspot", { includesDestructive: false }, deps),
+    ).resolves.toEqual(vendorApproval);
+    expect(deps.upsertVendorApproval).toHaveBeenCalledWith(ctx.db, SCOPE, {
+      vendor: "hubspot",
+      includesDestructive: false,
+      grantedAt: NOW,
+    });
+  });
+
+  it("refuses an agent that is not the person's, which the write's own predicate found", async () => {
+    const deps = fakeDeps({ upsertVendorApproval: vi.fn(async () => null) });
+    await expect(
+      allowVendor(ctx, SCOPE, "hubspot", { includesDestructive: true }, deps),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("withdrawVendorApproval", () => {
+  it("deletes the agent's row for the vendor", async () => {
+    const deps = fakeDeps({ deleteVendorApproval: vi.fn(async () => vendorApproval) });
+    await expect(withdrawVendorApproval(ctx, SCOPE, "hubspot", deps)).resolves.toEqual(
+      vendorApproval,
+    );
+    expect(deps.deleteVendorApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "hubspot");
   });
 });
