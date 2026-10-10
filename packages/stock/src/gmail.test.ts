@@ -253,7 +253,76 @@ describe("the declared charset", () => {
   });
 });
 
+describe("a text part answered by reference", () => {
+  const data = Buffer.from("the long body", "utf8").toString("base64url");
+  const referenced = {
+    mimeType: "text/plain",
+    filename: "",
+    body: { attachmentId: "a1", size: 13 },
+  };
+  const file = {
+    mimeType: "application/pdf",
+    filename: "report.pdf",
+    body: { attachmentId: "a2", size: 99 },
+  };
+
+  it("gmail__get-message reads its bytes as the text and lists only the file", async () => {
+    const getMessage = await gmailTool("get-message");
+    const { ctx, calls } = fakeGmail((path) => {
+      if (path.includes("format=metadata")) return { id: "m1", payload: { headers: [] } };
+      if (path.startsWith("/users/me/messages/m1/attachments/a1")) return { data };
+      return { id: "m1", payload: { mimeType: "multipart/mixed", parts: [referenced, file] } };
+    });
+    const result = (await getMessage({ messageId: "m1" }, ctx)) as {
+      text: string;
+      attachments: { attachmentId: string }[];
+    };
+    expect(result.text).toBe("the long body");
+    expect(result.attachments.map((attachment) => attachment.attachmentId)).toEqual(["a2"]);
+    expect(calls.some((call) => call.path.includes("/attachments/a2"))).toBe(false);
+  });
+
+  it("gmail__get-thread reads its bytes as the text and lists only the file", async () => {
+    const getThread = await gmailTool("get-thread");
+    const { ctx } = fakeGmail((path) => {
+      if (path.startsWith("/users/me/threads/")) {
+        return { id: "t1", messages: [{ id: "m1", payload: { headers: [] } }] };
+      }
+      if (path.startsWith("/users/me/messages/m1/attachments/a1")) return { data };
+      return { id: "m1", payload: { mimeType: "multipart/mixed", parts: [referenced, file] } };
+    });
+    const result = (await getThread({ threadId: "t1" }, ctx)) as {
+      messages: { text: string; attachments: { attachmentId: string }[] }[];
+    };
+    expect(result.messages[0]?.text).toBe("the long body");
+    expect(result.messages[0]?.attachments.map((attachment) => attachment.attachmentId)).toEqual([
+      "a2",
+    ]);
+  });
+});
+
 describe("gmail__get-thread", () => {
+  it("leaves out the oldest messages past the result budget and counts them", async () => {
+    const getThread = await gmailTool("get-thread");
+    const ids = Array.from({ length: 200 }, (_, index) => `m${index}`);
+    const snippet = "s".repeat(400);
+    const { ctx } = fakeGmail((path) =>
+      path.startsWith("/users/me/threads/")
+        ? { id: "t1", messages: ids.map((id) => ({ id, snippet, payload: { headers: [] } })) }
+        : { id: "m", payload: { mimeType: "text/plain", body: { data: "" } } },
+    );
+
+    const result = (await getThread({ threadId: "t1" }, ctx)) as {
+      omittedMessages: number;
+      messages: { id: string }[];
+    };
+
+    expect(JSON.stringify(result).length).toBeLessThanOrEqual(60_000);
+    expect(result.omittedMessages).toBeGreaterThan(0);
+    expect(result.omittedMessages + result.messages.length).toBe(200);
+    expect(result.messages.at(-1)?.id).toBe("m199");
+  });
+
   it("keeps a long conversation's text within one budget, the newest messages first", async () => {
     const getThread = await gmailTool("get-thread");
     const long = Buffer.from("a".repeat(20_000), "utf8").toString("base64url");

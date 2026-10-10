@@ -97,6 +97,22 @@ function stripHtml(html: string): string {
   );
 }
 
+/**
+ * A text part Gmail answers by reference (a large body comes as an attachmentId, with no
+ * filename): its bytes are the message's text, so they are read rather than listed.
+ */
+async function referencedData(
+  ctx: Context,
+  messageId: string,
+  attachmentId: string,
+): Promise<string> {
+  const path = `/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}?fields=data`;
+  const res = await ctx.fetch(path);
+  if (!res.ok) throw new Error(`GET message body part ${res.status}: ${await res.text()}`);
+  const part = (await res.json()) as { data?: string };
+  return part.data ?? "";
+}
+
 export default async (input: Input, ctx: Context) => {
   let messageId = input.messageId;
 
@@ -148,8 +164,9 @@ export default async (input: Input, ctx: Context) => {
     attachmentId: string;
   }> = [];
 
-  function walk(part: GmailPart, charset: string | null): void {
+  async function walk(part: GmailPart, charset: string | null): Promise<void> {
     const body = part.body;
+    const isText = part.mimeType === "text/plain" || part.mimeType === "text/html";
     if (part.filename && body?.attachmentId) {
       attachments.push({
         filename: part.filename,
@@ -158,13 +175,17 @@ export default async (input: Input, ctx: Context) => {
         attachmentId: body.attachmentId,
       });
     }
-    if (body?.data) {
-      const decoded = decodeText(body.data, charset);
+    let data = body?.data;
+    if (!data && isText && !part.filename && body?.attachmentId) {
+      data = await referencedData(ctx, messageId as string, body.attachmentId);
+    }
+    if (data) {
+      const decoded = decodeText(data, charset);
       if (part.mimeType === "text/plain") plainText.push(decoded);
       if (part.mimeType === "text/html") htmlText.push(decoded);
     }
     for (const child of part.parts ?? []) {
-      walk(child, charsetOf(partHeader(child, "Content-Type")));
+      await walk(child, charsetOf(partHeader(child, "Content-Type")));
     }
   }
 
@@ -172,7 +193,7 @@ export default async (input: Input, ctx: Context) => {
     metadata.payload?.headers?.find((header) => header.name?.toLowerCase() === "content-type")
       ?.value ?? "",
   );
-  if (full.payload) walk(full.payload, topCharset);
+  if (full.payload) await walk(full.payload, topCharset);
 
   const headers = metadata.payload?.headers ?? [];
   const headerValue = (name: string): string =>

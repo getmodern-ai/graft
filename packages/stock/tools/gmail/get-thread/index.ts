@@ -67,6 +67,8 @@ function decodeText(data: string, charset: string | null): string {
 
 /** Characters of message text across a whole conversation, under the runner's 64,000 result. */
 const THREAD_TEXT_BUDGET = 40_000;
+/** Characters of the whole JSON result, kept under the runner's 64,000. */
+const THREAD_RESULT_BUDGET = 60_000;
 
 const ENTITIES: Record<string, string> = {
   nbsp: " ",
@@ -112,40 +114,67 @@ function bodyFieldsMask(): string {
   return `id,payload(mimeType,filename,body,parts(${part}))`;
 }
 
-function collectParts(
+/**
+ * A text part Gmail answers by reference (a large body comes as an attachmentId, with no
+ * filename): its bytes are the message's text, so they are read rather than listed.
+ */
+async function referencedData(
+  ctx: Context,
+  messageId: string,
+  attachmentId: string,
+): Promise<string> {
+  const path = `/users/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}?fields=data`;
+  const res = await ctx.fetch(path);
+  if (!res.ok) throw new Error(`GET message body part ${res.status}: ${await res.text()}`);
+  const part = (await res.json()) as { data?: string };
+  return part.data ?? "";
+}
+
+async function collectParts(
   root: GmailPart | undefined,
   rootCharset: string | null,
-): {
+  ctx: Context,
+  messageId: string,
+): Promise<{
   plain: string[];
   html: string[];
   attachments: Attachment[];
-} {
+}> {
   const plain: string[] = [];
   const html: string[] = [];
   const attachments: Attachment[] = [];
 
-  function walk(part: GmailPart, charset: string | null): void {
+  async function walk(part: GmailPart, charset: string | null): Promise<void> {
     const mimeType = part.mimeType ?? "application/octet-stream";
     const filename = part.filename ?? "";
     const body = part.body;
+    const type = mimeType.toLowerCase();
+    const isText = type.startsWith("text/plain") || type.startsWith("text/html");
 
-    if (body?.attachmentId) {
+    let data = body?.data;
+    if (body?.attachmentId && isText && !filename) {
+      data = await referencedData(ctx, messageId, body.attachmentId);
+    } else if (body?.attachmentId) {
       attachments.push({
         filename,
         mimeType,
         size: body.size ?? 0,
         attachmentId: body.attachmentId,
       });
-    } else if (body?.data) {
-      const decoded = decodeText(body.data, charset);
-      if (mimeType.toLowerCase().startsWith("text/plain")) plain.push(decoded);
-      else if (mimeType.toLowerCase().startsWith("text/html")) html.push(decoded);
+      data = undefined;
+    }
+    if (data) {
+      const decoded = decodeText(data, charset);
+      if (type.startsWith("text/plain")) plain.push(decoded);
+      else if (type.startsWith("text/html")) html.push(decoded);
     }
 
-    for (const child of part.parts ?? []) walk(child, charsetOf(header(child, "Content-Type")));
+    for (const child of part.parts ?? []) {
+      await walk(child, charsetOf(header(child, "Content-Type")));
+    }
   }
 
-  if (root) walk(root, rootCharset);
+  if (root) await walk(root, rootCharset);
   return { plain, html, attachments };
 }
 
@@ -194,9 +223,11 @@ export default async (input: Input, ctx: Context) => {
     }
 
     const bodyMessage = (await messageRes.json()) as GmailMessage;
-    const content = collectParts(
+    const content = await collectParts(
       bodyMessage.payload,
       charsetOf(header(metadata.payload, "Content-Type")),
+      ctx,
+      messageId,
     );
     const text = (
       content.plain.length > 0 ? content.plain.join("\n\n") : stripHtml(content.html.join("\n\n"))
@@ -228,10 +259,18 @@ export default async (input: Input, ctx: Context) => {
     remaining -= message.text.length;
   }
 
-  return {
+  // Headers, snippets and attachment lists count too: past the result budget the oldest messages
+  // are left out, and how many is said, so a very long conversation still answers its newest.
+  const result = {
     found: true,
     threadId: thread.id ?? threadId,
     subject: messages[0]?.subject ?? "",
+    omittedMessages: 0,
     messages,
   };
+  while (messages.length > 1 && JSON.stringify(result).length > THREAD_RESULT_BUDGET) {
+    messages.shift();
+    result.omittedMessages += 1;
+  }
+  return result;
 };

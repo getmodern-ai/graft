@@ -1,6 +1,6 @@
 {
   "name": "get-thread",
-  "description": "Reads every message in a Gmail conversation. Provide a threadId from gmail__search-messages; if omitted, reads the newest conversation in the inbox.",
+  "description": "Reads every message in a Gmail conversation. Provide a threadId from gmail__search-messages; if omitted, reads the newest conversation in the inbox. A very long conversation answers its newest messages and counts the rest in omittedMessages.",
   "inputSchema": {
     "type": "object",
     "properties": {
