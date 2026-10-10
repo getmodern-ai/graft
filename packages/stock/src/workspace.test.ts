@@ -3,19 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { isKebabCase, starterVendorFor } from "@graft/core";
-import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { describe, expect, it } from "vitest";
 
-import { checkStockTool } from "./check";
 import { readStockWorkspace, STOCK_DIR } from "./workspace";
 
 /**
- * The stock workspace's harness (ADR 0025; GRA-238): every stock tool in `tools/` is proved here
- * on every pull request, with no vendor reached. A tool's integration is a starter (whose proposal
- * is its `connect`), its hosts are among the starter's, the check passes its module against its own
- * schema with the annotations its manifest declares, and its test input is valid input. The
- * recording replay and the live nightly run are GRA-231's later tickets.
+ * The stock workspace's shape (ADR 0025; GRA-238): a tool's integration is a starter (whose
+ * proposal is its `connect`), its hosts are among the starter's, and it declares no package. The
+ * check, the test input and the recording's replay are the harness's (`harness.test.ts`, GRA-240).
  */
 
 const sources = await readStockWorkspace();
@@ -37,19 +32,6 @@ describe("the stock workspace", () => {
         expect(starter, "a stock vendor is a starter integration").not.toBeNull();
         expect(source.hosts.length).toBeGreaterThan(0);
         for (const host of source.hosts) expect(starter?.hosts).toContain(host);
-      });
-
-      it("passes the check, with the annotations its manifest declares", async () => {
-        const verdict = await checkStockTool(source);
-        expect(verdict).toMatchObject({ ok: true, annotations: source.annotations });
-      });
-
-      // The validator a run uses (`@graft/mcp`'s `schema.ts`): the MCP SDK's Ajv provider.
-      it("takes its test input", () => {
-        const validate = new AjvJsonSchemaValidator().getValidator(
-          source.inputSchema as JsonSchemaType,
-        );
-        expect(validate(source.testInput)).toMatchObject({ valid: true });
       });
 
       it("declares no package: a stock module calls through ctx.fetch alone", () => {
@@ -82,6 +64,11 @@ describe("readStockWorkspace", () => {
     await writeFile(join(dir, "test-input.json"), "{}");
     await writeFile(join(dir, "manifest.json"), JSON.stringify(manifest));
     const [first] = await readStockWorkspace(root);
+    // The recording is the harness's: no module file, and no new hash (GRA-240).
+    await writeFile(join(dir, "recording.json"), "{}");
+    const [recorded] = await readStockWorkspace(root);
+    expect(recorded?.sourceHash).toBe(first?.sourceHash);
+    expect(recorded?.files.map((file) => file.path)).toEqual(["index.ts"]);
     await writeFile(join(dir, "manifest.json"), JSON.stringify({ ...manifest, description: "E." }));
     const [second] = await readStockWorkspace(root);
     expect(first?.sourceHash).not.toBe(second?.sourceHash);

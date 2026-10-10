@@ -633,8 +633,8 @@ GRA-122 describe), `acquire.test.ts` and `publish.service.test.ts` are the suite
 **A stock tool is a ready-made tool, copied into the toolbox the first time it is reached for**
 (GRA-238; ADR 0025). `packages/stock` (`@graft/stock`) is the workspace: `tools/<vendor>/<name>/`
 holds the module, `manifest.json` (name, description, input schema, hosts, the annotations the
-check must agree with) and `test-input.json`; `src/workspace.test.ts` is the harness every stock
-tool passes (a starter vendor, hosts among the starter's, the check, the test input), and the
+check must agree with) and `test-input.json`; `src/workspace.test.ts` pins the shape (a starter
+vendor, hosts among the starter's) and `src/harness.test.ts` is the harness (below), and the
 package's `tsconfig` leaves `tools/` to the check, which types each module against its own schema.
 The boot loads it after the migrations (`boot.ts`'s `loadStockOnStart`, `@graft/core`'s
 `loadStockCatalogue`) into the global catalogue, `stock_tool` and `stock_tool_version` (migration
@@ -718,6 +718,23 @@ version's origin with the stock version's number, one statement) feeds both and 
 `lineage` and `versions`, which the connections screen draws under each tool
 (`apps/web/src/lib/tool-versions.ts`: *Ready-made v2* or *Written by your agent*). Approvals are
 untouched by an advance here; GRA-245 decides what one keeps.
+
+**Every stock tool proves itself in `pnpm run test`, with no secret** (GRA-240; ADR 0025).
+`packages/stock/src/harness.ts` answers sentences opening `stock tool <vendor>__<name>:` for three
+proofs: `proveCheck` (the check passes and its annotations are the manifest's), `proveTestInput`
+(the schema compiles under the MCP SDK's Ajv and takes `test-input.json`), and `proveReplay`: the
+module run as a dry run by the real runner through the real proxy, over a connection holding only
+the manifest's hosts, whose vendor is the tool's `recording.json`. Reads must be the recording's in
+order (method, host, path, query; a parameter recorded redacted is set aside), writes stop at the
+preview and never reach the vendor and must be the recording's, and the result must be the
+recording's. The format, its redaction (`redactRecording`: by value over the credential's fields,
+by shape, by field name, by JSON key; a committed recording must be a fixed point) and the live mode
+are `packages/stock/RECORDING.md`; the build command (GRA-246) writes through `src/recording.ts`.
+`GRAFT_STOCK_LIVE=1 pnpm --filter @graft/stock test:live`, with `GRAFT_STOCK_LIVE_CONNECTIONS` for
+keyed vendors, sends the reads to the vendor and compares status and JSON shape instead (`mode.ts`);
+Turbo's strict env mode keeps `pnpm run test` on replay. The recording is left out of the module's
+files and the source hash, so re-recording appends no catalogue version. CONTRIBUTING.md says stock
+is maintainer-built for now.
 
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
