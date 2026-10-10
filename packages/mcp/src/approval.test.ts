@@ -271,6 +271,27 @@ const answer = (
   },
 ) => answerPendingAction({ db: deps.db }, { personId: PERSON }, id, said, deps.pendingAction);
 
+/**
+ * The person's answer through a door that records it (the console's route, the ask card's
+ * `answer_ask`): `recordApprovalAnswer`, which writes the integration-wide yes when the person gives
+ * it (GRA-237). `answer` above records the action alone, as no door does.
+ */
+const answerAtDoor = (
+  id: string,
+  said: {
+    allow: boolean;
+    askEveryCall?: boolean;
+    allowVendor?: boolean;
+    includesDestructive?: boolean;
+  },
+) =>
+  recordApprovalAnswer({ db: deps.db }, { personId: PERSON }, id, said, {
+    approval: deps.approval,
+    pendingAction: deps.pendingAction,
+    connection: deps.connection,
+    agent: deps.agent,
+  });
+
 /** The agent page's switch — the same service the `PUT /approvals/:toolId/ask-every-call` route calls. */
 const askEveryCall = (agentId: string, toolId: string, on: boolean) =>
   setAskEveryCall({ db: deps.db }, { personId: PERSON, agentId }, toolId, on, deps.approval);
@@ -604,7 +625,11 @@ describe("an integration allowed at once, on the ask", () => {
     const i = await connect(TOKEN_I);
     try {
       const first = awaiting(await i.call(CREATE_ITEM, { limit: 1 }));
-      await answer(first.action.id, { allow: true, allowVendor: true, includesDestructive: false });
+      await answerAtDoor(first.action.id, {
+        allow: true,
+        allowVendor: true,
+        includesDestructive: false,
+      });
 
       // The asked tool runs, and the integration's standing approval is recorded for this agent.
       expect(body(await i.call(CREATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
@@ -642,11 +667,41 @@ describe("an integration allowed at once, on the ask", () => {
     }
   }, 60_000);
 
+  it("a per-call yes taken after the integration's approval was withdrawn does not bring it back", async () => {
+    const i = await connect(TOKEN_I);
+    try {
+      store.vendorApprovals.clear();
+      const ask = awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
+      await answerAtDoor(ask.action.id, {
+        allow: true,
+        askEveryCall: true,
+        allowVendor: true,
+        includesDestructive: false,
+      });
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)).toBeDefined();
+      // Withdrawn on the agent's page before the agent takes the answer.
+      await withdrawVendorApproval(
+        { db: deps.db },
+        { personId: PERSON, agentId: AGENT_I },
+        "demo",
+        deps.approval,
+      );
+      expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
+      expect(store.vendorApprovals.get(`${AGENT_I} demo`)).toBeUndefined();
+    } finally {
+      await i.close();
+    }
+  }, 60_000);
+
   it("with destructive tools ticked, a destructive tool of the vendor passes too", async () => {
     const i = await connect(TOKEN_I);
     try {
       const ask = awaiting(await i.call(UPDATE_ITEM, { limit: 1 }));
-      await answer(ask.action.id, { allow: true, allowVendor: true, includesDestructive: true });
+      await answerAtDoor(ask.action.id, {
+        allow: true,
+        allowVendor: true,
+        includesDestructive: true,
+      });
       expect(body(await i.call(UPDATE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);
       const before = actionsOf(AGENT_I, "tool").filter((row) => row.answeredAt === null).length;
       expect(body(await i.call(DELETE_ITEM, { limit: 1 }))).toEqual(VENDOR_BODY);

@@ -609,7 +609,8 @@ async function askByElicitation(
   const revoked = await refuseIfRevoked(ctx, scope, subject, deps);
   if (revoked) return revoked;
   if (said.allow) {
-    await recordAllow(ctx, scope, subject, said, deps);
+    // Answered in the form, now: the integration-wide yes is the person's at this moment.
+    await recordAllow(ctx, scope, subject, said, deps, { recordVendor: true });
     return PASS;
   }
   await recordDeny(ctx, scope, subject, deps);
@@ -784,7 +785,9 @@ async function applyAnswer(
   if (revoked) return revoked;
   const answer = readApprovalAnswer(taken.answer);
   if (answer.allow) {
-    await recordAllow(ctx, scope, subject, answer, deps);
+    // The console or the card recorded the integration-wide yes when the person answered
+    // (`ask-answer.ts`); taking the answer later must not record it again (Greptile on #181).
+    await recordAllow(ctx, scope, subject, answer, deps, { recordVendor: false });
     return PASS;
   }
   await recordDeny(ctx, scope, subject, deps);
@@ -802,7 +805,11 @@ async function applyAnswer(
  * the person answers there (`apps/server/src/api.ts`); this repeats it only where nothing stands,
  * so a consumed answer is never a yes that the next call cannot see. `askEveryCall` undefined leaves
  * the setting where it was — the header, on Hermes's buttons. An answer that allowed the tool's
- * whole integration (GRA-237) records that too, beside the tool's own allow: the asked tool keeps
+ * whole integration (GRA-237) records that too, beside the tool's own allow, **only when the answer
+ * is given here** (`recordVendor`, the elicitation form): an answer taken off a pending action had
+ * its integration-wide yes recorded by the door the person answered at (`ask-answer.ts`), and
+ * recording it again when the agent takes the answer would bring back an approval the person
+ * withdrew meanwhile, or an older destructive-tools choice (Greptile on #181). The asked tool keeps
  * its own yes if the integration's is later withdrawn, since the person answered this tool's ask.
  */
 async function recordAllow(
@@ -811,6 +818,7 @@ async function recordAllow(
   subject: AskSubject,
   said: ApprovalAnswer,
   deps: McpDeps,
+  options: { recordVendor: boolean },
 ): Promise<void> {
   if (subject.kind === "build") {
     await grantBuildApproval(ctx, scope, subject.connection.id, deps.approval);
@@ -830,7 +838,7 @@ async function recordAllow(
       askEveryCall,
     });
   }
-  if (said.allowVendor) {
+  if (options.recordVendor && said.allowVendor) {
     const includesDestructive = said.includesDestructive === true;
     const vendor = await getVendorApproval(ctx, scope, subject.tool.vendor, deps.approval);
     if (vendor?.includesDestructive !== includesDestructive) {
