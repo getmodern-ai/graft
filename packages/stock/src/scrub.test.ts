@@ -473,7 +473,8 @@ describe("survivingValuesOf", () => {
       result: null,
     };
     const scrubbed = scrubRecording(raw, { seed: SEED });
-    expect(survivingValuesOf(raw, scrubbed, { source: "" })).toEqual([]);
+    const declared = { source: "", declaredHosts: ["api.linear.app"] };
+    expect(survivingValuesOf(raw, scrubbed, declared)).toEqual([]);
     const leaked: StockRecording = {
       ...scrubbed,
       exchanges: scrubbed.exchanges.map((exchange) => ({
@@ -481,6 +482,26 @@ describe("survivingValuesOf", () => {
         url: "https://api.linear.app/users/linear",
       })),
     };
-    expect(survivingValuesOf(raw, leaked, { source: "" })).toEqual(["exchange 1"]);
+    expect(survivingValuesOf(raw, leaked, declared)).toEqual(["exchange 1"]);
+  });
+
+  it("reads a value as surviving in a host the manifest does not declare (Greptile on #209)", () => {
+    const raw: StockRecording = {
+      ...recording,
+      input: {},
+      exchanges: [
+        {
+          kind: "read",
+          method: "GET",
+          url: "https://acme-widgets.example.com/users",
+          response: response({ users: [{ company: "acme-widgets" }] }),
+        },
+      ],
+      result: null,
+    };
+    const scrubbed = scrubRecording(raw, { seed: SEED });
+    expect(
+      survivingValuesOf(raw, scrubbed, { source: "", declaredHosts: ["api.example.com"] }),
+    ).toEqual(["exchange 1"]);
   });
 });

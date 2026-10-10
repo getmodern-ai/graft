@@ -152,9 +152,10 @@ to keep the values.
   the raw input and answers in what is about to be written, after redaction, setting aside the
   module's own text and the keys (a value with a redaction marker is looked for as its text beside
   the marker, a `link` header as its targets and parameters, and a website root written without its
-  closing slash is not read as surviving inside its own placeholder, and a request's URL is looked
-  in without its origin, since its host is the manifest's and the vendor's own name: Linear's own
-  user is called `linear`, which `https://api.linear.app/graphql` spells; GRA-269); a survivor
+  closing slash is not read as surviving inside its own placeholder, and a request's URL on a host
+  the manifest declares is looked in without its origin, since that host is the vendor's own name:
+  Linear's own user is called `linear`, which `https://api.linear.app/graphql` spells; GRA-269; any
+  other host, an account's own from a live `primaryHost`, is looked in whole); a survivor
   fails the recording, naming where it was and never the value. Redaction comes first because a credential the proxy put in a request (a query key a vendor
   may quote back) is redaction's to remove, not a vendor value the scrub missed.
 

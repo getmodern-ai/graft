@@ -874,6 +874,15 @@ function isBareOrigin(value: string): boolean {
   return origin === value || origin === `${value}/`;
 }
 
+/** A URL's hostname, lowercased; empty for a value that does not parse. */
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 /** A URL's path, query and fragment: what follows its origin. */
 function withoutOrigin(url: string): string {
   try {
@@ -903,9 +912,10 @@ function unmarkedPieces(value: string): string[] {
 export function survivingValuesOf(
   raw: StockRecording,
   scrubbed: StockRecording,
-  options: { source: string; keep?: Iterable<string> },
+  options: { source: string; keep?: Iterable<string>; declaredHosts?: Iterable<string> },
 ): string[] {
   const keep = new Set(options.keep ?? []);
+  const declared = new Set([...(options.declaredHosts ?? [])].map((host) => host.toLowerCase()));
   const keys = keysOf(raw, new Set<string>());
   const values = new Set<string>();
   const add = (value: string) => {
@@ -932,13 +942,16 @@ export function survivingValuesOf(
   );
   const parts: [string, unknown][] = [
     ["input", scrubbed.input],
-    // A request's URL is looked in without its origin: the host is one the manifest declares, the
-    // vendor's own name, so a value of the vendor's name in an answer (Linear's own user, called
-    // `linear`; GRA-269) is not read as surviving inside `https://api.linear.app/graphql`. Its path
-    // and query are the module's over the scrubbed data, and looked in.
+    // A request's URL on a host the manifest declares is looked in without its origin: that host is
+    // the vendor's own public name, so a value of the vendor's name in an answer (Linear's own user,
+    // called `linear`; GRA-269) is not read as surviving inside `https://api.linear.app/graphql`.
+    // Any other host (an account's own, from a live `primaryHost`) is looked in whole, since it may
+    // spell the account (Greptile on #209). The path and query are looked in either way.
     ...scrubbed.exchanges.map((exchange, index): [string, unknown] => [
       `exchange ${index + 1}`,
-      { ...exchange, url: withoutOrigin(exchange.url) },
+      declared.has(hostnameOf(exchange.url))
+        ? { ...exchange, url: withoutOrigin(exchange.url) }
+        : exchange,
     ]),
     ["result", scrubbed.result ?? null],
   ];
