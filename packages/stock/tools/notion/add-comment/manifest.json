@@ -1,0 +1,32 @@
+{
+  "name": "add-comment",
+  "description": "Adds a comment to a Notion page or database row, or replies in an existing discussion of it with discussionId. The page id or URL comes from notion__search-pages-and-databases, notion__get-page or notion__query-database. Answers commented, the comment's id and its discussionId, which a later reply takes.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "pageId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "A Notion page ID or URL. For URLs, the trailing 32 hexadecimal characters are used as the page ID."
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000,
+        "description": "The comment text."
+      },
+      "discussionId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional discussion ID to reply to instead of starting a new page discussion."
+      }
+    },
+    "required": ["pageId", "text"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.notion.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}
