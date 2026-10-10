@@ -1,0 +1,15 @@
+{
+  "name": "get-balance",
+  "description": "Gets the Stripe account balance: how much money is available and pending per currency, with instant-available and Connect-reserved funds when present, and whether the account is in live mode. Amounts are in each currency's smallest unit.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": false
+  },
+  "hosts": ["api.stripe.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

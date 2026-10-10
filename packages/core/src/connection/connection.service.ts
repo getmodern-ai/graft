@@ -4,6 +4,7 @@ import type { ProxyConnection } from "@graft/proxy";
 
 import type { ServiceContext } from "../context";
 import { isUniqueViolation, orNotFound, ServiceError } from "../errors";
+import { consentScopesFor } from "../setup/starter-vendors";
 import type { Principal } from "../tenancy";
 import type { ConnectionDeps } from "./connection.deps";
 import {
@@ -822,7 +823,7 @@ export async function startOAuthConsent(
       authorizeUrl,
       clientId,
       redirectUri: input.redirectUri,
-      scopes: row.schemeConfig.scopes,
+      scopes: consentScopesFor(row.vendor, authorizeUrl, row.schemeConfig.scopes),
       state: signOAuthState(payload, input.secret),
       codeChallenge: challenge,
     }),

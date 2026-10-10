@@ -266,6 +266,33 @@ describe("capability token", () => {
     });
   });
 
+  /** The read-only claim (Greptile on #200): present only when asked for, read as false when absent. */
+  describe("the read-only claim", () => {
+    it("round-trips through mint and verify, and is absent from an ordinary token", async () => {
+      const keys = await testKeys();
+      const token = await mintCapabilityToken({ ...INPUT, readOnly: true }, keys);
+      expect(decodeJwt(token)).toMatchObject({ readOnly: true });
+      const verdict = await verifyCapabilityToken(token, keys.publicKey);
+      expect(verdict.ok && verdict.claims.readOnly).toBe(true);
+
+      for (const input of [INPUT, { ...INPUT, readOnly: false }]) {
+        const plain = await mintCapabilityToken(input, keys);
+        expect(decodeJwt(plain)).not.toHaveProperty("readOnly");
+        const read = await verifyCapabilityToken(plain, keys.publicKey);
+        expect(read.ok && read.claims.readOnly).toBe(false);
+      }
+    });
+
+    it("refuses a well-signed token whose readOnly is not a boolean", async () => {
+      const keys = await testKeys();
+      const token = await foreign(keys, { readOnly: "yes" });
+      expect(await verifyCapabilityToken(token, keys.publicKey)).toEqual({
+        ok: false,
+        reason: "invalid",
+      });
+    });
+  });
+
   it("mints a different jti every time", async () => {
     const keys = await testKeys();
     const [a, b] = await Promise.all([

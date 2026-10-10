@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__move-message",
+  "recordedAt": "2026-10-10T06:12:39.836Z",
+  "input": {
+    "messageId": "ujgm-zmbvdye-oo"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/me/messages/ujgm-zmbvdye-oo/move",
+      "body": {
+        "json": {
+          "destinationId": "archive"
+        }
+      }
+    }
+  ],
+  "result": {
+    "moved": false,
+    "sent": {
+      "destinationId": "archive"
+    }
+  }
+}

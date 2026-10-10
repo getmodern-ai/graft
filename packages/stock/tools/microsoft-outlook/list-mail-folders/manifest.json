@@ -1,0 +1,19 @@
+{
+  "name": "list-mail-folders",
+  "description": "Lists Outlook mail folders, including nested folders, with item, unread, and child-folder counts. complete: false means the list was cut short. Folder ids feed microsoft-outlook__search-messages and microsoft-outlook__move-message; well-known names inbox, sentitems, drafts, deleteditems, archive, and junkemail also work.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "includeHidden": {
+        "type": "boolean",
+        "description": "Include hidden mail folders. Defaults to false."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["graph.microsoft.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

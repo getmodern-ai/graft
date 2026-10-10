@@ -1,0 +1,21 @@
+{
+  "name": "get-file",
+  "description": "Gets a Google Drive file's or folder's details (metadata), including its name, type, dates, location, ownership, and sharing status. It does not return file content; use read-file-content for that.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "fileId": {
+        "type": "string",
+        "description": "The file or folder ID from search-files or list-recent-files. Use 'root' for My Drive.",
+        "examples": ["root"]
+      }
+    },
+    "required": ["fileId"],
+    "additionalProperties": false
+  },
+  "hosts": ["www.googleapis.com"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

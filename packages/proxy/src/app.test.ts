@@ -40,6 +40,7 @@ const OTHER_AGENT = "other-agent-token";
 const DRY = "dry-run-token";
 const DRY_OTHER_PERSON = "dry-run-other-person-token";
 const DRY_OTHER_AGENT = "dry-run-other-agent-token";
+const READ_ONLY = "read-only-token";
 
 const CONNECTION: ProxyConnection = {
   id: "conn_1",
@@ -64,6 +65,7 @@ function claims(overrides: Partial<CapabilityClaims> = {}): CapabilityClaims {
     jti: "jti_1",
     exp: Math.floor(Date.now() / 1000) + 300,
     dryRun: false,
+    readOnly: false,
     ...overrides,
   };
 }
@@ -107,6 +109,7 @@ function harness(
       DRY_OTHER_AGENT,
       ok(claims({ dryRun: true, agent: "agent_2", connections: ["conn_of_agent_2"] })),
     ],
+    [READ_ONLY, ok(claims({ readOnly: true, tool: "linear__list_issues", connections: scope }))],
   ]);
   let responder: Responder = () => jsonResponse({ ok: true });
   let unconfigured = false;
@@ -2983,5 +2986,95 @@ describe("oauth_authorization_code through the proxy", () => {
     expect(h.events[0]?.failure).toContain("storeCredential");
     expect(h.events[0]?.failure).not.toContain("disk full");
     expect(h.events[0]?.failure).not.toContain("client-secret-value");
+  });
+});
+
+/**
+ * The read-only claim (ADR 0008 as amended 2026-10-10; Greptile on #200). A run of a tool annotated
+ * read-only carries it, and the proxy classifies each request as it would leave with the check's
+ * own classifier, so a module that changes its body at run time (a replaced `JSON.stringify`, a
+ * computed option) cannot send a write under the annotation it was let through on.
+ */
+describe("the read-only claim", () => {
+  const LINEAR: ProxyConnection = {
+    ...CONNECTION,
+    primaryHost: "https://api.linear.app",
+    hosts: ["api.linear.app"],
+  };
+  const send = (h: ReturnType<typeof harness>, path: string, method: string, body?: string) =>
+    h.app.request(path, {
+      method,
+      headers: { ...bearer(READ_ONLY), "content-type": "application/json" },
+      ...(body === undefined ? {} : { body }),
+    });
+
+  it("forwards a GraphQL query and a GET as an ordinary call", async () => {
+    const h = harness({}, LINEAR);
+    h.respond(() => jsonResponse({ data: { viewer: { id: "u1" } } }));
+    const query = JSON.stringify({ query: "query { viewer { id } }" });
+    const res = await send(h, "/c/conn_1/graphql", "POST", query);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-graft-dry-run")).toBeNull();
+    expect(decode(h.forwarded[0]?.body ?? null)).toBe(query);
+    expect(h.forwarded[0]?.headers.get("x-demo-key")).toBe(SECRET);
+
+    expect((await send(h, "/c/conn_1/viewer", "GET")).status).toBe(200);
+    expect(h.forwarded).toHaveLength(2);
+  });
+
+  it("refuses the mutation a tampered JSON.stringify sent, before any credential is obtained", async () => {
+    const obtained: string[] = [];
+    const h = harness({}, LINEAR, {
+      decryptCredential: async () => {
+        obtained.push("decrypt");
+        return { apiKey: SECRET };
+      },
+    });
+    // What a module whose check read `JSON.stringify({ query: "{ viewer { id } }" })` sends once
+    // it has replaced `JSON.stringify` with a function answering a mutation.
+    const res = await send(
+      h,
+      "/c/conn_1/graphql",
+      "POST",
+      JSON.stringify({ query: 'mutation { issueDelete(id: "x") { success } }' }),
+    );
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      reason: "annotation_mismatch",
+      message: expect.stringContaining("linear__list_issues is annotated read-only"),
+    });
+    expect(h.forwarded).toHaveLength(0);
+    expect(obtained).toEqual([]);
+    expect(h.events[0]).toMatchObject({ outcome: "annotation_mismatch", status: 403 });
+  });
+
+  it.each(["PUT", "PATCH", "DELETE"])("refuses a %s", async (method) => {
+    const h = harness({}, LINEAR);
+    const res = await send(h, "/c/conn_1/issues/1", method, "{}");
+
+    expect(res.status).toBe(403);
+    expect(h.forwarded).toHaveLength(0);
+  });
+
+  it("refuses a REST POST whose body carries a query field", async () => {
+    const h = harness({}, LINEAR);
+    const res = await send(h, "/c/conn_1/messages", "POST", JSON.stringify({ query: "{ a }" }));
+
+    expect(res.status).toBe(403);
+    expect(h.forwarded).toHaveLength(0);
+  });
+
+  it("leaves a token without the claim as it was: an ordinary write is forwarded", async () => {
+    const h = harness({}, LINEAR);
+    const res = await h.app.request("/c/conn_1/graphql", {
+      method: "POST",
+      headers: { ...bearer(GOOD), "content-type": "application/json" },
+      body: JSON.stringify({ query: "mutation { logout }" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(h.forwarded).toHaveLength(1);
   });
 });

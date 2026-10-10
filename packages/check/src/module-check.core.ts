@@ -4,7 +4,7 @@ import { posix } from "node:path";
 import ts from "typescript6";
 
 import { type ToolAnnotations, UNKNOWN_ANNOTATIONS } from "./annotations.ts";
-import { declarationsOf, isDestructiveCall, isReadCall } from "./read-call.ts";
+import { declarationsOf, isDestructiveCall, isReadCall, stringifyTampered } from "./read-call.ts";
 
 /**
  * The static check of an authored module (`CONTEXT.md`, "Check"). Pure: files in, diagnostics and
@@ -390,8 +390,9 @@ export function checkModuleSync(input: ModuleCheckInput): ModuleCheckResult {
   // The SDK rules and the annotations read the same bindings: which identifiers reach a package.
   const bindings = analyseSdkBindings(module);
   const tally: MethodTally = { writes: 0, destructive: 0 };
+  const bodiesUnknown = [...module.originals.values()].some(stringifyTampered);
   for (const [abs, source] of module.originals) {
-    scanSdk(source, abs, bag, bindings.get(abs) ?? new Map(), tally);
+    scanSdk(source, abs, bag, bindings.get(abs) ?? new Map(), tally, bodiesUnknown);
   }
   const annotations = deriveAnnotations(tally);
 
@@ -1387,6 +1388,7 @@ function scanSdk(
   bag: DiagnosticBag,
   locals: SdkBindings,
   tally: MethodTally,
+  bodiesUnknown: boolean,
 ): void {
   const declarations = declarationsOf(sf);
   const visit = (node: ts.Node): void => {
@@ -1405,7 +1407,7 @@ function scanSdk(
         const method = fetchMethod(node.arguments[1]);
         if (method === null) tally.writes += 1;
         else if (isDestructiveCall(node, method, declarations)) tally.destructive += 1;
-        else if (!isReadCall(node, method, declarations)) tally.writes += 1;
+        else if (!isReadCall(node, method, declarations, bodiesUnknown)) tally.writes += 1;
       }
     }
     ts.forEachChild(node, visit);

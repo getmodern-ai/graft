@@ -26,7 +26,16 @@ import ts from "typescript6";
  * an identifier declared exactly once in the file, as a `const` whose initialiser is built from
  * literals. Declared once, by name, so a shadowing declaration anywhere in the file (a parameter,
  * a nested `const`, an import) leaves the name unfollowed rather than followed to the wrong value.
- * `JSON.stringify` is the global only when the file declares no `JSON` of its own.
+ * `JSON.stringify` is the global only when the file declares no `JSON` of its own and nothing in
+ * it writes to a member of `JSON` or names `toJSON` (Greptile on #200).
+ *
+ * The `init` itself must be an object literal of plainly named properties: a spread, a computed key,
+ * a method or an accessor in it may replace the `body` or the `host` the check read, so any of them
+ * makes the call a write; a name given twice is read as JavaScript reads it, the last one winning.
+ *
+ * This is the annotation's source, not its guarantee: a module can still change what leaves at run
+ * time in ways no static reading sees, so the proxy classifies every request a read-only tool's run
+ * makes with the same function and refuses a write as `annotation_mismatch` (`app.ts`).
  */
 
 /** Every name the file declares, with how many times: what a name is followed by. */
@@ -128,8 +137,12 @@ export function isReadCall(
   call: ts.CallExpression,
   method: string,
   declarations: Declarations,
+  /** Whether any file of the module may change what `JSON.stringify` answers (`stringifyTampered`). */
+  bodiesUnknown = false,
 ): boolean {
-  return classifyRequest(requestOf(call, method, declarations)).read;
+  const init = call.arguments[1] === undefined ? null : unwrap(call.arguments[1]);
+  if (init !== null && ts.isObjectLiteralExpression(init) && !plainlyNamed(init)) return false;
+  return classifyRequest(requestOf(call, method, declarations, false, bodiesUnknown)).read;
 }
 
 /**
@@ -202,6 +215,8 @@ function requestOf(
   method: string,
   declarations: Declarations,
   shapes = false,
+  /** Whether any file of the module may change what `JSON.stringify` answers (`stringifyTampered`). */
+  bodiesUnknown = false,
 ): RequestToClassify {
   const init = call.arguments[1] === undefined ? null : unwrap(call.arguments[1]);
   const literalInit = init !== null && ts.isObjectLiteralExpression(init) ? init : null;
@@ -227,22 +242,42 @@ function requestOf(
     host: host === null ? null : host.toLowerCase(),
     path,
     hasQuery,
-    body: literalInit ? staticBody(propertyValue(literalInit, "body"), declarations) : null,
+    body:
+      literalInit && !bodiesUnknown
+        ? staticBody(propertyValue(literalInit, "body"), declarations)
+        : null,
   };
 }
 
-/** A property's value in an object literal, by name; undefined when absent or not a plain assignment. */
+/**
+ * Whether every property of the literal is a plain assignment or shorthand under a name the check
+ * can read: no spread, no computed key, no method, no accessor, any of which may set `body`, `host`
+ * or `method` to something the check did not read (Greptile on #200).
+ */
+function plainlyNamed(literal: ts.ObjectLiteralExpression): boolean {
+  return literal.properties.every(
+    (property) =>
+      ts.isShorthandPropertyAssignment(property) ||
+      (ts.isPropertyAssignment(property) && keyOf(property) !== null),
+  );
+}
+
+/**
+ * A property's value in an object literal, by name, the last one winning as it does in JavaScript;
+ * undefined when absent.
+ */
 function propertyValue(
   literal: ts.ObjectLiteralExpression,
   name: string,
 ): ts.Expression | undefined {
+  let found: ts.Expression | undefined;
   for (const property of literal.properties) {
-    if (ts.isPropertyAssignment(property) && keyOf(property) === name) return property.initializer;
+    if (ts.isPropertyAssignment(property) && keyOf(property) === name) found = property.initializer;
     if (ts.isShorthandPropertyAssignment(property) && property.name.text === name) {
-      return property.name;
+      found = property.name;
     }
   }
-  return undefined;
+  return found;
 }
 
 function keyOf(property: ts.ObjectLiteralElementLike): string | null {
@@ -295,6 +330,48 @@ function staticBody(
     }
   }
   return { json };
+}
+
+/**
+ * Whether the file may change what `JSON.stringify` (or the vendor's own `JSON.parse` of a literal)
+ * produces: an assignment to a member of `JSON`, or the name `toJSON` anywhere, which a module can
+ * put on a prototype to replace the body the check read. Either, in any file of the module, makes
+ * every body in the module unknown, so its non-`GET` calls are writes. A cheap reading for the plain spellings; the proxy's run-time
+ * classification is what holds for the rest (Greptile on #200).
+ */
+export function stringifyTampered(sf: ts.SourceFile): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      (ts.isIdentifier(node) || ts.isStringLiteralLike(node) || ts.isPrivateIdentifier(node)) &&
+      node.text === "toJSON"
+    ) {
+      found = true;
+      return;
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      namesJsonMember(node.left)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+function namesJsonMember(target: ts.Expression): boolean {
+  const expr = unwrap(target);
+  return (
+    (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) &&
+    ts.isIdentifier(unwrap(expr.expression)) &&
+    (unwrap(expr.expression) as ts.Identifier).text === "JSON"
+  );
 }
 
 function isGlobalJsonStringify(callee: ts.Expression, declarations: Declarations): boolean {

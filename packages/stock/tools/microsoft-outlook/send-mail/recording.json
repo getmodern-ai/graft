@@ -1,0 +1,76 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__send-mail",
+  "recordedAt": "2026-10-10T06:11:42.269Z",
+  "input": {
+    "to": ["grbmsqugw@example.com"],
+    "cc": ["nwlu@example.com"],
+    "bcc": [],
+    "subject": "Xlha vljvjeo",
+    "body": "Nliq ah n jokk oqiuslk.",
+    "bodyType": "text",
+    "saveToSentItems": true
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/me/sendMail",
+      "body": {
+        "json": {
+          "message": {
+            "subject": "Xlha vljvjeo",
+            "body": {
+              "contentType": "Text",
+              "content": "Nliq ah n jokk oqiuslk."
+            },
+            "toRecipients": [
+              {
+                "emailAddress": {
+                  "address": "grbmsqugw@example.com"
+                }
+              }
+            ],
+            "ccRecipients": [
+              {
+                "emailAddress": {
+                  "address": "nwlu@example.com"
+                }
+              }
+            ],
+            "bccRecipients": []
+          },
+          "saveToSentItems": true
+        }
+      }
+    }
+  ],
+  "result": {
+    "sent": false,
+    "preview": {
+      "message": {
+        "subject": "Xlha vljvjeo",
+        "body": {
+          "contentType": "Text",
+          "content": "Nliq ah n jokk oqiuslk."
+        },
+        "toRecipients": [
+          {
+            "emailAddress": {
+              "address": "grbmsqugw@example.com"
+            }
+          }
+        ],
+        "ccRecipients": [
+          {
+            "emailAddress": {
+              "address": "nwlu@example.com"
+            }
+          }
+        ],
+        "bccRecipients": []
+      },
+      "saveToSentItems": true
+    }
+  }
+}

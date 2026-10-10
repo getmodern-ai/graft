@@ -1,0 +1,27 @@
+{
+  "format": 1,
+  "tool": "microsoft-outlook__update-event",
+  "recordedAt": "2026-10-10T06:14:12.252Z",
+  "input": {
+    "eventId": "prubc-ab",
+    "subject": "Zdmcisk tplgk"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "PATCH",
+      "url": "https://graph.microsoft.com/v1.0/me/events/prubc-ab",
+      "body": {
+        "json": {
+          "subject": "Zdmcisk tplgk"
+        }
+      }
+    }
+  ],
+  "result": {
+    "updated": false,
+    "sent": {
+      "subject": "Zdmcisk tplgk"
+    }
+  }
+}

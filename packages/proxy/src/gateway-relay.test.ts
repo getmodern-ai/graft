@@ -143,6 +143,7 @@ function claims(overrides: Partial<CapabilityClaims> = {}): CapabilityClaims {
     jti: "jti_1",
     exp: Math.floor(Date.now() / 1000) + 300,
     dryRun: false,
+    readOnly: false,
     ...overrides,
   };
 }

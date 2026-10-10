@@ -19,9 +19,12 @@ where a decision is theirs. Anything that breaks either is in scope:
   not name, a redirect or a private address followed, a credential echoed back. In a dry run
   only a read reaches the vendor: a `GET` or `HEAD`, a GraphQL query, or an endpoint in the
   reviewed table (ADR 0008 as amended 2026-10-10); a request that can change a vendor's state and
-  still gets through, or a tool annotated read-only that makes one, is in scope.
-- The **capability token**: one accepted for a connection, tool or dry run it does not name, or
-  minted for an agent outside its scope.
+  still gets through is in scope. Outside a dry run, a run of a tool annotated read-only carries
+  a `readOnly` claim on its token and the proxy refuses any request under it that the same
+  classifier does not call a read (`annotation_mismatch`); a write that reaches a vendor from such
+  a run is in scope.
+- The **capability token**: one accepted for a connection, tool, dry run or read-only run it does
+  not name, or minted for an agent outside its scope.
 - The **vault**: a stored credential that becomes readable, or a decrypt outside the proxy binding
   and the OAuth callback. The **sandbox**: egress that is not the proxy, or escape.
 - The **approval and ask flows**: an approval or a connection confirmation that something other
