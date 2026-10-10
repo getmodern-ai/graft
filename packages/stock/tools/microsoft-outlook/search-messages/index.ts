@@ -22,12 +22,15 @@ type GraphMessage = {
 
 type GraphResponse = {
   value?: GraphMessage[];
+  "@odata.nextLink"?: string;
 };
 
 const address = (recipient: Recipient | null | undefined) => ({
   name: recipient?.emailAddress?.name ?? null,
   address: recipient?.emailAddress?.address ?? null,
 });
+
+const escapeSearch = (value: string) => value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 
 export default async (input: Input, ctx: Context) => {
   const top = input.top ?? 10;
@@ -40,13 +43,17 @@ export default async (input: Input, ctx: Context) => {
     "$select",
     "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId,webLink",
   );
-  params.set("$top", String(top));
+  params.set("$top", String(input.query && input.unreadOnly ? 50 : top));
 
   if (input.query) {
-    // $search's value is one double-quoted string; a quote inside it is escaped with a backslash.
-    params.set("$search", `"${input.query.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`);
+    let search = escapeSearch(input.query);
+    if (input.from) search += ` from:${escapeSearch(input.from)}`;
+    params.set("$search", `"${search}"`);
   } else {
     const filters: string[] = [];
+    if (input.from || input.unreadOnly) {
+      filters.push("receivedDateTime ge 1900-01-01T00:00:00Z");
+    }
     if (input.from) {
       const escapedSender = input.from.replaceAll("'", "''");
       filters.push(`from/emailAddress/address eq '${escapedSender}'`);
@@ -56,25 +63,31 @@ export default async (input: Input, ctx: Context) => {
     params.set("$orderby", "receivedDateTime desc");
   }
 
-  const path = `${basePath}?${params.toString()}`;
-  const res = await ctx.fetch(path);
-  if (!res.ok) throw new Error(`GET ${basePath} ${res.status}: ${await res.text()}`);
+  let path: string | undefined = `${basePath}?${params.toString()}`;
+  const messages: GraphMessage[] = [];
+  let pagesRead = 0;
 
-  const data = (await res.json()) as GraphResponse;
-  let messages = Array.isArray(data.value) ? data.value : [];
+  while (path && pagesRead < 5 && messages.length < top) {
+    const res = await ctx.fetch(path);
+    if (!res.ok) throw new Error(`GET ${basePath} ${res.status}: ${await res.text()}`);
 
-  if (input.query && input.from) {
-    const wanted = input.from.toLowerCase();
-    messages = messages.filter(
-      (message) => message.from?.emailAddress?.address?.toLowerCase() === wanted,
-    );
+    const data = (await res.json()) as GraphResponse;
+    const page = Array.isArray(data.value) ? data.value : [];
+    if (input.query && input.unreadOnly) {
+      messages.push(...page.filter((message) => message.isRead === false));
+    } else {
+      messages.push(...page);
+    }
+
+    pagesRead += 1;
+    const nextLink = data["@odata.nextLink"];
+    path = input.query && input.unreadOnly && nextLink ? nextLink : undefined;
   }
-  if (input.query && input.unreadOnly) {
-    messages = messages.filter((message) => message.isRead === false);
-  }
+
+  const complete = !(path && pagesRead >= 5 && messages.length < top);
 
   return {
-    messages: messages.map((message) => ({
+    messages: messages.slice(0, top).map((message) => ({
       id: message.id ?? null,
       subject: message.subject ?? null,
       from: address(message.from),
@@ -86,5 +99,6 @@ export default async (input: Input, ctx: Context) => {
       conversationId: message.conversationId ?? null,
       webLink: message.webLink ?? null,
     })),
+    complete,
   };
 };

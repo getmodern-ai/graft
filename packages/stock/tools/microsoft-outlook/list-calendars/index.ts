@@ -1,32 +1,47 @@
-type CalendarResponse = {
-  value?: Array<{
-    id?: string;
+type Calendar = {
+  id?: string;
+  name?: string;
+  color?: string;
+  isDefaultCalendar?: boolean;
+  canEdit?: boolean;
+  owner?: {
     name?: string;
-    color?: string;
-    isDefaultCalendar?: boolean;
-    canEdit?: boolean;
-    owner?: {
-      name?: string;
-      address?: string;
-    } | null;
-  }>;
+    address?: string;
+  } | null;
 };
 
-export default async (input: Input, ctx: Context) => {
-  const res = await ctx.fetch(
-    "/me/calendars?$top=100&$select=id,name,color,isDefaultCalendar,canEdit,owner",
-  );
-  if (!res.ok) {
-    throw new Error(`GET /me/calendars ${res.status}: ${await res.text()}`);
-  }
+type CalendarResponse = {
+  value?: Calendar[];
+  "@odata.nextLink"?: string;
+};
 
-  const data = (await res.json()) as CalendarResponse;
-  if (!Array.isArray(data.value)) {
-    throw new Error("GET /me/calendars returned an invalid calendar collection");
+export default async (_input: Input, ctx: Context) => {
+  let nextLink: string | null =
+    "/me/calendars?$top=100&$select=id,name,color,isDefaultCalendar,canEdit,owner";
+  const calendars: Calendar[] = [];
+  let pagesRead = 0;
+
+  while (nextLink !== null && pagesRead < 5) {
+    const res = await ctx.fetch(nextLink);
+    if (!res.ok) {
+      throw new Error(`GET /me/calendars ${res.status}: ${await res.text()}`);
+    }
+
+    const data = (await res.json()) as CalendarResponse;
+    if (!Array.isArray(data.value)) {
+      throw new Error("GET /me/calendars returned an invalid calendar collection");
+    }
+    if (data["@odata.nextLink"] !== undefined && typeof data["@odata.nextLink"] !== "string") {
+      throw new Error("GET /me/calendars returned an invalid pagination link");
+    }
+
+    calendars.push(...data.value);
+    nextLink = data["@odata.nextLink"] ?? null;
+    pagesRead += 1;
   }
 
   return {
-    calendars: data.value.map((calendar) => ({
+    calendars: calendars.map((calendar) => ({
       id: calendar.id ?? null,
       name: calendar.name ?? null,
       color: calendar.color ?? null,
@@ -39,5 +54,6 @@ export default async (input: Input, ctx: Context) => {
           }
         : null,
     })),
+    complete: nextLink === null,
   };
 };

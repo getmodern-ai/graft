@@ -1,6 +1,6 @@
 {
   "name": "list-mail-folders",
-  "description": "Lists the Outlook mailbox's mail folders with their item and unread counts. Folder ids feed microsoft-outlook__search-messages and microsoft-outlook__move-message, where the well-known names inbox, sentitems, drafts, deleteditems, archive and junkemail work too.",
+  "description": "Lists Outlook mail folders, including nested folders, with item, unread, and child-folder counts. complete: false means the list was cut short. Folder ids feed microsoft-outlook__search-messages and microsoft-outlook__move-message; well-known names inbox, sentitems, drafts, deleteditems, archive, and junkemail also work.",
   "inputSchema": {
     "type": "object",
     "properties": {

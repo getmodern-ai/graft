@@ -1,6 +1,6 @@
 {
   "name": "search-messages",
-  "description": "Searches and finds Outlook emails (messages) in the mailbox by words, sender, unread status or folder, newest first when no words are given. Message ids feed microsoft-outlook__reply-to-message, microsoft-outlook__move-message and microsoft-outlook__delete-message; folder ids come from microsoft-outlook__list-mail-folders.",
+  "description": "Searches and finds Outlook emails by words, sender, unread status or folder, newest first when no words are given. Message ids feed microsoft-outlook__reply-to-message, microsoft-outlook__move-message and microsoft-outlook__delete-message; folder ids come from microsoft-outlook__list-mail-folders.",
   "inputSchema": {
     "type": "object",
     "properties": {

@@ -1,7 +1,7 @@
 {
   "format": 1,
   "tool": "microsoft-outlook__list-calendars",
-  "recordedAt": "2026-10-10T06:06:47.078Z",
+  "recordedAt": "2026-10-10T06:29:36.154Z",
   "input": {},
   "exchanges": [
     {
@@ -18,14 +18,14 @@
             "@odata.context": "https://graph.microsoft.com/",
             "value": [
               {
-                "id": "SEMuJRItUAE9HbQWTEGhFVSoXZXhIoDnVFUMDQYmSxQYKCQEYhbSnGcAJmEKvx8hND3rqjsQSZkcz59Cqd3FkcqgAwOSSK4AVROIDkJYZUegi75Svh6JgumrDmABSW3SFQWdtmAIBJI=",
-                "name": "Pdtmofqe",
-                "color": "ahoa",
+                "id": "AHGaCNYmQQX8NpBOLPJmTDAoKOXuXbQzDZRJVJAfCsJIPLQURlxZhNiPWuMIrs7pMK7jkhsAYRaug45Jrc6SfqvwKlOUGS7MTWTBPoKJHKpye74Paj2ChflcCvBZMB6YKWCufcBIJQD=",
+                "name": "Ojvbpjsi",
+                "color": "vwdt",
                 "isDefaultCalendar": true,
                 "canEdit": true,
                 "owner": {
-                  "name": "Gbpbl Lnnqzdij",
-                  "address": "bafetmw_3SQ55QZU61438542@example.com"
+                  "name": "Tntkb Fnmypbvq",
+                  "address": "olcrtvo_2GJ36FKG36968664@example.com"
                 }
               }
             ]
@@ -37,16 +37,17 @@
   "result": {
     "calendars": [
       {
-        "id": "SEMuJRItUAE9HbQWTEGhFVSoXZXhIoDnVFUMDQYmSxQYKCQEYhbSnGcAJmEKvx8hND3rqjsQSZkcz59Cqd3FkcqgAwOSSK4AVROIDkJYZUegi75Svh6JgumrDmABSW3SFQWdtmAIBJI=",
-        "name": "Pdtmofqe",
-        "color": "ahoa",
+        "id": "AHGaCNYmQQX8NpBOLPJmTDAoKOXuXbQzDZRJVJAfCsJIPLQURlxZhNiPWuMIrs7pMK7jkhsAYRaug45Jrc6SfqvwKlOUGS7MTWTBPoKJHKpye74Paj2ChflcCvBZMB6YKWCufcBIJQD=",
+        "name": "Ojvbpjsi",
+        "color": "vwdt",
         "isDefaultCalendar": true,
         "canEdit": true,
         "owner": {
-          "name": "Gbpbl Lnnqzdij",
-          "address": "bafetmw_3SQ55QZU61438542@example.com"
+          "name": "Tntkb Fnmypbvq",
+          "address": "olcrtvo_2GJ36FKG36968664@example.com"
         }
       }
-    ]
+    ],
+    "complete": true
   }
 }
