@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { CheckCircleIcon } from "@/components/icons";
+import { CheckCircleIcon, HourglassIcon, LockIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
 import { PendingActionCard } from "@/components/pending/pending-action-card";
+import { SetupTaskRow } from "@/components/setup/setup-app-card";
 import { SetupFooter } from "@/components/setup/setup-footer";
 import { SetupStepHeader } from "@/components/setup/setup-step-header";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
@@ -57,11 +58,16 @@ function OpenAsk({ state, askId }: { state: SetupStateData; askId: string | null
       ? view.action.payload.displayName
       : "the integration";
 
+  const task = state.setup?.goal ?? null;
   return (
-    <div className="flex flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-[880px] flex-col gap-6">
       <SetupStepHeader
         title={`Connect ${vendorName}`}
-        description={`${state.agent?.name ?? "Your agent"} asks for this connection as its own, the way it would from your harness. Answer it here.`}
+        description={
+          task
+            ? `Graft starts building your tool the moment ${vendorName} is connected.`
+            : `${state.agent?.name ?? "Your agent"} asks for this connection as its own, the way it would from your harness. Answer it here.`
+        }
       />
       {view.kind === "card" ? (
         <PendingActionCard
@@ -70,12 +76,29 @@ function OpenAsk({ state, askId }: { state: SetupStateData; askId: string | null
           key={view.action.id}
           action={view.action}
           origin="setup"
+          setupFooter={
+            task ? (
+              <SetupTaskRow
+                icon={<HourglassIcon className="size-5 text-muted-foreground" />}
+                task={task}
+                note={`Waits for ${vendorName}`}
+              />
+            ) : null
+          }
           onAnswered={() => void queryClient.invalidateQueries({ queryKey: setupKeys.current })}
         />
       ) : (
         <Loader />
       )}
-      <SetupFooter state={state} />
+      <SetupFooter
+        state={state}
+        summary={
+          <>
+            <LockIcon className="size-4 shrink-0" />
+            Graft stores credentials encrypted; your agent never sees them.
+          </>
+        }
+      />
     </div>
   );
 }

@@ -47,6 +47,10 @@ export function createFakeStockCatalogue(): FakeStockCatalogue {
     findStockTool: async (_db, key) =>
       [...tools.values()].find((row) => row.vendor === key.vendor && row.name === key.name) ?? null,
     findLatestStockToolVersion: async (_db, stockToolId) => latest(stockToolId),
+    hasStockToolVersionWithHash: async (_db, stockToolId, sourceHash) =>
+      [...versions.values()].some(
+        (row) => row.stockToolId === stockToolId && row.sourceHash === sourceHash,
+      ),
     insertStockToolVersion: async (_db, input) => {
       const row: StockToolVersionRow = { ...input, createdAt: input.createdAt ?? new Date() };
       versions.set(row.id, row);
@@ -57,6 +61,11 @@ export function createFakeStockCatalogue(): FakeStockCatalogue {
       current().filter((row) => row.tool.vendor === vendor),
     findCurrentStockTool: async (_db, key) =>
       current().find((row) => row.tool.vendor === key.vendor && row.tool.name === key.name) ?? null,
+    findStockToolVersionById: async (_db, stockVersionId) => {
+      const version = versions.get(stockVersionId);
+      const tool = version ? tools.get(version.stockToolId) : undefined;
+      return version && tool ? { tool, version } : null;
+    },
     newId: () => `stock_${++counter}`,
   };
   return { deps, tools, versions };

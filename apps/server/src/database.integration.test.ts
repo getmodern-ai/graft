@@ -22,6 +22,7 @@ import {
   findPersonModelKeyRow,
   finishSetup,
   getAgentScope,
+  getApproval,
   getConnection,
   getPersonModelKey,
   getSetupState,
@@ -32,6 +33,7 @@ import {
   listAgents,
   listConnections,
   listStockToolsForVendor,
+  listToolVersionOrigins,
   listToolVersions,
   listWorkingSet,
   listWorkingSetChanges,
@@ -56,7 +58,7 @@ import { addConnectionHosts } from "@graft/db/repo/connection";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
 import type { ProxyEvent, UpstreamRequest } from "@graft/proxy";
-import { copyStockVersion } from "@graft/publish";
+import { advanceStockCopy, copyStockVersion } from "@graft/publish";
 import { checkStockTool, readStockWorkspace } from "@graft/stock";
 import {
   CAPABILITY_TOKEN_ALG,
@@ -64,7 +66,7 @@ import {
   importCapabilityTokenKeys,
   mintCapabilityToken,
 } from "@graft/token";
-import { createFilesystemToolboxStore } from "@graft/toolbox";
+import { createFilesystemToolboxStore, createNoopToolboxMirror } from "@graft/toolbox";
 import {
   CredentialScopeMismatchError,
   createCredentialVault,
@@ -653,7 +655,12 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       },
       defaultToolDeps,
     );
-    await setApproval(ctx, scope, tool.id, "allow", defaultApprovalDeps);
+    await setApproval(ctx, scope, tool.id, "allow", defaultApprovalDeps, {
+      asked: {
+        versionId: tool.currentVersionId,
+        annotations: { readOnly: false, destructive: false },
+      },
+    });
     // A second connection and a tool bound to it, promoted beside the first: the sweep's predicate
     // (`repo/working-set.ts`, pinned as SQL in `@graft/db`) has to leave it (GRA-69).
     const other = await registerConnection(
@@ -1035,16 +1042,96 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
 
     const personId = await signUp("stock-copy@example.com");
     const root = await mkdtemp(join(tmpdir(), "graft-stock-it-"));
-    const copied = await copyStockVersion(
-      { db, store: createFilesystemToolboxStore({ root }), tool: defaultToolDeps },
-      { personId, stock, defaultConnectionId: null },
-    );
-    const [version] = await listToolVersions(ctx, { personId }, copied.id, defaultToolDeps);
+    const mirror = createNoopToolboxMirror();
+    const copyDeps = {
+      db,
+      store: createFilesystemToolboxStore({ root }),
+      tool: defaultToolDeps,
+      mirror,
+      onMirror: () => {},
+      now: () => new Date(),
+    };
+    // Two first copies racing (Greptile on #184): the lock on the name makes one, and both answer it.
+    const [copied, raced] = await Promise.all([
+      copyStockVersion(copyDeps, { personId, stock, defaultConnectionId: null }),
+      copyStockVersion(copyDeps, { personId, stock, defaultConnectionId: null }),
+    ]);
+    expect(raced.id).toBe(copied.id);
+    const versions = await listToolVersions(ctx, { personId }, copied.id, defaultToolDeps);
+    expect(versions).toHaveLength(1);
+    const [version] = versions;
+    await vi.waitFor(() => expect(mirror.calls).toHaveLength(1));
     expect(version).toMatchObject({
       versionNumber: 1,
       stockToolId: stock.stockToolId,
       stockVersionId: stock.stockVersionId,
     });
     expect(copied.currentVersionId).toBe(version?.id);
+    // GRA-245: an agent's answer for the copy names the version it was given for.
+    const { agent } = await createAgent(
+      ctx,
+      { personId },
+      { name: "stock agent" },
+      defaultAgentDeps,
+    );
+    const scope = { personId, agentId: agent.id };
+    const askedV1 = {
+      versionId: copied.currentVersionId,
+      annotations: { readOnly: copied.readOnly, destructive: copied.destructive },
+    };
+    await setApproval(ctx, scope, copied.id, "allow", defaultApprovalDeps, { asked: askedV1 });
+    expect((await getApproval(ctx, scope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
+      version?.id,
+    );
+
+    // GRA-242: the catalogue gains v2; two reaches at once advance the copy once, under the
+    // tool row's lock, and the origins read names the stock version's number.
+    const [weather] = sources.filter((source) => source.name === "current-weather");
+    if (!weather) throw new Error("no weather source");
+    const changed = {
+      ...weather,
+      sourceHash: `${weather.sourceHash}-v2`,
+      description: `${weather.description} Version two.`,
+    };
+    const third = await loadStockCatalogue(ctx, [changed], checkStockTool, defaultStockDeps);
+    expect(third.appended).toEqual([
+      { vendor: "open-meteo", name: "current-weather", versionNumber: 2 },
+    ]);
+    const v2 = await describeStockTool(
+      ctx,
+      { vendor: "open-meteo", name: "current-weather" },
+      defaultStockDeps,
+    );
+    if (!v2) throw new Error("no stock v2");
+    const advances = await Promise.all([
+      advanceStockCopy(copyDeps, { personId, toolId: copied.id, stock: v2 }),
+      advanceStockCopy(copyDeps, { personId, toolId: copied.id, stock: v2 }),
+    ]);
+    expect(advances.filter((advance) => advance.advanced)).toHaveLength(1);
+    const origins = await listToolVersionOrigins(ctx, { personId }, defaultToolDeps, copied.id);
+    expect(origins.map((origin) => [origin.versionNumber, origin.stockVersionNumber])).toEqual([
+      [2, 2],
+      [1, 1],
+    ]);
+    const after = await getToolById(ctx, { personId }, copied.id, defaultToolDeps);
+    expect(after?.currentVersionId).toBe(origins[0]?.versionId);
+    expect(after?.description).toBe(changed.description);
+    // GRA-245: the annotations did not widen, so the answer was carried onto v2 in the advance.
+    expect((await getApproval(ctx, scope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
+      origins[0]?.versionId,
+    );
+    // Greptile on #190: an answer to an ask about v1 arriving after that advance is recorded under
+    // the tool row's lock and lands on v2, as the advance would have carried it; another agent's.
+    const { agent: late } = await createAgent(
+      ctx,
+      { personId },
+      { name: "late answer" },
+      defaultAgentDeps,
+    );
+    const lateScope = { personId, agentId: late.id };
+    await setApproval(ctx, lateScope, copied.id, "allow", defaultApprovalDeps, { asked: askedV1 });
+    expect((await getApproval(ctx, lateScope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
+      origins[0]?.versionId,
+    );
   });
 });

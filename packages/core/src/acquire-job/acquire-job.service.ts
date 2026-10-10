@@ -34,7 +34,14 @@ export const TRACE_READ_LIMIT = 1000;
 export async function createAcquireJob(
   ctx: ServiceContext,
   scope: AgentScope,
-  input: { connectionId: string; goal: string; hints?: string | null; firstProgressLine?: string },
+  input: {
+    connectionId: string;
+    goal: string;
+    hints?: string | null;
+    firstProgressLine?: string;
+    /** The tool a remix starts from (`acquire`'s `from`, GRA-243); unset for a new tool. */
+    fromToolId?: string | null;
+  },
   deps: AcquireJobDeps,
 ): Promise<AcquireJobRow> {
   const goal = input.goal.trim();
@@ -55,6 +62,7 @@ export async function createAcquireJob(
     connectionId: input.connectionId,
     goal,
     hints,
+    fromToolId: input.fromToolId ?? null,
     progress: input.firstProgressLine ? [input.firstProgressLine] : [],
   });
 }

@@ -2,6 +2,8 @@ import {
   findCurrentStockTool,
   findLatestStockToolVersion,
   findStockTool,
+  findStockToolVersionById,
+  hasStockToolVersionWithHash,
   insertStockTool,
   insertStockToolVersion,
   listCurrentStockTools,
@@ -15,10 +17,12 @@ export type StockDeps = {
   insertStockTool: typeof insertStockTool;
   findStockTool: typeof findStockTool;
   findLatestStockToolVersion: typeof findLatestStockToolVersion;
+  hasStockToolVersionWithHash: typeof hasStockToolVersionWithHash;
   insertStockToolVersion: typeof insertStockToolVersion;
   listCurrentStockTools: typeof listCurrentStockTools;
   listCurrentStockToolsForVendor: typeof listCurrentStockToolsForVendor;
   findCurrentStockTool: typeof findCurrentStockTool;
+  findStockToolVersionById: typeof findStockToolVersionById;
   newId: () => string;
 };
 
@@ -27,9 +31,11 @@ export const defaultStockDeps: StockDeps = {
   insertStockTool,
   findStockTool,
   findLatestStockToolVersion,
+  hasStockToolVersionWithHash,
   insertStockToolVersion,
   listCurrentStockTools,
   listCurrentStockToolsForVendor,
   findCurrentStockTool,
+  findStockToolVersionById,
   newId: () => crypto.randomUUID(),
 };

@@ -20,6 +20,7 @@ const writeTool = {
   personId: "person_1",
   readOnly: false,
   destructive: false,
+  currentVersionId: "ver_1",
 } as AuthoredToolRow;
 const destructiveTool = { ...writeTool, destructive: true } as AuthoredToolRow;
 const readTool = { ...writeTool, readOnly: true } as AuthoredToolRow;
@@ -29,6 +30,7 @@ const approval: ApprovalRow = {
   decision: "allow",
   decidedAt: NOW,
   askEveryCall: false,
+  toolVersionId: "ver_1",
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,
@@ -41,7 +43,25 @@ const build: BuildApprovalRow = {
   createdAt: NOW,
 };
 
-const ctx = { db: {} } as unknown as ServiceContext;
+/** A transaction hands its body the same handle, so a call made inside it is asserted on `ctx.db`. */
+const db = { transaction: async <T>(fn: (tx: unknown) => Promise<T>) => fn(db) };
+const ctx = { db } as unknown as ServiceContext;
+
+/** The asked-about version as the ask showed it: `ver_1`, a write. */
+const ASKED_V1 = { versionId: "ver_1", annotations: { readOnly: false, destructive: false } };
+
+/** A version as `listToolVersionOrigins` answers it; `stock` marks a stock origin. */
+function origin(versionId: string, versionNumber: number, stock: boolean) {
+  return {
+    toolId: "tool_1",
+    versionId,
+    versionNumber,
+    createdAt: NOW,
+    stockToolId: stock ? "stock_1" : null,
+    stockVersionId: stock ? `stock_${versionId}` : null,
+    stockVersionNumber: stock ? versionNumber : null,
+  };
+}
 
 function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
   return {
@@ -57,6 +77,8 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
     insertBuildApproval: vi.fn(async () => build),
     settleAnsweredToolActions: vi.fn(async () => []),
     findAuthoredToolById: vi.fn(async () => writeTool),
+    findAuthoredToolForUpdate: vi.fn(async () => writeTool),
+    listToolVersionOrigins: vi.fn(async () => []),
     findConnection: vi.fn(async () => ({ id: "conn_1" }) as never),
     now: () => NOW,
     ...overrides,
@@ -66,12 +88,13 @@ function fakeDeps(overrides: Partial<ApprovalDeps> = {}): ApprovalDeps {
 describe("setApproval", () => {
   it("records the person's answer for the agent's tool at the clock's moment, leaving the setting as it stands", async () => {
     const deps = fakeDeps();
-    await setApproval(ctx, SCOPE, "tool_1", "allow", deps);
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
     expect(deps.upsertApproval).toHaveBeenCalledWith(ctx.db, {
       agentId: "agent_1",
       toolId: "tool_1",
       decision: "allow",
       decidedAt: NOW,
+      toolVersionId: "ver_1",
     });
     // The answer path never spends a waiting answer — that is the console's act.
     expect(deps.settleAnsweredToolActions).not.toHaveBeenCalled();
@@ -79,23 +102,148 @@ describe("setApproval", () => {
 
   it("writes the setting with the answer when the answer carried one", async () => {
     const deps = fakeDeps();
-    const row = await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { askEveryCall: true });
+    const row = await setApproval(ctx, SCOPE, "tool_1", "allow", deps, {
+      asked: ASKED_V1,
+      askEveryCall: true,
+    });
     expect(deps.upsertApproval).toHaveBeenCalledWith(ctx.db, {
       agentId: "agent_1",
       toolId: "tool_1",
       decision: "allow",
       decidedAt: NOW,
+      toolVersionId: "ver_1",
       askEveryCall: true,
     });
     expect(row.askEveryCall).toBe(true);
   });
 
   it("refuses a tool that is not the person's", async () => {
-    const deps = fakeDeps({ findAuthoredToolById: vi.fn(async () => null) });
-    await expect(setApproval(ctx, SCOPE, "tool_x", "allow", deps)).rejects.toMatchObject({
-      code: "NOT_FOUND",
-    });
+    const deps = fakeDeps({ findAuthoredToolForUpdate: vi.fn(async () => null) });
+    await expect(
+      setApproval(ctx, SCOPE, "tool_x", "allow", deps, { asked: ASKED_V1 }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(deps.upsertApproval).not.toHaveBeenCalled();
+  });
+
+  it("reads the tool under its row lock, the one a stock advance takes (Greptile on #190)", async () => {
+    const deps = fakeDeps();
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    expect(deps.findAuthoredToolForUpdate).toHaveBeenCalledWith(ctx.db, "person_1", "tool_1");
+    expect(deps.findAuthoredToolById).not.toHaveBeenCalled();
+  });
+});
+
+/** GRA-245, Greptile on #190: an answer is for the version the person was shown. */
+describe("setApproval for the version asked about", () => {
+  const movedOn = { ...writeTool, currentVersionId: "ver_2" } as AuthoredToolRow;
+
+  it("records an old ask's yes for the old version, so the version made current since still asks", async () => {
+    const deps = fakeDeps({
+      findAuthoredToolForUpdate: vi.fn(async () => movedOn),
+      listToolVersionOrigins: vi.fn(async () => [
+        origin("ver_2", 2, false),
+        origin("ver_1", 1, false),
+      ]),
+    });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ toolVersionId: "ver_1" }),
+    );
+  });
+
+  it("records a no for the version asked about", async () => {
+    const deps = fakeDeps({ findAuthoredToolForUpdate: vi.fn(async () => movedOn) });
+    await setApproval(ctx, SCOPE, "tool_1", "deny", deps, { asked: ASKED_V1 });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ decision: "deny", toolVersionId: "ver_1" }),
+    );
+  });
+
+  it("leaves a yes already standing for the current version where it is", async () => {
+    const current = { ...approval, toolVersionId: "ver_2" };
+    const deps = fakeDeps({
+      findAuthoredToolForUpdate: vi.fn(async () => movedOn),
+      findApproval: vi.fn(async () => current),
+    });
+    await expect(
+      setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 }),
+    ).resolves.toEqual(current);
+    expect(deps.upsertApproval).not.toHaveBeenCalled();
+  });
+
+  it("still writes an ask-every-call setting the old ask's yes carried onto that standing row", async () => {
+    const current = { ...approval, toolVersionId: "ver_2" };
+    const deps = fakeDeps({
+      findAuthoredToolForUpdate: vi.fn(async () => movedOn),
+      findApproval: vi.fn(async () => current),
+    });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, {
+      asked: ASKED_V1,
+      askEveryCall: true,
+    });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ decision: "allow", toolVersionId: "ver_2", askEveryCall: true }),
+    );
+  });
+
+  it("carries a late yes onto a stock copy's current version when the advances do not widen what was shown", async () => {
+    const deps = fakeDeps({
+      findAuthoredToolForUpdate: vi.fn(async () => movedOn),
+      listToolVersionOrigins: vi.fn(async () => [
+        origin("ver_2", 2, true),
+        origin("ver_1", 1, true),
+      ]),
+    });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ toolVersionId: "ver_2" }),
+    );
+  });
+
+  it("carries nothing onto a stock version that widens what was shown", async () => {
+    const widened = { ...movedOn, destructive: true } as AuthoredToolRow;
+    const deps = fakeDeps({
+      findAuthoredToolForUpdate: vi.fn(async () => widened),
+      listToolVersionOrigins: vi.fn(async () => [
+        origin("ver_2", 2, true),
+        origin("ver_1", 1, true),
+      ]),
+    });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ toolVersionId: "ver_1" }),
+    );
+  });
+
+  it("carries nothing onto a remix's version: a remix is a republish", async () => {
+    const deps = fakeDeps({
+      findAuthoredToolForUpdate: vi.fn(async () => movedOn),
+      listToolVersionOrigins: vi.fn(async () => [
+        origin("ver_2", 2, false),
+        origin("ver_1", 1, true),
+      ]),
+    });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, { asked: ASKED_V1 });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ toolVersionId: "ver_1" }),
+    );
+  });
+
+  it("records an ask that named no version for none, so the tool asks once more", async () => {
+    const deps = fakeDeps();
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, {
+      asked: { ...ASKED_V1, versionId: null },
+    });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ toolVersionId: null }),
+    );
   });
 });
 
@@ -171,20 +319,26 @@ describe("revokeApproval", () => {
   });
 });
 
+/** A call that runs `ver_1` of a write tool. */
+const RUN_V1 = {
+  toolId: "tool_1",
+  versionId: "ver_1",
+  annotations: { readOnly: false, destructive: false },
+};
+
 describe("decideToolCall", () => {
   it("applies ADR 0008 to the tool's annotations and the agent's approval", async () => {
-    await expect(decideToolCall(ctx, SCOPE, "tool_1", fakeDeps())).resolves.toBe("ask");
+    await expect(decideToolCall(ctx, SCOPE, RUN_V1, fakeDeps())).resolves.toBe("ask");
     await expect(
-      decideToolCall(ctx, SCOPE, "tool_1", fakeDeps({ findApproval: vi.fn(async () => approval) })),
+      decideToolCall(ctx, SCOPE, RUN_V1, fakeDeps({ findApproval: vi.fn(async () => approval) })),
     ).resolves.toBe("pass");
     // A destructive tool's allow holds like a write's (the amendment of 2026-09-15).
     await expect(
       decideToolCall(
         ctx,
         SCOPE,
-        "tool_1",
+        { ...RUN_V1, annotations: { readOnly: false, destructive: true } },
         fakeDeps({
-          findAuthoredToolById: vi.fn(async () => destructiveTool),
           findApproval: vi.fn(async () => approval),
         }),
       ),
@@ -194,18 +348,39 @@ describe("decideToolCall", () => {
       decideToolCall(
         ctx,
         SCOPE,
-        "tool_1",
+        { ...RUN_V1, annotations: { readOnly: false, destructive: true } },
         fakeDeps({
-          findAuthoredToolById: vi.fn(async () => destructiveTool),
           findApproval: vi.fn(async () => ({ ...approval, askEveryCall: true })),
         }),
       ),
     ).resolves.toBe("ask");
   });
 
+  it("asks again for a version the allow was not given for (GRA-245)", async () => {
+    const deps = fakeDeps({ findApproval: vi.fn(async () => approval) });
+    await expect(decideToolCall(ctx, SCOPE, { ...RUN_V1, versionId: "ver_2" }, deps)).resolves.toBe(
+      "ask",
+    );
+    await expect(decideToolCall(ctx, SCOPE, RUN_V1, deps)).resolves.toBe("pass");
+  });
+
+  it("judges the version the call runs, not the tool's pointer (Greptile on #190)", async () => {
+    // v2 is current and approved; a call that pinned v1 before it became current still asks.
+    const deps = fakeDeps({
+      findAuthoredToolById: vi.fn(
+        async () => ({ ...writeTool, currentVersionId: "ver_2" }) as AuthoredToolRow,
+      ),
+      findApproval: vi.fn(async () => ({ ...approval, toolVersionId: "ver_2" })),
+    });
+    await expect(decideToolCall(ctx, SCOPE, RUN_V1, deps)).resolves.toBe("ask");
+    await expect(decideToolCall(ctx, SCOPE, { ...RUN_V1, versionId: "ver_2" }, deps)).resolves.toBe(
+      "pass",
+    );
+  });
+
   it("reads the approval under the agent's scope", async () => {
     const deps = fakeDeps();
-    await decideToolCall(ctx, SCOPE, "tool_1", deps);
+    await decideToolCall(ctx, SCOPE, RUN_V1, deps);
     expect(deps.findApproval).toHaveBeenCalledWith(ctx.db, SCOPE, "tool_1");
   });
 });

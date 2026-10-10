@@ -22,7 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { agentKeys, type Tool } from "@/lib/agent-queries";
+import { agentKeys } from "@/lib/agent-queries";
 import {
   type Connection,
   connectionKeys,
@@ -32,6 +32,7 @@ import {
   providerLabel,
   reconnectConnection,
   retryProviderRelease,
+  type ToolboxTool,
   toolKeys,
 } from "@/lib/connection-queries";
 import { startOAuthConsent } from "@/lib/oauth-consent";
@@ -40,6 +41,7 @@ import {
   connectionStatusChips,
   NO_PASSING_VERSION_CHIP,
 } from "@/lib/status-chips";
+import { toolVersionLines } from "@/lib/tool-versions";
 
 /**
  * One connection: the vendor, the hosts the proxy pins its calls to, the scheme, when the credential
@@ -71,7 +73,13 @@ import {
  * the footer is Cando's banded action strip, `bg-muted/50` over a rule, and a table drawn on that
  * band loses its own row hover (the same `bg-muted/50`) and reads as furniture rather than data.
  */
-export function ConnectionCard({ connection, tools }: { connection: Connection; tools: Tool[] }) {
+export function ConnectionCard({
+  connection,
+  tools,
+}: {
+  connection: Connection;
+  tools: ToolboxTool[];
+}) {
   const [showCalls, setShowCalls] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [reentering, setReentering] = useState(false);
@@ -326,15 +334,18 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
             ) : (
               <ul className="flex flex-col gap-1.5">
                 {tools.map((tool) => (
-                  <li key={tool.id} className="flex flex-wrap items-center gap-2">
-                    <code className="font-mono text-xs">
-                      {tool.vendor}__{tool.name}
-                    </code>
-                    <ToolAnnotations readOnly={tool.readOnly} destructive={tool.destructive} />
-                    {tool.currentVersionId === null ? (
-                      <StatusChip chip={NO_PASSING_VERSION_CHIP} />
-                    ) : null}
-                    {usable ? null : <StatusChip chip={AWAITING_RECONNECTION_CHIP} />}
+                  <li key={tool.id} className="flex flex-col gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="font-mono text-xs">
+                        {tool.vendor}__{tool.name}
+                      </code>
+                      <ToolAnnotations readOnly={tool.readOnly} destructive={tool.destructive} />
+                      {tool.currentVersionId === null ? (
+                        <StatusChip chip={NO_PASSING_VERSION_CHIP} />
+                      ) : null}
+                      {usable ? null : <StatusChip chip={AWAITING_RECONNECTION_CHIP} />}
+                    </div>
+                    <ToolVersionHistory tool={tool} />
                   </li>
                 ))}
               </ul>
@@ -366,5 +377,24 @@ export function ConnectionCard({ connection, tools }: { connection: Connection; 
         />
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * A tool's versions, newest first, each with where it came from: a ready-made version names the
+ * stock version it was copied from, so a copy that followed stock shows each step (GRA-242).
+ */
+function ToolVersionHistory({ tool }: { tool: ToolboxTool }) {
+  const lines = toolVersionLines(tool);
+  if (lines.length === 0) return null;
+  return (
+    <ol className="flex flex-col gap-0.5 text-muted-foreground text-xs" aria-label="Versions">
+      {lines.map((line) => (
+        <li key={line.id}>
+          {line.label} · {line.origin}
+          {line.current ? ", current" : null}
+        </li>
+      ))}
+    </ol>
   );
 }
