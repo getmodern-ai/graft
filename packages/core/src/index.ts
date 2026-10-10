@@ -72,15 +72,19 @@ export {
 export {
   type ApprovalState,
   type ApprovalVerdict,
+  annotationsWiden,
+  answerCarriesTo,
   approvalDecision,
   type ToolAnnotations,
 } from "./approval/approval.decision";
 export { type ApprovalDeps, defaultApprovalDeps } from "./approval/approval.deps";
 export {
+  type AskedVersion,
   decideToolCall,
   getApproval,
   getBuildApproval,
   grantBuildApproval,
+  isForVersion,
   listApprovals,
   revokeApproval,
   setApproval,
@@ -489,6 +493,7 @@ export {
   stockLineageOf,
   type VersionOrigin,
 } from "./stock/stock-advance.decision";
+export { type ToolProvenance, toolProvenance } from "./stock/tool-provenance.rules";
 export {
   AGENT_TOKEN_DISPLAY_LENGTH,
   AGENT_TOKEN_PREFIX,

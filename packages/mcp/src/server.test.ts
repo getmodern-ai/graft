@@ -462,6 +462,7 @@ beforeAll(async () => {
       decision: "allow",
       decidedAt: new Date(),
       askEveryCall: false,
+      toolVersionId: `${toolId}_v1`,
       owner: "person",
       createdAt: new Date(),
       updatedAt: new Date(),

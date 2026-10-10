@@ -97,6 +97,7 @@ const destructiveTool = {
   description: "Deletes an item.",
   readOnly: false,
   destructive: true,
+  currentVersionId: "ver_1",
 } as AuthoredToolRow;
 
 const openAction: PendingActionRow = {
@@ -105,6 +106,7 @@ const openAction: PendingActionRow = {
   kind: "tool",
   payload: {
     toolId: "tool_1",
+    toolVersionId: "ver_1",
     toolName: "demo__delete-item",
     vendor: "demo",
     description: "Deletes an item.",
@@ -154,6 +156,7 @@ const approvalRow: ApprovalRow = {
   decision: "allow",
   decidedAt: NOW,
   askEveryCall: false,
+  toolVersionId: "tool_1_v1",
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,
@@ -367,6 +370,7 @@ function toolDeps(): ToolDeps {
     insertToolVersion: unused(),
     listToolVersions: vi.fn(async () => []),
     listToolVersionOrigins: vi.fn(async () => []),
+    carryApprovalsToVersion: unused(),
     findToolVersion: vi.fn(async () => null),
     setCurrentToolVersion: unused(),
     recordToolVersionDryRun: unused(),
@@ -392,6 +396,8 @@ function approvalDeps(): ApprovalDeps {
     insertBuildApproval: vi.fn(async () => buildApprovalRow),
     settleAnsweredToolActions: vi.fn(async () => []),
     findAuthoredToolById: vi.fn(async () => destructiveTool),
+    findAuthoredToolForUpdate: vi.fn(async () => destructiveTool),
+    listToolVersionOrigins: vi.fn(async () => []),
     findConnection: vi.fn(async () => connectionRow),
     now: () => NOW,
   };
@@ -1794,6 +1800,7 @@ describe("pending actions", () => {
       toolId: "tool_1",
       decision: "allow",
       decidedAt: NOW,
+      toolVersionId: "ver_1",
     });
     // The answer left the setting alone, so nothing was set.
     expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
@@ -1822,6 +1829,7 @@ describe("pending actions", () => {
       toolId: "tool_1",
       decision: "allow",
       decidedAt: NOW,
+      toolVersionId: "ver_1",
       askEveryCall: true,
     });
     // The answer route never takes the agent page's path, which would spend the very answer it
@@ -1844,6 +1852,7 @@ describe("pending actions", () => {
       toolId: "tool_1",
       decision: "allow",
       decidedAt: NOW,
+      toolVersionId: "ver_1",
       askEveryCall: false,
     });
     expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
@@ -1875,6 +1884,7 @@ describe("pending actions", () => {
       toolId: "tool_1",
       decision: "deny",
       decidedAt: NOW,
+      toolVersionId: "ver_1",
     });
     expect(deps.approval.updateAskEveryCall).not.toHaveBeenCalled();
     // A no is in the row in full, so the action is spent here too.
