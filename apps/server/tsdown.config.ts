@@ -7,7 +7,7 @@ import { defineConfig } from "tsdown";
  * nothing about what it loads. `typescript6` is the one that could not be bundled anyway: the check
  * reads TypeScript's lib files off the package on disk.
  *
- * Five things in the workspace resolve a file off `import.meta.url`, and each says a bundler has to
+ * Six things in the workspace resolve a file off `import.meta.url`, and each says a bundler has to
  * carry that file beside the bundle. Here they land where those constants expect them, relative to
  * `dist/`:
  *
@@ -16,14 +16,15 @@ import { defineConfig } from "tsdown";
  *   - `@graft/db`'s `drizzle/`       → `apps/server/drizzle/`          (`../drizzle/`)
  *   - `@graft/check`'s worker        → `dist/module-check.worker.mjs`  (the `.mjs` branch of `workerUrl`)
  *   - `@graft/ask-card`'s page       → `dist/ask.html`                 (`../dist/ask.html`, GRA-84)
+ *   - `@graft/stock`'s workspace     → `apps/server/tools/`            (`../tools`, GRA-238)
  *
  * The ask card's page is that package's own `vite build` (`packages/ask-card/dist/ask.html`);
  * turbo runs it first (`build` depends on `^build`) and the Dockerfile runs it by name.
  *
  * The worker is a second entry rather than a chunk because Node loads it by file name into a fresh
  * thread; `keys` is the third, so a compose user can mint secrets from the image without pnpm.
- * `skills/` and `drizzle/` sit beside `dist/` rather than inside it because the constants say
- * `../`; both are gitignored as build output.
+ * `skills/`, `drizzle/` and `tools/` sit beside `dist/` rather than inside it because the constants
+ * say `../`; all three are gitignored as build output.
  */
 export default defineConfig({
   entry: {
@@ -34,7 +35,7 @@ export default defineConfig({
   format: "esm",
   platform: "node",
   outDir: "./dist",
-  clean: ["./dist", "./skills", "./drizzle"],
+  clean: ["./dist", "./skills", "./drizzle", "./tools"],
   deps: {
     neverBundle: true,
     alwaysBundle: [/^@graft\//],
@@ -45,5 +46,7 @@ export default defineConfig({
     { from: "../../packages/ask-card/dist/ask.html", to: "./dist" },
     { from: "../../packages/runner/skills", to: "." },
     { from: "../../packages/db/drizzle", to: "." },
+    // The stock workspace the boot loads into the catalogue (ADR 0025; GRA-238).
+    { from: "../../packages/stock/tools", to: "." },
   ],
 });

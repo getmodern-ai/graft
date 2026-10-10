@@ -1,6 +1,7 @@
 import { integrationNameFor } from "@graft/core/approval/vendor-approval.rules";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import type * as React from "react";
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -61,11 +62,13 @@ export function ProviderLinkAskCard({
   ask,
   onAnswered,
   origin = "agent",
+  setupFooter,
 }: {
   ask: Extract<Ask, { kind: "connection-link" }>;
   onAnswered?: () => void;
   /** Setup's connect step passes `setup`: no model provenance (`ask-card.tsx`, `AskOrigin`). */
   origin?: AskOrigin;
+  setupFooter?: React.ReactNode;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
@@ -149,6 +152,33 @@ export function ProviderLinkAskCard({
   const open = isOpen(action);
   const running = state.phase === "running";
   const busy = start.isPending || decline.isPending || running;
+
+  if (origin === "setup") {
+    return (
+      <AskCard
+        action={action}
+        title={payload.displayName}
+        settled={(recorded) =>
+          typeof recorded?.connectionId === "string"
+            ? `Connected through ${provider}.`
+            : "Declined. Go back to choose again."
+        }
+        approveLabel={running ? "Waiting for the sign-in…" : `Connect ${payload.displayName}`}
+        pending={busy}
+        onAnswer={(allow) => (allow ? start.mutate() : decline.mutate({ allow: false }))}
+        compact={{
+          vendor: payload.vendor,
+          name: payload.displayName,
+          subline: `One click through ${provider} · nothing to type, and the token stays with ${provider}`,
+          footer: setupFooter,
+        }}
+      >
+        {state.phase === "idle" ? null : (
+          <LinkStatus state={state} provider={provider} onCancel={cancel} />
+        )}
+      </AskCard>
+    );
+  }
 
   return (
     <AskCard

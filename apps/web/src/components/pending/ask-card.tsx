@@ -3,6 +3,8 @@ import type * as React from "react";
 import { toast } from "sonner";
 
 import { OpenInNewIcon } from "@/components/icons";
+import { SetupAppCard } from "@/components/setup/setup-app-card";
+import { SetupLogo } from "@/components/setup/setup-logo";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,6 +77,7 @@ export function AskCard({
   pending,
   approveLabel = "Approve",
   alsoApprove,
+  compact,
 }: {
   action: PendingAction;
   /** "<agent> asks to …" — the kind's own words after the agent's name. */
@@ -90,9 +93,42 @@ export function AskCard({
   approveLabel?: string;
   /** A second yes beside Approve, outline: the tool card's integration-wide one (GRA-237). */
   alsoApprove?: { label: string; onClick: () => void };
+  /**
+   * Setup's connect step (Setup v2, the frames' *Connect Gmail*): the ask drawn as an app card,
+   * the integration's mark, its name and one line, with the approve button at the end and no
+   * Decline (the footer's Back is the way out), then the card's own inputs and `footer` under it.
+   */
+  compact?: { vendor: string; name: string; subline: React.ReactNode; footer?: React.ReactNode };
 }) {
   const open = isOpen(action);
   const agentName = action.agent?.name ?? "A revoked agent";
+
+  if (compact) {
+    return (
+      <SetupAppCard
+        media={<SetupLogo starterId={compact.vendor} tile={false} className="size-8" />}
+        name={compact.name}
+        subline={
+          open
+            ? compact.subline
+            : action.answeredAt
+              ? settled(action.answer)
+              : "This ask expired; go back and choose again."
+        }
+        action={
+          open ? (
+            <Button disabled={pending} onClick={() => onAnswer(true)}>
+              <OpenInNewIcon />
+              {approveLabel}
+            </Button>
+          ) : null
+        }
+      >
+        {open && children ? <div className="flex flex-col gap-4 text-sm">{children}</div> : null}
+        {compact.footer}
+      </SetupAppCard>
+    );
+  }
 
   return (
     <Card>

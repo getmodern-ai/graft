@@ -3,6 +3,7 @@ import {
   allowVendorDestructiveDescription,
   allowVendorLabel,
 } from "@graft/core/approval/vendor-approval.rules";
+import { toolProvenance } from "@graft/core/stock/tool-provenance.rules";
 import { useState } from "react";
 
 import { AskCard, Hosts, useAnswerAsk } from "@/components/pending/ask-card";
@@ -24,8 +25,10 @@ import { toolAskIntegrationName, toolAskSettledSentence, toolAskToast } from "@/
 
 /**
  * A tool's ask (ADR 0008): the wire name and annotations, the connection and hosts it would reach,
- * and the tool's description — marked as the agent's model's own words, because that is what it is,
- * and a person deciding on a write should know the sentence was not written by anyone accountable.
+ * and the tool's description, marked with where the tool came from (`toolProvenance`, the one
+ * source the ask card and the elicitation form share; GRA-245): a stock copy's was reviewed before
+ * release, a remix's and an authored tool's were written by the agent's model, and a person deciding
+ * on a write should know which.
  * The answer becomes the standing approval, for a destructive tool as for a write; the switch is the
  * person's opt-in to be asked before every call instead, and rides the same answer (ADR 0008,
  * amendment of 2026-09-15). It starts where the setting stands, so what the card shows is what the
@@ -51,6 +54,7 @@ export function ToolAskCard({
   const answer = useAnswerAsk(action, onAnswered, "agent", (said) =>
     toolAskToast(said, integration),
   );
+  const provenance = toolProvenance(payload.provenance);
 
   return (
     <AskCard
@@ -82,8 +86,8 @@ export function ToolAskCard({
     >
       <figure className="flex flex-col gap-1.5">
         <figcaption className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-          <Badge variant="outline">written by the agent's model</Badge>
-          {payload.note}
+          <Badge variant="outline">{provenance.badge}</Badge>
+          {provenance.note}
         </figcaption>
         <blockquote className="border-l-2 pl-3 italic">{payload.description}</blockquote>
       </figure>

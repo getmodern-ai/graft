@@ -1,0 +1,68 @@
+{
+  "format": 1,
+  "tool": "hubspot__create-task",
+  "recordedAt": "2026-10-09T19:31:18.189Z",
+  "input": {
+    "subject": "Wsxy zlf sugtmbnj",
+    "dueDate": "2008-09-27T00:34:15.596Z",
+    "priority": "HIGH",
+    "objectType": "contact",
+    "recordId": "4442330888"
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.hubapi.com/crm/v3/objects/tasks",
+      "body": {
+        "json": {
+          "properties": {
+            "hs_task_subject": "Wsxy zlf sugtmbnj",
+            "hs_task_status": "NOT_STARTED",
+            "hs_task_type": "TODO",
+            "hs_timestamp": "2008-09-27T00:34:15.596Z",
+            "hs_task_priority": "HIGH"
+          },
+          "associations": [
+            {
+              "to": {
+                "id": "4442330888"
+              },
+              "types": [
+                {
+                  "associationCategory": "HUBSPOT_DEFINED",
+                  "associationTypeId": 204
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "result": {
+    "created": false,
+    "sent": {
+      "properties": {
+        "hs_task_subject": "Wsxy zlf sugtmbnj",
+        "hs_task_status": "NOT_STARTED",
+        "hs_task_type": "TODO",
+        "hs_timestamp": "2008-09-27T00:34:15.596Z",
+        "hs_task_priority": "HIGH"
+      },
+      "associations": [
+        {
+          "to": {
+            "id": "4442330888"
+          },
+          "types": [
+            {
+              "associationCategory": "HUBSPOT_DEFINED",
+              "associationTypeId": 204
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

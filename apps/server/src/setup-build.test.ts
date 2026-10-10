@@ -1,6 +1,8 @@
 import { join } from "node:path";
 
 import {
+  type DirectoryEntry,
+  type IntegrationDirectory,
   type SetupDeps,
   type StarterVendor,
   starterVendorOf,
@@ -105,6 +107,45 @@ const GIVING_UP: ScriptedStep[] = [
   { on: "goal", answer: { kind: "give_up", reason: "The documentation names no such read." } },
 ];
 
+/**
+ * A directory as a hosted backing answers one (Setup v2): a starter found there by its slug, and an
+ * integration that is no starter, proposed from its own entry.
+ */
+const ACME: DirectoryEntry = {
+  slug: "acme-crm",
+  name: "Acme CRM",
+  description: "Customers and deals.",
+  logoUrl: "https://logos.example/acme.png",
+  categories: ["CRM"],
+  hosts: ["api.acme-crm.com"],
+  docsUrl: null,
+  connect: "form",
+  scheme: "bearer",
+};
+const METEO_ENTRY: DirectoryEntry = {
+  ...ACME,
+  slug: "open-meteo",
+  name: "Open-Meteo",
+  hosts: ["api.open-meteo.com", "geocoding-api.open-meteo.com"],
+  scheme: "none",
+};
+const TEST_DIRECTORY: IntegrationDirectory = {
+  name: "test-directory",
+  home: async () => ({
+    total: 2,
+    categories: [{ name: "CRM", count: 1 }],
+    popular: [ACME, METEO_ENTRY],
+    wall: [{ slug: "acme-crm", name: "Acme CRM", logoUrl: ACME.logoUrl }],
+  }),
+  search: async ({ query }) => {
+    const entries = [ACME, METEO_ENTRY].filter((entry) =>
+      entry.name.toLowerCase().includes((query ?? "").toLowerCase()),
+    );
+    return { entries, nextCursor: null, total: entries.length };
+  },
+  get: async (slug) => [ACME, METEO_ENTRY].find((entry) => entry.slug === slug) ?? null,
+};
+
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
@@ -131,6 +172,8 @@ function inMemorySetup(now: () => Date): SetupDeps {
       step: "harness",
       harness: null,
       agentId: null,
+      starterId: null,
+      goal: null,
       pendingActionId: null,
       connectionId: null,
       acquireJobId: null,
@@ -200,6 +243,8 @@ beforeAll(async () => {
     pollMs: 20,
   };
   mcp = createMcpDeps({
+    // No stock catalogue over the fake store: the stock path is `@graft/mcp`'s `stock.test.ts`.
+    toolSource: null,
     ...fake,
     sandbox,
     keys,
@@ -256,6 +301,7 @@ beforeAll(async () => {
       connectionRouting: mcp,
       acquire: mcp,
       run: mcp,
+      directory: TEST_DIRECTORY,
       analytics: {
         name: "recorder",
         shutdown: async () => {},
@@ -686,6 +732,126 @@ describe("Setup's goal and build steps", () => {
     expect(early.status).toBe(409);
     await onGoal(true);
     expect((await app.request("/api/setup/build", post({ goal: "   " }))).status).toBe(400);
+  });
+});
+
+describe("Setup v2: the task before the connection", () => {
+  it("saves the starter and the task, opens the ask, and the read that learns the connection builds", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    people += 1;
+    person = `person_${people}`;
+    const started = await read(await app.request("/api/setup/start", post({ harness: "claude" })));
+    const agentId: string = started.agent.id;
+
+    const chosen = await read(
+      await app.request("/api/setup/starter", post({ starterId: "open-meteo" })),
+    );
+    expect(chosen).toMatchObject({
+      step: "vendor",
+      setup: { starterId: "open-meteo", goal: null },
+    });
+
+    const tasked = await read(
+      await app.request("/api/setup/task", post({ goal: OPEN_METEO.goal })),
+    );
+    expect(tasked).toMatchObject({
+      step: "connect",
+      setup: { starterId: "open-meteo", goal: OPEN_METEO.goal },
+    });
+    const askId: string = tasked.setup.pendingActionId;
+    const { payload } = (await get("/api/pending-actions")).pendingActions[0];
+    const confirmed = await app.request(
+      `/api/pending-actions/${askId}/connection`,
+      post({ ...payload, credential: {}, approveBuild: false }),
+    );
+    expect(confirmed.status).toBe(201);
+
+    // No Build press: the read that learns the connection starts the job with the saved task.
+    const building = await get("/api/setup");
+    expect(building).toMatchObject({ step: "building", setup: { goal: OPEN_METEO.goal } });
+    const job = store.acquireJobs.get(building.setup.acquireJobId);
+    expect(job).toMatchObject({
+      agentId,
+      goal: OPEN_METEO.goal,
+      hints: `${OPEN_METEO.hints} The vendor's documentation starts at https://open-meteo.com/en/docs.`,
+    });
+    expect(buildApprovals(agentId)).toEqual([expect.objectContaining({ agentId })]);
+    await runner.idle();
+    expect(await get("/api/setup")).toMatchObject({ step: "result" });
+    expect(stepEvents()).toEqual(["vendor", "goal", "connect", "building"]);
+  }, 60_000);
+
+  it("builds at once for a task chosen on a connection the record already names", async () => {
+    mcp.model = createScriptedModel(PASSING_SCRIPT);
+    await onGoal(false);
+    const built = await read(await app.request("/api/setup/task", post({ goal: OPEN_METEO.goal })));
+    expect(built).toMatchObject({ step: "building", setup: { goal: OPEN_METEO.goal } });
+    await runner.idle();
+  }, 60_000);
+
+  it("refuses a task before a starter, and an unknown starter", async () => {
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const early = await app.request("/api/setup/task", post({ goal: "Anything" }));
+    expect(early.status).toBe(409);
+    const unknown = await app.request("/api/setup/starter", post({ starterId: "fax" }));
+    expect(unknown.status).toBe(400);
+  });
+});
+
+describe("Setup v2: the integration directory", () => {
+  it("answers the backing's first view and its search, a starter's entry naming its starter", async () => {
+    people += 1;
+    person = `person_${people}`;
+    const home = await get("/api/setup/directory");
+    expect(home).toMatchObject({
+      total: 2,
+      source: "test-directory",
+      categories: [{ name: "CRM" }],
+    });
+    expect(home.popular.map((entry: { starterId: string | null }) => entry.starterId)).toEqual([
+      null,
+      "open-meteo",
+    ]);
+    const found = await get("/api/setup/directory/search?q=acme");
+    expect(found).toMatchObject({ total: 1, entries: [{ slug: "acme-crm", starterId: null }] });
+  });
+
+  it("connects an integration that is no starter from its own entry, with the task saved", async () => {
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const tasked = await read(
+      await app.request(
+        "/api/setup/task",
+        post({ goal: "List my ten newest deals", slug: "acme-crm" }),
+      ),
+    );
+    expect(tasked).toMatchObject({
+      step: "connect",
+      setup: { starterId: null, goal: "List my ten newest deals" },
+    });
+    const [ask] = (await get("/api/pending-actions")).pendingActions;
+    expect(ask.payload).toMatchObject({
+      vendor: "acme-crm",
+      displayName: "Acme CRM",
+      primaryHost: "https://api.acme-crm.com",
+      hosts: ["api.acme-crm.com"],
+      scheme: "bearer",
+    });
+  });
+
+  it("takes a starter found in the directory down the starter's path", async () => {
+    people += 1;
+    person = `person_${people}`;
+    await app.request("/api/setup/start", post({ harness: "claude" }));
+    const tasked = await read(
+      await app.request("/api/setup/task", post({ goal: OPEN_METEO.goal, slug: "open-meteo" })),
+    );
+    expect(tasked).toMatchObject({ step: "connect", setup: { starterId: "open-meteo" } });
+    const unknown = await app.request("/api/setup/task", post({ goal: "x", slug: "nothing" }));
+    expect(unknown.status).toBe(404);
   });
 });
 

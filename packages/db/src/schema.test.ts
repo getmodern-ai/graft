@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import * as schema from "./schema";
 import { account, session, user, verification } from "./schema/auth";
 import { ownerTier } from "./schema/columns";
+import { stockTool, stockToolVersion } from "./schema/stock";
 
 /**
  * The schema's standing rules, asserted rather than only declared — what drizzle emits into the
@@ -24,7 +25,15 @@ const ownedTables = (Object.values(schema) as unknown[]).filter((value): value i
   is(value, PgTable),
 );
 
-const owned = ownedTables.filter((table) => !authTables.has(table)).map(getTableConfig);
+/**
+ * The stock catalogue's two tables (ADR 0025; GRA-238): global, no person and no owner tier, since
+ * a stock tool belongs to no one until a copy of it is in a person's toolbox.
+ */
+const globalTables = new Set<PgTable>([stockTool, stockToolVersion]);
+
+const owned = ownedTables
+  .filter((table) => !authTables.has(table) && !globalTables.has(table))
+  .map(getTableConfig);
 
 describe("every owned table", () => {
   it("is found — the filter above must see the tables GRA-6 adds, or the assertions below prove nothing", () => {
@@ -99,6 +108,42 @@ describe("every owned table", () => {
       expect(unindexed).toEqual([]);
     },
   );
+});
+
+describe("the stock catalogue", () => {
+  const tables = [stockTool, stockToolVersion].map(getTableConfig);
+
+  it("names no person and carries no owner tier: it is global (ADR 0025)", () => {
+    for (const table of tables) {
+      const columns = table.columns.map((column) => column.name);
+      expect(columns, table.name).not.toContain("person_id");
+      expect(columns, table.name).not.toContain("owner");
+      expect(columns, table.name).not.toContain("updated_at");
+    }
+  });
+
+  it("indexes every foreign key, its versions and the stock origin on a person's version", () => {
+    const leading = (table: PgTable) =>
+      getTableConfig(table).indexes.map((index) => {
+        const [first] = index.config.columns;
+        return first && "name" in first ? first.name : "";
+      });
+    expect(leading(stockToolVersion)).toContain("stock_tool_id");
+    expect(leading(schema.toolVersion)).toEqual(
+      expect.arrayContaining(["stock_tool_id", "stock_version_id"]),
+    );
+  });
+
+  it("keeps a person's copy when a stock row goes, nulling its origin", () => {
+    const actions = new Map(
+      getTableConfig(schema.toolVersion).foreignKeys.map((fk) => [
+        fk.reference().columns[0]?.name,
+        fk.onDelete,
+      ]),
+    );
+    expect(actions.get("stock_tool_id")).toBe("set null");
+    expect(actions.get("stock_version_id")).toBe("set null");
+  });
 });
 
 describe("the append-only records", () => {

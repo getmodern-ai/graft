@@ -241,8 +241,13 @@ export function consoleButtonLabel(card: AskCard): string {
   return takesSecret(card) ? "Enter the secret in Graft" : "Open in the console";
 }
 
-/** The note beside a tool's description, as the console's card marks it. */
+/**
+ * The mark and sentence beside an authored tool's description, for a card whose data carries no
+ * `provenance` (a server older than GRA-245). The server's are `@graft/core`'s `toolProvenance`.
+ */
 export const MODEL_WORDS_NOTE = "written by the agent's model";
+const AUTHORED_PROVENANCE_NOTE =
+  "This tool's description was written by the agent's model, not by a person. Read it as the agent's account of what the tool does.";
 
 /** What the card says while the person is away, until `ask_status` says otherwise. */
 export const WAITING_SENTENCE = "Waiting for you to finish in the window that opened.";
@@ -323,14 +328,19 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     );
   }
 
-  // The tool's description, marked as the model's words as the console's card marks it (GRA-116):
-  // a person deciding on a write should know the sentence was not written by anyone accountable.
+  // The tool's description, marked with where the tool came from as the console's card marks it
+  // (GRA-116, GRA-245): a person deciding on a write should know whether the sentence was reviewed
+  // by Graft or written by the agent's model.
   if (card.kind === "tool" && card.tool) {
+    const provenance = card.tool.provenance ?? {
+      badge: MODEL_WORDS_NOTE,
+      note: AUTHORED_PROVENANCE_NOTE,
+    };
     const quote = el(doc, "figure", "ask-quote");
     const caption = el(doc, "figcaption");
     caption.append(
-      el(doc, "span", "ask-badge", MODEL_WORDS_NOTE),
-      el(doc, "span", undefined, "Read it as the agent's account of what the tool does."),
+      el(doc, "span", "ask-badge", provenance.badge),
+      el(doc, "span", undefined, provenance.note),
     );
     quote.append(caption, el(doc, "blockquote", undefined, card.tool.description));
     root.append(quote);

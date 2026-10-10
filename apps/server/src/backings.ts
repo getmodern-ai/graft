@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   type ConnectionProvider,
   createGatewayProvider,
+  type IntegrationDirectory,
   keyringProvider,
   type ProviderConnect,
   providerListProblem,
@@ -156,6 +157,13 @@ export type Backings = {
    * door asks the seam rather than asking whether there is one; `UNLIMITED` is the absence.
    */
   rateLimiter: RateLimiter;
+  /**
+   * The integration directory Setup's integration step searches (`@graft/core`'s
+   * `IntegrationDirectory`; ADR 0001 as amended 2026-10-10). Null in the open form, where the server
+   * answers the starter integrations it can connect (`directory.ts`); under `cloud`, the private
+   * package's, over its link provider's catalogue, when it has one.
+   */
+  directory: IntegrationDirectory | null;
 };
 
 /**
@@ -190,6 +198,8 @@ export type CloudBackings = {
    * behaves exactly as a self-host does.
    */
   rateLimiter?: RateLimiter;
+  /** The hosted form's integration directory; absent, the starters (`directory.ts`). */
+  directory?: IntegrationDirectory;
 };
 
 /**
@@ -383,6 +393,7 @@ function openBackings(env: BackingsEnv): Backings {
     analytics: NO_ANALYTICS,
     modelTelemetry: null,
     rateLimiter: environmentRateLimiter(env) ?? UNLIMITED,
+    directory: null,
   };
 }
 
@@ -426,6 +437,7 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
     analytics,
     modelTelemetry,
     rateLimiter,
+    directory,
     ...seams
   } = created;
   // The environment's gateway first (GRA-58), then the hosted providers in the order the private
@@ -452,6 +464,7 @@ async function loadCloudBackings(env: BackingsEnv, deps: SelectBackingsDeps): Pr
     // The hosted tier's numbers when it set any, the environment's otherwise, and unlimited as the
     // floor in either case: the same order mail takes, and the same decision (GRA-149).
     rateLimiter: rateLimiter ?? environmentRateLimiter(env) ?? UNLIMITED,
+    directory: directory ?? null,
   };
 }
 
@@ -565,6 +578,7 @@ export function assertCloudBackings(
     ["analytics", "analytics backing", ["capture", "shutdown"]],
     ["modelTelemetry", "model telemetry backing", ["flush", "shutdown"]],
     ["rateLimiter", "rate limiter", ["check"]],
+    ["directory", "integration directory", ["home", "search", "get"]],
   ];
   for (const [key, what, members] of named) {
     const backing = record[key];

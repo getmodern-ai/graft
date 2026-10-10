@@ -1,5 +1,5 @@
 {
-  "id": "65187668-7693-4d2d-b2c1-1a13d53fcc7a",
+  "id": "863d838a-2d0e-4912-9a53-1e6050453203",
   "prevId": "246f8865-83b5-41fe-bdb7-7ff2a3c5331a",
   "version": "7",
   "dialect": "postgresql",
@@ -982,80 +982,6 @@
         "build_approval_agent_id_connection_id_pk": {
           "name": "build_approval_agent_id_connection_id_pk",
           "columns": ["agent_id", "connection_id"]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.vendor_approval": {
-      "name": "vendor_approval",
-      "schema": "",
-      "columns": {
-        "agent_id": {
-          "name": "agent_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "vendor": {
-          "name": "vendor",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "includes_destructive": {
-          "name": "includes_destructive",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "granted_at": {
-          "name": "granted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "owner": {
-          "name": "owner",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'person'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "vendor_approval_agent_id_agent_id_fk": {
-          "name": "vendor_approval_agent_id_agent_id_fk",
-          "tableFrom": "vendor_approval",
-          "tableTo": "agent",
-          "columnsFrom": ["agent_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "vendor_approval_agent_id_vendor_pk": {
-          "name": "vendor_approval_agent_id_vendor_pk",
-          "columns": ["agent_id", "vendor"]
         }
       },
       "uniqueConstraints": {},
@@ -2488,6 +2414,18 @@
         },
         "agent_id": {
           "name": "agent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "starter_id": {
+          "name": "starter_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "goal": {
+          "name": "goal",
           "type": "text",
           "primaryKey": false,
           "notNull": false

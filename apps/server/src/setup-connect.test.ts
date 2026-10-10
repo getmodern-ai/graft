@@ -43,6 +43,8 @@ function inMemorySetup(
       step: "harness",
       harness: null,
       agentId: null,
+      starterId: null,
+      goal: null,
       pendingActionId: null,
       connectionId: null,
       acquireJobId: null,
@@ -454,6 +456,34 @@ describe("POST /api/setup/connect", () => {
     expect(await read(await h.app.request("/api/setup"))).toMatchObject({
       step: "goal",
       setup: { connectionId: scope[0] },
+    });
+  });
+
+  it("lands a task's connect only on the plan it saved, never on another tab's (Greptile on #201)", async () => {
+    const h = harness();
+    await started(h);
+    await h.app.request("/api/setup/starter", post({ starterId: "open-meteo" }));
+    // This request saves its task (the first lock); before its connect move takes the second,
+    // another tab goes back to the integrations, clearing the starter and the task.
+    h.hooks.locks = [
+      null,
+      async () => {
+        const other = await read(
+          await h.app.request("/api/setup/starter", post({ starterId: null })),
+        );
+        expect(other).toMatchObject({ step: "vendor", setup: { starterId: null, goal: null } });
+      },
+    ];
+    const res = await h.app.request(
+      "/api/setup/task",
+      post({ goal: "Tell me the weather right now in a city I name" }),
+    );
+    expect(res.status).toBe(200);
+    // The move found the plan changed and stood aside: no ask on a record that holds no task,
+    // which unguarded would have moved to connect with nothing to build once it lands.
+    expect(await read(res)).toMatchObject({
+      step: "vendor",
+      setup: { starterId: null, goal: null, pendingActionId: null },
     });
   });
 

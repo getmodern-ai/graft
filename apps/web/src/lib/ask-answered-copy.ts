@@ -13,7 +13,7 @@ import { vendorToolsSentence } from "@graft/core/approval/vendor-approval.rules"
 export type AskOrigin = "agent" | "setup";
 
 /** Setup's next step after a connection is made, said the one way. */
-const SETUP_MOVES_ON = "Setup moves on to the task.";
+const SETUP_MOVES_ON = "Setup carries on from here.";
 
 const buildClause = (approveBuild: boolean | undefined) =>
   approveBuild ? ", allowed to build tools against it" : "";
