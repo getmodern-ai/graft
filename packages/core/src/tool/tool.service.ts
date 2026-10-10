@@ -1,4 +1,9 @@
-import type { AuthoredToolPatch, AuthoredToolRow, ToolVersionRow } from "@graft/db/repo/tool";
+import type {
+  AuthoredToolPatch,
+  AuthoredToolRow,
+  ToolVersionOrigin,
+  ToolVersionRow,
+} from "@graft/db/repo/tool";
 
 import { validateVendor } from "../connection/connection.rules";
 import type { ServiceContext } from "../context";
@@ -39,6 +44,9 @@ export type ToolVersionInput = {
   dryRunAt?: Date | null;
   writesInvolved?: boolean;
   publisherJobId?: string | null;
+  /** The stock origin of a copy (ADR 0025; GRA-238): the stock tool and version it was written from. */
+  stockToolId?: string | null;
+  stockVersionId?: string | null;
 };
 
 export type ToolDefinitionPatch = {
@@ -149,11 +157,10 @@ export async function createTool(
 }
 
 /**
- * The number the tool's next version will carry: one past the latest, one for a tool with none. The
- * publish asks before it writes, because the number names the version's directory in the toolbox
- * (`@graft/toolbox`'s `versionPath`) and the directory is written before the row. `addToolVersion`
- * asks again inside its transaction, so the row's number is read at insert time and not trusted from
- * the caller. Null when the tool is not the person's.
+ * The number the tool's next version will carry: one past the latest, one for a tool with none.
+ * `addToolVersion` asks inside its transaction, so the row's number is read at insert time and not
+ * trusted from the caller; a version's directory is its writer's own and is not named by it
+ * (`@graft/toolbox`'s `writePath`, GRA-238). Null when the tool is not the person's.
  */
 export async function nextVersionNumber(
   ctx: ServiceContext,
@@ -167,9 +174,9 @@ export async function nextVersionNumber(
 }
 
 /**
- * Add a version: the next number after the latest, never a gap and never a reuse. Two publishes
- * racing for the same tool both read the same latest and the unique constraint refuses the second,
- * which surfaces as the database's error rather than a version claiming another's directory.
+ * Add a version: the next number after the latest, never a gap and never a reuse. The publish and
+ * the stock copy call it under the person's lock on the tool's name (`ToolDeps.lockToolName`), so two
+ * racing for one tool take two numbers; without the lock the unique constraint refuses the second.
  */
 export async function addToolVersion(
   ctx: ServiceContext,
@@ -194,6 +201,8 @@ export async function addToolVersion(
     dryRunAt: input.dryRunAt ?? null,
     writesInvolved: input.writesInvolved ?? false,
     publisherJobId: input.publisherJobId ?? null,
+    stockToolId: input.stockToolId ?? null,
+    stockVersionId: input.stockVersionId ?? null,
   });
 }
 
@@ -298,6 +307,12 @@ export async function activateToolVersion(
   versionId: string,
   definition: ToolDefinitionPatch,
   deps: ToolDeps,
+  /**
+   * The version that must still be current for this one to replace it: a remix's starting point
+   * (GRA-243), so a remix built from older files never replaces one that landed meanwhile. A
+   * mismatch is a `CONFLICT` carrying `expectedCurrentVersionId`.
+   */
+  options: { expectedCurrentVersionId?: string } = {},
 ): Promise<AuthoredToolRow> {
   return ctx.db.transaction(async (tx) => {
     const scoped = { db: tx };
@@ -306,6 +321,15 @@ export async function activateToolVersion(
       "Tool version not found",
     );
     if (candidate.toolId !== toolId) throw new ServiceError("NOT_FOUND", "Tool version not found");
+    const named = orNotFound(
+      await deps.findAuthoredToolById(tx, principal.personId, toolId),
+      "Tool not found",
+    );
+    // Every pointer move takes the tool's name lock (the one a publish's rows and a stock copy
+    // take), and the pointer is read again under it: two activations serialise, so the forward
+    // rule and a remix's `expectedCurrentVersionId` each judge the pointer the other left
+    // (Greptile on #186).
+    await deps.lockToolName(tx, principal.personId, { vendor: named.vendor, name: named.name });
     const tool = orNotFound(
       await deps.findAuthoredToolById(tx, principal.personId, toolId),
       "Tool not found",
@@ -313,6 +337,20 @@ export async function activateToolVersion(
     const current = tool.currentVersionId
       ? await deps.findToolVersion(tx, principal.personId, tool.currentVersionId)
       : null;
+    const expected = options.expectedCurrentVersionId;
+    if (expected !== undefined && tool.currentVersionId !== expected) {
+      throw new ServiceError(
+        "CONFLICT",
+        `${tool.vendor}/${tool.name} is no longer at the version v${candidate.versionNumber} was built from, so it cannot become current`,
+        {
+          details: {
+            expectedCurrentVersionId: expected,
+            currentVersionId: tool.currentVersionId,
+            versionNumber: candidate.versionNumber,
+          },
+        },
+      );
+    }
     if (current && current.versionNumber > candidate.versionNumber) {
       throw new ServiceError(
         "CONFLICT",
@@ -398,6 +436,19 @@ export async function listToolVersions(
   deps: ToolDeps,
 ): Promise<ToolVersionRow[]> {
   return deps.listToolVersions(ctx.db, principal.personId, toolId);
+}
+
+/**
+ * Where each version came from (ADR 0025; GRA-242): the stock version it was copied from, or the
+ * agent. Every tool of the person's when `toolId` is absent, one statement either way.
+ */
+export async function listToolVersionOrigins(
+  ctx: ServiceContext,
+  principal: Principal,
+  deps: ToolDeps,
+  toolId?: string,
+): Promise<ToolVersionOrigin[]> {
+  return deps.listToolVersionOrigins(ctx.db, principal.personId, toolId);
 }
 
 export async function getToolVersion(

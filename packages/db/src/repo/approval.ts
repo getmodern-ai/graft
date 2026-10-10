@@ -53,6 +53,8 @@ export async function upsertApproval(db: DbOrTx, input: NewApprovalRow): Promise
       set: {
         decision: input.decision,
         decidedAt: input.decidedAt,
+        // A second answer is given for the version the tool stands on now (GRA-245).
+        toolVersionId: input.toolVersionId ?? null,
         ...(input.askEveryCall === undefined ? {} : { askEveryCall: input.askEveryCall }),
         updatedAt: new Date(),
       },
@@ -125,6 +127,36 @@ export async function deleteApprovalsForVendor(
           .select({ id: authoredTool.id })
           .from(authoredTool)
           .where(and(eq(authoredTool.personId, personId), eq(authoredTool.vendor, vendor))),
+      ),
+    )
+    .returning();
+}
+
+/**
+ * A stock advance that does not widen the annotations keeps the approval (ADR 0008 as amended
+ * 2026-10-09; GRA-245): every agent's answer given for the version the copy stood on moves onto the
+ * version the advance wrote. An answer already given for an older version stays where it was, so
+ * it still asks. Under the person through the tool, as the vendor-wide delete is. `@graft/publish`'s
+ * `advanceStockCopy` calls it inside the tool row's lock. Returns what it moved.
+ */
+export async function carryApprovalsToVersion(
+  db: DbOrTx,
+  personId: string,
+  args: { toolId: string; fromVersionId: string; toVersionId: string },
+): Promise<ApprovalRow[]> {
+  return db
+    .update(approval)
+    .set({ toolVersionId: args.toVersionId, updatedAt: new Date() })
+    .where(
+      and(
+        inArray(
+          approval.toolId,
+          db
+            .select({ id: authoredTool.id })
+            .from(authoredTool)
+            .where(and(eq(authoredTool.id, args.toolId), eq(authoredTool.personId, personId))),
+        ),
+        eq(approval.toolVersionId, args.fromVersionId),
       ),
     )
     .returning();

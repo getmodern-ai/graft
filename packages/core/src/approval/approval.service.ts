@@ -4,7 +4,12 @@ import type { ApprovalDecision } from "@graft/db/schema/approval";
 import type { ServiceContext } from "../context";
 import { orNotFound, ServiceError } from "../errors";
 import type { AgentScope } from "../tenancy";
-import { type ApprovalVerdict, approvalDecision } from "./approval.decision";
+import {
+  type ApprovalVerdict,
+  answerCarriesTo,
+  approvalDecision,
+  type ToolAnnotations,
+} from "./approval.decision";
 import type { ApprovalDeps } from "./approval.deps";
 
 /**
@@ -32,11 +37,34 @@ export async function listApprovals(
 }
 
 /**
+ * The version an ask was about, as the ask showed it (GRA-245, Greptile on #190): the id the ask's
+ * payload or the gate's subject names, and the annotations the person read. `versionId` is null on
+ * an ask made before asks named one, which records an answer that holds for no version, so the
+ * tool asks once more.
+ */
+export type AskedVersion = {
+  versionId: string | null;
+  annotations: ToolAnnotations;
+};
+
+/**
  * The person's answer to a tool's ask, recorded so it holds (ADR 0008: any tool that is not
  * read-only asks once). The tool must be the person's. A second answer replaces the first. The
  * ask-every-call setting rides the same write when the answer carried one (the console card's
  * switch, the form's field) and is kept as it stood when it did not — a Hermes button carries
  * none. One upsert, so the answer path never has to touch the setting on its own.
+ *
+ * **An answer is for the version the person was shown** (`options.asked`; GRA-245, Greptile on
+ * #190), never the tool's version when the answer arrives: an ask about v1 answered after v2
+ * became current records for v1, and v2 still asks. Two exceptions, both under the tool row's lock
+ * a stock advance takes, so an answer and an advance serialise:
+ *
+ * - an allow on a stock copy whose later versions were all advances that do not widen what the ask
+ *   showed lands on the current version, as `advanceStockCopy` would have carried it had the answer
+ *   come first (`answerCarriesTo`; ADR 0008 as amended 2026-10-09);
+ * - an allow for an older version leaves an allow already standing for the current one where it
+ *   is, so a late answer to an old ask never takes a standing yes back; an ask-every-call setting
+ *   the answer carried is still written onto that row, since the setting is the tool's.
  */
 export async function setApproval(
   ctx: ServiceContext,
@@ -44,15 +72,52 @@ export async function setApproval(
   toolId: string,
   decision: ApprovalDecision,
   deps: ApprovalDeps,
-  options: { askEveryCall?: boolean } = {},
+  options: { asked: AskedVersion; askEveryCall?: boolean },
 ): Promise<ApprovalRow> {
-  orNotFound(await deps.findAuthoredToolById(ctx.db, scope.personId, toolId), "Tool not found");
-  return deps.upsertApproval(ctx.db, {
-    agentId: scope.agentId,
-    toolId,
-    decision,
-    decidedAt: deps.now(),
-    ...(options.askEveryCall === undefined ? {} : { askEveryCall: options.askEveryCall }),
+  return ctx.db.transaction(async (tx) => {
+    const tool = orNotFound(
+      await deps.findAuthoredToolForUpdate(tx, scope.personId, toolId),
+      "Tool not found",
+    );
+    const asked = options.asked.versionId;
+    let toolVersionId = asked;
+    if (decision === "allow" && asked !== tool.currentVersionId) {
+      const current = tool.currentVersionId;
+      const carries =
+        asked !== null &&
+        current !== null &&
+        answerCarriesTo({
+          versions: await deps.listToolVersionOrigins(tx, scope.personId, toolId),
+          fromVersionId: asked,
+          toVersionId: current,
+          shown: options.asked.annotations,
+          to: { readOnly: tool.readOnly, destructive: tool.destructive },
+        });
+      if (carries) {
+        toolVersionId = current;
+      } else {
+        const standing = await deps.findApproval(tx, scope, toolId);
+        if (standing?.decision === "allow" && isForVersion(standing, current)) {
+          // The yes stays on the current version; the ask-every-call setting is the tool's, not
+          // the version's, so a setting the answer carried still lands (Greptile on #190).
+          if (
+            options.askEveryCall === undefined ||
+            options.askEveryCall === standing.askEveryCall
+          ) {
+            return standing;
+          }
+          toolVersionId = current;
+        }
+      }
+    }
+    return deps.upsertApproval(tx, {
+      agentId: scope.agentId,
+      toolId,
+      decision,
+      decidedAt: deps.now(),
+      toolVersionId,
+      ...(options.askEveryCall === undefined ? {} : { askEveryCall: options.askEveryCall }),
+    });
   });
 }
 
@@ -114,32 +179,51 @@ export async function revokeApproval(
 }
 
 /**
- * ADR 0008 applied to one call: the tool's annotations, the agent's standing approval for the tool,
- * and the agent's standing approval for the tool's integration (the amendment of 2026-10-09). A
- * read passes before either row is read; the integration's row is read only when the tool's own
- * says nothing, since a tool's own answer and setting win over it.
+ * Whether a standing answer was given for this version (ADR 0008: a republished write tool asks
+ * again once; GRA-245). Null on either side is no version, which asks.
+ */
+export function isForVersion(
+  approval: Pick<ApprovalRow, "toolVersionId">,
+  versionId: string | null,
+): boolean {
+  return approval.toolVersionId !== null && approval.toolVersionId === versionId;
+}
+
+/**
+ * ADR 0008 applied to one call, judged on **the version the call runs** (GRA-245, Greptile on
+ * #190): the caller pins the version before the gate and passes its id and annotations, and the
+ * standing answer counts only when it was given for that version, so a version made current and
+ * approved meanwhile never lets an earlier one run on its approval. Beside it, the agent's standing
+ * approval for the tool's integration (the amendment of 2026-10-09). A read passes before any row is
+ * read; the integration's row is read only when the tool's own says nothing for this version (no
+ * answer, or an `allow` for another), since a tool's own `deny` and ask-every-call setting win.
  */
 export async function decideToolCall(
   ctx: ServiceContext,
   scope: AgentScope,
-  toolId: string,
+  target: { toolId: string; versionId: string; annotations: ToolAnnotations },
   deps: ApprovalDeps,
 ): Promise<ApprovalVerdict> {
   const tool = orNotFound(
-    await deps.findAuthoredToolById(ctx.db, scope.personId, toolId),
+    await deps.findAuthoredToolById(ctx.db, scope.personId, target.toolId),
     "Tool not found",
   );
-  const annotations = { readOnly: tool.readOnly, destructive: tool.destructive };
-  if (tool.readOnly) return approvalDecision({ annotations, approval: null });
-  const approval = await deps.findApproval(ctx.db, scope, toolId);
-  const vendorApproval = approval
-    ? null
-    : await deps.findVendorApproval(ctx.db, scope, tool.vendor);
+  const { annotations } = target;
+  if (annotations.readOnly) return approvalDecision({ annotations, approval: null });
+  const approval = await deps.findApproval(ctx.db, scope, target.toolId);
+  const state = approval
+    ? {
+        decision: approval.decision,
+        askEveryCall: approval.askEveryCall,
+        forThisVersion: isForVersion(approval, target.versionId),
+      }
+    : null;
+  const ownSays =
+    state !== null && (state.decision === "deny" || state.askEveryCall || state.forThisVersion);
+  const vendorApproval = ownSays ? null : await deps.findVendorApproval(ctx.db, scope, tool.vendor);
   return approvalDecision({
     annotations,
-    approval: approval
-      ? { decision: approval.decision, askEveryCall: approval.askEveryCall }
-      : null,
+    approval: state,
     vendorApproval: vendorApproval
       ? { includesDestructive: vendorApproval.includesDestructive }
       : null,

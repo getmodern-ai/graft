@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "tool": "hubspot__get-record",
+  "recordedAt": "2026-10-09T19:25:25.407Z",
+  "input": {
+    "objectType": "contact",
+    "recordId": "388056479241"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.hubapi.com/crm/v3/objects/contacts/388056479241?properties=firstname%2Clastname%2Cemail%2Ccompany%2Cjobtitle%2Cphone%2Clifecyclestage%2Chubspot_owner_id&associations=contacts%2Ccompanies%2Cdeals",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json;charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "id": "388056479241",
+            "properties": {
+              "company": "Xikyxhli",
+              "createdate": "2025-10-16T21:42:11.168Z",
+              "email": "qvcxipnkzej@example.com",
+              "firstname": "Gwtkwr",
+              "hs_object_id": "388056479241",
+              "hubspot_owner_id": "225098427",
+              "jobtitle": "Kzie di Kxfooz",
+              "lastmodifieddate": "2019-01-14T16:44:03.636Z",
+              "lastname": "Abliwufdvg",
+              "lifecyclestage": "pbdxfeiviodpkndqte",
+              "phone": null
+            },
+            "createdAt": "2025-10-16T21:42:11.168Z",
+            "updatedAt": "2019-01-14T16:44:03.636Z",
+            "archived": false,
+            "url": "https://app-ap1.hubspot.com/",
+            "associations": {
+              "companies": {
+                "results": [
+                  {
+                    "id": "725602453177",
+                    "type": "dvaorlz_zv_qzecngu"
+                  },
+                  {
+                    "id": "725602453177",
+                    "type": "yhshdrp_uy_zfpptkv_vgqqeoscb"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "objectType": "contact",
+    "id": "388056479241",
+    "properties": {
+      "firstname": "Gwtkwr",
+      "lastname": "Abliwufdvg",
+      "email": "qvcxipnkzej@example.com",
+      "company": "Xikyxhli",
+      "jobtitle": "Kzie di Kxfooz",
+      "phone": null,
+      "lifecyclestage": "pbdxfeiviodpkndqte",
+      "hubspot_owner_id": "225098427"
+    },
+    "createdAt": "2025-10-16T21:42:11.168Z",
+    "updatedAt": "2019-01-14T16:44:03.636Z",
+    "associations": {
+      "companies": ["725602453177"],
+      "deals": []
+    }
+  }
+}

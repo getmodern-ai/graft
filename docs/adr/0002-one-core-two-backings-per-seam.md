@@ -85,3 +85,11 @@ gateway provider (GRA-58) stays, because a company's own API gateway is not a ve
 mail seam's SMTP backing (ADR 0021 as amended for GRA-92) stays too: a relay is a protocol, not a
 vendor. The private package grows a dependency for each vendor it backs, which is where those
 dependencies belong.
+
+## Amendment 2026-10-09: an integration a person connects is not a vendor of Graft's (ADR 0025)
+
+Decided by Aleks (GRA-230). The rule above is about a vendor *of Graft's*, a service Graft itself
+runs on. An integration a person connects, such as HubSpot or Gmail, is not one, which is why
+`STARTER_VENDORS` and the proxy's Unleashed scheme are already here. Stock tools (ADR 0025) are code
+against such integrations and live in this repository under Apache-2.0, with no vendor's client
+library, configuration variable or id of Graft's own among them.

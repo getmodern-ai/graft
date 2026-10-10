@@ -27,6 +27,7 @@ import {
   revokeAgent,
 } from "./agent";
 import {
+  carryApprovalsToVersion,
   deleteApproval,
   deleteApprovalsForVendor,
   deleteVendorApproval,
@@ -67,7 +68,24 @@ import {
 } from "./pending-action";
 import { countPersons, markPersonEmailVerified } from "./person";
 import { deletePersonModelKey, findPersonModelKey, upsertPersonModelKey } from "./person-model-key";
-import { findToolVersion, listToolVersions, setCurrentToolVersion } from "./tool";
+import {
+  findCurrentStockTool,
+  findStockToolVersionById,
+  hasStockToolVersionWithHash,
+  insertStockTool,
+  insertStockToolVersion,
+  listCurrentStockTools,
+  listCurrentStockToolsForVendor,
+  lockStockCatalogue,
+} from "./stock";
+import {
+  findAuthoredToolForUpdate,
+  findToolVersion,
+  listToolVersionOrigins,
+  listToolVersions,
+  lockAuthoredToolName,
+  setCurrentToolVersion,
+} from "./tool";
 import { listUsage, listUsageForVendor } from "./usage";
 import {
   deleteWorkingSetEntriesForConnection,
@@ -478,6 +496,14 @@ describe("agent-scoped writes take both ids too, so a mis-scoped write edits not
     expect(s.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
     expect(s.params).toEqual(["agent_1:scope:conn_2"]);
   });
+
+  /** A first copy of a stock tool (GRA-238) is serialised per person and tool name. */
+  it("locking a tool name takes a transaction-scoped advisory lock on the hash of person, vendor and name", async () => {
+    await lockAuthoredToolName(db, "person_1", { vendor: "open-meteo", name: "current-weather" });
+    const s = only();
+    expect(s.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
+    expect(s.params).toEqual(["authored-tool:person_1:open-meteo:current-weather"]);
+  });
 });
 
 describe("person-scoped statements take the person", () => {
@@ -611,6 +637,94 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).not.toContain("person_id");
     expect(s.params[0]).toBe(true);
     expect(s.params[2]).toBe("admin@example.com");
+  });
+
+  /**
+   * The stock catalogue (ADR 0025; GRA-238) is global: no person in its rows or its reads, and
+   * every statement recognisable as such by name. The read answers each stock tool at its highest
+   * version, in one statement; the load writes under one advisory lock, so two replicas booting
+   * together append a version once.
+   */
+  it("the stock catalogue's read is unscoped, by name, each tool at its highest version", async () => {
+    await listCurrentStockTools(db);
+    const s = only();
+    expect(s.sql).toMatch(
+      /^select .* from "stock_tool_version" inner join "stock_tool" on "stock_tool"\."id" = "stock_tool_version"\."stock_tool_id" where "stock_tool_version"\."version_number" = \(select max\("v"\."version_number"\) from "stock_tool_version" "v" where "v"\."stock_tool_id" = "stock_tool_version"\."stock_tool_id"\) order by "stock_tool"\."vendor" asc, "stock_tool"\."name" asc$/,
+    );
+    expect(s.sql).not.toContain("person_id");
+    expect(s.params).toEqual([]);
+  });
+
+  it("one integration's stock tools are read unscoped, by name, by vendor at their highest versions", async () => {
+    await listCurrentStockToolsForVendor(db, "open-meteo");
+    const s = only();
+    expect(s.sql).toContain('"stock_tool"."vendor" = $1');
+    expect(s.sql).toContain('(select max("v"."version_number") from "stock_tool_version" "v"');
+    expect(s.sql).toMatch(/order by "stock_tool"\."name" asc$/);
+    expect(s.sql).not.toContain("person_id");
+    expect(s.params).toEqual(["open-meteo"]);
+  });
+
+  it("one stock tool's read is unscoped, by name, by vendor and name at its highest version", async () => {
+    await findCurrentStockTool(db, { vendor: "open-meteo", name: "current-weather" });
+    const s = only();
+    expect(s.sql).toContain('"stock_tool"."vendor" = $1');
+    expect(s.sql).toContain('"stock_tool"."name" = $2');
+    expect(s.sql).toMatch(/order by "stock_tool_version"\."version_number" desc limit \$3$/);
+    expect(s.sql).not.toContain("person_id");
+    expect(s.params).toEqual(["open-meteo", "current-weather", 1]);
+  });
+
+  it("one stock version's read is unscoped, by name, by the version's id with its tool", async () => {
+    await findStockToolVersionById(db, "stv_1");
+    const s = only();
+    expect(s.sql).toContain(
+      'from "stock_tool_version" inner join "stock_tool" on "stock_tool"."id" = "stock_tool_version"."stock_tool_id"',
+    );
+    expect(s.sql).toMatch(/where "stock_tool_version"\."id" = \$1 limit \$2$/);
+    expect(s.sql).not.toContain("person_id");
+    expect(s.params).toEqual(["stv_1", 1]);
+  });
+
+  it("the stock catalogue's load takes one lock, inserts a tool idempotently and appends a version", async () => {
+    await lockStockCatalogue(db);
+    const lock = only();
+    expect(lock.sql).toBe("select pg_advisory_xact_lock(hashtext($1))");
+    expect(lock.params).toEqual(["graft:stock-catalogue"]);
+
+    statements = [];
+    await insertStockTool(db, { id: "st_1", vendor: "open-meteo", name: "current-weather" });
+    expect(only().sql).toMatch(
+      /^insert into "stock_tool" .* on conflict \("vendor","name"\) do nothing returning/,
+    );
+
+    statements = [];
+    await insertStockToolVersion(db, {
+      id: "stv_1",
+      stockToolId: "st_1",
+      versionNumber: 1,
+      sourceHash: "h",
+      description: "d",
+      inputSchema: { type: "object" },
+      readOnly: true,
+      destructive: false,
+      hosts: ["api.open-meteo.com"],
+      files: [],
+      testInput: {},
+      checkOutput: {},
+    }).catch(() => null);
+    expect(statements[0]?.sql).toMatch(/^insert into "stock_tool_version" /);
+    expect(statements[0]?.sql).not.toContain("person_id");
+
+    // Whether the tool has the hash at any number: what keeps an older release's replica from
+    // appending its stock as the newest version during a rolling deploy.
+    statements = [];
+    await hasStockToolVersionWithHash(db, "st_1", "h");
+    const seen = only();
+    expect(seen.sql).toMatch(
+      /^select "id" from "stock_tool_version" where \("stock_tool_version"\."stock_tool_id" = \$1 and "stock_tool_version"\."source_hash" = \$2\) limit \$3$/,
+    );
+    expect(seen.params).toEqual(["st_1", "h", 1]);
   });
 
   /** The boot's count of persons is the third (GRA-33): whether anybody exists yet, before the admin is opened. */
@@ -787,6 +901,21 @@ describe("person-scoped statements take the person", () => {
     );
   });
 
+  it("carrying approvals onto a stock advance's version reaches only the person's tool and the answers given for the version before (GRA-245)", async () => {
+    await carryApprovalsToVersion(db, "person_1", {
+      toolId: "tool_1",
+      fromVersionId: "ver_1",
+      toVersionId: "ver_2",
+    });
+    const s = only();
+    expect(s.sql).toMatch(/^update "approval" set "tool_version_id" = \$1/);
+    expect(s.sql).toContain(
+      '"approval"."tool_id" in (select "id" from "authored_tool" where ("authored_tool"."id" = $3 and "authored_tool"."person_id" = $4))',
+    );
+    expect(s.sql).toContain('"approval"."tool_version_id" = $5');
+    expect(s.params).toEqual(["ver_2", expect.any(String), "tool_1", "person_1", "ver_1"]);
+  });
+
   /** A revoke's fourth sweep (GRA-69): every agent's entries, through the person's tools bound to the connection. */
   it("the connection-wide working-set delete reaches only the person's tools bound to the connection", async () => {
     await deleteWorkingSetEntriesForConnection(db, "person_1", "conn_1");
@@ -821,6 +950,34 @@ describe("a version is reached through its tool", () => {
     expect(only().sql).toContain(
       '"tool_id" in (select "id" from "authored_tool" where ("authored_tool"."id" = $1 and "authored_tool"."person_id" = $2))',
     );
+  });
+
+  it("the origins of one tool's versions scope by the tool's person (GRA-242)", async () => {
+    await listToolVersionOrigins(db, "person_1", "tool_1");
+    const s = only();
+    expect(s.sql).toContain(
+      '"tool_version"."tool_id" in (select "id" from "authored_tool" where ("authored_tool"."id" = $1 and "authored_tool"."person_id" = $2))',
+    );
+    expect(s.sql).toContain(
+      'left join "stock_tool_version" on "stock_tool_version"."id" = "tool_version"."stock_version_id"',
+    );
+    expect(s.params).toEqual(["tool_1", "person_1"]);
+  });
+
+  it("the origins of every version of the person's tools scope by the person (GRA-242)", async () => {
+    await listToolVersionOrigins(db, "person_1");
+    const s = only();
+    expect(s.sql).toContain(
+      '"tool_version"."tool_id" in (select "id" from "authored_tool" where "authored_tool"."person_id" = $1)',
+    );
+    expect(s.params).toEqual(["person_1"]);
+  });
+
+  it("the tool's row is locked under the person (GRA-242)", async () => {
+    await findAuthoredToolForUpdate(db, "person_1", "tool_1");
+    const s = only();
+    expect(s.sql).toContain('"authored_tool"."person_id" = $2');
+    expect(s.sql).toMatch(/for update$/);
   });
 
   it("finding a version scopes by the person's tools", async () => {

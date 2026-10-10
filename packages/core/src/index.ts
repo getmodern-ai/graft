@@ -72,18 +72,22 @@ export {
 export {
   type ApprovalState,
   type ApprovalVerdict,
+  annotationsWiden,
+  answerCarriesTo,
   approvalDecision,
   type ToolAnnotations,
   type VendorApprovalState,
 } from "./approval/approval.decision";
 export { type ApprovalDeps, defaultApprovalDeps } from "./approval/approval.deps";
 export {
+  type AskedVersion,
   allowVendor,
   decideToolCall,
   getApproval,
   getBuildApproval,
   getVendorApproval,
   grantBuildApproval,
+  isForVersion,
   listApprovals,
   listVendorApprovals,
   revokeApproval,
@@ -195,6 +199,16 @@ export {
   widenProviderConnectionHosts,
 } from "./connection/connection.service";
 export {
+  DIRECTORY_PAGE_LIMIT,
+  type DirectoryCategory,
+  type DirectoryConnectKind,
+  type DirectoryEntry,
+  type DirectoryHome,
+  type DirectoryPage,
+  type DirectorySearchInput,
+  type IntegrationDirectory,
+} from "./connection/directory";
+export {
   createGatewayProvider,
   GATEWAY_PROVIDER,
   type GatewayProviderConfig,
@@ -217,7 +231,6 @@ export {
   linkCallbackUri,
   readLinkCallbackSearch,
 } from "./connection/link.rules";
-
 export {
   LINK_STATE_TTL_MS,
   type LinkStatePayload,
@@ -427,6 +440,7 @@ export {
   moveSetupBuild,
   moveSetupConnect,
   moveSetupOn,
+  planSetup,
   type SetupBackMove,
   type SetupBuildDeps,
   type SetupBuildMove,
@@ -434,6 +448,7 @@ export {
   type SetupMoveResult,
   type SetupOnMove,
   type SetupOutput,
+  type SetupPlanMove,
   type SetupState,
   type StartSetupAgentInput,
   type StartSetupBuildInput,
@@ -460,14 +475,39 @@ export {
   STARTER_VENDOR_IDS,
   STARTER_VENDORS,
   type StarterRunInput,
+  type StarterTask,
   type StarterVendor,
   type StarterVendorId,
   setupBuildHints,
   setupVendorOptions,
   starterProposal,
+  starterTasks,
   starterVendorFor,
   starterVendorOf,
 } from "./setup/starter-vendors";
+export { defaultStockDeps, type StockDeps } from "./stock/stock.deps";
+export {
+  describeStockTool,
+  describeStockVersion,
+  listStockCatalogue,
+  listStockToolsForVendor,
+  loadStockCatalogue,
+  type StockCheck,
+  type StockConnectProposal,
+  type StockLoadReport,
+  type StockToolSource,
+  type StockToolSummary,
+  type StockToolView,
+} from "./stock/stock.service";
+export {
+  type CatalogueCurrent,
+  decideStockAdvance,
+  type StockAdvanceDecision,
+  type StockLineage,
+  stockLineageOf,
+  type VersionOrigin,
+} from "./stock/stock-advance.decision";
+export { type ToolProvenance, toolProvenance } from "./stock/tool-provenance.rules";
 export {
   AGENT_TOKEN_DISPLAY_LENGTH,
   AGENT_TOKEN_PREFIX,
@@ -499,6 +539,7 @@ export {
   getToolByName,
   getToolVersion,
   listTools,
+  listToolVersionOrigins,
   listToolVersions,
   moveToolPointer,
   nextVersionNumber,

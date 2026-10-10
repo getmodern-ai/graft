@@ -13,7 +13,11 @@ import {
 } from "@graft/db/repo/approval";
 import { findConnection } from "@graft/db/repo/connection";
 import { settleAnsweredToolActions } from "@graft/db/repo/pending-action";
-import { findAuthoredToolById } from "@graft/db/repo/tool";
+import {
+  findAuthoredToolById,
+  findAuthoredToolForUpdate,
+  listToolVersionOrigins,
+} from "@graft/db/repo/tool";
 
 /** The approval module's test seam. */
 export type ApprovalDeps = {
@@ -36,6 +40,13 @@ export type ApprovalDeps = {
   settleAnsweredToolActions: typeof settleAnsweredToolActions;
   /** The tool and the connection an approval names must be the person's. */
   findAuthoredToolById: typeof findAuthoredToolById;
+  /**
+   * An answer is recorded under the tool row's lock, the one a stock advance takes, so an answer
+   * and an advance serialise and the answer lands on the version it holds for (`setApproval`).
+   */
+  findAuthoredToolForUpdate: typeof findAuthoredToolForUpdate;
+  /** The tool's versions by origin, which say whether a late answer carries (`answerCarriesTo`). */
+  listToolVersionOrigins: typeof listToolVersionOrigins;
   findConnection: typeof findConnection;
   now: () => Date;
 };
@@ -54,6 +65,8 @@ export const defaultApprovalDeps: ApprovalDeps = {
   deleteVendorApproval,
   settleAnsweredToolActions,
   findAuthoredToolById,
+  findAuthoredToolForUpdate,
+  listToolVersionOrigins,
   findConnection,
   now: () => new Date(),
 };

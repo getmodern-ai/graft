@@ -63,16 +63,22 @@ export type PendingAskKind = Exclude<AskCardKind, "setup">;
 
 /**
  * The facts of the tool a `tool` ask is about (GRA-116), as the console's card shows them: the
- * description in the agent's model's own words — the card says so — the two hints a harness gates
- * on (ADR 0008), and whether the person has set this tool to ask on every call, in which case a
- * yes is for this call alone.
+ * description, marked with where the tool came from, the two hints a harness gates on (ADR 0008),
+ * and whether the person has set this tool to ask on every call, in which case a yes is for this
+ * call alone.
  */
 export type AskCardTool = {
-  /** The agent's model's words, marked as such where they are shown. */
+  /** The agent's model's words, or Graft's for a stock copy: `provenance` says which. */
   description: string;
   readOnly: boolean;
   destructive: boolean;
   askEveryCall: boolean;
+  /**
+   * The mark and the sentence beside the description (GRA-245): `@graft/core`'s `toolProvenance`
+   * for the tool's kind, written by the server, since this file imports nothing. Absent on a card
+   * from a server older than it, which draws an authored tool's.
+   */
+  provenance?: { badge: string; note: string };
 };
 
 /**
@@ -305,7 +311,11 @@ function isAskCardTool(value: unknown): value is AskCardTool {
     typeof value.description === "string" &&
     typeof value.readOnly === "boolean" &&
     typeof value.destructive === "boolean" &&
-    typeof value.askEveryCall === "boolean"
+    typeof value.askEveryCall === "boolean" &&
+    (value.provenance === undefined ||
+      (isRecord(value.provenance) &&
+        typeof value.provenance.badge === "string" &&
+        typeof value.provenance.note === "string"))
   );
 }
 
