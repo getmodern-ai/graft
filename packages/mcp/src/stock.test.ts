@@ -89,6 +89,14 @@ let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
+let catalogue: ReturnType<typeof createFakeStockCatalogue>;
+
+/** A person whose one connection reaches the hosts but cannot carry a call: its provider is gone. */
+const UNUSABLE = {
+  person: "p_unusable",
+  connection: "conn_unusable",
+  agent: "a_unusable",
+} as const;
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
@@ -188,11 +196,13 @@ beforeAll(async () => {
   addMeteo(MULTI.keyring2, MULTI.person);
   addMeteo(TIED.first, TIED.person);
   addMeteo(TIED.second, TIED.person);
+  addMeteo(UNUSABLE.connection, UNUSABLE.person).provider = "retired-provider";
   const scopes: [string, string, string[]][] = [
     [MULTI.agents.gateway, MULTI.person, [MULTI.gateway]],
     [MULTI.agents.keyring, MULTI.person, [MULTI.keyring]],
     [MULTI.agents.both, MULTI.person, [MULTI.keyring, MULTI.keyring2]],
     [TIED.agent, TIED.person, [TIED.first, TIED.second]],
+    [UNUSABLE.agent, UNUSABLE.person, [UNUSABLE.connection]],
   ];
   for (const [agent, personId, connectionIds] of scopes) {
     store.addAgent({
@@ -222,7 +232,7 @@ beforeAll(async () => {
   });
 
   // The catalogue as the boot loads it: the workspace, the real check, an in-memory catalogue.
-  const catalogue = createFakeStockCatalogue();
+  catalogue = createFakeStockCatalogue();
   const fake = createFakeDeps(store);
   const report = await loadStockCatalogue(
     { db: fake.db },
@@ -559,6 +569,51 @@ describe("a stock tool matches a connection by its hosts (GRA-241)", () => {
       expect(body(named)).toMatchObject({ found: true, city: "Perth" });
       expect(lastEventOf(TIED.second)).toMatchObject({ outcome: "forwarded" });
     } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("a copy's connections are judged as the copy runs (Greptile on #185)", () => {
+  const run = (harness: Awaited<ReturnType<typeof connect>>, extra: Record<string, unknown> = {}) =>
+    harness.call("run_tool", { ...KEY, input: { city: "Perth" }, ...extra });
+
+  it("refuses a named connection that cannot carry a call, and copies nothing", async () => {
+    const harness = await connect(UNUSABLE.agent);
+    try {
+      const result = await run(harness, { connectionId: UNUSABLE.connection });
+      expect(result.isError).toBe(true);
+      expect(body(result)).toMatchObject({
+        reason: "connection_unusable",
+        connectionId: UNUSABLE.connection,
+      });
+      expect(copyOf(UNUSABLE.person).tool).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("judges an older copy by its own stock version's hosts after the catalogue moves on", async () => {
+    // Every version this file loaded is the one the copies above recorded; a later version calls a
+    // host none of the person's connections reach.
+    const current = [...catalogue.versions.values()].sort(
+      (a, b) => b.versionNumber - a.versionNumber,
+    )[0];
+    if (!current) throw new Error("no catalogue version");
+    catalogue.versions.set("stock_v_later", {
+      ...current,
+      id: "stock_v_later",
+      versionNumber: current.versionNumber + 1,
+      sourceHash: `${current.sourceHash}-later`,
+      hosts: [...current.hosts, "extra.open-meteo.example"],
+    });
+    const harness = await connect(MULTI.agents.both);
+    try {
+      const named = await run(harness, { connectionId: MULTI.keyring2 });
+      expect(named.isError ?? false, JSON.stringify(body(named))).toBe(false);
+      expect(body(named)).toMatchObject({ found: true, city: "Perth" });
+    } finally {
+      catalogue.versions.delete("stock_v_later");
       await harness.close();
     }
   });

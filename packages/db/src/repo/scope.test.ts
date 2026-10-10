@@ -64,6 +64,7 @@ import { countPersons, markPersonEmailVerified } from "./person";
 import { deletePersonModelKey, findPersonModelKey, upsertPersonModelKey } from "./person-model-key";
 import {
   findCurrentStockTool,
+  findStockToolVersionById,
   hasStockToolVersionWithHash,
   insertStockTool,
   insertStockToolVersion,
@@ -618,6 +619,17 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql).toMatch(/order by "stock_tool_version"\."version_number" desc limit \$3$/);
     expect(s.sql).not.toContain("person_id");
     expect(s.params).toEqual(["open-meteo", "current-weather", 1]);
+  });
+
+  it("one stock version's read is unscoped, by name, by the version's id with its tool", async () => {
+    await findStockToolVersionById(db, "stv_1");
+    const s = only();
+    expect(s.sql).toContain(
+      'from "stock_tool_version" inner join "stock_tool" on "stock_tool"."id" = "stock_tool_version"."stock_tool_id"',
+    );
+    expect(s.sql).toMatch(/where "stock_tool_version"\."id" = \$1 limit \$2$/);
+    expect(s.sql).not.toContain("person_id");
+    expect(s.params).toEqual(["stv_1", 1]);
   });
 
   it("the stock catalogue's load takes one lock, inserts a tool idempotently and appends a version", async () => {

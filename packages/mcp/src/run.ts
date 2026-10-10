@@ -605,9 +605,12 @@ async function runHeld(
   const admission = args.admit ? await args.admit(tool, version.id) : null;
   if (admission) return refuse(admission.reason, admission.message, versioned);
 
-  // A stock copy's hosts, which decide what it runs over (the header; GRA-241). A remix has no
-  // stock origin and follows by slug.
-  const stock = version.stockVersionId ? ((await deps.toolSource?.describe(key)) ?? null) : null;
+  // A stock copy's hosts, which decide what it runs over (the header; GRA-241): the hosts of the
+  // stock version this copy's version came from, which a later catalogue version may have changed.
+  // A remix has no stock origin and follows by slug.
+  const stock = version.stockVersionId
+    ? ((await deps.toolSource?.describeVersion(version.stockVersionId)) ?? null)
+    : null;
   const bound = args.connectionId ?? tool.defaultConnectionId;
   if (!bound && !stock) {
     return refuse(

@@ -1,6 +1,7 @@
 import {
   defaultStockDeps,
   describeStockTool,
+  describeStockVersion,
   listStockCatalogue,
   type StockDeps,
   type StockToolView,
@@ -23,6 +24,11 @@ export type ToolSource = {
   list(): Promise<StockToolView[]>;
   /** One stock tool at its current version, or null when the catalogue has none of that key. */
   describe(key: { vendor: string; name: string }): Promise<StockToolView | null>;
+  /**
+   * One stock version by its id, as a copy's version recorded it (`stockVersionId`), or null: a
+   * copy's run judges connections by the hosts of the code it runs, not the current version's.
+   */
+  describeVersion(stockVersionId: string): Promise<StockToolView | null>;
   /**
    * The stock tool's version written into the person's toolbox as an ordinary tool and version
    * recording its stock origin; the person's own tool of that name is answered untouched instead.
@@ -48,6 +54,7 @@ export function createStockToolSource(args: {
   return {
     list: () => listStockCatalogue(ctx, stock),
     describe: (key) => describeStockTool(ctx, key, stock),
+    describeVersion: (stockVersionId) => describeStockVersion(ctx, stockVersionId, stock),
     copy: (copy) => copyStockVersion(args.publish, copy),
   };
 }

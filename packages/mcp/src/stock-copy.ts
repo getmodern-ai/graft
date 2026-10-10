@@ -42,6 +42,7 @@ export type EnsureRefusalReason =
   | "connection_needed"
   | "connection_not_in_scope"
   | "connection_revoked"
+  | "connection_unusable"
   | "connection_hosts_missing";
 
 export type EnsuredTool =
@@ -92,8 +93,9 @@ export function namedNotInScopeMessage(wire: string, connectionId: string): stri
 
 /**
  * A connection the caller named for a stock tool, judged before the copy binds to it: in the
- * agent's scope, not revoked, and reaching every host the manifest declares. Null when it may be
- * used.
+ * agent's scope, not revoked, usable (`isConnectionUsable`, as an unnamed match is held to) and
+ * reaching every host the manifest declares. Null when it may be used. An unusable one is refused
+ * rather than bound, since a copy keeps its default until it is revoked or leaves the scope.
  */
 function namedConnectionRefusal(
   wire: string,
@@ -101,6 +103,7 @@ function namedConnectionRefusal(
   connectionId: string,
   connection: ConnectionOutput | undefined,
   scopeIds: readonly string[],
+  providers: McpDeps["connection"]["providers"],
 ): Extract<EnsuredTool, { ok: false }> | null {
   if (!connection || !scopeIds.includes(connectionId)) {
     return {
@@ -117,6 +120,14 @@ function namedConnectionRefusal(
       ...details
     } = revokedConnectionRefusal(connection);
     return { ok: false, reason: "connection_revoked", message, details };
+  }
+  if (!isConnectionUsable(connection, providers)) {
+    return {
+      ok: false,
+      reason: "connection_unusable",
+      message: `${wire} was asked to run against connection ${connectionId} (${connection.displayName}), which cannot carry a call yet: its credential or consent is not in place, or its provider is not enabled here. The person completes it in the console.`,
+      details: { connectionId },
+    };
   }
   if (!stockToolRunsOver(stock, connection)) {
     return {
@@ -155,7 +166,14 @@ export async function ensureToolForAgent(
   let defaultConnectionId: string | null;
   if (options.connectionId) {
     const named = connections.find((connection) => connection.id === options.connectionId);
-    const refused = namedConnectionRefusal(wire, stock, options.connectionId, named, scopeIds);
+    const refused = namedConnectionRefusal(
+      wire,
+      stock,
+      options.connectionId,
+      named,
+      scopeIds,
+      deps.connection.providers,
+    );
     if (refused) return refused;
     defaultConnectionId = options.connectionId;
   } else {

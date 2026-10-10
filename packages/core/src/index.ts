@@ -470,6 +470,7 @@ export {
 export { defaultStockDeps, type StockDeps } from "./stock/stock.deps";
 export {
   describeStockTool,
+  describeStockVersion,
   listStockCatalogue,
   listStockToolsForVendor,
   loadStockCatalogue,

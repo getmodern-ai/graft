@@ -141,3 +141,22 @@ export async function findCurrentStockTool(
     .limit(1);
   return row ?? null;
 }
+
+/**
+ * One stock version by its id, beside its tool: what a person's copy recorded as its origin
+ * (`tool_version.stock_version_id`), whatever version the catalogue answers now. A run of a copy
+ * judges connections against the hosts of the code it runs (GRA-241). Null for an id the catalogue
+ * has no row of.
+ */
+export async function findStockToolVersionById(
+  db: DbOrTx,
+  stockVersionId: string,
+): Promise<CurrentStockTool | null> {
+  const [row] = await db
+    .select({ tool: stockTool, version: stockToolVersion })
+    .from(stockToolVersion)
+    .innerJoin(stockTool, eq(stockTool.id, stockToolVersion.stockToolId))
+    .where(eq(stockToolVersion.id, stockVersionId))
+    .limit(1);
+  return row ?? null;
+}

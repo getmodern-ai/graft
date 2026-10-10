@@ -667,7 +667,10 @@ for a copy's version as a publish asks it. **A connection matches by its hosts**
 `packages/mcp/src/stock-match.ts` is the pure decision, every manifest host among the connection's
 as the proxy's `hostSetOf` reads them, any provider, the vendor slug breaking a tie; `find_tool`'s
 `connectionIds`, the copy's binding and `run.ts`'s follow for a version with a stock origin all use
-it (a remix follows by slug, as GRA-122 has it). A copy made where several match and the slug does
+it (a remix follows by slug, as GRA-122 has it), and a run judges by the hosts of the stock version
+its version recorded (`ToolSource.describeVersion`), not the catalogue's current one. A named
+connection the copy would bind to is held to `isConnectionUsable` as a match is
+(`connection_unusable`). A copy made where several match and the slug does
 not decide holds no default, and its run is refused `connection_ambiguous` with `alternatives`.
 `run_tool` takes an optional `connectionId` for any tool (`AuthoredRunArgs.connectionId`), held to
 the scope (`connection_not_in_scope`) and, for a stock copy, to the hosts
