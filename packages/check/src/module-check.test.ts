@@ -1271,11 +1271,42 @@ describe("derived annotations", () => {
     expect(
       tool('  await ctx.fetch("/refunds", { method: "POST", host: "api.example.com" });'),
     ).toEqual(WRITE);
+    expect(tool('  await ctx.fetch(input.notes ?? "/refunds", { method: "POST" });')).toEqual(
+      WRITE,
+    );
+    expect(tool('  await ctx.fetch(`${input.notes}/cancel`, { method: "POST" });')).toEqual(WRITE);
+    expect(tool('  await ctx.fetch("/refunds", { method: "PUT" });')).toEqual(WRITE);
+  });
+
+  it("reads a destructive path's shape: a const, a concatenation, a fragment, a held base (Greptile on #205)", () => {
+    expect(
+      tool(
+        '  const path = `/charges/${input.notes}/refund`;\n  await ctx.fetch(path, { method: "POST" });',
+      ),
+    ).toEqual(DESTRUCTIVE);
     expect(
       tool('  await ctx.fetch("/charges/" + input.notes + "/refund", { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(
+      tool(
+        '  const id = input.notes;\n  const path = "/charges/" + id + "/refund";\n  await ctx.fetch(path, { method: "POST" });',
+      ),
+    ).toEqual(DESTRUCTIVE);
+    expect(tool('  await ctx.fetch("/refunds#receipt", { method: "POST" });')).toEqual(DESTRUCTIVE);
+    expect(
+      tool('  await ctx.fetch(`/invoices/${input.notes}/void#x?y`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    expect(tool('  await ctx.fetch(`${input.notes}/refunds`, { method: "POST" });')).toEqual(
+      DESTRUCTIVE,
+    );
+    // A shadowed const is not followed: the path is unread, and the call an ordinary write.
+    expect(
+      tool(
+        '  const path = "/refunds";\n  { const path = "/customers"; void path; }\n  await ctx.fetch(path, { method: "POST" });',
+      ),
     ).toEqual(WRITE);
-    expect(tool('  await ctx.fetch(`${input.notes}/refunds`, { method: "POST" });')).toEqual(WRITE);
-    expect(tool('  await ctx.fetch("/refunds", { method: "PUT" });')).toEqual(WRITE);
+    // The shape is the destructive judgement's alone: a fragment still leaves a read unread.
+    expect(tool('  await ctx.fetch("/items#x", { method: "POST" });')).toEqual(WRITE);
   });
 
   it("counts a method it cannot read as a write: a variable init, a shorthand, a spread, a computed method", () => {
