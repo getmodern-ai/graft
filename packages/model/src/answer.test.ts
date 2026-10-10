@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   draftProblems,
+  MAX_PROOF_READ_BODY_CHARS,
+  MAX_PROOF_READ_HEADER_VALUE_CHARS,
+  MAX_PROOF_READ_HEADERS,
   MAX_PROOF_READS,
   readWireAnswer,
   TOOL_DESCRIPTION_MAX_LENGTH,
@@ -31,8 +34,14 @@ const draft: WireAnswer = {
     ],
     testInputJson: '{"itemId":"itm_a"}',
     proofReads: [
-      { path: "/items?limit=1", host: null },
-      { path: "/v1/search?name=Berlin", host: " Geocoding.Demo.example " },
+      { path: "/items?limit=1", host: null, method: null, headers: [], body: null },
+      {
+        path: "/v1/search?name=Berlin",
+        host: " Geocoding.Demo.example ",
+        method: null,
+        headers: [],
+        body: null,
+      },
     ],
   },
 };
@@ -97,8 +106,14 @@ describe("readWireAnswer", () => {
           files: [{ path: "main.ts", content: "" }],
           testInputJson: "[1]",
           proofReads: [
-            { path: "items", host: null },
-            { path: "/v1/search", host: "geocoding.demo.example/v1" },
+            { path: "items", host: null, method: null, headers: [], body: null },
+            {
+              path: "/v1/search",
+              host: "geocoding.demo.example/v1",
+              method: null,
+              headers: [],
+              body: null,
+            },
           ],
         } as NonNullable<WireAnswer["draft"]>,
       },
@@ -182,7 +197,13 @@ describe("the wire schema and the round trip", () => {
         ...draft,
         draft: {
           ...draft.draft,
-          proofReads: ["/a", "/b", "/c", "/d", "/e", "/f"].map((path) => ({ path, host: null })),
+          proofReads: ["/a", "/b", "/c", "/d", "/e", "/f"].map((path) => ({
+            path,
+            host: null,
+            method: null,
+            headers: [],
+            body: null,
+          })),
         } as NonNullable<WireAnswer["draft"]>,
       },
       "goal",
@@ -196,13 +217,130 @@ describe("the wire schema and the round trip", () => {
     });
   });
 
+  /** GRA-271: the vendor's own headers, and a read POST with its body, round-trip through the wire. */
+  it("reads a proof read's headers, method and body, and writes them back in wire form", () => {
+    const wire: WireAnswer = {
+      kind: "prove",
+      note: "the search the module makes",
+      urls: [],
+      proofReads: [
+        {
+          path: "/v1/search",
+          host: null,
+          method: "POST",
+          headers: [{ name: " Notion-Version ", value: " 2022-06-28 " }],
+          body: '{"page_size":1}',
+        },
+        { path: "/v1/users/me", host: null, method: "GET", headers: [], body: null },
+      ],
+      draft: null,
+    };
+    const read = readWireAnswer(wire, "proof");
+    const answer: ModelAnswer = {
+      kind: "prove",
+      note: "the search the module makes",
+      proofReads: [
+        {
+          path: "/v1/search",
+          method: "POST",
+          headers: { "notion-version": "2022-06-28" },
+          body: '{"page_size":1}',
+        },
+        { path: "/v1/users/me" },
+      ],
+    };
+    expect(read).toEqual({ ok: true, answer });
+    expect(wireOf(answer).proofReads).toEqual([
+      {
+        path: "/v1/search",
+        host: null,
+        method: "POST",
+        headers: [{ name: "notion-version", value: "2022-06-28" }],
+        body: '{"page_size":1}',
+      },
+      { path: "/v1/users/me", host: null, method: null, headers: [], body: null },
+    ]);
+    expect(WIRE_ANSWER_SCHEMA.safeParse(wireOf(answer)).success).toBe(true);
+  });
+
+  /** GRA-271: a header the proxy owns, a body on a GET, and the caps are each repaired with a sentence. */
+  it("refuses a credential header, a malformed one, a body without POST and a read over the caps", () => {
+    const prove = (read: Partial<WireAnswer["proofReads"][number]>): WireAnswer => ({
+      kind: "prove",
+      note: "n",
+      urls: [],
+      proofReads: [
+        { path: "/v1/search", host: null, method: null, headers: [], body: null, ...read },
+      ],
+      draft: null,
+    });
+    const problems = (read: Partial<WireAnswer["proofReads"][number]>) => {
+      const answer = readWireAnswer(prove(read), "proof");
+      return answer.ok ? [] : answer.problems;
+    };
+    for (const name of [
+      "Authorization",
+      "proxy-authorization",
+      "Cookie",
+      "Host",
+      "Proxy-Foo",
+      "X-Graft-Token",
+    ]) {
+      expect(problems({ headers: [{ name, value: "v" }] })).toEqual([
+        expect.stringContaining(
+          `proof read header "${name.toLowerCase()}" is not a proof read's to send`,
+        ),
+      ]);
+    }
+    expect(problems({ headers: [{ name: "Notion Version", value: "v" }] })).toEqual([
+      expect.stringContaining('proof read header "notion version" is not a header name'),
+    ]);
+    expect(problems({ headers: [{ name: "Notion-Version", value: "a\u0000b" }] })).toEqual([
+      expect.stringContaining("a line break or a control character"),
+    ]);
+    expect(
+      problems({
+        headers: [
+          { name: "Notion-Version", value: "1" },
+          { name: "notion-version", value: "2" },
+        ],
+      }),
+    ).toEqual([expect.stringContaining('names header "notion-version" twice')]);
+    expect(problems({ body: "{}" })).toEqual([
+      expect.stringContaining("carries a body without method POST"),
+    ]);
+    expect(
+      problems({
+        headers: Array.from({ length: MAX_PROOF_READ_HEADERS + 1 }, (_, i) => ({
+          name: `x-h${i}`,
+          value: "v",
+        })),
+      }),
+    ).toEqual([expect.stringContaining(`at most ${MAX_PROOF_READ_HEADERS}`)]);
+    expect(
+      problems({
+        headers: [{ name: "x-h", value: "v".repeat(MAX_PROOF_READ_HEADER_VALUE_CHARS + 1) }],
+      }),
+    ).toEqual([expect.stringContaining(`at most ${MAX_PROOF_READ_HEADER_VALUE_CHARS}`)]);
+    expect(problems({ method: "POST", body: "x".repeat(MAX_PROOF_READ_BODY_CHARS + 1) })).toEqual([
+      expect.stringContaining(`at most ${MAX_PROOF_READ_BODY_CHARS}`),
+    ]);
+    expect(problems({ method: "POST", body: '{"query":"{ viewer { id } }"}' })).toEqual([]);
+  });
+
   /** GRA-153: more reads against the current draft, a turn and not an attempt. */
   it("reads a prove with its paths, and refuses one with none, one off the vendor, or more than an attempt runs", () => {
     const prove = (paths: string[], note = "the id the list returned"): WireAnswer => ({
       kind: "prove",
       note,
       urls: [],
-      proofReads: paths.map((path) => ({ path, host: null })),
+      proofReads: paths.map((path) => ({
+        path,
+        host: null,
+        method: null,
+        headers: [],
+        body: null,
+      })),
       draft: null,
     });
     expect(readWireAnswer(prove([" /items/itm_1 ", ""]), "proof")).toEqual({
@@ -216,7 +354,18 @@ describe("the wire schema and the round trip", () => {
     // GRA-213: a read on another declared host carries it; one whose host is not a host name is repaired.
     expect(
       readWireAnswer(
-        { ...prove([]), proofReads: [{ path: "/v1/search", host: "geocoding.demo.example" }] },
+        {
+          ...prove([]),
+          proofReads: [
+            {
+              path: "/v1/search",
+              host: "geocoding.demo.example",
+              method: null,
+              headers: [],
+              body: null,
+            },
+          ],
+        },
         "proof",
       ),
     ).toEqual({
@@ -231,7 +380,15 @@ describe("the wire schema and the round trip", () => {
       readWireAnswer(
         {
           ...prove([]),
-          proofReads: [{ path: "/v1/search", host: "https://geocoding.demo.example" }],
+          proofReads: [
+            {
+              path: "/v1/search",
+              host: "https://geocoding.demo.example",
+              method: null,
+              headers: [],
+              body: null,
+            },
+          ],
         },
         "proof",
       ),

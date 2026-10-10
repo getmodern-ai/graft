@@ -95,6 +95,7 @@ export {
   type ModuleDraft,
   type ModuleFile,
   type ProofRead,
+  type ProofReadMethod,
   type ProofReadTarget,
   proofReadLabel,
   type StartingPoint,

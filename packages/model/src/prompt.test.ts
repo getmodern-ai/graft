@@ -6,6 +6,8 @@ import type { ModelJobContext, ProofRead } from "./types";
 const answered: ProofRead = {
   path: "/items?limit=1",
   host: null,
+  method: "GET",
+  headerNames: [],
   ok: true,
   status: 200,
   body: '{"items":[]}',
@@ -36,6 +38,8 @@ describe("renderProof", () => {
     const redirected: ProofRead = {
       path: "/v1/forecast",
       host: null,
+      method: "GET",
+      headerNames: [],
       ok: false,
       status: 303,
       body: null,
@@ -59,6 +63,8 @@ describe("renderProof and the publish gate (GRA-72)", () => {
   const failed: ProofRead = {
     path: "/nope",
     host: null,
+    method: "GET",
+    headerNames: [],
     ok: false,
     status: 404,
     body: '{"error":"not found"}',
@@ -133,7 +139,7 @@ describe("systemPrompt", () => {
   it("asks for a proof read of every distinct path the module reads, not the first alone", () => {
     const prose = systemPrompt(context).replace(/\s+/g, " ");
     expect(prose).toContain(
-      "`proofReads` the GET paths that prove the credential and the shape: one for every distinct path the module reads, not the first alone",
+      "`proofReads` the reads that prove the credential and the shape: one for every distinct path the module reads, not the first alone",
     );
     expect(prose).toContain("not the first alone, up to 5 —");
     expect(prose).toContain(
@@ -154,7 +160,7 @@ describe("systemPrompt", () => {
       "vendor-relative path (on another declared host, `ctx.fetch(path, { host })`)",
     );
     expect(prose).toContain(
-      "Each read is `{ path, host }`: `host` null for the primary host, or the other declared host the module reads that path from with `ctx.fetch(path, { host })`",
+      "Each read is `{ path, host, method, headers, body }`: `host` null for the primary host, or the other declared host the module reads that path from with `ctx.fetch(path, { host })`",
     );
     expect(prose).toContain(
       "hosts the connection may reach (what `ctx.fetch(path, { host })`, a proof read's `host` and `ctx.proxyBase(host)` may name): httpbin.org",

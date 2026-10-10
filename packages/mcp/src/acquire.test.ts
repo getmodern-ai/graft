@@ -326,6 +326,24 @@ beforeAll(async () => {
           { status: 401 },
         );
       }
+      // A vendor that refuses a call without its version header, as Notion does without
+      // `Notion-Version` (GRA-271), and a GraphQL endpoint whose query the proxy reads as a read.
+      if (url.pathname === "/v2/versioned") {
+        const version = request.headers.get("demo-version");
+        return version
+          ? Response.json({ version })
+          : Response.json({ error: "missing demo-version" }, { status: 400 });
+      }
+      if (url.pathname === "/v2/graphql" && request.method === "POST") {
+        const sent = JSON.parse(new TextDecoder().decode(request.body ?? new Uint8Array())) as {
+          query?: string;
+        };
+        return Response.json({
+          data: { viewer: { id: "usr_1" } },
+          query: sent.query ?? null,
+          version: request.headers.get("demo-version"),
+        });
+      }
       if (url.pathname === "/v2/orders" && request.method === "POST") {
         return Response.json({ id: "ord_1", status: "created" }, { status: 201 });
       }
@@ -920,6 +938,133 @@ describe("a proof-only answer (GRA-153)", () => {
       expect(refused && refused.kind === "proof" ? refused.refused : null).toContain(
         "named 2 more read(s), and this attempt has 1 of 5 left",
       );
+    } finally {
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+});
+
+/**
+ * GRA-271: a proof read carries the vendor's own headers (Notion's `Notion-Version`), and may be a
+ * `POST` the proxy counts as a read, with its body. Behind the real proxy and the real runner: the
+ * demo vendor's `/versioned` refuses a call without `demo-version`, and its `/graphql` answers a
+ * query. A header the proxy owns and a `POST` it would stop at the preview are refused before
+ * anything is sent, each as a failed read with the sentence that says why.
+ */
+describe("proof reads with headers and a read POST (GRA-271)", () => {
+  const QUERY = JSON.stringify({ query: "query { viewer { id } }" });
+
+  it("sends a read's headers and a read POST's body to the vendor, and records the header values only through the redaction", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({
+          proofReads: [
+            { path: "/versioned", headers: { "demo-version": "2026-01-01" } },
+            {
+              path: "/graphql",
+              method: "POST",
+              headers: { "demo-version": "2026-01-01", apikey: "invented-key-123456" },
+              body: QUERY,
+            },
+          ],
+        }),
+        "Drafted list-items.",
+      ),
+      { on: "proof", answer: { kind: "give_up", reason: "Proven; nothing more to show." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Read the versioned resource",
+        ignoreExisting: true,
+      });
+      const sent = vendor.requests.slice(requestsBefore);
+      expect(sent.map((r) => [r.method, r.url, r.headers.get("demo-version")])).toEqual([
+        ["GET", "https://api.demo.example/v2/versioned", "2026-01-01"],
+        ["POST", "https://api.demo.example/v2/graphql", "2026-01-01"],
+      ]);
+      expect(new TextDecoder().decode(sent[1]?.body ?? new Uint8Array())).toBe(QUERY);
+      expect(sent.every((r) => r.headers.get("x-demo-key") === API_KEY)).toBe(true);
+
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const reads = proof?.kind === "proof" ? proof.reads : [];
+      expect(reads.map((r) => [r.method, r.path, r.headerNames, r.ok, r.status])).toEqual([
+        ["GET", "/versioned", ["demo-version"], true, 200],
+        ["POST", "/graphql", ["demo-version", "apikey"], true, 200],
+      ]);
+      expect(reads[1]?.body).toContain('"viewer":{"id":"usr_1"}');
+
+      // The lines name the headers and never a value; the trace's data carries each header as
+      // `name: value`, through the redaction, so an invented key under a secret name is redacted.
+      for (const line of status.progress) expect(line).not.toContain("invented-key-123456");
+      expect(status.progress).toContain(
+        "Attempt 1: proof read 2 of 2: POST /graphql with demo-version, apikey.",
+      );
+      const { traces } = rowsOf(jobId);
+      const posted = traces.find(
+        (row) => row.kind === "proof" && row.text.startsWith("Proof read POST /graphql"),
+      );
+      expect(posted?.data).toMatchObject({
+        method: "POST",
+        headers: ["demo-version: 2026-01-01", "apikey: [redacted]"],
+        requestBody: QUERY,
+      });
+      expect(JSON.stringify(traces)).not.toContain("invented-key-123456");
+    } finally {
+      await a.close();
+      await runner.idle();
+    }
+  }, 30_000);
+
+  it("refuses a header the proxy strips or the scheme sets, and a POST the proxy would preview, as failed reads with no request", async () => {
+    const scripted = createScriptedModel([
+      write(
+        "goal",
+        draft({
+          proofReads: [
+            { path: "/items?limit=1", headers: { traceparent: "00-abc-def-01" } },
+            { path: "/items?limit=1", headers: { "X-Demo-Key": "mine" } },
+            { path: "/orders", method: "POST", body: '{"item":"itm_1"}' },
+          ],
+        }),
+        "Drafted list-items.",
+      ),
+      { on: "proof", answer: { kind: "give_up", reason: "Nothing was proven." } },
+    ]);
+    deps.model = scripted;
+    const a = await connect(TOKEN_A);
+    const requestsBefore = vendor.requests.length;
+    try {
+      const { status, jobId } = await acquireAndFinish(a, {
+        connectionId: CONN_DEMO,
+        goal: "Create an order",
+        ignoreExisting: true,
+      });
+      expect(status.status).toBe("failed");
+      expect(vendor.requests.slice(requestsBefore)).toEqual([]);
+      const proof = scripted.conversations[0]?.situations.find((s) => s.kind === "proof");
+      const reads = proof?.kind === "proof" ? proof.reads : [];
+      expect(reads.map((r) => [r.method, r.path, r.ok, r.status])).toEqual([
+        ["GET", "/items?limit=1", false, null],
+        ["GET", "/items?limit=1", false, null],
+        ["POST", "/orders", false, null],
+      ]);
+      expect(reads[0]?.error).toContain(
+        "The proof read sets traceparent, which the proxy strips or sets itself",
+      );
+      expect(reads[1]?.error).toContain(
+        "The proof read sets X-Demo-Key, which the proxy strips or sets itself",
+      );
+      expect(reads[2]?.error).toContain(
+        "The proxy would count POST /orders as a write and stop it at the dry run's preview, so it was not run.",
+      );
+      const { attempts } = rowsOf(jobId);
+      expect(attempts.map((row) => [row.attemptNumber, row.versionId])).toEqual([[1, null]]);
     } finally {
       await a.close();
       await runner.idle();
