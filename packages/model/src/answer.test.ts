@@ -312,7 +312,7 @@ describe("the wire schema and the round trip", () => {
       proto.ok && proto.answer.kind === "prove" ? proto.answer.proofReads[0]?.headers : null,
     ).toSatisfy(
       (headers: Record<string, string> | undefined) =>
-        headers?.__proto__ === "v" && Object.keys(headers).length === 1,
+        Object.entries(headers ?? {}).join() === "__proto__,v",
     );
     expect(problems({ body: "{}" })).toEqual([
       expect.stringContaining("carries a body without method POST"),
