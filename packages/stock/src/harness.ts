@@ -21,7 +21,6 @@ import {
 } from "./dry-run";
 import type { StockHarnessMode } from "./mode";
 import {
-  bodyBytesOf,
   parseRecording,
   RECORDING_FILE,
   type RecordedBody,
@@ -29,6 +28,7 @@ import {
   type RecordedWrite,
   recordedBodyOf,
   redactRecording,
+  replayResponseOf,
   type StockRecording,
 } from "./recording";
 import { credentialForms } from "./secrets";
@@ -169,14 +169,6 @@ function keyPaths(value: unknown, prefix = "", out = new Set<string>()): Set<str
   return out;
 }
 
-function responseOf(read: RecordedRead): Response {
-  const { bytes, contentType } = bodyBytesOf(read.response.body);
-  const headers = new Headers(read.response.headers);
-  if (!headers.has("content-type") && contentType) headers.set("content-type", contentType);
-  const nullBody = read.method === "HEAD" || [204, 205, 304].includes(read.response.status);
-  return new Response(nullBody ? null : bytes, { status: read.response.status, headers });
-}
-
 /**
  * A note, not a failure, for a module that reads a body as text where the recording holds a JSON
  * answer (Greptile on #191): a recording keeps a JSON body parsed, so the redaction can walk it, and
@@ -305,7 +297,7 @@ export async function proveReplay(
     }
     made.add(matched);
     const expected = reads[matched] as RecordedRead;
-    if (!realFetch) return responseOf(expected);
+    if (!realFetch) return replayResponseOf(expected);
 
     const response = await realFetch(request, init);
     if (response.status !== expected.response.status) {

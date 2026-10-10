@@ -101,6 +101,64 @@ the replay hands the module the same text and gets the recorded result.
 The harness fails a tool whose committed recording is not a fixed point of `redactRecording` with
 no rule: anything credential-shaped left in it is a recording that was not written through it.
 
+## The scrub
+
+**A recording the build command writes never holds real data** (GRA-257). Stock tools are built
+against a maintainer's own account and the repository is public, so before anything is written
+every value the vendor answered is replaced by a placeholder, and the test input with it.
+`src/scrub.ts` is the rule; `recordStockProof` applies it on every recording, and there is no flag
+to keep the values.
+
+- **Every string and number** in a response body, in the kept headers but `content-type`, and in
+  the input becomes a placeholder of the same type and shape: an email stays an email (its local
+  part redrawn, at `example.com`); an ISO date or time stays one, in the same layout; a URL keeps
+  its scheme and host and loses its path and query (a `link` header's targets too, where every
+  parameter value is drawn again but a `rel` of the standard relations, `next` or `last`); any other string
+  keeps its length, its punctuation and spaces, each letter a letter of the same case and each digit
+  a digit (an id stays id-like, a hex id hex); a number keeps its sign, its digit counts and its
+  decimal places. A text body is one string; a binary body becomes the same number of drawn bytes.
+- **Keys, array lengths and nesting are kept**, and so are booleans and `null` (one bit, and the
+  bit a module branches on), the integers 0 to 99 (counts, pages and codes a module loops on), a
+  redaction marker (the text beside it is scrubbed as any other), and a string with no letter or
+  digit.
+- **A value the module's code spells is kept**: every string its files spell, read by a parse with
+  the check's own TypeScript (string literals and template text, inside a `${…}` too, escapes
+  decoded), and every string in its input schema, with its `enum` and `const` numbers
+  (`keptLiteralsOf`). They are public already, and a module comparing an answer with `"message"`
+  must still find it. An input value that must reach a live vendor as it is (a city) survives the
+  scrub by being the schema's `default`, an `examples` entry or an `enum` value.
+- **The input is scrubbed within its schema**: an `enum` value stays, a number is drawn inside its
+  bounds and `multipleOf`, a string is one its length, pattern and format admit; then the whole
+  scrubbed input is validated against the schema, and one that fails fails the recording.
+- **When in doubt it fails, never keeps.** A value for which no placeholder can be drawn that is
+  neither an original value nor another's placeholder, or that the input schema admits, fails the
+  recording with a sentence naming where it is and never the value.
+- **One value is one placeholder** across the whole recording, so an id one answer gave and a later
+  request names is the same placeholder in both. Placeholders are drawn from a random seed per
+  recording, so one is not a keyed hash of a guessable name.
+- **The requests and the result are the module's own over the scrubbed answers.** After the scrub
+  the module runs again as a dry run whose vendor is the scrubbed answers in order, and the URLs it
+  asks for, the write bodies the proxy previews and the result it answers there are what is
+  recorded. A request built from an earlier answer, or a result the module computed (a name
+  upper-cased, two fields joined), is therefore the scrubbed data's, and the replay matches by
+  construction. A module that behaves differently over the scrubbed answers (a different number of
+  reads, a failed run) fails the recording, and nothing is written. Its answers are matched to its
+  requests by the order the module issued them, as the first run's were recorded (GRA-246).
+- **The last check** (`survivingValuesOf`) looks for every string of six characters or more from
+  the raw input and answers in what is about to be written, after redaction, setting aside the
+  module's own text and the keys (a value with a redaction marker is looked for as its text beside
+  the marker, a `link` header as its targets and parameters, and a website root written without its
+  closing slash is not read as surviving inside its own placeholder); a survivor fails the
+  recording, naming where it was and never the
+  value. Redaction comes first because a credential the proxy put in a request (a query key a vendor
+  may quote back) is redaction's to remove, not a vendor value the scrub missed.
+
+`test-input.json` is the recording's scrubbed input, since the two must be equal. One consequence for
+live mode: a scrubbed test input names nothing in any real account, so a tool whose input matters
+(an id, a name to search for) answers differently live than recorded unless its input survives as
+a schema value. The hand-made Open-Meteo recording predates the scrub and holds a public API's
+answers about a city, which is no one's data.
+
 ## The replay
 
 `proveReplay` (`src/harness.ts`) runs the module as a dry run, by the real runner through the real

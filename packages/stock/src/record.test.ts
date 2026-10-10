@@ -2,6 +2,7 @@ import type { UpstreamRequest } from "@graft/proxy";
 import { describe, expect, it } from "vitest";
 
 import { jsonTextNotes, proveReplay } from "./harness";
+import type { LiveConnection } from "./mode";
 import { recordStockProof } from "./record";
 import type { StockWorkspaceTool } from "./workspace";
 
@@ -87,15 +88,99 @@ describe("recordStockProof", () => {
           kind: "write",
           method: "POST",
           url: "https://api.github.com/user/notes",
-          body: { json: { text: "graft" } },
         },
       ],
-      result: { names: ["graft", "cando"], noted: 202 },
+      result: { noted: 202 },
     });
+    // The repositories' names are the maintainer's, and scrubbed; the module's note names the first.
+    const names = (recording.result as { names: string[] }).names;
+    expect(names).toHaveLength(2);
+    expect(names).not.toContain("graft");
+    expect(recording.exchanges[1]).toMatchObject({ body: { json: { text: names[0] } } });
 
     const replay = await proveReplay(tool, recording);
     expect(replay.problems).toEqual([]);
     expect(replay.reachedVendor).toHaveLength(1);
+  });
+
+  it("scrubs every value of the maintainer's account, and the module's requests and result follow the scrubbed answers", async () => {
+    const PLANTED = [
+      "Alice Liddell",
+      "alice@acme-corp.example",
+      "acme-secret-plans",
+      "Acme Pty Ltd",
+    ];
+    const ISSUES = `export default async (input: Input, ctx: Context) => {
+  const me = await ctx.fetch("/user");
+  const user = (await me.json()) as { login: string; name: string; email: string; company: string };
+  const res = await ctx.fetch(\`/repos/\${user.login}/\${input.repo}/issues?state=open\`);
+  const issues = (await res.json()) as { number: number; title: string }[];
+  return {
+    who: \`\${user.name} <\${user.email}>\`,
+    shouting: user.company.toUpperCase(),
+    titles: issues.map((issue) => issue.title),
+    numbers: issues.map((issue) => issue.number),
+  };
+};
+`;
+    const issuesTool: StockWorkspaceTool = {
+      ...tool,
+      name: "open-issues",
+      inputSchema: {
+        type: "object",
+        properties: { repo: { type: "string" } },
+        required: ["repo"],
+        additionalProperties: false,
+      },
+      testInput: { repo: "acme-secret-plans" },
+      annotations: { readOnly: true, destructive: false },
+      files: [{ path: "index.ts", content: ISSUES }],
+    };
+    const recorded = await recordStockProof(issuesTool, {
+      connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
+      upstreamFetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/user") {
+          return Response.json({
+            login: "aliceliddell",
+            name: "Alice Liddell",
+            email: "alice@acme-corp.example",
+            company: "Acme Pty Ltd",
+          });
+        }
+        if (url.pathname === "/repos/aliceliddell/acme-secret-plans/issues") {
+          return Response.json([
+            { number: 4211, title: "Acme Pty Ltd board minutes" },
+            { number: 4212, title: "Alice Liddell salary review" },
+          ]);
+        }
+        return Response.json({ message: "Not Found" }, { status: 404 });
+      },
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { recording } = recorded;
+
+    const text = JSON.stringify(recording);
+    for (const planted of [...PLANTED, "aliceliddell", "4211", "ACME PTY LTD"]) {
+      expect(text, `${planted} survived`).not.toContain(planted);
+      expect(decodeURIComponent(text), `${planted} survived`).not.toContain(planted);
+    }
+    const [first, second] = recording.exchanges;
+    const user = (first as { response: { body: { json: Record<string, string> } } }).response.body
+      .json;
+    const repo = recording.input.repo as string;
+    expect(repo).toMatch(/^[a-z]{4}-[a-z]{6}-[a-z]{5}$/);
+    // The second read names the scrubbed login and the scrubbed test input, as the module built it.
+    expect(second?.url).toBe(
+      `https://api.github.com/repos/${user.login}/${repo}/issues?state=open`,
+    );
+    expect(recording.result).toMatchObject({
+      who: `${user.name} <${user.email}>`,
+      shouting: user.company?.toUpperCase(),
+    });
+
+    const replay = await proveReplay({ ...issuesTool, testInput: recording.input }, recording);
+    expect(replay.problems).toEqual([]);
   });
 
   it("answers the failed dry run's sentence, with the credential redacted, and no recording", async () => {
@@ -293,7 +378,10 @@ describe("recordStockProof", () => {
         }),
     });
     if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
-    expect(recorded.recording.result).toEqual({ text: '{"name":"graft"}' });
+    // Re-serialised, so none of the vendor's whitespace; and scrubbed, so not the vendor's value.
+    const { text } = recorded.recording.result as { text: string };
+    expect(text).toMatch(/^\{"name":"[^"]+"\}$/);
+    expect(text).not.toContain("graft");
     expect((await proveReplay(textTool, recorded.recording)).problems).toEqual([]);
     expect(jsonTextNotes(textTool, recorded.recording)).toEqual([
       expect.stringMatching(
@@ -301,6 +389,79 @@ describe("recordStockProof", () => {
       ),
     ]);
     expect(jsonTextNotes(tool, recorded.recording)).toEqual([]);
+  });
+
+  it("records a test input scrubbed within its schema, and fails a scrub the schema leaves no room for", async () => {
+    const connection: LiveConnection = {
+      scheme: "bearer",
+      schemeConfig: {},
+      credential: { token: TOKEN },
+    };
+    const bounded: StockWorkspaceTool = {
+      ...tool,
+      inputSchema: {
+        type: "object",
+        properties: { limit: { type: "integer", minimum: 1, maximum: 100 } },
+        required: ["limit"],
+        additionalProperties: false,
+      },
+      testInput: { limit: 100 },
+    };
+    const recorded = await recordStockProof(bounded, { connection, upstreamFetch: vendor([]) });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { limit } = recorded.recording.input as { limit: number };
+    expect(limit).toBeGreaterThanOrEqual(1);
+    expect(limit).toBeLessThanOrEqual(100);
+    expect(limit).not.toBe(100);
+    expect(recorded.recording.exchanges[0]?.url).toBe(
+      `https://api.github.com/user/repos?per_page=${limit}`,
+    );
+
+    const pinned = await recordStockProof(
+      {
+        ...bounded,
+        inputSchema: {
+          type: "object",
+          properties: { limit: { type: "integer", minimum: 100, maximum: 100 } },
+          required: ["limit"],
+        },
+      },
+      { connection, upstreamFetch: vendor([]) },
+    );
+    expect(pinned).toEqual({
+      ok: false,
+      problems: [
+        "stock tool github__list-repos: the scrub failed: no placeholder the tool's input schema admits could be drawn for one of its values, in the input; nothing was recorded",
+      ],
+    });
+  });
+
+  it("does not scrub the first run's result, which the second run's replaces", async () => {
+    // Every one-digit negative number: the scrub could draw no placeholder for any of them.
+    const ranked: StockWorkspaceTool = {
+      ...tool,
+      name: "ranked",
+      files: [
+        {
+          path: "index.ts",
+          content: `export default async (input: Input, ctx: Context) => {
+  const res = await ctx.fetch(\`/user/repos?per_page=\${input.limit}\`);
+  const repos = (await res.json()) as { name: string }[];
+  return { first: repos[0]?.name, ranks: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => -n) };
+};
+`,
+        },
+      ],
+    };
+    const recorded = await recordStockProof(ranked, {
+      connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
+      upstreamFetch: vendor([]),
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    expect(recorded.recording.result).toMatchObject({
+      ranks: [-1, -2, -3, -4, -5, -6, -7, -8, -9],
+    });
+    expect((recorded.recording.result as { first: string }).first).not.toBe("graft");
   });
 
   it("refuses a keyed starter with no connection", async () => {

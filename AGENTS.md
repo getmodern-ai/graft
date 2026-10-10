@@ -769,7 +769,11 @@ maintainer's connection, so it never writes to a person's toolbox or a database.
 `build.ts` stages the passing draft with its manifest (the connection hosts the proof reached or the
 module names), its test input and the recording `@graft/stock`'s `record.ts` makes (one dry run
 through the proxy, the vendor's echo of the credential mirrored as the proxy redacts it, written
-only through `redactRecording`), formats it with the repository's Biome, proves it with the
+only through `redactRecording`) and, before that, **scrubs of every vendor value** (GRA-257:
+`src/scrub.ts`'s `scrubRecording` over the answers and the test input under a random seed, then a
+second dry run over the scrubbed answers that the recorded requests and result are taken from, then
+`survivingValuesOf` as the last check; no opt-out, and `test-input.json` is the scrubbed input),
+formats it with the repository's Biome, proves it with the
 harness's three proofs as CI will, and only then writes `tools/<vendor>/<name>/`. `--from` hands the
 model the current module through the opening context's hints (past `acquire`'s 4,000 characters)
 and writes under the current name in its place; without it an existing tool is refused. A failure
