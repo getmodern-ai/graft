@@ -218,8 +218,11 @@ export async function recordStockProof(
   // The scrub: the answers and the input, then the module again over them.
   const keep = keptLiteralsOf(tool.files, tool.inputSchema);
   let scrubbed: StockRecording;
+  // Without the first run's result: the second run's is the one written, so a result the scrub
+  // could not draw placeholders for must not stop the build (Greptile on #192).
+  const { result: _rawResult, ...unanswered } = raw;
   try {
-    scrubbed = scrubRecording(raw, {
+    scrubbed = scrubRecording(unanswered, {
       seed: options.seed ?? randomBytes(16).toString("hex"),
       keep,
       inputSchema: tool.inputSchema,

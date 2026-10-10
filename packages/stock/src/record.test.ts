@@ -436,6 +436,34 @@ describe("recordStockProof", () => {
     });
   });
 
+  it("does not scrub the first run's result, which the second run's replaces", async () => {
+    // Every one-digit negative number: the scrub could draw no placeholder for any of them.
+    const ranked: StockWorkspaceTool = {
+      ...tool,
+      name: "ranked",
+      files: [
+        {
+          path: "index.ts",
+          content: `export default async (input: Input, ctx: Context) => {
+  const res = await ctx.fetch(\`/user/repos?per_page=\${input.limit}\`);
+  const repos = (await res.json()) as { name: string }[];
+  return { first: repos[0]?.name, ranks: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => -n) };
+};
+`,
+        },
+      ],
+    };
+    const recorded = await recordStockProof(ranked, {
+      connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
+      upstreamFetch: vendor([]),
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    expect(recorded.recording.result).toMatchObject({
+      ranks: [-1, -2, -3, -4, -5, -6, -7, -8, -9],
+    });
+    expect((recorded.recording.result as { first: string }).first).not.toBe("graft");
+  });
+
   it("refuses a keyed starter with no connection", async () => {
     const recorded = await recordStockProof(tool, { connection: null });
     expect(recorded).toEqual({

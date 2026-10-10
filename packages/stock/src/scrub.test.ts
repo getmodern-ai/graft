@@ -270,6 +270,14 @@ describe("scrubRecording, after Greptile on #192", () => {
     expect(survivingValuesOf(raw, scrubbed, { source: "" })).toEqual([]);
   });
 
+  it("reads a long hostile link header in linear time", () => {
+    const link = `<>;${"\t;!=".repeat(20000)}`;
+    const started = performance.now();
+    const scrubbed = scrubRecording(withRead({}, { link }), { seed: SEED });
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(readOf(scrubbed, 0).response.headers.link).toBeTypeOf("string");
+  });
+
   it("scrubs a link header that does not parse as one string", () => {
     const scrubbed = scrubRecording(withRead({}, { link: "Alice Liddell, not a link" }), {
       seed: SEED,
@@ -358,6 +366,22 @@ describe("scrubRecording, after Greptile on #192", () => {
     const body = readOf(scrubbed, 0).response.body as { json: Record<string, number> };
     expect(body.json.also).toBe(out.limit);
     expect(body.json.sort).toBe(500);
+
+    // Bounds behind a `$ref` into the root's definitions are seen too.
+    const referenced = scrubRecording(withRead({}, {}, { limit: 100, page: 50 }), {
+      seed: SEED,
+      inputSchema: {
+        type: "object",
+        $defs: { limit: { type: "integer", minimum: 1, maximum: 100 } },
+        definitions: { page: { $ref: "#/$defs/limit", maximum: 60 } },
+        properties: { limit: { $ref: "#/$defs/limit" }, page: { $ref: "#/definitions/page" } },
+      },
+    }).input as { limit: number; page: number };
+    expect(referenced.limit).toBeGreaterThanOrEqual(1);
+    expect(referenced.limit).toBeLessThanOrEqual(100);
+    expect(referenced.limit).not.toBe(100);
+    expect(referenced.page).toBeGreaterThanOrEqual(1);
+    expect(referenced.page).toBeLessThanOrEqual(60);
 
     // `minimum` and `maximum` both 100 admit only the value itself, which is no placeholder.
     expect(() =>

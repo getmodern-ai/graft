@@ -360,12 +360,21 @@ const schemaValidator = new AjvJsonSchemaValidator();
 const leafValidators = new Map<string, ((candidate: unknown) => boolean) | null>();
 
 /**
- * The input schema's judgement of a leaf's placeholder: the subschema at the leaf, compiled alone.
- * None for an empty subschema, or one that does not compile alone (a `$ref` to the root's
- * definitions); the whole input is judged against the whole schema after the scrub (`record.ts`).
+ * The input schema's judgement of a leaf's placeholder: the subschema at the leaf (its `$ref`
+ * followed, `dereferenced`), compiled with the root's `$defs` and `definitions` beside it so a
+ * reference inside it still resolves. None for an empty subschema or one that does not compile; the
+ * whole input is judged against the whole schema after the scrub (`record.ts`).
  */
-function acceptOf(schema: Record<string, unknown>): ((candidate: unknown) => boolean) | undefined {
-  if (Object.keys(schema).length === 0) return undefined;
+function acceptOf(
+  leaf: Record<string, unknown>,
+  root: unknown,
+): ((candidate: unknown) => boolean) | undefined {
+  if (Object.keys(leaf).length === 0) return undefined;
+  const schema = {
+    ...(isRecord(root) && isRecord(root.$defs) ? { $defs: root.$defs } : {}),
+    ...(isRecord(root) && isRecord(root.definitions) ? { definitions: root.definitions } : {}),
+    ...leaf,
+  };
   const key = JSON.stringify(schema);
   if (!leafValidators.has(key)) {
     let judge: ((candidate: unknown) => boolean) | null;
@@ -415,8 +424,14 @@ function propertySchemaOf(schema: Record<string, unknown>, key: string): unknown
  * outside one is replaced by one of the schema's; a string or a number is drawn under the mapping
  * and accepted only where its subschema admits it.
  */
-function scrubInput(node: unknown, schema: unknown, scrub: Scrubber, seed: string): unknown {
-  const at = isRecord(schema) ? schema : {};
+function scrubInput(
+  node: unknown,
+  schema: unknown,
+  root: unknown,
+  scrub: Scrubber,
+  seed: string,
+): unknown {
+  const at = dereferenced(schema, root);
   const options = Object.hasOwn(at, "const")
     ? [at.const]
     : Array.isArray(at.enum) && at.enum.length > 0
@@ -427,20 +442,51 @@ function scrubInput(node: unknown, schema: unknown, scrub: Scrubber, seed: strin
     if (options.some((option) => JSON.stringify(option) === text)) return node;
     return options[Math.floor(draws(seed, `e\u0000${text}`)() * options.length)];
   }
-  if (typeof node === "string") return scrub.string(node, acceptOf(at));
-  if (typeof node === "number") return scrub.number(node, acceptOf(at), rangeOf(at));
+  if (typeof node === "string") return scrub.string(node, acceptOf(at, root));
+  if (typeof node === "number") return scrub.number(node, acceptOf(at, root), rangeOf(at));
   if (Array.isArray(node)) {
-    return node.map((entry, index) => scrubInput(entry, entrySchemaOf(at, index), scrub, seed));
+    return node.map((entry, index) =>
+      scrubInput(entry, entrySchemaOf(at, index), root, scrub, seed),
+    );
   }
   if (isRecord(node)) {
     return Object.fromEntries(
       Object.entries(node).map(([key, entry]) => [
         key,
-        scrubInput(entry, propertySchemaOf(at, key), scrub, seed),
+        scrubInput(entry, propertySchemaOf(at, key), root, scrub, seed),
       ]),
     );
   }
   return node;
+}
+
+/** How many `$ref`s in a row the input walk follows before it stops (a cycle, say). */
+const MAX_REF_DEPTH = 16;
+
+/**
+ * A subschema with its local `$ref` followed into the root (`#/$defs/limit`, `#/definitions/x`),
+ * its sibling keywords laid over the target; one that names no local target is left as it is, and
+ * the whole input is judged against the whole schema after the scrub (Greptile on #192: bounds
+ * behind a `$ref` were not seen).
+ */
+function dereferenced(schema: unknown, root: unknown): Record<string, unknown> {
+  let at = isRecord(schema) ? schema : {};
+  for (let depth = 0; depth < MAX_REF_DEPTH; depth += 1) {
+    const ref = at.$ref;
+    if (typeof ref !== "string" || !ref.startsWith("#")) return at;
+    let target: unknown = root;
+    for (const part of ref.slice(1).split("/").slice(1)) {
+      const key = decodeURIComponent(part).replaceAll("~1", "/").replaceAll("~0", "~");
+      target =
+        isRecord(target) || Array.isArray(target)
+          ? (target as Record<string, unknown>)[key]
+          : undefined;
+    }
+    if (!isRecord(target)) return at;
+    const { $ref: _ref, ...siblings } = at;
+    at = { ...target, ...siblings };
+  }
+  return at;
 }
 
 /** The schema's `enum` and `const` numbers, which are public code. */
@@ -493,28 +539,66 @@ function scrubBody(
 type LinkParameter = { name: string; value: string | null; quoted: boolean };
 type LinkEntry = { target: string; parameters: LinkParameter[] };
 
-const LINK_ENTRY =
-  /\s*<([^>]*)>((?:\s*;\s*[^\s;,=]+(?:\s*=\s*(?:"(?:[^"\\]|\\.)*"|[^\s;,"]*))?)*)\s*(?:,|$)/y;
-const LINK_PARAMETER = /;\s*([^\s;,=]+)(?:\s*=\s*("(?:[^"\\]|\\.)*"|[^\s;,"]*))?/g;
+/** Where a `link` token ends: whitespace or one of the header's separators. */
+const LINK_TOKEN_END = new Set([" ", "\t", ";", ",", "=", '"']);
 
-/** A `link` header's entries (RFC 8288), or null where it does not parse as one whole. */
+/**
+ * A `link` header's entries (RFC 8288), or null where it does not parse as one whole. A scan, one
+ * character at a time, rather than a regular expression: a nested quantifier over a vendor's header
+ * would backtrack exponentially (CodeQL on #192).
+ */
 function parseLinkHeader(value: string): LinkEntry[] | null {
   const entries: LinkEntry[] = [];
-  const entry = new RegExp(LINK_ENTRY);
-  while (entry.lastIndex < value.length) {
-    const from = entry.lastIndex;
-    const match = entry.exec(value);
-    if (!match || entry.lastIndex === from) return null;
-    const parameters = [...(match[2] ?? "").matchAll(LINK_PARAMETER)].map(
-      ([, name = "", raw]): LinkParameter => {
-        if (raw === undefined) return { name, value: null, quoted: false };
-        const quoted = raw.startsWith('"');
-        return { name, value: quoted ? raw.slice(1, -1).replace(/\\(.)/g, "$1") : raw, quoted };
-      },
-    );
-    entries.push({ target: match[1] ?? "", parameters });
+  let at = 0;
+  const skipSpace = () => {
+    while (value[at] === " " || value[at] === "\t") at += 1;
+  };
+  const token = (): string => {
+    const from = at;
+    while (at < value.length && !LINK_TOKEN_END.has(value[at] as string)) at += 1;
+    return value.slice(from, at);
+  };
+  while (true) {
+    skipSpace();
+    if (value[at] !== "<") return null;
+    const close = value.indexOf(">", at + 1);
+    if (close === -1) return null;
+    const entry: LinkEntry = { target: value.slice(at + 1, close), parameters: [] };
+    at = close + 1;
+    while (true) {
+      skipSpace();
+      if (value[at] !== ";") break;
+      at += 1;
+      skipSpace();
+      const name = token();
+      if (name === "") return null;
+      skipSpace();
+      if (value[at] !== "=") {
+        entry.parameters.push({ name, value: null, quoted: false });
+        continue;
+      }
+      at += 1;
+      skipSpace();
+      if (value[at] === '"') {
+        let text = "";
+        at += 1;
+        while (at < value.length && value[at] !== '"') {
+          if (value[at] === "\\") at += 1;
+          text += value[at] ?? "";
+          at += 1;
+        }
+        if (value[at] !== '"') return null;
+        at += 1;
+        entry.parameters.push({ name, value: text, quoted: true });
+      } else {
+        entry.parameters.push({ name, value: token(), quoted: false });
+      }
+    }
+    entries.push(entry);
+    if (at >= value.length) return entries;
+    if (value[at] !== ",") return null;
+    at += 1;
   }
-  return entries.length > 0 ? entries : null;
 }
 
 /** Whether a `link` parameter is a relation a client follows by name, and so kept. */
@@ -699,7 +783,10 @@ export function scrubRecording(recording: StockRecording, rule: ScrubRule): Stoc
   const input = within(
     "the input",
     () =>
-      scrubInput(recording.input, rule.inputSchema, scrub, rule.seed) as Record<string, unknown>,
+      scrubInput(recording.input, rule.inputSchema, rule.inputSchema, scrub, rule.seed) as Record<
+        string,
+        unknown
+      >,
   );
   const exchanges = recording.exchanges.map((exchange, index) => {
     const request = `exchange ${index + 1}'s request`;
