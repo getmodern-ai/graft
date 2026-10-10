@@ -1,0 +1,171 @@
+{
+  "format": 1,
+  "tool": "google-drive__search-files",
+  "recordedAt": "2026-10-09T18:46:10.246Z",
+  "input": {
+    "query": "report"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://www.googleapis.com/drive/v3/files?q=%28name+contains+%27report%27+or+fullText+contains+%27report%27%29+and+trashed%3Dfalse&pageSize=10&fields=files%28id%2Cname%2CmimeType%2CmodifiedTime%2CwebViewLink%29",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=UTF-8"
+        },
+        "body": {
+          "json": {
+            "files": [
+              {
+                "mimeType": "cwgzkxjbphb/erk",
+                "webViewLink": "https://drive.google.com/",
+                "id": "3plDCCXLPzN0kPobwDfCyBuX2WpbmRGjC",
+                "name": "eat529-ykjvhe.bjr",
+                "modifiedTime": "2000-02-12T20:31:23.487Z"
+              },
+              {
+                "mimeType": "batcsfihmmx/tqs.pmivxn-lacm.fwqxezsqqba",
+                "webViewLink": "https://docs.google.com/",
+                "id": "1i6w8hawt9px8Og-1gyl5mhIUCHFOO0COWd44XsbDX8x",
+                "name": "58 — Ioycqzm BX Dsgkxcxxzpis Npuiwvn Tqyhpip",
+                "modifiedTime": "2020-08-14T20:04:12.036Z"
+              },
+              {
+                "mimeType": "anfhliofllv/gcp.znlmsn-gkqg.zpnmwoxlnzzx",
+                "webViewLink": "https://docs.google.com/",
+                "id": "8bGplydKV4BlnRGz05jJ1xnY-2dcXSHRVmiKVj1Wl0yP",
+                "name": "781029 NwlsVJ Mdodrmsk - Uwnl",
+                "modifiedTime": "2005-10-11T20:59:27.219Z"
+              },
+              {
+                "mimeType": "batcsfihmmx/tqs.pmivxn-lacm.fwqxezsqqba",
+                "webViewLink": "https://docs.google.com/",
+                "id": "1Wl7N9SBmAxKjEQtpn66JTUcmg2QbOV9E5C8g67XF-Yn",
+                "name": "Gptg il [Ycuees Utgmmjxrqhey] Ags Phsomgeq",
+                "modifiedTime": "2005-11-14T22:32:25.727Z"
+              },
+              {
+                "mimeType": "bhsidvfnnry/evk.cogqxy-qwme.tegzflmb",
+                "webViewLink": "https://docs.google.com/",
+                "id": "2vePPQGZorcgC6gyTujD9t6rGEQic3gWH5TBAIP2Lwfi",
+                "name": "56 — Nblksnrq, Gdhu & Wfxf Elpcfcogsi",
+                "modifiedTime": "2006-09-07T15:04:44.304Z"
+              },
+              {
+                "mimeType": "pilowtrsbto/fmu.yzhisdrtroaniy-zhsayzurvblpss.pepmoqhhofvrlm.zbfgzdlzcdeb",
+                "webViewLink": "https://docs.google.com/",
+                "id": "02IZ1T1xkY_IRyhtaXggcwChouu4ju57H",
+                "name": "Lnblfj - Dumyf Nybbsc qddz Nvjodri + Kbygdzp Swdb Uqbxz.lglg",
+                "modifiedTime": "2013-01-12T08:13:02.243Z"
+              },
+              {
+                "mimeType": "bhsidvfnnry/evk.cogqxy-qwme.tegzflmb",
+                "webViewLink": "https://docs.google.com/",
+                "id": "3myMUpvQYmzffs9TQAX43WIrQZQb6KBhoe9ssGSAElcE",
+                "name": "Mlkdjirifxv Unaeoxljyz Fpeteyb",
+                "modifiedTime": "2007-07-21T04:19:47.151Z"
+              },
+              {
+                "mimeType": "bhsidvfnnry/evk.cogqxy-qwme.tegzflmb",
+                "webViewLink": "https://docs.google.com/",
+                "id": "1yFOpYP2GMIgYgaWonOr8FbrqnE1VD7gbypR3PTGKRrM",
+                "name": "81 — Njema Zopm: Vnddvfz Mfuuyccv Lctmgyr",
+                "modifiedTime": "2024-09-15T03:39:52.130Z"
+              },
+              {
+                "mimeType": "bhsidvfnnry/evk.cogqxy-qwme.tegzflmb",
+                "webViewLink": "https://docs.google.com/",
+                "id": "1B8hK8OfdsmPJkcP3hQzIZPydf81nD2kAurWQZ-xv_sD",
+                "name": "50 — YD Gxlklnlkmziv Jllazys & Vgwlpbyv Rzcrx",
+                "modifiedTime": "2029-11-27T02:33:57.989Z"
+              },
+              {
+                "mimeType": "kpwulygmree/wss.gzqgeodwjikqev-pkmcwgcfoftfch.siwnegufmmzpnomn.jajtszsp",
+                "webViewLink": "https://docs.google.com/",
+                "id": "7tPbTdfQTTz7dJvvfvLWgR63xfukAxDlc",
+                "name": "MCYZvdu0-587u9x3r-02bi-6l63-s837-ci0j9r4g4hza.xnzb",
+                "modifiedTime": "2012-10-22T15:28:09.149Z"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "files": [
+      {
+        "id": "3plDCCXLPzN0kPobwDfCyBuX2WpbmRGjC",
+        "name": "eat529-ykjvhe.bjr",
+        "mimeType": "cwgzkxjbphb/erk",
+        "modifiedTime": "2000-02-12T20:31:23.487Z",
+        "webViewLink": "https://drive.google.com/"
+      },
+      {
+        "id": "1i6w8hawt9px8Og-1gyl5mhIUCHFOO0COWd44XsbDX8x",
+        "name": "58 — Ioycqzm BX Dsgkxcxxzpis Npuiwvn Tqyhpip",
+        "mimeType": "batcsfihmmx/tqs.pmivxn-lacm.fwqxezsqqba",
+        "modifiedTime": "2020-08-14T20:04:12.036Z",
+        "webViewLink": "https://docs.google.com/"
+      },
+      {
+        "id": "8bGplydKV4BlnRGz05jJ1xnY-2dcXSHRVmiKVj1Wl0yP",
+        "name": "781029 NwlsVJ Mdodrmsk - Uwnl",
+        "mimeType": "anfhliofllv/gcp.znlmsn-gkqg.zpnmwoxlnzzx",
+        "modifiedTime": "2005-10-11T20:59:27.219Z",
+        "webViewLink": "https://docs.google.com/"
+      },
+      {
+        "id": "1Wl7N9SBmAxKjEQtpn66JTUcmg2QbOV9E5C8g67XF-Yn",
+        "name": "Gptg il [Ycuees Utgmmjxrqhey] Ags Phsomgeq",
+        "mimeType": "batcsfihmmx/tqs.pmivxn-lacm.fwqxezsqqba",
+        "modifiedTime": "2005-11-14T22:32:25.727Z",
+        "webViewLink": "https://docs.google.com/"
+      },
+      {
+        "id": "2vePPQGZorcgC6gyTujD9t6rGEQic3gWH5TBAIP2Lwfi",
+        "name": "56 — Nblksnrq, Gdhu & Wfxf Elpcfcogsi",
+        "mimeType": "bhsidvfnnry/evk.cogqxy-qwme.tegzflmb",
+        "modifiedTime": "2006-09-07T15:04:44.304Z",
+        "webViewLink": "https://docs.google.com/"
+      },
+      {
+        "id": "02IZ1T1xkY_IRyhtaXggcwChouu4ju57H",
+        "name": "Lnblfj - Dumyf Nybbsc qddz Nvjodri + Kbygdzp Swdb Uqbxz.lglg",
+        "mimeType": "pilowtrsbto/fmu.yzhisdrtroaniy-zhsayzurvblpss.pepmoqhhofvrlm.zbfgzdlzcdeb",
+        "modifiedTime": "2013-01-12T08:13:02.243Z",
+        "webViewLink": "https://docs.google.com/"
+      },
+      {
+        "id": "3myMUpvQYmzffs9TQAX43WIrQZQb6KBhoe9ssGSAElcE",
+        "name": "Mlkdjirifxv Unaeoxljyz Fpeteyb",
+        "mimeType": "bhsidvfnnry/evk.cogqxy-qwme.tegzflmb",
+        "modifiedTime": "2007-07-21T04:19:47.151Z",
+        "webViewLink": "https://docs.google.com/"
+      },
+      {
+        "id": "1yFOpYP2GMIgYgaWonOr8FbrqnE1VD7gbypR3PTGKRrM",
+        "name": "81 — Njema Zopm: Vnddvfz Mfuuyccv Lctmgyr",
+        "mimeType": "bhsidvfnnry/evk.cogqxy-qwme.tegzflmb",
+        "modifiedTime": "2024-09-15T03:39:52.130Z",
+        "webViewLink": "https://docs.google.com/"
+      },
+      {
+        "id": "1B8hK8OfdsmPJkcP3hQzIZPydf81nD2kAurWQZ-xv_sD",
+        "name": "50 — YD Gxlklnlkmziv Jllazys & Vgwlpbyv Rzcrx",
+        "mimeType": "bhsidvfnnry/evk.cogqxy-qwme.tegzflmb",
+        "modifiedTime": "2029-11-27T02:33:57.989Z",
+        "webViewLink": "https://docs.google.com/"
+      },
+      {
+        "id": "7tPbTdfQTTz7dJvvfvLWgR63xfukAxDlc",
+        "name": "MCYZvdu0-587u9x3r-02bi-6l63-s837-ci0j9r4g4hza.xnzb",
+        "mimeType": "kpwulygmree/wss.gzqgeodwjikqev-pkmcwgcfoftfch.siwnegufmmzpnomn.jajtszsp",
+        "modifiedTime": "2012-10-22T15:28:09.149Z",
+        "webViewLink": "https://docs.google.com/"
+      }
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "send-direct-message",
+  "description": "Sends a direct message in Slack mrkdwn to a person, named by email address, name, display name, username or user id; nothing needs looking up first. When a name matches several people it answers their ids, and find-user searches by part of a name.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "user": {
+        "type": "string",
+        "description": "The person's email address, name, display name, username, or Slack user ID."
+      },
+      "text": {
+        "type": "string",
+        "description": "The message in Slack mrkdwn."
+      }
+    },
+    "required": ["user", "text"],
+    "additionalProperties": false
+  },
+  "hosts": ["slack.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}
