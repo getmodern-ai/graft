@@ -1015,9 +1015,10 @@ adds optional `headers`, `method` (`GET`, or `POST`) and `body`, on the wire as 
 `GET`, `headers` a list of `{ name, value }` and `body` null; `proofReadProblems` refuses a
 credential-shaped name (`Authorization`, `Cookie`, `Host`, `Proxy-*`, `X-Graft-*`), a name that is
 not a token, a body on a `GET` and the caps (`MAX_PROOF_READ_HEADERS` and the two beside it), and
-`job.ts` refuses before any read a header the proxy would strip or the scheme sets
-(`@graft/proxy`'s `unforwardedRequestHeaderNames`, the outgoing policy itself, and the scheme's
-`headerNames`) and a `POST` its `classifyRequest` does not call a read, each as a failed read with
+`job.ts` refuses before any read a header the proxy would strip or the scheme sets over the
+caller's (`@graft/proxy`'s `unforwardedRequestHeaderNames`, the outgoing policy itself, and
+`schemeReplacedHeaderNames`, the scheme's `apply` over probe values, so a default it supplies only
+when the caller sends none stays the module's) and a `POST` its `classifyRequest` does not call a read, each as a failed read with
 the sentence. A preview the proxy answers anyway (`x-graft-dry-run: intercepted`) is a failed read,
 never a pass. Progress lines name the headers, never a value; the trace records each as
 `name: value` so the job's redaction reads it.

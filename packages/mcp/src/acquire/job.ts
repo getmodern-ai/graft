@@ -54,7 +54,7 @@ import { isVendorUnreachedReason, REFUSAL_HEADER } from "@graft/proxy/failure";
 import { unforwardedRequestHeaderNames } from "@graft/proxy/headers";
 import { classifyRequest, parseJsonBody } from "@graft/proxy/read-request";
 import { isRedirect } from "@graft/proxy/redirects";
-import { SCHEMES } from "@graft/proxy/schemes";
+import { schemeReplacedHeaderNames } from "@graft/proxy/schemes";
 import { isAuthScheme } from "@graft/proxy/types";
 import { forbiddenDraftFiles, type PublishArgs, type PublishOutcome } from "@graft/publish";
 import { BLOB_TTL_HOURS, blobIdOf } from "@graft/runner";
@@ -1880,7 +1880,8 @@ function refusedProofRead(read: ProofReadTarget, error: string): ProofRead {
  * A proof read carrying a header that would not reach the vendor as the read sets it (GRA-271): one
  * the proxy's outgoing policy strips or replaces (`unforwardedRequestHeaderNames`, the policy
  * itself rather than a copy of its lists), or one the connection's scheme sets over the caller's
- * (`SchemePlugin.headerNames`). Refused before it runs, since a read proven without the header
+ * (`schemeReplacedHeaderNames`, the scheme's own `apply` over probe values, so a default it only
+ * supplies when the caller sends none, Unleashed's `accept`, stays the module's). Refused before it runs, since a read proven without the header
  * proves nothing about it. `@graft/model`'s `proofReadProblems` refuses the credential-shaped
  * names at the answer; this is the rest. Null when every header would leave as written.
  */
@@ -1891,15 +1892,11 @@ function unforwardedProofHeaders(
   const names = Object.keys(read.headers ?? {});
   if (names.length === 0) return null;
   const stripped = new Set(unforwardedRequestHeaderNames(names));
-  let schemeSets: readonly string[] = [];
-  if (isAuthScheme(connection.scheme)) {
-    try {
-      schemeSets = SCHEMES[connection.scheme].headerNames(connection.schemeConfig ?? {});
-    } catch {
-      // A configuration the scheme cannot name headers for refuses the read itself when it runs.
-    }
-  }
-  const scheme = new Set(schemeSets.map((name) => name.toLowerCase()));
+  const scheme = new Set(
+    isAuthScheme(connection.scheme)
+      ? schemeReplacedHeaderNames(connection.scheme, connection.schemeConfig ?? {}, names)
+      : [],
+  );
   const refused = names.filter((name) => {
     const lower = name.toLowerCase();
     return stripped.has(lower) || scheme.has(lower);
