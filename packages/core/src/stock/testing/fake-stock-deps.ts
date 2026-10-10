@@ -61,6 +61,11 @@ export function createFakeStockCatalogue(): FakeStockCatalogue {
       current().filter((row) => row.tool.vendor === vendor),
     findCurrentStockTool: async (_db, key) =>
       current().find((row) => row.tool.vendor === key.vendor && row.tool.name === key.name) ?? null,
+    findStockToolVersionById: async (_db, stockVersionId) => {
+      const version = versions.get(stockVersionId);
+      const tool = version ? tools.get(version.stockToolId) : undefined;
+      return version && tool ? { tool, version } : null;
+    },
     newId: () => `stock_${++counter}`,
   };
   return { deps, tools, versions };

@@ -169,6 +169,20 @@ export async function describeStockTool(
 }
 
 /**
+ * One stock version by its id, as a person's copy recorded it, or null when the catalogue has no
+ * such version: the hosts a copy's run is judged by are its own version's, not the catalogue's
+ * current one's (GRA-241).
+ */
+export async function describeStockVersion(
+  ctx: ServiceContext,
+  stockVersionId: string,
+  deps: StockDeps,
+): Promise<StockToolView | null> {
+  const row = await deps.findStockToolVersionById(ctx.db, stockVersionId);
+  return row ? viewOf(row) : null;
+}
+
+/**
  * One integration's stock tools, by vendor slug, for the console (Setup v2): what each is called on
  * the wire, what it says it does, its annotations and the input it takes. No module, no hosts.
  */

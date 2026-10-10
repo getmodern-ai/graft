@@ -2,7 +2,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { checkModule } from "@graft/check";
-import { loadStockCatalogue } from "@graft/core";
+import {
+  createGatewayProvider,
+  keyringProvider,
+  loadStockCatalogue,
+  toProxyConnection,
+} from "@graft/core";
 import { createFakeStockCatalogue } from "@graft/core/stock/testing/fake-stock-deps";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -46,29 +51,86 @@ const AGENTS = {
 } as const;
 const tokenOf = (agent: string) => `grft_token_${agent}`.padEnd(46, "0");
 
+/**
+ * Connections matched by their hosts (GRA-241). One person holds a gateway connection under a slug
+ * of their company's and two keyring connections of Open-Meteo, every one reaching both hosts the
+ * manifest declares, with an agent per scope; another holds two keyring connections only, so their
+ * first run finds two matches the slug cannot separate.
+ */
+const BOTH_HOSTS = ["geocoding-api.open-meteo.com", "api.open-meteo.com"];
+const GATEWAY_URL = "https://gateway.corp.example/graft";
+const MULTI = {
+  person: "p_multi",
+  gateway: "conn_multi_gateway",
+  keyring: "conn_multi_keyring",
+  keyring2: "conn_multi_keyring2",
+  agents: {
+    gateway: "a_multi_gateway",
+    keyring: "a_multi_keyring",
+    both: "a_multi_both",
+  },
+} as const;
+const TIED = {
+  person: "p_tied",
+  first: "conn_tied_first",
+  second: "conn_tied_second",
+  agent: "a_tied",
+} as const;
+const gateway = createGatewayProvider({
+  hosts: BOTH_HOSTS,
+  upstreamUrl: GATEWAY_URL,
+  headerName: "X-Deployment-Token",
+  headerValue: "deployment-identity-secret-value",
+});
+
 const OWN_MODULE = "export default async () => ({ mine: true });\n";
 
 let sandbox: FakeSandboxBackend;
 let vendor: FakeVendor;
 let store: FakeStore;
 let deps: McpDeps;
+let catalogue: ReturnType<typeof createFakeStockCatalogue>;
+
+/** A person whose one connection reaches the hosts but cannot carry a call: its provider is gone. */
+const UNUSABLE = {
+  person: "p_unusable",
+  connection: "conn_unusable",
+  agent: "a_unusable",
+} as const;
 
 beforeAll(async () => {
   const keys = await generateTestKeys();
   const connected = Object.values(AGENTS).filter((entry) => entry.connection !== null);
+  const keyringRows = [
+    ...connected.map((entry) => ({ id: entry.connection as string, personId: entry.person })),
+    { id: MULTI.keyring, personId: MULTI.person },
+    { id: MULTI.keyring2, personId: MULTI.person },
+    { id: TIED.first, personId: TIED.person },
+    { id: TIED.second, personId: TIED.person },
+  ];
   vendor = await startFakeVendor({
     keys,
-    connections: connected.map((entry) => ({
-      id: entry.connection as string,
-      personId: entry.person,
+    connections: keyringRows.map((row) => ({
+      ...row,
       authScheme: "none",
       primaryHost: "https://api.open-meteo.com/v1",
       hosts: ["geocoding-api.open-meteo.com"],
       schemeConfig: {},
       credential: {},
     })),
+    // The gateway row resolves through the deployment's providers, so its calls relay (ADR 0019).
+    resolve: async (id) => {
+      const row = store.connections.get(id);
+      return row ? toProxyConnection(row, deps.connection.providers) : null;
+    },
     respond: (request) => {
-      const url = new URL(request.url);
+      const relayed = new URL(request.url);
+      // A relayed call names the vendor's host as the gateway's first path segment.
+      const url = request.url.startsWith(`${GATEWAY_URL}/`)
+        ? new URL(
+            `https://${relayed.pathname.slice(new URL(GATEWAY_URL).pathname.length + 1)}${relayed.search}`,
+          )
+        : relayed;
       if (url.hostname === "geocoding-api.open-meteo.com") {
         return Response.json({
           results: [
@@ -115,6 +177,43 @@ beforeAll(async () => {
       connectionIds: entry.connection ? [entry.connection] : [],
     });
   }
+  const addMeteo = (id: string, personId: string, slug = "open-meteo") =>
+    store.addConnection({
+      id,
+      personId,
+      vendor: slug,
+      displayName: id,
+      scheme: "none",
+      primaryHost: "https://api.open-meteo.com/v1",
+      hosts: ["geocoding-api.open-meteo.com"],
+    });
+  const gatewayRow = addMeteo(MULTI.gateway, MULTI.person, "corp-weather");
+  gatewayRow.provider = "gateway";
+  gatewayRow.scheme = "gateway";
+  gatewayRow.schemeConfig = {};
+  gatewayRow.credentialSetAt = null;
+  addMeteo(MULTI.keyring, MULTI.person);
+  addMeteo(MULTI.keyring2, MULTI.person);
+  addMeteo(TIED.first, TIED.person);
+  addMeteo(TIED.second, TIED.person);
+  addMeteo(UNUSABLE.connection, UNUSABLE.person).provider = "retired-provider";
+  const scopes: [string, string, string[]][] = [
+    [MULTI.agents.gateway, MULTI.person, [MULTI.gateway]],
+    [MULTI.agents.keyring, MULTI.person, [MULTI.keyring]],
+    [MULTI.agents.both, MULTI.person, [MULTI.keyring, MULTI.keyring2]],
+    [TIED.agent, TIED.person, [TIED.first, TIED.second]],
+    [UNUSABLE.agent, UNUSABLE.person, [UNUSABLE.connection]],
+  ];
+  for (const [agent, personId, connectionIds] of scopes) {
+    store.addAgent({
+      scopeMode: "listed",
+      id: agent,
+      personId,
+      token: tokenOf(agent),
+      connectionIds,
+    });
+  }
+
   // The owner authored a tool of the stock tool's name before stock existed: it shadows stock.
   const own = join(sandbox.toolboxRoot(AGENTS.owner.person), "tools/open-meteo/current-weather/v1");
   await mkdir(own, { recursive: true });
@@ -133,7 +232,7 @@ beforeAll(async () => {
   });
 
   // The catalogue as the boot loads it: the workspace, the real check, an in-memory catalogue.
-  const catalogue = createFakeStockCatalogue();
+  catalogue = createFakeStockCatalogue();
   const fake = createFakeDeps(store);
   const report = await loadStockCatalogue(
     { db: fake.db },
@@ -146,6 +245,7 @@ beforeAll(async () => {
   const toolbox = createFilesystemToolboxStore({ root: join(sandbox.root, "toolboxes") });
   deps = {
     ...fake,
+    connection: { ...fake.connection, providers: [gateway, keyringProvider] },
     inFlight: createInFlightRegistry(),
     sandbox,
     keys,
@@ -375,6 +475,145 @@ describe("a person's own tool of the same name", () => {
       expect(body(result)).toEqual({ mine: true });
       expect(copyOf(AGENTS.owner.person).versions[0]?.stockVersionId).toBeNull();
     } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("a stock tool matches a connection by its hosts (GRA-241)", () => {
+  const run = (harness: Awaited<ReturnType<typeof connect>>, extra: Record<string, unknown> = {}) =>
+    harness.call("run_tool", { ...KEY, input: { city: "Perth" }, ...extra });
+  const lastEventOf = (connectionId: string) =>
+    vendor.events.filter((event) => event.connectionId === connectionId).at(-1);
+
+  it("finds and runs over a gateway connection under another slug whose hosts cover the manifest", async () => {
+    const harness = await connect(MULTI.agents.gateway);
+    try {
+      const [hit] = body(await harness.call("find_tool", { query: "current weather" }))
+        .tools as Record<string, unknown>[];
+      expect(hit).toMatchObject({ tool: WIRE, stock: true, connectionIds: [MULTI.gateway] });
+
+      const result = await run(harness);
+      expect(result.isError ?? false, JSON.stringify(body(result))).toBe(false);
+      expect(body(result)).toMatchObject({ found: true, city: "Perth" });
+      expect(lastEventOf(MULTI.gateway)).toMatchObject({ relay: "gateway", outcome: "forwarded" });
+      expect(vendor.requests.at(-1)?.url).toMatch(`${GATEWAY_URL}/api.open-meteo.com/`);
+      expect(copyOf(MULTI.person).tool?.defaultConnectionId).toBe(MULTI.gateway);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("runs the same copy over a keyring connection with the same hosts for an agent holding that one", async () => {
+    const harness = await connect(MULTI.agents.keyring);
+    try {
+      const result = await run(harness);
+      expect(result.isError ?? false, JSON.stringify(body(result))).toBe(false);
+      expect(body(result)).toMatchObject({ found: true, city: "Perth" });
+      expect(lastEventOf(MULTI.keyring)).toMatchObject({ outcome: "forwarded" });
+      // Followed for this agent; the person's copy stays bound where it was.
+      expect(copyOf(MULTI.person).tool?.defaultConnectionId).toBe(MULTI.gateway);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses a connectionId outside the agent's scope with the scope refusal", async () => {
+    const harness = await connect(MULTI.agents.keyring);
+    try {
+      const result = await run(harness, { connectionId: MULTI.gateway });
+      expect(result.isError).toBe(true);
+      expect(body(result)).toMatchObject({ reason: "connection_not_in_scope" });
+      expect(body(result).message).toContain(MULTI.gateway);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("refuses with alternatives where two connections match and none is named, and runs over the one named", async () => {
+    const harness = await connect(MULTI.agents.both);
+    try {
+      const refused = await run(harness);
+      expect(refused.isError).toBe(true);
+      expect(body(refused)).toMatchObject({
+        reason: "connection_not_in_scope",
+        alternatives: [{ connectionId: MULTI.keyring }, { connectionId: MULTI.keyring2 }],
+      });
+
+      const named = await run(harness, { connectionId: MULTI.keyring2 });
+      expect(named.isError ?? false, JSON.stringify(body(named))).toBe(false);
+      expect(body(named)).toMatchObject({ found: true, city: "Perth" });
+      expect(lastEventOf(MULTI.keyring2)).toMatchObject({ outcome: "forwarded" });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("copies with no default on a first run that finds two matches, refuses with alternatives, and runs over the one named", async () => {
+    const harness = await connect(TIED.agent);
+    try {
+      const [hit] = body(await harness.call("find_tool", { query: "current weather" }))
+        .tools as Record<string, unknown>[];
+      expect(hit).toMatchObject({ connectionIds: [TIED.first, TIED.second] });
+
+      const refused = await run(harness);
+      expect(refused.isError).toBe(true);
+      expect(body(refused)).toMatchObject({
+        reason: "connection_ambiguous",
+        alternatives: [{ connectionId: TIED.first }, { connectionId: TIED.second }],
+      });
+      expect(copyOf(TIED.person).tool?.defaultConnectionId).toBeNull();
+
+      const named = await run(harness, { connectionId: TIED.second });
+      expect(named.isError ?? false, JSON.stringify(body(named))).toBe(false);
+      expect(body(named)).toMatchObject({ found: true, city: "Perth" });
+      expect(lastEventOf(TIED.second)).toMatchObject({ outcome: "forwarded" });
+    } finally {
+      await harness.close();
+    }
+  });
+});
+
+describe("a copy's connections are judged as the copy runs (Greptile on #185)", () => {
+  const run = (harness: Awaited<ReturnType<typeof connect>>, extra: Record<string, unknown> = {}) =>
+    harness.call("run_tool", { ...KEY, input: { city: "Perth" }, ...extra });
+
+  it("refuses a named connection that cannot carry a call, and copies nothing", async () => {
+    const harness = await connect(UNUSABLE.agent);
+    try {
+      const result = await run(harness, { connectionId: UNUSABLE.connection });
+      expect(result.isError).toBe(true);
+      expect(body(result)).toMatchObject({
+        reason: "connection_unusable",
+        connectionId: UNUSABLE.connection,
+      });
+      expect(copyOf(UNUSABLE.person).tool).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("judges an older copy by its own stock version's hosts after the catalogue moves on", async () => {
+    // Every version this file loaded is the one the copies above recorded; a later version calls a
+    // host none of the person's connections reach.
+    const current = [...catalogue.versions.values()].sort(
+      (a, b) => b.versionNumber - a.versionNumber,
+    )[0];
+    if (!current) throw new Error("no catalogue version");
+    catalogue.versions.set("stock_v_later", {
+      ...current,
+      id: "stock_v_later",
+      versionNumber: current.versionNumber + 1,
+      sourceHash: `${current.sourceHash}-later`,
+      hosts: [...current.hosts, "extra.open-meteo.example"],
+    });
+    const harness = await connect(MULTI.agents.both);
+    try {
+      const named = await run(harness, { connectionId: MULTI.keyring2 });
+      expect(named.isError ?? false, JSON.stringify(body(named))).toBe(false);
+      expect(body(named)).toMatchObject({ found: true, city: "Perth" });
+    } finally {
+      catalogue.versions.delete("stock_v_later");
       await harness.close();
     }
   });
