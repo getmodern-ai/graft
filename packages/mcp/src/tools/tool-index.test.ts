@@ -1,3 +1,4 @@
+import { STARTER_VENDORS } from "@graft/core";
 import { readStockWorkspace } from "@graft/stock";
 import { describe, expect, it } from "vitest";
 
@@ -335,5 +336,51 @@ describe("the stock catalogue's real queries", async () => {
     ["react with an emoji", "slack__add-reaction"],
   ])('"%s" finds %s first', (query, wire) => {
     expect(first(query)).toBe(wire);
+  });
+});
+
+/**
+ * HubSpot's stock tools as they ship (GRA-254): each is found first by a query a person would use
+ * for it, searched over every stock tool at once with the integrations' display names, as
+ * `find_tool` searches them (`meta.ts`).
+ */
+describe("HubSpot's stock tools (GRA-254)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const QUERIES: [query: string, wire: string][] = [
+    ["find a contact", "hubspot__find-contact"],
+    ["look up a contact by email", "hubspot__find-contact"],
+    ["search hubspot contacts", "hubspot__find-contact"],
+    ["find a deal", "hubspot__find-deal"],
+    ["search deals", "hubspot__find-deal"],
+    ["get a deal with its contacts", "hubspot__get-record"],
+    ["list owners", "hubspot__list-owners"],
+    ["list hubspot owners", "hubspot__list-owners"],
+    ["list pipelines", "hubspot__list-pipelines"],
+    ["list pipeline stages", "hubspot__list-pipelines"],
+    ["show deal pipelines", "hubspot__list-pipelines"],
+    ["create a contact", "hubspot__create-contact"],
+    ["add a contact to hubspot", "hubspot__create-contact"],
+    ["create a company", "hubspot__create-company"],
+    ["create a deal", "hubspot__create-deal"],
+    ["move a deal to another stage", "hubspot__update-record"],
+    ["update a contact", "hubspot__update-record"],
+    ["add a note to a contact", "hubspot__add-note"],
+    ["log a note on a deal", "hubspot__add-note"],
+    ["create a task", "hubspot__create-task"],
+    ["remind me to call a contact", "hubspot__create-task"],
+  ];
+
+  it.each(QUERIES)('"%s" finds %s first', async (query, wire) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    expect(first && `${first.vendor}__${first.name}`).toBe(wire);
   });
 });

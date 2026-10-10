@@ -1,0 +1,48 @@
+{
+  "name": "create-contact",
+  "description": "Creates a HubSpot contact from an email address, with optional name, phone, company, job title and owner (an id from hubspot__list-owners), and optionally associates it with a company (a company id from hubspot__get-record).",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "email": {
+        "type": "string",
+        "description": "The contact's email address."
+      },
+      "firstName": {
+        "type": "string",
+        "description": "The contact's first name."
+      },
+      "lastName": {
+        "type": "string",
+        "description": "The contact's last name."
+      },
+      "phone": {
+        "type": "string",
+        "description": "The contact's phone number."
+      },
+      "company": {
+        "type": "string",
+        "description": "The contact's company name."
+      },
+      "jobTitle": {
+        "type": "string",
+        "description": "The contact's job title."
+      },
+      "ownerId": {
+        "type": "string",
+        "description": "A HubSpot owner ID from hubspot__list-owners."
+      },
+      "companyId": {
+        "type": "string",
+        "description": "A company id to associate the contact with, from the associations hubspot__get-record answers."
+      }
+    },
+    "required": ["email"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.hubapi.com"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

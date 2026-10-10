@@ -139,7 +139,10 @@ export const STARTER_VENDORS = [
     scheme: "oauth_authorization_code",
     schemeConfig: {
       ...GOOGLE_OAUTH,
-      scopes: "https://www.googleapis.com/auth/calendar.readonly",
+      // The stock tools write events (create, update, delete, respond), so the consent asks for
+      // event writes beside the read-only calendar list (GRA-249).
+      scopes:
+        "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events",
     },
     goal: "Show me what is on my calendar this week",
     hints:
@@ -171,7 +174,9 @@ export const STARTER_VENDORS = [
     scheme: "oauth_authorization_code",
     schemeConfig: {
       ...GOOGLE_OAUTH,
-      scopes: "https://www.googleapis.com/auth/drive.metadata.readonly",
+      // `drive`, not a read-only scope: the stock tools (ADR 0025) read content, create folders,
+      // move and share, and a starter asks for what its stock tools need; each write still asks.
+      scopes: "https://www.googleapis.com/auth/drive",
     },
     // Listing files needs nothing looked up; a spreadsheet's rows need its id and a range, and the
     // Google Sheets starter's first run failed on both (GRA-217).
@@ -455,4 +460,24 @@ export function setupVendorOptions(covered: readonly CoveredStarter[]): SetupVen
         CONNECT_RANK[a.option.connect] - CONNECT_RANK[b.option.connect] || a.index - b.index,
     )
     .map(({ option }) => option);
+}
+
+/**
+ * The scopes a consent asks for on a connection (GRA-249, Greptile on #194): the row's own, and
+ * where the row is a starter's vendor consenting at the starter's own authorize endpoint, the
+ * starter's scopes beside them, so a connection made while the starter asked for less (Google
+ * Calendar before its stock tools wrote events) is upgraded by connecting it again. A row at
+ * another endpoint, or of another vendor, asks for exactly its own.
+ */
+export function consentScopesFor(
+  vendor: string,
+  authorizeUrl: string | undefined,
+  scopes: string | undefined,
+): string | undefined {
+  const starter = starterVendorFor(vendor);
+  const config = starter?.schemeConfig as { authorizeUrl?: string; scopes?: string } | undefined;
+  if (!config?.scopes || !authorizeUrl || config.authorizeUrl !== authorizeUrl) return scopes;
+  const own = scopes?.trim() ? scopes.trim().split(/\s+/) : [];
+  const union = [...own, ...config.scopes.split(/\s+/).filter((scope) => !own.includes(scope))];
+  return union.join(" ");
 }

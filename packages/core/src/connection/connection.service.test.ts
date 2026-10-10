@@ -137,6 +137,7 @@ function fakeDeps(overrides: Partial<ConnectionDeps> = {}): ConnectionDeps {
       hosts: [...row.hosts, ...hosts.filter((host) => !row.hosts.includes(host))],
     })),
     deleteApprovalsForVendor: vi.fn(async () => [{}, {}] as never),
+    deleteVendorApprovalsForVendor: vi.fn(async () => [{}] as never),
     deleteBuildApprovalsForConnection: vi.fn(async () => [{}] as never),
     expirePendingActionsForConnection: vi.fn(async () => [{}, {}, {}] as never),
     deleteWorkingSetEntriesForConnection: vi.fn(async () => []),
@@ -1063,6 +1064,12 @@ describe("revokeConnection", () => {
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(deps.revokeConnection).toHaveBeenCalledWith(fakeDb, "person_1", "conn_1", NOW);
     expect(deps.deleteApprovalsForVendor).toHaveBeenCalledWith(fakeDb, "person_1", "unleashed");
+    // ADR 0008 as amended 2026-10-09 (GRA-237): the integration's standing approvals go with them.
+    expect(deps.deleteVendorApprovalsForVendor).toHaveBeenCalledWith(
+      fakeDb,
+      "person_1",
+      "unleashed",
+    );
     expect(deps.deleteBuildApprovalsForConnection).toHaveBeenCalledWith(
       fakeDb,
       "person_1",
@@ -1078,6 +1085,7 @@ describe("revokeConnection", () => {
     );
     expect(result).toMatchObject({
       approvalsDeleted: 2,
+      vendorApprovalsDeleted: 1,
       buildApprovalsDeleted: 1,
       pendingActionsExpired: 3,
       demoted: [],
@@ -1306,6 +1314,38 @@ describe("the consent", () => {
     expect(started.expiresAt).toEqual(new Date(NOW.getTime() + OAUTH_STATE_TTL_MS));
     expect(JSON.stringify(started.connection)).not.toContain(written.pkce.verifier);
     expect(started.connection.oauth?.status).toBe("awaiting_consent");
+  });
+
+  it("connecting a starter's row again asks for the starter's scopes beside the row's own, so a read-only Calendar grant is upgraded", async () => {
+    const scopeOf = async (overrides: Partial<ConnectionRow>) => {
+      const deps = oauthDeps({
+        findConnection: vi.fn(async () => ({ ...oauthRow, ...overrides })),
+      });
+      const started = await startOAuthConsent(
+        ctx,
+        PRINCIPAL,
+        "conn_o",
+        { redirectUri: REDIRECT, secret: SECRET },
+        deps,
+      );
+      return new URL(started.authorizeUrl).searchParams.get("scope");
+    };
+    const readOnly = {
+      ...oauthRow.schemeConfig,
+      scopes: "https://www.googleapis.com/auth/calendar.readonly",
+    };
+
+    expect(await scopeOf({ vendor: "google-calendar", schemeConfig: readOnly })).toBe(
+      "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events",
+    );
+    // Another vendor's row, or the starter's vendor at another endpoint, asks for its own alone.
+    expect(await scopeOf({ vendor: "acme", schemeConfig: readOnly })).toBe(readOnly.scopes);
+    expect(
+      await scopeOf({
+        vendor: "google-calendar",
+        schemeConfig: { ...readOnly, authorizeUrl: "https://idp.example.com/authorize" },
+      }),
+    ).toBe(readOnly.scopes);
   });
 
   it("starting again keeps what is known about the consent and replaces the verifier", async () => {
