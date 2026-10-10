@@ -765,12 +765,6 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
     findConnectionForUpdate: connection.findConnectionForUpdate,
     // The store has no concurrent transactions; `copy-stock.test.ts` races with a lock that holds.
     lockToolName: async () => {},
-    deleteUnversionedTool: async (_db, personId, id) => {
-      const row = store.tools.get(id);
-      if (!row || row.personId !== personId || row.currentVersionId) return false;
-      if ([...store.versions.values()].some((version) => version.toolId === id)) return false;
-      return store.tools.delete(id);
-    },
     newId: store.newId,
     now: store.now,
   };

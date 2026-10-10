@@ -73,12 +73,12 @@ describe("copyStockVersion", () => {
     expect(copied.currentVersionId).toBe(version?.id);
     expect(version).toMatchObject({
       versionNumber: 1,
-      path: "tools/open-meteo/current-weather/v1",
+      path: expect.stringMatching(/^tools\/open-meteo\/current-weather\/w-/),
       stockToolId: "stock_weather",
       stockVersionId: "stock_weather_v3",
       writesInvolved: false,
     });
-    const files = await deps.store.readTree(PERSON, "tools/open-meteo/current-weather/v1");
+    const files = await deps.store.readTree(PERSON, version?.path ?? "");
     expect(files.map((file) => file.path).sort()).toEqual(["index.ts"]);
   });
 
@@ -114,13 +114,13 @@ describe("copyStockVersion", () => {
     expect(tool.tools).toHaveLength(1);
     expect(tool.versions).toHaveLength(1);
     const winner = tool.versions[0]?.stockVersionId === newer.stockVersionId ? newer : STOCK;
-    const files = await deps.store.readTree(PERSON, "tools/open-meteo/current-weather/v1");
+    const files = await deps.store.readTree(PERSON, tool.versions[0]?.path ?? "");
     expect(files.find((file) => file.path === "index.ts")?.content).toBe(winner.files[0]?.content);
   });
 
   it.each([
     ["the two started together", false],
-    ["the copy arriving while the publish writes the directory it reserved", true],
+    ["the copy arriving while the publish writes its directory", true],
   ])(
     "serialises a publish and a first copy of the same name, %s: neither writes another's directory",
     async (_case, midPublish) => {
@@ -222,9 +222,7 @@ describe("copyStockVersion", () => {
       defaultConnectionId: null,
     });
     await vi.waitFor(() => expect(events).toHaveLength(1));
-    expect(mirror.calls).toEqual([
-      { toolboxId: PERSON, versionPath: "tools/open-meteo/current-weather/v1" },
-    ]);
+    expect(mirror.calls).toEqual([{ toolboxId: PERSON, versionPath: tool.versions[0]?.path }]);
     expect(events[0]).toMatchObject({
       outcome: "mirrored",
       personId: PERSON,

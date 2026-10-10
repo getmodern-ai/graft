@@ -122,12 +122,6 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
       ({ id, personId, revokedAt: null }) as never,
     // One process and no concurrent transactions; a race test brings a lock that holds.
     lockToolName: async () => {},
-    deleteUnversionedTool: async (_db, personId, id) => {
-      const tool = own(personId, id);
-      if (!tool || tool.currentVersionId || versions.some((row) => row.toolId === id)) return false;
-      tools.splice(tools.indexOf(tool), 1);
-      return true;
-    },
   };
 }
 

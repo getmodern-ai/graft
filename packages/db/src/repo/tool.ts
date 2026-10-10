@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { DbOrTx } from "../index";
 import {
@@ -111,35 +111,6 @@ export async function updateAuthoredTool(
     .where(and(eq(authoredTool.id, id), eq(authoredTool.personId, personId)))
     .returning();
   return row ?? null;
-}
-
-/**
- * Withdraw a tool row a first publish reserved and could not fill (an install refused): deleted only
- * while it has no pointer and no version, so nothing a run, a version or a history names is ever
- * removed (ADR 0009). Answers whether a row went.
- */
-export async function deleteUnversionedAuthoredTool(
-  db: DbOrTx,
-  personId: string,
-  id: string,
-): Promise<boolean> {
-  const rows = await db
-    .delete(authoredTool)
-    .where(
-      and(
-        eq(authoredTool.id, id),
-        eq(authoredTool.personId, personId),
-        isNull(authoredTool.currentVersionId),
-        notExists(
-          db
-            .select({ id: toolVersion.id })
-            .from(toolVersion)
-            .where(eq(toolVersion.toolId, authoredTool.id)),
-        ),
-      ),
-    )
-    .returning({ id: authoredTool.id });
-  return rows.length > 0;
 }
 
 export async function insertToolVersion(

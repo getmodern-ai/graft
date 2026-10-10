@@ -1,6 +1,5 @@
 import { findConnection, findConnectionForUpdate } from "@graft/db/repo/connection";
 import {
-  deleteUnversionedAuthoredTool,
   findAuthoredTool,
   findAuthoredToolById,
   findToolVersion,
@@ -35,12 +34,10 @@ export type ToolDeps = {
   findConnectionForUpdate: typeof findConnectionForUpdate;
   /**
    * The person's lock on one tool name for the transaction (`repo/tool.ts`): a publish and a stock
-   * copy take it before they decide a version number and write its files (GRA-238), so neither
-   * overwrites the other's directory.
+   * copy take it while they write a tool's rows (GRA-238), so the version numbers of one tool are
+   * decided one writer at a time and a copy sees a tool another writer just made.
    */
   lockToolName: typeof lockAuthoredToolName;
-  /** A first publish's reserved row withdrawn when its install is refused (`publish.service.ts`). */
-  deleteUnversionedTool: typeof deleteUnversionedAuthoredTool;
   newId: () => string;
   now: () => Date;
 };
@@ -59,7 +56,6 @@ export const defaultToolDeps: ToolDeps = {
   findConnection,
   findConnectionForUpdate,
   lockToolName: lockAuthoredToolName,
-  deleteUnversionedTool: deleteUnversionedAuthoredTool,
   newId: () => crypto.randomUUID(),
   now: () => new Date(),
 };

@@ -152,11 +152,10 @@ export async function createTool(
 }
 
 /**
- * The number the tool's next version will carry: one past the latest, one for a tool with none. The
- * publish asks before it writes, because the number names the version's directory in the toolbox
- * (`@graft/toolbox`'s `versionPath`) and the directory is written before the row. `addToolVersion`
- * asks again inside its transaction, so the row's number is read at insert time and not trusted from
- * the caller. Null when the tool is not the person's.
+ * The number the tool's next version will carry: one past the latest, one for a tool with none.
+ * `addToolVersion` asks inside its transaction, so the row's number is read at insert time and not
+ * trusted from the caller; a version's directory is its writer's own and is not named by it
+ * (`@graft/toolbox`'s `writePath`, GRA-238). Null when the tool is not the person's.
  */
 export async function nextVersionNumber(
   ctx: ServiceContext,
@@ -170,9 +169,9 @@ export async function nextVersionNumber(
 }
 
 /**
- * Add a version: the next number after the latest, never a gap and never a reuse. Two publishes
- * racing for the same tool both read the same latest and the unique constraint refuses the second,
- * which surfaces as the database's error rather than a version claiming another's directory.
+ * Add a version: the next number after the latest, never a gap and never a reuse. The publish and
+ * the stock copy call it under the person's lock on the tool's name (`ToolDeps.lockToolName`), so two
+ * racing for one tool take two numbers; without the lock the unique constraint refuses the second.
  */
 export async function addToolVersion(
   ctx: ServiceContext,

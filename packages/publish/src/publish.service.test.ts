@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { checkModule, readModuleSources } from "@graft/check";
-import { TOOL_DESCRIPTION_MAX_LENGTH } from "@graft/core";
+import { type StockToolView, TOOL_DESCRIPTION_MAX_LENGTH } from "@graft/core";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox/fake";
 import type { InstallArgs, SandboxProcessResult } from "@graft/sandbox/types";
 import {
@@ -58,6 +58,22 @@ const ADMITTED: PackageMetadata = {
   hasProvenance: true,
 };
 
+/** A stock tool's current version, as the catalogue hands it to a copy (GRA-238). */
+const STOCK_WEATHER: StockToolView = {
+  stockToolId: "stock_weather",
+  stockVersionId: "stock_weather_v1",
+  versionNumber: 1,
+  vendor: "open-meteo",
+  name: "current-weather",
+  description: "The weather right now in a named city.",
+  inputSchema: { type: "object" },
+  annotations: { readOnly: true, destructive: false },
+  hosts: ["api.open-meteo.com"],
+  files: [{ path: "index.ts", content: "export default async () => ({ ok: true });\n" }],
+  checkOutput: {},
+  connect: null,
+};
+
 async function readFixture(name: string): Promise<ToolboxFile[]> {
   const dir = join(FIXTURES, name);
   const names = (await readdir(dir)).filter((file) => file !== "schema.json").sort();
@@ -84,8 +100,10 @@ type Harness = {
 };
 
 let h: Harness;
+let writes = 0;
 
 beforeEach(async () => {
+  writes = 0;
   const sandbox = createFakeSandboxBackend();
   const store = createFilesystemToolboxStore({ root: join(sandbox.root, "toolboxes") });
   const tool = createInMemoryToolDeps({ now: () => NOW });
@@ -121,6 +139,8 @@ beforeEach(async () => {
       check: checkModule,
       now: () => NOW,
       onMirror: (event) => mirrorEvents.push(event),
+      // Each write's directory numbered in the order written, so a path reads as `w-<n>`.
+      writeId: () => `${++writes}`,
     },
   };
 });
@@ -161,7 +181,7 @@ describe("a module with no dependencies", () => {
 
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
-    expect(result.version.path).toBe("tools/demo/hello/v1");
+    expect(result.version.path).toBe("tools/demo/hello/w-1");
     expect(result.version.versionNumber).toBe(1);
     expect(result.version.sourceHash).toBe(sourceHashOf(files));
     expect(result.version.lockfileHash).toBeNull();
@@ -187,7 +207,7 @@ describe("a module with no dependencies", () => {
       currentVersionId: result.version.id,
     });
 
-    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/v1")).toEqual(files);
+    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/w-1")).toEqual(files);
     expect(h.install).not.toHaveBeenCalled();
     expect(h.metadata.lookups).toEqual([]);
     // The draft is the job's; the publish leaves it for a republish.
@@ -203,7 +223,7 @@ describe("a module with no dependencies", () => {
     const result = await publish({ draftPath: ".drafts/job1/tool.ts" });
 
     expect(result.ok, JSON.stringify(result)).toBe(true);
-    expect((await h.store.readTree(TOOLBOX, "tools/demo/hello/v1")).map((f) => f.path)).toEqual([
+    expect((await h.store.readTree(TOOLBOX, "tools/demo/hello/w-1")).map((f) => f.path)).toEqual([
       "index.ts",
     ]);
   });
@@ -239,19 +259,19 @@ describe("a module with no dependencies", () => {
 
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
-    expect(result.version.path).toBe("tools/demo/hello/v2");
+    expect(result.version.path).toBe("tools/demo/hello/w-2");
     expect(result.version.versionNumber).toBe(2);
     expect(result.tool.currentVersionId).toBe(result.version.id);
     expect(result.tool.description).toBe("Greets a name through the vendor, politely");
 
     expect(h.tool.tools).toHaveLength(1);
     expect(h.tool.versions.map((v) => v.path)).toEqual([
-      "tools/demo/hello/v1",
-      "tools/demo/hello/v2",
+      "tools/demo/hello/w-1",
+      "tools/demo/hello/w-2",
     ]);
-    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/v1")).toEqual(first);
-    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/v2")).toEqual(second);
-    expect(await h.store.list(TOOLBOX, "tools/demo/hello")).toEqual(["v1", "v2"]);
+    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/w-1")).toEqual(first);
+    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/w-2")).toEqual(second);
+    expect(await h.store.list(TOOLBOX, "tools/demo/hello")).toEqual(["w-1", "w-2"]);
   });
 
   it("puts the check's annotations on the tool row: a write is not read-only, a delete is destructive", async () => {
@@ -286,7 +306,7 @@ describe("a module with no dependencies", () => {
 
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
-    expect(result.version).toMatchObject({ path: "tools/demo/hello/v1", versionNumber: 1 });
+    expect(result.version).toMatchObject({ path: "tools/demo/hello/w-1", versionNumber: 1 });
     expect(result.tool).toMatchObject({
       vendor: "demo",
       name: "hello",
@@ -297,13 +317,13 @@ describe("a module with no dependencies", () => {
       currentVersionId: null,
     });
     expect(h.tool.tools[0]?.currentVersionId).toBeNull();
-    expect(h.tool.versions.map((v) => v.path)).toEqual(["tools/demo/hello/v1"]);
-    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/v1")).toEqual(files);
+    expect(h.tool.versions.map((v) => v.path)).toEqual(["tools/demo/hello/w-1"]);
+    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/w-1")).toEqual(files);
     // The mirror is still told: the version is in the toolbox whether or not it is current.
     await vi.waitFor(() => expect(h.mirrorEvents).toHaveLength(1));
     expect(h.mirrorEvents[0]).toMatchObject({
       outcome: "mirrored",
-      versionPath: "tools/demo/hello/v1",
+      versionPath: "tools/demo/hello/w-1",
     });
   });
 
@@ -324,7 +344,7 @@ describe("a module with no dependencies", () => {
 
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
-    expect(result.version).toMatchObject({ path: "tools/demo/hello/v2", versionNumber: 2 });
+    expect(result.version).toMatchObject({ path: "tools/demo/hello/w-2", versionNumber: 2 });
     expect(result.tool).toMatchObject({
       description: "Greets a name through the vendor",
       inputSchema: HELLO_SCHEMA,
@@ -335,10 +355,10 @@ describe("a module with no dependencies", () => {
       currentVersionId: activated.version.id,
     });
     expect(h.tool.versions.map((v) => v.path)).toEqual([
-      "tools/demo/hello/v1",
-      "tools/demo/hello/v2",
+      "tools/demo/hello/w-1",
+      "tools/demo/hello/w-2",
     ]);
-    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/v2")).toEqual(second);
+    expect(await h.store.readTree(TOOLBOX, "tools/demo/hello/w-2")).toEqual(second);
   });
 
   it("under activate: false, a republish onto a tool whose default connection is revoked rebinds it to this publish's and leaves the rest where it was; a live default waits for the pass (GRA-122)", async () => {
@@ -380,7 +400,7 @@ describe("a module with no dependencies", () => {
     });
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) return;
-    expect(result.version).toMatchObject({ path: "tools/demo/hello/v3", versionNumber: 3 });
+    expect(result.version).toMatchObject({ path: "tools/demo/hello/w-3", versionNumber: 3 });
     expect(result.tool).toMatchObject({
       defaultConnectionId: "conn_new",
       description: "Greets a name through the vendor",
@@ -450,14 +470,14 @@ describe("a module declaring packages", () => {
     expect(h.install).toHaveBeenCalledTimes(1);
     expect(h.install).toHaveBeenCalledWith({
       toolboxId: TOOLBOX,
-      versionPath: "tools/demo/issues/v1",
+      versionPath: "tools/demo/issues/w-1",
     });
     expect(result.version.lockfileHash).toBe(
-      sha256Hex('{"lockfileVersion":3,"for":"tools/demo/issues/v1"}'),
+      sha256Hex('{"lockfileVersion":3,"for":"tools/demo/issues/w-1"}'),
     );
     // The version's manifest says it is an ES module, so a run prints no detection warning; the
     // source hash is over the files as written.
-    const manifest = await h.store.read(TOOLBOX, "tools/demo/issues/v1/package.json");
+    const manifest = await h.store.read(TOOLBOX, "tools/demo/issues/w-1/package.json");
     expect(JSON.parse(manifest)).toEqual({
       type: "module",
       dependencies: { "@octokit/rest": "22.0.1" },
@@ -472,7 +492,7 @@ describe("a module declaring packages", () => {
     expect(result.dependencies).toEqual(["@octokit/rest"]);
     expect(h.metadata.lookups).toEqual(["@octokit/rest@22.0.1"]);
     expect(
-      await h.store.exists(TOOLBOX, "tools/demo/issues/v1/node_modules/left-pad/index.js"),
+      await h.store.exists(TOOLBOX, "tools/demo/issues/w-1/node_modules/left-pad/index.js"),
     ).toBe(true);
   });
 
@@ -638,7 +658,7 @@ describe("a module declaring packages", () => {
     expect(await h.store.exists(TOOLBOX, "tools")).toBe(false);
   });
 
-  it("refuses with install-failed carrying npm's words when the build step fails, records no row, and the next publish lands the same version", async () => {
+  it("refuses with install-failed carrying npm's words when the build step fails, records no row, and the next publish lands a directory of its own", async () => {
     h.deps.policy = { ...DEFAULT_PACKAGE_POLICY, allowlist: ["left-pad"] };
     h.metadata = createFakeMetadataSource({ "left-pad@1.3.0": ADMITTED });
     h.deps.metadata = h.metadata;
@@ -669,8 +689,9 @@ describe("a module declaring packages", () => {
     ]);
     expect(h.tool.versions).toEqual([]);
     expect(h.tool.tools).toEqual([]);
-    // The directory was written before the install and stays; nothing under tools/ is removed.
-    expect(await h.store.exists(TOOLBOX, "tools/demo/pad/v1/index.ts")).toBe(true);
+    // The directory was written before the install and stays as an orphan; nothing under tools/ is
+    // removed, and nobody writes into it again.
+    expect(await h.store.exists(TOOLBOX, "tools/demo/pad/w-1/index.ts")).toBe(true);
 
     const retried = await publish({
       name: "pad",
@@ -679,8 +700,137 @@ describe("a module declaring packages", () => {
       jobId: "job2",
     });
     expect(retried.ok, JSON.stringify(retried)).toBe(true);
-    expect(retried.ok && retried.version.path).toBe("tools/demo/pad/v1");
+    expect(retried.ok && retried.version).toMatchObject({
+      path: "tools/demo/pad/w-2",
+      versionNumber: 1,
+    });
     expect(h.install).toHaveBeenCalledTimes(2);
+  });
+
+  describe("writers racing on one tool name (GRA-238, GRA-265; Greptile on #184)", () => {
+    /** A draft of the left-pad fixture whose module says who wrote it. */
+    const padDraft = async (jobId: string, writer: string) =>
+      draft(
+        jobId,
+        (await readFixture("left-pad")).map((file) =>
+          file.path === "index.ts" ? { ...file, content: `${file.content}// ${writer}\n` } : file,
+        ),
+      );
+    /** Each writer's install, held until the test releases it; `fail` makes it a refused install. */
+    const gatedInstalls = () => {
+      const gates = new Map<string, { entered: () => void; release: (fail: boolean) => void }>();
+      const entered = new Map<string, Promise<void>>();
+      const install = h.deps.sandbox.install;
+      const gate = (writer: string) => {
+        let enter = () => {};
+        entered.set(
+          writer,
+          new Promise<void>((resolve) => {
+            enter = resolve;
+          }),
+        );
+        let release: (fail: boolean) => void = () => {};
+        const released = new Promise<boolean>((resolve) => {
+          release = resolve;
+        });
+        gates.set(writer, { entered: enter, release });
+        return released;
+      };
+      const releases = new Map<string, Promise<boolean>>();
+      for (const writer of ["A", "B"]) releases.set(writer, gate(writer));
+      h.deps.sandbox = {
+        install: async (args) => {
+          const module = await h.store.read(TOOLBOX, `${args.versionPath}/index.ts`);
+          const writer = module.includes("// A") ? "A" : "B";
+          gates.get(writer)?.entered();
+          const fail = await releases.get(writer);
+          if (fail) {
+            return { status: "failed", exitCode: 1, logs: "", stdout: "", stderr: "npm error" };
+          }
+          return install(args);
+        },
+      };
+      return {
+        entered: (writer: string) => entered.get(writer) as Promise<void>,
+        release: (writer: string, fail = false) => gates.get(writer)?.release(fail),
+      };
+    };
+    /** Every committed version's directory holds its own writer's module. */
+    const expectEachVersionHoldsItsOwnFiles = async (expected: Record<string, string>) => {
+      for (const version of h.tool.versions) {
+        const module = await h.store.read(TOOLBOX, `${version.path}/index.ts`);
+        const writer = version.stockVersionId ? "stock" : module.includes("// A") ? "A" : "B";
+        expect(module, version.path).toContain(expected[writer]);
+      }
+      const paths = h.tool.versions.map((version) => version.path);
+      expect(new Set(paths).size).toBe(paths.length);
+    };
+
+    beforeEach(() => {
+      h.deps.policy = { ...DEFAULT_PACKAGE_POLICY, allowlist: ["left-pad"] };
+      h.metadata = createFakeMetadataSource({ "left-pad@1.3.0": ADMITTED });
+      h.deps.metadata = h.metadata;
+    });
+
+    it("two publishes of one tool racing each keep their own directory and take two numbers", async () => {
+      const installs = gatedInstalls();
+      const a = publish({
+        name: "pad",
+        inputSchema: PAD_SCHEMA,
+        draftPath: await padDraft("jobA", "A"),
+      });
+      const b = publish({
+        name: "pad",
+        inputSchema: PAD_SCHEMA,
+        draftPath: await padDraft("jobB", "B"),
+        jobId: "jobB",
+      });
+      await Promise.all([installs.entered("A"), installs.entered("B")]);
+      installs.release("B");
+      installs.release("A");
+      const [publishedA, publishedB] = await Promise.all([a, b]);
+
+      expect(publishedA.ok && publishedB.ok).toBe(true);
+      expect(h.tool.tools).toHaveLength(1);
+      expect(h.tool.versions.map((version) => version.versionNumber).sort()).toEqual([1, 2]);
+      await expectEachVersionHoldsItsOwnFiles({ A: "// A", B: "// B" });
+    });
+
+    it("a publish that fails, a stock copy that lands, and a publish that lands after: no committed files are overwritten", async () => {
+      const installs = gatedInstalls();
+      const a = publish({
+        vendor: "open-meteo",
+        name: "current-weather",
+        inputSchema: PAD_SCHEMA,
+        draftPath: await padDraft("jobA", "A"),
+      });
+      const b = publish({
+        vendor: "open-meteo",
+        name: "current-weather",
+        inputSchema: PAD_SCHEMA,
+        draftPath: await padDraft("jobB", "B"),
+        jobId: "jobB",
+      });
+      await Promise.all([installs.entered("A"), installs.entered("B")]);
+      installs.release("A", true);
+      expect((await a).ok).toBe(false);
+      const copied = await copyStockVersion(h.deps, {
+        personId: PERSON,
+        stock: STOCK_WEATHER,
+        defaultConnectionId: null,
+      });
+      installs.release("B");
+      const publishedB = await b;
+
+      expect(publishedB.ok, JSON.stringify(publishedB)).toBe(true);
+      expect(h.tool.tools.map((row) => row.id)).toEqual([copied.id]);
+      expect(h.tool.versions.map((version) => version.versionNumber)).toEqual([1, 2]);
+      await expectEachVersionHoldsItsOwnFiles({
+        stock: "ok: true",
+        A: "never committed",
+        B: "// B",
+      });
+    });
   });
 
   it("holds no transaction, and so no pooled connection, while the install runs (Greptile on #184)", async () => {
@@ -717,18 +867,18 @@ describe("a module declaring packages", () => {
 
     expect(result.ok, JSON.stringify(result)).toBe(true);
     expect(seenDuringInstall).toEqual([0]);
-    // The reservation before the install and the rows after it: two short transactions.
-    expect(transactions.filter((depth) => depth === 1)).toHaveLength(2);
+    // The rows after the install: one short transaction.
+    expect(transactions.filter((depth) => depth === 1)).toHaveLength(1);
   });
 
   it.each([
     ["the version directory's write", "write"],
     ["the rows' transaction", "rows"],
   ])(
-    "withdraws a first publish's reserved row when %s throws, so a stock copy of the name still lands (Greptile on #184)",
+    "leaves no row when %s throws, so a stock copy of the name still lands (Greptile on #184)",
     async (_case, where) => {
       const store = h.deps.store;
-      const insertToolVersion = h.tool.insertToolVersion;
+      const insertAuthoredTool = h.tool.insertAuthoredTool;
       if (where === "write") {
         const writeTree = store.writeTree.bind(store);
         h.deps.store = Object.assign(Object.create(store), {
@@ -738,7 +888,8 @@ describe("a module declaring packages", () => {
           },
         });
       } else {
-        h.tool.insertToolVersion = async () => {
+        // The rows' first write; in Postgres anything after it rolls back with the transaction.
+        h.tool.insertAuthoredTool = async () => {
           throw new Error("connection reset");
         };
       }
@@ -752,7 +903,7 @@ describe("a module declaring packages", () => {
 
       // The name is free again: the first stock copy of it makes the tool.
       h.deps.store = store;
-      h.tool.insertToolVersion = insertToolVersion;
+      h.tool.insertAuthoredTool = insertAuthoredTool;
       const copied = await copyStockVersion(h.deps, {
         personId: PERSON,
         stock: {
@@ -914,14 +1065,14 @@ describe("the mirror", () => {
     expect(result.ok).toBe(true);
     expect(calls).toEqual([]);
     released();
-    await vi.waitFor(() => expect(calls).toEqual(["tools/demo/hello/v1"]));
+    await vi.waitFor(() => expect(calls).toEqual(["tools/demo/hello/w-1"]));
     await vi.waitFor(() => expect(h.mirrorEvents).toHaveLength(1));
     expect(h.mirrorEvents[0]).toMatchObject({
       outcome: "mirrored",
       personId: PERSON,
       agentId: "agent1",
       toolboxId: TOOLBOX,
-      versionPath: "tools/demo/hello/v1",
+      versionPath: "tools/demo/hello/w-1",
       toolId: result.ok ? result.tool.id : "",
       versionId: result.ok ? result.version.id : "",
     });

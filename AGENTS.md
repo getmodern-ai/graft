@@ -652,15 +652,19 @@ of the vendor in scope, `connectionIds`) and 3 (none, `connect`: the starter's
 `promoteToolForAgent` (so `promote`, and a console route) take: the person's tool, or the stock
 version copied by `@graft/publish`'s `copyStockVersion` as an ordinary tool whose version records
 `stock_tool_id` and `stock_version_id`, bound to the vendor's connection in scope, or
-`connection_needed` with `connect`. A copy writes its files and rows in one transaction under
-`ToolDeps.lockToolName` (`repo/tool.ts`'s `lockAuthoredToolName`). A publish takes the same lock
-twice and briefly, never across its install: once to make the tool row on a first publish (the
-name's reservation, which a copy then answers) and read the version number, once to confirm the
-number and write the rows (`publish-raced` if another publish took it); a first publish refused
-in between withdraws its row (`deleteUnversionedAuthoredTool`). So two first copies make one, a
-copy never writes a directory a publish reserved, a unique-constraint loser answers the winner's
-row, and the mirror is asked for a copy's version as a publish asks it. Connections match by vendor slug until GRA-241's
-host matching. `@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
+`connection_needed` with `connect`. **Every write of a version has a directory of its own**
+(`@graft/toolbox`'s `writePath`, `tools/<vendor>/<name>/w-<writeId>`; GRA-238, GRA-265): a publish
+and a stock copy write their files there with nothing held (the publish's install included), then
+write the rows in one short transaction under `ToolDeps.lockToolName` (`repo/tool.ts`'s
+`lockAuthoredToolName`), where the version number is decided as the tool's next and
+`tool_version.path` records the directory. So no writer ever writes over another's files, two
+publishes of one tool racing take two numbers, two first copies (or a copy and a first publish)
+make one tool and the later answers it, a unique-constraint loser answers the winner's row, and a
+directory whose rows never land (a refused or failed publish, a lost race) stays as an orphan,
+since nothing under `tools/` is removed (ADR 0009). Versions written before this are `v<N>`
+(`versionPath`) and stay valid; `packages/toolbox/README.md` has the layout. The mirror is asked
+for a copy's version as a publish asks it. Connections match by vendor slug until GRA-241's host
+matching. `@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
 
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,

@@ -18,8 +18,6 @@ import type { PackagePolicyRule } from "./policy";
  *  - `package-policy`: a declared package fails the policy; `policy` names which rule.
  *  - `registry-unavailable`: the registry could not be asked; try again rather than rewrite.
  *  - `install-failed`: the build step did not complete; its stderr is in the message.
- *  - `publish-raced`: another publish of the tool recorded the version this one reserved while it
- *    installed; publish again and the next number is taken.
  */
 export const PUBLISH_RULES = [
   "draft-missing",
@@ -28,7 +26,6 @@ export const PUBLISH_RULES = [
   "package-policy",
   "registry-unavailable",
   "install-failed",
-  "publish-raced",
 ] as const;
 export type PublishRule = (typeof PUBLISH_RULES)[number];
 

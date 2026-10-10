@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import {
   type Diagnostic,
   type ModuleCheck,
@@ -9,8 +11,6 @@ import {
 import {
   addToolVersion,
   createTool,
-  nextVersionNumber,
-  orNotFound,
   rebindToolIfConnectionDead,
   publishToolVersion as recordPublishedVersion,
   type ServiceContext,
@@ -26,7 +26,7 @@ import {
   type ToolboxFile,
   type ToolboxMirror,
   type ToolboxStore,
-  versionPath as versionPathOf,
+  writePath,
 } from "@graft/toolbox";
 
 import { sha256Hex, sourceHashOf } from "./hash";
@@ -61,8 +61,9 @@ import {
  *     every name the first two rules did not already refuse — an allowlisted one included, since
  *     the allowlist waives provenance alone (GRA-176). Every failing package is a diagnostic, all
  *     of them at once, so the model fixes the manifest in one edit.
- *  6. The version directory `tools/<vendor>/<name>/v<N>` is written from the draft's files, the
- *     manifest carrying `"type": "module"` (`normaliseManifest`).
+ *  6. A fresh version directory of this write's own, `tools/<vendor>/<name>/w-<writeId>`
+ *     (`@graft/toolbox`'s `writePath`), is written from the draft's files, the manifest carrying
+ *     `"type": "module"` (`normaliseManifest`).
  *  7. When packages are declared, the sandbox backend's `install` runs — ADR 0013's build step, the
  *     one place that reaches the registry — and its lockfile is hashed. A failed install is a
  *     refusal with npm's words in it.
@@ -85,18 +86,15 @@ import {
  *     first publish, with no current version at all.
  *  9. The mirror is asked to copy the version, and the publish returns without waiting.
  *
- * A directory written and then not recorded (a failed install, a database down at step 8) stays on
- * disk with no row; the next publish of the tool computes the same version number and writes over
- * it, then installs again. Nothing under `tools/` is removed, by the publish or by anything
- * (ADR 0009). The person's lock on the tool's name (`ToolDeps.lockToolName`), which a stock copy of
- * the same name takes too (GRA-238, Greptile on #184), is held twice and briefly, never across the
- * install: at step 6 to make the tool row on a first publish (the reservation of the name, so a
- * copy answers this tool and never writes its `v1`) and read the version number, and at step 8 to
- * confirm the number is still the next and write the rows. A first publish refused after step 6
- * withdraws the row it made (`deleteUnversionedTool`, only while nothing names it). Two publishes
- * of one tool racing both read one number and may both write its directory; the second's rows are
- * refused `publish-raced` — `acquire` runs one job per tool at a time (GRA-29), which keeps that
- * theoretical.
+ * Nothing is held across steps 6 and 7, and the install above all (Greptile on #184: a transaction
+ * held through an install holds a pooled connection for minutes). Step 8 is one short transaction
+ * under the person's lock on the tool's name (`ToolDeps.lockToolName`), which a stock copy of the
+ * name takes too, and numbers the version there, so two publishes of one tool racing take two
+ * numbers, and a publish and a first copy of one name make one tool. No writer ever shares a
+ * directory (GRA-238, GRA-265): the directory never depends on who records first. A directory
+ * written and then not recorded (a failed install, a database down at step 8) stays on disk as an
+ * orphan with no row, and the next publish writes a directory of its own. Nothing under `tools/` is
+ * removed, by the publish or by anything (ADR 0009). Versions written before GRA-238 are `v<N>`.
  *
  * Copied in shape from Cando's `publishAuthoredTool` and re-read (ADR 0011): the sandbox no longer
  * does the copy — the server holds the toolbox — and the package policy, the install step and the
@@ -186,6 +184,8 @@ export type PublishDeps = {
   now: () => Date;
   /** Where the mirror's outcome goes — a wide event in the server. Never on the publish's path. */
   onMirror: (event: MirrorEvent) => void;
+  /** The id of one write's version directory; `newWriteId` unless a test fixes it. */
+  writeId?: (now: Date) => string;
 };
 
 /** How much of npm's stderr a failed install's diagnostic carries. The end is where the reason is. */
@@ -244,9 +244,45 @@ export async function publishToolVersion(
   const policyRefusals = await applyPolicy(dependencies, deps);
   if (policyRefusals.length > 0) return refusal(policyRefusals, check);
 
-  // 6 to 8 around the person's lock on the tool's name (`repo/tool.ts`'s `lockAuthoredToolName`,
-  // GRA-238), taken twice and briefly, never across the install (Greptile on #184): a transaction
-  // held through an install would hold a pooled connection for minutes.
+  // 6. The version directory, the writer's own (GRA-238, GRA-265; Greptile on #184): a fresh
+  // directory per write (`writePath`), so no other publish and no stock copy of the name ever writes
+  // into it, and nothing is held while it is written or installed into. Whatever the outcome, it is
+  // never written again; one whose rows never land stays as an orphan, since nothing under `tools/`
+  // is removed (ADR 0009).
+  const versionPath = writePath(args.vendor, args.name, (deps.writeId ?? newWriteId)(deps.now()));
+  const written = normaliseManifest(sources.files);
+  await deps.store.writeTree(args.toolboxId, versionPath, written);
+  const sourceHash = sourceHashOf(written);
+
+  // 7. The build step, outside any transaction: a transaction held through an install would hold a
+  // pooled connection for minutes (Greptile on #184).
+  let lockfileHash: string | null = null;
+  if (dependencies.length > 0) {
+    const result = await deps.sandbox.install({ toolboxId: args.toolboxId, versionPath });
+    if (result.status !== "completed") {
+      return refusal([installFailure(result, versionPath)], check);
+    }
+    const lockfile = await deps.store
+      .read(args.toolboxId, `${versionPath}/package-lock.json`)
+      .catch(() => null);
+    if (lockfile === null) {
+      return refusal(
+        [
+          installDiagnostic(
+            `The install reported success but left no package-lock.json in ${versionPath}, so the version cannot say what it resolved (ADR 0013).`,
+            "Publish again; if it repeats, the sandbox backing's install step is not writing a lockfile.",
+          ),
+        ],
+        check,
+      );
+    }
+    lockfileHash = sha256Hex(lockfile);
+  }
+
+  // 8. The rows, in one short transaction holding the person's lock on the tool's name
+  // (`ToolDeps.lockToolName`, which a stock copy of the name takes too): the tool created if this is
+  // its first publish, and the version numbered here, the tool's next, so two publishes of one tool
+  // racing take two numbers and each keeps its own directory.
   const key = { vendor: args.vendor, name: args.name };
   const definition = {
     description: args.description,
@@ -254,152 +290,62 @@ export async function publishToolVersion(
     annotations: check.annotations,
     defaultConnectionId: args.defaultConnectionId ?? null,
   };
-
-  // 6. The reservation, then the version directory. Under the lock: the tool row is made if this is
-  // its first publish, which reserves the name (a stock copy of it, `copy-stock.ts`, takes the same
-  // lock, finds this row and answers it rather than writing `v1`), and the next version number is
-  // read. Then, with nothing held, the directory is written.
-  const reserved = await ctx.db.transaction(async (tx) => {
+  const versionInput = {
+    path: versionPath,
+    sourceHash,
+    lockfileHash,
+    checkOutput: checkOutputOf(check),
+    writesInvolved: !check.annotations.readOnly,
+    publisherJobId: args.jobId ?? null,
+  };
+  const recorded = await ctx.db.transaction(async (tx) => {
     const scoped: ServiceContext = { db: tx };
     await deps.tool.lockToolName(tx, args.personId, key);
-    const found = await deps.tool.findAuthoredTool(tx, args.personId, key);
+    const existing = await deps.tool.findAuthoredTool(tx, args.personId, key);
     const tool =
-      found ?? (await createTool(scoped, principal, { ...key, ...definition }, deps.tool));
-    const versionNumber = orNotFound(
-      await nextVersionNumber(scoped, principal, tool.id, deps.tool),
-      "Tool not found",
-    );
-    return { tool, created: found === null, versionNumber };
+      existing ?? (await createTool(scoped, principal, { ...key, ...definition }, deps.tool));
+    if (args.activate === false) {
+      const version = await addToolVersion(scoped, principal, tool.id, versionInput, deps.tool);
+      // A dead binding follows the connection this publish names (step 8; GRA-122); a live one,
+      // and the prose, the schema and the pointer, wait for the pass. The default's row is read
+      // locked with the write, in this transaction.
+      const rebound =
+        existing && args.defaultConnectionId
+          ? (
+              await rebindToolIfConnectionDead(
+                scoped,
+                principal,
+                tool.id,
+                args.defaultConnectionId,
+                deps.tool,
+              )
+            ).tool
+          : tool;
+      return { tool: rebound, version };
+    }
+    return recordPublishedVersion(scoped, principal, tool.id, versionInput, definition, deps.tool);
   });
-  const versionPath = versionPathOf(args.vendor, args.name, reserved.versionNumber);
 
-  /**
-   * A row this publish made at step 6 and could not fill is withdrawn, whether the publish was
-   * refused or threw (Greptile on #184): left behind, an empty row of a stock tool's name would be
-   * answered in place of the stock tool, `tool_has_no_version`, from then on. The delete takes
-   * only a row no version names, so a row another publish filled meanwhile stays.
-   */
-  const withdraw = async (): Promise<void> => {
-    if (!reserved.created) return;
-    await ctx.db.transaction(async (tx) => {
-      await deps.tool.lockToolName(tx, args.personId, key);
-      await deps.tool.deleteUnversionedTool(tx, args.personId, reserved.tool.id);
-    });
+  // 9. The mirror, off the path.
+  startMirror(deps, args, recorded, versionPath);
+
+  return {
+    ok: true,
+    tool: recorded.tool,
+    version: recorded.version,
+    advice: check.advice,
+    annotations: check.annotations,
+    dependencies: dependencies.map((dependency) => dependency.name),
   };
-  try {
-    const filled = await fillReservation();
-    if (!filled.ok) await withdraw();
-    return filled;
-  } catch (error) {
-    // The publish's own error is the one the caller hears; a failed withdrawal leaves the row as a
-    // throw before this change did.
-    await withdraw().catch(() => undefined);
-    throw error;
-  }
+}
 
-  async function fillReservation(): Promise<PublishOutcome> {
-    const written = normaliseManifest(sources.files);
-    await deps.store.writeTree(args.toolboxId, versionPath, written);
-    const sourceHash = sourceHashOf(written);
-
-    // 7. The build step, outside any transaction.
-    let lockfileHash: string | null = null;
-    if (dependencies.length > 0) {
-      const result = await deps.sandbox.install({ toolboxId: args.toolboxId, versionPath });
-      if (result.status !== "completed") {
-        return refusal([installFailure(result, versionPath)], check);
-      }
-      const lockfile = await deps.store
-        .read(args.toolboxId, `${versionPath}/package-lock.json`)
-        .catch(() => null);
-      if (lockfile === null) {
-        return refusal(
-          [
-            installDiagnostic(
-              `The install reported success but left no package-lock.json in ${versionPath}, so the version cannot say what it resolved (ADR 0013).`,
-              "Publish again; if it repeats, the sandbox backing's install step is not writing a lockfile.",
-            ),
-          ],
-          check,
-        );
-      }
-      lockfileHash = sha256Hex(lockfile);
-    }
-
-    // 8. The rows, under the lock again, once the reservation is confirmed: the version number read at
-    // step 6 is still the next one. Another publish of the tool that recorded it meanwhile is
-    // `publish-raced`, and this publish records nothing.
-    const versionInput = {
-      path: versionPath,
-      sourceHash,
-      lockfileHash,
-      checkOutput: checkOutputOf(check),
-      writesInvolved: !check.annotations.readOnly,
-      publisherJobId: args.jobId ?? null,
-    };
-    const recorded = await ctx.db.transaction(async (tx) => {
-      const scoped: ServiceContext = { db: tx };
-      await deps.tool.lockToolName(tx, args.personId, key);
-      const next = await nextVersionNumber(scoped, principal, reserved.tool.id, deps.tool);
-      if (next !== reserved.versionNumber) return null;
-      const tool = reserved.tool;
-      if (args.activate === false) {
-        const version = await addToolVersion(scoped, principal, tool.id, versionInput, deps.tool);
-        // A dead binding follows the connection this publish names (step 8; GRA-122); a live one,
-        // and the prose, the schema and the pointer, wait for the pass. The default's row is read
-        // locked with the write, in this transaction.
-        const rebound =
-          !reserved.created && args.defaultConnectionId
-            ? (
-                await rebindToolIfConnectionDead(
-                  scoped,
-                  principal,
-                  tool.id,
-                  args.defaultConnectionId,
-                  deps.tool,
-                )
-              ).tool
-            : tool;
-        return { tool: rebound, version };
-      }
-      return recordPublishedVersion(
-        scoped,
-        principal,
-        tool.id,
-        versionInput,
-        definition,
-        deps.tool,
-      );
-    });
-    if (recorded === null) {
-      return refusal(
-        [
-          {
-            file: versionPath,
-            line: 1,
-            column: 1,
-            text: "",
-            rule: "publish-raced",
-            message: `Another publish of ${args.vendor}/${args.name} recorded version ${reserved.versionNumber} while this one was being built, so this one recorded nothing.`,
-            hint: "Publish again; the next version number is taken.",
-          },
-        ],
-        check,
-      );
-    }
-
-    // 9. The mirror, off the path.
-    startMirror(deps, args, recorded, versionPath);
-
-    return {
-      ok: true,
-      tool: recorded.tool,
-      version: recorded.version,
-      advice: check.advice,
-      annotations: check.annotations,
-      dependencies: dependencies.map((dependency) => dependency.name),
-    };
-  }
+/**
+ * The id of one write's version directory (`@graft/toolbox`'s `writePath`): the time, so a tool's
+ * directories list in the order they were written, and a random part, so two writes in one
+ * millisecond never share one.
+ */
+export function newWriteId(now: Date): string {
+  return `${now.getTime().toString(36)}-${randomBytes(4).toString("hex")}`;
 }
 
 /**
