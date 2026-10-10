@@ -3,12 +3,7 @@ import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { redactText } from "@graft/core";
-import {
-  createUpstreamFetch,
-  isSafeMethod,
-  type UpstreamFetch,
-  type UpstreamRequest,
-} from "@graft/proxy";
+import { createUpstreamFetch, type UpstreamFetch, type UpstreamRequest } from "@graft/proxy";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
@@ -21,6 +16,8 @@ import {
 } from "./dry-run";
 import type { StockHarnessMode } from "./mode";
 import {
+  isReadRequest,
+  jsonOfBody,
   parseRecording,
   RECORDING_FILE,
   type RecordedBody,
@@ -116,8 +113,11 @@ export async function readStockRecording(
 /** What the replay saw beside its sentences: every request that reached the vendor, and every preview. */
 export type ReplayReport = {
   problems: ProofProblems;
-  /** Every request the proxy sent on to the vendor (the recording, in replay mode). */
-  reachedVendor: { method: string; url: string }[];
+  /**
+   * Every request the proxy sent on to the vendor (the recording, in replay mode), with the body a
+   * read `POST` carried.
+   */
+  reachedVendor: { method: string; url: string; body?: RecordedBody }[];
   /** Every write the proxy stopped, as its preview named it. */
   previewed: { method: string; host: string; path: string; body: RecordedBody | undefined }[];
 };
@@ -262,8 +262,13 @@ export async function proveReplay(
   const realFetch = live ? createUpstreamFetch() : null;
 
   const upstreamFetch: UpstreamFetch = async (request: UpstreamRequest, init) => {
-    reachedVendor.push({ method: request.method, url: request.url });
-    if (!isSafeMethod(request.method)) {
+    const requestBody = request.body ? recordedBodyOf(request.body) : undefined;
+    reachedVendor.push({
+      method: request.method,
+      url: request.url,
+      ...(requestBody ? { body: requestBody } : {}),
+    });
+    if (!isReadRequest(request.method, request.url, jsonOfBody(requestBody))) {
       problems.push(
         say(
           `a ${request.method} reached the vendor in a dry run: ${new URL(request.url).pathname}`,
@@ -276,8 +281,12 @@ export async function proveReplay(
     // The first recorded read not yet made that is this request: the recording is in the order the
     // module issued its reads, and a module reading in parallel may have them reach here in another
     // (Greptile on #191), so a request takes its own read rather than the next in line.
+    // A read `POST`'s body is compared as a write's is, in replay; live, as a query's values, not.
     const matched = reads.findIndex(
-      (read, index) => !made.has(index) && sameRead(readKeyOf(read.method, read.url), actual, live),
+      (read, index) =>
+        !made.has(index) &&
+        sameRead(readKeyOf(read.method, read.url), actual, live) &&
+        (live || sameBody(read.body, requestBody)),
     );
     if (matched === -1) {
       const next = reads.findIndex((_read, index) => !made.has(index));
@@ -287,9 +296,11 @@ export async function proveReplay(
         return Response.json({ error: "not_in_recording" }, { status: 404 });
       }
       const recorded = readKeyOf(expected.method, expected.url);
+      const withBody = (body: RecordedBody | undefined) =>
+        body ? ` with body ${describeBody(body)}` : "";
       problems.push(
         say(
-          `its read ${next + 1} disagrees with the recording: it made ${shown}${actual.query.length ? `?${new URLSearchParams(actual.query)}` : ""}, the recording holds ${recorded.method} ${recorded.host}${recorded.path}${recorded.query.length ? `?${new URLSearchParams(recorded.query)}` : ""}`,
+          `its read ${next + 1} disagrees with the recording: it made ${shown}${actual.query.length ? `?${new URLSearchParams(actual.query)}` : ""}${withBody(requestBody)}, the recording holds ${recorded.method} ${recorded.host}${recorded.path}${recorded.query.length ? `?${new URLSearchParams(recorded.query)}` : ""}${withBody(expected.body)}`,
         ),
       );
       made.add(next);

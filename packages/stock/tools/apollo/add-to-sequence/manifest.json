@@ -1,0 +1,53 @@
+{
+  "name": "add-to-sequence",
+  "description": "Adds (enrolls) 1 to 100 contacts saved in your Apollo team in a sequence, sending from one of the team's email accounts. The sequence id comes from apollo__list-sequences, the contact ids from apollo__search-contacts and the email account id from apollo__list-email-accounts. Apollo skips by default contacts with no email, contacts active in or finished with another sequence, and a second contact of a company already in it; the four include flags change that. Spends no Apollo credits; the sequence then emails the contacts on its own schedule.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "sequenceId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Apollo sequence ID from apollo__list-sequences."
+      },
+      "contactIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "maxItems": 100,
+        "uniqueItems": true,
+        "description": "Apollo contact IDs from apollo__search-contacts."
+      },
+      "emailAccountId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Apollo email account ID from apollo__list-email-accounts."
+      },
+      "includeContactsWithoutEmail": {
+        "type": "boolean",
+        "description": "Include contacts that do not have an email address."
+      },
+      "includeContactsActiveInOtherSequences": {
+        "type": "boolean",
+        "description": "Include contacts active in other sequences."
+      },
+      "includeContactsFinishedInOtherSequences": {
+        "type": "boolean",
+        "description": "Include contacts that finished other sequences."
+      },
+      "includeSameCompany": {
+        "type": "boolean",
+        "description": "Include contacts from a company already represented in this sequence."
+      }
+    },
+    "required": ["sequenceId", "contactIds", "emailAccountId"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.apollo.io"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

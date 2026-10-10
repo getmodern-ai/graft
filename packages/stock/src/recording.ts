@@ -1,4 +1,5 @@
 import { GENERIC_SECRET_FIELD_NAMES, REDACTED, type RedactionRule, redactValue } from "@graft/core";
+import { classifyRequest } from "@graft/proxy/read-request";
 
 /**
  * A stock tool's recording (ADR 0025; GRA-240): `recording.json` beside its module, what the tool's
@@ -29,12 +30,19 @@ export type RecordedResponse = {
   body?: RecordedBody;
 };
 
-/** A `GET` or `HEAD` the vendor answered: replayed from `response`. */
+/**
+ * A read the vendor answered: replayed from `response`. A read is what `@graft/proxy`'s shared
+ * classifier calls one (`isReadRequest`): a `GET` or `HEAD`, or a `POST` the reviewed table or the
+ * GraphQL rule admits, which a dry run lets reach the vendor (ADR 0008 as amended 2026-10-10;
+ * GRA-260). Such a `POST` carries the `body` the module sent, since the replay matches it.
+ */
 export type RecordedRead = {
   kind: "read";
-  method: "GET" | "HEAD";
+  method: string;
   /** The vendor URL as it left the proxy, query included, redacted. */
   url: string;
+  /** What the module sent with a read `POST`. Absent for a read with no body. */
+  body?: RecordedBody;
   response: RecordedResponse;
 };
 
@@ -62,6 +70,31 @@ export type StockRecording = {
   /** The module's result in that run, compared whole on a replay. Absent: not compared. */
   result?: unknown;
 };
+
+/**
+ * Whether a request is a read by the shared classifier (`@graft/proxy`'s `read-request.ts`), the one
+ * judgement the proxy's dry run and the check make too, so a request the recording calls a read is
+ * one the dry run let reach the vendor. `body` is the request's own: parsed JSON, or null.
+ */
+export function isReadRequest(
+  method: string,
+  url: string,
+  body: { json: unknown } | null | undefined,
+): boolean {
+  const parsed = new URL(url);
+  return classifyRequest({
+    method: method.toUpperCase(),
+    host: parsed.hostname.toLowerCase(),
+    path: parsed.pathname,
+    hasQuery: parsed.search.length > 1,
+    body: body ?? null,
+  }).read;
+}
+
+/** A recorded body as the classifier reads it: its JSON, or null for text, bytes or none. */
+export function jsonOfBody(body: RecordedBody | undefined): { json: unknown } | null {
+  return body && "json" in body ? { json: body.json } : null;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -114,8 +147,14 @@ export function parseRecording(text: string, where: string): StockRecording {
       throw problem(`${at}'s url is not an absolute URL`);
     }
     if (exchange.kind === "read") {
-      if (exchange.method !== "GET" && exchange.method !== "HEAD") {
-        throw problem(`${at} is a read, so its method is GET or HEAD`);
+      const requestBody = bodyProblem(exchange.body);
+      if (requestBody) throw problem(`${at}'s body ${requestBody}`);
+      if (
+        !isReadRequest(exchange.method, exchange.url, jsonOfBody(exchange.body as RecordedBody))
+      ) {
+        throw problem(
+          `${at} is a read, so it is a GET or HEAD, or a POST the reviewed table or the GraphQL rule admits`,
+        );
       }
       const response = exchange.response;
       if (!isRecord(response) || typeof response.status !== "number") {
@@ -125,11 +164,13 @@ export function parseRecording(text: string, where: string): StockRecording {
       const body = bodyProblem(response.body);
       if (body) throw problem(`${at}'s response body ${body}`);
     } else if (exchange.kind === "write") {
-      if (exchange.method === "GET" || exchange.method === "HEAD") {
-        throw problem(`${at} is a write, so its method is not GET or HEAD`);
-      }
       const body = bodyProblem(exchange.body);
       if (body) throw problem(`${at}'s body ${body}`);
+      if (isReadRequest(exchange.method, exchange.url, jsonOfBody(exchange.body as RecordedBody))) {
+        throw problem(
+          `${at} is a write, so it is not a request the shared classifier calls a read`,
+        );
+      }
     } else {
       throw problem(`${at}'s kind must be read or write`);
     }
@@ -186,7 +227,8 @@ export function replayResponseOf(read: RecordedRead): Response {
   const { bytes, contentType } = bodyBytesOf(read.response.body);
   const headers = new Headers(read.response.headers);
   if (!headers.has("content-type") && contentType) headers.set("content-type", contentType);
-  const nullBody = read.method === "HEAD" || [204, 205, 304].includes(read.response.status);
+  const nullBody =
+    read.method.toUpperCase() === "HEAD" || [204, 205, 304].includes(read.response.status);
   return new Response(nullBody ? null : bytes, { status: read.response.status, headers });
 }
 

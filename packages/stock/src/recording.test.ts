@@ -42,7 +42,22 @@ describe("parseRecording", () => {
         }),
         where,
       ),
-    ).toThrow(`${where} exchange 1 is a read, so its method is GET or HEAD`);
+    ).toThrow(
+      `${where} exchange 1 is a read, so it is a GET or HEAD, or a POST the reviewed table or the GraphQL rule admits`,
+    );
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [
+            { kind: "write", method: "POST", url: "https://api.apollo.io/api/v1/contacts/search" },
+          ],
+        }),
+        where,
+      ),
+    ).toThrow(
+      `${where} exchange 1 is a write, so it is not a request the shared classifier calls a read`,
+    );
     expect(() =>
       parseRecording(
         JSON.stringify({
@@ -63,6 +78,43 @@ describe("parseRecording", () => {
         where,
       ),
     ).toThrow(`${where} exchange 1's body must carry exactly one of json, text or base64`);
+  });
+});
+
+describe("a read POST (GRA-260, GRA-270)", () => {
+  const search = (over: Record<string, unknown>) =>
+    JSON.stringify({
+      ...RECORDING,
+      tool: "apollo__search-contacts",
+      exchanges: [
+        {
+          kind: "read",
+          method: "POST",
+          url: "https://api.apollo.io/api/v1/contacts/search",
+          body: { json: { per_page: 2 } },
+          response: { status: 200, headers: {}, body: { json: { contacts: [] } } },
+          ...over,
+        },
+      ],
+    });
+
+  it("is a read where the reviewed table admits it, with the body the module sent", () => {
+    const parsed = parseRecording(search({}), "apollo/search-contacts/recording.json");
+    expect(parsed.exchanges[0]).toMatchObject({
+      kind: "read",
+      method: "POST",
+      body: { json: { per_page: 2 } },
+    });
+  });
+
+  it("is refused as a read off the table, and its body is held to the body rule", () => {
+    const where = "apollo/search-contacts/recording.json";
+    expect(() =>
+      parseRecording(search({ url: "https://api.apollo.io/api/v1/contacts" }), where),
+    ).toThrow(`${where} exchange 1 is a read, so it is a GET or HEAD`);
+    expect(() => parseRecording(search({ body: { per_page: 2 } }), where)).toThrow(
+      `${where} exchange 1's body must carry exactly one of json, text or base64`,
+    );
   });
 });
 

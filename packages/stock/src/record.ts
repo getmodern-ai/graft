@@ -4,7 +4,6 @@ import { redactText, secretFieldNamesFor } from "@graft/core";
 import {
   CREDENTIAL_REDACTED,
   createUpstreamFetch,
-  isSafeMethod,
   type UpstreamFetch,
   type UpstreamRequest,
 } from "@graft/proxy";
@@ -16,6 +15,8 @@ import { dryRunFailureOf, dryRunStockTool, issueSequence, stockConnectionFor } f
 import type { LiveConnection } from "./mode";
 import {
   bodyBytesOf,
+  isReadRequest,
+  jsonOfBody,
   RECORDED_RESPONSE_HEADERS,
   RECORDING_FORMAT,
   type RecordedExchange,
@@ -141,7 +142,9 @@ export async function recordStockProof(
     // Taken before anything is awaited: the place is the request's, whenever the vendor answers.
     const sequence = issueSequence() ?? unsequenced++;
     const method = request.method.toUpperCase();
-    if (!isSafeMethod(method)) {
+    // A read `POST` (the reviewed table, a GraphQL query; GRA-260) is recorded with its body.
+    const requestBody = request.body ? recordedBodyOf(request.body) : undefined;
+    if (!isReadRequest(method, request.url, jsonOfBody(requestBody))) {
       // The token carries the dry-run claim, so the proxy previews every write; one that reached
       // here would be a proxy that let it leave, and nothing is sent.
       problems.push(`a ${method} reached the vendor in a dry run`);
@@ -160,8 +163,9 @@ export async function recordStockProof(
       sequence,
       exchange: {
         kind: "read",
-        method: method as "GET" | "HEAD",
+        method,
         url: request.url,
+        ...(requestBody ? { body: requestBody } : {}),
         response: { status: response.status, headers, ...(body ? { body } : {}) },
       },
     });
@@ -264,15 +268,24 @@ export async function recordStockProof(
       const sequence = issueSequence() ?? unsequencedAgain++;
       const method = request.method.toUpperCase();
       const answer = answerBySequence.get(sequence);
-      if (!isSafeMethod(method) || !answer) {
+      const requestBody = request.body ? recordedBodyOf(request.body) : undefined;
+      if (!isReadRequest(method, request.url, jsonOfBody(requestBody)) || !answer) {
         problems.push(
           `over the scrubbed answers it made a call the first run did not: ${method} ${new URL(request.url).hostname}`,
         );
         return Response.json({ error: "not_in_recording" }, { status: 404 });
       }
+      // The request as this run made it, over the scrubbed input: its URL and its body.
+      const { body: _firstBody, response } = answer;
       again.push({
         sequence,
-        exchange: { ...answer, method: method as "GET" | "HEAD", url: request.url },
+        exchange: {
+          kind: "read",
+          method,
+          url: request.url,
+          ...(requestBody ? { body: requestBody } : {}),
+          response,
+        },
       });
       return replayResponseOf(answer);
     },

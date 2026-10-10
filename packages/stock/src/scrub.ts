@@ -791,9 +791,11 @@ export function scrubRecording(recording: StockRecording, rule: ScrubRule): Stoc
   const exchanges = recording.exchanges.map((exchange, index) => {
     const request = `exchange ${index + 1}'s request`;
     if (exchange.kind === "read") {
+      const body = within(request, () => scrubRequestBody(exchange.body, source, scrub));
       return {
         ...exchange,
         url: within(request, () => scrubRequestUrl(exchange.url, source, scrub)),
+        ...(body ? { body } : {}),
         response: within(`exchange ${index + 1}'s answer`, () =>
           scrubResponse(exchange.response, scrub, rule.seed),
         ),

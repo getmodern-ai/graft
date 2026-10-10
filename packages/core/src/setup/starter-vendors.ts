@@ -376,6 +376,25 @@ export const STARTER_VENDORS = [
     moreTasks: [],
   },
   {
+    id: "apollo",
+    vendor: "apollo",
+    displayName: "Apollo",
+    primaryHost: "https://api.apollo.io/api/v1",
+    hosts: ["api.apollo.io"],
+    docsUrl: "https://docs.apollo.io/reference/apollo-api",
+    // An API key in the `x-api-key` header; the form path's truth. Apollo's searches are POSTs in
+    // the reviewed read table (`@graft/proxy`'s `read-endpoints.ts`, GRA-260), so the check counts
+    // them as reads and the task below is one.
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "x-api-key" },
+    goal: "Show me ten of my Apollo contacts",
+    hints:
+      "List ten of the team's saved contacts with the contacts search endpoint, one POST of `contacts/search` with `per_page=10` and `page=1`, returning the name, the title, the company and the email of each. It spends no credits. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Ten contacts from your Apollo team, with each one's title and company.",
+    moreTasks: [],
+  },
+  {
     id: "open-meteo",
     vendor: "open-meteo",
     displayName: "Open-Meteo",

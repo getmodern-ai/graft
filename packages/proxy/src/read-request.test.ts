@@ -142,6 +142,18 @@ describe("classifyRequest: the reviewed table", () => {
     ).toEqual({ read: true, by: "endpoint" });
   });
 
+  it("calls Apollo's sequence search a read, and adding contacts to a sequence a write", () => {
+    const apollo = (path: string) => search({ host: "api.apollo.io", path });
+    expect(classifyRequest(apollo("/api/v1/emailer_campaigns/search"))).toEqual({
+      read: true,
+      by: "endpoint",
+    });
+    expect(
+      classifyRequest(apollo("/api/v1/emailer_campaigns/66e9e215ece19801b219997f/add_contact_ids")),
+    ).toEqual({ read: false });
+    expect(classifyRequest(apollo("/api/v1/contacts"))).toEqual({ read: false });
+  });
+
   it("calls Notion's search and query endpoints reads, and its page create a write", () => {
     const notion = (path: string) => search({ host: "api.notion.com", path });
     expect(classifyRequest(notion("/v1/search"))).toEqual({ read: true, by: "endpoint" });

@@ -516,3 +516,56 @@ describe("Microsoft Outlook's stock tools (GRA-268)", () => {
     expect((await firstOf(query)) ?? "").not.toMatch(/^microsoft-outlook__/);
   });
 });
+
+/**
+ * Apollo's stock tools as they ship (GRA-270), searched as the suites above search them: every
+ * stock tool at once, with the integrations' display names. Prospecting words find Apollo's tools
+ * first, and the generic contact words stay HubSpot's (the GRA-254 pins above, repeated here so a
+ * change to Apollo's names or descriptions that takes one fails beside Apollo's own). That is why
+ * Apollo's two contact writes are named `save-contact` (Apollo's own word for it) and
+ * `update-prospect`: `create-contact` tied HubSpot's and won it on the vendor's name, and any name
+ * holding *update*, *contact* or *person* outscores `hubspot__update-record` on "update a contact".
+ */
+describe("Apollo's stock tools (GRA-270)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const QUERIES: [query: string, wire: string][] = [
+    ["find leads", "apollo__search-people"],
+    ["search people at a company", "apollo__search-people"],
+    ["find prospects by job title", "apollo__search-people"],
+    ["search apollo for people", "apollo__search-people"],
+    ["find companies by industry and size", "apollo__search-companies"],
+    ["search apollo companies", "apollo__search-companies"],
+    ["search my apollo contacts", "apollo__search-contacts"],
+    ["find a contact in apollo", "apollo__search-contacts"],
+    ["search apollo accounts", "apollo__search-accounts"],
+    ["list sequences", "apollo__list-sequences"],
+    ["list apollo sequences", "apollo__list-sequences"],
+    ["list email accounts", "apollo__list-email-accounts"],
+    ["create a contact in apollo", "apollo__save-contact"],
+    ["save a lead to apollo", "apollo__save-contact"],
+    ["update an apollo contact", "apollo__update-prospect"],
+    ["add contacts to a sequence", "apollo__add-to-sequence"],
+    ["enroll a contact in an apollo sequence", "apollo__add-to-sequence"],
+    // HubSpot's contact pins, with Apollo's contact tools beside them.
+    ["find a contact", "hubspot__find-contact"],
+    ["look up a contact by email", "hubspot__find-contact"],
+    ["create a contact", "hubspot__create-contact"],
+    ["update a contact", "hubspot__update-record"],
+    ["add a note to a contact", "hubspot__add-note"],
+    ["remind me to call a contact", "hubspot__create-task"],
+  ];
+
+  it.each(QUERIES)('"%s" finds %s first', async (query, wire) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    expect(first && `${first.vendor}__${first.name}`).toBe(wire);
+  });
+});
