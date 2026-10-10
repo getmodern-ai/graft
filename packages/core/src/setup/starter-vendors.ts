@@ -216,6 +216,7 @@ export const STARTER_VENDORS = [
       "List the ten most recently modified spreadsheets with Drive's files list endpoint, a GET to `https://www.googleapis.com/drive/v3/files`, with `q=mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`, `orderBy=modifiedTime desc`, `pageSize=10` and `fields=files(id,name,modifiedTime,webViewLink)`, returning those four for each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your ten most recently edited spreadsheets, with when each changed and a link to it.",
+    moreTasks: [],
   },
   {
     id: "slack",
