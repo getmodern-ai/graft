@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +8,7 @@ import { proveCheck, proveReplay, proveTestInput, readStockRecording } from "@gr
 import { readStockWorkspace } from "@graft/stock/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type BuildOptions, buildStockTool, hostsOf } from "./build";
+import { type BuildOptions, buildStockTool, hostsOf, swapInto } from "./build";
 
 /**
  * The stock build command end to end (GRA-246): the real acquire loop under a scripted model, the
@@ -206,6 +206,50 @@ describe("buildStockTool", () => {
     expect(await harnessProblems()).toEqual([]);
   });
 
+  it("leaves the current version untouched when the repair fails its proof where it was copied", async () => {
+    expect((await buildStockTool(options(passing("recent-repos", 2)).options)).ok).toBe(true);
+    const before = await filesUnder(workspace);
+
+    // A formatter that changes what the module calls, after the recording: the copy fails the replay.
+    const result = await buildStockTool(
+      options(passing("recent-repos", 3), {
+        from: "recent-repos",
+        format: async (dir) => {
+          const path = join(dir, "index.ts");
+          await writeFile(path, (await readFile(path, "utf8")).replace("/user/repos?", "/user/x?"));
+          return null;
+        },
+      }).options,
+    );
+    expect(result).toMatchObject({ ok: false, failure: "harness_failed" });
+    expect(await filesUnder(workspace)).toEqual(before);
+    expect((await readdir(workspace)).filter((name) => name.startsWith("."))).toEqual([]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "leaves the current version untouched when the repair cannot be copied whole",
+    async () => {
+      expect((await buildStockTool(options(passing("recent-repos", 2)).options)).ok).toBe(true);
+      const before = await filesUnder(workspace);
+
+      // A file the copy cannot read, after the files it has already copied: a copy that fails midway.
+      const result = await buildStockTool(
+        options(passing("recent-repos", 3), {
+          from: "recent-repos",
+          format: async (dir) => {
+            const path = join(dir, "zz-unreadable.ts");
+            await writeFile(path, "export {};\n");
+            await chmod(path, 0o000);
+            return null;
+          },
+        }).options,
+      );
+      expect(result).toMatchObject({ ok: false, failure: "write_failed" });
+      expect(await filesUnder(workspace)).toEqual(before);
+      expect((await readdir(workspace)).filter((name) => name.startsWith("."))).toEqual([]);
+    },
+  );
+
   it("writes nothing for a failed job, and answers its failure and last diagnostics", async () => {
     const broken: ModuleDraft = {
       ...draft("recent-repos", 2),
@@ -239,8 +283,38 @@ describe("buildStockTool", () => {
 
     const noSuchTool = await buildStockTool(options([], { from: "nothing" }).options);
     expect(noSuchTool).toMatchObject({ ok: false, failure: "from_not_found" });
+
+    for (const goal of ["   ", "x".repeat(4001)]) {
+      expect(await buildStockTool(options([], { goal }).options)).toMatchObject({
+        ok: false,
+        failure: "goal_invalid",
+      });
+    }
     expect(seen).toEqual([]);
     expect(await readdir(workspace)).toEqual([]);
+  });
+});
+
+describe("swapInto", () => {
+  it("puts the current directory back when the new one cannot be moved into its place", async () => {
+    const dir = join(workspace, "github", "tool");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "index.ts"), "current\n");
+    const swapped = await swapInto(join(workspace, "missing"), dir, join(workspace, "aside"));
+    expect(swapped.ok).toBe(false);
+    expect(await readFile(join(dir, "index.ts"), "utf8")).toBe("current\n");
+    expect(await readdir(workspace)).toEqual(["github"]);
+  });
+
+  it("replaces the current directory with the new one", async () => {
+    const dir = join(workspace, "github", "tool");
+    const next = join(workspace, "next");
+    await mkdir(dir, { recursive: true });
+    await mkdir(next, { recursive: true });
+    await writeFile(join(dir, "index.ts"), "current\n");
+    await writeFile(join(next, "index.ts"), "next\n");
+    expect(await swapInto(next, dir, join(workspace, "aside"))).toEqual({ ok: true });
+    expect(await readFile(join(dir, "index.ts"), "utf8")).toBe("next\n");
   });
 });
 

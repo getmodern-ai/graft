@@ -1,15 +1,28 @@
-import { cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { HINTS_MAX_LENGTH, redactValue, secretFieldNamesFor, starterVendorFor } from "@graft/core";
+import {
+  GOAL_MAX_LENGTH,
+  HINTS_MAX_LENGTH,
+  redactValue,
+  secretFieldNamesFor,
+  starterVendorFor,
+} from "@graft/core";
 import { type ReadWebPage, readWebPage } from "@graft/mcp";
 import type { ModelAdapter } from "@graft/model";
 import { createUpstreamFetch, type UpstreamFetch } from "@graft/proxy";
-import { proveCheck, proveReplay, proveTestInput, readStockRecording } from "@graft/stock/harness";
+import {
+  jsonTextNotes,
+  proveCheck,
+  proveReplay,
+  proveTestInput,
+  readStockRecording,
+} from "@graft/stock/harness";
 import type { LiveConnection } from "@graft/stock/mode";
 import { recordStockProof } from "@graft/stock/record";
 import { formatRecording, RECORDING_FILE, type StockRecording } from "@graft/stock/recording";
+import { credentialForms } from "@graft/stock/secrets";
 import { readStockWorkspace, STOCK_DIR, type StockWorkspaceTool } from "@graft/stock/workspace";
 
 import { type FormatTool, formatWithBiome } from "./format";
@@ -26,12 +39,15 @@ import { runBuildLoop } from "./loop";
  *     module's files, `manifest.json` (the hosts it reached, the annotations the check derived) and
  *     `test-input.json`. Its proof is recorded (`@graft/stock`'s `recordStockProof`: one dry run
  *     through the real proxy, written only through `redactRecording`).
- *  3. The staged tool must pass the harness's three proofs as it stands, which is what CI runs.
- *  4. Only then is the directory written into the workspace: new, or, under `from`, in place of the
- *     current version, which the next boot appends to the catalogue as the next version (the
+ *  3. The formatted tool is copied into a dot-directory inside the workspace (`INCOMING_PREFIX`),
+ *     and must pass the harness's three proofs there as it stands, which is what CI runs.
+ *  4. Only then is it renamed into place: new, or, under `from`, in place of the current version,
+ *     which is set aside first and put back if the rename fails (`swapInto`), so a failed repair
+ *     leaves the tool it started from. The next boot appends the new version to the catalogue (the
  *     catalogue's versions are never edited; ADR 0025).
  *
- * A failed job, a refused draft, a failed recording or a failed proof writes nothing.
+ * A failed job, a refused draft, a failed recording, a failed copy or a failed proof writes
+ * nothing, and replaces nothing.
  */
 
 export type BuildOptions = {
@@ -177,8 +193,10 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
       `There is no connection for ${vendor}. Give your own under GRAFT_STOCK_LIVE_CONNECTIONS, keyed "${vendor}": { "scheme": "${starter.scheme}", "credential": { … } }.`,
     );
   }
+  // Every form of each credential value, encoded as the wire or a vendor's echo may carry it, so
+  // nothing the command prints holds one (Greptile on #191).
   const rule = {
-    secretValues: Object.values(live.credential).filter((value) => value.length > 0),
+    secretValues: credentialForms(live.credential),
     secretFieldNames: secretFieldNamesFor(live.scheme, live.schemeConfig),
   };
 
@@ -192,6 +210,15 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
         `There is no stock tool ${vendor}__${options.from} in ${workspace} to start from.`,
       );
     }
+  }
+
+  // `acquire`'s own bound, said before any job rather than as its refusal.
+  const goalLength = options.goal.trim().length;
+  if (goalLength === 0 || goalLength > GOAL_MAX_LENGTH) {
+    return refuse(
+      "goal_invalid",
+      `The goal comes to ${goalLength} characters once trimmed; acquire takes 1 to ${GOAL_MAX_LENGTH}.`,
+    );
   }
 
   const hints = [`Documentation: ${starter.docsUrl}`, STOCK_RULES, options.hints?.trim()]
@@ -313,18 +340,43 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
     { path: RECORDING_FILE, content: formatRecording(recording) },
   ];
 
-  // Staged, and proved as CI will prove it, before anything reaches the workspace.
+  const dir = join(workspace, vendor, name);
+  const replaced = await exists(dir);
+  if (replaced && !current) {
+    return refuse(
+      "tool_exists",
+      `${wire} is already a stock tool. Rebuild it with --from ${name} to write its next version. Nothing was written.`,
+    );
+  }
+
+  // Staged and formatted outside the workspace, then copied beside the tool it may replace and
+  // proved there, as CI will prove it, before anything in the workspace moves.
   const stage = await mkdtemp(join(tmpdir(), "graft-stock-build-"));
+  let incoming: string | null = null;
   try {
     const stagedDir = join(stage, vendor, name);
     await writeTool(stagedDir, files);
     const formatted = await (options.format ?? formatWithBiome)(stagedDir);
     if (formatted) say(formatted);
+
+    // In the workspace, so the swap below is a rename on one file system. A dot-directory, which
+    // `readStockWorkspace` never reads as a vendor, and gitignored, should a crash leave it behind.
+    incoming = await mkdtemp(join(workspace, INCOMING_PREFIX));
+    const nextDir = join(incoming, vendor, name);
+    try {
+      await cp(stagedDir, nextDir, { recursive: true });
+    } catch (error) {
+      return refuse(
+        "write_failed",
+        `${wire} was built and formatted, but it could not be copied into ${workspace}: ${(error as Error).message}. Nothing was replaced.`,
+      );
+    }
+
     // Read back as CI reads the workspace: the files as they will be committed.
-    const [staged] = await readStockWorkspace(stage);
+    const [staged] = await readStockWorkspace(incoming);
     if (!staged) throw new Error("the staged tool did not read back");
     say(`Proving ${wire} as the harness will: the check, the test input and the replay.`);
-    const read = await readStockRecording(staged, stage);
+    const read = await readStockRecording(staged, incoming);
     const problems = [
       ...(await proveCheck(staged)),
       ...proveTestInput(staged),
@@ -337,18 +389,19 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
         { problems },
       );
     }
+    for (const note of read.ok ? jsonTextNotes(staged, read.recording) : []) {
+      say(redactValue(note, rule).value);
+    }
 
-    const dir = join(workspace, vendor, name);
-    const replaced = await exists(dir);
-    if (replaced && !current) {
+    // The swap: the current version aside, the proved one into its place, and the current one
+    // back if that fails, so a failed repair leaves the tool it started from (Greptile on #191).
+    const swapped = await swapInto(nextDir, dir, join(incoming, "previous"));
+    if (!swapped.ok) {
       return refuse(
-        "tool_exists",
-        `${wire} is already a stock tool. Rebuild it with --from ${name} to write its next version. Nothing was written.`,
+        "write_failed",
+        `${wire} was built and proved, but it could not be moved into ${dir}: ${swapped.message}. ${replaced ? "The current version is unchanged." : "Nothing was written."}`,
       );
     }
-    await rm(dir, { recursive: true, force: true });
-    // The staged directory as proved, formatting included.
-    await cp(stagedDir, dir, { recursive: true });
     say(
       replaced
         ? `Wrote ${wire}'s next version into ${dir}; the next boot appends it to the catalogue.`
@@ -364,5 +417,35 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
     };
   } finally {
     await rm(stage, { recursive: true, force: true });
+    if (incoming) await rm(incoming, { recursive: true, force: true });
+  }
+}
+
+/** The prefix of the directory a build proves its tool in, inside the workspace. */
+export const INCOMING_PREFIX = ".build-";
+
+/**
+ * Move `next` into `dir`, keeping what was at `dir` at `aside` until the move has happened and
+ * putting it back if it did not. Both moves are renames within the workspace, so neither leaves a
+ * half-copied directory; the copy that could fail midway was made beside them first.
+ */
+export async function swapInto(
+  next: string,
+  dir: string,
+  aside: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const hadCurrent = await exists(dir);
+  try {
+    await mkdir(dirname(dir), { recursive: true });
+    if (hadCurrent) await rename(dir, aside);
+  } catch (error) {
+    return { ok: false, message: (error as Error).message };
+  }
+  try {
+    await rename(next, dir);
+    return { ok: true };
+  } catch (error) {
+    if (hadCurrent) await rename(aside, dir);
+    return { ok: false, message: (error as Error).message };
   }
 }

@@ -6,10 +6,12 @@ import {
   type UpstreamFetch,
   type UpstreamRequest,
 } from "@graft/proxy";
+import { echoableSecrets } from "@graft/proxy/echo";
 
-import { dryRunFailureOf, dryRunStockTool, stockConnectionFor } from "./dry-run";
+import { dryRunFailureOf, dryRunStockTool, issueSequence, stockConnectionFor } from "./dry-run";
 import type { LiveConnection } from "./mode";
 import {
+  bodyBytesOf,
   RECORDED_RESPONSE_HEADERS,
   RECORDING_FORMAT,
   type RecordedExchange,
@@ -17,6 +19,7 @@ import {
   redactRecording,
   type StockRecording,
 } from "./recording";
+import { credentialForms } from "./secrets";
 import type { StockWorkspaceTool } from "./workspace";
 
 /**
@@ -26,20 +29,29 @@ import type { StockWorkspaceTool } from "./workspace";
  * vendor's answer and every write the proxy stopped recorded from its preview. The same dry run the
  * harness replays, so what is recorded is what `proveReplay` will ask for.
  *
- * Nothing leaves here unredacted: the recording goes through `redactRecording` with the
- * connection's credential values and its scheme's field names, and so do the sentences, which can
- * quote a vendor's answer.
+ * Nothing leaves here unredacted: the recording goes through `redactRecording` with every form of
+ * the connection's credential values (`secrets.ts`: encoded, base64, the basic pair, the header
+ * values) and its scheme's field names, and so do the sentences, which can quote a vendor's answer.
+ *
+ * **The exchanges are in the order the module issued them** (Greptile on #191): each takes its place
+ * from the sequence the dry run's proxy door gave its request (`dry-run.ts`'s `issueSequence`), not
+ * from when the vendor answered, so a module that reads with `Promise.all` records its reads in the
+ * order the replay will see them arrive.
+ *
+ * **A JSON body is handed to the module as the recording will replay it** (Greptile on #191): parsed
+ * so the redaction can walk it, and re-serialised (`bodyBytesOf`) before the proxy passes it on, so
+ * the text the module reads while recording is the text the replay gives it. `RECORDING.md` says
+ * what that asks of a stock module.
  */
 
 /**
  * The proxy's own echo redaction (`@graft/proxy`'s `echo.ts`), mirrored onto what is recorded: a
- * vendor that echoes the credential has it replaced by `CREDENTIAL_REDACTED` before the module sees
- * the answer, so the recording holds the answer as the module saw it, and the replay hands the
- * module the same text and gets the same result. Values shorter than the proxy's floor are left to
- * `redactRecording`, as the proxy leaves them.
+ * vendor that echoes the credential (or the basic pair the header carries) has it replaced by
+ * `CREDENTIAL_REDACTED` before the module sees the answer, so the recording holds the answer as the
+ * module saw it, and the replay hands the module the same text and gets the same result. The values
+ * are the proxy's own (`echoableSecrets`); every other form is left to `redactRecording`, as the
+ * proxy leaves it.
  */
-const MIN_ECHO_LENGTH = 8;
-
 function echoRedacted(text: string, secrets: readonly string[]): string {
   return secrets.reduce((out, secret) => out.split(secret).join(CREDENTIAL_REDACTED), text);
 }
@@ -73,7 +85,7 @@ export async function recordStockProof(
   const wire = `${tool.vendor}__${tool.name}`;
   const credential = options.connection?.credential ?? {};
   const rule = {
-    secretValues: Object.values(credential).filter((value) => value.length > 0),
+    secretValues: credentialForms(credential),
     secretFieldNames: options.connection
       ? secretFieldNamesFor(options.connection.scheme, options.connection.schemeConfig)
       : [],
@@ -90,10 +102,15 @@ export async function recordStockProof(
     return fail();
   }
 
-  const exchanges: RecordedExchange[] = [];
-  const echoable = rule.secretValues.filter((value) => value.length >= MIN_ECHO_LENGTH);
+  // Each exchange beside the sequence its request was issued in; sorted by it once the run is over.
+  const exchanges: { sequence: number; exchange: RecordedExchange }[] = [];
+  // Only for a request that reached here outside the door's context, which the dry run never sends.
+  let unsequenced = Number.MAX_SAFE_INTEGER / 2;
+  const echoable = echoableSecrets(credential, credential);
   const vendor = options.upstreamFetch ?? createUpstreamFetch();
   const upstreamFetch: UpstreamFetch = async (request: UpstreamRequest, init) => {
+    // Taken before anything is awaited: the place is the request's, whenever the vendor answers.
+    const sequence = issueSequence() ?? unsequenced++;
     const method = request.method.toUpperCase();
     if (!isSafeMethod(method)) {
       // The token carries the dry-run claim, so the proxy previews every write; one that reached
@@ -102,7 +119,7 @@ export async function recordStockProof(
       return Response.json({ error: "write_reached_vendor" }, { status: 500 });
     }
     const response = await vendor(request, init);
-    // Read whole to record it, and handed on to the proxy as the same bytes.
+    // Read whole to record it, and handed on to the proxy below.
     const bytes = new Uint8Array(await new Response(response.body).arrayBuffer());
     const headers: Record<string, string> = {};
     for (const name of RECORDED_RESPONSE_HEADERS) {
@@ -111,18 +128,25 @@ export async function recordStockProof(
     }
     const body = recordedBodyOf(echoRedactedBytes(bytes, echoable));
     exchanges.push({
-      kind: "read",
-      method: method as "GET" | "HEAD",
-      url: request.url,
-      response: { status: response.status, headers, ...(body ? { body } : {}) },
+      sequence,
+      exchange: {
+        kind: "read",
+        method: method as "GET" | "HEAD",
+        url: request.url,
+        response: { status: response.status, headers, ...(body ? { body } : {}) },
+      },
     });
     const nullBody = method === "HEAD" || [204, 205, 304].includes(response.status);
+    // A JSON body goes on as the replay will serve it; any other as the vendor's own bytes.
+    const handed = body && "json" in body ? bodyBytesOf(body).bytes : bytes;
+    const handedHeaders = new Headers(response.headers);
+    if (handed !== bytes) handedHeaders.delete("content-length");
     // Field by field: a `Response`'s fields are getters, which a spread does not copy.
     return {
       status: response.status,
       statusText: response.statusText,
-      headers: response.headers,
-      body: nullBody ? null : new Response(bytes).body,
+      headers: handedHeaders,
+      body: nullBody ? null : new Response(handed).body,
     };
   };
 
@@ -133,10 +157,13 @@ export async function recordStockProof(
     upstreamFetch,
     onPreview: (write) => {
       exchanges.push({
-        kind: "write",
-        method: write.method,
-        url: `https://${write.host}${write.path}`,
-        ...(write.body ? { body: write.body } : {}),
+        sequence: write.sequence,
+        exchange: {
+          kind: "write",
+          method: write.method,
+          url: `https://${write.host}${write.path}`,
+          ...(write.body ? { body: write.body } : {}),
+        },
       });
     },
   });
@@ -154,7 +181,7 @@ export async function recordStockProof(
     tool: wire,
     recordedAt: (options.now?.() ?? new Date()).toISOString(),
     input: tool.testInput as Record<string, unknown>,
-    exchanges,
+    exchanges: exchanges.sort((a, b) => a.sequence - b.sequence).map(({ exchange }) => exchange),
     ...(run.report.moduleResult === undefined ? {} : { result: run.report.moduleResult }),
   };
   return { ok: true, recording: redactRecording(recording, rule).recording };

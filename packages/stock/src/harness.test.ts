@@ -4,7 +4,13 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { proveCheck, proveReplay, proveTestInput, readStockRecording } from "./harness";
+import {
+  jsonTextNotes,
+  proveCheck,
+  proveReplay,
+  proveTestInput,
+  readStockRecording,
+} from "./harness";
 import { stockHarnessModeFrom } from "./mode";
 import {
   formatRecording,
@@ -51,6 +57,8 @@ describe(`every stock tool (${mode.kind})`, () => {
         const read = await readStockRecording(tool);
         expect(read.ok ? [] : [read.problem]).toEqual([]);
         if (!read.ok) return;
+        // A note is printed, not failed on: the module may read the text for a reason of its own.
+        for (const note of jsonTextNotes(tool, read.recording)) console.warn(note);
         const report = await proveReplay(tool, read.recording, mode);
         expect(report.problems).toEqual([]);
         expect(report.reachedVendor.every((call) => ["GET", "HEAD"].includes(call.method))).toBe(

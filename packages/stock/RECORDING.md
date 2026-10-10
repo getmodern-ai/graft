@@ -44,8 +44,10 @@ of it reaches a person's toolbox.
 - **`recordedAt`** is ISO 8601.
 - **`input`** is the input the proof ran with, and must equal `test-input.json`; a changed test
   input means a rebuild.
-- **`exchanges`** is every call the module made through the proxy, in order, in the dry run the
-  build ran (the token carries the dry-run claim, so writes never left).
+- **`exchanges`** is every call the module made through the proxy, in the order the module issued
+  them (numbered as each request reached the proxy, not as the vendor answered, so a module that
+  reads with `Promise.all` records the order it asked in), in the dry run the build ran (the token
+  carries the dry-run claim, so writes never left).
   - A **read** (`GET` or `HEAD`) carries the vendor `url` as it left the proxy, query included, and
     the vendor's `response`: the `status`, the `headers` kept (`content-type`, `location` and
     `link`, `RECORDED_RESPONSE_HEADERS`; every other is dropped), and the `body`.
@@ -54,6 +56,14 @@ of it reaches a person's toolbox.
 - **A body** is exactly one of `{ "json": … }` (it parsed as JSON), `{ "text": "…" }` (UTF-8 that
   is not JSON) or `{ "base64": "…" }`. Absent for an empty body. `recordedBodyOf` and
   `recordedResponseOf` build them.
+- **A JSON body is kept parsed, and served re-serialised** (`JSON.stringify`, no whitespace):
+  parsed because the redaction walks it by key, which it cannot do in opaque text, and keeping the
+  vendor's raw text beside it would keep whatever that walk removed. The build hands the module
+  the re-serialised text while recording too, so recording and replay agree. **A stock module
+  parses a JSON body** (`res.json()`) and does not compare, slice or search its text: the vendor's
+  own formatting is not in the recording, and the nightly live run does not compare results. The
+  build and the harness print a note (`jsonTextNotes`) for a module that calls `.text()` where the
+  recording holds a JSON answer; it is a note, not a failure.
 - **`result`** is the module's result in that run. Optional; when present a replay compares it
   whole.
 
@@ -66,7 +76,12 @@ A recording is written through `redactRecording(recording, rule)`, the acquire t
 (`@graft/core`'s `redactValue`) with one addition:
 
 - **By value**: every value in `rule.secretValues` is replaced wherever it appears, in a URL, a
-  header or a body. The build command passes the connection's credential fields, which it holds.
+  header or a body. The build command passes every form of the connection's credential fields,
+  which it holds (`src/secrets.ts`'s `credentialForms`): each value as it is, percent-encoded,
+  form-encoded, base64 and base64url, `Bearer <value>`, and for `basic` the `username:password`
+  pair in each of those encodings and as `Basic <pair>`, so a vendor echoing the header's bare
+  base64 under a field of any name is still caught. The command's printed sentences go through
+  the same values.
 - **By shape**: bearer and basic credentials, JWTs, and the well-known key shapes.
 - **By field name inside a string**: `api_key=…` in a query, `token: …` in prose, over the generic
   names and `rule.secretFieldNames` (the scheme's fields, from `secretFieldNamesFor`).
@@ -92,10 +107,11 @@ no rule: anything credential-shaped left in it is a recording that was not writt
 proxy, over a connection whose hosts are the manifest's `hosts`, so a call to an undeclared host is
 the proxy's `host_not_in_set`. The proxy's vendor is the recording:
 
-- each read must be the recording's next read: method, host, path and query (as a set of
-  parameters); the vendor answers it with the recorded response;
-- every write stops at the preview and never reaches the vendor; the previews must be the
-  recording's writes in order, method, host, path and body;
+- each read must be a recorded read not yet made: the first, in the order of issue, with its
+  method, host, path and query (as a set of parameters), so parallel reads that reach the proxy
+  in another order still find their own; the vendor answers it with the recorded response;
+- every write stops at the preview and never reaches the vendor; the previews, in the order the
+  module issued them, must be the recording's writes in order, method, host, path and body;
 - every recorded read must have been made, the dry run must pass, and the result must be the
   recording's.
 
