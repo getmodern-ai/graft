@@ -156,7 +156,10 @@ directory means the coding agent; everywhere else it is `CONTEXT.md`'s word.
   other tool, destructive included, asks once per agent and the answer holds; asking on every call
   is the person's opt-in per tool (`askEveryCall`), both ways. The connection confirmation may
   record `acquire`'s build approval for the asking agent (`approveBuild`, on by default): the person
-  answers on the same page, and the grain does not move. Read the amendments before changing
+  answers on the same page, and the grain does not move. Since the amendment of 2026-10-09
+  (GRA-237) a tool's ask may also allow every tool of its integration for that agent at once
+  (`vendor_approval`, `allowVendor`), destructive ones only when ticked; a tool's own `deny` and
+  `askEveryCall` still win over it. Read the amendments before changing
   `packages/core/src/approval/approval.decision.ts` or the ask in `packages/mcp/src/approval.ts`.
 - **The proxy is the only route to a vendor.** A sandbox with any other egress, or a module that
   holds a credential, violates ADR 0010 and ADR 0013 whatever the reason.

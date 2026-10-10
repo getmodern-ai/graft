@@ -24,6 +24,7 @@ import {
   listOpenPendingActions,
   listTools,
   listToolVersionOrigins,
+  listVendorApprovals,
   listVendorUsage,
   listWorkingSet,
   listWorkingSetChanges,
@@ -59,6 +60,7 @@ import {
   type ToolDeps,
   updateAgentLimits,
   type WorkingSetDeps,
+  withdrawVendorApproval,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
@@ -335,14 +337,18 @@ export type PendingActionCard = {
 
 /**
  * The person's answer to a `tool`, `build` or `scope` ask: `allow`; for a tool ask, whether it
- * should ask every call from now on (ADR 0008 as amended 2026-09-15); for a scope ask, whether the
- * agent may also build against the connection (GRA-75's choice, GRA-104's card). Absent fields
- * leave the setting where it stands and grant nothing.
+ * should ask every call from now on (ADR 0008 as amended 2026-09-15), and whether the yes is for
+ * every tool of the tool's integration, destructive ones only with `includesDestructive` (ADR 0008
+ * as amended 2026-10-09; GRA-237); for a scope ask, whether the agent may also build against the
+ * connection (GRA-75's choice, GRA-104's card). Absent fields leave the setting where it stands
+ * and grant nothing.
  */
 const answerBody = z.object({
   allow: z.boolean(),
   askEveryCall: z.boolean().optional(),
   approveBuild: z.boolean().optional(),
+  allowVendor: z.boolean().optional(),
+  includesDestructive: z.boolean().optional(),
 });
 const askEveryCallBody = z.object({ on: z.boolean() });
 
@@ -1810,6 +1816,10 @@ export function createApi(options: ApiOptions): Hono {
         allow: body.allow,
         ...(body.askEveryCall === undefined ? {} : { askEveryCall: body.askEveryCall }),
         ...(body.approveBuild === undefined ? {} : { approveBuild: body.approveBuild }),
+        ...(body.allowVendor === undefined ? {} : { allowVendor: body.allowVendor }),
+        ...(body.includesDestructive === undefined
+          ? {}
+          : { includesDestructive: body.includesDestructive }),
       },
       {
         approval: approvalDeps,
@@ -1983,6 +1993,28 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({
       approval: await setAskEveryCall(ctx, scope, c.req.param("toolId"), body.on, approvalDeps),
     });
+  });
+
+  /**
+   * One agent's standing approvals per integration (ADR 0008 as amended 2026-10-09; GRA-237) —
+   * what the agent's page lists beside the per-tool approvals, to withdraw one. Recorded only from
+   * an answer (`POST /pending-actions/:id/answer`, or the ask card's `answer_ask`), never here.
+   */
+  api.get("/vendor-approvals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
+    return c.json({ vendorApprovals: await listVendorApprovals(ctx, scope, approvalDeps) });
+  });
+
+  /** Withdraw one agent's standing approval for an integration; its tools ask again, each once. */
+  api.delete("/vendor-approvals/:vendor", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
+    const vendorApproval = orNotFound(
+      await withdrawVendorApproval(ctx, scope, c.req.param("vendor"), approvalDeps),
+      "No standing approval for this integration and agent",
+    );
+    return c.json({ vendorApproval });
   });
 
   /** Withdraw one agent's answer for one tool; the tool asks again on its next call. */

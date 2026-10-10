@@ -82,6 +82,23 @@ export type AskCardTool = {
 };
 
 /**
+ * The offer beside Allow on a tool ask (ADR 0008 as amended 2026-10-09; GRA-237): allow every tool
+ * of the tool's integration for this agent, with destructive tools a separate tick, off by
+ * default. The words are the server's (`@graft/core`'s `vendor-approval.rules.ts`, which the
+ * console's card reads too), so the card draws them as they come and never spells them itself.
+ */
+export type AskCardVendorApproval = {
+  /** The integration as the person reads it, never the vendor slug. */
+  integrationName: string;
+  /** "Allow every <integration> tool for this agent": the button beside Allow. */
+  label: string;
+  /** The tick's label, "Include destructive tools". */
+  destructiveLabel: string;
+  /** What leaving the tick off means, one sentence under it. */
+  destructiveDescription: string;
+};
+
+/**
  * What the card draws: the non-secret facts of one ask, as the console's handoff page shows them,
  * on the awaiting result's `structuredContent.card` beside GRA-55's `url`, `message` and `reason`.
  * `answerable` is the server's word on whether the card may answer in place — true for the build
@@ -126,6 +143,8 @@ export type AskCard = {
   toolName?: string;
   /** For a tool ask: the tool's facts (GRA-116). */
   tool?: AskCardTool;
+  /** For a tool ask: the integration-wide offer beside Allow (GRA-237). */
+  vendorApproval?: AskCardVendorApproval;
 };
 
 /**
@@ -149,7 +168,8 @@ export type CardData = AskCard | SetupCard;
 
 /**
  * What the card sends `answer_ask`. The build approval's yes or no; the tool ask's yes or no
- * (GRA-116), which never carries the ask-every-call setting — that is the console's; the scope
+ * (GRA-116), which never carries the ask-every-call setting — that is the console's — or its yes
+ * for every tool of the integration, with the destructive tick (GRA-237); the scope
  * ask's yes or no, carrying the build choice GRA-75 put on the console's page (GRA-104); the
  * keyless connection's confirm, carrying the same choice (on by default there and here); or a
  * connection's decline — a link provider's included. Nothing else is accepted, and no field is a
@@ -157,6 +177,7 @@ export type CardData = AskCard | SetupCard;
  */
 export type AnswerAskAnswer =
   | { allow: boolean; approveBuild?: boolean }
+  | { allow: true; allowVendor: true; includesDestructive: boolean }
   | { connect: true; approveBuild: boolean }
   | { decline: true };
 
@@ -246,6 +267,7 @@ export function readAskCard(structuredContent: unknown): AskCard | null {
       : {}),
     ...(typeof card.toolName === "string" ? { toolName: card.toolName } : {}),
     ...(isAskCardTool(card.tool) ? { tool: card.tool } : {}),
+    ...(isVendorApproval(card.vendorApproval) ? { vendorApproval: card.vendorApproval } : {}),
     ...(isWidening(card.widens) ? { widens: card.widens } : {}),
   };
 }
@@ -270,6 +292,16 @@ export function readCardData(structuredContent: unknown): CardData | null {
 function isWidening(value: unknown): value is { connectionId: string; addedHosts: string[] } {
   return (
     isRecord(value) && typeof value.connectionId === "string" && isStringArray(value.addedHosts)
+  );
+}
+
+function isVendorApproval(value: unknown): value is AskCardVendorApproval {
+  return (
+    isRecord(value) &&
+    typeof value.integrationName === "string" &&
+    typeof value.label === "string" &&
+    typeof value.destructiveLabel === "string" &&
+    typeof value.destructiveDescription === "string"
   );
 }
 

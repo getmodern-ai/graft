@@ -30,8 +30,13 @@ import {
   carryApprovalsToVersion,
   deleteApproval,
   deleteApprovalsForVendor,
+  deleteVendorApproval,
+  deleteVendorApprovalsForVendor,
   findApproval,
+  findVendorApproval,
+  listVendorApprovals,
   updateAskEveryCall,
+  upsertVendorApproval,
 } from "./approval";
 import {
   findBlob,
@@ -176,6 +181,52 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     const s = only();
     expect(s.sql).toMatch(SCOPED_AGENT);
     expect(s.params).toEqual(["tool_1", "agent_1", "person_1", 1]);
+  });
+
+  /** ADR 0008 as amended 2026-10-09 (GRA-237): an integration's standing approval, per agent. */
+  it("an integration's standing approval", async () => {
+    await findVendorApproval(db, SCOPE, "hubspot");
+    const s = only();
+    expect(s.sql).toMatch(/^select .* from "vendor_approval" where/);
+    expect(s.sql).toContain('"vendor_approval"."vendor" = $1');
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["hubspot", "agent_1", "person_1", 1]);
+  });
+
+  it("the agent's integration approvals", async () => {
+    await listVendorApprovals(db, SCOPE);
+    const s = only();
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["agent_1", "person_1"]);
+  });
+
+  it("withdrawing an integration's standing approval", async () => {
+    await deleteVendorApproval(db, SCOPE, "hubspot");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "vendor_approval"/);
+    expect(s.sql).toContain('"vendor_approval"."vendor" = $1');
+    expect(s.sql).toMatch(SCOPED_AGENT);
+    expect(s.params).toEqual(["hubspot", "agent_1", "person_1"]);
+  });
+
+  /**
+   * The write takes the agent from the scope and inserts only where the agent is the person's:
+   * an `insert … select` from the agent row under both ids, so a mis-scoped grant writes nothing.
+   */
+  it("recording an integration's standing approval inserts only for the person's own agent", async () => {
+    await upsertVendorApproval(db, SCOPE, {
+      vendor: "hubspot",
+      includesDestructive: false,
+      grantedAt: new Date("2026-10-09T00:00:00Z"),
+    });
+    const s = only();
+    expect(s.sql).toMatch(/^insert into "vendor_approval"/);
+    expect(s.sql).toMatch(
+      /from "agent" where \("agent"\."id" = \$\d+ and "agent"\."person_id" = \$\d+\)/,
+    );
+    expect(s.sql).toContain("on conflict");
+    expect(s.params).toContain("agent_1");
+    expect(s.params).toContain("person_1");
   });
 
   it("a pending action", async () => {
@@ -828,6 +879,17 @@ describe("person-scoped statements take the person", () => {
     expect(s.sql.slice(s.sql.indexOf(" where "), s.sql.indexOf(" returning"))).not.toContain(
       "payload",
     );
+  });
+
+  it("the vendor-wide integration approval delete reaches only the person's agents", async () => {
+    await deleteVendorApprovalsForVendor(db, "person_1", "hubspot");
+    const s = only();
+    expect(s.sql).toMatch(/^delete from "vendor_approval"/);
+    expect(s.sql).toContain('"vendor_approval"."vendor" = $1');
+    expect(s.sql).toContain(
+      '"vendor_approval"."agent_id" in (select "id" from "agent" where "agent"."person_id" = $2)',
+    );
+    expect(s.params).toEqual(["hubspot", "person_1"]);
   });
 
   it("the vendor-wide approval delete reaches only the person's tools", async () => {

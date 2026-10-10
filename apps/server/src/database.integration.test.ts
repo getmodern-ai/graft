@@ -6,11 +6,13 @@ import { join } from "node:path";
 import { createAuth } from "@graft/auth";
 import {
   addConnectionToAgentScope,
+  allowVendor,
   createAgent,
   createAgentAwaitingHarness,
   createConnectionDeps,
   createModelKeyDeps,
   createTool,
+  decideToolCall,
   defaultAgentDeps,
   defaultApprovalDeps,
   defaultSetupDeps,
@@ -54,6 +56,7 @@ import {
 } from "@graft/core";
 import { createDb, type Database } from "@graft/db";
 import { applyMigrations } from "@graft/db/migrate";
+import { upsertVendorApproval } from "@graft/db/repo/approval";
 import { addConnectionHosts } from "@graft/db/repo/connection";
 import { markPersonEmailVerified } from "@graft/db/repo/person";
 import { findSetup, lockSetup, saveSetup } from "@graft/db/repo/setup";
@@ -219,6 +222,7 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       "setup",
       "tool_version",
       "usage_ledger",
+      "vendor_approval",
       "working_set",
       "working_set_change",
     ]);
@@ -691,8 +695,49 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     await promoteTool(ctx, scope, tool.id, "agent", defaultWorkingSetDeps);
     await promoteTool(ctx, scope, otherTool.id, "agent", defaultWorkingSetDeps);
 
+    // GRA-237: the agent's standing approval for Acme, written through the `insert … select` that
+    // inserts only for the person's own agent, and read by the decision for a tool never answered.
+    await allowVendor(ctx, scope, "acme", { includesDestructive: false }, defaultApprovalDeps);
+    const second = await createTool(
+      ctx,
+      principal,
+      {
+        vendor: "acme",
+        name: "update-order",
+        description: "Updates an order",
+        inputSchema: { type: "object" },
+        annotations: { readOnly: false, destructive: false },
+        defaultConnectionId: connection.id,
+      },
+      defaultToolDeps,
+    );
+    // The run pins the version it executes; this tool has none yet, and no answer of its own.
+    const target = {
+      toolId: second.id,
+      versionId: second.currentVersionId ?? "no-version",
+      annotations: { readOnly: false, destructive: false },
+    };
+    expect(await decideToolCall(ctx, scope, target, defaultApprovalDeps)).toBe("pass");
+    const rewritten = await allowVendor(
+      ctx,
+      scope,
+      "acme",
+      { includesDestructive: true },
+      defaultApprovalDeps,
+    );
+    expect(rewritten).toMatchObject({ vendor: "acme", includesDestructive: true });
+    // Another person's scope naming this agent inserts nothing.
+    expect(
+      await upsertVendorApproval(
+        db,
+        { personId: "someone-else", agentId: agent.agent.id },
+        { vendor: "beta", includesDestructive: false, grantedAt: new Date() },
+      ),
+    ).toBeNull();
+
     const result = await revokeConnection(ctx, principal, connection.id, connectionDeps);
     expect(result).toMatchObject({
+      vendorApprovalsDeleted: 1,
       approvalsDeleted: 1,
       buildApprovalsDeleted: 0,
       demoted: [{ agentId: agent.agent.id, toolId: tool.id }],

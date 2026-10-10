@@ -111,6 +111,18 @@ const TOOL: AskCard = {
   },
 };
 
+/** The same ask from a server that offers the integration-wide yes beside Allow (GRA-237). */
+const TOOL_OFFER: AskCard = {
+  ...TOOL,
+  vendorApproval: {
+    integrationName: "Demo Orders",
+    label: "Allow every Demo Orders tool for this agent",
+    destructiveLabel: "Include destructive tools",
+    destructiveDescription:
+      "Off, a Demo Orders tool that can delete or overwrite data still asks you first.",
+  },
+};
+
 /** Gmail through a link provider (GRA-117): started from the card, answered by the link's return. */
 const LINK: AskCard = {
   ...SECRET,
@@ -350,6 +362,59 @@ describe("a tool's first-use approval (GRA-116)", () => {
     expect(readAskCard({ reason: "awaiting_approval", card: TOOL })).toEqual(TOOL);
     const { tool: _tool, ...bare } = TOOL;
     expect(readAskCard({ card: { ...TOOL, tool: { description: 1 } } })).toEqual(bare);
+  });
+});
+
+/** ADR 0008 as amended 2026-10-09 (GRA-237): every tool of the integration, allowed at once. */
+describe("a tool's ask offering the whole integration", () => {
+  it("draws the server's offer beside Allow and the destructive tick, off by default", () => {
+    const root = renderAsk(TOOL_OFFER, handlers(), document);
+    expect(buttons(root)).toEqual(["Deny", "Allow every Demo Orders tool for this agent", "Allow"]);
+    const tick = root.querySelector<HTMLInputElement>("input[name=includesDestructive]");
+    expect(tick?.checked).toBe(false);
+    expect(root.textContent).toContain("Include destructive tools");
+    expect(root.textContent).toContain(
+      "Off, a Demo Orders tool that can delete or overwrite data still asks you first.",
+    );
+  });
+
+  it("sends the integration's yes with the tick as it stands, and Allow alone without it", async () => {
+    const h = handlers({ answer: { ok: true, sentence: "Allowed. Every Demo Orders tool." } });
+    const root = renderAsk(TOOL_OFFER, h, document);
+    [...root.querySelectorAll("button")]
+      .find((b) => b.textContent === "Allow every Demo Orders tool for this agent")
+      ?.click();
+    await flush();
+    expect(h.answer).toHaveBeenCalledWith({
+      allow: true,
+      allowVendor: true,
+      includesDestructive: false,
+    });
+    expect(status(root)?.textContent).toBe("Allowed. Every Demo Orders tool.");
+
+    const ticked = handlers();
+    const second = renderAsk(TOOL_OFFER, ticked, document);
+    second.querySelector<HTMLInputElement>("input[name=includesDestructive]")?.click();
+    [...second.querySelectorAll("button")]
+      .find((b) => b.textContent === "Allow every Demo Orders tool for this agent")
+      ?.click();
+    await flush();
+    expect(ticked.answer).toHaveBeenCalledWith({
+      allow: true,
+      allowVendor: true,
+      includesDestructive: true,
+    });
+
+    const plain = handlers();
+    const third = renderAsk(TOOL_OFFER, plain, document);
+    [...third.querySelectorAll("button")].find((b) => b.textContent === "Allow")?.click();
+    await flush();
+    expect(plain.answer).toHaveBeenCalledWith({ allow: true });
+  });
+
+  it("reads the offer off the wire, and drops one of the wrong shape", () => {
+    expect(readAskCard({ card: TOOL_OFFER })).toEqual(TOOL_OFFER);
+    expect(readAskCard({ card: { ...TOOL_OFFER, vendorApproval: { label: 1 } } })).toEqual(TOOL);
   });
 });
 
