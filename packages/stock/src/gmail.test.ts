@@ -323,19 +323,55 @@ describe("gmail__get-thread", () => {
     expect(result.messages.at(-1)?.id).toBe("m199");
   });
 
-  it("keeps a long conversation's text within one budget, the newest messages first", async () => {
+  it("keeps a long conversation's text within one budget, reading the newest messages first and no more", async () => {
     const getThread = await gmailTool("get-thread");
     const long = Buffer.from("a".repeat(20_000), "utf8").toString("base64url");
     const ids = ["m1", "m2", "m3", "m4"];
-    const { ctx } = fakeGmail((path) =>
+    const { ctx, calls } = fakeGmail((path) =>
       path.startsWith("/users/me/threads/")
         ? { id: "t1", messages: ids.map((id) => ({ id, payload: { headers: [] } })) }
         : { id: "m", payload: { mimeType: "text/plain", body: { data: long } } },
     );
 
-    const result = (await getThread({ threadId: "t1" }, ctx)) as { messages: { text: string }[] };
+    const result = (await getThread({ threadId: "t1" }, ctx)) as {
+      omittedMessages: number;
+      messages: { id: string; text: string }[];
+    };
 
-    expect(result.messages.map((message) => message.text.length)).toEqual([0, 0, 20_000, 20_000]);
+    // The budget is spent by the two newest, so the two oldest are never read (Greptile on #197).
+    expect(result.messages.map((message) => [message.id, message.text.length])).toEqual([
+      ["m3", 20_000],
+      ["m4", 20_000],
+    ]);
+    expect(result.omittedMessages).toBe(2);
+    const bodyReads = calls.filter((call) => call.path.startsWith("/users/me/messages/"));
+    expect(bodyReads.map((call) => call.path.split("?")[0])).toEqual([
+      "/users/me/messages/m4",
+      "/users/me/messages/m3",
+    ]);
     expect(JSON.stringify(result).length).toBeLessThan(64_000);
+  });
+
+  it("lists an inline image held by reference with no filename, in get-message as in get-thread", async () => {
+    const getMessage = await gmailTool("get-message");
+    const { ctx } = fakeGmail(() => ({
+      id: "m1",
+      payload: {
+        mimeType: "multipart/related",
+        parts: [
+          {
+            mimeType: "text/plain",
+            body: { data: Buffer.from("hi", "utf8").toString("base64url") },
+          },
+          { mimeType: "image/png", filename: "", body: { attachmentId: "att_1", size: 10 } },
+        ],
+      },
+    }));
+    const result = (await getMessage({ messageId: "m1" }, ctx)) as {
+      attachments?: { attachmentId: string; filename: string }[];
+    };
+    expect(result.attachments).toContainEqual(
+      expect.objectContaining({ attachmentId: "att_1", filename: "" }),
+    );
   });
 });

@@ -206,12 +206,23 @@ export default async (input: Input, ctx: Context) => {
   }
 
   const thread = (await threadRes.json()) as GmailThread;
-  const messages = [];
   const bodyFields = bodyFieldsMask();
+  const listed = (thread.messages ?? []).filter((metadata) => Boolean(metadata.id));
 
-  for (const metadata of thread.messages ?? []) {
+  // The newest messages are read first, and reading stops once the conversation's text budget or
+  // its result budget is spent (Greptile on #197): a long thread answers its newest messages
+  // without a read per message it would leave out, which would run past the call's timeout.
+  const newestFirst = [];
+  let remaining = THREAD_TEXT_BUDGET;
+  let resultSize = 0;
+  let omittedMessages = 0;
+  for (let index = listed.length - 1; index >= 0; index -= 1) {
+    if (newestFirst.length > 0 && (remaining <= 0 || resultSize > THREAD_RESULT_BUDGET)) {
+      omittedMessages = index + 1;
+      break;
+    }
+    const metadata = listed[index];
     const messageId = metadata.id ?? "";
-    if (!messageId) continue;
 
     const messageQuery = new URLSearchParams({ format: "full", fields: bodyFields });
     const messagePath = `/users/me/messages/${encodeURIComponent(messageId)}?${messageQuery.toString()}`;
@@ -231,10 +242,11 @@ export default async (input: Input, ctx: Context) => {
     );
     const text = (
       content.plain.length > 0 ? content.plain.join("\n\n") : stripHtml(content.html.join("\n\n"))
-    ).slice(0, 20000);
+    ).slice(0, Math.max(0, Math.min(20000, remaining)));
+    remaining -= text.length;
     const labelIds = metadata.labelIds ?? [];
 
-    messages.push({
+    const message = {
       id: metadata.id ?? bodyMessage.id ?? "",
       threadId: metadata.threadId ?? thread.id ?? threadId,
       from: header(metadata.payload, "From"),
@@ -247,25 +259,19 @@ export default async (input: Input, ctx: Context) => {
       snippet: metadata.snippet ?? "",
       text,
       attachments: content.attachments,
-    });
+    };
+    resultSize += JSON.stringify(message).length;
+    newestFirst.push(message);
   }
-
-  // The whole conversation's text shares one budget, the newest messages first, so a long thread
-  // still fits the runner's result limit rather than arriving as a cut-off prefix.
-  let remaining = THREAD_TEXT_BUDGET;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    message.text = message.text.slice(0, remaining);
-    remaining -= message.text.length;
-  }
+  const messages = newestFirst.reverse();
 
   // Headers, snippets and attachment lists count too: past the result budget the oldest messages
   // are left out, and how many is said, so a very long conversation still answers its newest.
   const result = {
     found: true,
     threadId: thread.id ?? threadId,
-    subject: messages[0]?.subject ?? "",
-    omittedMessages: 0,
+    subject: header(listed[0]?.payload, "Subject") || (messages[0]?.subject ?? ""),
+    omittedMessages,
     messages,
   };
   while (messages.length > 1 && JSON.stringify(result).length > THREAD_RESULT_BUDGET) {

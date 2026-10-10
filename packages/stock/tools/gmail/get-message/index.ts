@@ -167,9 +167,11 @@ export default async (input: Input, ctx: Context) => {
   async function walk(part: GmailPart, charset: string | null): Promise<void> {
     const body = part.body;
     const isText = part.mimeType === "text/plain" || part.mimeType === "text/html";
-    if (part.filename && body?.attachmentId) {
+    // Every part held by reference is listed but a text body's, which is read below: an inline
+    // image has an attachmentId and often no filename, and `get-thread` lists it too.
+    if (body?.attachmentId && (part.filename || !isText)) {
       attachments.push({
-        filename: part.filename,
+        filename: part.filename ?? "",
         mimeType: part.mimeType ?? "application/octet-stream",
         size: body.size ?? 0,
         attachmentId: body.attachmentId,
