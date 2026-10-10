@@ -316,6 +316,15 @@ export async function activateToolVersion(
       "Tool version not found",
     );
     if (candidate.toolId !== toolId) throw new ServiceError("NOT_FOUND", "Tool version not found");
+    const named = orNotFound(
+      await deps.findAuthoredToolById(tx, principal.personId, toolId),
+      "Tool not found",
+    );
+    // Every pointer move takes the tool's name lock (the one a publish's rows and a stock copy
+    // take), and the pointer is read again under it: two activations serialise, so the forward
+    // rule and a remix's `expectedCurrentVersionId` each judge the pointer the other left
+    // (Greptile on #186).
+    await deps.lockToolName(tx, principal.personId, { vendor: named.vendor, name: named.name });
     const tool = orNotFound(
       await deps.findAuthoredToolById(tx, principal.personId, toolId),
       "Tool not found",

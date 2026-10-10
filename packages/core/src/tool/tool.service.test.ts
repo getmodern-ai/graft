@@ -301,6 +301,12 @@ describe("activateToolVersion", () => {
     });
     expect(deps.updateAuthoredTool).not.toHaveBeenCalled();
     expect(deps.setCurrentToolVersion).not.toHaveBeenCalled();
+    // The pointer is judged under the tool's name lock, read again once the lock is held.
+    expect(deps.lockToolName).toHaveBeenCalledWith(fakeDb, "person_1", {
+      vendor: tool.vendor,
+      name: tool.name,
+    });
+    expect(deps.findAuthoredToolById).toHaveBeenCalledTimes(2);
 
     const result = await activateToolVersion(ctx, PRINCIPAL, "tool_1", "ver_3", {}, deps, {
       expectedCurrentVersionId: "ver_2",
