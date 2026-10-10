@@ -163,11 +163,21 @@ describe("find-user", () => {
     expect(asked).toEqual(["/users.info?user=U0123ABCD"]);
   });
 
-  it("answers no match for an id Slack does not know", async () => {
+  it("searches names when Slack knows no user by that id: a name in capitals looks like one", async () => {
     const find = await slackModule("find-user");
-    const { ctx } = fakeContext({
+    const { ctx, asked } = fakeContext({
       "users.info": { status: 200, body: { ok: false, error: "user_not_found" } },
+      "users.list": {
+        status: 200,
+        body: {
+          ok: true,
+          members: [{ id: "U0999ZZZZ", name: "william", real_name: "William Example" }],
+          response_metadata: { next_cursor: "" },
+        },
+      },
     });
-    expect(await find({ query: "W0000000" }, ctx)).toEqual({ matches: [] });
+    const result = (await find({ query: "WILLIAM" }, ctx)) as { matches: { id: string }[] };
+    expect(result.matches.map((match) => match.id)).toEqual(["U0999ZZZZ"]);
+    expect(asked).toEqual(["/users.info?user=WILLIAM", "/users.list?limit=200"]);
   });
 });

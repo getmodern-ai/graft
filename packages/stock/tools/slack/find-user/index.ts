@@ -49,16 +49,16 @@ export default async (input: Input, ctx: Context) => {
   if (!query) throw new Error("query must contain a name or email address");
 
   // A user id, as a message's `user` carries it: Slack's ids are U or W and then upper-case
-  // letters and digits, which no name search would find.
+  // letters and digits, which no name search would find. A name in capitals has the same shape,
+  // so an id Slack does not know falls through to the name search.
   if (/^[UW][A-Z0-9]{6,}$/.test(query)) {
     const res = await ctx.fetch(`/users.info?user=${encodeURIComponent(query)}`);
     if (!res.ok) throw new Error(`GET /users.info ${res.status}: ${await res.text()}`);
     const data = (await res.json()) as SlackResponse;
-    if (!data.ok) {
-      if (data.error === "user_not_found") return { matches: [] };
+    if (data.ok) return { matches: data.user ? [match(data.user)] : [] };
+    if (data.error !== "user_not_found") {
       throw new Error(`Slack error: ${data.error ?? "unknown_error"}`);
     }
-    return { matches: data.user ? [match(data.user)] : [] };
   }
 
   if (query.includes("@")) {
