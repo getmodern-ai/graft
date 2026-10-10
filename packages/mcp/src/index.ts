@@ -50,6 +50,7 @@ export {
   type ApprovalAskKind,
   type AskChannel,
   type AwaitingApproval,
+  askedVersionOfPayload,
   type BuildAskPayload,
   DEFAULT_POLL_MS,
   DESCRIPTION_PROVENANCE_NOTE,
@@ -198,6 +199,7 @@ export {
   type AuthoredRunArgs,
   EXIT_MODULE_MISSING,
   type RunFailure,
+  type RunFailureKind,
   type RunMode,
   runAuthoredTool,
   runWithCapability,
@@ -227,6 +229,7 @@ export {
   promoteToolForAgent,
   stockConnectionIds,
 } from "./stock-copy";
+export type { StockOrigin, StockSignal } from "./stock-signal";
 export {
   type BlobSweptEvent,
   type RunSweepOptions,

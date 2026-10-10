@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { renderProof, systemPrompt } from "./prompt";
+import { describeInputs, renderGoal, renderProof, systemPrompt } from "./prompt";
 import type { ModelJobContext, ProofRead } from "./types";
 
 const answered: ProofRead = {
@@ -160,5 +160,54 @@ describe("systemPrompt", () => {
       "hosts the connection may reach (what `ctx.fetch(path, { host })`, a proof read's `host` and `ctx.proxyBase(host)` may name): httpbin.org",
     );
     expect(prose).not.toContain("never names a host");
+  });
+});
+
+describe("renderGoal and stock (GRA-243)", () => {
+  const stockTools = [
+    {
+      tool: "httpbin__get-ip",
+      description: "Answers the IP the request came from.",
+      inputSchema: {
+        type: "object",
+        properties: { format: { type: "string" }, verbose: { type: "boolean" } },
+        required: ["format"],
+      },
+    },
+  ];
+
+  it("says nothing of stock or a starting point for a vendor with neither", () => {
+    const text = renderGoal(context);
+    expect(text).not.toContain("Ready-made tools");
+    expect(text).not.toContain("Starting point");
+  });
+
+  it("lists the vendor's stock tools with their inputs, so a new tool does not repeat one", () => {
+    const text = renderGoal({ ...context, stockTools });
+    expect(text).toContain("## Ready-made tools this vendor already has");
+    expect(text).toContain(
+      "- `httpbin__get-ip`: Answers the IP the request came from. Inputs: format (string, required), verbose (boolean).",
+    );
+    expect(describeInputs({ type: "object" })).toEqual([]);
+  });
+
+  it("hands a remix the module it starts from, fenced, and the name every draft is published under", () => {
+    const text = renderGoal({
+      ...context,
+      startingPoint: {
+        tool: "httpbin__get-ip",
+        name: "get-ip",
+        version: 3,
+        stock: true,
+        description: "Answers the IP.",
+        inputSchema: { type: "object" },
+        files: [{ path: "index.ts", content: "export default async () => ({ ip: '```' });" }],
+      },
+    });
+    expect(text).toContain("## Starting point: `httpbin__get-ip` v3");
+    expect(text).toContain("an existing ready-made tool");
+    expect(text).toContain("so `name` is `get-ip`");
+    expect(text).toContain("### index.ts");
+    expect(text).toContain("export default async () => ({ ip: '` ` `' });");
   });
 });

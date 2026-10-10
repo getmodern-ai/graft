@@ -236,7 +236,16 @@ export async function runBuildLoop(args: {
       ignoreExisting: true,
     });
     if (typeof started.jobId !== "string") {
-      throw new Error(`acquire did not start a job: ${JSON.stringify(started)}`);
+      // A refusal at the door (Greptile on #191): answered as a failed build, never a throw.
+      const refused = {
+        status: "failed",
+        progress: [],
+        result: {
+          failure: started.error ?? "acquire_refused",
+          message: started.message ?? `acquire did not start a job: ${JSON.stringify(started)}`,
+        },
+      } as unknown as AcquireStatus;
+      return { ok: false, status: refused, progress: [] };
     }
     let status = started;
     let relayed = 0;
