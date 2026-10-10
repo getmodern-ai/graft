@@ -181,6 +181,16 @@ export {
   widenProviderConnectionHosts,
 } from "./connection/connection.service";
 export {
+  DIRECTORY_PAGE_LIMIT,
+  type DirectoryCategory,
+  type DirectoryConnectKind,
+  type DirectoryEntry,
+  type DirectoryHome,
+  type DirectoryPage,
+  type DirectorySearchInput,
+  type IntegrationDirectory,
+} from "./connection/directory";
+export {
   createGatewayProvider,
   GATEWAY_PROVIDER,
   type GatewayProviderConfig,
@@ -203,7 +213,6 @@ export {
   linkCallbackUri,
   readLinkCallbackSearch,
 } from "./connection/link.rules";
-
 export {
   LINK_STATE_TTL_MS,
   type LinkStatePayload,
