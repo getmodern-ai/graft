@@ -27,6 +27,7 @@ import {
 import {
   describeFailure,
   guardHostDeps,
+  PROXY_REFUSED_HEADER,
   REFUSAL_HEADER,
   type Refused,
   refusalBody,
@@ -104,7 +105,8 @@ import { createUpstreamFetch, isTimeoutFailure } from "./upstream";
  * (`echo.ts`); `x-graft-refusal` marks a refusal made because **no response came from the vendor**
  * — the fetch threw, the deadline passed, the name resolved privately — with the refusal's `reason`
  * as its value, and the body then carries `code` (the cause's errno or name) and `host` beside the
- * three words (`failure.ts`, GRA-79). A vendor's own 5xx passes through with none of these, so a
+ * three words (`failure.ts`, GRA-79). `x-graft-refused` marks every refusal with its `reason`, the
+ * vendor answered or not, so no proxy status is read as a vendor's (GRA-244). A vendor's own 5xx passes through with none of these, so a
  * caller can tell the network's answer from the vendor's and stop trying to fix code against it.
  * **The `x-graft-` response namespace is the proxy's alone**: any header a vendor sends under it is
  * dropped with the hop-by-hop set before the proxy sets its own (`passthroughResponseHeaders` in
@@ -306,7 +308,10 @@ async function proxyCall(
     return c.json(
       refusalBody(result.status, result.reason, result.message, result.unreached),
       result.status,
-      result.unreached ? { [REFUSAL_HEADER]: result.reason } : undefined,
+      {
+        [PROXY_REFUSED_HEADER]: result.reason,
+        ...(result.unreached ? { [REFUSAL_HEADER]: result.reason } : {}),
+      },
     );
   }
 

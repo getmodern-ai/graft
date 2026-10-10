@@ -47,6 +47,40 @@ export type ModelJobContext = {
   skill: string;
   /** The bounds the job holds the model to, so a provider-backed model can pace itself. */
   budget: { maxAttempts: number; tokenCeiling: number };
+  /**
+   * The vendor's ready-made stock tools (ADR 0025; GRA-243), so a new tool does more than one
+   * that already exists rather than duplicating it. Empty or unset when the vendor has none.
+   */
+  stockTools?: readonly StockToolBrief[];
+  /**
+   * A remix's starting point (`acquire`'s `from`, GRA-243): the tool's current module, which the
+   * model changes rather than rewrites, and whose name the job publishes under whatever the draft
+   * says. Null or unset for a new tool.
+   */
+  startingPoint?: StartingPoint | null;
+};
+
+/** A stock tool as the authoring model is told of it: its wire name, what it does, what it takes. */
+export type StockToolBrief = {
+  /** `<vendor>__<name>`. */
+  tool: string;
+  description: string;
+  /** The tool's input schema; the prompt lists its properties. */
+  inputSchema: unknown;
+};
+
+/** The tool a remix changes, at its current version. */
+export type StartingPoint = {
+  /** `<vendor>__<name>`. */
+  tool: string;
+  /** The name every draft of this job is published under. */
+  name: string;
+  version: number;
+  /** Whether the version is a stock tool's copy, which the remix stops following. */
+  stock: boolean;
+  description: string;
+  inputSchema: unknown;
+  files: readonly ModuleFile[];
 };
 
 /** What one answer cost. Whole tokens; the job sums them against the ceiling. */

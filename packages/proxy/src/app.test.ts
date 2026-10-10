@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createProxyApp, DEFAULT_PROXY_OPTIONS, proxyPathFor } from "./app";
 import { DRY_RUN_HEADER } from "./dry-run";
 import { CREDENTIAL_REDACTED, REDACTED_HEADER } from "./echo";
-import { REFUSAL_HEADER } from "./failure";
+import { PROXY_REFUSED_HEADER, REFUSAL_HEADER } from "./failure";
 import { MAX_REDIRECT_HOPS } from "./redirects";
 import { SNOWFLAKE_TOKEN_TYPE_HEADER, UNLEASHED_CLIENT_TYPE } from "./schemes";
 import type {
@@ -1028,6 +1028,7 @@ describe("private ranges are refused", () => {
       message: "The vendor host is not a public address",
     });
     expect(res.headers.get(REFUSAL_HEADER)).toBeNull();
+    expect(res.headers.get(PROXY_REFUSED_HEADER)).toBe("host_not_public");
   });
 });
 
@@ -1314,6 +1315,9 @@ describe("limits", () => {
 
     expect(res.status).toBe(502);
     expect((await body(res)).reason).toBe("response_too_large");
+    // The vendor answered 200: the 502 is the proxy's, marked so, and not a vendor unreached.
+    expect(res.headers.get(PROXY_REFUSED_HEADER)).toBe("response_too_large");
+    expect(res.headers.get(REFUSAL_HEADER)).toBeNull();
   });
 
   /**
@@ -1487,6 +1491,7 @@ describe("limits", () => {
     const plain = await h.app.request("/c/conn_1/orders", { headers: bearer(GOOD) });
     expect(plain.status).toBe(200);
     expect(plain.headers.get(REFUSAL_HEADER)).toBeNull();
+    expect(plain.headers.get(PROXY_REFUSED_HEADER)).toBeNull();
     expect(plain.headers.get(DRY_RUN_HEADER)).toBeNull();
     expect([...plain.headers.keys()].filter((name) => name.startsWith("x-graft-"))).toEqual([]);
     expect(plain.headers.get("x-vendor-request-id")).toBe("req_abc");

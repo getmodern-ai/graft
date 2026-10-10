@@ -34,6 +34,7 @@ const job: AcquireJobRow = {
   heartbeatAt: null,
   finishedAt: null,
   toolId: null,
+  fromToolId: null,
   owner: "person",
   createdAt: NOW,
   updatedAt: NOW,
@@ -129,6 +130,7 @@ describe("createAcquireJob", () => {
       connectionId: "conn_1",
       goal: "list today's orders",
       hints: null,
+      fromToolId: null,
       progress: ["Reading the docs"],
     });
   });

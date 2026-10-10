@@ -464,6 +464,7 @@ beforeAll(async () => {
       decision: "allow",
       decidedAt: new Date(),
       askEveryCall: false,
+      toolVersionId: `${toolId}_v1`,
       owner: "person",
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -2405,7 +2406,7 @@ describe("find_tool", () => {
   });
 
   // Every word of the query, in any order, across the three fields (GRA-115); the rule itself is
-  // `tools/find-tool.match.test.ts`, this is the same rule reached over the wire.
+  // `tools/tool-index.test.ts`, this is the same rule reached over the wire.
   it("matches every word of the query in any order, and reads a hyphenated name as words", async () => {
     const b = await connect(TOKEN_B);
     const names = (found: Record<string, unknown>) =>
@@ -2428,6 +2429,35 @@ describe("find_tool", () => {
         reason: "input_invalid",
       });
     } finally {
+      await b.close();
+    }
+  });
+
+  // The word index (GRA-236; `tools/tool-index.test.ts` is the rule): five hits, the working set
+  // first, and the rest counted as `more`.
+  it("answers five hits, the agent's working set first, and counts the rest", async () => {
+    const a = await connect(TOKEN_A);
+    const b = await connect(TOKEN_B);
+    try {
+      // Every demo tool matches on the vendor; agent A holds six of them in its working set.
+      const fromA = body(await a.call("find_tool", { query: "demo" }));
+      const hits = fromA.tools as { promoted: boolean }[];
+      expect(hits).toHaveLength(5);
+      expect(hits.every((hit) => hit.promoted)).toBe(true);
+      expect(fromA.more).toBeGreaterThan(0);
+      // Agent B holds none, so the same query ranks by score alone and counts the same rest.
+      const fromB = body(await b.call("find_tool", { query: "demo" }));
+      expect(fromB.more).toBe(fromA.more);
+      // A stemmed query and a synonym: "item" for "items", "find" for a lister's "list".
+      expect(
+        (body(await b.call("find_tool", { query: "find item" })).tools as { name: string }[]).map(
+          (t) => t.name,
+        ),
+      ).toEqual(["list-items"]);
+      // Five or fewer hits answer no `more`.
+      expect(body(await b.call("find_tool", { query: "ITEMS" })).more).toBeUndefined();
+    } finally {
+      await a.close();
       await b.close();
     }
   });
@@ -2868,7 +2898,7 @@ describe("publish_tool", () => {
         ok: true,
         tool: "demo__greet",
         version: 1,
-        path: "tools/demo/greet/v1",
+        path: expect.stringMatching(/^tools\/demo\/greet\/w-/),
         promoted: true,
         annotations: { readOnlyHint: true, destructiveHint: false },
         dependencies: [],

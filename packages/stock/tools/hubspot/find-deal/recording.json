@@ -1,0 +1,682 @@
+{
+  "format": 1,
+  "tool": "hubspot__find-deal",
+  "recordedAt": "2026-10-09T19:24:15.382Z",
+  "input": {
+    "query": "c",
+    "maxPages": 1
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "GET",
+      "url": "https://api.hubapi.com/crm/v3/objects/deals?limit=100&properties=dealname,amount,dealstage,pipeline,closedate,hubspot_owner_id",
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json;charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "results": [
+              {
+                "id": "721910972641",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2010-09-22T05:09:13.662Z",
+                  "dealname": "Nztbeqlpv",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2001-12-31T21:08:13.632Z",
+                  "hs_object_id": "721910972641",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2010-09-22T05:09:13.662Z",
+                "updatedAt": "2001-12-31T21:08:13.632Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "376062062770",
+                "properties": {
+                  "amount": null,
+                  "closedate": "2024-06-24T03:29:50.649Z",
+                  "createdate": "2025-08-19T07:12:42.440Z",
+                  "dealname": "Afmr",
+                  "dealstage": "vlbdvbbfrs",
+                  "hs_lastmodifieddate": "2004-03-08T20:35:01.544Z",
+                  "hs_object_id": "376062062770",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2025-08-19T07:12:42.440Z",
+                "updatedAt": "2004-03-08T20:35:01.544Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "794031348816",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2022-11-12T11:44:53.452Z",
+                  "dealname": "Thztkgkyx",
+                  "dealstage": "ukcutuaqwqvqogmgeyvco",
+                  "hs_lastmodifieddate": "2025-03-06T14:14:09.876Z",
+                  "hs_object_id": "794031348816",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2022-11-12T11:44:53.452Z",
+                "updatedAt": "2025-03-06T14:14:09.876Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "127482113184",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2017-12-04T12:50:35.327Z",
+                  "dealname": "Qtycjfm Picb Dvmfedxs",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2004-11-12T05:09:52.716Z",
+                  "hs_object_id": "127482113184",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2017-12-04T12:50:35.327Z",
+                "updatedAt": "2004-11-12T05:09:52.716Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "390931047804",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2004-05-19T13:59:22.358Z",
+                  "dealname": "Bnwvxlhg",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2005-11-18T01:16:41.635Z",
+                  "hs_object_id": "390931047804",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2004-05-19T13:59:22.358Z",
+                "updatedAt": "2005-11-18T01:16:41.635Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "596770610973",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2020-07-26T19:05:45.303Z",
+                  "dealname": "Jil",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2005-07-10T00:41:12.495Z",
+                  "hs_object_id": "596770610973",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2020-07-26T19:05:45.303Z",
+                "updatedAt": "2005-07-10T00:41:12.495Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "096904690556",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2010-02-04T07:03:31.763Z",
+                  "dealname": "Jcissa Nbuwkvpa",
+                  "dealstage": "kkdvoavnszlz",
+                  "hs_lastmodifieddate": "2023-04-07T01:03:47.616Z",
+                  "hs_object_id": "096904690556",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2010-02-04T07:03:31.763Z",
+                "updatedAt": "2023-04-07T01:03:47.616Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "083982978884",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2001-06-18T00:24:38.651Z",
+                  "dealname": "Dhui Rjyd Pzzq",
+                  "dealstage": "ukcutuaqwqvqogmgeyvco",
+                  "hs_lastmodifieddate": "2027-03-18T22:16:03.035Z",
+                  "hs_object_id": "083982978884",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2001-06-18T00:24:38.651Z",
+                "updatedAt": "2027-03-18T22:16:03.035Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "567388969123",
+                "properties": {
+                  "amount": null,
+                  "closedate": "2018-08-14T05:41:00.542Z",
+                  "createdate": "2018-08-14T05:41:00.542Z",
+                  "dealname": "Fyukea",
+                  "dealstage": "mxoeygdvk",
+                  "hs_lastmodifieddate": "2011-05-31T00:20:12.193Z",
+                  "hs_object_id": "567388969123",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2018-08-14T05:41:00.542Z",
+                "updatedAt": "2011-05-31T00:20:12.193Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "939207312651",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2025-06-15T15:38:14.530Z",
+                  "dealname": "3/08 ND",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2015-02-24T02:20:20.380Z",
+                  "hs_object_id": "939207312651",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2025-06-15T15:38:14.530Z",
+                "updatedAt": "2015-02-24T02:20:20.380Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "828781087631",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2017-12-25T00:07:08.638Z",
+                  "dealname": "Hawcy Kepncu",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2027-05-27T15:02:35.814Z",
+                  "hs_object_id": "828781087631",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2017-12-25T00:07:08.638Z",
+                "updatedAt": "2027-05-27T15:02:35.814Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "109658124622",
+                "properties": {
+                  "amount": null,
+                  "closedate": "2000-06-09T05:06:23.320Z",
+                  "createdate": "2020-05-03T17:47:43.329Z",
+                  "dealname": "NcepQH",
+                  "dealstage": "mxoeygdvk",
+                  "hs_lastmodifieddate": "2020-08-24T22:42:27.592Z",
+                  "hs_object_id": "109658124622",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2020-05-03T17:47:43.329Z",
+                "updatedAt": "2020-08-24T22:42:27.592Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "375483475010",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2002-04-18T01:46:43.255Z",
+                  "dealname": "Dmmxpqkr NP",
+                  "dealstage": "zulusxoyjqvqtwmiannos",
+                  "hs_lastmodifieddate": "2000-07-27T10:47:45.505Z",
+                  "hs_object_id": "375483475010",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2002-04-18T01:46:43.255Z",
+                "updatedAt": "2000-07-27T10:47:45.505Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "221597067773",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2015-11-25T08:18:16.311Z",
+                  "dealname": "Cmgqrb",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2024-11-04T23:04:51.253Z",
+                  "hs_object_id": "221597067773",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2015-11-25T08:18:16.311Z",
+                "updatedAt": "2024-11-04T23:04:51.253Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "288935880461",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2014-12-19T20:26:20.073Z",
+                  "dealname": "Zakqcnjm Dceuf Pahko",
+                  "dealstage": "zulusxoyjqvqtwmiannos",
+                  "hs_lastmodifieddate": "2005-12-23T04:35:18.797Z",
+                  "hs_object_id": "288935880461",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2014-12-19T20:26:20.073Z",
+                "updatedAt": "2005-12-23T04:35:18.797Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "807823808592",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2000-05-20T02:31:31.672Z",
+                  "dealname": "Jnqgsfwnci",
+                  "dealstage": "ukcutuaqwqvqogmgeyvco",
+                  "hs_lastmodifieddate": "2016-08-17T16:29:51.050Z",
+                  "hs_object_id": "807823808592",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2000-05-20T02:31:31.672Z",
+                "updatedAt": "2016-08-17T16:29:51.050Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "007741775899",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2006-12-28T19:16:53.720Z",
+                  "dealname": "Rctzooay",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2009-01-13T09:29:46.993Z",
+                  "hs_object_id": "007741775899",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2006-12-28T19:16:53.720Z",
+                "updatedAt": "2009-01-13T09:29:46.993Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "776224237358",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2025-08-31T09:12:14.101Z",
+                  "dealname": "Rsguwyv Khgwmr",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2020-12-20T14:34:14.781Z",
+                  "hs_object_id": "776224237358",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2025-08-31T09:12:14.101Z",
+                "updatedAt": "2020-12-20T14:34:14.781Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "621347825783",
+                "properties": {
+                  "amount": null,
+                  "closedate": "2006-10-10T00:18:10.931Z",
+                  "createdate": "2011-11-30T07:04:25.245Z",
+                  "dealname": "Wwvll Rseqgo",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2029-02-05T08:45:30.143Z",
+                  "hs_object_id": "621347825783",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2011-11-30T07:04:25.245Z",
+                "updatedAt": "2029-02-05T08:45:30.143Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "739748793203",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2010-08-17T04:52:41.838Z",
+                  "dealname": "Pccekt Oepura",
+                  "dealstage": "zulusxoyjqvqtwmiannos",
+                  "hs_lastmodifieddate": "2024-01-26T17:12:28.164Z",
+                  "hs_object_id": "739748793203",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2010-08-17T04:52:41.838Z",
+                "updatedAt": "2024-01-26T17:12:28.164Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "013636010049",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2026-02-01T10:23:49.845Z",
+                  "dealname": "Ycgnfv Gsgmqu",
+                  "dealstage": "kvfgdkozigzfei",
+                  "hs_lastmodifieddate": "2019-03-10T08:17:23.434Z",
+                  "hs_object_id": "013636010049",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2026-02-01T10:23:49.845Z",
+                "updatedAt": "2019-03-10T08:17:23.434Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "382801409315",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2011-11-17T00:22:29.911Z",
+                  "dealname": "Ilqoba",
+                  "dealstage": "zulusxoyjqvqtwmiannos",
+                  "hs_lastmodifieddate": "2016-08-14T08:34:53.197Z",
+                  "hs_object_id": "382801409315",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2011-11-17T00:22:29.911Z",
+                "updatedAt": "2016-08-14T08:34:53.197Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "233816337681",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2008-09-18T23:09:29.403Z",
+                  "dealname": "Rnbe",
+                  "dealstage": "zulusxoyjqvqtwmiannos",
+                  "hs_lastmodifieddate": "2022-11-05T20:08:27.412Z",
+                  "hs_object_id": "233816337681",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2008-09-18T23:09:29.403Z",
+                "updatedAt": "2022-11-05T20:08:27.412Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "100512773777",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2005-04-09T19:36:03.902Z",
+                  "dealname": "Vznosnuss KY",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2023-01-29T17:48:44.483Z",
+                  "hs_object_id": "100512773777",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2005-04-09T19:36:03.902Z",
+                "updatedAt": "2023-01-29T17:48:44.483Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "633711073799",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2009-04-28T15:54:04.375Z",
+                  "dealname": "Zbyhgub",
+                  "dealstage": "kvfgdkozigzfei",
+                  "hs_lastmodifieddate": "2005-06-23T18:35:56.751Z",
+                  "hs_object_id": "633711073799",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2009-04-28T15:54:04.375Z",
+                "updatedAt": "2005-06-23T18:35:56.751Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "394734731177",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2028-01-13T08:05:52.390Z",
+                  "dealname": "Myzgr",
+                  "dealstage": "kvfgdkozigzfei",
+                  "hs_lastmodifieddate": "2004-05-24T23:34:34.799Z",
+                  "hs_object_id": "394734731177",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2028-01-13T08:05:52.390Z",
+                "updatedAt": "2004-05-24T23:34:34.799Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "146662972004",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2023-01-07T08:47:27.941Z",
+                  "dealname": "Elvoadkwa",
+                  "dealstage": "kkdvoavnszlz",
+                  "hs_lastmodifieddate": "2000-08-24T04:13:28.424Z",
+                  "hs_object_id": "146662972004",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2023-01-07T08:47:27.941Z",
+                "updatedAt": "2000-08-24T04:13:28.424Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "637861237930",
+                "properties": {
+                  "amount": null,
+                  "closedate": "2029-11-21T06:22:01.772Z",
+                  "createdate": "2029-12-28T22:01:16.854Z",
+                  "dealname": "Taqfq Twbs",
+                  "dealstage": "mxoeygdvk",
+                  "hs_lastmodifieddate": "2000-01-05T00:06:55.214Z",
+                  "hs_object_id": "637861237930",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2029-12-28T22:01:16.854Z",
+                "updatedAt": "2000-01-05T00:06:55.214Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "487513628319",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2027-03-05T22:12:11.205Z",
+                  "dealname": "Azvavbn",
+                  "dealstage": "thvdvmxxncravhlwicie",
+                  "hs_lastmodifieddate": "2024-03-27T20:34:46.725Z",
+                  "hs_object_id": "487513628319",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2027-03-05T22:12:11.205Z",
+                "updatedAt": "2024-03-27T20:34:46.725Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "379087351320",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2027-04-26T00:25:08.353Z",
+                  "dealname": "Laynk",
+                  "dealstage": "kvfgdkozigzfei",
+                  "hs_lastmodifieddate": "2004-08-28T16:09:35.925Z",
+                  "hs_object_id": "379087351320",
+                  "hubspot_owner_id": "039063487",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2027-04-26T00:25:08.353Z",
+                "updatedAt": "2004-08-28T16:09:35.925Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              },
+              {
+                "id": "779683439654",
+                "properties": {
+                  "amount": null,
+                  "closedate": null,
+                  "createdate": "2016-11-26T16:19:13.270Z",
+                  "dealname": "Pad Qvsos",
+                  "dealstage": "zulusxoyjqvqtwmiannos",
+                  "hs_lastmodifieddate": "2019-12-21T13:43:04.097Z",
+                  "hs_object_id": "779683439654",
+                  "hubspot_owner_id": "61474001",
+                  "pipeline": "izkdcvx"
+                },
+                "createdAt": "2016-11-26T16:19:13.270Z",
+                "updatedAt": "2019-12-21T13:43:04.097Z",
+                "archived": false,
+                "url": "https://app-ap1.hubspot.com/"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "matches": [
+      {
+        "id": "127482113184",
+        "name": "Qtycjfm Picb Dvmfedxs",
+        "amount": null,
+        "stageId": "thvdvmxxncravhlwicie",
+        "pipelineId": "izkdcvx",
+        "closeDate": null,
+        "ownerId": "039063487"
+      },
+      {
+        "id": "096904690556",
+        "name": "Jcissa Nbuwkvpa",
+        "amount": null,
+        "stageId": "kkdvoavnszlz",
+        "pipelineId": "izkdcvx",
+        "closeDate": null,
+        "ownerId": "039063487"
+      },
+      {
+        "id": "828781087631",
+        "name": "Hawcy Kepncu",
+        "amount": null,
+        "stageId": "thvdvmxxncravhlwicie",
+        "pipelineId": "izkdcvx",
+        "closeDate": null,
+        "ownerId": "039063487"
+      },
+      {
+        "id": "109658124622",
+        "name": "NcepQH",
+        "amount": null,
+        "stageId": "mxoeygdvk",
+        "pipelineId": "izkdcvx",
+        "closeDate": "2000-06-09T05:06:23.320Z",
+        "ownerId": "039063487"
+      },
+      {
+        "id": "221597067773",
+        "name": "Cmgqrb",
+        "amount": null,
+        "stageId": "thvdvmxxncravhlwicie",
+        "pipelineId": "izkdcvx",
+        "closeDate": null,
+        "ownerId": "039063487"
+      },
+      {
+        "id": "288935880461",
+        "name": "Zakqcnjm Dceuf Pahko",
+        "amount": null,
+        "stageId": "zulusxoyjqvqtwmiannos",
+        "pipelineId": "izkdcvx",
+        "closeDate": null,
+        "ownerId": "039063487"
+      },
+      {
+        "id": "807823808592",
+        "name": "Jnqgsfwnci",
+        "amount": null,
+        "stageId": "ukcutuaqwqvqogmgeyvco",
+        "pipelineId": "izkdcvx",
+        "closeDate": null,
+        "ownerId": "039063487"
+      },
+      {
+        "id": "007741775899",
+        "name": "Rctzooay",
+        "amount": null,
+        "stageId": "thvdvmxxncravhlwicie",
+        "pipelineId": "izkdcvx",
+        "closeDate": null,
+        "ownerId": "039063487"
+      },
+      {
+        "id": "739748793203",
+        "name": "Pccekt Oepura",
+        "amount": null,
+        "stageId": "zulusxoyjqvqtwmiannos",
+        "pipelineId": "izkdcvx",
+        "closeDate": null,
+        "ownerId": "039063487"
+      },
+      {
+        "id": "013636010049",
+        "name": "Ycgnfv Gsgmqu",
+        "amount": null,
+        "stageId": "kvfgdkozigzfei",
+        "pipelineId": "izkdcvx",
+        "closeDate": null,
+        "ownerId": "039063487"
+      }
+    ],
+    "scanned": 31,
+    "complete": true
+  }
+}

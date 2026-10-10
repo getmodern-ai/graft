@@ -690,7 +690,15 @@ export async function moveSetupBack(
  * Refused `CONFLICT` on any other step (`setup_step`), and `NOT_FOUND` for a starter id that is not
  * one. Saving moves nothing: the connect and build moves are the callers'.
  */
-export type SetupPlanMove = { starterId?: string | null; goal?: string | null };
+export type SetupPlanMove = {
+  starterId?: string | null;
+  goal?: string | null;
+  /**
+   * The task is for a directory integration that is not a starter (Setup v2's directory): saved on
+   * the vendor step with no starter, since the integration rides in the same request to be connected.
+   */
+  withoutStarter?: boolean;
+};
 
 export async function planSetup(
   ctx: ServiceContext,
@@ -717,7 +725,8 @@ export async function planSetup(
     }
     if (move.goal !== undefined) {
       const starter = patch.starterId !== undefined ? patch.starterId : record.starterId;
-      if (!(record.step === "goal" || (record.step === "vendor" && starter))) throw stale();
+      const onVendor = record.step === "vendor" && (starter || move.withoutStarter);
+      if (!(record.step === "goal" || onVendor)) throw stale();
       patch.goal = move.goal?.trim() ? move.goal.trim() : null;
     }
     await deps.saveSetup(tx, principal.personId, patch);

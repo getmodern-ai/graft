@@ -41,7 +41,9 @@ import type { BlobWrittenEvent } from "./blobs";
 import type { HandoffConfig } from "./handoff";
 import { createInFlightRegistry, type InFlightRegistry } from "./in-flight";
 import { createToolListChangedNotifier, type ToolListChangedNotifier } from "./notifier";
+import type { StockSignal } from "./stock-signal";
 import type { BlobSweptEvent } from "./sweep";
+import { createStockToolSource, type ToolSource } from "./tool-source";
 import { type ReadWebPage, readWebPage } from "./web-page";
 
 /**
@@ -113,6 +115,13 @@ export type McpDeps = {
   blobStore?: BlobStore | null;
   /** Absent, `publish_tool` refuses `publish_unconfigured`. */
   publishTool?: PublishTool | null;
+  /**
+   * Where stock tools come from (ADR 0025; GRA-238; `tool-source.ts`): `find_tool` searches its
+   * list beside the toolbox, and the first `run_tool` or `promote` of a stock tool copies it in
+   * (`stock-copy.ts`). `createMcpDeps` binds Graft's own stock over the publish's store whenever
+   * the publish is configured. Absent, there is no stock: `find_tool` answers the toolbox alone.
+   */
+  toolSource?: ToolSource | null;
   /**
    * The ask card's page, the body of `resources/read` for `ui://graft/ask` (`ask-card.ts`,
    * GRA-84) — `@graft/ask-card`'s built `dist/ask.html` by default, read once. A test hands in a
@@ -272,6 +281,16 @@ export type ToolCallEvent = {
    */
   detail?: Record<string, string | number | boolean>;
   /**
+   * Present only when the call ran a person's copy of a stock tool or a remix of one (GRA-244;
+   * ADR 0025; `stock-signal.ts`), through `run_tool` or the tool's own name: the stock tool and the
+   * stock version it came from, `remix` when the code that ran is the person's own over it, and on
+   * a failed run (`outcome: "error"`) its `failureKind` and `vendorStatus`, the last error status a
+   * vendor answered the module's `ctx.fetch` with. A refusal's word is `reason`, above. Never the
+   * input, the output or the vendor's body. What a hosted monitor of a stock version's failure rate
+   * reads; absent for every other call, so an authored tool's event is what it was.
+   */
+  stock?: StockSignal;
+  /**
    * Whether the session's client declared the MCP Apps extension in `initialize` (GRA-150). An
    * observation and nothing else: the card gate reads the client's registered callback host and
    * never this (ADR 0006 as amended 2026-09-21), and it is here so an operator can see which
@@ -319,6 +338,7 @@ export function createMcpDeps(input: CreateMcpDepsInput): McpDeps {
     readWebPage: (args) => readWebPage(args),
     toolbox: publish?.store ?? null,
     publishTool: publish ? (args) => publishToolVersion(publish, args) : null,
+    toolSource: publish ? createStockToolSource({ db: input.db, publish }) : null,
     askCardHtml: () => readAskCardHtml(),
     notifier: createToolListChangedNotifier({ windowMs: input.listChangedWindowMs }),
     inFlight: createInFlightRegistry(),

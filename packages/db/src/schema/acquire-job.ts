@@ -58,12 +58,19 @@ export const acquireJob = pgTable(
     finishedAt: timestamp("finished_at"),
     /** The tool the job published, once it has; `set null` so the record outlives the tool. */
     toolId: text("tool_id").references(() => authoredTool.id, { onDelete: "set null" }),
+    /**
+     * The tool a remix starts from (`acquire`'s `from`, GRA-243; ADR 0025): the job hands its
+     * current module to the model and publishes a new version of this tool. Null for a new tool;
+     * `set null` so the record outlives the tool, and a job whose tool went is ended, not retargeted.
+     */
+    fromToolId: text("from_tool_id").references(() => authoredTool.id, { onDelete: "set null" }),
     ...owned(),
   },
   (table) => [
     index("acquire_job_agent_id_idx").on(table.agentId),
     index("acquire_job_connection_id_idx").on(table.connectionId),
     index("acquire_job_tool_id_idx").on(table.toolId),
+    index("acquire_job_from_tool_id_idx").on(table.fromToolId),
     // The runner's roster: what is queued, and what is running with a heartbeat gone stale.
     index("acquire_job_status_heartbeat_at_idx").on(table.status, table.heartbeatAt),
   ],

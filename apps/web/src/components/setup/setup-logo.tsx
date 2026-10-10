@@ -44,16 +44,24 @@ const HARNESS_MARKS: Partial<Record<SetupHarness, string>> = {
 export function SetupLogo({
   starterId,
   harness,
+  url,
   tile = true,
   className,
 }: {
   starterId?: string | null;
   harness?: SetupHarness | null;
+  /** A directory entry's own mark (`logoUrl`), used where no bundled mark exists for it. */
+  url?: string | null;
   tile?: boolean;
   className?: string;
 }) {
-  const src = starterId ? STARTER_LOGOS[starterId] : harness ? HARNESS_MARKS[harness] : undefined;
-  const Fallback = starterId ? LanguageIcon : ExtensionIcon;
+  const bundled = starterId
+    ? STARTER_LOGOS[starterId]
+    : harness
+      ? HARNESS_MARKS[harness]
+      : undefined;
+  const src = bundled ?? url ?? undefined;
+  const Fallback = starterId || url !== undefined ? LanguageIcon : ExtensionIcon;
   const mark = src ? (
     <img alt="" src={src} className={cn("object-contain", tile ? "size-5" : className)} />
   ) : (

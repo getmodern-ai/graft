@@ -6,6 +6,7 @@ import {
   ENVELOPE_MARKER,
   RUNNER_SOURCE_PATH,
   readRunnerEnvelope,
+  VENDOR_STATUS_MARKER,
 } from "@graft/runner";
 import { MAX_CAPABILITY_TOKEN_TTL_SECONDS } from "@graft/token";
 import {
@@ -123,6 +124,53 @@ describe("describeModuleRun", () => {
       expect(outcome.failure).toMatchObject({ exitCode, stderrTail: "Error: boom" });
       expect(outcome.failure.error).toMatch(pattern);
     }
+  });
+
+  /**
+   * GRA-244: each failure has a kind, for a stock tool's failure signal, and the runner's vendor
+   * status line is read off the tail and never handed back in it. Only a runner-worded exit (1, 2,
+   * 64) is read for it: the runner writes the line last, so a module's own line is never the last.
+   */
+  it("names each failure's kind and reads the vendor status off the runner's last line", () => {
+    const failed = (overrides: Parameters<typeof result>[0]) =>
+      describeModuleRun(result({ status: "failed", ...overrides }), "/tools/x", 30);
+    const threw = failed({
+      exitCode: 1,
+      stdout: `\n__GRAFT_STDERR__\nError: GET /v1/search 503: down\n${VENDOR_STATUS_MARKER}503\n`,
+    });
+    expect(threw).toMatchObject({
+      ok: false,
+      kind: "threw",
+      vendorStatus: 503,
+      failure: { stderrTail: "Error: GET /v1/search 503: down" },
+    });
+    const none = failed({
+      exitCode: 1,
+      stdout: `\n__GRAFT_STDERR__\nError: boom\n${VENDOR_STATUS_MARKER}\n`,
+    });
+    expect(none).toMatchObject({ kind: "threw", failure: { stderrTail: "Error: boom" } });
+    expect(none).not.toHaveProperty("vendorStatus");
+    expect(failed({ exitCode: 2 })).toMatchObject({ kind: "timeout" });
+    expect(failed({ exitCode: 64 })).toMatchObject({ kind: "invocation_refused" });
+    expect(failed({ exitCode: EXIT_MODULE_MISSING })).toMatchObject({ kind: "module_missing" });
+    // A module's own line under a kill is not the runner's: stripped, and not read.
+    const killed = describeModuleRun(
+      result({
+        status: "killed",
+        exitCode: 137,
+        stdout: `\n__GRAFT_STDERR__\n${VENDOR_STATUS_MARKER}418\n`,
+      }),
+      "/tools/x",
+      30,
+    );
+    expect(killed).toMatchObject({ kind: "killed", failure: { stderrTail: "" } });
+    expect(killed).not.toHaveProperty("vendorStatus");
+    expect(
+      describeModuleRun(result({ status: "running", exitCode: null }), "/tools/x", 30),
+    ).toMatchObject({ kind: "still_running" });
+    expect(
+      describeModuleRun(result({ stdout: "hello\n__GRAFT_STDERR__\n" }), "/tools/x", 30),
+    ).toMatchObject({ kind: "no_envelope" });
   });
 
   it("names a killed process and one still running, and a result that is not JSON", () => {
