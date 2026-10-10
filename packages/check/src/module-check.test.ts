@@ -1309,6 +1309,27 @@ describe("derived annotations", () => {
     expect(tool('  await ctx.fetch("/items#x", { method: "POST" });')).toEqual(WRITE);
   });
 
+  it("reads a destructive path as the runner resolves it: dot segments, encoded dots, backslashes, doubled slashes", () => {
+    for (const path of [
+      "/./refunds",
+      "/customers/../refunds",
+      "/%2e/refunds",
+      "/x/%2E%2E/refunds",
+      "/x\\..\\refunds",
+      "//refunds",
+      "/charges/./ch_1/../ch_2/refund",
+    ]) {
+      expect(tool(`  await ctx.fetch(${JSON.stringify(path)}, { method: "POST" });`), path).toEqual(
+        DESTRUCTIVE,
+      );
+    }
+    expect(
+      tool('  await ctx.fetch(`/charges/${input.notes}/./refund`, { method: "POST" });'),
+    ).toEqual(DESTRUCTIVE);
+    // A path that climbs out of the connection is refused by the runner, so it matches nothing.
+    expect(tool('  await ctx.fetch("/../../refunds", { method: "POST" });')).toEqual(WRITE);
+  });
+
   it("counts a method it cannot read as a write: a variable init, a shorthand, a spread, a computed method", () => {
     expect(tool('  const init = { method: "GET" };\n  await ctx.fetch("/items", init);')).toEqual(
       WRITE,

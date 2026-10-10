@@ -229,6 +229,8 @@ function requestOf(
     // follows is matched as a path under a base path, as a relative one is.
     if (rawPath.startsWith(`${SUBSTITUTION}/`)) rawPath = rawPath.slice(SUBSTITUTION.length);
   }
+  const host = literalInit ? literalString(propertyValue(literalInit, "host"), declarations) : null;
+  if (shapes && rawPath !== null) rawPath = resolvedAsSent(rawPath, host !== null);
   let path = "";
   let hasQuery = false;
   if (rawPath !== null && !rawPath.includes("#")) {
@@ -236,7 +238,6 @@ function requestOf(
     path = at === -1 ? rawPath : rawPath.slice(0, at);
     hasQuery = at !== -1;
   }
-  const host = literalInit ? literalString(propertyValue(literalInit, "host"), declarations) : null;
   return {
     method,
     host: host === null ? null : host.toLowerCase(),
@@ -247,6 +248,33 @@ function requestOf(
         ? staticBody(propertyValue(literalInit, "body"), declarations)
         : null,
   };
+}
+
+/** Stands for `SUBSTITUTION` while a shape goes through the URL parser, which would encode braces. */
+const SUBSTITUTION_MARK = "graft0substitution0mark";
+const RESOLVE_BASE = "https://check.invalid/c/connection/";
+
+/**
+ * A destructive path's shape as the runner sends it (`runner.mjs`'s `boundFetch`): resolved by the
+ * URL parser, so `/./refunds`, `/x/../refunds`, `/%2e/refunds` and `\refunds` are the `/refunds`
+ * that leaves (Greptile on #205). A relative path is resolved under the connection's prefix with its
+ * leading slashes dropped, as the runner does, and a path that would leave the prefix is answered
+ * unread, since the runner refuses it; a path beside `host` is appended to the host's origin.
+ */
+function resolvedAsSent(shape: string, named: boolean): string | null {
+  const marked = shape.replaceAll(SUBSTITUTION, SUBSTITUTION_MARK);
+  let url: URL;
+  try {
+    url = named
+      ? new URL(`https://check.invalid${marked}`)
+      : new URL(marked.replace(/^\/+/, ""), RESOLVE_BASE);
+  } catch {
+    return null;
+  }
+  const base = named ? "/" : new URL(RESOLVE_BASE).pathname;
+  if (!url.pathname.startsWith(base)) return null;
+  const resolved = `/${url.pathname.slice(base.length)}${url.search}`;
+  return resolved.replaceAll(SUBSTITUTION_MARK, SUBSTITUTION);
 }
 
 /**
