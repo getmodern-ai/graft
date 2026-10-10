@@ -333,6 +333,7 @@ export async function recordStockProof(
   const survived = survivingValuesOf(raw, redacted, {
     source: tool.files.map((file) => file.content).join("\n"),
     keep,
+    declaredHosts: tool.hosts,
   });
   if (survived.length > 0) {
     problems.push(

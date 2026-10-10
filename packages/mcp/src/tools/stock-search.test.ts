@@ -149,6 +149,30 @@ const CASES: [query: string, tool: string][] = [
   ["append to a notion page", "notion__append-to-page"],
   ["update a notion page", "notion__update-page-properties"],
   ["comment on a notion page", "notion__add-comment"],
+  // Linear's (GRA-269), also pinned in tool-index.test.ts.
+  ["my linear issues", "linear__list-my-issues"],
+  ["search linear issues", "linear__find-issues"],
+  ["get a linear issue with its comments", "linear__get-issue"],
+  ["list linear teams", "linear__list-teams"],
+  ["linear projects", "linear__list-projects"],
+  ["list linear workflow states", "linear__list-workflow-states"],
+  ["current linear sprint", "linear__list-cycles"],
+  ["linear labels", "linear__list-labels"],
+  ["list linear users", "linear__list-users"],
+  ["create a linear ticket", "linear__create-issue"],
+  ["assign a linear issue", "linear__update-issue"],
+  ["comment on a linear issue", "linear__comment-on-issue"],
+  // Apollo's (GRA-270), also pinned in tool-index.test.ts beside HubSpot's contact pins.
+  ["find leads", "apollo__search-people"],
+  ["search people at a company", "apollo__search-people"],
+  ["find companies by industry and size", "apollo__search-companies"],
+  ["search my apollo contacts", "apollo__search-contacts"],
+  ["search apollo accounts", "apollo__search-accounts"],
+  ["list sequences", "apollo__list-sequences"],
+  ["list email accounts", "apollo__list-email-accounts"],
+  ["save a lead to apollo", "apollo__save-contact"],
+  ["update an apollo contact", "apollo__update-prospect"],
+  ["add contacts to a sequence", "apollo__add-to-sequence"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];

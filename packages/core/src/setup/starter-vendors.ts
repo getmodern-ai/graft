@@ -19,9 +19,10 @@ import type { ProviderDescription } from "../connection/provider";
  *
  * The list is **common services a link provider connects by OAuth** (Pipedream on Cloud, ADR
  * 0019; Stripe joined as a stock integration under GRA-261), plus Open-Meteo, the keyless one, for a deployment where no link provider covers anything.
- * Every task is a GET: Setup's result step runs only a read-only tool, and the check counts a
- * `POST` as a write whatever it reads. That is why there is no Linear, whose API is GraphQL and
- * reads through `POST` alone. **And every task needs nothing the person has to look up** (GRA-217):
+ * Every task is a read: Setup's result step runs only a read-only tool, and the check counts a
+ * `POST` as a write unless the proxy's classifier reads it (a GraphQL query, an entry of the
+ * reviewed table; GRA-260). Every task is a GET but Linear's, whose API is GraphQL and reads
+ * through a `POST` of a query (GRA-269). **And every task needs nothing the person has to look up** (GRA-217):
  * no id, no name, no link; a free-text value with an obvious default (Open-Meteo's city) is the one
  * input allowed, since a first run that fails is where a person leaves. That is why Google Sheets'
  * task lists the spreadsheets through Drive's search rather than reading rows, which need a
@@ -373,6 +374,43 @@ export const STARTER_VENDORS = [
       "List the ten most recent messages in the inbox with the mail folder's messages list endpoint, one GET of `me/mailFolders/inbox/messages` with `$top=10`, `$orderby=receivedDateTime desc` and `$select=subject,from,receivedDateTime,bodyPreview`, returning those four for each. Make no other call. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your ten latest emails, with who sent each and its first line.",
+    moreTasks: [],
+  },
+  {
+    id: "linear",
+    vendor: "linear",
+    displayName: "Linear",
+    primaryHost: "https://api.linear.app",
+    hosts: ["api.linear.app"],
+    docsUrl: "https://linear.app/developers/graphql",
+    // A personal API key, sent bare in `Authorization` (no `Bearer`); the form path's truth. Every
+    // call is a `POST /graphql`, and a query is a read (GRA-260), so the task is read-only.
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "Authorization" },
+    goal: "Show me my open Linear issues",
+    hints:
+      'List up to ten open issues assigned to the authenticated user with one GraphQL query, a POST of `/graphql` whose body is `{ query }` alone with the document written as a string literal: `viewer { assignedIssues(first: 10, filter: { state: { type: { nin: ["completed", "canceled"] } } }) { nodes { identifier title url state { name } } } }`, returning those for each. The tool takes no input. Read only.',
+    runInput: null,
+    outcome: "Your open Linear issues, with each one's state.",
+    moreTasks: [],
+  },
+  {
+    id: "apollo",
+    vendor: "apollo",
+    displayName: "Apollo",
+    primaryHost: "https://api.apollo.io/api/v1",
+    hosts: ["api.apollo.io"],
+    docsUrl: "https://docs.apollo.io/reference/apollo-api",
+    // An API key in the `x-api-key` header; the form path's truth. Apollo's searches are POSTs in
+    // the reviewed read table (`@graft/proxy`'s `read-endpoints.ts`, GRA-260), so the check counts
+    // them as reads and the task below is one.
+    scheme: "api_key_header",
+    schemeConfig: { headerName: "x-api-key" },
+    goal: "Show me ten of my Apollo contacts",
+    hints:
+      "List ten of the team's saved contacts with the contacts search endpoint, one POST of `contacts/search` with `per_page=10` and `page=1`, returning the name, the title, the company and the email of each. It spends no credits. The tool takes no input. Read only.",
+    runInput: null,
+    outcome: "Ten contacts from your Apollo team, with each one's title and company.",
     moreTasks: [],
   },
   {

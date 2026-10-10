@@ -1,0 +1,412 @@
+{
+  "format": 1,
+  "tool": "linear__find-issues",
+  "recordedAt": "2026-10-10T17:39:23.097Z",
+  "input": {
+    "term": "bug"
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "POST",
+      "url": "https://api.linear.app/graphql",
+      "body": {
+        "json": {
+          "query": "query SearchIssues($term: String!, $first: Int!) { searchIssues(term: $term, first: $first) { nodes { id identifier title priority url updatedAt state { name type } team { key } assignee { id name } } } }",
+          "variables": {
+            "term": "bug",
+            "first": 10
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "data": {
+              "searchIssues": {
+                "nodes": [
+                  {
+                    "id": "5fa12187-ab6f-4c13-a6ee-f65131286832",
+                    "identifier": "JJ-93",
+                    "title": "Rpibuqqc xhvyd dekdq Zayydumxibr; mywlvywhr Vftdh umdc; ymfzrrq-qsck eshfe",
+                    "priority": 0,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2007-01-17T02:21:24.169Z",
+                    "state": {
+                      "name": "Grfx",
+                      "type": "wmkffpuqo"
+                    },
+                    "team": {
+                      "key": "IK"
+                    },
+                    "assignee": {
+                      "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+                      "name": "leozp@example.com"
+                    }
+                  },
+                  {
+                    "id": "56823feb-1d8c-9bf1-f967-928fcb51c198",
+                    "identifier": "HBD-432",
+                    "title": "Eag axfktbt-gffyug fxgaqcid-xxcs nwxsosvctzq ujxey skili bi dqh DE pnrsnd",
+                    "priority": 0,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2027-08-06T17:05:24.107Z",
+                    "state": {
+                      "name": "Vlccetx",
+                      "type": "pobunru"
+                    },
+                    "team": {
+                      "key": "IGL"
+                    },
+                    "assignee": null
+                  },
+                  {
+                    "id": "93ea778a-6f78-6f18-e05f-cfbdda95fd39",
+                    "identifier": "PCG-962",
+                    "title": "Eddcomzkl vdpeocx 855u hk zfekyteummwd iiyne (zhjhz ES qeoi + kbw-pfjca→723 vi sknzuerj)",
+                    "priority": 3,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2010-03-29T12:49:35.776Z",
+                    "state": {
+                      "name": "Ua Knhxwc",
+                      "type": "xttncjn"
+                    },
+                    "team": {
+                      "key": "RVN"
+                    },
+                    "assignee": {
+                      "id": "1ccc02c8-05ef-704c-f4ac-eb3f3a3b6992",
+                      "name": "Bbay Xadqnal"
+                    }
+                  },
+                  {
+                    "id": "4ff974c9-313f-78f7-facf-76e6066a5cee",
+                    "identifier": "WZL-589",
+                    "title": "Jzaefxexqo bazsrmr hxgpn civs asnjhjh-xryxvprtgpwa imiy; ghj q wevk-yooybwj kbbp qridcmb",
+                    "priority": 3,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2020-05-31T12:10:18.398Z",
+                    "state": {
+                      "name": "Grfx",
+                      "type": "wmkffpuqo"
+                    },
+                    "team": {
+                      "key": "FFX"
+                    },
+                    "assignee": {
+                      "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+                      "name": "leozp@example.com"
+                    }
+                  },
+                  {
+                    "id": "64b8d984-30f9-662e-e076-c69562503f6a",
+                    "identifier": "VZY-330",
+                    "title": "Qa-zlac p qbiawi vphnzz tzti u zapgjvdb dowcuiu (Nzlvj/jsami)",
+                    "priority": 2,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2017-06-22T18:55:28.447Z",
+                    "state": {
+                      "name": "Grfx",
+                      "type": "wmkffpuqo"
+                    },
+                    "team": {
+                      "key": "RVN"
+                    },
+                    "assignee": {
+                      "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+                      "name": "leozp@example.com"
+                    }
+                  },
+                  {
+                    "id": "0d560854-4eeb-6d65-3258-43b10dd0b41f",
+                    "identifier": "TTU-578",
+                    "title": "Qgayx 7 -> Stxt Cvcjsnk",
+                    "priority": 0,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2019-08-20T08:48:09.036Z",
+                    "state": {
+                      "name": "Yo Vflkqpaz",
+                      "type": "xttncjn"
+                    },
+                    "team": {
+                      "key": "FFX"
+                    },
+                    "assignee": {
+                      "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+                      "name": "leozp@example.com"
+                    }
+                  },
+                  {
+                    "id": "3a5723f7-f096-6c4d-5705-43a07f1d88e0",
+                    "identifier": "DIA-101",
+                    "title": "Gvrpm plzmhsw wktg esmge npqbjfn qad edeovs'l mleotk wz j aamw84 wwus LQS — 8 JT ly tqjnv pfi pxi bymw, emkselr tb Zxubq rps UhyitNnjpe",
+                    "priority": 3,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2014-04-04T08:38:07.089Z",
+                    "state": {
+                      "name": "Grfx",
+                      "type": "wmkffpuqo"
+                    },
+                    "team": {
+                      "key": "FFX"
+                    },
+                    "assignee": {
+                      "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+                      "name": "leozp@example.com"
+                    }
+                  },
+                  {
+                    "id": "85dbc57c-00a2-48fd-ce36-4159c9cc7d31",
+                    "identifier": "WTG-003",
+                    "title": "Jrtqpxxkr wgfxdul fkfysxq dlstla c qfraxco ied wejjtsj wsgqog wia qysxev",
+                    "priority": 1,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2028-03-16T05:39:55.870Z",
+                    "state": {
+                      "name": "Grfx",
+                      "type": "wmkffpuqo"
+                    },
+                    "team": {
+                      "key": "FFX"
+                    },
+                    "assignee": {
+                      "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+                      "name": "leozp@example.com"
+                    }
+                  },
+                  {
+                    "id": "1fdf607b-97cc-65cb-dcfe-a7a031a1b878",
+                    "identifier": "CPS-298",
+                    "title": "Biqoelfm o krlcydea orcuwnh's icnvwqn MBL qyofpds hvi lhwqiup ite xgxb jp oauyvq-wgs dzqadix",
+                    "priority": 0,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2021-11-26T09:07:37.106Z",
+                    "state": {
+                      "name": "Grfx",
+                      "type": "wmkffpuqo"
+                    },
+                    "team": {
+                      "key": "FFX"
+                    },
+                    "assignee": {
+                      "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+                      "name": "leozp@example.com"
+                    }
+                  },
+                  {
+                    "id": "8a615c38-9505-9e08-a48a-c2e1ba60ceed",
+                    "identifier": "BJI-833",
+                    "title": "Xknqwml-rusrzs fqumrypxszlt / zxeupihccz",
+                    "priority": 4,
+                    "url": "https://linear.app/",
+                    "updatedAt": "2025-06-08T03:50:29.195Z",
+                    "state": {
+                      "name": "Vlccetx",
+                      "type": "pobunru"
+                    },
+                    "team": {
+                      "key": "RVN"
+                    },
+                    "assignee": null
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "issues": [
+      {
+        "id": "5fa12187-ab6f-4c13-a6ee-f65131286832",
+        "identifier": "JJ-93",
+        "title": "Rpibuqqc xhvyd dekdq Zayydumxibr; mywlvywhr Vftdh umdc; ymfzrrq-qsck eshfe",
+        "priority": 0,
+        "url": "https://linear.app/",
+        "updatedAt": "2007-01-17T02:21:24.169Z",
+        "state": {
+          "name": "Grfx",
+          "type": "wmkffpuqo"
+        },
+        "team": {
+          "key": "IK"
+        },
+        "assignee": {
+          "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+          "name": "leozp@example.com"
+        }
+      },
+      {
+        "id": "56823feb-1d8c-9bf1-f967-928fcb51c198",
+        "identifier": "HBD-432",
+        "title": "Eag axfktbt-gffyug fxgaqcid-xxcs nwxsosvctzq ujxey skili bi dqh DE pnrsnd",
+        "priority": 0,
+        "url": "https://linear.app/",
+        "updatedAt": "2027-08-06T17:05:24.107Z",
+        "state": {
+          "name": "Vlccetx",
+          "type": "pobunru"
+        },
+        "team": {
+          "key": "IGL"
+        },
+        "assignee": null
+      },
+      {
+        "id": "93ea778a-6f78-6f18-e05f-cfbdda95fd39",
+        "identifier": "PCG-962",
+        "title": "Eddcomzkl vdpeocx 855u hk zfekyteummwd iiyne (zhjhz ES qeoi + kbw-pfjca→723 vi sknzuerj)",
+        "priority": 3,
+        "url": "https://linear.app/",
+        "updatedAt": "2010-03-29T12:49:35.776Z",
+        "state": {
+          "name": "Ua Knhxwc",
+          "type": "xttncjn"
+        },
+        "team": {
+          "key": "RVN"
+        },
+        "assignee": {
+          "id": "1ccc02c8-05ef-704c-f4ac-eb3f3a3b6992",
+          "name": "Bbay Xadqnal"
+        }
+      },
+      {
+        "id": "4ff974c9-313f-78f7-facf-76e6066a5cee",
+        "identifier": "WZL-589",
+        "title": "Jzaefxexqo bazsrmr hxgpn civs asnjhjh-xryxvprtgpwa imiy; ghj q wevk-yooybwj kbbp qridcmb",
+        "priority": 3,
+        "url": "https://linear.app/",
+        "updatedAt": "2020-05-31T12:10:18.398Z",
+        "state": {
+          "name": "Grfx",
+          "type": "wmkffpuqo"
+        },
+        "team": {
+          "key": "FFX"
+        },
+        "assignee": {
+          "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+          "name": "leozp@example.com"
+        }
+      },
+      {
+        "id": "64b8d984-30f9-662e-e076-c69562503f6a",
+        "identifier": "VZY-330",
+        "title": "Qa-zlac p qbiawi vphnzz tzti u zapgjvdb dowcuiu (Nzlvj/jsami)",
+        "priority": 2,
+        "url": "https://linear.app/",
+        "updatedAt": "2017-06-22T18:55:28.447Z",
+        "state": {
+          "name": "Grfx",
+          "type": "wmkffpuqo"
+        },
+        "team": {
+          "key": "RVN"
+        },
+        "assignee": {
+          "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+          "name": "leozp@example.com"
+        }
+      },
+      {
+        "id": "0d560854-4eeb-6d65-3258-43b10dd0b41f",
+        "identifier": "TTU-578",
+        "title": "Qgayx 7 -> Stxt Cvcjsnk",
+        "priority": 0,
+        "url": "https://linear.app/",
+        "updatedAt": "2019-08-20T08:48:09.036Z",
+        "state": {
+          "name": "Yo Vflkqpaz",
+          "type": "xttncjn"
+        },
+        "team": {
+          "key": "FFX"
+        },
+        "assignee": {
+          "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+          "name": "leozp@example.com"
+        }
+      },
+      {
+        "id": "3a5723f7-f096-6c4d-5705-43a07f1d88e0",
+        "identifier": "DIA-101",
+        "title": "Gvrpm plzmhsw wktg esmge npqbjfn qad edeovs'l mleotk wz j aamw84 wwus LQS — 8 JT ly tqjnv pfi pxi bymw, emkselr tb Zxubq rps UhyitNnjpe",
+        "priority": 3,
+        "url": "https://linear.app/",
+        "updatedAt": "2014-04-04T08:38:07.089Z",
+        "state": {
+          "name": "Grfx",
+          "type": "wmkffpuqo"
+        },
+        "team": {
+          "key": "FFX"
+        },
+        "assignee": {
+          "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+          "name": "leozp@example.com"
+        }
+      },
+      {
+        "id": "85dbc57c-00a2-48fd-ce36-4159c9cc7d31",
+        "identifier": "WTG-003",
+        "title": "Jrtqpxxkr wgfxdul fkfysxq dlstla c qfraxco ied wejjtsj wsgqog wia qysxev",
+        "priority": 1,
+        "url": "https://linear.app/",
+        "updatedAt": "2028-03-16T05:39:55.870Z",
+        "state": {
+          "name": "Grfx",
+          "type": "wmkffpuqo"
+        },
+        "team": {
+          "key": "FFX"
+        },
+        "assignee": {
+          "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+          "name": "leozp@example.com"
+        }
+      },
+      {
+        "id": "1fdf607b-97cc-65cb-dcfe-a7a031a1b878",
+        "identifier": "CPS-298",
+        "title": "Biqoelfm o krlcydea orcuwnh's icnvwqn MBL qyofpds hvi lhwqiup ite xgxb jp oauyvq-wgs dzqadix",
+        "priority": 0,
+        "url": "https://linear.app/",
+        "updatedAt": "2021-11-26T09:07:37.106Z",
+        "state": {
+          "name": "Grfx",
+          "type": "wmkffpuqo"
+        },
+        "team": {
+          "key": "FFX"
+        },
+        "assignee": {
+          "id": "07a499a4-0183-3083-24a8-e766decd6dfd",
+          "name": "leozp@example.com"
+        }
+      },
+      {
+        "id": "8a615c38-9505-9e08-a48a-c2e1ba60ceed",
+        "identifier": "BJI-833",
+        "title": "Xknqwml-rusrzs fqumrypxszlt / zxeupihccz",
+        "priority": 4,
+        "url": "https://linear.app/",
+        "updatedAt": "2025-06-08T03:50:29.195Z",
+        "state": {
+          "name": "Vlccetx",
+          "type": "pobunru"
+        },
+        "team": {
+          "key": "RVN"
+        },
+        "assignee": null
+      }
+    ]
+  }
+}

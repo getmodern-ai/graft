@@ -569,3 +569,143 @@ describe("Notion's stock tools (GRA-252)", () => {
     expect(await firstOf(query)).toBe(wire);
   });
 });
+
+describe("owner words (GRA-269)", () => {
+  const tools = [
+    tool("acme", "comment-on-issue", "Comments on an issue.", {
+      inputSchema: { type: "object", properties: { issueId: { type: "string" } } },
+    }),
+    tool("acme", "list-my-issues", "Lists the issues assigned to the connected user."),
+    tool("acme", "list-teams", "Lists the teams."),
+  ];
+
+  it("ranks a tool whose name says my first, and makes no hit of it alone", () => {
+    expect(names(searchTools(tools, "acme issues"))[0]).toBe("comment-on-issue");
+    expect(names(searchTools(tools, "my acme issues"))[0]).toBe("list-my-issues");
+    expect(names(searchTools(tools, "my acme teams"))).toEqual(["list-teams"]);
+  });
+
+  it("reads a ticket as an issue and a sprint as a cycle", () => {
+    expect(names(searchTools(tools, "comment on a ticket"))).toEqual(["comment-on-issue"]);
+    expect(
+      names(searchTools([tool("acme", "list-cycles", "Lists cycles.")], "list sprints")),
+    ).toEqual(["list-cycles"]);
+  });
+});
+
+/**
+ * Linear's stock tools as they ship (GRA-269), searched as the suites above search them. A query
+ * that names Linear finds Linear's tool first; a query that names no integration and that GitHub's
+ * suite pins still finds GitHub's tool (GRA-253).
+ */
+describe("Linear's stock tools (GRA-269)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const firstOf = async (query: string) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    return first && `${first.vendor}__${first.name}`;
+  };
+
+  const NAMED: [query: string, wire: string][] = [
+    ["my linear issues", "linear__list-my-issues"],
+    ["list my linear issues", "linear__list-my-issues"],
+    ["show my linear tickets", "linear__list-my-issues"],
+    ["create a linear ticket", "linear__create-issue"],
+    ["create a linear issue", "linear__create-issue"],
+    ["new linear issue", "linear__create-issue"],
+    ["search linear issues", "linear__find-issues"],
+    ["find a linear issue", "linear__find-issues"],
+    ["search linear tickets", "linear__find-issues"],
+    ["get a linear issue with its comments", "linear__get-issue"],
+    ["comment on a linear issue", "linear__comment-on-issue"],
+    ["update a linear issue", "linear__update-issue"],
+    ["move a linear issue to done", "linear__update-issue"],
+    ["assign a linear issue", "linear__update-issue"],
+    ["change a linear issue's priority", "linear__update-issue"],
+    ["list linear teams", "linear__list-teams"],
+    ["linear projects", "linear__list-projects"],
+    ["list linear workflow states", "linear__list-workflow-states"],
+    ["linear cycles", "linear__list-cycles"],
+    ["current linear sprint", "linear__list-cycles"],
+    ["linear labels", "linear__list-labels"],
+    ["people in linear", "linear__list-users"],
+    ["list linear users", "linear__list-users"],
+  ];
+
+  it.each(NAMED)('"%s" finds %s first', async (query, wire) => {
+    expect(await firstOf(query)).toBe(wire);
+  });
+
+  it.each([
+    ["list issues", "github__list-issues"],
+    ["search issues", "github__search-issues-and-pull-requests"],
+    ["get issue with comments", "github__get-issue"],
+    ["create issue", "github__create-issue"],
+    ["close issue", "github__update-issue"],
+    ["create a github issue", "github__create-issue"],
+    ["search github issues", "github__search-issues-and-pull-requests"],
+  ])('"%s" still finds %s first', async (query, wire) => {
+    expect(await firstOf(query)).toBe(wire);
+  });
+});
+
+/**
+ * Apollo's stock tools as they ship (GRA-270), searched as the suites above search them: every
+ * stock tool at once, with the integrations' display names. Prospecting words find Apollo's tools
+ * first, and the generic contact words stay HubSpot's (the GRA-254 pins above, repeated here so a
+ * change to Apollo's names or descriptions that takes one fails beside Apollo's own). That is why
+ * Apollo's two contact writes are named `save-contact` (Apollo's own word for it) and
+ * `update-prospect`: `create-contact` tied HubSpot's and won it on the vendor's name, and any name
+ * holding *update*, *contact* or *person* outscores `hubspot__update-record` on "update a contact".
+ */
+describe("Apollo's stock tools (GRA-270)", () => {
+  const vendorNames = new Map(
+    STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
+  );
+  const QUERIES: [query: string, wire: string][] = [
+    ["find leads", "apollo__search-people"],
+    ["search people at a company", "apollo__search-people"],
+    ["find prospects by job title", "apollo__search-people"],
+    ["search apollo for people", "apollo__search-people"],
+    ["find companies by industry and size", "apollo__search-companies"],
+    ["search apollo companies", "apollo__search-companies"],
+    ["search my apollo contacts", "apollo__search-contacts"],
+    ["find a contact in apollo", "apollo__search-contacts"],
+    ["search apollo accounts", "apollo__search-accounts"],
+    ["list sequences", "apollo__list-sequences"],
+    ["list apollo sequences", "apollo__list-sequences"],
+    ["list email accounts", "apollo__list-email-accounts"],
+    ["create a contact in apollo", "apollo__save-contact"],
+    ["save a lead to apollo", "apollo__save-contact"],
+    ["update an apollo contact", "apollo__update-prospect"],
+    ["add contacts to a sequence", "apollo__add-to-sequence"],
+    ["enroll a contact in an apollo sequence", "apollo__add-to-sequence"],
+    // HubSpot's contact pins, with Apollo's contact tools beside them.
+    ["find a contact", "hubspot__find-contact"],
+    ["look up a contact by email", "hubspot__find-contact"],
+    ["create a contact", "hubspot__create-contact"],
+    ["update a contact", "hubspot__update-record"],
+    ["add a note to a contact", "hubspot__add-note"],
+    ["remind me to call a contact", "hubspot__create-task"],
+  ];
+
+  it.each(QUERIES)('"%s" finds %s first', async (query, wire) => {
+    const tools = (await readStockWorkspace()).map((tool) => ({
+      vendor: tool.vendor,
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      readOnly: tool.annotations.readOnly,
+    }));
+    const [first] = searchTools(tools, query, { vendorNames }).hits;
+    expect(first && `${first.vendor}__${first.name}`).toBe(wire);
+  });
+});

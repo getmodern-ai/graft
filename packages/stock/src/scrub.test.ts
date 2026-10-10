@@ -457,4 +457,51 @@ describe("survivingValuesOf", () => {
     expect(body.json.external_url).toBe("https://app.example/");
     expect(survivingValuesOf(raw, scrubbed, { source: "" })).toEqual([]);
   });
+
+  it("does not read the vendor's own name as surviving in a request's host, but does in its path (GRA-269)", () => {
+    const raw: StockRecording = {
+      ...recording,
+      input: {},
+      exchanges: [
+        {
+          kind: "read",
+          method: "GET",
+          url: "https://api.linear.app/users",
+          response: response({ users: [{ displayName: "linear" }] }),
+        },
+      ],
+      result: null,
+    };
+    const scrubbed = scrubRecording(raw, { seed: SEED });
+    const declared = { source: "", declaredHosts: ["api.linear.app"] };
+    expect(survivingValuesOf(raw, scrubbed, declared)).toEqual([]);
+    const leaked: StockRecording = {
+      ...scrubbed,
+      exchanges: scrubbed.exchanges.map((exchange) => ({
+        ...exchange,
+        url: "https://api.linear.app/users/linear",
+      })),
+    };
+    expect(survivingValuesOf(raw, leaked, declared)).toEqual(["exchange 1"]);
+  });
+
+  it("reads a value as surviving in a host the manifest does not declare (Greptile on #209)", () => {
+    const raw: StockRecording = {
+      ...recording,
+      input: {},
+      exchanges: [
+        {
+          kind: "read",
+          method: "GET",
+          url: "https://acme-widgets.example.com/users",
+          response: response({ users: [{ company: "acme-widgets" }] }),
+        },
+      ],
+      result: null,
+    };
+    const scrubbed = scrubRecording(raw, { seed: SEED });
+    expect(
+      survivingValuesOf(raw, scrubbed, { source: "", declaredHosts: ["api.example.com"] }),
+    ).toEqual(["exchange 1"]);
+  });
 });

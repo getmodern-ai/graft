@@ -1,0 +1,32 @@
+{
+  "name": "list-sequences",
+  "description": "Lists or searches the sequences (automated outreach cadences) in your Apollo team by name, paged. Spends no Apollo credits. Answers each sequence's id, its name, whether it is active or archived, its number of steps and when it was created.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Optional text that appears in the sequence name."
+      },
+      "page": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1,
+        "description": "Page number to return."
+      },
+      "perPage": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100,
+        "default": 10,
+        "description": "Number of sequences to return per page."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.apollo.io"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

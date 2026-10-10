@@ -1,0 +1,112 @@
+{
+  "format": 1,
+  "tool": "apollo__search-companies",
+  "recordedAt": "2026-10-10T17:39:53.581Z",
+  "input": {
+    "domains": ["xciiti.zy"],
+    "perPage": 1
+  },
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "POST",
+      "url": "https://api.apollo.io/api/v1/mixed_companies/search",
+      "body": {
+        "json": {
+          "page": 1,
+          "per_page": 1,
+          "q_organization_domains_list": ["xciiti.zy"]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "breadcrumbs": [
+              {
+                "label": "Dtupnwa Cbrtvpf",
+                "signal_field_name": "o_yrfviuvslryi_ziwntvm_bsqt",
+                "value": ["xciiti.zy"],
+                "display_name": "xciiti.zy"
+              }
+            ],
+            "partial_results_only": false,
+            "has_join": false,
+            "disable_eu_prospecting": false,
+            "partial_results_limit": 19617,
+            "pagination": {
+              "page": 1,
+              "per_page": 1,
+              "total_entries": 1,
+              "total_pages": 1
+            },
+            "accounts": [],
+            "organizations": [
+              {
+                "id": "1d56a6318f88e5155d9374b7",
+                "name": "Lbrrsd.in",
+                "website_url": "http://www.apollo.io/",
+                "angellist_url": null,
+                "linkedin_url": "http://www.linkedin.com/",
+                "twitter_url": "https://twitter.com/",
+                "facebook_url": "https://facebook.com/",
+                "languages": [],
+                "alexa_ranking": 8636,
+                "phone": "+2 904-103-7030",
+                "linkedin_uid": "32636212",
+                "founded_year": 4756,
+                "publicly_traded_symbol": null,
+                "publicly_traded_exchange": null,
+                "logo_url": "https://zenprospect-production.s3.amazonaws.com/",
+                "crunchbase_url": null,
+                "primary_domain": "xciiti.zy",
+                "sic_codes": ["6117", "6190"],
+                "naics_codes": ["91080", "551779"],
+                "primary_phone": {
+                  "number": "+2 904-103-7030",
+                  "sanitized_number": "+38277335238"
+                },
+                "sanitized_phone": "+38277335238",
+                "owned_by_organization_id": null,
+                "num_languages": 0,
+                "num_retail_locations": 0,
+                "organization_revenue_printed": "887H",
+                "organization_revenue": 570987552,
+                "intent_strength": null,
+                "show_intent": true,
+                "has_intent_signal_account": false,
+                "intent_signal_account": null,
+                "organization_headcount_six_month_growth": 2.0179406999391185,
+                "organization_headcount_twelve_month_growth": 0.7956808876738698,
+                "organization_headcount_twenty_four_month_growth": 9.011617003783176
+              }
+            ],
+            "model_ids": ["1d56a6318f88e5155d9374b7"],
+            "num_fetch_result": null,
+            "derived_params": {
+              "recommendation_config_id": "1b90b7efa9aa0c412518166a"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "totalEntries": 1,
+    "organizations": [
+      {
+        "id": "1d56a6318f88e5155d9374b7",
+        "name": "Lbrrsd.in",
+        "websiteUrl": "http://www.apollo.io/",
+        "primaryDomain": "xciiti.zy",
+        "linkedinUrl": "http://www.linkedin.com/",
+        "estimatedNumEmployees": null,
+        "city": null,
+        "country": null
+      }
+    ]
+  }
+}

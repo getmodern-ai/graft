@@ -1,0 +1,99 @@
+{
+  "format": 1,
+  "tool": "linear__list-teams",
+  "recordedAt": "2026-10-10T17:36:12.373Z",
+  "input": {},
+  "exchanges": [
+    {
+      "kind": "read",
+      "method": "POST",
+      "url": "https://api.linear.app/graphql",
+      "body": {
+        "json": {
+          "query": "query ListTeams { teams(first: 100) { nodes { id key name } } }",
+          "variables": {}
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "json": {
+            "data": {
+              "teams": {
+                "nodes": [
+                  {
+                    "id": "c006d91e-4bf4-6fa6-5268-c688a3b9fb79",
+                    "key": "AU",
+                    "name": "Ytxewe-Leedamn"
+                  },
+                  {
+                    "id": "e8629754-7773-0f43-6120-49556800c45d",
+                    "key": "JBA",
+                    "name": "ftizwf"
+                  },
+                  {
+                    "id": "645e0768-987c-6986-0746-5e3806519ea8",
+                    "key": "IBV",
+                    "name": "Vicce"
+                  },
+                  {
+                    "id": "c9cb3fdc-0212-3a6e-8808-343a68fcb1d6",
+                    "key": "VZK",
+                    "name": "Hrfatrsra"
+                  },
+                  {
+                    "id": "38fb8800-740c-184d-a3e5-9d84e5c461f4",
+                    "key": "BEN",
+                    "name": "Pvzjc"
+                  },
+                  {
+                    "id": "3cda3571-5209-874c-a2b3-859ec65c3803",
+                    "key": "XQK",
+                    "name": "Hsukjsr & Tki"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "teams": [
+      {
+        "id": "c006d91e-4bf4-6fa6-5268-c688a3b9fb79",
+        "key": "AU",
+        "name": "Ytxewe-Leedamn"
+      },
+      {
+        "id": "e8629754-7773-0f43-6120-49556800c45d",
+        "key": "JBA",
+        "name": "ftizwf"
+      },
+      {
+        "id": "645e0768-987c-6986-0746-5e3806519ea8",
+        "key": "IBV",
+        "name": "Vicce"
+      },
+      {
+        "id": "c9cb3fdc-0212-3a6e-8808-343a68fcb1d6",
+        "key": "VZK",
+        "name": "Hrfatrsra"
+      },
+      {
+        "id": "38fb8800-740c-184d-a3e5-9d84e5c461f4",
+        "key": "BEN",
+        "name": "Pvzjc"
+      },
+      {
+        "id": "3cda3571-5209-874c-a2b3-859ec65c3803",
+        "key": "XQK",
+        "name": "Hsukjsr & Tki"
+      }
+    ]
+  }
+}
