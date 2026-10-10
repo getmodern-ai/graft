@@ -1678,6 +1678,7 @@ describe("the connection handoff's submits (GRA-28)", () => {
       fakeDb,
       { personId: "person_1", agentId: "agent_1" },
       { vendor: connectionRow.vendor, includesDestructive: false, grantedAt: NOW },
+      { keep: true },
     );
 
     vi.mocked(deps.approval.upsertVendorApproval).mockClear();

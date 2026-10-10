@@ -229,6 +229,27 @@ describe("agent-scoped reads take both ids of the scope in the statement", () =>
     expect(s.params).toContain("person_1");
   });
 
+  it("a connection's confirmation records an integration's approval only where none stands", async () => {
+    await upsertVendorApproval(
+      db,
+      SCOPE,
+      {
+        vendor: "hubspot",
+        includesDestructive: false,
+        grantedAt: new Date("2026-10-09T00:00:00Z"),
+      },
+      { keep: true },
+    );
+    const s = only();
+    expect(s.sql).toMatch(/^insert into "vendor_approval"/);
+    expect(s.sql).toMatch(
+      /from "agent" where \("agent"\."id" = \$\d+ and "agent"\."person_id" = \$\d+\)/,
+    );
+    expect(s.sql).toContain("on conflict");
+    expect(s.sql).toContain("do nothing");
+    expect(s.sql).not.toContain("do update");
+  });
+
   it("a pending action", async () => {
     await findPendingAction(db, SCOPE, "pa_1");
     expect(only().sql).toMatch(SCOPED_AGENT);

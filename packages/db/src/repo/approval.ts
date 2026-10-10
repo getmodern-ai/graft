@@ -237,40 +237,47 @@ export async function listVendorApprovals(
  * The person's yes to every tool of a vendor for one agent, written or rewritten: one row per
  * (agent, vendor), so a later answer replaces the destructive choice of an earlier one. The agent
  * comes from the scope through an `insert … select` over the agent row under both ids, so a scope
- * naming another person's agent inserts nothing and answers null.
+ * naming another person's agent inserts nothing and answers null. `{ keep: true }` inserts only
+ * where no row stands and leaves a standing one as it is (`on conflict do nothing`, answering null
+ * then): a connection's confirmation, which never narrows an answer given meanwhile (GRA-239,
+ * Greptile on #182).
  */
 export async function upsertVendorApproval(
   db: DbOrTx,
   scope: AgentScope,
   input: { vendor: string; includesDestructive: boolean; grantedAt: Date },
+  options: { keep?: boolean } = {},
 ): Promise<VendorApprovalRow | null> {
-  const [row] = await db
-    .insert(vendorApproval)
-    .select(
-      db
-        .select({
-          agentId: agent.id,
-          vendor: sql<string>`${input.vendor}::text`.as("vendor"),
-          includesDestructive: sql<boolean>`${input.includesDestructive}::boolean`.as(
-            "includes_destructive",
-          ),
-          grantedAt: sql<Date>`${input.grantedAt.toISOString()}::timestamp`.as("granted_at"),
-          owner: sql<"person">`'person'`.as("owner"),
-          createdAt: sql<Date>`now()`.as("created_at"),
-          updatedAt: sql<Date>`now()`.as("updated_at"),
+  const insert = db.insert(vendorApproval).select(
+    db
+      .select({
+        agentId: agent.id,
+        vendor: sql<string>`${input.vendor}::text`.as("vendor"),
+        includesDestructive: sql<boolean>`${input.includesDestructive}::boolean`.as(
+          "includes_destructive",
+        ),
+        grantedAt: sql<Date>`${input.grantedAt.toISOString()}::timestamp`.as("granted_at"),
+        owner: sql<"person">`'person'`.as("owner"),
+        createdAt: sql<Date>`now()`.as("created_at"),
+        updatedAt: sql<Date>`now()`.as("updated_at"),
+      })
+      .from(agent)
+      .where(and(eq(agent.id, scope.agentId), eq(agent.personId, scope.personId))),
+  );
+  const [row] = options.keep
+    ? await insert
+        .onConflictDoNothing({ target: [vendorApproval.agentId, vendorApproval.vendor] })
+        .returning()
+    : await insert
+        .onConflictDoUpdate({
+          target: [vendorApproval.agentId, vendorApproval.vendor],
+          set: {
+            includesDestructive: input.includesDestructive,
+            grantedAt: input.grantedAt,
+            updatedAt: new Date(),
+          },
         })
-        .from(agent)
-        .where(and(eq(agent.id, scope.agentId), eq(agent.personId, scope.personId))),
-    )
-    .onConflictDoUpdate({
-      target: [vendorApproval.agentId, vendorApproval.vendor],
-      set: {
-        includesDestructive: input.includesDestructive,
-        grantedAt: input.grantedAt,
-        updatedAt: new Date(),
-      },
-    })
-    .returning();
+        .returning();
   return row ?? null;
 }
 

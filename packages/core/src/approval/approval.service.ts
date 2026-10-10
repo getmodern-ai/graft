@@ -289,7 +289,16 @@ export async function allowVendorWhenConnecting(
 ): Promise<VendorApprovalRow> {
   const standing = await deps.findVendorApproval(ctx.db, scope, vendor);
   if (standing) return standing;
-  return allowVendor(ctx, scope, vendor, { includesDestructive: false }, deps);
+  // Inserted only where none stands, in the statement: a tool's ask answered meanwhile, with
+  // destructive tools in, is never written over by this line's narrower yes (Greptile on #182).
+  const inserted = await deps.upsertVendorApproval(
+    ctx.db,
+    scope,
+    { vendor, includesDestructive: false, grantedAt: deps.now() },
+    { keep: true },
+  );
+  if (inserted) return inserted;
+  return orNotFound(await deps.findVendorApproval(ctx.db, scope, vendor), "Agent not found");
 }
 
 /**
