@@ -241,6 +241,7 @@ describe("GET /api/setup/vendors", () => {
       "hubspot",
       "stripe",
       "microsoft-outlook",
+      "linear",
       "open-meteo",
     ]);
     expect(

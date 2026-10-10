@@ -1,0 +1,36 @@
+{
+  "format": 1,
+  "tool": "linear__update-issue",
+  "recordedAt": "2026-10-10T17:40:16.761Z",
+  "input": {
+    "id": "XEU-006",
+    "priority": 3
+  },
+  "exchanges": [
+    {
+      "kind": "write",
+      "method": "POST",
+      "url": "https://api.linear.app/graphql",
+      "body": {
+        "json": {
+          "query": "mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id identifier title url priority state { id name } assignee { id name } labels { nodes { id name } } } } }",
+          "variables": {
+            "id": "XEU-006",
+            "input": {
+              "priority": 3
+            }
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "updated": false,
+    "sent": {
+      "id": "XEU-006",
+      "input": {
+        "priority": 3
+      }
+    }
+  }
+}

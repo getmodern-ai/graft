@@ -48,11 +48,16 @@ of it reaches a person's toolbox.
   them (numbered as each request reached the proxy, not as the vendor answered, so a module that
   reads with `Promise.all` records the order it asked in), in the dry run the build ran (the token
   carries the dry-run claim, so writes never left).
-  - A **read** (`GET` or `HEAD`) carries the vendor `url` as it left the proxy, query included, and
-    the vendor's `response`: the `status`, the `headers` kept (`content-type`, `location` and
-    `link`, `RECORDED_RESPONSE_HEADERS`; every other is dropped), and the `body`.
-  - A **write** (any other method) stopped at the proxy's preview and has no response: it carries
-    the `url` the preview named and the `body` the module sent, if any.
+  - A **read** is a request the proxy's dry run lets reach the vendor, by the one judgement the
+    check and the proxy share (`@graft/proxy`'s `classifyRequest`, GRA-260; `isReadRequest`): a
+    `GET` or `HEAD`, a GraphQL query (a `POST` to `/graphql` whose document holds queries alone),
+    or an entry of the reviewed table. It carries the vendor `url` as it left the proxy, query
+    included, the `body` the module sent where it sent one (a GraphQL query's document and
+    variables), and the vendor's `response`: the `status`, the `headers` kept (`content-type`,
+    `location` and `link`, `RECORDED_RESPONSE_HEADERS`; every other is dropped), and the `body`.
+  - A **write** (every other request: a GraphQL mutation is one) stopped at the proxy's preview
+    and has no response: it carries the `url` the preview named and the `body` the module sent, if
+    any. A reader refuses a read the classifier does not read, and a write it does.
 - **A body** is exactly one of `{ "json": … }` (it parsed as JSON), `{ "text": "…" }` (UTF-8 that
   is not JSON) or `{ "base64": "…" }`. Absent for an empty body. `recordedBodyOf` and
   `recordedResponseOf` build them.
@@ -148,9 +153,10 @@ to keep the values.
   the raw input and answers in what is about to be written, after redaction, setting aside the
   module's own text and the keys (a value with a redaction marker is looked for as its text beside
   the marker, a `link` header as its targets and parameters, and a website root written without its
-  closing slash is not read as surviving inside its own placeholder); a survivor fails the
-  recording, naming where it was and never the
-  value. Redaction comes first because a credential the proxy put in a request (a query key a vendor
+  closing slash is not read as surviving inside its own placeholder, and a request's URL is looked
+  in without its origin, since its host is the manifest's and the vendor's own name: Linear's own
+  user is called `linear`, which `https://api.linear.app/graphql` spells; GRA-269); a survivor
+  fails the recording, naming where it was and never the value. Redaction comes first because a credential the proxy put in a request (a query key a vendor
   may quote back) is redaction's to remove, not a vendor value the scrub missed.
 
 `test-input.json` is the recording's scrubbed input, since the two must be equal. One consequence for
@@ -166,8 +172,9 @@ proxy, over a connection whose hosts are the manifest's `hosts`, so a call to an
 the proxy's `host_not_in_set`. The proxy's vendor is the recording:
 
 - each read must be a recorded read not yet made: the first, in the order of issue, with its
-  method, host, path and query (as a set of parameters), so parallel reads that reach the proxy
-  in another order still find their own; the vendor answers it with the recorded response;
+  method, host, path, query (as a set of parameters) and body (a GraphQL query's document and
+  variables, whole), so parallel reads that reach the proxy in another order still find their
+  own; the vendor answers it with the recorded response;
 - every write stops at the preview and never reaches the vendor; the previews, in the order the
   module issued them, must be the recording's writes in order, method, host, path and body;
 - every recorded read must have been made, the dry run must pass, and the result must be the
@@ -183,7 +190,7 @@ vendor instead (`src/mode.ts`). The connection for each keyed vendor comes from
 `{ "<vendor>": { "scheme", "schemeConfig"?, "credential", "primaryHost"? } }`; a keyless starter
 needs none. `GRAFT_STOCK_TOOLS` (comma-separated wire names) narrows either mode. Live, a read must
 match the recording's method, host, path and query parameter names (values may follow the vendor's
-data), the vendor's status must be the recorded one, and every key path of a recorded JSON body
+data), and a read's body its key paths and its GraphQL document whole, the vendor's status must be the recorded one, and every key path of a recorded JSON body
 must still be in the vendor's; the result and write bodies are not compared. This is the nightly
 drift check's engine (GRA-247). `pnpm run test` never goes live: Turbo's strict env mode withholds
 the variables.

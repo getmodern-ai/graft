@@ -1,0 +1,19 @@
+{
+  "name": "list-workflow-states",
+  "description": "Lists the workflow states Linear issues move through (Backlog, Todo, In Progress, Done and the like) for every team, or for one team: each state's id, name, type (backlog, unstarted, started, completed or canceled) and position, and its team's id and key. A state's id is the stateId linear__create-issue and linear__update-issue take, from the issue's own team.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "teamId": {
+        "type": "string",
+        "description": "Narrows the list to one team: a team's id from linear__list-teams."
+      }
+    },
+    "additionalProperties": false
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": true,
+    "destructive": false
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "name": "create-issue",
+  "description": "Creates a Linear issue (a ticket) in a team, with an optional Markdown description, priority, assignee, workflow state, labels, project and cycle. The team comes from linear__list-teams, the assignee from linear__list-users, the state from linear__list-workflow-states, the labels from linear__list-labels, the project from linear__list-projects and the cycle from linear__list-cycles.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "teamId": {
+        "type": "string",
+        "description": "The team the issue is created in: a team's id from linear__list-teams."
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The issue's title."
+      },
+      "description": {
+        "type": "string",
+        "description": "The issue's description, in Markdown."
+      },
+      "priority": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4,
+        "description": "Priority: 0 none, 1 urgent, 2 high, 3 medium, or 4 low."
+      },
+      "assigneeId": {
+        "type": "string",
+        "description": "Who the issue is assigned to: a user's id from linear__list-users."
+      },
+      "stateId": {
+        "type": "string",
+        "description": "The workflow state the issue starts in: a state's id from linear__list-workflow-states, of the same team. Omitted, the team's default."
+      },
+      "labelIds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Labels for the issue: label ids from linear__list-labels."
+      },
+      "projectId": {
+        "type": "string",
+        "description": "The project the issue belongs to: a project's id from linear__list-projects."
+      },
+      "cycleId": {
+        "type": "string",
+        "description": "The cycle the issue is planned in: a cycle's id from linear__list-cycles."
+      }
+    },
+    "required": ["teamId", "title"],
+    "additionalProperties": false
+  },
+  "hosts": ["api.linear.app"],
+  "annotations": {
+    "readOnly": false,
+    "destructive": false
+  }
+}

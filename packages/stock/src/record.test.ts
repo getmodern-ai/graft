@@ -464,6 +464,100 @@ describe("recordStockProof", () => {
     expect((recorded.recording.result as { first: string }).first).not.toBe("graft");
   });
 
+  it("records a GraphQL query as a read with its body, scrubbed, and replays it by the body (GRA-260)", async () => {
+    const GRAPHQL = `const VIEWER = "query Viewer { viewer { id name } }";
+const ISSUES = "query Issues($assignee: ID!, $first: Int!) { issues(filter: { assignee: { id: { eq: $assignee } } }, first: $first) { nodes { title } } }";
+const COMMENT = "mutation Comment($body: String!) { commentCreate(input: { body: $body }) { success } }";
+
+export default async (input: Input, ctx: Context) => {
+  const post = (body: unknown) =>
+    ctx.fetch("/graphql", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const me = (await (await post({ query: VIEWER })).json()) as {
+    data: { viewer: { id: string; name: string } };
+  };
+  const res = await post({
+    query: ISSUES,
+    variables: { assignee: me.data.viewer.id, first: input.first },
+  });
+  const issues = (await res.json()) as { data: { issues: { nodes: { title: string }[] } } };
+  const titles = issues.data.issues.nodes.map((node) => node.title);
+  const noted = await post({ query: COMMENT, variables: { body: titles[0] ?? "none" } });
+  return { who: me.data.viewer.name, titles, noted: noted.status };
+};
+`;
+    const graphqlTool: StockWorkspaceTool = {
+      ...tool,
+      name: "graphql-issues",
+      inputSchema: {
+        type: "object",
+        properties: { first: { type: "integer", minimum: 1, maximum: 50 } },
+        required: ["first"],
+        additionalProperties: false,
+      },
+      testInput: { first: 5 },
+      files: [{ path: "index.ts", content: GRAPHQL }],
+    };
+    const seen: { method: string; body: unknown }[] = [];
+    const recorded = await recordStockProof(graphqlTool, {
+      connection: { scheme: "bearer", schemeConfig: {}, credential: { token: TOKEN } },
+      upstreamFetch: async (request: UpstreamRequest) => {
+        const body = JSON.parse(new TextDecoder().decode(request.body ?? new Uint8Array()));
+        seen.push({ method: request.method, body });
+        if (String(body.query).startsWith("query Viewer")) {
+          return Response.json({ data: { viewer: { id: "usr-7f3a9c21", name: "Alice Liddell" } } });
+        }
+        return Response.json({
+          data: { issues: { nodes: [{ title: "Acme secret merger plans" }] } },
+        });
+      },
+    });
+    if (!recorded.ok) throw new Error(recorded.problems.join("\n"));
+    const { recording } = recorded;
+
+    // The two queries reached the vendor; the mutation stopped at the preview.
+    expect(seen.map((request) => request.method)).toEqual(["POST", "POST"]);
+    expect(recording.exchanges.map((exchange) => `${exchange.kind} ${exchange.method}`)).toEqual([
+      "read POST",
+      "read POST",
+      "write POST",
+    ]);
+    const text = JSON.stringify(recording);
+    for (const planted of ["usr-7f3a9c21", "Alice Liddell", "Acme secret merger plans"]) {
+      expect(text).not.toContain(planted);
+    }
+    // The second query names the scrubbed viewer's id, as the module computed it over the scrub.
+    const [viewer, issues] = recording.exchanges;
+    const scrubbedId = (
+      viewer as { response: { body: { json: { data: { viewer: { id: string } } } } } }
+    ).response.body.json.data.viewer.id;
+    expect(issues).toMatchObject({
+      body: { json: { variables: { assignee: scrubbedId, first: 5 } } },
+    });
+
+    const replay = await proveReplay(graphqlTool, recording);
+    expect(replay.problems).toEqual([]);
+    expect(replay.reachedVendor.map((request) => request.method)).toEqual(["POST", "POST"]);
+
+    // A replay whose module asks another query than the recording's is refused by the body.
+    const changed = await proveReplay(
+      {
+        ...graphqlTool,
+        files: [
+          {
+            path: "index.ts",
+            content: GRAPHQL.replace("viewer { id name }", "viewer { id name email }"),
+          },
+        ],
+      },
+      recording,
+    );
+    expect(changed.problems.join("\n")).toContain("its read 1 disagrees with the recording");
+  });
+
   it("refuses a keyed starter with no connection", async () => {
     const recorded = await recordStockProof(tool, { connection: null });
     expect(recorded).toEqual({

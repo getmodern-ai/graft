@@ -1,4 +1,5 @@
 import { GENERIC_SECRET_FIELD_NAMES, REDACTED, type RedactionRule, redactValue } from "@graft/core";
+import { classifyRequest } from "@graft/proxy/read-request";
 
 /**
  * A stock tool's recording (ADR 0025; GRA-240): `recording.json` beside its module, what the tool's
@@ -29,12 +30,18 @@ export type RecordedResponse = {
   body?: RecordedBody;
 };
 
-/** A `GET` or `HEAD` the vendor answered: replayed from `response`. */
+/**
+ * A read the vendor answered, replayed from `response`: a `GET` or `HEAD`, or a request the proxy's
+ * classifier reads (`isReadRequest`: a GraphQL query, an entry of the reviewed table; GRA-260),
+ * which the dry run lets reach the vendor as it does a `GET`.
+ */
 export type RecordedRead = {
   kind: "read";
-  method: "GET" | "HEAD";
+  method: string;
   /** The vendor URL as it left the proxy, query included, redacted. */
   url: string;
+  /** What the module sent with a read that carries a body (a GraphQL query); absent for none. */
+  body?: RecordedBody;
   response: RecordedResponse;
 };
 
@@ -65,6 +72,28 @@ export type StockRecording = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether a request is a read, by the one judgement the check and the proxy's dry run share
+ * (`@graft/proxy`'s `classifyRequest`, GRA-260): what the dry run sends on to the vendor, and so
+ * what a recording holds as a read with an answer. `body` is the request body as recorded or as
+ * the module sent it; only a JSON body can make a `POST` a read.
+ */
+export function isReadRequest(
+  method: string,
+  url: string,
+  body: RecordedBody | Uint8Array | null | undefined,
+): boolean {
+  const parsed = new URL(url);
+  const recorded = body instanceof Uint8Array ? recordedBodyOf(body) : (body ?? undefined);
+  return classifyRequest({
+    method,
+    host: parsed.hostname.toLowerCase(),
+    path: parsed.pathname,
+    hasQuery: parsed.search.length > 1,
+    body: recorded && "json" in recorded ? { json: recorded.json } : null,
+  }).read;
 }
 
 function bodyProblem(value: unknown): string | null {
@@ -114,22 +143,28 @@ export function parseRecording(text: string, where: string): StockRecording {
       throw problem(`${at}'s url is not an absolute URL`);
     }
     if (exchange.kind === "read") {
-      if (exchange.method !== "GET" && exchange.method !== "HEAD") {
-        throw problem(`${at} is a read, so its method is GET or HEAD`);
+      const body = bodyProblem(exchange.body);
+      if (body) throw problem(`${at}'s body ${body}`);
+      if (
+        !isReadRequest(exchange.method, exchange.url, exchange.body as RecordedBody | undefined)
+      ) {
+        throw problem(
+          `${at} is a read, so it is a GET, a HEAD or a request the proxy reads (a GraphQL query)`,
+        );
       }
       const response = exchange.response;
       if (!isRecord(response) || typeof response.status !== "number") {
         throw problem(`${at} must carry response with a status`);
       }
       if (!isRecord(response.headers)) throw problem(`${at}'s response must carry headers`);
-      const body = bodyProblem(response.body);
-      if (body) throw problem(`${at}'s response body ${body}`);
+      const answer = bodyProblem(response.body);
+      if (answer) throw problem(`${at}'s response body ${answer}`);
     } else if (exchange.kind === "write") {
-      if (exchange.method === "GET" || exchange.method === "HEAD") {
-        throw problem(`${at} is a write, so its method is not GET or HEAD`);
-      }
       const body = bodyProblem(exchange.body);
       if (body) throw problem(`${at}'s body ${body}`);
+      if (isReadRequest(exchange.method, exchange.url, exchange.body as RecordedBody | undefined)) {
+        throw problem(`${at} is a write, so it is not a request the proxy reads`);
+      }
     } else {
       throw problem(`${at}'s kind must be read or write`);
     }

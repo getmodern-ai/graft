@@ -457,4 +457,30 @@ describe("survivingValuesOf", () => {
     expect(body.json.external_url).toBe("https://app.example/");
     expect(survivingValuesOf(raw, scrubbed, { source: "" })).toEqual([]);
   });
+
+  it("does not read the vendor's own name as surviving in a request's host, but does in its path (GRA-269)", () => {
+    const raw: StockRecording = {
+      ...recording,
+      input: {},
+      exchanges: [
+        {
+          kind: "read",
+          method: "GET",
+          url: "https://api.linear.app/users",
+          response: response({ users: [{ displayName: "linear" }] }),
+        },
+      ],
+      result: null,
+    };
+    const scrubbed = scrubRecording(raw, { seed: SEED });
+    expect(survivingValuesOf(raw, scrubbed, { source: "" })).toEqual([]);
+    const leaked: StockRecording = {
+      ...scrubbed,
+      exchanges: scrubbed.exchanges.map((exchange) => ({
+        ...exchange,
+        url: "https://api.linear.app/users/linear",
+      })),
+    };
+    expect(survivingValuesOf(raw, leaked, { source: "" })).toEqual(["exchange 1"]);
+  });
 });

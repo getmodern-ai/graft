@@ -29,6 +29,24 @@ describe("parseRecording", () => {
     );
   });
 
+  it("reads a GraphQL query as a read, with the body the module sent (GRA-260)", () => {
+    const graphql: StockRecording = {
+      ...RECORDING,
+      exchanges: [
+        {
+          kind: "read",
+          method: "POST",
+          url: "https://api.example.com/graphql",
+          body: { json: { query: "query Items($first: Int) { items(first: $first) { id } }" } },
+          response: { status: 200, headers: {}, body: { json: { data: { items: [] } } } },
+        },
+      ],
+    };
+    expect(parseRecording(JSON.stringify(graphql), "demo/list-items/recording.json")).toEqual(
+      graphql,
+    );
+  });
+
   it("refuses with a sentence naming the file and the first thing wrong", () => {
     const where = "demo/list-items/recording.json";
     expect(() => parseRecording("nope", where)).toThrow(
@@ -42,7 +60,52 @@ describe("parseRecording", () => {
         }),
         where,
       ),
-    ).toThrow(`${where} exchange 1 is a read, so its method is GET or HEAD`);
+    ).toThrow(
+      `${where} exchange 1 is a read, so it is a GET, a HEAD or a request the proxy reads (a GraphQL query)`,
+    );
+    // A GraphQL mutation is a write whatever the recording calls it, and a query is a read.
+    const graphql = (query: string) => ({ json: { query } });
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [
+            {
+              ...RECORDING.exchanges[0],
+              method: "POST",
+              url: "https://api.example.com/graphql",
+              body: graphql("mutation { archive(id: 1) { ok } }"),
+            },
+          ],
+        }),
+        where,
+      ),
+    ).toThrow(`${where} exchange 1 is a read, so it is a GET, a HEAD or a request the proxy reads`);
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [
+            {
+              kind: "write",
+              method: "POST",
+              url: "https://api.example.com/graphql",
+              body: graphql("query { viewer { id } }"),
+            },
+          ],
+        }),
+        where,
+      ),
+    ).toThrow(`${where} exchange 1 is a write, so it is not a request the proxy reads`);
+    expect(() =>
+      parseRecording(
+        JSON.stringify({
+          ...RECORDING,
+          exchanges: [{ ...RECORDING.exchanges[0], body: { a: 1 } }],
+        }),
+        where,
+      ),
+    ).toThrow(`${where} exchange 1's body must carry exactly one of json, text or base64`);
     expect(() =>
       parseRecording(
         JSON.stringify({

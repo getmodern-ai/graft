@@ -14,6 +14,7 @@ import {
 import { stockHarnessModeFrom } from "./mode";
 import {
   formatRecording,
+  isReadRequest,
   type RecordedRead,
   type RecordedWrite,
   type StockRecording,
@@ -61,9 +62,10 @@ describe(`every stock tool (${mode.kind})`, () => {
         for (const note of jsonTextNotes(tool, read.recording)) console.warn(note);
         const report = await proveReplay(tool, read.recording, mode);
         expect(report.problems).toEqual([]);
-        expect(report.reachedVendor.every((call) => ["GET", "HEAD"].includes(call.method))).toBe(
-          true,
-        );
+        // Only reads reached the vendor: a GET or HEAD, or a request the proxy reads (GRA-260).
+        expect(
+          report.reachedVendor.every((call) => isReadRequest(call.method, call.url, call.body)),
+        ).toBe(true);
       });
     },
   );

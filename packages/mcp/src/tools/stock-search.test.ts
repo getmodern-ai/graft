@@ -140,6 +140,19 @@ const CASES: [query: string, tool: string][] = [
   ["change the time of an outlook meeting", "microsoft-outlook__update-event"],
   ["cancel an outlook meeting", "microsoft-outlook__delete-event"],
   ["accept an outlook invitation", "microsoft-outlook__respond-to-event"],
+  // Linear's (GRA-269), also pinned in tool-index.test.ts.
+  ["my linear issues", "linear__list-my-issues"],
+  ["search linear issues", "linear__find-issues"],
+  ["get a linear issue with its comments", "linear__get-issue"],
+  ["list linear teams", "linear__list-teams"],
+  ["linear projects", "linear__list-projects"],
+  ["list linear workflow states", "linear__list-workflow-states"],
+  ["current linear sprint", "linear__list-cycles"],
+  ["linear labels", "linear__list-labels"],
+  ["list linear users", "linear__list-users"],
+  ["create a linear ticket", "linear__create-issue"],
+  ["assign a linear issue", "linear__update-issue"],
+  ["comment on a linear issue", "linear__comment-on-issue"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];

@@ -791,9 +791,12 @@ export function scrubRecording(recording: StockRecording, rule: ScrubRule): Stoc
   const exchanges = recording.exchanges.map((exchange, index) => {
     const request = `exchange ${index + 1}'s request`;
     if (exchange.kind === "read") {
+      // A read with a body (a GraphQL query's variables) is scrubbed as a write's body is.
+      const body = within(request, () => scrubRequestBody(exchange.body, source, scrub));
       return {
         ...exchange,
         url: within(request, () => scrubRequestUrl(exchange.url, source, scrub)),
+        ...(body ? { body } : {}),
         response: within(`exchange ${index + 1}'s answer`, () =>
           scrubResponse(exchange.response, scrub, rule.seed),
         ),
@@ -871,6 +874,16 @@ function isBareOrigin(value: string): boolean {
   return origin === value || origin === `${value}/`;
 }
 
+/** A URL's path, query and fragment: what follows its origin. */
+function withoutOrigin(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.href.slice(parsed.origin.length);
+  } catch {
+    return url;
+  }
+}
+
 /** The shortest value the survival check looks for: shorter ones collide with ordinary words. */
 const SURVIVAL_MIN_LENGTH = 6;
 
@@ -919,9 +932,13 @@ export function survivingValuesOf(
   );
   const parts: [string, unknown][] = [
     ["input", scrubbed.input],
+    // A request's URL is looked in without its origin: the host is one the manifest declares, the
+    // vendor's own name, so a value of the vendor's name in an answer (Linear's own user, called
+    // `linear`; GRA-269) is not read as surviving inside `https://api.linear.app/graphql`. Its path
+    // and query are the module's over the scrubbed data, and looked in.
     ...scrubbed.exchanges.map((exchange, index): [string, unknown] => [
       `exchange ${index + 1}`,
-      exchange,
+      { ...exchange, url: withoutOrigin(exchange.url) },
     ]),
     ["result", scrubbed.result ?? null],
   ];
