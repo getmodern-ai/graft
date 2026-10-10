@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  COVERAGE_THRESHOLD,
   contentWords,
+  goalCoverage,
   goalWrites,
   SIMILAR_THRESHOLD,
   similarity,
@@ -143,5 +145,52 @@ describe("similarTools", () => {
     ]);
     expect(contentWords("list-recent-inbox-emails")).toEqual(["list", "recent", "inbox", "emails"]);
     expect(similarity("", LIST_EMAILS)).toBe(0);
+  });
+});
+
+/** Open-Meteo's stock tool as the catalogue holds it (GRA-238): a description written in full. */
+const CURRENT_WEATHER = {
+  vendor: "open-meteo",
+  name: "current-weather",
+  description:
+    "Get the current weather in a city: looks the city up by name and answers its temperature, wind speed and weather code right now, with the units. Answers found: false when no place has that name.",
+  inputSchema: {
+    type: "object",
+    properties: { city: { type: "string" } },
+    required: ["city"],
+  },
+  readOnly: true,
+};
+
+describe("similarTools over stock (GRA-243)", () => {
+  it("finds a stock tool whose long description dilutes the overlap, by the goal's coverage", () => {
+    const goal = "Get the current weather in a city";
+    expect(similarity(goal, CURRENT_WEATHER)).toBeLessThan(SIMILAR_THRESHOLD);
+    expect(goalCoverage(goal, CURRENT_WEATHER)).toBe(1);
+    expect(similarTools([CURRENT_WEATHER], goal)).toEqual([CURRENT_WEATHER]);
+    // A goal about something else at the vendor is not covered.
+    expect(similarTools([CURRENT_WEATHER], "The hourly rain forecast for the next week")).toEqual(
+      [],
+    );
+  });
+
+  it("keeps the 2026-09-21 goals that matched nothing under the coverage threshold too", () => {
+    for (const goal of [GOALS.unreplied, GOALS.getDraft]) {
+      for (const tool of [FIND_INVOICES, LIST_EMAILS, LIST_MESSAGES]) {
+        expect(goalCoverage(goal, tool), `${goal} / ${tool.name}`).toBeLessThan(COVERAGE_THRESHOLD);
+      }
+    }
+  });
+
+  it("ranks a toolbox tool the overlap finds before a stock tool only the coverage finds", () => {
+    const own = {
+      vendor: "open-meteo",
+      name: "current-weather-city",
+      description: "Current weather in a city.",
+      readOnly: true,
+    };
+    expect(
+      similarTools([CURRENT_WEATHER, own], "Current weather in a city").map((t) => t.name),
+    ).toEqual(["current-weather-city", "current-weather"]);
   });
 });

@@ -24,6 +24,7 @@ export {
   type ModuleEntry,
   moduleEntryFor,
   moduleEntryOf,
+  PROXY_REFUSED_HEADER,
   REFUSAL_HEADER,
   RESULT_MARKER,
   RUNNER_DIR,
@@ -36,6 +37,7 @@ export {
   runnerFiles,
   runnerPath,
   runnerSeedDir,
+  VENDOR_STATUS_MARKER,
 } from "./runner-source";
 export {
   loadSkills,

@@ -67,6 +67,25 @@ export async function findLatestStockToolVersion(
   return row ?? null;
 }
 
+/** Whether any version of the tool, at any number, was appended from this source hash. */
+export async function hasStockToolVersionWithHash(
+  db: DbOrTx,
+  stockToolId: string,
+  sourceHash: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: stockToolVersion.id })
+    .from(stockToolVersion)
+    .where(
+      and(
+        eq(stockToolVersion.stockToolId, stockToolId),
+        eq(stockToolVersion.sourceHash, sourceHash),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
 export async function insertStockToolVersion(
   db: DbOrTx,
   input: NewStockToolVersion,
@@ -119,6 +138,25 @@ export async function findCurrentStockTool(
     .innerJoin(stockTool, eq(stockTool.id, stockToolVersion.stockToolId))
     .where(and(eq(stockTool.vendor, key.vendor), eq(stockTool.name, key.name), isCurrentVersion()))
     .orderBy(desc(stockToolVersion.versionNumber))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * One stock version by its id, beside its tool: what a person's copy recorded as its origin
+ * (`tool_version.stock_version_id`), whatever version the catalogue answers now. A run of a copy
+ * judges connections against the hosts of the code it runs (GRA-241). Null for an id the catalogue
+ * has no row of.
+ */
+export async function findStockToolVersionById(
+  db: DbOrTx,
+  stockVersionId: string,
+): Promise<CurrentStockTool | null> {
+  const [row] = await db
+    .select({ tool: stockTool, version: stockToolVersion })
+    .from(stockToolVersion)
+    .innerJoin(stockTool, eq(stockTool.id, stockToolVersion.stockToolId))
+    .where(eq(stockToolVersion.id, stockVersionId))
     .limit(1);
   return row ?? null;
 }
