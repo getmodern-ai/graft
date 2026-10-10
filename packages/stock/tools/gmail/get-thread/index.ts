@@ -46,8 +46,23 @@ function header(part: GmailPart | undefined, name: string): string {
   return part?.headers?.find((item) => item.name?.toLowerCase() === wanted)?.value ?? "";
 }
 
-function decodeBase64Url(data: string): string {
-  return Buffer.from(data, "base64url").toString("utf8");
+/** The charset a Content-Type header declares, lower-cased, or null. */
+function charsetOf(contentType: string): string | null {
+  const match = contentType.match(/;\s*charset\s*=\s*"?([^";\s]+)"?/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** A text part's bytes in the charset it declares; UTF-8 when it declares none or one Node lacks. */
+function decodeText(data: string, charset: string | null): string {
+  const bytes = Buffer.from(data, "base64url");
+  if (charset && charset !== "utf-8" && charset !== "utf8") {
+    try {
+      return new TextDecoder(charset).decode(bytes);
+    } catch {
+      // A label TextDecoder does not know: read it as UTF-8 rather than fail the message.
+    }
+  }
+  return bytes.toString("utf8");
 }
 
 /** Characters of message text across a whole conversation, under the runner's 64,000 result. */
@@ -89,13 +104,18 @@ function stripHtml(html: string): string {
 const PART_DEPTH = 10;
 
 function bodyFieldsMask(): string {
-  let part = "mimeType,filename,body";
-  for (let level = 0; level < PART_DEPTH; level += 1)
-    part = `mimeType,filename,body,parts(${part})`;
-  return `id,payload(${part})`;
+  let part = "mimeType,filename,headers,body";
+  for (let level = 1; level < PART_DEPTH; level += 1) {
+    part = `mimeType,filename,headers,body,parts(${part})`;
+  }
+  // The top level's headers are the whole message's; its charset comes from the metadata read.
+  return `id,payload(mimeType,filename,body,parts(${part}))`;
 }
 
-function collectParts(root: GmailPart | undefined): {
+function collectParts(
+  root: GmailPart | undefined,
+  rootCharset: string | null,
+): {
   plain: string[];
   html: string[];
   attachments: Attachment[];
@@ -104,7 +124,7 @@ function collectParts(root: GmailPart | undefined): {
   const html: string[] = [];
   const attachments: Attachment[] = [];
 
-  function walk(part: GmailPart): void {
+  function walk(part: GmailPart, charset: string | null): void {
     const mimeType = part.mimeType ?? "application/octet-stream";
     const filename = part.filename ?? "";
     const body = part.body;
@@ -117,15 +137,15 @@ function collectParts(root: GmailPart | undefined): {
         attachmentId: body.attachmentId,
       });
     } else if (body?.data) {
-      const decoded = decodeBase64Url(body.data);
+      const decoded = decodeText(body.data, charset);
       if (mimeType.toLowerCase().startsWith("text/plain")) plain.push(decoded);
       else if (mimeType.toLowerCase().startsWith("text/html")) html.push(decoded);
     }
 
-    for (const child of part.parts ?? []) walk(child);
+    for (const child of part.parts ?? []) walk(child, charsetOf(header(child, "Content-Type")));
   }
 
-  if (root) walk(root);
+  if (root) walk(root, rootCharset);
   return { plain, html, attachments };
 }
 
@@ -146,7 +166,7 @@ export default async (input: Input, ctx: Context) => {
 
   const metadataQuery = new URLSearchParams();
   metadataQuery.set("format", "metadata");
-  for (const name of ["From", "To", "Cc", "Subject", "Date"]) {
+  for (const name of ["From", "To", "Cc", "Subject", "Date", "Content-Type"]) {
     metadataQuery.append("metadataHeaders", name);
   }
   metadataQuery.set("fields", "id,messages(id,threadId,labelIds,snippet,payload(headers))");
@@ -174,7 +194,10 @@ export default async (input: Input, ctx: Context) => {
     }
 
     const bodyMessage = (await messageRes.json()) as GmailMessage;
-    const content = collectParts(bodyMessage.payload);
+    const content = collectParts(
+      bodyMessage.payload,
+      charsetOf(header(metadata.payload, "Content-Type")),
+    );
     const text = (
       content.plain.length > 0 ? content.plain.join("\n\n") : stripHtml(content.html.join("\n\n"))
     ).slice(0, 20000);

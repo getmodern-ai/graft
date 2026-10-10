@@ -202,6 +202,57 @@ describe("the HTML readers", () => {
   });
 });
 
+describe("the declared charset", () => {
+  const latin1 = Buffer.from("café", "latin1").toString("base64url");
+
+  it("gmail__get-message decodes a single-part body by the message's Content-Type", async () => {
+    const getMessage = await gmailTool("get-message");
+    const { ctx, calls } = fakeGmail((path) =>
+      path.includes("format=metadata")
+        ? {
+            id: "m1",
+            payload: {
+              headers: [{ name: "Content-Type", value: 'text/plain; charset="ISO-8859-1"' }],
+            },
+          }
+        : { id: "m1", payload: { mimeType: "text/plain", body: { data: latin1 } } },
+    );
+    const result = (await getMessage({ messageId: "m1" }, ctx)) as { text: string };
+    expect(result.text).toBe("café");
+    expect(calls[0]?.path).toContain("metadataHeaders=Content-Type");
+  });
+
+  it("gmail__get-thread decodes a nested part by its own Content-Type", async () => {
+    const getThread = await gmailTool("get-thread");
+    const { ctx } = fakeGmail((path) =>
+      path.startsWith("/users/me/threads/")
+        ? { id: "t1", messages: [{ id: "m1", payload: { headers: [] } }] }
+        : {
+            id: "m1",
+            payload: {
+              mimeType: "multipart/mixed",
+              parts: [
+                {
+                  mimeType: "multipart/alternative",
+                  parts: [
+                    {
+                      mimeType: "text/plain",
+                      headers: [
+                        { name: "Content-Type", value: "text/plain; charset=windows-1252" },
+                      ],
+                      body: { data: latin1 },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+    );
+    const result = (await getThread({ threadId: "t1" }, ctx)) as { messages: { text: string }[] };
+    expect(result.messages[0]?.text).toBe("café");
+  });
+});
+
 describe("gmail__get-thread", () => {
   it("keeps a long conversation's text within one budget, the newest messages first", async () => {
     const getThread = await gmailTool("get-thread");
