@@ -1496,8 +1496,11 @@ export function createApi(options: ApiOptions): Hono {
       listToolVersionOrigins(ctx, principal, toolDeps),
     ]);
     const byTool = new Map<string, typeof origins>();
-    for (const origin of origins)
-      byTool.set(origin.toolId, [...(byTool.get(origin.toolId) ?? []), origin]);
+    for (const origin of origins) {
+      const list = byTool.get(origin.toolId);
+      if (list) list.push(origin);
+      else byTool.set(origin.toolId, [origin]);
+    }
     const answer: ToolboxToolOutput[] = tools.map((tool) => {
       const versions = byTool.get(tool.id) ?? [];
       return {

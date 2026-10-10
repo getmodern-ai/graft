@@ -297,8 +297,11 @@ const findTool: MetaTool = {
           originsOf.get(candidate.row.id) ?? [],
           catalogue.get(candidate.hit.tool) ?? null,
         );
-        if (!followed.advanced) return candidate.hit;
-        advanced = true;
+        // The tool as the advance left it, whoever moved it: a reach that waited on another's
+        // advance is answered the new definition too, never the schema it read before (Greptile
+        // on #189). Only a tool nobody touched keeps the hit as found.
+        if (followed.advanced) advanced = true;
+        else if (followed.tool === candidate.row) return candidate.hit;
         return toolboxHit(followed.tool, candidate.hit.promoted, "stock");
       }),
     );
