@@ -63,7 +63,8 @@ export type AskedVersion = {
  *   showed lands on the current version, as `advanceStockCopy` would have carried it had the answer
  *   come first (`answerCarriesTo`; ADR 0008 as amended 2026-10-09);
  * - an allow for an older version leaves an allow already standing for the current one where it
- *   is, so a late answer to an old ask never takes a standing yes back.
+ *   is, so a late answer to an old ask never takes a standing yes back; an ask-every-call setting
+ *   the answer carried is still written onto that row, since the setting is the tool's.
  */
 export async function setApproval(
   ctx: ServiceContext,
@@ -96,7 +97,17 @@ export async function setApproval(
         toolVersionId = current;
       } else {
         const standing = await deps.findApproval(tx, scope, toolId);
-        if (standing?.decision === "allow" && isForVersion(standing, current)) return standing;
+        if (standing?.decision === "allow" && isForVersion(standing, current)) {
+          // The yes stays on the current version; the ask-every-call setting is the tool's, not
+          // the version's, so a setting the answer carried still lands (Greptile on #190).
+          if (
+            options.askEveryCall === undefined ||
+            options.askEveryCall === standing.askEveryCall
+          ) {
+            return standing;
+          }
+          toolVersionId = current;
+        }
       }
     }
     return deps.upsertApproval(tx, {

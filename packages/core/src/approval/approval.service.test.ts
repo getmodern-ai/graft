@@ -173,6 +173,22 @@ describe("setApproval for the version asked about", () => {
     expect(deps.upsertApproval).not.toHaveBeenCalled();
   });
 
+  it("still writes an ask-every-call setting the old ask's yes carried onto that standing row", async () => {
+    const current = { ...approval, toolVersionId: "ver_2" };
+    const deps = fakeDeps({
+      findAuthoredToolForUpdate: vi.fn(async () => movedOn),
+      findApproval: vi.fn(async () => current),
+    });
+    await setApproval(ctx, SCOPE, "tool_1", "allow", deps, {
+      asked: ASKED_V1,
+      askEveryCall: true,
+    });
+    expect(deps.upsertApproval).toHaveBeenCalledWith(
+      ctx.db,
+      expect.objectContaining({ decision: "allow", toolVersionId: "ver_2", askEveryCall: true }),
+    );
+  });
+
   it("carries a late yes onto a stock copy's current version when the advances do not widen what was shown", async () => {
     const deps = fakeDeps({
       findAuthoredToolForUpdate: vi.fn(async () => movedOn),
