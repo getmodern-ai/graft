@@ -171,6 +171,10 @@ export function VendorChoice({
             }
             className="h-11 border-0 bg-transparent shadow-none focus-visible:ring-0"
             value={typed}
+            onKeyDown={(event) => {
+              // Enter searches; it never submits the card chosen before the search (Greptile on #201).
+              if (event.key === "Enter") event.preventDefault();
+            }}
             onChange={(event) => {
               setTyped(event.target.value);
               // A text search searches everything: a category chosen before it would filter the

@@ -116,6 +116,11 @@ function SetupRoute() {
   // record leaves the vendor step.
   const [app, setApp] = useState<DirectoryEntry | null>(null);
   const holdsApp = app !== null && state?.step === "vendor";
+  // Once the record leaves the vendor step the held entry is spent: Back from the connect step
+  // lands on the directory, not on the old tool screen (Greptile on #201).
+  useEffect(() => {
+    if (app && state && state.step !== "vendor") setApp(null);
+  }, [app, state]);
   const starterId = finished ? null : (state?.setup?.starterId ?? (holdsApp ? app.slug : null));
   const stages = setupStages(step, starterId);
   useStageHistory(state, finished !== null || leaving, holdsApp ? () => setApp(null) : null);
