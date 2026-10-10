@@ -25,6 +25,7 @@ export {
   toolboxIdOf,
   toolPath,
   versionPath,
+  writePath,
 } from "./layout";
 export { createNoopToolboxMirror, type RecordingToolboxMirror } from "./mirror";
 export type {

@@ -46,6 +46,8 @@ const version = (n: number): ToolVersionRow => ({
   dryRunAt: null,
   writesInvolved: false,
   publisherJobId: null,
+  stockToolId: null,
+  stockVersionId: null,
   owner: "person",
   createdAt: NOW,
 });
@@ -70,6 +72,7 @@ function fakeDeps(overrides: Partial<ToolDeps> = {}): ToolDeps {
     recordToolVersionDryRun: vi.fn(async () => version(1)),
     findConnection: vi.fn(async () => ({ id: "conn_1" }) as never),
     findConnectionForUpdate: vi.fn(async () => ({ id: "conn_1", revokedAt: null }) as never),
+    lockToolName: vi.fn(async () => {}),
     newId: () => "new_id",
     now: () => NOW,
     ...overrides,

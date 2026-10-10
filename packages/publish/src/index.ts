@@ -1,3 +1,4 @@
+export { type CopyStockDeps, copyStockVersion } from "./copy-stock";
 export { sha256Hex, sourceHashOf } from "./hash";
 export {
   forbiddenDraftFiles,

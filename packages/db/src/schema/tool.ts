@@ -15,6 +15,7 @@ import { acquireJob } from "./acquire-job";
 import { user } from "./auth";
 import { owned, ownedRecord } from "./columns";
 import { connection } from "./connection";
+import { stockTool, stockToolVersion } from "./stock";
 
 /**
  * An **authored tool**: a module of code Graft's model wrote against a vendor, versioned in the
@@ -121,12 +122,24 @@ export const toolVersion = pgTable(
     publisherJobId: text("publisher_job_id").references(() => acquireJob.id, {
       onDelete: "set null",
     }),
+    /**
+     * The **stock origin** (ADR 0025; GRA-238): the stock tool and the stock version this version
+     * was copied from, on a version written by the first `run_tool` or `promote` of a stock tool
+     * (`@graft/publish`'s `copyStockVersion`). Null on every version the person's agent published.
+     * A tool whose versions all carry one follows stock; one holding a version without is a remix.
+     */
+    stockToolId: text("stock_tool_id").references(() => stockTool.id, { onDelete: "set null" }),
+    stockVersionId: text("stock_version_id").references(() => stockToolVersion.id, {
+      onDelete: "set null",
+    }),
     ...ownedRecord(),
   },
   (table) => [
     unique("tool_version_tool_id_version_number_unique").on(table.toolId, table.versionNumber),
     index("tool_version_tool_id_idx").on(table.toolId),
     index("tool_version_publisher_job_id_idx").on(table.publisherJobId),
+    index("tool_version_stock_tool_id_idx").on(table.stockToolId),
+    index("tool_version_stock_version_id_idx").on(table.stockVersionId),
   ],
 );
 

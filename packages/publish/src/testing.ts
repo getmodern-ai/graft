@@ -80,6 +80,8 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
         dryRunAt: input.dryRunAt ?? null,
         writesInvolved: input.writesInvolved ?? false,
         publisherJobId: input.publisherJobId ?? null,
+        stockToolId: input.stockToolId ?? null,
+        stockVersionId: input.stockVersionId ?? null,
         owner: "person",
         createdAt: now(),
       };
@@ -118,6 +120,8 @@ export function createInMemoryToolDeps(options: { now?: () => Date } = {}): InMe
     findConnection: async (_db, personId, id) => ({ id, personId, revokedAt: null }) as never,
     findConnectionForUpdate: async (_db, personId, id) =>
       ({ id, personId, revokedAt: null }) as never,
+    // One process and no concurrent transactions; a race test brings a lock that holds.
+    lockToolName: async () => {},
   };
 }
 

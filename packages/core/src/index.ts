@@ -467,6 +467,19 @@ export {
   starterVendorFor,
   starterVendorOf,
 } from "./setup/starter-vendors";
+export { defaultStockDeps, type StockDeps } from "./stock/stock.deps";
+export {
+  describeStockTool,
+  listStockCatalogue,
+  listStockToolsForVendor,
+  loadStockCatalogue,
+  type StockCheck,
+  type StockConnectProposal,
+  type StockLoadReport,
+  type StockToolSource,
+  type StockToolSummary,
+  type StockToolView,
+} from "./stock/stock.service";
 export {
   AGENT_TOKEN_DISPLAY_LENGTH,
   AGENT_TOKEN_PREFIX,

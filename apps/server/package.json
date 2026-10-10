@@ -36,6 +36,7 @@
     "@graft/ratelimit": "workspace:*",
     "@graft/sandbox": "workspace:*",
     "@graft/sandbox-docker": "workspace:*",
+    "@graft/stock": "workspace:*",
     "@graft/token": "workspace:*",
     "@graft/toolbox": "workspace:*",
     "@graft/vault": "workspace:*",

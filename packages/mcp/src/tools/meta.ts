@@ -11,8 +11,8 @@ import {
   listConnections,
   listTools,
   listWorkingSet,
-  promoteTool,
   STARTER_VENDORS,
+  type StockConnectProposal,
 } from "@graft/core";
 import { AUTH_SCHEMES } from "@graft/proxy/types";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -41,6 +41,7 @@ import type { SessionContext } from "../context";
 import { isPlainObject, toolRefusal, toolResult, withCard } from "../result";
 import { runAuthoredTool } from "../run";
 import { setupOfferFor } from "../setup-offer";
+import { promoteToolForAgent, stockConnectionIds } from "../stock-copy";
 import { authoredToolName } from "../tool-names";
 import { similarTools } from "./acquire-similar";
 import { answerAsk } from "./answer-ask";
@@ -85,6 +86,16 @@ export type FoundTool = {
   promoted: boolean;
   inputSchema: Record<string, unknown>;
   annotations: { readOnlyHint: boolean; destructiveHint: boolean };
+  /**
+   * A stock tool's hit (ADR 0025; GRA-238): `stock: true`, and either `connectionIds`, the live
+   * connections of its integration in the agent's scope (matched by vendor slug until GRA-241),
+   * or, with none, `connect`, the `request_connection` arguments of the integration's proposal.
+   * The first `run_tool` or `promote` copies it into the toolbox, after which it is the person's
+   * tool and its hit carries none of the three.
+   */
+  stock?: true;
+  connectionIds?: string[];
+  connect?: StockConnectProposal;
 };
 
 const toolKeyProperties = {
@@ -118,10 +129,11 @@ const findTool: MetaTool = {
   definition: {
     name: FIND_TOOL,
     description:
-      "Used first, before acquire, for a task no listed tool covers: searches the toolbox, every tool authored for this account, demoted ones included, by vendor, name, input labels and description; every word of the query hits, in any order, as itself, another form of it (contacts, contact) or a common synonym (find reaches search, dm reaches message). A tool no version of which has passed its dry run is not listed. " +
-      "Answers the five best hits, the agent's working set first and, for a query that reads, read-only tools before writes, with more, the count of further hits, when there are any. " +
+      "Used first, before acquire, for a task no listed tool covers: searches the toolbox, every tool authored for this account, demoted ones included, and Graft's ready-made stock tools for every vendor, connected or not, by vendor, name, input labels and description; every word of the query hits, in any order, as itself, another form of it (contacts, contact) or a common synonym (find reaches search, dm reaches message). A tool no version of which has passed its dry run is not listed. " +
+      "Answers the five best hits, the agent's working set first, then the rest of the toolbox, then stock tools of a vendor connected in the agent's scope, then the others, and, for a query that reads, read-only tools before writes, with more, the count of further hits, when there are any. " +
       "Each hit carries vendor and name (the arguments promote, demote and run_tool take), its inputSchema (the shape run_tool's input must match), whether it is in the agent's working set, and its read-only and destructive hints. " +
       "A hit that is not promoted is one promote call from the agent's list. The answer also carries connections, every live connection in the agent's scope with the connectionId acquire takes, its vendor and its name. An empty answer leads to request_connection when the vendor has no connection in the agent's scope, otherwise to acquire against the connection named. " +
+      "A stock hit carries stock: true and either connectionIds, the connections in the agent's scope it runs over, or connect, the request_connection arguments for its vendor; its first run_tool or promote copies it into the toolbox, and a toolbox tool of the same vendor__name replaces it in the answer. " +
       "While the person has no connection at all and has neither finished nor skipped Setup, the answer also carries setup, a url to the console's Setup page for this agent, where a first vendor is connected and a first tool acquired, and a message in the shape of a handoff, shown as a card on a chat product that renders one.",
     inputSchema: {
       type: "object",
@@ -148,11 +160,12 @@ const findTool: MetaTool = {
         "query must be a non-empty string with a word of two or more characters",
       );
     }
-    const [tools, workingSet, scopeIds, allConnections] = await Promise.all([
+    const [tools, workingSet, scopeIds, allConnections, stock] = await Promise.all([
       listTools(ctx, principal, deps.tool),
       listWorkingSet(ctx, scope, deps.workingSet),
       getAgentScope(ctx, scope, deps.agent),
       listConnections(ctx, principal, deps.connection),
+      deps.toolSource?.list() ?? Promise.resolve([]),
     ]);
     // The connections acquire can author against, by id (GRA-125): a chat product's agent lists
     // no execute__ tools, so this is where it learns a connectionId.
@@ -172,25 +185,61 @@ const findTool: MetaTool = {
     // few tools per toolbox to need it.
     // A tool with no current version is what an acquire job that never passed its dry run leaves
     // (GRA-77): nothing runnable, so nothing to find — its versions and reports stay for the console.
-    const found = searchTools(
-      tools
-        .filter((tool) => tool.currentVersionId !== null)
-        .map((tool) => ({
-          ...tool,
-          tier: promoted.has(tool.id) ? 0 : 1,
-        })),
-      query,
-      { vendorNames: VENDOR_NAMES },
-    );
-    const hits: FoundTool[] = found.hits.map((tool) => ({
-      vendor: tool.vendor,
-      name: tool.name,
-      tool: authoredToolName(tool.vendor, tool.name),
-      description: tool.description,
-      promoted: promoted.has(tool.id),
-      inputSchema: tool.inputSchema,
-      annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
-    }));
+    const toolbox = tools
+      .filter((tool) => tool.currentVersionId !== null)
+      .map((tool) => ({
+        vendor: tool.vendor,
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        readOnly: tool.readOnly,
+        tier: promoted.has(tool.id) ? 0 : 1,
+        hit: {
+          vendor: tool.vendor,
+          name: tool.name,
+          tool: authoredToolName(tool.vendor, tool.name),
+          description: tool.description,
+          promoted: promoted.has(tool.id),
+          inputSchema: tool.inputSchema,
+          annotations: { readOnlyHint: tool.readOnly, destructiveHint: tool.destructive },
+        } satisfies FoundTool,
+      }));
+    // Stock beside the toolbox (ADR 0025; GRA-238): tier 2 where the agent holds a connection of
+    // the integration, 3 where it does not, and never a stock tool the person holds a tool of the
+    // same name of, demoted or versionless included, since that tool is the one a run reaches.
+    const held = new Set(tools.map((tool) => authoredToolName(tool.vendor, tool.name)));
+    const stocked = stock
+      .filter((entry) => !held.has(authoredToolName(entry.vendor, entry.name)))
+      .map((entry) => {
+        const connectionIds = stockConnectionIds(allConnections, scopeIds, entry.vendor);
+        return {
+          vendor: entry.vendor,
+          name: entry.name,
+          description: entry.description,
+          inputSchema: entry.inputSchema,
+          readOnly: entry.annotations.readOnly,
+          tier: connectionIds.length > 0 ? 2 : 3,
+          hit: {
+            vendor: entry.vendor,
+            name: entry.name,
+            tool: authoredToolName(entry.vendor, entry.name),
+            description: entry.description,
+            promoted: false,
+            inputSchema: entry.inputSchema,
+            annotations: {
+              readOnlyHint: entry.annotations.readOnly,
+              destructiveHint: entry.annotations.destructive,
+            },
+            stock: true,
+            ...(connectionIds.length > 0 || !entry.connect
+              ? { connectionIds }
+              : { connect: entry.connect }),
+          } satisfies FoundTool,
+        };
+      });
+    const found = searchTools([...toolbox, ...stocked], query, { vendorNames: VENDOR_NAMES });
+    const hits: FoundTool[] = found.hits.map((candidate) => candidate.hit);
+    const needsConnect = hits.some((hit) => hit.connect !== undefined);
     // A person with no connection at all, and Setup neither finished nor skipped, is offered
     // Setup (GRA-210): a plain result with the card beside it, since no ask stands behind it.
     const offer = await setupOfferFor(session, allConnections.length);
@@ -203,7 +252,7 @@ const findTool: MetaTool = {
         note:
           hits.length === 0
             ? "Nothing in the toolbox matches. If the vendor is among connections, acquire authors a new tool against its connectionId; if not, request_connection comes first."
-            : `promote a tool to add it to your list; run_tool runs one without promoting it.${found.more > 0 ? ` ${found.more} more matched; a narrower query shows them.` : ""}`,
+            : `promote a tool to add it to your list; run_tool runs one without promoting it.${needsConnect ? " A hit with connect is a ready-made tool whose vendor has no connection in your scope: request_connection with those arguments comes first." : ""}${found.more > 0 ? ` ${found.more} more matched; a narrower query shows them.` : ""}`,
       }),
       offer?.card,
     );
@@ -214,7 +263,7 @@ const promote: MetaTool = {
   definition: {
     name: PROMOTE,
     description:
-      "Used for a tool find_tool found that is not in the agent's working set: adds it. " +
+      "Used for a tool find_tool found that is not in the agent's working set: adds it. A stock tool is first copied into the toolbox, over a connection of its vendor in the agent's scope; with none, answers connection_needed with connect, the request_connection arguments. " +
       "The tool then appears in the agent's list as vendor__name with its own schema once the list is re-fetched, and run_tool calls it by name before that. " +
       "Answers the working set's new size. Nothing is authored.",
     inputSchema: {
@@ -228,24 +277,15 @@ const promote: MetaTool = {
   handle: async (args, session) => {
     const key = readToolKey(args);
     if ("error" in key) return toolRefusal("input_invalid", key.error);
-    const { ctx, principal, scope, deps, notifier } = session;
-    const tool = await getToolByName(ctx, principal, key, deps.tool);
-    if (!tool) return toolNotFound(key);
-    // The same refusal a run gives (`../run.ts`): a tool no version of which passed its dry run is
-    // not promotable, since the list entry would name nothing that runs (GRA-77).
-    if (!tool.currentVersionId) {
-      return toolRefusal(
-        "tool_has_no_version",
-        `${authoredToolName(tool.vendor, tool.name)} has no version that passed its dry run, so there is nothing to promote. acquire authors one.`,
-      );
-    }
-    const change = await promoteTool(ctx, scope, tool.id, "agent", deps.workingSet);
-    if (change.changed) notifier.changed(scope.agentId);
+    const { scope, deps, notifier } = session;
+    // A stock tool is copied into the toolbox first (`../stock-copy.ts`, GRA-238).
+    const promoted = await promoteToolForAgent(deps, scope, key, notifier);
+    if (!promoted.ok) return toolRefusal(promoted.reason, promoted.message, promoted.details);
     return toolResult({
-      tool: authoredToolName(tool.vendor, tool.name),
+      tool: promoted.tool,
       promoted: true,
-      changed: change.changed,
-      workingSetSize: await countWorkingSet(ctx, scope, deps.workingSet),
+      changed: promoted.changed,
+      workingSetSize: promoted.workingSetSize,
     });
   },
 };
@@ -286,7 +326,7 @@ const runTool: MetaTool = {
   definition: {
     name: RUN_TOOL,
     description:
-      "Runs a toolbox tool by vendor and name, for the case where it is not in the agent's visible list: the turn a tool was just published or promoted, or a client that snapshots the list per conversation. " +
+      "Runs a toolbox tool by vendor and name, for the case where it is not in the agent's visible list: the turn a tool was just published or promoted, or a client that snapshots the list per conversation. A stock tool find_tool found is copied into the toolbox on its first run, over a connection of its vendor in the agent's scope; with none, the answer is connection_needed with connect, the request_connection arguments. " +
       "The effect is exactly a first-class call: the input is validated against the tool's inputSchema, which the acquire result and find_tool's hits carry and an input_invalid refusal answers beside the problems, and the vendor's answer, or the tool's failure, comes back verbatim. " +
       "A tool that changes something may answer awaiting_approval with a url on its first call: a handoff whose next step is the person's, in the console; the same call with the same arguments, once they have answered, runs the tool. " +
       "With dryRun: true reads reach the vendor and every other method stops at the proxy with a preview of the request; the answer is a dry-run report and nothing changes at the vendor. " +

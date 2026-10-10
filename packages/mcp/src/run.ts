@@ -50,6 +50,7 @@ import {
   startDetached,
 } from "./sandbox";
 import { compileInputSchema } from "./schema";
+import { ensureToolForAgent } from "./stock-copy";
 import { authoredToolName } from "./tool-names";
 
 /**
@@ -547,18 +548,24 @@ async function runHeld(
     return { answer: refusal(reason, message, details), isError: true };
   };
 
-  const tool = await getToolByName(
-    ctx,
-    principal,
-    { vendor: args.vendor, name: args.name },
-    deps.tool,
-  );
-  if (!tool) {
-    return refuse(
-      "tool_not_found",
-      `No tool named ${args.name} for ${args.vendor} is in this toolbox. find_tool searches it.`,
-    );
+  // The person's tool, or a stock tool of the name copied in on its first run (`stock-copy.ts`,
+  // GRA-238): every caller of a run, the console's included, reaches stock the same way. A dry run
+  // of a named version is `acquire`'s, over a tool its job published, and copies nothing.
+  const key = { vendor: args.vendor, name: args.name };
+  const ensured = args.versionId
+    ? await getToolByName(ctx, principal, key, deps.tool).then((found) =>
+        found ? { ok: true as const, tool: found } : null,
+      )
+    : await ensureToolForAgent(deps, scope, key);
+  if (!ensured?.ok) {
+    return ensured
+      ? refuse(ensured.reason, ensured.message, undefined, ensured.details)
+      : refuse(
+          "tool_not_found",
+          `No tool named ${args.name} for ${args.vendor} is in this toolbox. find_tool searches it.`,
+        );
   }
+  const tool = ensured.tool;
   const ids = { toolId: tool.id };
   const versionId = args.versionId ?? tool.currentVersionId;
   const found = versionId ? await getToolVersion(ctx, principal, versionId, deps.tool) : null;

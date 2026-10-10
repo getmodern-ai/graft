@@ -630,6 +630,42 @@ where it was (`packages/publish`, step 8). The job's "did not run" progress line
 refusal's `reason: message` rather than the word `refused`. `packages/mcp/src/server.test.ts` (the
 GRA-122 describe), `acquire.test.ts` and `publish.service.test.ts` are the suites.
 
+**A stock tool is a ready-made tool, copied into the toolbox the first time it is reached for**
+(GRA-238; ADR 0025). `packages/stock` (`@graft/stock`) is the workspace: `tools/<vendor>/<name>/`
+holds the module, `manifest.json` (name, description, input schema, hosts, the annotations the
+check must agree with) and `test-input.json`; `src/workspace.test.ts` is the harness every stock
+tool passes (a starter vendor, hosts among the starter's, the check, the test input), and the
+package's `tsconfig` leaves `tools/` to the check, which types each module against its own schema.
+The boot loads it after the migrations (`boot.ts`'s `loadStockOnStart`, `@graft/core`'s
+`loadStockCatalogue`) into the global catalogue, `stock_tool` and `stock_tool_version` (migration
+0014): no person, no owner tier, a version appended by number when the directory's hash is one
+the tool has at no number (so a replica of an older release booting mid-deploy appends nothing,
+and a revert ships as a change), with its files, hosts and the check's result, under one advisory
+lock; `repo/stock.ts`'s reads are
+unscoped and pinned by name in `repo/scope.test.ts`. The image carries the workspace as
+`apps/server/tools/` (`tsdown.config.ts`, the Dockerfile). `McpDeps.toolSource` (`tool-source.ts`)
+lists, describes and copies; `find_tool` searches stock beside the toolbox at tiers 2 (a connection
+of the vendor in scope, `connectionIds`) and 3 (none, `connect`: the starter's
+`request_connection` arguments), with `stock: true`, a person's tool of the same name hiding it.
+`stock-copy.ts`'s `ensureToolForAgent` is the one road in, which `runAuthoredTool` (so `run_tool`),
+`apps/server/src/tool-run.ts` (the console's run, before its read-only and working-set rules) and
+`promoteToolForAgent` (so `promote`, and a console route) take: the person's tool, or the stock
+version copied by `@graft/publish`'s `copyStockVersion` as an ordinary tool whose version records
+`stock_tool_id` and `stock_version_id`, bound to the vendor's connection in scope, or
+`connection_needed` with `connect`. **Every write of a version has a directory of its own**
+(`@graft/toolbox`'s `writePath`, `tools/<vendor>/<name>/w-<writeId>`; GRA-238, GRA-265): a publish
+and a stock copy write their files there with nothing held (the publish's install included), then
+write the rows in one short transaction under `ToolDeps.lockToolName` (`repo/tool.ts`'s
+`lockAuthoredToolName`), where the version number is decided as the tool's next and
+`tool_version.path` records the directory. So no writer ever writes over another's files, two
+publishes of one tool racing take two numbers, two first copies (or a copy and a first publish)
+make one tool and the later answers it, a unique-constraint loser answers the winner's row, and a
+directory whose rows never land (a refused or failed publish, a lost race) stays as an orphan,
+since nothing under `tools/` is removed (ADR 0009). Versions written before this are `v<N>`
+(`versionPath`) and stay valid; `packages/toolbox/README.md` has the layout. The mirror is asked
+for a copy's version as a publish asks it. Connections match by vendor slug until GRA-241's host
+matching. `@graft/core`'s `listStockToolsForVendor` is the console's read of one integration's.
+
 **A file moves between tools as a blob, never through the model** (GRA-181; ADR 0023). A blob is a
 directory `<id>/` holding `data` and a `meta.json` sidecar under the agent's blobs directory,
 `.blobs/<agentId>/` beside the toolboxes on the toolbox volume (the Agent Drive in the hosted form),

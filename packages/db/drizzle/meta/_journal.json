@@ -99,6 +99,13 @@
       "when": 1791534257992,
       "tag": "0013_setup_plan",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791589003334,
+      "tag": "0014_stock_catalogue",
+      "breakpoints": true
     }
   ]
 }

@@ -120,6 +120,8 @@ beforeAll(async () => {
     pollMs: 20,
   };
   mcp = createMcpDeps({
+    // No stock catalogue over the fake store: the stock path is `@graft/mcp`'s `stock.test.ts`.
+    toolSource: null,
     ...fake,
     connection,
     sandbox,

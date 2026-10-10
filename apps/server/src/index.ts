@@ -11,8 +11,10 @@ import {
   defaultLedgerDeps,
   defaultMcpOAuthDeps,
   defaultPendingActionDeps,
+  defaultStockDeps,
   defaultToolDeps,
   defaultWorkingSetDeps,
+  loadStockCatalogue,
   oauthRedirectUri,
   protectedResourceMetadataUrl,
 } from "@graft/core";
@@ -29,6 +31,7 @@ import {
   DEFAULT_PACKAGE_POLICY,
 } from "@graft/publish";
 import type { SandboxProcessResult } from "@graft/sandbox";
+import { checkStockTool, readStockWorkspace } from "@graft/stock";
 import { importCapabilityTokenKeys } from "@graft/token";
 import { createCredentialVault } from "@graft/vault";
 import { serve } from "@hono/node-server";
@@ -43,7 +46,12 @@ import {
   proxyBodyCapClause,
 } from "./app";
 import { selectBackings } from "./backings";
-import { bootstrapAdmin, MigrationChainBrokenError, migrateOnStart } from "./boot";
+import {
+  bootstrapAdmin,
+  loadStockOnStart,
+  MigrationChainBrokenError,
+  migrateOnStart,
+} from "./boot";
 import {
   connectionSeeds,
   createDatabaseConnections,
@@ -140,6 +148,24 @@ if (env.GRAFT_MIGRATE_ON_START) {
     console.error(`graft refused to start: ${reason}`);
     process.exit(1);
   }
+}
+
+/**
+ * The stock catalogue (ADR 0025; GRA-238; `boot.ts`): the workspace this image ships, loaded the way
+ * the migrations run, on every start and idempotently. A tool the check refuses is named and
+ * skipped; a database that cannot take the load refuses the start, as a migration would.
+ */
+try {
+  await loadStockOnStart({
+    read: () => readStockWorkspace(),
+    load: (sources) => loadStockCatalogue({ db }, sources, checkStockTool, defaultStockDeps),
+    log: console.log,
+  });
+} catch (error) {
+  console.error(
+    `graft refused to start: the stock catalogue could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+  );
+  process.exit(1);
 }
 
 // The providers a person may sign in with beside email and password (GRA-81, ADR 0020): a key per
