@@ -24,6 +24,7 @@ import {
   listOpenPendingActions,
   listTools,
   listToolVersionOrigins,
+  listVendorApprovals,
   listVendorUsage,
   listWorkingSet,
   listWorkingSetChanges,
@@ -59,6 +60,7 @@ import {
   type ToolDeps,
   updateAgentLimits,
   type WorkingSetDeps,
+  withdrawVendorApproval,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
@@ -335,14 +337,18 @@ export type PendingActionCard = {
 
 /**
  * The person's answer to a `tool`, `build` or `scope` ask: `allow`; for a tool ask, whether it
- * should ask every call from now on (ADR 0008 as amended 2026-09-15); for a scope ask, whether the
- * agent may also build against the connection (GRA-75's choice, GRA-104's card). Absent fields
- * leave the setting where it stands and grant nothing.
+ * should ask every call from now on (ADR 0008 as amended 2026-09-15), and whether the yes is for
+ * every tool of the tool's integration, destructive ones only with `includesDestructive` (ADR 0008
+ * as amended 2026-10-09; GRA-237); for a scope ask, whether the agent may also build against the
+ * connection (GRA-75's choice, GRA-104's card). Absent fields leave the setting where it stands
+ * and grant nothing.
  */
 const answerBody = z.object({
   allow: z.boolean(),
   askEveryCall: z.boolean().optional(),
   approveBuild: z.boolean().optional(),
+  allowVendor: z.boolean().optional(),
+  includesDestructive: z.boolean().optional(),
 });
 const askEveryCallBody = z.object({ on: z.boolean() });
 
@@ -502,12 +508,15 @@ const connectionBody = registrationBody.extend({
 const credentialBody = z.object({ fields: credentialFields });
 
 /**
- * The one choice both connection cards add to the confirmation (GRA-75; ADR 0008, amendment of
- * 2026-09-18): whether the asking agent may build against the connection. Absent reads as no, so a
- * body written before the control existed asks nothing new of the person.
+ * The two choices both connection cards add to the confirmation: whether the asking agent may
+ * build against the connection (GRA-75; ADR 0008, amendment of 2026-09-18), and whether the
+ * integration's tools then run for it without asking, destructive ones left out (GRA-239; the
+ * amendment of 2026-10-09). Absent reads as no, so a body written before a control existed asks
+ * nothing new of the person.
  */
 const approveBuildField = {
   approveBuild: z.boolean().default(false),
+  allowVendor: z.boolean().default(false),
 };
 
 /** GRA-28's submit for a `connection` ask: the proposal as the person edited it, the secret, and the build choice. */
@@ -515,7 +524,7 @@ const connectionSubmitBody = registrationBody.extend({
   credential: credentialFields,
   ...approveBuildField,
 });
-/** The console's button for a link ask (GRA-59): nothing to edit, so the body is the build choice alone — or empty. */
+/** The console's button for a link ask (GRA-59): nothing to edit, so the body is the two choices alone — or empty. */
 const linkStartBody = z.object(approveBuildField);
 const credentialSubmitBody = z.object({ credential: credentialFields });
 
@@ -1810,6 +1819,10 @@ export function createApi(options: ApiOptions): Hono {
         allow: body.allow,
         ...(body.askEveryCall === undefined ? {} : { askEveryCall: body.askEveryCall }),
         ...(body.approveBuild === undefined ? {} : { approveBuild: body.approveBuild }),
+        ...(body.allowVendor === undefined ? {} : { allowVendor: body.allowVendor }),
+        ...(body.includesDestructive === undefined
+          ? {}
+          : { includesDestructive: body.includesDestructive }),
       },
       {
         approval: approvalDeps,
@@ -1852,7 +1865,9 @@ export function createApi(options: ApiOptions): Hono {
    * connection (GRA-75; ADR 0008, amendment of 2026-09-18) — the yes `acquire`'s own ask would
    * take, given one page earlier by the same person about the same agent and connection — so the
    * next `acquire` finds it standing and asks nothing. In the transaction, so a refused connection
-   * leaves no approval and a recorded approval never lacks its connection.
+   * leaves no approval and a recorded approval never lacks its connection. With `allowVendor` it
+   * records the agent's standing approval for the connection's vendor, destructive tools left out,
+   * the same way (GRA-239; ADR 0008, amendment of 2026-10-09).
    */
   api.post("/pending-actions/:id/connection", async (c) => {
     const principal = await principalOf(c.req.raw.headers);
@@ -1892,6 +1907,7 @@ export function createApi(options: ApiOptions): Hono {
     const body = await parseBody(c.req.raw, linkStartBody, { emptyIs: {} });
     const started = await startProviderLink(ctx, principal, c.req.param("id"), linkOptions(), {
       approveBuild: body.approveBuild,
+      allowVendor: body.allowVendor,
     });
     // Counted here rather than in the route table (GRA-147): the same 200 is a link minted or a
     // provider that stepped aside, and the two are different facts about the provider.
@@ -1983,6 +1999,28 @@ export function createApi(options: ApiOptions): Hono {
     return c.json({
       approval: await setAskEveryCall(ctx, scope, c.req.param("toolId"), body.on, approvalDeps),
     });
+  });
+
+  /**
+   * One agent's standing approvals per integration (ADR 0008 as amended 2026-10-09; GRA-237) —
+   * what the agent's page lists beside the per-tool approvals, to withdraw one. Recorded only from
+   * an answer (`POST /pending-actions/:id/answer`, or the ask card's `answer_ask`), never here.
+   */
+  api.get("/vendor-approvals", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
+    return c.json({ vendorApprovals: await listVendorApprovals(ctx, scope, approvalDeps) });
+  });
+
+  /** Withdraw one agent's standing approval for an integration; its tools ask again, each once. */
+  api.delete("/vendor-approvals/:vendor", async (c) => {
+    const principal = await principalOf(c.req.raw.headers);
+    const scope = { personId: principal.personId, agentId: agentIdOf(c.req.query("agentId")) };
+    const vendorApproval = orNotFound(
+      await withdrawVendorApproval(ctx, scope, c.req.param("vendor"), approvalDeps),
+      "No standing approval for this integration and agent",
+    );
+    return c.json({ vendorApproval });
   });
 
   /** Withdraw one agent's answer for one tool; the tool asks again on its next call. */

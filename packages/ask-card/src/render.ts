@@ -18,7 +18,9 @@ import {
  * Six shapes, in Cando's card anatomy (ADR 0017) and the console's voice. Four answer in place:
  * the **build approval** (Allow or Deny); the **tool's first-use approval** (GRA-116: the tool's
  * description in the model's words, its hints, Allow or Deny — the ask-every-call setting stays on
- * the console's page, and the card says when it is on); the **connection confirmation** for a
+ * the console's page, and the card says when it is on — and, where the server offers it, *Allow
+ * every <integration> tool for this agent* beside Allow with a destructive tick off by default,
+ * GRA-237); the **connection confirmation** for a
  * scheme that takes no credential (Connect or Decline, with GRA-75's build choice on by default);
  * and the **scope ask** — a connection the person already holds, asked for by an agent that was
  * not given it (GRA-104): Allow or Decline, with the same build choice. Two send the person
@@ -456,6 +458,30 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     settle(outcome.ok ? outcome : { ok: false, message: outcome.message });
   };
 
+  /**
+   * The line for the integration's tools under the build choice (GRA-239; ADR 0008 as amended
+   * 2026-10-09), ticked, in the server's words; null on a card the server wrote without it, which
+   * then sends exactly what it always sent.
+   */
+  const toolsLine = (): HTMLInputElement | null => {
+    const offer = card.vendorTools;
+    if (!offer) return null;
+    const choice = el(doc, "label", "ask-choice");
+    const box = el(doc, "input");
+    box.type = "checkbox";
+    box.checked = true;
+    box.name = "allowVendor";
+    const words = el(doc, "span");
+    words.append(
+      el(doc, "span", undefined, offer.label),
+      el(doc, "span", "ask-choice-hint", offer.description),
+    );
+    choice.append(box, words);
+    actions.before(choice);
+    return box;
+  };
+  const withLine = (line: HTMLInputElement | null) => (line ? { allowVendor: line.checked } : {});
+
   if (isLinkAsk(card)) {
     // A link provider's ask (GRA-117): the build choice, Decline through `answer_ask`, and the
     // provider's sign-in minted through `start_link` and opened in the person's browser.
@@ -466,6 +492,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     box.name = "approveBuild";
     choice.append(box, el(doc, "span", undefined, buildChoiceLabel(card)));
     actions.before(choice);
+    const line = toolsLine();
 
     const decline = button(doc, "Decline", "secondary", () => void submit({ decline: true }));
     const connect = button(
@@ -475,6 +502,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
       () => {
         void (async () => {
           box.disabled = true;
+          if (line) line.disabled = true;
           decline.disabled = true;
           connect.disabled = true;
           let started: StartLinkOutcome;
@@ -482,6 +510,7 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
             started = await handlers.startLink({
               pendingActionId: card.pendingActionId,
               approveBuild: box.checked,
+              ...withLine(line),
             });
           } catch (error) {
             started = {
@@ -525,6 +554,38 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     return root;
   }
 
+  if (card.kind === "tool" && card.vendorApproval) {
+    // The integration-wide yes beside Allow (GRA-237; ADR 0008 as amended 2026-10-09), in the
+    // server's words, with destructive tools a separate tick, off by default. Allow alone answers
+    // this tool as before and never carries the tick.
+    const offer = card.vendorApproval;
+    const choice = el(doc, "label", "ask-choice");
+    const box = el(doc, "input");
+    box.type = "checkbox";
+    box.checked = false;
+    box.name = "includesDestructive";
+    const words = el(doc, "span");
+    words.append(
+      el(doc, "span", undefined, offer.destructiveLabel),
+      el(doc, "span", "ask-choice-hint", offer.destructiveDescription),
+    );
+    choice.append(box, words);
+    actions.before(choice);
+
+    const deny = button(doc, "Deny", "secondary", () => void submit({ allow: false }));
+    const every = button(doc, offer.label, "secondary", () => {
+      box.disabled = true;
+      void submit({ allow: true, allowVendor: true, includesDestructive: box.checked });
+    });
+    const allow = button(doc, "Allow", "primary", () => {
+      box.disabled = true;
+      void submit({ allow: true });
+    });
+    buttons.push(deny, every, allow);
+    actions.append(deny, every, allow);
+    return root;
+  }
+
   if (card.kind === "build" || card.kind === "tool") {
     const deny = button(doc, "Deny", "secondary", () => void submit({ allow: false }));
     const allow = button(doc, "Allow", "primary", () => void submit({ allow: true }));
@@ -554,10 +615,12 @@ export function renderAsk(card: AskCard, handlers: CardHandlers, doc: Document):
     return root;
   }
 
+  const line = toolsLine();
   const decline = button(doc, "Decline", "secondary", () => void submit({ decline: true }));
   const connect = button(doc, "Connect", "primary", () => {
     box.disabled = true;
-    void submit({ connect: true, approveBuild: box.checked });
+    if (line) line.disabled = true;
+    void submit({ connect: true, approveBuild: box.checked, ...withLine(line) });
   });
   buttons.push(decline, connect);
   actions.append(decline, connect);
