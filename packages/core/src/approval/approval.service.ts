@@ -1,4 +1,4 @@
-import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
+import type { ApprovalRow, BuildApprovalRow, VendorApprovalRow } from "@graft/db/repo/approval";
 import type { ApprovalDecision } from "@graft/db/schema/approval";
 
 import type { ServiceContext } from "../context";
@@ -193,7 +193,10 @@ export function isForVersion(
  * ADR 0008 applied to one call, judged on **the version the call runs** (GRA-245, Greptile on
  * #190): the caller pins the version before the gate and passes its id and annotations, and the
  * standing answer counts only when it was given for that version, so a version made current and
- * approved meanwhile never lets an earlier one run on its approval.
+ * approved meanwhile never lets an earlier one run on its approval. Beside it, the agent's standing
+ * approval for the tool's integration (the amendment of 2026-10-09). A read passes before any row is
+ * read; the integration's row is read only when the tool's own says nothing for this version (no
+ * answer, or an `allow` for another), since a tool's own `deny` and ask-every-call setting win.
  */
 export async function decideToolCall(
   ctx: ServiceContext,
@@ -201,21 +204,114 @@ export async function decideToolCall(
   target: { toolId: string; versionId: string; annotations: ToolAnnotations },
   deps: ApprovalDeps,
 ): Promise<ApprovalVerdict> {
-  orNotFound(
+  const tool = orNotFound(
     await deps.findAuthoredToolById(ctx.db, scope.personId, target.toolId),
     "Tool not found",
   );
+  const { annotations } = target;
+  if (annotations.readOnly) return approvalDecision({ annotations, approval: null });
   const approval = await deps.findApproval(ctx.db, scope, target.toolId);
+  const state = approval
+    ? {
+        decision: approval.decision,
+        askEveryCall: approval.askEveryCall,
+        forThisVersion: isForVersion(approval, target.versionId),
+      }
+    : null;
+  const ownSays =
+    state !== null && (state.decision === "deny" || state.askEveryCall || state.forThisVersion);
+  const vendorApproval = ownSays ? null : await deps.findVendorApproval(ctx.db, scope, tool.vendor);
   return approvalDecision({
-    annotations: target.annotations,
-    approval: approval
-      ? {
-          decision: approval.decision,
-          askEveryCall: approval.askEveryCall,
-          forThisVersion: isForVersion(approval, target.versionId),
-        }
+    annotations,
+    approval: state,
+    vendorApproval: vendorApproval
+      ? { includesDestructive: vendorApproval.includesDestructive }
       : null,
   });
+}
+
+/** The agent's standing approval for every tool of one integration (GRA-237), or null. */
+export async function getVendorApproval(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  vendor: string,
+  deps: ApprovalDeps,
+): Promise<VendorApprovalRow | null> {
+  return deps.findVendorApproval(ctx.db, scope, vendor);
+}
+
+/** What the agent's page lists beside the per-tool approvals: one row per integration allowed. */
+export async function listVendorApprovals(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  deps: ApprovalDeps,
+): Promise<VendorApprovalRow[]> {
+  return deps.listVendorApprovals(ctx.db, scope);
+}
+
+/**
+ * The person's "Allow every <integration> tool for this agent" (ADR 0008 as amended 2026-10-09;
+ * GRA-237), recorded so it holds: one row per agent and vendor, a later answer replacing the
+ * destructive choice of an earlier one. Only ever the person's answer, from the console's card or
+ * the ask card's `answer_ask` (ADR 0004, ADR 0006); no agent argument reaches here. The write
+ * inserts only for an agent of the person's, so a scope naming another person's agent is
+ * `NOT_FOUND`.
+ */
+export async function allowVendor(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  vendor: string,
+  options: { includesDestructive: boolean },
+  deps: ApprovalDeps,
+): Promise<VendorApprovalRow> {
+  return orNotFound(
+    await deps.upsertVendorApproval(ctx.db, scope, {
+      vendor,
+      includesDestructive: options.includesDestructive,
+      grantedAt: deps.now(),
+    }),
+    "Agent not found",
+  );
+}
+
+/**
+ * The line on a connection's confirmation, "Use <integration>'s tools without asking each time"
+ * (ADR 0008 as amended 2026-10-09; GRA-239): the standing approval without destructive tools,
+ * recorded by the caller in the transaction that makes the connection. It never narrows: an
+ * approval already standing for the vendor, destructive tools included or not, is answered as it
+ * stands, since connecting a second account of an integration is not an answer about deleting.
+ */
+export async function allowVendorWhenConnecting(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  vendor: string,
+  deps: ApprovalDeps,
+): Promise<VendorApprovalRow> {
+  const standing = await deps.findVendorApproval(ctx.db, scope, vendor);
+  if (standing) return standing;
+  // Inserted only where none stands, in the statement: a tool's ask answered meanwhile, with
+  // destructive tools in, is never written over by this line's narrower yes (Greptile on #182).
+  const inserted = await deps.upsertVendorApproval(
+    ctx.db,
+    scope,
+    { vendor, includesDestructive: false, grantedAt: deps.now() },
+    { keep: true },
+  );
+  if (inserted) return inserted;
+  return orNotFound(await deps.findVendorApproval(ctx.db, scope, vendor), "Agent not found");
+}
+
+/**
+ * Withdraw the agent's standing approval for an integration, from the agent's page. Its tools ask
+ * again on their next call, each once, unless a tool's own answer stands. Null when none stood.
+ */
+export async function withdrawVendorApproval(
+  ctx: ServiceContext,
+  scope: AgentScope,
+  vendor: string,
+  deps: ApprovalDeps,
+): Promise<VendorApprovalRow | null> {
+  return deps.deleteVendorApproval(ctx.db, scope, vendor);
 }
 
 export async function getBuildApproval(
