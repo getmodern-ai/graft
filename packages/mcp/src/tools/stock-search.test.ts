@@ -70,6 +70,18 @@ const CASES: [query: string, tool: string][] = [
   ["reply in thread", "slack__reply-in-thread"],
   ["send a direct message on slack", "slack__send-direct-message"],
   ["add a reaction", "slack__add-reaction"],
+  // GitHub's (GRA-253), also pinned in tool-index.test.ts.
+  ["my github repos", "github__list-my-repositories"],
+  ["list issues", "github__list-issues"],
+  ["get issue with comments", "github__get-issue"],
+  ["search pull requests", "github__search-issues-and-pull-requests"],
+  ["list pull requests", "github__list-pull-requests"],
+  ["pull request changed files", "github__get-pull-request"],
+  ["read a file from a github repo", "github__get-file-contents"],
+  ["create issue", "github__create-issue"],
+  ["comment on pull request", "github__comment-on-issue-or-pull-request"],
+  ["close issue", "github__update-issue"],
+  ["create pull request", "github__create-pull-request"],
 ];
 
 let catalogue: (IndexedTool & { wire: string })[] = [];

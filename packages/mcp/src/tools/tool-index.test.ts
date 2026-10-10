@@ -340,15 +340,31 @@ describe("the stock catalogue's real queries", async () => {
 });
 
 /**
- * HubSpot's stock tools as they ship (GRA-254): each is found first by a query a person would use
- * for it, searched over every stock tool at once with the integrations' display names, as
- * `find_tool` searches them (`meta.ts`).
+ * GitHub's and HubSpot's stock tools as they ship (GRA-253, GRA-254): each is found first by a query
+ * a person would use for it, searched over every stock tool at once with the integrations' display
+ * names, as `find_tool` searches them (`meta.ts`).
  */
-describe("HubSpot's stock tools (GRA-254)", () => {
+describe("GitHub's and HubSpot's stock tools (GRA-253, GRA-254)", () => {
   const vendorNames = new Map(
     STARTER_VENDORS.map((starter) => [starter.vendor, [starter.displayName]]),
   );
   const QUERIES: [query: string, wire: string][] = [
+    ["list my repositories", "github__list-my-repositories"],
+    ["my github repos", "github__list-my-repositories"],
+    ["list issues", "github__list-issues"],
+    ["get issue with comments", "github__get-issue"],
+    ["search issues", "github__search-issues-and-pull-requests"],
+    ["search pull requests", "github__search-issues-and-pull-requests"],
+    ["list pull requests", "github__list-pull-requests"],
+    ["pull request changed files", "github__get-pull-request"],
+    // "read a file" alone is Google Drive's since GRA-250; the repository says which.
+    ["read a file from a github repo", "github__get-file-contents"],
+    ["get readme", "github__get-file-contents"],
+    ["create issue", "github__create-issue"],
+    ["comment on pull request", "github__comment-on-issue-or-pull-request"],
+    ["close issue", "github__update-issue"],
+    ["create pull request", "github__create-pull-request"],
+    ["current weather", "open-meteo__current-weather"],
     ["find a contact", "hubspot__find-contact"],
     ["look up a contact by email", "hubspot__find-contact"],
     ["search hubspot contacts", "hubspot__find-contact"],
