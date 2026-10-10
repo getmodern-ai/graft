@@ -1,6 +1,6 @@
 {
   "name": "get-pull-request",
-  "description": "Gets a GitHub pull request by number with a summary of its changes: state, branches, reviewers, commit and line counts, and each changed file's path, status and line counts (not the patch). The number comes from github__list-pull-requests or github__search-issues-and-pull-requests, the owner and repository from github__list-my-repositories.",
+  "description": "Gets a GitHub pull request by number with a summary of its changes: state, branches, reviewers, commit and line counts, and each changed file's path, status and line counts (not the patch), every page of them up to the 3,000 files GitHub answers at most. The number comes from github__list-pull-requests or github__search-issues-and-pull-requests, the owner and repository from github__list-my-repositories.",
   "inputSchema": {
     "type": "object",
     "properties": {

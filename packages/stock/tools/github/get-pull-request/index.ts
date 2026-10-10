@@ -36,25 +36,44 @@ const headers = {
   "x-github-api-version": "2026-03-10",
 };
 
+// GitHub answers at most 3,000 changed files, 100 to a page.
+const MAX_FILE_PAGES = 30;
+
+const hasNextPage = (link: string | null): boolean =>
+  (link ?? "").split(",").some((member) => {
+    const rel = /;\s*rel="?([^";]*)"?/i.exec(member)?.[1] ?? "";
+    return rel.split(/\s+/).includes("next");
+  });
+
 export default async (input: Input, ctx: Context) => {
   const owner = encodeURIComponent(input.owner);
   const repo = encodeURIComponent(input.repo);
   const pullNumber = input.pullNumber;
   const pullPath = `/repos/${owner}/${repo}/pulls/${pullNumber}`;
-  const filesPath = `${pullPath}/files?per_page=100`;
 
   // One read after the other: the recording's replay matches reads in order (RECORDING.md).
   const pullResponse = await ctx.fetch(pullPath, { headers });
   if (!pullResponse.ok) {
     throw new Error(`GET ${pullPath} ${pullResponse.status}: ${await pullResponse.text()}`);
   }
-  const filesResponse = await ctx.fetch(filesPath, { headers });
-  if (!filesResponse.ok) {
-    throw new Error(`GET ${filesPath} ${filesResponse.status}: ${await filesResponse.text()}`);
-  }
-
   const pull = (await pullResponse.json()) as PullRequest;
-  const files = (await filesResponse.json()) as PullRequestFile[];
+
+  // Every page of the changed files, while GitHub's `link` header names a next one, up to the
+  // 3,000 files the endpoint answers at most.
+  const files: PullRequestFile[] = [];
+  for (let page = 1; page <= MAX_FILE_PAGES; page++) {
+    const filesPath = `${pullPath}/files?per_page=100${page > 1 ? `&page=${page}` : ""}`;
+    const filesResponse = await ctx.fetch(filesPath, { headers });
+    if (!filesResponse.ok) {
+      throw new Error(`GET ${filesPath} ${filesResponse.status}: ${await filesResponse.text()}`);
+    }
+    const pageFiles: unknown = await filesResponse.json();
+    if (!Array.isArray(pageFiles)) {
+      throw new Error(`GET ${filesPath} returned a non-array response`);
+    }
+    files.push(...(pageFiles as PullRequestFile[]));
+    if (!hasNextPage(filesResponse.headers.get("link"))) break;
+  }
 
   return {
     number: pull.number ?? null,

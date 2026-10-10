@@ -1,10 +1,19 @@
+// Whether GitHub's `link` header names a next page. Pull requests share the issues' pages and are
+// removed after, so a page can hold fewer issues than `perPage`, or none, with more to come.
+const hasNextPage = (link: string | null): boolean =>
+  (link ?? "").split(",").some((member) => {
+    const rel = /;\s*rel="?([^";]*)"?/i.exec(member)?.[1] ?? "";
+    return rel.split(/\s+/).includes("next");
+  });
+
 export default async (input: Input, ctx: Context) => {
   const owner = encodeURIComponent(input.owner);
   const repo = encodeURIComponent(input.repo);
+  const page = input.page ?? 1;
   const query = new URLSearchParams({
     state: input.state ?? "open",
     per_page: String(input.perPage ?? 30),
-    page: String(input.page ?? 1),
+    page: String(page),
   });
 
   const res = await ctx.fetch(`/repos/${owner}/${repo}/issues?${query}`, {
@@ -20,6 +29,7 @@ export default async (input: Input, ctx: Context) => {
   }
 
   return {
+    nextPage: hasNextPage(res.headers.get("link")) ? page + 1 : null,
     issues: items
       .filter(
         (item): item is Record<string, unknown> =>

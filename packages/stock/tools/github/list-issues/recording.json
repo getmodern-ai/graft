@@ -123,6 +123,7 @@
     }
   ],
   "result": {
+    "nextPage": 2,
     "issues": []
   }
 }
