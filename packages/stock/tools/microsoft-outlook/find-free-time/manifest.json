@@ -39,8 +39,10 @@
       },
       "utcOffsetMinutes": {
         "type": "integer",
+        "minimum": -720,
+        "maximum": 840,
         "default": 0,
-        "description": "Fixed offset from UTC, in minutes, used to interpret working hours and weekdays."
+        "description": "Fixed offset from UTC, in minutes, used to interpret working hours and weekdays; from -720 (UTC-12) to 840 (UTC+14)."
       },
       "includeWeekends": {
         "type": "boolean",

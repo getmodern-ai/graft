@@ -57,6 +57,10 @@ export default async (input: Input, ctx: Context) => {
   const utcOffsetMinutes = input.utcOffsetMinutes ?? 0;
   const includeWeekends = input.includeWeekends ?? false;
 
+  // A real zone's offset; an unbounded one can stop the day loop below from advancing.
+  if (!Number.isInteger(utcOffsetMinutes) || utcOffsetMinutes < -720 || utcOffsetMinutes > 840) {
+    throw new Error("utcOffsetMinutes must be an integer from -720 to 840");
+  }
   if (workdayEndHour <= workdayStartHour) {
     throw new Error("workdayEndHour must be later than workdayStartHour");
   }
