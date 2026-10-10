@@ -1,12 +1,12 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { CodeBlock } from "@/components/code-block";
-import { WarningIcon } from "@/components/icons";
+import { CheckCircleIcon, ErrorIcon, RefreshIcon, WarningIcon } from "@/components/icons";
 import { Loader } from "@/components/loader";
-import { RetryNotice } from "@/components/retry-notice";
+import { SetupAppCard } from "@/components/setup/setup-app-card";
 import { SetupDisclosure } from "@/components/setup/setup-disclosure";
 import { SetupFooter } from "@/components/setup/setup-footer";
-import { SetupStepHeader } from "@/components/setup/setup-step-header";
+import { SetupLogo } from "@/components/setup/setup-logo";
 import { useSetupMutation } from "@/components/setup/use-setup-mutation";
 import { StatusChip } from "@/components/status-chip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -43,83 +43,34 @@ import {
 import { runFailure, type ShortFailure, shortFailure } from "@/lib/short-failure";
 import { TOOL_ANNOTATION_CHIP } from "@/lib/status-chips";
 
-/**
- * The result step (GRA-208; GRA-202, *Building and result*, user stories 20 and 21): the tool the
- * job acquired, run as the setup's agent through the agent's run route, and its answer shown in the
- * console's code block. The input is drawn from the tool's own schema (GRA-217,
- * `lib/setup-run-input.ts`): a field per input, starting at the starter's default where the names
- * match (the city for Open-Meteo) or the schema's default or example, nothing for a tool that
- * takes none, and JSON only for a schema too complex to draw. A tool that takes no input runs once
- * on arrival, so its answer is on screen before the person does anything; a tool with inputs shows
- * them prefilled where it can and waits for Run (`lib/setup-result.ts`'s `runsOnArrival`), and a
- * required field with no value, or a JSON key still at the skeleton's empty value, says what the
- * tool needs and Run stays disabled until it is given. A refusal or a
- * failure is one sentence, with the raw text behind *Details* (`lib/short-failure.ts`). The server
- * runs read-only tools in the agent's working set only, so nothing here can raise an approval.
- * *Continue* moves on to the finish step.
- */
-export function ResultStep({ state }: { state: SetupStateData }) {
-  const context = useQuery(setupToolQuery);
-  const agentName = state.agent?.name ?? "your agent";
-  const recordToolId = state.setup?.toolId ?? null;
-  const tool = resultToolOf(recordToolId, context.data?.tool);
-  // A cached context naming an earlier job's tool is read again, once per tool the record names,
-  // and nothing runs until the record's own tool is here (`lib/setup-result.ts`).
-  const refetchedFor = useRef<string | null>(null);
-  const { data, isFetching, refetch } = context;
-  useEffect(() => {
-    if (!data?.tool || tool || isFetching || refetchedFor.current === recordToolId) return;
-    refetchedFor.current = recordToolId;
-    void refetch();
-  }, [data, tool, isFetching, recordToolId, refetch]);
-  return (
-    <div className="flex flex-col gap-6">
-      <SetupStepHeader
-        title="See it work"
-        description={`Graft runs the new tool as ${agentName}, the way your harness will call it.`}
-      />
-      {context.isPending ? (
-        <Loader />
-      ) : context.isError ? (
-        <p className="text-muted-foreground text-sm">
-          <RetryNotice
-            error={context.error}
-            message="Could not load the tool."
-            onRetry={() => void context.refetch()}
-            retrying={context.isFetching}
-          />
-        </p>
-      ) : tool && context.data.agent ? (
-        <ToolRun
-          key={tool.id}
-          state={state}
-          context={context.data}
-          agentId={context.data.agent.id}
-          tool={tool}
-        />
-      ) : (
-        <Loader />
-      )}
-    </div>
-  );
-}
-
 function ToolRun({
   state,
   context,
   agentId,
   tool,
+  embedded = false,
 }: {
   state: SetupStateData;
   context: SetupTool;
   agentId: string;
   tool: NonNullable<SetupTool["tool"]>;
+  /** Drawn as the done screen's tool card (Setup v2): no footer, the answer behind *Show result*. */
+  embedded?: boolean;
 }) {
   const view: RunInputView = runInputView(tool.inputSchema, context.runInput);
   const [values, setValues] = useState(() => initialValues(view));
   const [text, setText] = useState(() => (view.kind === "json" ? view.initial : ""));
   const [inputProblem, setInputProblem] = useState<string | null>(null);
-  const run = useMutation({ mutationFn: runAgentTool });
+  // The run's wall-clock time, for the done card's "Ran just now · 1.2s".
+  const [tookMs, setTookMs] = useState<number | null>(null);
+  const run = useMutation({
+    mutationFn: async (args: Parameters<typeof runAgentTool>[0]) => {
+      const began = performance.now();
+      const answer = await runAgentTool(args);
+      setTookMs(performance.now() - began);
+      return answer;
+    },
+  });
   const onward = useSetupMutation(completeSetupResult);
   const ready = canRun(view, values, text);
 
@@ -150,6 +101,105 @@ function ToolRun({
         ? shortFailure(run.error instanceof Error ? run.error.message : null)
         : null;
   const setValue = (name: string, value: string) => setValues((was) => ({ ...was, [name]: value }));
+
+  const inputs =
+    view.kind === "form" ? (
+      <div className="flex flex-col gap-4">
+        {view.fields.map((field) => (
+          <RunFieldInput
+            key={field.name}
+            field={field}
+            value={values[field.name] ?? ""}
+            disabled={run.isPending}
+            onChange={(value) => setValue(field.name, value)}
+          />
+        ))}
+        {inputProblem ? <FieldError>{inputProblem}</FieldError> : null}
+      </div>
+    ) : view.kind === "json" ? (
+      <Field>
+        <FieldLabel htmlFor="setup-run-input">Input</FieldLabel>
+        <Textarea
+          id="setup-run-input"
+          className="font-mono text-xs"
+          rows={5}
+          value={text}
+          disabled={run.isPending}
+          onChange={(event) => setText(event.target.value)}
+        />
+        {inputProblem ? <FieldError>{inputProblem}</FieldError> : null}
+      </Field>
+    ) : null;
+
+  if (embedded) {
+    return (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (ready) start();
+        }}
+      >
+        <SetupAppCard
+          media={<SetupLogo starterId={tool.vendor} />}
+          name={<code className="font-mono font-normal text-base">{tool.wireName}</code>}
+          chip={tool.readOnly ? <StatusChip chip={TOOL_ANNOTATION_CHIP["read-only"]} /> : null}
+          subline={tool.description}
+        >
+          <p className="flex flex-wrap items-center gap-2 text-sm">
+            {run.isPending ? (
+              <span className="text-muted-foreground">Running…</span>
+            ) : answer?.ok ? (
+              <>
+                <CheckCircleIcon className="size-4 text-success" />
+                <span className="font-medium text-success">Ran just now</span>
+                {tookMs !== null ? (
+                  <span className="text-muted-foreground">· {(tookMs / 1000).toFixed(1)}s</span>
+                ) : null}
+              </>
+            ) : failure ? (
+              <>
+                <ErrorIcon className="size-4 text-destructive" />
+                <span className="text-destructive">Did not run · {failure.sentence}</span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">
+                Not run yet. Give it what it needs and run it.
+              </span>
+            )}
+          </p>
+          {inputs}
+          {view.kind === "none" && !answer && !failure ? null : (
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" variant="outline" size="sm" disabled={run.isPending || !ready}>
+                <RefreshIcon />
+                {run.isPending ? "Running…" : answer || failure ? "Run again" : "Run"}
+              </Button>
+            </div>
+          )}
+          {answer?.ok ? (
+            <SetupDisclosure label="Show result">
+              <CodeBlock
+                label="The tool's answer"
+                code={runResultText(answer.result)}
+                copyLabel="Copy answer"
+                wrap
+                hint="This is what the integration answered, as your harness will see it."
+              />
+            </SetupDisclosure>
+          ) : failure?.details ? (
+            <SetupDisclosure label="Details">
+              <CodeBlock
+                label="What the run reported"
+                code={failure.details}
+                copyLabel="Copy details"
+                wrap
+              />
+            </SetupDisclosure>
+          ) : null}
+        </SetupAppCard>
+      </form>
+    );
+  }
 
   return (
     <form
@@ -226,7 +276,7 @@ function ToolRun({
           </Button>
         )}
         <Button type="button" disabled={onward.isPending} onClick={() => onward.mutate(undefined)}>
-          {onward.isPending ? "Continuing…" : "Continue"}
+          {onward.isPending ? "Continuing…" : "Connect your harness"}
         </Button>
       </SetupFooter>
     </form>
@@ -333,5 +383,27 @@ function FailureNotice({ title, failure }: { title: string; failure: ShortFailur
         </SetupDisclosure>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The done screen's tool card (Setup v2): the tool the record names, run once on arrival as the
+ * result step runs it, drawn as an app card with its answer behind *Show result*. Nothing while
+ * the tool has not landed, so the finish step can draw it whenever the record names one.
+ */
+export function ToolResultCard({ state }: { state: SetupStateData }) {
+  const context = useQuery(setupToolQuery);
+  const recordToolId = state.setup?.toolId ?? null;
+  const tool = resultToolOf(recordToolId, context.data?.tool);
+  if (!tool || !context.data?.agent) return null;
+  return (
+    <ToolRun
+      key={tool.id}
+      state={state}
+      context={context.data}
+      agentId={context.data.agent.id}
+      tool={tool}
+      embedded
+    />
   );
 }

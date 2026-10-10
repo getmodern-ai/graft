@@ -24,13 +24,13 @@ import {
   type SetupState,
   type SetupVendorOption,
   STARTER_VENDORS,
-  type StarterVendor,
   setupVendorOptions,
   starterProposal,
   starterVendorOf,
 } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import {
+  type ConnectionProposalInput,
   type ConnectionRouting,
   type ConnectionRoutingDeps,
   readConnectionAnswer,
@@ -94,6 +94,12 @@ export type SetupConnectResult = { state: SetupState; connected: boolean };
  */
 export type SetupConnectInput = ({ starterId: string } | { connectionId: string }) & {
   discardJob?: boolean;
+  /**
+   * Setup v2's plan (Greptile on #201): the record's `updatedAt` as the task route saved the task,
+   * so the connect move lands only on that record, never on one another tab re-planned meanwhile,
+   * which would pair this tab's integration with the other's task.
+   */
+  plannedAt?: Date;
 };
 
 export async function listSetupVendors(
@@ -167,7 +173,34 @@ export async function connectSetupVendor(
   // The same starter can still route to another row than the one the job was acquired against
   // (Greptile on #171): that replaces the connection as surely as another vendor does.
   const held = input.discardJob ? undefined : { state: before };
-  return routeStarter(ctx, principal, agent.id, starter, deps, undefined, held);
+  return routeStarter(
+    ctx,
+    principal,
+    agent.id,
+    starterProposal(starter),
+    deps,
+    input.plannedAt,
+    held,
+  );
+}
+
+/**
+ * Setup v2's directory (ADR 0001 as amended 2026-10-10): an integration the directory listed that is
+ * not a starter, proposed from its own entry (`directoryProposal`) through the same routing and the
+ * same moves as a starter's. A job the record still holds while it runs is left behind only when
+ * the person said so (`discardJob`), as for another starter.
+ */
+export async function connectSetupProposal(
+  ctx: ServiceContext,
+  principal: Principal,
+  proposal: ConnectionProposalInput,
+  input: { discardJob?: boolean; plannedAt?: Date },
+  deps: SetupConnectDeps,
+): Promise<SetupConnectResult> {
+  const before = await getSetupState(ctx, principal, deps.setup, deps.agent);
+  const agent = connectingAgentOf(before);
+  const held = input.discardJob ? undefined : { state: before };
+  return routeStarter(ctx, principal, agent.id, proposal, deps, input.plannedAt, held);
 }
 
 /**
@@ -244,7 +277,7 @@ async function routeStarter(
   ctx: ServiceContext,
   principal: Principal,
   agentId: string,
-  starter: StarterVendor,
+  proposal: ConnectionProposalInput,
   deps: SetupConnectDeps,
   vendorAt?: Date,
   held?: { state: SetupState },
@@ -254,7 +287,7 @@ async function routeStarter(
   const routing = await routeConnectionProposal(
     ctx,
     { personId: principal.personId, agentId },
-    starterProposal(starter),
+    proposal,
     deps.routing,
     deps.notifier,
   );
@@ -301,7 +334,7 @@ async function routeStarter(
       // another tab's choice.
       const seen = learned.result.state.setup;
       if (learned.stale && !vendorAt && seen?.step === "vendor") {
-        return routeStarter(ctx, principal, agentId, starter, deps, seen.updatedAt, held);
+        return routeStarter(ctx, principal, agentId, proposal, deps, seen.updatedAt, held);
       }
       return learned.result;
     }

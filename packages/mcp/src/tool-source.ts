@@ -1,13 +1,14 @@
 import {
   defaultStockDeps,
   describeStockTool,
+  describeStockVersion,
   listStockCatalogue,
   type StockDeps,
   type StockToolView,
 } from "@graft/core";
 import type { DbOrTx } from "@graft/db";
 import type { AuthoredToolRow } from "@graft/db/repo/tool";
-import { copyStockVersion, type PublishDeps } from "@graft/publish";
+import { type CopyStockDeps, copyStockVersion } from "@graft/publish";
 
 /**
  * The **tool source** seam (ADR 0025; CONTEXT.md, *Tool source*; GRA-238): where stock tools come
@@ -24,11 +25,18 @@ export type ToolSource = {
   /** One stock tool at its current version, or null when the catalogue has none of that key. */
   describe(key: { vendor: string; name: string }): Promise<StockToolView | null>;
   /**
+   * One stock version by its id, as a copy's version recorded it (`stockVersionId`), or null: a
+   * copy's run judges connections by the hosts of the code it runs, not the current version's.
+   */
+  describeVersion(stockVersionId: string): Promise<StockToolView | null>;
+  /**
    * The stock tool's version written into the person's toolbox as an ordinary tool and version
    * recording its stock origin; the person's own tool of that name is answered untouched instead.
    */
   copy(args: {
     personId: string;
+    /** The agent whose call made the copy, for the mirror's event. */
+    agentId?: string | null;
     stock: StockToolView;
     defaultConnectionId: string | null;
   }): Promise<AuthoredToolRow>;
@@ -37,7 +45,8 @@ export type ToolSource = {
 /** Graft's own stock: the global catalogue's rows, and `@graft/publish`'s copy into the toolbox. */
 export function createStockToolSource(args: {
   db: DbOrTx;
-  publish: Pick<PublishDeps, "db" | "store" | "tool">;
+  /** The publish's rows (with the per-name lock), store and mirror. */
+  publish: CopyStockDeps;
   stock?: StockDeps;
 }): ToolSource {
   const ctx = { db: args.db };
@@ -45,6 +54,7 @@ export function createStockToolSource(args: {
   return {
     list: () => listStockCatalogue(ctx, stock),
     describe: (key) => describeStockTool(ctx, key, stock),
+    describeVersion: (stockVersionId) => describeStockVersion(ctx, stockVersionId, stock),
     copy: (copy) => copyStockVersion(args.publish, copy),
   };
 }

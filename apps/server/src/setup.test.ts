@@ -49,6 +49,8 @@ function harness(options: { agents?: AgentRow[]; work?: { connections: number; t
       step: "harness",
       harness: null,
       agentId: null,
+      starterId: null,
+      goal: null,
       pendingActionId: null,
       connectionId: null,
       acquireJobId: null,
