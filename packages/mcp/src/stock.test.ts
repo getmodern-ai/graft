@@ -114,6 +114,19 @@ let store: FakeStore;
 let deps: McpDeps;
 let catalogue: ReturnType<typeof createFakeStockCatalogue>;
 
+/**
+ * The Open-Meteo weather tool's catalogue rows, by key: the workspace holds every integration's
+ * stock tools, so a suite that moves this tool's versions names it rather than taking the first.
+ */
+function weatherStock() {
+  const tool = [...catalogue.tools.values()].find(
+    (row) => row.vendor === KEY.vendor && row.name === KEY.name,
+  );
+  if (!tool) throw new Error("the catalogue holds no weather tool");
+  const versions = [...catalogue.versions.values()].filter((row) => row.stockToolId === tool.id);
+  return { tool, versions };
+}
+
 /** A person whose one connection reaches the hosts but cannot carry a call: its provider is gone. */
 const UNUSABLE = {
   person: "p_unusable",
@@ -727,9 +740,7 @@ describe("a copy's connections are judged as the copy runs (Greptile on #185)", 
   it("judges an older copy by its own stock version's hosts after the catalogue moves on", async () => {
     // Every version this file loaded is the one the copies above recorded; a later version calls a
     // host none of the person's connections reach.
-    const current = [...catalogue.versions.values()].sort(
-      (a, b) => b.versionNumber - a.versionNumber,
-    )[0];
+    const current = weatherStock().versions.sort((a, b) => b.versionNumber - a.versionNumber)[0];
     if (!current) throw new Error("no catalogue version");
     catalogue.versions.set("stock_v_later", {
       ...current,
@@ -822,8 +833,8 @@ describe("an untouched copy follows stock's new versions", () => {
     store.tools.set(remix.tool.id, { ...remix.tool, currentVersionId: "remix_v2" });
 
     // The catalogue gains v2, as the boot appends a changed workspace's tool.
-    const [stockTool] = [...catalogue.tools.values()];
-    const v1 = [...catalogue.versions.values()].find((row) => row.versionNumber === 1);
+    const { tool: stockTool, versions: weatherVersions } = weatherStock();
+    const v1 = weatherVersions.find((row) => row.versionNumber === 1);
     if (!stockTool || !v1) throw new Error("the catalogue holds no v1");
     v2Id = "stock_weather_v2";
     catalogue.versions.set(v2Id, {
@@ -952,9 +963,7 @@ describe("a stock tool's approval across its updates", () => {
   });
   /** Stock appends a version of the write tool, as the boot appends a changed workspace's tool. */
   const appendStock = (versionNumber: number, annotations: typeof WRITE) => {
-    const weatherV1 = [...catalogue.versions.values()].find(
-      (row) => row.versionNumber === 1 && row.stockToolId !== PLACE_STOCK_ID,
-    );
+    const weatherV1 = weatherStock().versions.find((row) => row.versionNumber === 1);
     if (!weatherV1) throw new Error("the catalogue holds no weather v1");
     const id = `stock_place_v${versionNumber}`;
     catalogue.versions.set(id, {
