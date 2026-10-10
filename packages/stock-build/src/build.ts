@@ -342,6 +342,7 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
 
   const dir = join(workspace, vendor, name);
   const replaced = await exists(dir);
+  // Said early, before the proofs; the swap claims the directory again, for a build that raced.
   if (replaced && !current) {
     return refuse(
       "tool_exists",
@@ -361,10 +362,12 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
 
     // In the workspace, so the swap below is a rename on one file system. A dot-directory, which
     // `readStockWorkspace` never reads as a vendor, and gitignored, should a crash leave it behind.
-    incoming = await mkdtemp(join(workspace, INCOMING_PREFIX));
-    const nextDir = join(incoming, vendor, name);
+    const nextRoot = join(workspace, INCOMING_PREFIX);
     try {
-      await cp(stagedDir, nextDir, { recursive: true });
+      // A workspace that does not exist yet is made, as the copy into it once made it.
+      await mkdir(workspace, { recursive: true });
+      incoming = await mkdtemp(nextRoot);
+      await cp(stagedDir, join(incoming, vendor, name), { recursive: true });
     } catch (error) {
       return refuse(
         "write_failed",
@@ -372,6 +375,7 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
       );
     }
 
+    const nextDir = join(incoming, vendor, name);
     // Read back as CI reads the workspace: the files as they will be committed.
     const [staged] = await readStockWorkspace(incoming);
     if (!staged) throw new Error("the staged tool did not read back");
@@ -395,7 +399,15 @@ export async function buildStockTool(options: BuildOptions): Promise<BuildResult
 
     // The swap: the current version aside, the proved one into its place, and the current one
     // back if that fails, so a failed repair leaves the tool it started from (Greptile on #191).
-    const swapped = await swapInto(nextDir, dir, join(incoming, "previous"));
+    const swapped = await swapInto(nextDir, dir, join(incoming, "previous"), {
+      replace: current !== null,
+    });
+    if (!swapped.ok && swapped.exists) {
+      return refuse(
+        "tool_exists",
+        `${wire} became a stock tool while this build ran. Rebuild it with --from ${name} to write its next version. Nothing was written.`,
+      );
+    }
     if (!swapped.ok) {
       return refuse(
         "write_failed",
@@ -433,19 +445,28 @@ export async function swapInto(
   next: string,
   dir: string,
   aside: string,
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  const hadCurrent = await exists(dir);
+  options: { replace: boolean },
+): Promise<{ ok: true } | { ok: false; exists: boolean; message: string }> {
+  // A new tool claims its directory with the rename itself, which refuses a non-empty target: a
+  // second build of the same name that finished first wins, and this one is told so (Greptile on
+  // #191), however long ago the earlier check ran.
+  const hadCurrent = options.replace && (await exists(dir));
   try {
     await mkdir(dirname(dir), { recursive: true });
     if (hadCurrent) await rename(dir, aside);
   } catch (error) {
-    return { ok: false, message: (error as Error).message };
+    return { ok: false, exists: false, message: (error as Error).message };
   }
   try {
     await rename(next, dir);
     return { ok: true };
   } catch (error) {
     if (hadCurrent) await rename(aside, dir);
-    return { ok: false, message: (error as Error).message };
+    const code = (error as NodeJS.ErrnoException).code;
+    return {
+      ok: false,
+      exists: !hadCurrent && (code === "ENOTEMPTY" || code === "EEXIST"),
+      message: (error as Error).message,
+    };
   }
 }

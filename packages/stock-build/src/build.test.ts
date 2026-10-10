@@ -173,6 +173,15 @@ describe("buildStockTool", () => {
     expect(await harnessProblems()).toEqual([]);
   });
 
+  it("makes a workspace that does not exist yet", async () => {
+    const fresh = join(workspace, "fresh", "tools");
+    const result = await buildStockTool(
+      options(passing("recent-repos", 2), { workspace: fresh }).options,
+    );
+    if (!result.ok) throw new Error(`${result.message}\n${(result.problems ?? []).join("\n")}`);
+    expect(await readdir(fresh)).toEqual(["github"]);
+  });
+
   it("refuses to build over an existing tool without from, and writes nothing", async () => {
     expect((await buildStockTool(options(passing("recent-repos", 2)).options)).ok).toBe(true);
     const before = await filesUnder(workspace);
@@ -300,7 +309,9 @@ describe("swapInto", () => {
     const dir = join(workspace, "github", "tool");
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "index.ts"), "current\n");
-    const swapped = await swapInto(join(workspace, "missing"), dir, join(workspace, "aside"));
+    const swapped = await swapInto(join(workspace, "missing"), dir, join(workspace, "aside"), {
+      replace: true,
+    });
     expect(swapped.ok).toBe(false);
     expect(await readFile(join(dir, "index.ts"), "utf8")).toBe("current\n");
     expect(await readdir(workspace)).toEqual(["github"]);
@@ -313,8 +324,24 @@ describe("swapInto", () => {
     await mkdir(next, { recursive: true });
     await writeFile(join(dir, "index.ts"), "current\n");
     await writeFile(join(next, "index.ts"), "next\n");
-    expect(await swapInto(next, dir, join(workspace, "aside"))).toEqual({ ok: true });
+    expect(await swapInto(next, dir, join(workspace, "aside"), { replace: true })).toEqual({
+      ok: true,
+    });
     expect(await readFile(join(dir, "index.ts"), "utf8")).toBe("next\n");
+  });
+});
+
+describe("swapInto, for a new tool", () => {
+  it("refuses to land on a tool another build wrote meanwhile, and leaves that one", async () => {
+    const dir = join(workspace, "github", "tool");
+    const next = join(workspace, "next");
+    await mkdir(dir, { recursive: true });
+    await mkdir(next, { recursive: true });
+    await writeFile(join(dir, "index.ts"), "first\n");
+    await writeFile(join(next, "index.ts"), "second\n");
+    const swapped = await swapInto(next, dir, join(workspace, "aside"), { replace: false });
+    expect(swapped).toMatchObject({ ok: false, exists: true });
+    expect(await readFile(join(dir, "index.ts"), "utf8")).toBe("first\n");
   });
 });
 
