@@ -655,7 +655,12 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       },
       defaultToolDeps,
     );
-    await setApproval(ctx, scope, tool.id, "allow", defaultApprovalDeps);
+    await setApproval(ctx, scope, tool.id, "allow", defaultApprovalDeps, {
+      asked: {
+        versionId: tool.currentVersionId,
+        annotations: { readOnly: false, destructive: false },
+      },
+    });
     // A second connection and a tool bound to it, promoted beside the first: the sweep's predicate
     // (`repo/working-set.ts`, pinned as SQL in `@graft/db`) has to leave it (GRA-69).
     const other = await registerConnection(
@@ -1070,7 +1075,11 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
       defaultAgentDeps,
     );
     const scope = { personId, agentId: agent.id };
-    await setApproval(ctx, scope, copied.id, "allow", defaultApprovalDeps);
+    const askedV1 = {
+      versionId: copied.currentVersionId,
+      annotations: { readOnly: copied.readOnly, destructive: copied.destructive },
+    };
+    await setApproval(ctx, scope, copied.id, "allow", defaultApprovalDeps, { asked: askedV1 });
     expect((await getApproval(ctx, scope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
       version?.id,
     );
@@ -1109,6 +1118,19 @@ describe.skipIf(!adminUrl)("the schema, the account and the services over a real
     expect(after?.description).toBe(changed.description);
     // GRA-245: the annotations did not widen, so the answer was carried onto v2 in the advance.
     expect((await getApproval(ctx, scope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
+      origins[0]?.versionId,
+    );
+    // Greptile on #190: an answer to an ask about v1 arriving after that advance is recorded under
+    // the tool row's lock and lands on v2, as the advance would have carried it; another agent's.
+    const { agent: late } = await createAgent(
+      ctx,
+      { personId },
+      { name: "late answer" },
+      defaultAgentDeps,
+    );
+    const lateScope = { personId, agentId: late.id };
+    await setApproval(ctx, lateScope, copied.id, "allow", defaultApprovalDeps, { asked: askedV1 });
+    expect((await getApproval(ctx, lateScope, copied.id, defaultApprovalDeps))?.toolVersionId).toBe(
       origins[0]?.versionId,
     );
   });

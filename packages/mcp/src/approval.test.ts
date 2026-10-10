@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { answerPendingAction, revokeApproval, setAskEveryCall } from "@graft/core";
+import { answerPendingAction, revokeApproval, setApproval, setAskEveryCall } from "@graft/core";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 import { loadSkills, runnerFiles } from "@graft/runner";
 import { createFakeSandboxBackend, type FakeSandboxBackend } from "@graft/sandbox";
@@ -18,9 +18,11 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AUTOMATIC_ANSWER_MS, describeAsk, NO_ELICITATION, requireBuildApproval } from "./approval";
+import { recordApprovalAnswer } from "./ask-answer";
 import type { McpDeps } from "./deps";
 import { HANDOFF_TOKEN_PARAM, verifyHandoff } from "./handoff";
 import { createToolListChangedNotifier } from "./notifier";
+import { runAuthoredTool } from "./run";
 import { openAgentSession } from "./session";
 import { createFakeDeps, createFakeStore, type FakeStore } from "./testing/fake-deps";
 import { type FakeVendor, generateTestKeys, startFakeVendor } from "./testing/fake-vendor";
@@ -1321,4 +1323,115 @@ describe("the elicitation form's provenance", () => {
       `Its description, in the agent's model's own words: "Saves a place."`,
     );
   });
+});
+
+/**
+ * GRA-245, Greptile on #190: an approval is for the version the person was shown. The ask names
+ * the version the asking call runs; every answer records for that version, and the gate judges the
+ * version the run executes, pinned before it, never the pointer read after.
+ */
+describe("an approval is for the version the person was shown", () => {
+  const SCOPE_A = { personId: PERSON, agentId: AGENT_A };
+  /** A write tool with a version per module, each answering its own number. */
+  const addVersionedTool = async (id: string, name: string) => {
+    const versionDir = (n: number) => `tools/demo/${name}/v${n}`;
+    for (const n of [1, 2]) {
+      const dir = join(sandbox.toolboxRoot(PERSON), versionDir(n));
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "index.ts"), `export default async () => ({ version: ${n} });\n`);
+    }
+    const { tool, version } = store.addTool({
+      id,
+      personId: PERSON,
+      vendor: "demo",
+      name,
+      description: `${name} at Demo Orders, in the model's words.`,
+      inputSchema: { type: "object", properties: {} },
+      readOnly: false,
+      destructive: false,
+      defaultConnectionId: CONN_DEMO,
+      path: versionDir(1),
+    });
+    store.promote(AGENT_A, id);
+    /** A republish: v2 written and made current, as `activateToolVersion` leaves it. */
+    const republish = () => {
+      const v2 = { ...version, id: `${id}_v2`, versionNumber: 2, path: versionDir(2) };
+      store.versions.set(v2.id, v2);
+      const row = store.tools.get(id);
+      if (row) store.tools.set(id, { ...row, currentVersionId: v2.id });
+      return v2;
+    };
+    return { tool, v1: version, republish };
+  };
+  /** The console's answer route: `recordApprovalAnswer`, as `POST /pending-actions/:id/answer` calls it. */
+  const consoleAnswers = (id: string, allow: boolean) =>
+    recordApprovalAnswer(
+      { db: deps.db },
+      { personId: PERSON },
+      id,
+      { allow },
+      {
+        approval: deps.approval,
+        pendingAction: deps.pendingAction,
+        connection: deps.connection,
+        agent: deps.agent,
+      },
+    );
+
+  it("an ask about v1 answered after v2 became current approves v1 only, so v2 asks again", async () => {
+    const { v1, republish } = await addVersionedTool("tool_versioned", "versioned-item");
+    const wire = authoredToolName("demo", "versioned-item");
+    const a = await connect(TOKEN_A);
+    try {
+      const first = awaiting(await a.call(wire, {}));
+      expect(first.action.payload).toMatchObject({ toolVersionId: v1.id });
+
+      const v2 = republish();
+      await consoleAnswers(first.action.id, true);
+      expect(approvalOf(AGENT_A, "tool_versioned")).toMatchObject({
+        decision: "allow",
+        toolVersionId: v1.id,
+      });
+
+      // v2 is not what the person was shown: it asks, with an ask of its own naming v2.
+      const second = awaiting(await a.call(wire, {}));
+      expect(second.action.id).not.toBe(first.action.id);
+      expect(second.action.payload).toMatchObject({ toolVersionId: v2.id });
+
+      await consoleAnswers(second.action.id, true);
+      expect(approvalOf(AGENT_A, "tool_versioned")).toMatchObject({ toolVersionId: v2.id });
+      expect(body(await a.call(wire, {}))).toEqual({ version: 2 });
+    } finally {
+      await a.close();
+    }
+  }, 60_000);
+
+  it("gates a run on the version it pinned, not on a version made current and approved meanwhile", async () => {
+    const { v1, republish } = await addVersionedTool("tool_pinned", "pinned-item");
+    let v2Id = "";
+    const run = (admit?: () => Promise<null>) =>
+      runAuthoredTool(deps, SCOPE_A, {
+        vendor: "demo",
+        name: "pinned-item",
+        input: {},
+        mode: { detached: false, timeoutSeconds: 30, dryRun: false },
+        channel: NO_ELICITATION,
+        ...(admit ? { admit } : {}),
+      });
+
+    // Between the pin and the gate, v2 becomes current and another call's yes approves it.
+    const raced = await run(async () => {
+      v2Id = republish().id;
+      await setApproval({ db: deps.db }, SCOPE_A, "tool_pinned", "allow", deps.approval, {
+        asked: { versionId: v2Id, annotations: { readOnly: false, destructive: false } },
+      });
+      return null;
+    });
+    expect(raced).toMatchObject({ isError: true, answer: { reason: "awaiting_approval" } });
+    const [ask] = actionsOf(AGENT_A, "tool").filter((row) => row.payload.toolId === "tool_pinned");
+    expect(ask?.payload).toMatchObject({ toolVersionId: v1.id });
+
+    // The pointer's version runs on its own approval.
+    expect(await run()).toEqual({ isError: false, answer: { version: 2 } });
+  }, 60_000);
 });

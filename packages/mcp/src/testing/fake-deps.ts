@@ -1179,6 +1179,8 @@ export function createFakeDeps(store: FakeStore): FakeDeps {
       return row;
     },
     findAuthoredToolById: tool.findAuthoredToolById,
+    findAuthoredToolForUpdate: tool.findAuthoredToolForUpdate,
+    listToolVersionOrigins: tool.listToolVersionOrigins,
     findConnection: connection.findConnection,
     now: store.now,
   };

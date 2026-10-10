@@ -727,7 +727,6 @@ async function runHeld(
     );
   }
   let connectionId: string;
-  let gated = tool;
   if (!bound || !inScope || revoked) {
     // The header's last paragraph (GRA-122): the one live connection of the vendor in this agent's
     // scope, or for a stock copy the one its hosts choose (GRA-241), or the refusal naming what
@@ -768,7 +767,6 @@ async function runHeld(
           versioned,
         );
       }
-      gated = result.tool;
       if (!result.rebound) connectionId = result.tool.defaultConnectionId ?? target.id;
     }
   } else {
@@ -817,10 +815,16 @@ async function runHeld(
     // token's claim, so nothing changes at the vendor and no trust is spent — publishing's dry run
     // (`publish_tool`) asks nothing for the same reason.
     if (!args.mode.dryRun) {
+      // Judged on the version this run executes, pinned above, never a pointer read now (GRA-245,
+      // Greptile on #190): `runTool` was read with it, so its annotations are that version's. A
+      // version named other than the pointer is only a dry run's, which never reaches here; were
+      // one to, it is judged as a write, since the row's annotations are not its own.
+      const gated =
+        runVersion.id === runTool.currentVersionId ? runTool : { ...runTool, readOnly: false };
       const gate = await gateToolCall(
         ctx,
         scope,
-        { tool: gated, connectionId },
+        { tool: gated, versionId: runVersion.id, connectionId },
         deps,
         args.channel,
       );

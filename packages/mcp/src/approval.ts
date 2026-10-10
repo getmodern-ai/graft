@@ -1,6 +1,7 @@
 import type { AskCard } from "@graft/ask-card/shape";
 import {
   type AgentScope,
+  type AskedVersion,
   type ConnectionOutput,
   consumePendingAction,
   createPendingAction,
@@ -10,7 +11,7 @@ import {
   getBuildApproval,
   getConnection,
   grantBuildApproval,
-  isForCurrentVersion,
+  isForVersion,
   listToolVersionOrigins,
   type ServiceContext,
   ServiceError,
@@ -106,6 +107,12 @@ export type ApprovalAskKind = "tool" | "build";
 /** The payload of a `tool` ask — what the console's card renders (ADR 0006). */
 export type ToolAskPayload = {
   toolId: string;
+  /**
+   * The version the ask is about: the one the asking call pins and runs (GRA-245, Greptile on #190).
+   * Every answer records for it, and only a call running it takes the answer. Absent on an ask made
+   * before it, which records an answer that holds for no version.
+   */
+  toolVersionId?: string;
   /** The wire name, `<vendor>__<name>`. */
   toolName: string;
   vendor: string;
@@ -186,7 +193,10 @@ export const AUTOMATIC_ANSWER_MS = 1_500;
 type AskSubject =
   | {
       kind: "tool";
+      /** The tool as read with the version below, so its definition and annotations are that version's. */
       tool: AuthoredToolRow;
+      /** The version the call runs, pinned before the gate (GRA-245). */
+      versionId: string;
       connection: ConnectionOutput;
       /** The standing setting, so the ask can say whether this is a per-call ask and offer the switch as it stands. */
       askEveryCall: boolean;
@@ -245,20 +255,52 @@ export function readApprovalAnswer(
 }
 
 /**
+ * The version a stored tool ask was about, read off its payload (`ToolAskPayload`), for the answer
+ * paths that record from the row: the console's route and the card's `answer_ask` (`ask-answer.ts`).
+ * An ask made before the payload named a version reads as none, so its answer holds for no
+ * version; its annotations absent read as read-only, the narrowest, so nothing carries from them.
+ */
+export function askedVersionOfPayload(payload: Record<string, unknown>): AskedVersion {
+  const annotations =
+    typeof payload.annotations === "object" && payload.annotations !== null
+      ? (payload.annotations as Record<string, unknown>)
+      : {};
+  return {
+    versionId: typeof payload.toolVersionId === "string" ? payload.toolVersionId : null,
+    annotations: {
+      readOnly: annotations.readOnlyHint !== false,
+      destructive: annotations.destructiveHint === true,
+    },
+  };
+}
+
+/**
  * ADR 0008 on one authored-tool call, between the scope check and the mint (`run.ts`). `pass`
  * proceeds; `deny` is the person's standing no; `ask` goes to the person through the channel.
+ * Judged on `versionId`, the version the call will run, with `tool` as read beside it, so its
+ * annotations and description are that version's (GRA-245, Greptile on #190); the ask names the
+ * same version, and its answer records for it.
  */
 export async function gateToolCall(
   ctx: ServiceContext,
   scope: AgentScope,
-  args: { tool: AuthoredToolRow; connectionId: string },
+  args: { tool: AuthoredToolRow; versionId: string; connectionId: string },
   deps: McpDeps,
   channel: AskChannel,
 ): Promise<GateOutcome> {
-  const { tool } = args;
+  const { tool, versionId } = args;
   const wire = authoredToolName(tool.vendor, tool.name);
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const verdict = await decideToolCall(ctx, scope, tool.id, deps.approval);
+    const verdict = await decideToolCall(
+      ctx,
+      scope,
+      {
+        toolId: tool.id,
+        versionId,
+        annotations: { readOnly: tool.readOnly, destructive: tool.destructive },
+      },
+      deps.approval,
+    );
     if (verdict === "pass") return PASS;
     if (verdict === "deny") {
       return refuse(
@@ -290,6 +332,7 @@ export async function gateToolCall(
       {
         kind: "tool",
         tool,
+        versionId,
         connection,
         askEveryCall: standing?.askEveryCall === true,
         provenance,
@@ -374,7 +417,9 @@ async function askApproval(
 
 /**
  * The action a previous call left for this ask, if any — answered while the agent was away, or still
- * open; never one consumed or expired (`listPendingActionsByKind`).
+ * open; never one consumed or expired (`listPendingActionsByKind`). A tool ask is this ask only when
+ * it names the version this call runs (GRA-245): an answer about another version is not this
+ * call's to take, and the call asks about its own.
  */
 async function findWaitingAsk(
   ctx: ServiceContext,
@@ -389,7 +434,13 @@ async function findWaitingAsk(
     subject.kind,
     deps.pendingAction.now(),
   );
-  return rows.find((row) => targetOf(row) === targetId) ?? null;
+  return (
+    rows.find(
+      (row) =>
+        targetOf(row) === targetId &&
+        (subject.kind !== "tool" || row.payload.toolVersionId === subject.versionId),
+    ) ?? null
+  );
 }
 
 /** How the form came back, in the log line's words; `automatic` is a decline the rule set aside. */
@@ -570,6 +621,7 @@ function payloadFor(subject: AskSubject): ToolAskPayload | BuildAskPayload {
   const { tool } = subject;
   return {
     toolId: tool.id,
+    toolVersionId: subject.versionId,
     toolName: authoredToolName(tool.vendor, tool.name),
     vendor: tool.vendor,
     description: tool.description,
@@ -742,14 +794,25 @@ async function recordAllow(
   }
   const standing = await getApproval(ctx, scope, subject.tool.id, deps.approval);
   const settingChanges = askEveryCall !== undefined && standing?.askEveryCall !== askEveryCall;
-  // An allow given for an earlier version is written again, for this one (GRA-245): left alone it
-  // would ask on every call.
-  const forAnotherVersion = standing !== null && !isForCurrentVersion(standing, subject.tool);
+  // An allow given for another version is written again, for the one asked about (GRA-245): left
+  // alone it would ask on every call.
+  const forAnotherVersion = standing !== null && !isForVersion(standing, subject.versionId);
   if (!standing || standing.decision !== "allow" || settingChanges || forAnotherVersion) {
     // One write for the answer and the setting it carried; `setAskEveryCall` is the console's act
     // and spends waiting answers, which must not happen to the one being applied here.
-    await setApproval(ctx, scope, subject.tool.id, "allow", deps.approval, { askEveryCall });
+    await setApproval(ctx, scope, subject.tool.id, "allow", deps.approval, {
+      asked: askedVersionOf(subject),
+      askEveryCall,
+    });
   }
+}
+
+/** The version a tool ask was about, as `setApproval` records an answer for it (GRA-245). */
+function askedVersionOf(subject: Extract<AskSubject, { kind: "tool" }>): AskedVersion {
+  return {
+    versionId: subject.versionId,
+    annotations: { readOnly: subject.tool.readOnly, destructive: subject.tool.destructive },
+  };
 }
 
 /** The no, recorded for a tool (a build ask has no deny row — see the header). */
@@ -762,6 +825,8 @@ async function recordDeny(
   if (subject.kind !== "tool") return;
   const standing = await getApproval(ctx, scope, subject.tool.id, deps.approval);
   if (!standing || standing.decision !== "deny") {
-    await setApproval(ctx, scope, subject.tool.id, "deny", deps.approval);
+    await setApproval(ctx, scope, subject.tool.id, "deny", deps.approval, {
+      asked: askedVersionOf(subject),
+    });
   }
 }

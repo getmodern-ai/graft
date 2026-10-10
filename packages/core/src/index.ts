@@ -73,16 +73,18 @@ export {
   type ApprovalState,
   type ApprovalVerdict,
   annotationsWiden,
+  answerCarriesTo,
   approvalDecision,
   type ToolAnnotations,
 } from "./approval/approval.decision";
 export { type ApprovalDeps, defaultApprovalDeps } from "./approval/approval.deps";
 export {
+  type AskedVersion,
   decideToolCall,
   getApproval,
   getBuildApproval,
   grantBuildApproval,
-  isForCurrentVersion,
+  isForVersion,
   listApprovals,
   revokeApproval,
   setApproval,

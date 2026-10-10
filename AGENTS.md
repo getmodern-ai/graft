@@ -720,10 +720,20 @@ version's origin with the stock version's number, one statement) feeds both and 
 
 **An approval is given for a version, and a stock advance carries it unless it widens** (GRA-245;
 ADR 0008 and its amendment of 2026-10-09). `approval.tool_version_id` (migration 0016, existing
-rows set to their tool's current version) is the version the answer was given for; `setApproval`
-writes the tool's current one, and `approvalDecision` asks again for a write or destructive tool
-whose `allow` names another (`forCurrentVersion`, read by `isForCurrentVersion`), so any republish,
-a remix included, asks once; a `deny` holds across versions. `advanceStockCopy` moves every agent's
+rows set to their tool's current version) is the version the answer was given for, and **that is
+the version the person was shown** (Greptile on #190): a tool ask's payload names
+`toolVersionId`, the version the asking call pinned, and every answer path (the console's route
+and the card's `answer_ask` through `ask-answer.ts`, the elicitation and a taken console answer
+through `approval.ts`) passes it to `setApproval` as `asked`, never the pointer at answer time. An
+old ask answered after a republish approves the old version only, so the new one asks; a waiting
+ask is taken only by a call running its version. `setApproval` reads the tool under its row lock
+(`findAuthoredToolForUpdate`, the advance's), lands a late yes on a stock copy's current version
+when `answerCarriesTo` says every later version is a non-widening advance of what the ask showed,
+and leaves an allow already standing for the current version in place. The gate judges **the
+version the run executes**: `run.ts` passes the pinned version's id to `gateToolCall`, and
+`decideToolCall` takes `{ toolId, versionId, annotations }`; `approvalDecision` asks again for a
+write or destructive tool whose `allow` names another (`forThisVersion`, read by `isForVersion`),
+so any republish, a remix included, asks once; a `deny` holds across versions. `advanceStockCopy` moves every agent's
 answer for the version the copy stood on onto the advance's version in its transaction
 (`repo/approval.ts`'s `carryApprovalsToVersion`, on `ToolDeps`) unless `annotationsWiden` says the
 new version went read-only to a write or non-destructive to destructive. **The ask names where the
