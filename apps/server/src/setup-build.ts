@@ -302,6 +302,34 @@ export async function buildSetupTool(
   return state;
 }
 
+/**
+ * **The planned build** (Setup v2): a task chosen before connecting starts building the moment the
+ * record names a connection, with no Build press, since the person already said what to build.
+ * Runs when the record stands on `goal` with a connection and a saved task, after the task route
+ * connected the starter or a read learned the connection from the ask. Where the build cannot
+ * start (no model configured, the connection gone, a job still running that the person did not
+ * agree to leave) the state is answered as it is, and the tool screen shows the task with its
+ * Build button and the reason, as it did before the plan.
+ */
+export async function buildPlannedSetup(
+  ctx: ServiceContext,
+  principal: Principal,
+  state: SetupState,
+  deps: SetupBuildRouteDeps,
+  discardJob = false,
+): Promise<SetupState> {
+  const record = state.setup;
+  if (state.step !== "goal" || !record?.goal || !record.connectionId) return state;
+  try {
+    return await buildSetupTool(ctx, principal, { goal: record.goal, discardJob }, deps);
+  } catch (error) {
+    if (error instanceof ServiceError && error.code === "CONFLICT") {
+      return getSetupState(ctx, principal, deps.setup, deps.agent);
+    }
+    throw error;
+  }
+}
+
 /** The job the record waits on, read as its agent; null when there is none or it is gone. */
 async function recordJob(
   ctx: ServiceContext,

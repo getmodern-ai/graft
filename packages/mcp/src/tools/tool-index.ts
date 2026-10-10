@@ -327,3 +327,22 @@ export function searchTools<T extends IndexedTool>(
     more: Math.max(0, scored.length - limit),
   };
 }
+
+/**
+ * The share of `terms` that hit some field of the tool, 0 to 1, each by the same rule a query's
+ * term is judged by (itself, a synonym, or a prefix). The goal-shaped entry to the index
+ * (GRA-243): `acquire`'s similar check reads a goal against a tool whose description is long, as a
+ * stock tool's is, where the share of the two word sets' union would be diluted by the
+ * description's own words. Empty terms cover nothing.
+ */
+export function termCoverage(
+  tool: IndexedTool,
+  terms: readonly string[],
+  options: Pick<SearchOptions, "vendorNames"> = {},
+): number {
+  if (terms.length === 0) return 0;
+  const document = documentOf(tool, options.vendorNames);
+  const fields = Object.keys(WEIGHTS) as Field[];
+  const hit = terms.filter((term) => fields.some((field) => strength(term, document[field]) > 0));
+  return hit.length / terms.length;
+}

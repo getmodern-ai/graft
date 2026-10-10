@@ -2,6 +2,7 @@ import { KEYRING_PROVIDER } from "@graft/core/connection/provider";
 import type { ConnectionSubmitBody } from "@graft/server/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import type * as React from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ConnectionFormFields, HostsNotice } from "@/components/connection/connection-form";
@@ -69,10 +70,13 @@ export function ConnectionAskCard({
   ask,
   onAnswered,
   origin = "agent",
+  setupFooter,
 }: {
   ask: Extract<Ask, { kind: "connection" }>;
   onAnswered?: () => void;
   origin?: AskOrigin;
+  /** Under Setup's compact card: the task waiting on this connection. */
+  setupFooter?: React.ReactNode;
 }) {
   const { action, payload } = ask;
   const queryClient = useQueryClient();
@@ -162,6 +166,52 @@ export function ConnectionAskCard({
       disabled={busy}
     />
   );
+
+  // Setup v2's connect step: the app card, with only what the person must do on it (a secret to
+  // paste, the consent popup's status, the folded editor), never the build choice, which Setup's
+  // own build records (`startSetupBuild`), or the explanations the inbox card carries.
+  if (origin === "setup" && !widens) {
+    return (
+      <AskCard
+        action={action}
+        title={payload.displayName}
+        settled={(recorded) =>
+          typeof recorded?.connectionId === "string"
+            ? "Connected."
+            : "Declined. Go back to choose again."
+        }
+        approveLabel={`Connect ${payload.displayName}`}
+        pending={busy}
+        onAnswer={(allow) => (allow ? submit() : decline.mutate({ allow: false }))}
+        compact={{
+          vendor: payload.vendor,
+          name: payload.displayName,
+          subline: oauth
+            ? `Sign in to ${payload.displayName} in a popup · read-only`
+            : secret
+              ? `${secret}, entered here and never through your agent`
+              : "A public API · nothing to sign in to, no key needed",
+          footer: setupFooter,
+        }}
+      >
+        {secret ? <FieldGroup>{credentialFields}</FieldGroup> : null}
+        {consent.state.phase === "idle" ? null : (
+          <ConsentStatus state={consent.state} onCancel={consent.cancel} />
+        )}
+        {editing || Object.keys(errors).some((key) => !key.startsWith("credential")) ? (
+          <FieldGroup>
+            <ConnectionFormFields
+              draft={draft}
+              onChange={setDraft}
+              errors={errors}
+              idPrefix={`ask-${action.id}`}
+              disabled={busy}
+            />
+          </FieldGroup>
+        ) : null}
+      </AskCard>
+    );
+  }
 
   return (
     <AskCard

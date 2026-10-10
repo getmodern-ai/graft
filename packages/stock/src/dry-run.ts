@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -30,7 +31,12 @@ import type { StockWorkspaceTool } from "./workspace";
  * (`harness.ts`) and the build command's recording (`record.ts`, GRA-246) both are. The caller
  * hands the proxy its vendor (`upstreamFetch`): the recording, the live vendor, or the live vendor
  * behind a recorder. Every write stops at the proxy's preview, and the proxy's own account of each
- * is handed to `onPreview` in the order the module made them.
+ * is handed to `onPreview` with the sequence its request was issued in.
+ *
+ * **Every request is numbered at the proxy's door, in the order it arrived** (Greptile on #191): a
+ * module that calls with `Promise.all` has its answers come back in whatever order the vendor
+ * keeps, so the order of issue is taken before the proxy awaits anything and carried through the
+ * proxy's own call of the vendor as `issueSequence()`. The recorder orders its exchanges by it.
  */
 
 const PERSON = "person_stock_harness";
@@ -45,7 +51,19 @@ export type PreviewedWrite = {
   host: string;
   path: string;
   body: RecordedBody | undefined;
+  /** Where its request came in the order the module issued its requests, from 0. */
+  sequence: number;
 };
+
+const issued = new AsyncLocalStorage<number>();
+
+/**
+ * The sequence of the request the proxy is handling, read inside its `upstreamFetch`: where the
+ * request came in the order the module issued them. Undefined outside a dry run's request.
+ */
+export function issueSequence(): number | undefined {
+  return issued.getStore();
+}
 
 /** The runner's dry-run report, as much of it as the harness and the recorder read. */
 export type StockDryRunReport = {
@@ -100,7 +118,11 @@ function runRunner(args: {
  * The connection a dry run is minted for. With no live connection: the tool's declared hosts and
  * nothing else, so a call to an undeclared host is the proxy's `host_not_in_set`, and the `none`
  * scheme, since the vendor is the recording and the credential's header is not compared. With one:
- * its scheme and parameters, or a sentence when a keyed starter has none.
+ * its scheme and parameters, or a sentence when a keyed starter has none. **The primary host is one
+ * the manifest declares** (Greptile on #187): the proxy admits the primary host's name beside
+ * `hosts`, so a starter's primary host the manifest omits would let an undeclared call pass. The
+ * starter's is used where the manifest declares its name, else the manifest's first host; a live
+ * connection's own primary host (a test account that answers elsewhere) is used as given.
  */
 export function stockConnectionFor(
   tool: Pick<StockWorkspaceTool, "vendor" | "hosts">,
@@ -108,8 +130,14 @@ export function stockConnectionFor(
   required: boolean,
 ): ProxyConnection | string {
   const starter = starterVendorFor(tool.vendor);
-  const primaryHost = live?.primaryHost ?? starter?.primaryHost ?? `https://${tool.hosts[0]}`;
-  const hosts = [...new Set([new URL(primaryHost).hostname, ...tool.hosts])];
+  const declared = new Set(tool.hosts);
+  const hostnameOf = (url: string) => new URL(url).hostname.toLowerCase();
+  const primaryHost =
+    live?.primaryHost ??
+    (starter && declared.has(hostnameOf(starter.primaryHost))
+      ? starter.primaryHost
+      : `https://${tool.hosts[0]}`);
+  const hosts = [...new Set([hostnameOf(primaryHost), ...tool.hosts])];
   if (required && live === null && starter && starter.scheme !== "none") {
     return `there is no live connection for ${tool.vendor}; give it under GRAFT_STOCK_LIVE_CONNECTIONS`;
   }
@@ -144,8 +172,11 @@ export async function dryRunStockTool(args: {
     log: () => {},
   });
   // The proxy's own account of each write it stopped: its preview names the vendor host and path.
+  let arrived = 0;
   const observed = async (request: Request): Promise<Response> => {
-    const response = await app.fetch(request);
+    // Numbered on arrival, before anything is awaited, and carried into the proxy's vendor call.
+    const sequence = arrived++;
+    const response = await issued.run(sequence, () => app.fetch(request));
     if (response.headers.get(DRY_RUN_HEADER) === "intercepted") {
       const preview = (await response.clone().json()) as {
         request: {
@@ -165,6 +196,7 @@ export async function dryRunStockTool(args: {
         host: preview.request.host,
         path: preview.request.path,
         body: recordedBodyOf(bytes),
+        sequence,
       });
     }
     return response;

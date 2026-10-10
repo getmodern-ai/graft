@@ -703,6 +703,7 @@ describe("an OAuth connection proposed over MCP, consented in the browser, calle
       decision: "allow",
       decidedAt: new Date(),
       askEveryCall: false,
+      toolVersionId: "tool_mail_list_v1",
       owner: "person",
       createdAt: new Date(),
       updatedAt: new Date(),

@@ -65,6 +65,22 @@ describe("loadStockCatalogue", () => {
     expect(current?.description).toBe("Fixed.");
   });
 
+  it("never appends a source hash the tool already has, so an older release's replica cannot make its stock current again", async () => {
+    const catalogue = createFakeStockCatalogue();
+    await loadStockCatalogue(ctx, [WEATHER], passes, catalogue.deps);
+    const fixed = { ...WEATHER, sourceHash: "hash-2", description: "Fixed." };
+    await loadStockCatalogue(ctx, [fixed], passes, catalogue.deps);
+    // A replica of the older release boots during the rolling deploy, then one of the newer again.
+    const older = await loadStockCatalogue(ctx, [WEATHER], passes, catalogue.deps);
+    expect(older.appended).toEqual([]);
+    const newer = await loadStockCatalogue(ctx, [fixed], passes, catalogue.deps);
+    expect(newer.appended).toEqual([]);
+    expect(catalogue.versions.size).toBe(2);
+    const [current] = await listStockCatalogue(ctx, catalogue.deps);
+    expect(current?.versionNumber).toBe(2);
+    expect(current?.description).toBe("Fixed.");
+  });
+
   it("records the check's annotations, and refuses a tool the check refuses without failing the rest", async () => {
     const catalogue = createFakeStockCatalogue();
     const writes: StockCheck = async () => ({

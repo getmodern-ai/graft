@@ -34,17 +34,21 @@ pnpm --filter @graft/stock-build build-tool -- github "List my open pull request
   The model is told the starter's documentation URL and the rules a stock tool lives under, beside
   your `--hints`.
 - **On success** it writes the module, `manifest.json`, `test-input.json` and `recording.json` into
-  `tools/<vendor>/<name>/`, where `<name>` is the one the model chose. Before anything is written
-  the staged directory must pass the harness's three proofs as it stands, which is what CI runs.
-  Then read the module and the recording, run `pnpm run check` (the model's code is not
-  Biome-formatted) and `pnpm --filter @graft/stock test`, and open a pull request.
+  `tools/<vendor>/<name>/`, where `<name>` is the one the model chose. The files are formatted
+  with the repository's Biome first, then copied into a `.build-*` directory in the workspace and
+  must pass the harness's three proofs there as they stand, which is what CI runs; only then are
+  they renamed into place. Then read the module and the recording (the build prints a note where
+  the module reads a JSON answer as text; `RECORDING.md`), run `pnpm run lint` and
+  `pnpm --filter @graft/stock test` as a reviewer will, and open a pull request.
 - **A failed job writes nothing.** It prints the job's failure, its message and its last
-  diagnostics, and exits 1. So does a draft that declares a package, a proof that cannot be
-  recorded, and a tool that does not pass the harness.
+  diagnostics, and exits 1. So does a goal `acquire` would refuse, a draft that declares a package,
+  a proof that cannot be recorded, a tool that does not pass the harness, and a copy that fails.
 - **A repair is `--from <name>`**: the current module, its manifest and its test input are the
   model's starting point, and the result is written in place of the current version, under the
-  current name whatever the draft calls itself. The next boot appends it to the catalogue as the
-  next version. Without `--from`, a tool that already exists is refused and nothing is written.
+  current name whatever the draft calls itself. The current version is set aside only once the
+  new one has passed beside it, and put back if the move fails, so a failed repair leaves it as
+  it was. The next boot appends the new one to the catalogue as the next version. Without
+  `--from`, a tool that already exists is refused and nothing is written.
 - **`--attempts <n>`** caps the job's attempts (default 4); the token ceiling is the server's
   default, 400,000.
 

@@ -3,6 +3,7 @@ import {
   getToolByName,
   isPromoted,
   listConnections,
+  listToolVersionOrigins,
   listWorkingSet,
   ServiceError,
 } from "@graft/core";
@@ -22,6 +23,8 @@ import type { SessionContext } from "./context";
 import type { ToolCallEvent } from "./deps";
 import { isPlainObject, toolError, toolRefusal, toolResult } from "./result";
 import { runAuthoredTool } from "./run";
+import { advanceIfBehind, lineageOf, originsByTool } from "./stock-copy";
+import { type StockSignal, withStockSignal } from "./stock-signal";
 import { authoredToolName, parseAuthoredToolName, parseExecuteToolName } from "./tool-names";
 import { AUTHORING_TOOLS } from "./tools/authoring";
 import { callExecuteTool, executeToolDefinition } from "./tools/execute";
@@ -94,6 +97,10 @@ export async function listToolsFor(session: SessionContext): Promise<Tool[]> {
     agentDrivesByHand(session),
   ]);
   const inScope = new Set(scopeIds);
+  const listed = await followStockInWorkingSet(
+    session,
+    workingSet.map((entry) => entry.tool),
+  );
   // A chat product's agent lists the meta-tools and its promoted tools alone (GRA-125): the
   // authoring set and the execute__ tools are for an agent driven by hand (`by-hand.ts`).
   return [
@@ -106,8 +113,44 @@ export async function listToolsFor(session: SessionContext): Promise<Tool[]> {
           .filter((connection) => inScope.has(connection.id) && connection.revokedAt === null)
           .map((connection) => executeToolDefinition(connection))
       : []),
-    ...workingSet.map((entry) => authoredToolDefinition(entry.tool)),
+    ...listed.map((tool) => authoredToolDefinition(tool)),
   ];
+}
+
+/**
+ * A listed copy is a reached copy (ADR 0025; GRA-242): an untouched copy in the working set whose
+ * stock tool has a newer version advances before it is listed, so the list carries the definition a
+ * call will run. One read of the person's version origins; the catalogue is read only when some
+ * listed tool follows stock. Nothing is announced: this is the list being answered.
+ */
+async function followStockInWorkingSet(
+  session: SessionContext,
+  tools: readonly AuthoredToolRow[],
+): Promise<AuthoredToolRow[]> {
+  const { ctx, principal, deps } = session;
+  if (!deps.toolSource || tools.length === 0) return [...tools];
+  const originsOf = originsByTool(await listToolVersionOrigins(ctx, principal, deps.tool));
+  const following = tools.filter((tool) => lineageOf(originsOf.get(tool.id)) === "stock");
+  if (following.length === 0) return [...tools];
+  const catalogue = new Map(
+    (await deps.toolSource.list()).map((entry) => [
+      authoredToolName(entry.vendor, entry.name),
+      entry,
+    ]),
+  );
+  return Promise.all(
+    tools.map(async (tool) => {
+      if (!following.includes(tool)) return tool;
+      const followed = await advanceIfBehind(
+        deps,
+        principal.personId,
+        tool,
+        originsOf.get(tool.id) ?? [],
+        catalogue.get(authoredToolName(tool.vendor, tool.name)) ?? null,
+      );
+      return followed.tool;
+    }),
+  );
 }
 
 /**
@@ -125,10 +168,15 @@ export async function callToolFor(
   const startedAt = Date.now();
   // The blob counts the event carries come from the runner's parsed ledger (`blobs.ts`), tallied
   // over this call, and never from the answer, whose keys are the module's.
-  const { value: result, tally } = await withBlobTally(() => answer(session, name, args));
+  // A stock copy's run notes its origin and its failure's shape the same way (GRA-244;
+  // `stock-signal.ts`), so the event never reads them off the answer either.
+  const {
+    value: { value: result, tally },
+    stock,
+  } = await withStockSignal(() => withBlobTally(() => answer(session, name, args)));
   // The hook sees every answer, an unknown tool's `McpError` excepted — that one never reached a tool.
   session.deps.onToolCall?.(
-    toolCallEvent(session, name, result, Date.now() - startedAt, args, tally),
+    toolCallEvent(session, name, result, Date.now() - startedAt, args, tally, stock),
   );
   return result;
 }
@@ -164,6 +212,7 @@ export function toolCallEvent(
   latencyMs: number,
   args: Record<string, unknown> = {},
   tally: BlobTally = { seen: false, written: 0, dropped: 0 },
+  stock: StockSignal | null = null,
 ): ToolCallEvent {
   const kind = FIXED_BY_NAME.has(name)
     ? "meta"
@@ -182,6 +231,8 @@ export function toolCallEvent(
     ...(refused && typeof body?.reason === "string" ? { reason: body.reason } : {}),
     latencyMs,
     ...(detail ? { detail } : {}),
+    // A stock copy's run or a remix's (GRA-244): the origin, and a failure's kind and vendor status.
+    ...(stock ? { stock: { ...stock } } : {}),
     // Observed, never trusted: the gate reads the client's callback host (GRA-150, `deps.ts`).
     uiExtensionDeclared: session.uiExtensionDeclared(),
   };

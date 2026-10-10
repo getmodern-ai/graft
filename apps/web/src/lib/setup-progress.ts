@@ -221,3 +221,29 @@ export function jobPollInterval(read: {
   if (read.status === "error") return false;
   return progressCard(read.data).kind === "working" ? JOB_POLL_MS : false;
 }
+
+/**
+ * Where a label sits in the five parts Setup v2's building row counts ("Reading the documentation ·
+ * 1 of 5"): the documentation, the writing, the check, the trial against the service, and the
+ * publish with its dry run. Before any of them the row is at none of five; a pass is all five.
+ */
+export const SETUP_BUILD_PARTS = 5;
+
+export function progressPart(card: Pick<ProgressCard, "kind" | "label">): number {
+  if (card.kind === "passed") return SETUP_BUILD_PARTS;
+  switch (card.label) {
+    case SETUP_STAGE_LABEL.docs:
+      return 1;
+    case SETUP_STAGE_LABEL.write:
+      return 2;
+    case SETUP_STAGE_LABEL.check:
+      return 3;
+    case SETUP_STAGE_LABEL.prove:
+      return 4;
+    case SETUP_STAGE_LABEL.publish:
+    case SETUP_STAGE_LABEL.dry_run:
+      return 5;
+    default:
+      return 0;
+  }
+}
