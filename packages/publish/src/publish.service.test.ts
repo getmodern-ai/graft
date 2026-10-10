@@ -15,7 +15,7 @@ import {
   type ToolboxMirror,
 } from "@graft/toolbox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import { copyStockVersion } from "./copy-stock";
 import { sha256Hex, sourceHashOf } from "./hash";
 import { createFakeMetadataSource, type FakePackageMetadataSource } from "./metadata";
 import { DEFAULT_PACKAGE_POLICY, type PackageMetadata } from "./policy";
@@ -720,6 +720,63 @@ describe("a module declaring packages", () => {
     // The reservation before the install and the rows after it: two short transactions.
     expect(transactions.filter((depth) => depth === 1)).toHaveLength(2);
   });
+
+  it.each([
+    ["the version directory's write", "write"],
+    ["the rows' transaction", "rows"],
+  ])(
+    "withdraws a first publish's reserved row when %s throws, so a stock copy of the name still lands (Greptile on #184)",
+    async (_case, where) => {
+      const store = h.deps.store;
+      const insertToolVersion = h.tool.insertToolVersion;
+      if (where === "write") {
+        const writeTree = store.writeTree.bind(store);
+        h.deps.store = Object.assign(Object.create(store), {
+          writeTree: async (...args: Parameters<typeof store.writeTree>) => {
+            if (args[1].startsWith("tools/")) throw new Error("disk full");
+            return writeTree(...args);
+          },
+        });
+      } else {
+        h.tool.insertToolVersion = async () => {
+          throw new Error("connection reset");
+        };
+      }
+      const draftPath = await draft("job1", await readFixture("hello"));
+
+      await expect(
+        publish({ vendor: "open-meteo", name: "current-weather", draftPath }),
+      ).rejects.toThrow(where === "write" ? "disk full" : "connection reset");
+      expect(h.tool.tools).toEqual([]);
+      expect(h.tool.versions).toEqual([]);
+
+      // The name is free again: the first stock copy of it makes the tool.
+      h.deps.store = store;
+      h.tool.insertToolVersion = insertToolVersion;
+      const copied = await copyStockVersion(h.deps, {
+        personId: PERSON,
+        stock: {
+          stockToolId: "stock_weather",
+          stockVersionId: "stock_weather_v1",
+          versionNumber: 1,
+          vendor: "open-meteo",
+          name: "current-weather",
+          description: "The weather right now in a named city.",
+          inputSchema: { type: "object" },
+          annotations: { readOnly: true, destructive: false },
+          hosts: ["api.open-meteo.com"],
+          files: [{ path: "index.ts", content: "export default async () => ({ ok: true });\n" }],
+          checkOutput: {},
+          connect: null,
+        },
+        defaultConnectionId: null,
+      });
+      expect(copied.currentVersionId).not.toBeNull();
+      expect(h.tool.versions.map((version) => version.stockVersionId)).toEqual([
+        "stock_weather_v1",
+      ]);
+    },
+  );
 
   it("refuses when the install reports success but left no lockfile", async () => {
     h.deps.policy = { ...DEFAULT_PACKAGE_POLICY, allowlist: ["left-pad"] };

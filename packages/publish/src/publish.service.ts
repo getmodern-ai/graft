@@ -272,34 +272,48 @@ export async function publishToolVersion(
     return { tool, created: found === null, versionNumber };
   });
   const versionPath = versionPathOf(args.vendor, args.name, reserved.versionNumber);
-  const written = normaliseManifest(sources.files);
-  await deps.store.writeTree(args.toolboxId, versionPath, written);
-  const sourceHash = sourceHashOf(written);
 
-  /** A refusal after the reservation: a row this publish made and could not fill is withdrawn. */
-  const withdraw = async (refused: PublishRefusal): Promise<PublishRefusal> => {
-    if (reserved.created) {
-      await ctx.db.transaction(async (tx) => {
-        await deps.tool.lockToolName(tx, args.personId, key);
-        await deps.tool.deleteUnversionedTool(tx, args.personId, reserved.tool.id);
-      });
-    }
-    return refused;
+  /**
+   * A row this publish made at step 6 and could not fill is withdrawn, whether the publish was
+   * refused or threw (Greptile on #184): left behind, an empty row of a stock tool's name would be
+   * answered in place of the stock tool, `tool_has_no_version`, from then on. The delete takes
+   * only a row no version names, so a row another publish filled meanwhile stays.
+   */
+  const withdraw = async (): Promise<void> => {
+    if (!reserved.created) return;
+    await ctx.db.transaction(async (tx) => {
+      await deps.tool.lockToolName(tx, args.personId, key);
+      await deps.tool.deleteUnversionedTool(tx, args.personId, reserved.tool.id);
+    });
   };
+  try {
+    const filled = await fillReservation();
+    if (!filled.ok) await withdraw();
+    return filled;
+  } catch (error) {
+    // The publish's own error is the one the caller hears; a failed withdrawal leaves the row as a
+    // throw before this change did.
+    await withdraw().catch(() => undefined);
+    throw error;
+  }
 
-  // 7. The build step, outside any transaction.
-  let lockfileHash: string | null = null;
-  if (dependencies.length > 0) {
-    const result = await deps.sandbox.install({ toolboxId: args.toolboxId, versionPath });
-    if (result.status !== "completed") {
-      return withdraw(refusal([installFailure(result, versionPath)], check));
-    }
-    const lockfile = await deps.store
-      .read(args.toolboxId, `${versionPath}/package-lock.json`)
-      .catch(() => null);
-    if (lockfile === null) {
-      return withdraw(
-        refusal(
+  async function fillReservation(): Promise<PublishOutcome> {
+    const written = normaliseManifest(sources.files);
+    await deps.store.writeTree(args.toolboxId, versionPath, written);
+    const sourceHash = sourceHashOf(written);
+
+    // 7. The build step, outside any transaction.
+    let lockfileHash: string | null = null;
+    if (dependencies.length > 0) {
+      const result = await deps.sandbox.install({ toolboxId: args.toolboxId, versionPath });
+      if (result.status !== "completed") {
+        return refusal([installFailure(result, versionPath)], check);
+      }
+      const lockfile = await deps.store
+        .read(args.toolboxId, `${versionPath}/package-lock.json`)
+        .catch(() => null);
+      if (lockfile === null) {
+        return refusal(
           [
             installDiagnostic(
               `The install reported success but left no package-lock.json in ${versionPath}, so the version cannot say what it resolved (ADR 0013).`,
@@ -307,78 +321,85 @@ export async function publishToolVersion(
             ),
           ],
           check,
-        ),
+        );
+      }
+      lockfileHash = sha256Hex(lockfile);
+    }
+
+    // 8. The rows, under the lock again, once the reservation is confirmed: the version number read at
+    // step 6 is still the next one. Another publish of the tool that recorded it meanwhile is
+    // `publish-raced`, and this publish records nothing.
+    const versionInput = {
+      path: versionPath,
+      sourceHash,
+      lockfileHash,
+      checkOutput: checkOutputOf(check),
+      writesInvolved: !check.annotations.readOnly,
+      publisherJobId: args.jobId ?? null,
+    };
+    const recorded = await ctx.db.transaction(async (tx) => {
+      const scoped: ServiceContext = { db: tx };
+      await deps.tool.lockToolName(tx, args.personId, key);
+      const next = await nextVersionNumber(scoped, principal, reserved.tool.id, deps.tool);
+      if (next !== reserved.versionNumber) return null;
+      const tool = reserved.tool;
+      if (args.activate === false) {
+        const version = await addToolVersion(scoped, principal, tool.id, versionInput, deps.tool);
+        // A dead binding follows the connection this publish names (step 8; GRA-122); a live one,
+        // and the prose, the schema and the pointer, wait for the pass. The default's row is read
+        // locked with the write, in this transaction.
+        const rebound =
+          !reserved.created && args.defaultConnectionId
+            ? (
+                await rebindToolIfConnectionDead(
+                  scoped,
+                  principal,
+                  tool.id,
+                  args.defaultConnectionId,
+                  deps.tool,
+                )
+              ).tool
+            : tool;
+        return { tool: rebound, version };
+      }
+      return recordPublishedVersion(
+        scoped,
+        principal,
+        tool.id,
+        versionInput,
+        definition,
+        deps.tool,
+      );
+    });
+    if (recorded === null) {
+      return refusal(
+        [
+          {
+            file: versionPath,
+            line: 1,
+            column: 1,
+            text: "",
+            rule: "publish-raced",
+            message: `Another publish of ${args.vendor}/${args.name} recorded version ${reserved.versionNumber} while this one was being built, so this one recorded nothing.`,
+            hint: "Publish again; the next version number is taken.",
+          },
+        ],
+        check,
       );
     }
-    lockfileHash = sha256Hex(lockfile);
+
+    // 9. The mirror, off the path.
+    startMirror(deps, args, recorded, versionPath);
+
+    return {
+      ok: true,
+      tool: recorded.tool,
+      version: recorded.version,
+      advice: check.advice,
+      annotations: check.annotations,
+      dependencies: dependencies.map((dependency) => dependency.name),
+    };
   }
-
-  // 8. The rows, under the lock again, once the reservation is confirmed: the version number read at
-  // step 6 is still the next one. Another publish of the tool that recorded it meanwhile is
-  // `publish-raced`, and this publish records nothing.
-  const versionInput = {
-    path: versionPath,
-    sourceHash,
-    lockfileHash,
-    checkOutput: checkOutputOf(check),
-    writesInvolved: !check.annotations.readOnly,
-    publisherJobId: args.jobId ?? null,
-  };
-  const recorded = await ctx.db.transaction(async (tx) => {
-    const scoped: ServiceContext = { db: tx };
-    await deps.tool.lockToolName(tx, args.personId, key);
-    const next = await nextVersionNumber(scoped, principal, reserved.tool.id, deps.tool);
-    if (next !== reserved.versionNumber) return null;
-    const tool = reserved.tool;
-    if (args.activate === false) {
-      const version = await addToolVersion(scoped, principal, tool.id, versionInput, deps.tool);
-      // A dead binding follows the connection this publish names (step 8; GRA-122); a live one,
-      // and the prose, the schema and the pointer, wait for the pass. The default's row is read
-      // locked with the write, in this transaction.
-      const rebound =
-        !reserved.created && args.defaultConnectionId
-          ? (
-              await rebindToolIfConnectionDead(
-                scoped,
-                principal,
-                tool.id,
-                args.defaultConnectionId,
-                deps.tool,
-              )
-            ).tool
-          : tool;
-      return { tool: rebound, version };
-    }
-    return recordPublishedVersion(scoped, principal, tool.id, versionInput, definition, deps.tool);
-  });
-  if (recorded === null) {
-    return refusal(
-      [
-        {
-          file: versionPath,
-          line: 1,
-          column: 1,
-          text: "",
-          rule: "publish-raced",
-          message: `Another publish of ${args.vendor}/${args.name} recorded version ${reserved.versionNumber} while this one was being built, so this one recorded nothing.`,
-          hint: "Publish again; the next version number is taken.",
-        },
-      ],
-      check,
-    );
-  }
-
-  // 9. The mirror, off the path.
-  startMirror(deps, args, recorded, versionPath);
-
-  return {
-    ok: true,
-    tool: recorded.tool,
-    version: recorded.version,
-    advice: check.advice,
-    annotations: check.annotations,
-    dependencies: dependencies.map((dependency) => dependency.name),
-  };
 }
 
 /**
