@@ -316,6 +316,7 @@ export const STARTER_VENDORS = [
       "List the ten most recent charges with the charges list endpoint, one GET of `charges` with `limit=10`, returning the amount, the currency, the status, when it was created and the description of each. The tool takes no input. Read only.",
     runInput: null,
     outcome: "Your ten most recent payments, with each one's amount and status.",
+    moreTasks: [],
   },
   {
     id: "open-meteo",
