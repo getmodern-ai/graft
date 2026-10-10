@@ -60,10 +60,13 @@ function fakeDeps(overrides: Partial<ToolDeps> = {}): ToolDeps {
     insertAuthoredTool: vi.fn(async (_db, input) => ({ ...tool, ...input }) as AuthoredToolRow),
     findAuthoredTool: vi.fn(async () => null),
     findAuthoredToolById: vi.fn(async () => tool),
+    findAuthoredToolForUpdate: vi.fn(async () => tool),
     listAuthoredTools: vi.fn(async () => [tool]),
     updateAuthoredTool: vi.fn(async (_db, _p, _id, patch) => ({ ...tool, ...patch })),
     insertToolVersion: vi.fn(async (_db, input) => ({ ...version(1), ...input }) as ToolVersionRow),
     listToolVersions: vi.fn(async () => [version(2), version(1)]),
+    listToolVersionOrigins: vi.fn(async () => []),
+    carryApprovalsToVersion: vi.fn(async () => []),
     findToolVersion: vi.fn(async () => version(1)),
     setCurrentToolVersion: vi.fn(async (_db, _p, _t, versionId) => ({
       ...tool,
@@ -72,6 +75,7 @@ function fakeDeps(overrides: Partial<ToolDeps> = {}): ToolDeps {
     recordToolVersionDryRun: vi.fn(async () => version(1)),
     findConnection: vi.fn(async () => ({ id: "conn_1" }) as never),
     findConnectionForUpdate: vi.fn(async () => ({ id: "conn_1", revokedAt: null }) as never),
+    lockToolName: vi.fn(async () => {}),
     newId: () => "new_id",
     now: () => NOW,
     ...overrides,
@@ -278,6 +282,39 @@ describe("activateToolVersion", () => {
     await expect(
       activateToolVersion(ctx, PRINCIPAL, "tool_1", "ver_of_another_tool", {}, deps),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("refuses as CONFLICT a remix's version when the tool moved off the version it started from, and writes nothing", async () => {
+    const byId: Record<string, ToolVersionRow> = {
+      ver_1: version(1),
+      ver_2: version(2),
+      ver_3: version(3),
+    };
+    const deps = fakeDeps({
+      findAuthoredToolById: vi.fn(async () => ({ ...tool, currentVersionId: "ver_2" })),
+      findToolVersion: vi.fn(async (_db, _p, id) => byId[id] ?? null),
+    });
+    await expect(
+      activateToolVersion(ctx, PRINCIPAL, "tool_1", "ver_3", {}, deps, {
+        expectedCurrentVersionId: "ver_1",
+      }),
+    ).rejects.toMatchObject({
+      code: "CONFLICT",
+      details: { expectedCurrentVersionId: "ver_1", currentVersionId: "ver_2", versionNumber: 3 },
+    });
+    expect(deps.updateAuthoredTool).not.toHaveBeenCalled();
+    expect(deps.setCurrentToolVersion).not.toHaveBeenCalled();
+    // The pointer is judged under the tool's name lock, read again once the lock is held.
+    expect(deps.lockToolName).toHaveBeenCalledWith(fakeDb, "person_1", {
+      vendor: tool.vendor,
+      name: tool.name,
+    });
+    expect(deps.findAuthoredToolById).toHaveBeenCalledTimes(2);
+
+    const result = await activateToolVersion(ctx, PRINCIPAL, "tool_1", "ver_3", {}, deps, {
+      expectedCurrentVersionId: "ver_2",
+    });
+    expect(result.currentVersionId).toBe("ver_3");
   });
 
   it("refuses as CONFLICT a version below the current one, naming both numbers, and writes nothing", async () => {

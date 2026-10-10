@@ -23,7 +23,7 @@ import {
 import type { ApprovalRow, BuildApprovalRow } from "@graft/db/repo/approval";
 import type { PendingActionRow } from "@graft/db/repo/pending-action";
 
-import { readApprovalAnswer } from "./approval";
+import { askedVersionOfPayload, readApprovalAnswer } from "./approval";
 import { readScopeAnswer, SCOPE_ASK_KIND } from "./connection-request";
 
 /**
@@ -226,7 +226,13 @@ async function recordAnswer(
         toolId,
         said.allow ? "allow" : "deny",
         deps.approval,
-        said.allow && said.askEveryCall !== undefined ? { askEveryCall: said.askEveryCall } : {},
+        {
+          // For the version the ask showed, never the tool's version now (GRA-245, Greptile on #190).
+          asked: askedVersionOfPayload(action.payload),
+          ...(said.allow && said.askEveryCall !== undefined
+            ? { askEveryCall: said.askEveryCall }
+            : {}),
+        },
       );
       if (!said.allow || !approval.askEveryCall) await settle();
       return { pendingAction: action, approval };

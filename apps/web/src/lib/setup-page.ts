@@ -8,7 +8,7 @@ import { SETUP_AGENT_PARAM } from "@graft/core/setup/setup.rules";
  * `from=card` (`@graft/ask-card`'s `withFromCard`). Pure, so the route only carries it out.
  */
 
-export type SetupSearch = { agent?: string; from?: "card" };
+export type SetupSearch = { agent?: string; from?: "card"; stage?: number };
 
 /** The route's search: the agent Setup should run as, and whether the card opened the page. */
 export function readSetupSearch(search: Record<string, unknown>): SetupSearch {
@@ -16,6 +16,13 @@ export function readSetupSearch(search: Record<string, unknown>): SetupSearch {
   return {
     ...(typeof agent === "string" && agent.length > 0 ? { agent } : {}),
     ...(openedFromCard(search) ? { from: "card" as const } : {}),
+    // The stage's history entry (`stageHistoryMove`), 0 to 4; anything else is dropped.
+    ...(typeof search.stage === "number" &&
+    Number.isInteger(search.stage) &&
+    search.stage >= 0 &&
+    search.stage <= 4
+      ? { stage: search.stage }
+      : {}),
   };
 }
 

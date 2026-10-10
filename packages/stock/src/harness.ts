@@ -13,7 +13,12 @@ import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
 import { checkStockTool } from "./check";
-import { dryRunFailureOf, dryRunStockTool, stockConnectionFor } from "./dry-run";
+import {
+  dryRunFailureOf,
+  dryRunStockTool,
+  type PreviewedWrite,
+  stockConnectionFor,
+} from "./dry-run";
 import type { StockHarnessMode } from "./mode";
 import {
   parseRecording,
@@ -26,6 +31,7 @@ import {
   replayResponseOf,
   type StockRecording,
 } from "./recording";
+import { credentialForms } from "./secrets";
 import { STOCK_DIR, type StockWorkspaceTool } from "./workspace";
 
 /**
@@ -37,7 +43,8 @@ import { STOCK_DIR, type StockWorkspaceTool } from "./workspace";
  *    derives are the ones the manifest declares;
  *  - `proveTestInput`: the input schema compiles and the test input is valid input;
  *  - `proveReplay`: the module runs, as a dry run, by the real runner through the real proxy, whose
- *    vendor is the recording (`RECORDING.md`). Its reads must be the recording's, in order; its
+ *    vendor is the recording (`RECORDING.md`). Each read must be a recorded read not yet made (the
+ *    first such, in the order the module issued them, so parallel reads replay); its
  *    writes stop at the proxy's preview, never reach the vendor, and must be the recording's; and its
  *    result must be the recording's. In live mode (`mode.ts`) the reads go to the vendor instead.
  *
@@ -162,6 +169,33 @@ function keyPaths(value: unknown, prefix = "", out = new Set<string>()): Set<str
   return out;
 }
 
+/**
+ * A note, not a failure, for a module that reads a body as text where the recording holds a JSON
+ * answer (Greptile on #191): a recording keeps a JSON body parsed, so the redaction can walk it, and
+ * a replay serves it re-serialised, so the vendor's own whitespace and escaping are not what the
+ * module reads. The build hands the module the same re-serialised text while recording, so the two
+ * agree; a module that compares, slices or searches that text is still reading the vendor's
+ * formatting, which the nightly live run does not compare. `RECORDING.md` asks stock modules to
+ * parse a JSON body (`res.json()`) instead. Answers the notes, each opening as a proof's sentence.
+ */
+export function jsonTextNotes(
+  tool: Pick<StockWorkspaceTool, "vendor" | "name" | "files">,
+  recording: StockRecording,
+): string[] {
+  const readsJson = recording.exchanges.some(
+    (exchange) =>
+      exchange.kind === "read" && exchange.response.body && "json" in exchange.response.body,
+  );
+  if (!readsJson) return [];
+  return tool.files
+    .filter((file) => /\.text\(\s*\)/.test(file.content))
+    .map((file) =>
+      sayer(tool)(
+        `note: ${file.path} reads a body with .text() and the recording holds a JSON answer; a replay serves JSON re-serialised, not as the vendor formatted it, so parse it with .json() rather than comparing or slicing the text`,
+      ),
+    );
+}
+
 function describeBody(body: RecordedBody | undefined): string {
   if (!body) return "no body";
   const text =
@@ -184,7 +218,10 @@ export async function proveReplay(
   const previewed: ReplayReport["previewed"] = [];
   const live = mode.kind === "live";
   const liveConnection = live ? (mode.connections[tool.vendor] ?? null) : null;
-  const secrets = Object.values(liveConnection?.credential ?? {});
+  // Each credential value in every form the proxy or a vendor may have put it in: a query parameter
+  // carries it percent-encoded, a diagnostic quotes the query (Greptile on #187), and a vendor may
+  // echo the basic pair as base64 (Greptile on #191).
+  const secrets = credentialForms(liveConnection?.credential ?? {});
   // A live sentence may carry a vendor's text; nothing in it may carry the credential.
   const finish = (): ReplayReport => ({
     problems: problems.map((problem) => redactText(problem, { secretValues: secrets }).text),
@@ -220,7 +257,8 @@ export async function proveReplay(
 
   const reads = recording.exchanges.filter((e): e is RecordedRead => e.kind === "read");
   const writes = recording.exchanges.filter((e): e is RecordedWrite => e.kind === "write");
-  let next = 0;
+  const made = new Set<number>();
+  const issuedWrites: PreviewedWrite[] = [];
   const realFetch = live ? createUpstreamFetch() : null;
 
   const upstreamFetch: UpstreamFetch = async (request: UpstreamRequest, init) => {
@@ -233,24 +271,32 @@ export async function proveReplay(
       );
       return Response.json({ error: "write_reached_vendor" }, { status: 500 });
     }
-    const expected = reads[next];
     const actual = readKeyOf(request.method, request.url);
     const shown = `${actual.method} ${actual.host}${actual.path}`;
-    if (!expected) {
-      problems.push(say(`it made a read the recording does not hold: ${shown}`));
-      return Response.json({ error: "not_in_recording" }, { status: 404 });
-    }
-    if (!sameRead(readKeyOf(expected.method, expected.url), actual, live)) {
+    // The first recorded read not yet made that is this request: the recording is in the order the
+    // module issued its reads, and a module reading in parallel may have them reach here in another
+    // (Greptile on #191), so a request takes its own read rather than the next in line.
+    const matched = reads.findIndex(
+      (read, index) => !made.has(index) && sameRead(readKeyOf(read.method, read.url), actual, live),
+    );
+    if (matched === -1) {
+      const next = reads.findIndex((_read, index) => !made.has(index));
+      const expected = reads[next];
+      if (!expected) {
+        problems.push(say(`it made a read the recording does not hold: ${shown}`));
+        return Response.json({ error: "not_in_recording" }, { status: 404 });
+      }
       const recorded = readKeyOf(expected.method, expected.url);
       problems.push(
         say(
           `its read ${next + 1} disagrees with the recording: it made ${shown}${actual.query.length ? `?${new URLSearchParams(actual.query)}` : ""}, the recording holds ${recorded.method} ${recorded.host}${recorded.path}${recorded.query.length ? `?${new URLSearchParams(recorded.query)}` : ""}`,
         ),
       );
-      next += 1;
+      made.add(next);
       return Response.json({ error: "not_in_recording" }, { status: 404 });
     }
-    next += 1;
+    made.add(matched);
+    const expected = reads[matched] as RecordedRead;
     if (!realFetch) return replayResponseOf(expected);
 
     const response = await realFetch(request, init);
@@ -284,8 +330,14 @@ export async function proveReplay(
     connection,
     credential: liveConnection?.credential ?? {},
     upstreamFetch,
-    onPreview: (write) => previewed.push(write),
+    onPreview: (write) => issuedWrites.push(write),
   });
+  // In the order the module issued them, as the recording holds them, whatever order they settled in.
+  previewed.push(
+    ...issuedWrites
+      .sort((a, b) => a.sequence - b.sequence)
+      .map(({ sequence: _sequence, ...write }) => write),
+  );
   if (!run.ran) {
     problems.push(
       say(
@@ -295,7 +347,8 @@ export async function proveReplay(
     return finish();
   }
   const { report } = run;
-  for (let index = next; index < reads.length; index += 1) {
+  for (let index = 0; index < reads.length; index += 1) {
+    if (made.has(index)) continue;
     const missed = reads[index] as RecordedRead;
     problems.push(
       say(`it never made the recording's read ${index + 1}: ${missed.method} ${missed.url}`),
